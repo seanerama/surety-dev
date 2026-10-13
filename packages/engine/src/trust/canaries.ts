@@ -6,11 +6,34 @@
 // evidence: a containment action counts only when the domain init witnessed
 // the engine's probe program run it as a descendant of the backend.
 
+import { createHash } from 'node:crypto';
 import { readlinkSync } from 'node:fs';
 
 
-export type CanaryKind = 'positive' | 'cancellation' | 'containment';
+export type CanaryKind = 'positive' | 'cancellation' | 'containment' | 'continuation';
 export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 'containment'];
+
+// The canaries an attempt runs (D2 §7.2; D6 §2.6): D2's three; with
+// `session_headless` the continuation canary after them; for an active
+// entry's session qualification the continuation canary alone.
+export function canaryKindsOf(a: { mode?: string | null; session_entry?: string | null }): CanaryKind[] {
+  if (a.mode !== 'session_headless') return [...CANARY_KINDS];
+  return a.session_entry ? ['continuation'] : [...CANARY_KINDS, 'continuation'];
+}
+
+// The continuation canary (D6 §2.6): turn 1 writes a token into the role's
+// artifact (the Vision role's `.surety/idea.md`); turn 2 is asked to answer
+// with it from what the engine carried over (the transcript and the
+// artifact in its package), never from anything the first turn's process
+// kept. The token is the engine's, derived from the attempt; the owner's
+// messages never hold it.
+export const CONTINUATION_ARTIFACT = '.surety/idea.md';
+export const continuationToken = (attempt: string): string => `surety-continuation-${createHash('sha256').update(`continuation:${attempt}`).digest('hex').slice(0, 24)}`;
+export const CONTINUATION_PATTERN = 'surety-continuation-[0-9a-f]{24}';
+export const continuationMessage = (turn: 1 | 2): string =>
+  turn === 1
+    ? 'This is a qualification canary of the engine, turn 1 of 2. Follow /surety/context/canary.json exactly.'
+    : 'This is a qualification canary of the engine, turn 2 of 2. Follow /surety/context/canary.json exactly.';
 
 // The destination the containment canary's off-list `CONNECT` asks for: the
 // engine's own, never resolved, never an unexpected contact of the attempt.
@@ -78,7 +101,19 @@ export const canaryEdit = (attempt: string) => ({ path: `qualification-canary/${
 export const CANARY_BARRIER = '/surety/out/canary-barrier';
 
 // What `/surety/context/canary.json` holds for a canary run.
-export function canaryInstructions(args: { attempt: string; kind: string; deadlineSeconds: number }): Record<string, unknown> {
+export function canaryInstructions(args: { attempt: string; kind: string; deadlineSeconds: number; turn?: number | null }): Record<string, unknown> {
+  if (args.kind === 'continuation') {
+    if (args.turn === 1) {
+      return {
+        kind: 'continuation',
+        attempt: args.attempt,
+        turn: 1,
+        edit: { path: CONTINUATION_ARTIFACT, content: `# Continuation canary\n\n${continuationToken(args.attempt)}\n` },
+        result: { status: 'completed', summary: `continuation canary of ${args.attempt}, turn 1`, reply: 'Written.', artifact_changed: true },
+      };
+    }
+    return { kind: 'continuation', attempt: args.attempt, turn: 2, token_pattern: CONTINUATION_PATTERN };
+  }
   const base = { kind: args.kind, attempt: args.attempt, result: canaryResult(args.attempt, args.kind) };
   if (args.kind === 'positive') return { ...base, edit: canaryEdit(args.attempt) };
   if (args.kind === 'cancellation') return { ...base, barrier: CANARY_BARRIER, wait_seconds: args.deadlineSeconds + 60 };
@@ -112,6 +147,24 @@ export function canaryPromptText(c: Record<string, unknown>): string[] {
     ];
   }
   const out = ['', '## A qualification canary', '', 'This run is a qualification canary of the engine. /surety/context/canary.json holds these instructions as data; follow them exactly.', ''];
+  if (c.kind === 'continuation') {
+    if (c.turn === 1) {
+      const edit = c.edit as { path: string; content: string };
+      out.push(
+        `1. Write the file /surety/workspace/${edit.path} with exactly the content given as edit.content in /surety/context/canary.json (${JSON.stringify(edit.content)}), nothing more and nothing less.`,
+        `2. Write exactly this JSON to /surety/out/result.json: ${JSON.stringify(c.result)}`,
+        '3. Then stop.',
+      );
+    } else {
+      out.push(
+        `1. Find, in this turn's context package under /surety/context (the transcript of this conversation and your artifact under artifact/), every string that matches the regular expression ${String(c.token_pattern)}.`,
+        '2. Write to /surety/out/result.json a JSON object with "status": "completed", "summary": "continuation canary, turn 2", "artifact_changed": false and "reply": the strings you found, separated by spaces (or "I do not know." if you found none).',
+        '3. Then stop.',
+      );
+    }
+    out.push('');
+    return out;
+  }
   if (c.kind === 'positive') {
     const edit = c.edit as { path: string; content: string };
     out.push(

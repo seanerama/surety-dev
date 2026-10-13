@@ -147,9 +147,23 @@ export function proposalDiscovery(db: Db, proposal: string): Discovery | null {
   return ((JSON.parse(p.classification) as { discovery?: Discovery }).discovery ?? null) as Discovery | null;
 }
 
+// The import-boundary refusals recorded at capture (D6 §8.3; B13).
+export function proposalBoundaryErrors(db: Db, proposal: string): unknown[] {
+  const row = db.prepare('SELECT "boundary_errors" FROM "protected_proposals" WHERE "id" = ?').get(proposal) as { boundary_errors: string | null } | undefined;
+  if (!row?.boundary_errors) return [];
+  try {
+    const v = JSON.parse(row.boundary_errors) as unknown;
+    return Array.isArray(v) ? v : [v];
+  } catch {
+    return [row.boundary_errors];
+  }
+}
+
 // Does the proposal's frozen discovery have errors (L5)? The criteria are
 // judged against the index as registered now.
 export function proposalHasErrors(db: Db, project: string, proposal: string): boolean {
+  // D6 §8.3 (B13): an import that leaves the protected root undeclared.
+  if (proposalBoundaryErrors(db, proposal).length > 0) return true;
   const d = proposalDiscovery(db, proposal);
   if (d === null) return false;
   return d.errors.length > 0 || criterionErrors(d.checks, knownCriteria(db, project)).length > 0;

@@ -147,6 +147,8 @@ const COLUMN_ENUMS: Record<string, string> = {
   'candidates.nominated_by': 'NominatedBy',
   'candidates.progress': 'CandidateProgress',
   'out_of_band_changes.subject_kind': 'IntegritySubject',
+  // D6 A.2 (N01).
+  'work_items.held': 'HoldReason',
   'out_of_band_changes.disposition': 'OobDisposition',
   'records.kind': 'RecordKind',
   'records.post_scan': 'PostScan',
@@ -219,6 +221,10 @@ const COLUMN_ENUMS: Record<string, string> = {
   'plan_checks.routing': 'PlanRouting',
   'phase_plans.routing': 'PlanRouting',
   'phase_plans.status': 'PhasePlanStatus',
+  // D6 A.2 (M5 slice 32).
+  'stages.conformance_state': 'ConformanceStageState',
+  'releases.state': 'ReleaseStateFact',
+  'environments.origin': 'EnvironmentOrigin',
 };
 
 const pascal = (text: string): string =>

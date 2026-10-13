@@ -149,7 +149,7 @@ export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string 
 // its role reported recorded. Capture is not a commit.
 export function captureRunProposal(
   tx: Tx,
-  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[] },
+  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[]; adoptedTests?: unknown[] | null; boundaryErrors?: unknown[] },
 ): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
@@ -166,6 +166,8 @@ export function captureRunProposal(
     rationale: args.rationale,
     requested: args.requested,
     changesRequiredSet: args.changesRequiredSet,
+    adoptedTests: args.adoptedTests ?? null,
+    boundaryErrors: args.boundaryErrors ?? [],
   });
   recordReport(tx, { run: run.id, evidence: args.evidence });
 }

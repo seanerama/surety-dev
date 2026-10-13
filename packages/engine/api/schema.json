@@ -378,7 +378,8 @@
       "ref",
       "checkout",
       "repository",
-      "environment"
+      "environment",
+      "workspace"
     ],
     "OobDisposition": [
       "discard",
@@ -458,6 +459,10 @@
       "failed",
       "invalidated"
     ],
+    "QualificationAttemptsMode": [
+      "one_shot_headless",
+      "session_headless"
+    ],
     "RecordKind": [
       "transcript",
       "tool_output",
@@ -492,6 +497,9 @@
       "recovery",
       "oob",
       "keep"
+    ],
+    "ReleaseStateFact": [
+      "external_unverified"
     ],
     "RequirementOrigin": [
       "intended",
@@ -560,7 +568,8 @@
     ],
     "SpecChangeRequestsSource": [
       "owner",
-      "finding"
+      "finding",
+      "replan"
     ],
     "SpecChangeRequestsStatus": [
       "requested",
@@ -659,6 +668,14 @@
       "executing",
       "integrating",
       "verifying"
+    ],
+    "HoldReason": [
+      "resource_envelope",
+      "chain_boundary",
+      "depends_on",
+      "authoring_readiness",
+      "open_decision",
+      "session_busy"
     ],
     "WorkspaceDisposition": [
       "active",
@@ -829,7 +846,12 @@
       "spec.change_proposed",
       "spec.change_approved",
       "spec.change_failed",
-      "deploy.requested_by_policy"
+      "deploy.requested_by_policy",
+      "project.adopted",
+      "requirement.confirmed",
+      "conformance.source_bound",
+      "stage.conformance_integrated",
+      "conformance.alpha_barrier_opened"
     ],
     "EngineMode": [
       "restricted",
@@ -1390,6 +1412,9 @@
           "required": false
         },
         "module_presence": {
+          "required": false
+        },
+        "source_digest": {
           "required": false
         }
       }
@@ -2306,6 +2331,9 @@
         "qualification_run": {
           "required": false,
           "references": "adapter_qualification_runs"
+        },
+        "origin": {
+          "required": false
         }
       }
     },
@@ -2493,6 +2521,9 @@
         },
         "supervision_lost_at": {
           "required": false
+        },
+        "memory_max": {
+          "required": false
         }
       }
     },
@@ -2599,6 +2630,9 @@
           "required": false
         },
         "criterion": {
+          "required": false
+        },
+        "remediation": {
           "required": false
         }
       }
@@ -2861,6 +2895,9 @@
           "references": "qualification_attempts"
         },
         "provider_session_id": {
+          "required": false
+        },
+        "deadline_at": {
           "required": false
         }
       }
@@ -3411,6 +3448,10 @@
         },
         "closed_by": {
           "required": false
+        },
+        "workspace": {
+          "required": false,
+          "references": "workspaces"
         }
       }
     },
@@ -3876,6 +3917,12 @@
         },
         "approval_binding": {
           "required": false
+        },
+        "adopted_tests": {
+          "required": false
+        },
+        "boundary_errors": {
+          "required": false
         }
       }
     },
@@ -4026,6 +4073,14 @@
         },
         "invalidated_reason": {
           "required": false
+        },
+        "mode": {
+          "required": true,
+          "enum": "QualificationAttemptsMode"
+        },
+        "session_entry": {
+          "required": false,
+          "references": "trust_entries"
         }
       }
     },
@@ -4106,6 +4161,37 @@
         },
         "immutable": {
           "required": true
+        }
+      }
+    },
+    "releases": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "name": {
+          "required": true
+        },
+        "revision": {
+          "required": false
+        },
+        "state": {
+          "required": true,
+          "enum": "ReleaseStateFact"
+        },
+        "artifact": {
+          "required": false
+        },
+        "candidate": {
+          "required": false,
+          "references": "candidates"
         }
       }
     },
@@ -4401,6 +4487,13 @@
         },
         "turn_count": {
           "required": true
+        },
+        "current_base": {
+          "required": false
+        },
+        "qualification_attempt": {
+          "required": false,
+          "references": "qualification_attempts"
         }
       }
     },
@@ -4574,6 +4667,43 @@
         },
         "last_refusal": {
           "required": false
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "keys": {
+          "required": false
+        }
+      }
+    },
+    "spec_claims": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "spec_revision": {
+          "required": true,
+          "references": "spec_revisions"
+        },
+        "ordinal": {
+          "required": true
+        },
+        "claim_source": {
+          "required": true
+        },
+        "claim": {
+          "required": true
+        },
+        "observed": {
+          "required": true
+        },
+        "requirement": {
+          "required": false,
+          "references": "requirements"
         }
       }
     },
@@ -4724,6 +4854,15 @@
           "required": false
         },
         "cancelled_at": {
+          "required": false
+        },
+        "source_revision": {
+          "required": false
+        },
+        "conformance_source_digest": {
+          "required": false
+        },
+        "conformance_state": {
           "required": false
         }
       }
@@ -5129,6 +5268,10 @@
         },
         "boundary_passed_at": {
           "required": false
+        },
+        "held": {
+          "required": false,
+          "enum": "HoldReason"
         }
       }
     },
@@ -5822,10 +5965,23 @@
       "enabled": false
     },
     "adoption_mode": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "pinned_revision",
+        "signals",
+        "policy_revision"
+      ],
+      "target_seconds": 172800
     },
     "requirement_confirm": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "key",
+        "text",
+        "criteria",
+        "blob"
+      ],
+      "target_seconds": 172800
     },
     "stop_confirm": {
       "enabled": true,
@@ -6441,6 +6597,21 @@
     },
     "deploy.requested_by_policy": {
       "owner": "store/transitions/deploy.ts"
+    },
+    "project.adopted": {
+      "owner": "adopt/records.ts"
+    },
+    "requirement.confirmed": {
+      "owner": "adopt/records.ts"
+    },
+    "conformance.source_bound": {
+      "owner": "adopt/conformance.ts"
+    },
+    "stage.conformance_integrated": {
+      "owner": "adopt/conformance.ts"
+    },
+    "conformance.alpha_barrier_opened": {
+      "owner": "plan/phase.ts"
     }
   },
   "config": {
@@ -6571,7 +6742,9 @@
           "spec_approval": 172800,
           "architecture_approval": 172800,
           "plan_approval": 172800,
-          "spec_change": 259200
+          "spec_change": 259200,
+          "adoption_mode": 172800,
+          "requirement_confirm": 172800
         }
       },
       "ui_bootstrap": {
@@ -6815,6 +6988,18 @@
         "min": 65536,
         "max": 16777216,
         "integer": true
+      },
+      "adoption_full_max_files": {
+        "default": 2000,
+        "min": 100,
+        "max": 100000,
+        "integer": true
+      },
+      "turn_max_bytes": {
+        "default": 65536,
+        "min": 4096,
+        "max": 1048576,
+        "integer": true
       }
     },
     "project": {
@@ -6876,6 +7061,24 @@
         "default": 1200,
         "min": 60,
         "max": 7200,
+        "integer": true
+      },
+      "transcript_max_bytes": {
+        "default": 8388608,
+        "min": 1048576,
+        "max": 67108864,
+        "integer": true
+      },
+      "deadline_vision": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "deadline_spec_writer": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
         "integer": true
       },
       "record_retention_days": {
@@ -7049,6 +7252,56 @@
           "claude",
           "codex"
         ],
+        "widening": "never"
+      },
+      "backend_vision": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "backend_spec_writer": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "model_vision": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_spec_writer": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_architect": {
+        "default": "opus",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_builder": {
+        "default": "sonnet",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_verifier": {
+        "default": "sonnet",
+        "type": "model",
+        "widening": "never"
+      },
+      "model_reviewer": {
+        "default": "sonnet",
+        "type": "model",
         "widening": "never"
       },
       "autonomy": {

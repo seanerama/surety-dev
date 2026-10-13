@@ -147,11 +147,13 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 
 ## 10. Open questions
 
-*[One list item per question, keyed `Q<k>`; the engine reads the list. Each is either a decision for the owner or a question a requirement must answer before it can be planned. Cite in the item the keys of the requirements it blocks: every `R<n>` the item names is read as blocked by it. An optional trailing `(phase n)` says which phase the question must be settled before. A spec with open questions can be approved, with two exceptions (D6 reading 1): a question blocking a requirement the phase hint of section 5 places in phase 1, and a question whose phase cannot be told (no `(phase n)` on it and no phase on its requirement), each block approval. The Architect may not plan a requirement whose question is open.]*
+*[One list item per question, keyed `Q<k>`; the engine reads the list. Each is either a decision for the owner or a question a requirement must answer before it can be planned. Cite in the item the keys of the requirements it blocks: every `R<n>` the item names is read as blocked by it. An optional trailing `(phase n)` says which phase the question must be settled before. A spec with open questions can be approved, with two exceptions (D6 reading 1): a question blocking a requirement the phase hint of section 5 places in phase 1, and a question with no `(phase n)` on it or blocking a requirement with no phase in section 5 (B04: a missing hint cannot make approval vacuously safe), each block approval. The Architect may not plan a requirement whose question is open.]*
 
 - Q1 [question] Blocks R2. Owner: [name]. (phase 1)
 
 ## 11. Change log
+
+*[Written by the engine (D6 §3.4, §4.5): on each approval it writes the row for the approved version in one engine commit, replacing a row with that version if one is there. A session leaves this table as it is.]*
 
 | Version | Date | Change | Approved by |
 |---|---|---|---|

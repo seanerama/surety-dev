@@ -422,9 +422,12 @@ function resultTotals(m: Record<string, unknown>): { tokens: Record<TokenKey, nu
 // A model fallback (E86 item 3, provisional): the stream shows a model other
 // than the entry's, by a `model_refusal_fallback` event or by a model it
 // named; null where it shows none. Its text names the fallback.
+export { sameModel } from './model.js';
+import { sameModel } from './model.js';
+
 export function claudeModelFallback(s: ClaudeStreamSummary | null, entryModel: string): { text: string; fallbacks: ClaudeStreamSummary['fallbacks']; models: string[] } | null {
   if (s === null) return null;
-  const others = s.models_seen.filter((m) => m !== entryModel);
+  const others = s.models_seen.filter((m) => !sameModel(entryModel, m));
   if (s.fallbacks.length === 0 && others.length === 0) return null;
   const f = s.fallbacks[0];
   const text = f

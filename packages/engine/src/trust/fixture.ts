@@ -105,6 +105,28 @@ export function ensureFixtureProject(rt: Runtime, store: StoreClient): Promise<s
     const found = await findFixtureProject(store, rt.home);
     if (found !== null) return found;
     const repo = await ensureFixtureRepo(rt.home);
+    // A home moved or copied keeps its store, in which the fixture project
+    // names the repository's old path: that project is rebound to the
+    // repository here when this repository holds the commit its integration
+    // branch is expected at (the owner's rebind, D1 §11.4), never a second
+    // project made on the same repository, whose engine refs (its keep refs,
+    // numbered per project) would collide with the first one's.
+    const moved = await store.call<{ id: string; dev_repo_path: string; head: string | null }[]>('read', { name: 'qualification.moved_fixtures', args: { name: FIXTURE_NAME, repo } });
+    for (const m of moved) {
+      if (m.head === null) continue;
+      if ((await git(repoContext(repo), ['cat-file', '-e', `${m.head}^{commit}`])).code !== 0) continue;
+      await store.call('mutate', { name: 'project.rebind', args: { project: m.id, dev_repo_path: repo }, actor: ENGINE_ACTOR, method: 'POST', path: `/v1/projects/${m.id}/rebind` });
+      return m.id;
+    }
+    // A repository holding another project's Surety records is never shared
+    // by a new one (the same collision): refused, with what to do.
+    const refs = await git(repoContext(repo), ['for-each-ref', '--format=%(refname)', 'refs/surety/']);
+    if (refs.code !== 0) throw new Error(`the fixture repository ${repo} could not be read`);
+    if (refs.stdout.trim() !== '') {
+      throw new Error(
+        `the fixture repository ${repo} holds Surety records (${refs.stdout.trim().split('\n').slice(0, 3).join(', ')}) of a project this home does not register here, and no fixture project of this store can be rebound to it; move it aside and the engine makes a new one`,
+      );
+    }
     const args = await prepareBootstrap(rt, { name: FIXTURE_NAME, tier: 'T1', dev_repo_path: repo, integration_branch: FIXTURE_BRANCH });
     const result = await store.call<{ status: number; effects?: { kind: string }[] }>('mutate', { name: 'project.create', args, actor: ENGINE_ACTOR, method: 'POST', path: '/v1/projects' });
     // The bootstrap commit is integrated now, before the caller goes on (at

@@ -164,6 +164,9 @@ export interface RunHandle {
   // A session turn's reply as the engine took it (D6 B.7; SEAM.md §343):
   // the first result line, accepted or `invalid`; null while none came.
   sessionReply: import('./sessions/session.js').SessionReply | 'invalid' | null;
+  // A session turn's settlement barrier `session.turn_settling.terminated`
+  // has fired for it already (on the real boundary, before collection).
+  terminatedFired: boolean;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -221,6 +224,7 @@ export function newHandle(claim: Claim): RunHandle {
     samplingReport: null,
     helpChecked: null,
     sessionReply: null,
+    terminatedFired: false,
   };
 }
 
@@ -354,7 +358,8 @@ export class Runtime {
       | 'egress_tunnel_max_seconds'
       | 'egress_tunnels_max'
       | 'egress_buffer_max_bytes'
-      | 'egress_log_max_bytes',
+      | 'egress_log_max_bytes'
+      | 'turn_max_bytes',
   ): number {
     return this.config.values[key];
   }

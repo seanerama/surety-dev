@@ -35,7 +35,10 @@ export type DecisionKind =
   | 'architecture_approval'
   | 'plan_approval'
   // D6 §4.5 (M5 slice 31b).
-  | 'spec_change';
+  | 'spec_change'
+  // D6 §8.1 (M5 slice 32): the adoption's mode and the retrofit confirmations.
+  | 'adoption_mode'
+  | 'requirement_confirm';
 
 export interface OptionSpec {
   key: string;

@@ -60,6 +60,7 @@ const SPEC_CODES: Record<string, string> = {
   module_table_invalid: 'spec_modules_invalid',
   question_malformed: 'spec_question_invalid',
   claims_table_invalid: 'spec_claims_invalid',
+  claims_requirement_unknown: 'spec_claims_invalid',
 };
 
 export function specFindings(text: string, path = '.surety/spec/spec.md'): { findings: Finding[]; semantics: SemanticResult } {
@@ -76,11 +77,16 @@ export function specFindings(text: string, path = '.surety/spec/spec.md'): { fin
       subject.criterion = /\b(R[1-9][0-9]*\.[1-9][0-9]*)\b/.exec(f.why)?.[1] ?? null;
     } else if (f.code === 'index_invalid') {
       subject.row = /index row (\d+)/.exec(f.why) ? Number(/index row (\d+)/.exec(f.why)![1]) : 0;
+      const rowKey = /index row \d+ \((R[1-9][0-9]*)\)/.exec(f.why)?.[1];
+      if (rowKey) subject.key = rowKey;
       const area = /"([a-z_]+)" is not a sensitive area/.exec(f.why)?.[1];
       if (area) {
         code = 'spec_area_unknown';
         subject.area = area;
       }
+    } else if (f.code === 'claims_requirement_unknown') {
+      subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
+      subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
     } else if (f.code === 'area_unknown' || f.code === 'areas_missing') {
       subject.area = valueNamed(f.why);
       subject.where = f.where;
@@ -105,6 +111,9 @@ export interface ArchitectBaseline {
   requirement_keys: string[];
   // TPL §6's modules of the approved specification, with their areas.
   spec_modules: { name: string; sensitive_areas: string[] }[];
+  // Scoped mode's descriptive, criteria-less requirements (Sean,
+  // 2026-10-13): each must be held by a module of the map.
+  descriptive_keys?: string[];
 }
 
 export interface ArchitectParsed {
@@ -160,6 +169,22 @@ export function architectFindings(texts: ArchitectTexts, baseline: ArchitectBase
       for (const area of sm.sensitive_areas) {
         if (!present.has(area)) findings.push({ code: 'architecture_area_dropped', path: MODULES_FILE, subject: { area, module: sm.name }, message: `${MODULES_FILE} drops the sensitive area ${area} of the specification's module ${sm.name} from every module; an area can be moved, never dropped` });
       }
+    }
+  }
+  // The requirements the modules hold (Sean, 2026-10-13): each a requirement
+  // of the approved specification; in scoped mode every descriptive,
+  // criteria-less requirement held by some module, so that a stage touching
+  // it can be known (D6-R04, R08; E6).
+  if (parsed.modules) {
+    const held = new Set<string>();
+    for (const m of parsed.modules.modules) {
+      for (const k of m.requirements ?? []) {
+        held.add(k);
+        if (!baseline.requirement_keys.includes(k)) findings.push({ code: 'module_requirement_unknown', path: MODULES_FILE, subject: { module: m.name, key: k }, message: `${MODULES_FILE}: the module ${m.name} holds ${k}, which the approved specification does not have` });
+      }
+    }
+    for (const k of baseline.descriptive_keys ?? []) {
+      if (!held.has(k)) findings.push({ code: 'module_requirement_unmapped', path: MODULES_FILE, subject: { key: k }, message: `${MODULES_FILE}: no module holds ${k}, a descriptive requirement with no criteria; in scoped mode every one is held by the module it describes` });
     }
   }
   // The roadmap's references (D6 §3.3, §5.1): every approved requirement in

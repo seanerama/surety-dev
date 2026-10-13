@@ -228,7 +228,7 @@ function environmentsOf(db: Db, project: string) {
     const stored = parseJson<{ condition: string; observed_at: string | null; source: string | null }>(row.observed);
     if (stored === null || stored.observed_at === null) {
       // Never observed: the condition is unknown, and nothing says when.
-      return { id: row.id, name: row.name, observed: { condition: 'unknown', observed_at: null, source: null, provenance: null, freshness: null, expires_at: null } };
+      return { id: row.id, name: row.name, state: 'unknown', observed: { condition: 'unknown', observed_at: null, source: null, provenance: null, freshness: null, expires_at: null } };
     }
     const at = Date.parse(stored.observed_at);
     const age = now - at;
@@ -236,6 +236,9 @@ function environmentsOf(db: Db, project: string) {
     return {
       id: row.id,
       name: row.name,
+      // The environment's state as the engine knows it now (SEAM.md §378):
+      // the condition observed, `unknown` when nothing current says.
+      state: freshness === 'expired' ? 'unknown' : stored.condition,
       observed: {
         // An expired observation says nothing about now (D1 §3.5).
         condition: freshness === 'expired' ? 'unknown' : stored.condition,
@@ -292,6 +295,9 @@ export function readProject(db: Db, args: { project: string; maxConcurrentRuns: 
       registration_state: row.registration_state,
       environments: environmentsOf(db, args.project),
       idea: ideaOf(db, args.project),
+      // D6 §8.1 step 1 (SEAM.md §379): A, the signals and the mode; the
+      // mode is null, with its reason, while the owner has not chosen it.
+      adoption: parseJson<unknown>((db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption),
     },
   };
 }

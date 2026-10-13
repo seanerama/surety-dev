@@ -16,6 +16,7 @@ import { approveSpec, latestSemantics, specBlockers } from '../spec/approval.js'
 import { integrationRef } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
 import { saveNotesOf } from './session.js';
+import { retrofitBlockers } from '../adopt/records.js';
 
 type Db = Tx['db'];
 
@@ -97,7 +98,9 @@ function specManifest(db: Db, run: string): Record<string, unknown> {
     semantic_digest: row?.semantic_digest ?? null,
     spec_version: latest + 1,
     readable: row ? row.readable === 1 : null,
-    blocking: specBlockers(row),
+    // D6-R09 (SEAM.md §384): an adopted project's mode rules, naming each
+    // requirement that keeps `approve` blocked.
+    blocking: [...specBlockers(row), ...retrofitBlockers(db, project, run)],
     policy_revision: project === null ? null : policyRevision(db, project),
   };
 }
@@ -107,7 +110,7 @@ export const SPEC_APPROVAL: KindSpec = {
     const manifest = specManifest(tx.db, d.subject_id);
     if (manifest.blob === null) return null;
     const row = latestSemantics(tx.db, d.subject_id);
-    const blockers = specBlockers(row);
+    const blockers = [...specBlockers(row), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
     let findings: { where: string; code: string; why: string }[] = [];
     try {
       findings = row ? (JSON.parse(row.findings) as { where: string; code: string; why: string }[]) : [];

@@ -287,6 +287,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
         ui_bootstrap: config.values.ui_bootstrap,
         checks: Object.fromEntries(CHECK_LIMIT_KEYS.map((k) => [k, config.values[k]])),
         classifier_authority: config.values.classifier_authority,
+        // D6 A.7 (M5 slice 33): an owner's turn's bound, and the memory
+        // maximum a domain is recorded as admitted at (the driver's ruling (b)).
+        turn_max_bytes: config.values.turn_max_bytes,
+        domain_memory_max: config.values.domain_memory_max,
       },
       // The resource envelope's admission (D2 §3.7), on the real boundary.
       envelope: checksRun && scope.scope !== null

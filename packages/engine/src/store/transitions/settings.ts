@@ -21,6 +21,9 @@ export interface EngineSettings {
   classifier_authority?: AuthoritySetting;
   // The running incarnation, set when the store is opened.
   incarnation?: string;
+  // D6 A.7 (M5 slice 33).
+  turn_max_bytes?: number;
+  domain_memory_max?: number;
 }
 
 let settings: EngineSettings | null = null;
@@ -83,4 +86,11 @@ export function policyRevision(db: Database, project: string): number | null {
     | { revision: number }
     | undefined;
   return row?.revision ?? null;
+}
+
+// The model a role requests (D6 A.7, E139 Q6): its `model_<role>` key, or
+// null for a role without one.
+export function roleModel(db: Database, project: string, role: string): string | null {
+  const v = (projectEffective(db, project) as Record<string, unknown>)[`model_${role}`];
+  return typeof v === 'string' && v !== '' ? v : null;
 }
