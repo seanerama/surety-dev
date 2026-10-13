@@ -30,6 +30,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import { answer, decisionsOfKind } from './harness/decisions.mjs';
 import {
   authoringReady,
+  buildActs,
   candidatesOfProject,
   checkRows,
   environmentsOf,
@@ -174,7 +175,9 @@ describe('M408 the retrofit journey on the project lane', () => {
     assert.deepEqual(JSON.parse(proposal.adopted_tests), [ADOPTED], 'the copy and its dependency boundary');
     const suite = checkRows(fx.home, p.id).find((c) => c.key === 'suite');
     assert.equal(suite?.origin, 'developer', 'the developer check');
-    assert.ok(ctx.humanActs.some((h) => h.kind === 'check_correction_unclassifiable' && h.option === 'approve'), 'the toolchain proposal approved by the harness as the owner');
+    // Counted from the store (objection 074): decisions consumed by a human answer.
+    const toolchain = buildActs(ctx).filter((h) => h.kind === 'check_correction_unclassifiable');
+    assert.deepEqual(toolchain.map((h) => h.option), ['approve'], `the toolchain proposal approved once by the harness as the owner (${JSON.stringify(buildActs(ctx))}; posts ${JSON.stringify(ctx.humanActs)})`);
   });
 
   test('(e) the conformance stage with no Builder against A: c-1\'s application source A while the head carries the engine\'s commits; its checks engine-run; the gate satisfied; conformed', () => {
