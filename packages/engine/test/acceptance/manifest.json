@@ -410,6 +410,18 @@
       "M448-the-prospective-bundle.test.mjs",
       "M449-the-semantic-representation-and-open-questions.test.mjs",
       "M424-a-pending-plan-approval-and-a-moving-head.test.mjs"
+    ],
+    "35": [
+      "M425-plan-references-and-approvals.test.mjs",
+      "M426-plan-dependencies-and-validation.test.mjs",
+      "M426-replans-against-the-roadmap.test.mjs",
+      "M427-plan-routing-from-the-artifacts.test.mjs",
+      "M427-a-requirement-conflict-and-a-rebased-reroute.test.mjs",
+      "M428-the-phase-gate-and-t1-nomination.test.mjs",
+      "M429-phase-verification-and-its-sign-off.test.mjs",
+      "M430-early-replanning-as-a-compare-and-swap.test.mjs",
+      "M430-two-replacements-and-a-restart.test.mjs",
+      "M413-a-conformance-stage-in-phase-two.test.mjs"
     ]
   },
   "sandbox": [

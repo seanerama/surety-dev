@@ -235,7 +235,14 @@ import { roleThat } from '../gitruns.mjs';
 import { script, step } from '../scripted.mjs';
 import { BUILDER_FILES, CHANGE_REQUEST, CORRECTED_R4_TESTS, CORRECTED_SERVICE_TEST, SPEC_V2, STAGES, authoringFiles, phasePlanMd } from './reference.mjs';
 
-export const JOURNEY_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete' });
+// M5 slice 35 (D6 §5.2, A.7; the driver's ruling 1, 2026-10-13; SEAM.md §406):
+// `phase_size` defaults to {min 3, max 5} and a plan outside it is routed
+// `uncertain`. Tally's phases have two stages and the adopted fixture's one,
+// so their journeys pin the size their plans have, and their replans keep
+// computed routing.
+export const TALLY_PHASE_SIZE = Object.freeze({ min: 2, max: 5 });
+export const ADOPTED_PHASE_SIZE = Object.freeze({ min: 1, max: 5 });
+export const JOURNEY_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', phase_size: TALLY_PHASE_SIZE });
 // The decisions D6 §1 routes to the owner within the journey; the harness
 // answers these and no other kind (a `blocker` or a `plan_approval` is a
 // failure of the autonomous path, which M401 (g) reads from `humanActs`).

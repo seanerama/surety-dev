@@ -1,0 +1,210 @@
+// M430, early replanning as a compare-and-swap (slice 35; kernel lane). M5
+// plan §3.5 M430 (a) to (d), (f), (g); D6-F04; D6 §5.7, §6.6, A.5; F
+// §3.10.7; B08; the driver's rulings of 2026-10-13 (pending routed
+// replacements answered during a held run until slice 37; a kept stage's
+// number with other inputs is PLAN_DUPLICATE_STAGE; a superseded `building`
+// stage integrates as history and its work completes `superseded`; the
+// Reviewer's `fix` against the plan as `target: "plan"`; `replan` on the
+// parked blocker and on X2's); SEAM.md §§406, 413.
+//
+// (a) each trigger with its evidence: an approved spec change touching the
+//     current phase (`spec_change`); a parked stage's blocker answered
+//     `replan` (`blocker_replan`); an objection's X2 blocker answered
+//     `replan` (`objection_upheld`); a Reviewer's `contract_conflict` with
+//     `fix` against the plan (`contract_conflict`);
+// (b) an objection filed alone: nothing;
+// (c) the replacement against `planned`, `building` and `integrated` stages:
+//     generation 2 active, 1 `replaced`; the planned stage cancelled with its
+//     work; the integrated one kept; only the remainder registered;
+// (d) the `building` stage with changed tasks: its late integration is
+//     history, its work `superseded`; with every input unchanged: retained;
+// (f) delivery and dispatch from the active set; the finding kept;
+// (g) what became stale recorded.
+// (e) is in `M430-two-replacements-and-a-restart.test.mjs`. The floor of
+// (f) has no case: the reference project has no sensitive area (COVERAGE).
+
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+
+import { answer, decisionsOn } from './harness/decisions.mjs';
+import { findingsOf, raiseFindings, review } from './harness/gates.mjs';
+import { roleThat } from './harness/gitruns.mjs';
+import { ROUTED_KINDS, builderScript, candidatesOfProject, phasePlansOf, planOfPhase, pump, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
+import { journey35, nextReplanOutcome, openPlanApprovals, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
+import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
+import { CHECK_DEFS, CHECK_PROGRAMS, REQUIREMENTS, STAGES, authoringFiles, specText } from './harness/journey/reference.mjs';
+import { tick } from './harness/runs.mjs';
+import { script, step } from './harness/scripted.mjs';
+
+const json = (v) => (v === null || v === undefined ? v : typeof v === 'string' ? JSON.parse(v) : v);
+const active = (x) => x.active === 1 || x.active === true;
+const S1 = STAGES[1][0];
+const S2 = STAGES[1][1];
+const S3 = { ...STAGES[2][0], number: 3, depends_on: [2] };
+const THREE = [S1, S2, S3];
+const ROADMAP3 = { '.surety/roadmap/roadmap.json': roadmapWith({ version: 1, phases: [{ ...phaseOf(1), requirement_ids: ['R1', 'R2', 'R3'] }, { ...phaseOf(2), requirement_ids: ['R4'] }] }) };
+// Phase 1's authoring, R3's checks included.
+const DEFS = (k) => `.surety/checks/defs/${k}.json`;
+const AUTHORING3 = {
+  ...authoringFiles(1),
+  [DEFS('accept-r3')]: CHECK_DEFS[2][DEFS('accept-r3')],
+  [DEFS('integration-tally')]: CHECK_DEFS[2][DEFS('integration-tally')],
+  '.surety/checks/tests/tally.test.mjs': CHECK_PROGRAMS['.surety/checks/tests/tally.test.mjs'],
+  '.surety/checks/tests/integration-tally.test.mjs': CHECK_PROGRAMS['.surety/checks/tests/integration-tally.test.mjs'],
+};
+const authoring3 = roleThat(Object.entries(AUTHORING3).map(([path, content]) => step.write(path, content)), { proposal: { rationale: 'Phase 1\'s checks, R3 included.', requested_change_kind: 'unclassifiable' } });
+const R3_V2 = specText({ version: 2, requirements: REQUIREMENTS.map((r) => (r.key === 'R3' ? { ...r, statement: 'The library counts the successful sums served since the process started.' } : r)) });
+const changeScript = roleThat([step.write('.surety/spec/spec.md', R3_V2)], { changes: [{ key: 'R3', kind: 'text_changed', reason: 'only successful sums are counted' }] });
+const HELD_S2 = { steps: [step.hold('gate', { heartbeat_ms: 250 }), ...builderScript(2).steps] };
+
+const replacementOf = (home, project) => phasePlansOf(home, project).filter((x) => x.phase_number === 1).map((x) => ({ ...x, replacement: json(x.replacement) }));
+const runOf = (home, project, item) => runsOfProject(home, project).filter((r) => r.work_item === item);
+const stageWorkOf = (home, project, stage) => workOf(home, project, 'stage_build').find((w) => w.subject?.stage === stage.id);
+
+// The T1 project with the three-stage phase 1, a spec change touching R3
+// approved before readiness (the authoring decision withheld), the
+// replacement routed (`uncertain`) and pending, then readiness given, S1
+// integrated and S2's Builder held. Returns the state at the hold.
+async function replacementPendingWithS2Held(t, replacementStages) {
+  const { fx, p, ctx, plan } = await journey35(t, { tier: 'T1', over: ROADMAP3, stages: THREE });
+  fx.scripted.kindScript('check_authoring', [authoring3]);
+  fx.scripted.kindScript('spec_change', changeScript);
+  fx.scripted.kindScript('stage_build', [builderScript(1), HELD_S2, builderScript(2), builderScript(3), builderScript(3), builderScript(4)]);
+  fx.scripted.kindScript('replan', [replan35({ phase: 1, spec_version: 2, conformance: 'uncertain', stages: replacementStages, before: [{ probe: { action: 'context_dump' } }] }), replan35({ spec_version: 2 })]);
+  await postChange(fx, ctx, 'R3 counts successful sums only.');
+  // Readiness withheld: only the spec change is answered until the replacement is pending.
+  const outcome = await nextReplanOutcome(fx, ctx, 1, { runs: new Set(), approvals: new Set(), published: new Set([plan.id]) }, { max: 200, answerKinds: ['spec_change'] });
+  assert.ok(outcome.approval, `the replacement routed to the owner and pending (${JSON.stringify(outcome.failed ? [outcome.failed.reason_class, outcome.failed.reason_text] : Object.keys(outcome))})`);
+  const stagesBefore = stagesOfPlan(fx.home, plan.id);
+  const answerKinds = ROUTED_KINDS.filter((k) => k !== 'plan_approval');
+  await pumpNoIdle(fx, ctx, () => {
+    const launch = fx.scripted.launches({ work_kind: 'stage_build' })[1];
+    return launch && fx.scripted.eventsOf(launch.pid, 'holding').length > 0 ? launch : undefined;
+  }, { what: 'S1 integrated and S2\'s Builder holding', max: 200, answerKinds });
+  const states = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s.status]));
+  assert.deepEqual(states, { 1: 'integrated', 2: 'building', 3: 'planned' }, 'the fixture is live: integrated, building and planned at the swap');
+  return { fx, p, ctx, plan, stagesBefore, answerKinds };
+}
+
+describe('M430 early replanning as a compare-and-swap', () => {
+  test('(a) an approved spec change touching the current phase; (c) the swap against integrated, building and planned stages; (d) the building stage with changed tasks is history; (f) dispatch and completion from the active set; (g) the stale recorded', async (t) => {
+    const S4 = { ...S2, number: 4, tasks: [...S2.tasks, 'name the refused parameter in the 400'], depends_on: [1] };
+    const S5 = { ...S3, number: 5, tasks: ['write src/tally.mjs counting successful sums'], depends_on: [4] };
+    const { fx, p, ctx, plan, answerKinds } = await replacementPendingWithS2Held(t, [S1, S4, S5]);
+    const [replan] = workOf(fx.home, p.id, 'replan');
+    assert.equal(replan.trigger_source, 'spec_change', '(a) the replan\'s trigger is the spec change');
+    const [pending] = openPlanApprovals(fx.home, p.id);
+    const res = await answer(fx.engine, p.id, pending, 'approve');
+    assert.equal(res.status, 200, `the owner approves the replacement during S2's run (→ ${res.status} ${res.text})`);
+    const g2 = await pumpNoIdle(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2), { what: 'generation 2 active', max: 20, answerKinds });
+    const g1 = replacementOf(fx.home, p.id).find((x) => x.id === plan.id);
+    assert.equal(g1.status, 'replaced', '(c) generation 1 replaced');
+    assert.ok(!active(g1), 'and not active');
+    const stages1 = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s]));
+    assert.equal(stages1[3].status, 'cancelled', 'the planned S3 cancelled');
+    assert.ok(stages1[3].cancelled_at, 'with cancelled_at');
+    assert.equal(stageWorkOf(fx.home, p.id, stages1[3])?.status, 'cancelled', 'and its work');
+    assert.equal(stages1[1].status, 'integrated', 'the integrated S1 kept, its identity and history');
+    const remainder = stagesOfPlan(fx.home, g2.id);
+    assert.deepEqual(remainder.map((s) => s.number).sort(), [4, 5], `only the remainder registered, no duplicate of S1 (${JSON.stringify(remainder.map((s) => s.number))})`);
+    for (const s of remainder) assert.equal(workOf(fx.home, p.id, 'stage_build').filter((w) => w.subject?.stage === s.id).length, 1, `one stage_build for S${s.number}`);
+    assert.ok(JSON.stringify(g2.replacement ?? {}).includes('spec_change'), `the trigger spec_change on the replacement (${JSON.stringify(g2.replacement)})`);
+    assert.ok((g2.replacement?.stale ?? []).length > 0, `(g) what became stale recorded (${JSON.stringify(g2.replacement)})`);
+    assert.ok(JSON.stringify(g2.replacement?.kept ?? []).includes(stages1[1].id), 'S1 listed kept');
+    assert.ok(JSON.stringify(g2.replacement?.cancelled ?? []).includes(stages1[3].id), 'S3 listed cancelled');
+    assert.ok(JSON.stringify(g2.replacement?.superseded ?? []).includes(stages1[2].id), 'S2 listed superseded');
+    // (d) S2 released: its integration is history.
+    fx.scripted.release('all', 'gate');
+    await pumpNoIdle(fx, ctx, () => runOf(fx.home, p.id, stageWorkOf(fx.home, p.id, stages1[2]).id).find((r) => r.state === 'ended'), { what: 'S2\'s run to end', max: 20, answerKinds });
+    const s2work = stageWorkOf(fx.home, p.id, stages1[2]);
+    assert.ok(JSON.stringify(s2work).includes('superseded'), `(d) S2's work completes superseded (${JSON.stringify({ status: s2work.status, outcome: s2work.outcome })})`);
+    assert.notEqual(stageWorkOf(fx.home, p.id, remainder.find((s) => s.number === 4))?.status, 'complete', 'S4\'s work is not fulfilled by S2\'s late integration');
+    // (f) to completion from the active set.
+    const done = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 1).find((x) => x.id === g2.id && x.completed_at), { what: 'phase 1 complete on generation 2', max: 160 });
+    assert.deepEqual(runOf(fx.home, p.id, stageWorkOf(fx.home, p.id, stages1[3]).id), [], '(f) the cancelled S3 never dispatched');
+    const candidates = candidatesOfProject(fx.home, p.id);
+    assert.equal(candidates.length, 1, 'one T1 nomination, once S1, S4 and S5 were integrated');
+    assert.equal(done.completion_binding.candidate, candidates[0].id);
+    assert.equal(done.completion_binding.generation, 2, 'completed on the active generation');
+  });
+
+  test('(d) a building stage with every input unchanged: retained for the replacement, no duplicate', async (t) => {
+    const S5 = { ...S3, number: 5, tasks: ['write src/tally.mjs counting successful sums'], depends_on: [2] };
+    const { fx, p, ctx, plan, answerKinds } = await replacementPendingWithS2Held(t, [S1, S2, S5]);
+    const [pending] = openPlanApprovals(fx.home, p.id);
+    assert.equal((await answer(fx.engine, p.id, pending, 'approve')).status, 200);
+    const g2 = await pumpNoIdle(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2), { what: 'generation 2 active', max: 20, answerKinds });
+    const stages1 = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s]));
+    assert.deepEqual(stagesOfPlan(fx.home, g2.id).map((s) => s.number), [5], `only S5 registered: S2 retained, never duplicated (${JSON.stringify(stagesOfPlan(fx.home, g2.id).map((s) => s.number))})`);
+    assert.ok(JSON.stringify(g2.replacement?.retained ?? []).includes(stages1[2].id), `S2 listed retained (${JSON.stringify(g2.replacement)})`);
+    fx.scripted.release('all', 'gate');
+    await pumpNoIdle(fx, ctx, () => (stagesOfPlan(fx.home, plan.id).find((s) => s.number === 2)?.status === 'integrated' ? true : undefined), { what: 'S2 integrated', max: 20, answerKinds });
+    const s2work = stageWorkOf(fx.home, p.id, stages1[2]);
+    assert.ok(!JSON.stringify(s2work).includes('superseded'), 'S2\'s work is not superseded: its integration fulfils the replacement');
+  });
+
+  test('(a) a parked stage\'s blocker answered replan: blocker_replan with its evidence; the replacement recorded with the stale from the blocker', async (t) => {
+    const { fx, p, ctx, plan } = await journey35(t, { policy: { repair_attempts_max: 0 } });
+    fx.scripted.kindScript('stage_build', [script.crash(), script.crash(), builderScript(1), builderScript(2)]);
+    const S1b = { ...S1, number: 3, tasks: ['write src/sum.mjs exporting sum(a, b) with Number arguments'] };
+    const S2b = { ...S2, number: 4, depends_on: [3] };
+    fx.scripted.kindScript('replan', [replan35({ phase: 1, stages: [S1b, S2b] }), replan35({})]);
+    const item = () => workOf(fx.home, p.id, 'stage_build').find((w) => w.status === 'parked');
+    const blocker = await pump(fx, ctx, () => {
+      const w = item();
+      return w && decisionsOn(fx.home, 'blocker', w.id).find((d) => d.status === 'open');
+    }, { what: 'S1 parked with its blocker', max: 60 });
+    const options = blocker.options.map((o) => o.key);
+    for (const o of ['retry', 'replan', 'cancel']) assert.ok(options.includes(o), `the parked blocker offers ${o} (${JSON.stringify(options)})`);
+    assert.equal((await answer(fx.engine, p.id, blocker, 'replan')).status, 200);
+    const [r] = workOf(fx.home, p.id, 'replan');
+    assert.ok(r, 'replan work created');
+    assert.equal(r.trigger_source, 'blocker_replan');
+    assert.ok([r.trigger_id, JSON.stringify(r.subject ?? {})].join(' ').match(new RegExp(`${blocker.id}|${item().id}`)), `its evidence names the blocker or the parked work (${JSON.stringify([r.trigger_id, r.subject])})`);
+    const g2 = await pump(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2), { what: 'the replacement published', max: 20 });
+    assert.ok(JSON.stringify(g2.replacement ?? {}).includes('blocker_replan'), `the replacement records its trigger (${JSON.stringify(g2.replacement)})`);
+    assert.ok((g2.replacement?.stale ?? []).length > 0, `(g) the stale recorded from the blocker's evidence (${JSON.stringify(g2.replacement)})`);
+    const stages1 = stagesOfPlan(fx.home, plan.id);
+    assert.deepEqual(stages1.map((s) => s.status), ['cancelled', 'cancelled'], 'the unbuilt stages of generation 1 cancelled');
+  });
+
+  test('(b) an objection filed alone creates nothing; (a) its X2 blocker answered replan: objection_upheld', async (t) => {
+    const { fx, p, ctx } = await journey35(t);
+    fx.scripted.kindScript('stage_build', [builderScript(1, { objections: [{ check: 'accept-r1', category: 'contract_conflict', message: 'R1.1 says 5, but the plan\'s interface returns a string.' }] }), builderScript(1), builderScript(2)]);
+    const exits = (x) => (x.key === 'accept-r1' ? 1 : 0);
+    const blocker = await pump(fx, ctx, () => {
+      for (const w of workOf(fx.home, p.id, 'stage_build')) {
+        const d = decisionsOn(fx.home, 'blocker', w.id).find((x) => x.status === 'open' && x.options.some((o) => o.key === 'correct_check'));
+        if (d) return d;
+      }
+      return undefined;
+    }, { what: 'the X2 blocker', max: 60, exits });
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.deepEqual(workOf(fx.home, p.id, 'replan'), [], '(b) the objection filed, its blocker unanswered: no replan');
+    assert.ok(blocker.options.some((o) => o.key === 'replan'), `the X2 blocker offers replan (${JSON.stringify(blocker.options.map((o) => o.key))})`);
+    assert.equal((await answer(fx.engine, p.id, blocker, 'replan')).status, 200);
+    const [r] = workOf(fx.home, p.id, 'replan');
+    assert.ok(r, 'replan work created');
+    assert.equal(r.trigger_source, 'objection_upheld');
+    const objection = findingsOf(fx.home, p.id).find((f) => f.category === 'contract_conflict');
+    assert.ok(objection && [r.trigger_id, JSON.stringify(r.subject ?? {})].join(' ').includes(objection.id), `its evidence names the objection (${JSON.stringify([r.trigger_id, r.subject, objection?.id])})`);
+  });
+
+  test('(a) a Reviewer\'s contract_conflict with fix against the plan: contract_conflict, no fix work; (f) the finding kept after the replacement', async (t) => {
+    const { fx, p, ctx } = await journey35(t);
+    const S2b = { ...S2, number: 3, tasks: [...S2.tasks, 'read a and b as integers only'] };
+    fx.scripted.kindScript('replan', [replan35({ phase: 1, stages: [S1, S2b] }), replan35({})]);
+    const c1 = await pump(fx, ctx, () => candidatesOfProject(fx.home, p.id)[0], { what: 'stage 1\'s candidate', max: 60 });
+    const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'contract_conflict', severity: 'medium', message: 'The plan has stage 2 accept floats; the module map\'s sum-route says integers.' }]);
+    await review(fx, p.id, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix', target: 'plan' }] });
+    const [r] = workOf(fx.home, p.id, 'replan');
+    assert.ok(r, 'replan work created by the disposition');
+    assert.deepEqual([r.trigger_source, r.trigger_id], ['contract_conflict', found.id], 'trigger (contract_conflict, the finding)');
+    assert.deepEqual(workOf(fx.home, p.id, 'fix'), [], 'no fix work: the fix is against the plan');
+    await pump(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2), { what: 'the replacement published', max: 40 });
+    const after = findingsOf(fx.home, p.id).find((f) => f.id === found.id);
+    assert.ok(after, '(f) the finding kept after the replacement');
+    assert.equal(after.disposition, 'fix', 'with its disposition');
+  });
+});
+
