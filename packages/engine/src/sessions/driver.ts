@@ -149,9 +149,12 @@ export class SessionDriver {
       const lines = [...(outcome.refused ? [`The save was refused (${outcome.refused.code}): ${outcome.refused.text} The workspace keeps the change.`] : []), ...outcome.findings.map((f) => `${f.code}${f.path ? ` (${f.path})` : ''}: ${f.message}`)];
       outcome.notesRecord = await writeWholeRecord(this.rt, { project, run, kind: 'session_transcript', content: Buffer.from(lines.join('\n')) }).catch(() => null);
     }
-    const done = await this.rt.engine<{ idle_generation: number; saved: boolean }>('session.finish_save', outcome);
+    const done = await this.rt.engine<{ idle_generation: number; saved: boolean; standing?: Finding[] }>('session.finish_save', outcome);
     if (refusal) throw refusal;
-    return { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.findings };
+    // A save with nothing new answers with what the engine found at the
+    // checkpoint that stands: the artifact as saved is unchanged, and so is
+    // what is wrong with it.
+    return { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.nothingToSave ? (done.standing ?? []) : outcome.findings };
   }
 
   // The snapshot, its validation against the role's paths, the checkpoint
