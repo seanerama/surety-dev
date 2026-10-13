@@ -25,6 +25,7 @@ import { INIT_SCRIPT } from '../sandboxed.js';
 import { type CandidateDiff, type ContextFacts, type EngineCommitsInRange, PROBE_PROGRAM, writeContextPackage } from './context.js';
 import { isAncestor } from '../../git/repo.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
+import { writeTurnPackage } from '../../sessions/turn-package.js';
 import { CANARY_BARRIER, CONTAINMENT_ACTIONS, CONTAINMENT_CHECK_MS, CONTAINMENT_PROBE, canaryInstructions, containmentTargets } from '../../trust/canaries.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
@@ -178,7 +179,12 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
             engine_commits: await engineCommitsInRange(repo, base.revision, facts.candidate.revision, facts.review.revision_records),
           };
   }
-  writeContextPackage(join(area, 'context'), claim, facts, {
+  // A session turn's package (D6 §2.2): the transcript, the notes, the
+  // approved inputs and the artifact's current state; a continuation
+  // canary's instructions beside them (D6 §2.6).
+  if (claim.session) {
+    if (!(await writeTurnPackage(rt, claim, join(area, 'context'), handle.workspacePath, canary))) throw new Error(`the context package of session ${claim.run}'s turn could not be built`);
+  } else writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
     diff,
     probe: claim.profile === 'probe',

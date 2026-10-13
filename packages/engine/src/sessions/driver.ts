@@ -62,25 +62,51 @@ export class SessionDriver {
     return n;
   }
 
-  // ---- a turn's settlement (D6 §2.1; B01) ---------------------------------------------
+  // ---- a turn's settlement (D6 §2.1, §2.4; B01; D6-S10; SEAM.md §389) ----------------
 
-  // The role has exited: its domain's termination established, its reply (or
-  // the failure) recorded in the transcript through the redactor, its usage
-  // charged, and the session idle again at the next generation. A turn whose
-  // termination cannot be established ends the session (slice 33 hardens
-  // this path; nothing is settled on an unknown).
+  // The role has exited. The turn is settled in this order, each fact
+  // established (durably) before its barrier and before the next is tried:
+  // (1) `terminated`, its domain's termination with closure; (2)
+  // `collected`, what it left collected and materialized into the session's
+  // workspace through the secret screen (on the real boundary); (3)
+  // `reply_recorded`, its reply or failure in the transcript through the
+  // redactor; (4) `usage_recorded`, its terminal observation and its one
+  // ledger row, an unknown remainder charged by D2's policy. Then the
+  // session is idle at the next generation. A turn whose run the engine
+  // has decided to end (a Stop, a deadline, a lease lost) is left to the
+  // run-end protocol, which settles it `unknown` with nothing taken late;
+  // each transition below also refuses a turn that is no longer open.
   async settle(handle: RunHandle): Promise<void> {
     const { run, invocation, project, domain } = handle.claim;
+    const ending = async (): Promise<boolean> => {
+      if (handle.ending || handle.controlAfterExit !== null) {
+        if (!handle.ending && handle.controlAfterExit !== null) {
+          // A Stop or an Abandon confirmed while the turn settled: it ends
+          // the session, whose end protocol settles the turn.
+          const control = handle.controlAfterExit;
+          this.rt.requestEnd(handle, control === 'stop' ? { outcome: 'stopped', reason: 'human_stop' } : { outcome: 'abandoned', reason: 'human_abandon' }, { afterExit: true });
+        }
+        return true;
+      }
+      return !(await this.rt.engine<boolean>('session.turn_open', { run, invocation }).catch(() => false));
+    };
     try {
       const terminated = await this.ender.terminateDomains(run);
       if (!terminated) {
         this.rt.requestEnd(handle, { outcome: 'failed', reason: 'infra_error', reasonText: "the termination of the turn's domain could not be established; the turn is not settled" }, { afterExit: true });
         return;
       }
-      // On the real boundary what the turn wrote is on its domain's volatile
-      // filesystem: it reaches the session's workspace now, through the
-      // secret screen, so that a save sees it (D2 §§2.3, 2.5; D6 §2.4); the
-      // hold is then dropped, before the next turn's domain is placed.
+      if (!handle.terminatedFired) {
+        handle.terminatedFired = true;
+        await pausePoint('session.turn_settling.terminated');
+      }
+      if (await ending()) {
+        return;
+      }
+      // (2) On the real boundary what the turn wrote is on its domain's
+      // volatile filesystem: it reaches the session's workspace now, through
+      // the secret screen, so that a save sees it (D2 §§2.3, 2.5; D6 §2.4);
+      // the hold is then dropped, before the next turn's domain is placed.
       let materializeFailure: string | null = null;
       const hold = handle.sandbox?.volatile ?? null;
       if (handle.sandbox !== null && hold !== null && hold.held && handle.workspacePath !== null && !handle.materialized) {
@@ -95,6 +121,11 @@ export class SessionDriver {
         } else handle.materialized = true;
       }
       handle.sandbox?.releaseVolatile();
+      await pausePoint('session.turn_settling.collected');
+      if (await ending()) {
+        return;
+      }
+      // (3)
       const reply = materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
       const failure =
         reply !== null
@@ -102,26 +133,49 @@ export class SessionDriver {
           : materializeFailure !== null
             ? materializeFailure
             : handle.sessionReply === 'invalid'
-            ? "the role's result is not a turn's result (D6 B.7)"
-            : handle.sessionReply === null
-              ? 'the role exited without a result'
-              : `the role exited with status ${String(handle.exit?.code ?? handle.exit?.signal ?? 'unknown')}`;
+              ? "the role's result is not a turn's result (D6 B.7)"
+              : handle.sessionReply === null
+                ? 'the role exited without a result'
+                : `the role exited with status ${String(handle.exit?.code ?? handle.exit?.signal ?? 'unknown')}`;
       const text = reply !== null ? reply.reply : `The turn failed: ${failure}.`;
       const record = await writeWholeRecord(this.rt, { project, run, kind: 'session_transcript', content: Buffer.from(text) }).catch((err) => {
         log('turn record', err, { run });
         return null;
       });
+      await this.rt.engine('session.turn_reply', { run, invocation, reply, failure, textRecord: record });
+      await pausePoint('session.turn_settling.reply_recorded');
+      if (await ending()) {
+        return;
+      }
+      // (4)
       const exit = await this.rt.read<{ exit_class: string | null; exit_evidence: string | null } | null>('domain.exit_of', { domain }).catch(() => null);
-      await this.rt.engine('session.settle', { run, invocation, reply, failure, textRecord: record, exit });
+      await this.rt.engine('session.turn_usage', { run, invocation, exit });
+      await pausePoint('session.turn_settling.usage_recorded');
+      if (await ending()) {
+        return;
+      }
+      await this.rt.engine('session.settle', { run, invocation });
     } finally {
+      // A run the engine decided to end keeps its handle for the run-end
+      // protocol; otherwise the turn is done with it.
       if (!handle.ending) this.rt.handles.delete(run);
     }
   }
 
   // ---- save (D6 §2.4, §2.5; B01, B02) -------------------------------------------------
 
+  // The admission of a save, a close or a turn (D6 §2.4; B01; SEAM.md §389):
+  // the session read, the `session.admission` barrier, and then the
+  // compare-and-swap the transition makes on what was read.
+  async admission(project: string, run: string): Promise<number | null> {
+    const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
+    await pausePoint('session.admission');
+    return read !== null && read.idle ? read.idle_generation : null;
+  }
+
   async save(project: string, run: string, opts: { expectedGeneration?: number | null } = {}): Promise<SaveAnswer> {
-    const facts = await this.rt.engine<SaveFacts>('session.begin_save', { project, run, expectedGeneration: opts.expectedGeneration ?? null });
+    const admittedAt = await this.admission(project, run);
+    const facts = await this.rt.engine<SaveFacts>('session.begin_save', { project, run, admittedAt, expectedGeneration: opts.expectedGeneration ?? null });
     const outcome: SaveOutcome = { project, run, committed: null, refused: null, findings: [], notesRecord: null, products: {}, nothingToSave: false };
     let refusal: Refusal | null = null;
     try {
@@ -272,8 +326,8 @@ export class SessionDriver {
     // The close holds the generation its own save left (B01): a turn
     // admitted since wins it, and the close is refused
     // `session_generation_stale` rather than losing that turn.
-    const expectedGeneration = answer.idle_generation;
-    const facts = await this.rt.engine<SaveFacts & { session_state: string }>('session.close_facts', { project, run, expectedGeneration });
+    const admittedAt = answer.idle_generation;
+    const facts = await this.rt.engine<SaveFacts & { session_state: string }>('session.close_facts', { project, run, admittedAt });
     let raise: Record<string, unknown> = { kind: 'none' };
     if (!opts.refuse) {
       if (facts.role === 'vision') raise = { kind: 'idea_accept' };
@@ -282,7 +336,7 @@ export class SessionDriver {
     }
     let closed: { decisions: { id: string; kind: string; batch_key: string | null }[] };
     try {
-      closed = await this.rt.engine('session.close', { project, run, raise, expectedGeneration });
+      closed = await this.rt.engine('session.close', { project, run, raise, admittedAt });
     } catch (err) {
       // A bundle recorded for a close that lost its generation is stale,
       // never a proposal awaiting a decision that was not raised.
@@ -292,6 +346,90 @@ export class SessionDriver {
     await this.ender.endRun(run, { outcome: 'completed', reason: 'none' });
     const summary = await this.rt.read<{ run: Record<string, unknown> }>('session.view', { project, run });
     return { run: summary.run, saved, decisions: closed.decisions.map((d) => ({ id: d.id, kind: d.kind, ...(d.batch_key ? { batch_key: d.batch_key } : {}) })) };
+  }
+
+  // ---- idle timeout and budget exhaustion: one protocol (D6 §2.4; B01) ----------------
+
+  // At each tick: every session idle past `session_idle_timeout`, or idle
+  // with its cumulative budget spent, is closed by the engine.
+  async sweep(): Promise<number> {
+    const due = await this.rt.read<{ run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[]>('session.due_closes', { at: nowIso() });
+    let n = 0;
+    for (const d of due) {
+      try {
+        if (await this.closeByProtocol(d.project, d.run, d.cause)) n++;
+      } catch (err) {
+        log('session close', err, { run: d.run, cause: d.cause });
+      }
+    }
+    return n;
+  }
+
+  // The save, or the retained workspace recorded when the save is refused
+  // (the refusal is the engine's entry and the workspace keeps the change);
+  // then `closing` under the generation the save left, the product's
+  // decision raised only if the product parses, and the end protocol:
+  // `timed_out` (`deadline`) or `stopped` (`budget`, public code
+  // `budget_exhausted`). Nothing in the workspace is lost; the grant and the
+  // lease are released by the run's end. false when another admission won.
+  async closeByProtocol(project: string, run: string, cause: 'idle_timeout' | 'budget_exhausted'): Promise<boolean> {
+    let answer: SaveAnswer | null = null;
+    try {
+      answer = await this.save(project, run);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'session_not_idle' || code === 'session_generation_stale' || code === 'not_found') return false;
+      // The save was refused and recorded: the close goes on.
+      answer = null;
+    }
+    const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
+    if (read === null || !read.idle) return false;
+    const admittedAt = read.idle_generation;
+    const facts = await this.rt.engine<SaveFacts>('session.close_facts', { project, run, admittedAt });
+    let raise: Record<string, unknown> = { kind: 'none' };
+    // The product parses: a checkpoint of this session stands, the save
+    // found nothing wrong with it, and none was refused just now.
+    if (answer !== null && answer.findings.length === 0 && facts.head !== null && facts.head !== facts.base_revision) {
+      if (facts.role === 'vision') raise = { kind: 'idea_accept' };
+      else if (facts.role === 'spec_writer') raise = { kind: 'spec_approval' };
+      else raise = await this.bundle(facts).catch(() => ({ kind: 'none' }));
+    }
+    try {
+      await this.rt.engine('session.close', { project, run, raise, admittedAt, cause });
+    } catch (err) {
+      if (raise.kind === 'bundle') await this.rt.engine('session.bundle_stale', { bundle: raise.bundle, reason: 'the close that recorded it was refused' }).catch((e) => log('bundle', e, { run }));
+      const code = (err as { code?: string }).code;
+      if (code === 'session_not_idle' || code === 'session_generation_stale') return false;
+      throw err;
+    }
+    await this.ender.endRun(
+      run,
+      cause === 'idle_timeout'
+        ? { outcome: 'timed_out', reason: 'deadline', reasonText: 'session_idle_timeout passed with the session idle' }
+        : { outcome: 'stopped', reason: 'budget', reasonText: 'budget_run_billable_tokens' },
+    );
+    return true;
+  }
+
+  // ---- resume (D6 §2.4; D1 §15.3; SEAM.md §394) -------------------------------------
+
+  // What the resume's transaction is given: whether the ended session's
+  // retained workspace holds changes no checkpoint committed (its snapshot
+  // differs from its checkpoint base), found here, never in a transaction.
+  async resumeArgs(project: string, run: string): Promise<{ dirty: { workspace: string; base: string; tree: string } | null }> {
+    const facts = await this.rt.read<{ repo: string; state: string; workspace: { id: string; path: string; current_base: string; metadata: Record<string, unknown> | null; disposition: string } | null }>('session.resume_facts', { project, run });
+    const ws = facts.workspace;
+    if (facts.state !== 'ended' || ws === null || ws.disposition !== 'retained' || ws.metadata === null) return { dirty: null };
+    const metadata = ws.metadata as unknown as MetadataBaseline;
+    const tree = await snapshotTree(worktreeContext(facts.repo, metadata.adminDir, ws.path), ws.current_base, this.rt.scratch).catch(() => null);
+    const base = await treeOf(repoContext(facts.repo), ws.current_base).catch(() => null);
+    // Unknown is never clean: a workspace that cannot be read is not resumed
+    // as if it held nothing.
+    if (tree === null || base === null) {
+      throw new Refusal(500, 'infra_error', `The retained workspace of session ${run} could not be read, so whether it holds changes no checkpoint committed is unknown.`, 'Read the workspace on the host; resume once it can be read.', { run, workspace: ws.id });
+    }
+    if (tree === base) return { dirty: null };
+    return { dirty: { workspace: ws.id, base: ws.current_base, tree } };
   }
 
   // The Architect's close (D6 §3.4, §5.3, §5.5; B02): the prospective bundle

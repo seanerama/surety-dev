@@ -422,9 +422,18 @@ function resultTotals(m: Record<string, unknown>): { tokens: Record<TokenKey, nu
 // A model fallback (E86 item 3, provisional): the stream shows a model other
 // than the entry's, by a `model_refusal_fallback` event or by a model it
 // named; null where it shows none. Its text names the fallback.
+// Whether `seen` is the model `requested` names: the same name, or, for one
+// of Claude Code's aliases (`opus`, `sonnet`, `haiku`), a model of that
+// family (`claude-opus-…`). The alias is what the role's key requests (D6
+// A.7, E139 Q6).
+export function sameModel(requested: string, seen: string): boolean {
+  if (seen === requested) return true;
+  return /^[a-z]+$/.test(requested) && seen.split(/[-.@:/]/).includes(requested);
+}
+
 export function claudeModelFallback(s: ClaudeStreamSummary | null, entryModel: string): { text: string; fallbacks: ClaudeStreamSummary['fallbacks']; models: string[] } | null {
   if (s === null) return null;
-  const others = s.models_seen.filter((m) => m !== entryModel);
+  const others = s.models_seen.filter((m) => !sameModel(entryModel, m));
   if (s.fallbacks.length === 0 && others.length === 0) return null;
   const f = s.fallbacks[0];
   const text = f

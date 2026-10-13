@@ -62,10 +62,21 @@ export function beginWidening(tx: Tx, args: { intent: string; project: string; p
   return made;
 }
 
-export function stashFacts(tx: Tx, args: { intent: string }): { repo: string; path: string; baseline: { head: string } } | null {
+export function stashFacts(
+  tx: Tx,
+  args: { intent: string },
+): { repo: string; path: string; baseline: { head: string }; workspace?: { id: string; found: { head: string; tracked_tree_hash: string } } } | null {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { project: string; plan: string } | undefined;
   if (!intent) throw notFound('intent', args.intent);
-  const plan = JSON.parse(intent.plan) as { checkout: string };
+  const plan = JSON.parse(intent.plan) as { checkout: string; workspace?: string | null; found?: string | null };
+  // A session's retained workspace (D6 §2.4): its content as the resume
+  // found it, kept under the oob ref; the workspace is given up after.
+  if (plan.workspace) {
+    const w = tx.db.prepare('SELECT "path", "current_base" FROM "workspaces" WHERE "id" = ?').get(plan.workspace) as { path: string; current_base: string } | undefined;
+    const found = plan.found ? (JSON.parse(plan.found) as { head: string; tracked_tree_hash: string }) : null;
+    if (!w || !found) return null;
+    return { repo: projectRepoRow(tx, intent.project).dev_repo_path, path: w.path, baseline: { head: found.head }, workspace: { id: plan.workspace, found } };
+  }
   const c = tx.db.prepare('SELECT "path", "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(plan.checkout) as { path: string; baseline: string } | undefined;
   if (!c) return null;
   return { repo: projectRepoRow(tx, intent.project).dev_repo_path, path: c.path, baseline: JSON.parse(c.baseline) as { head: string } };
@@ -186,8 +197,9 @@ export function stashKept(db: Db, args: { intent: string }): boolean {
 export function stashed(tx: Tx, args: { intent: string }): void {
   const intent = tx.db.prepare('SELECT * FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { project: string; plan: string; status: string };
   if (intent.status !== 'executing') return;
-  const plan = JSON.parse(intent.plan) as { observation: string; checkout: string };
+  const plan = JSON.parse(intent.plan) as { observation: string; checkout: string; workspace?: string | null };
   tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'stash' WHERE "id" = ? AND "disposition" IS NULL`).run(plan.observation);
+  if (plan.workspace) tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ? AND "disposition" = 'retained'`).run(tx.at, plan.workspace);
   tx.emit('repo.reconciled', { project: intent.project, out_of_band_change: plan.observation }, { disposition: 'stash', checkout: plan.checkout });
   markStale(tx, { project: intent.project });
   completeIntent(tx, args.intent);

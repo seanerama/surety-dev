@@ -187,8 +187,9 @@ export class Effects {
   // content as reviewed is committed to a new registered oob ref, the
   // checkout restored to its baseline, and the observation reconciled.
   private async stash(row: IntentRow): Promise<void> {
-    const facts = await this.rt.engine<{ repo: string; path: string; baseline: { head: string } } | null>('oob.stash_facts', { intent: row.id });
+    const facts = await this.rt.engine<{ repo: string; path: string; baseline: { head: string }; workspace?: { id: string; found: { head: string; tracked_tree_hash: string } } } | null>('oob.stash_facts', { intent: row.id });
     if (facts === null) return;
+    if (facts.workspace) return this.stashWorkspace(row, facts as typeof facts & { workspace: NonNullable<typeof facts.workspace> });
     const ctx = await checkoutContext(facts.repo, facts.path);
     if (ctx === null) return;
     if (row.status === 'pending') {
@@ -223,6 +224,31 @@ export class Effects {
       log('stash restore', new Error(`the checkout ${facts.path} could not be restored to its baseline`), { intent: row.id });
       return;
     }
+    await this.rt.engine('oob.stashed', { intent: row.id });
+  }
+
+  // A session's retained workspace answered `stash` (D6 §2.4): the content
+  // the resume found (its snapshot tree on its checkpoint base) is committed
+  // by the engine and kept under an oob ref through the journal; nothing is
+  // adopted onto any branch, and the workspace is given up.
+  private async stashWorkspace(row: IntentRow, facts: { repo: string; path: string; workspace: { id: string; found: { head: string; tracked_tree_hash: string } } }): Promise<void> {
+    if (row.status === 'pending') {
+      const found = JSON.stringify(facts.workspace.found);
+      const message = messageText({ title: `surety: stash the uncommitted session workspace ${facts.path}`, trailers: [['Surety-Project', row.project], ['Surety-Observation', String(row.plan.observation)]] });
+      const content = commitContent({ tree: facts.workspace.found.tracked_tree_hash, parent: facts.workspace.found.head, message, at: nowIso() });
+      const sha = await commitId(facts.repo, content);
+      if (sha === null) return;
+      const made = await this.journal.withProject(row.project, () =>
+        this.journal.intend(
+          'oob.begin_stash',
+          { intent: row.id, facts: { found }, repo: facts.repo, tree: facts.workspace.found.tracked_tree_hash, parent: facts.workspace.found.head, sha, content, deadlineSeconds: this.rt.setting('git_deadline') },
+          'commit_tree',
+        ),
+      );
+      if ('operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));
+    }
+    await this.rt.services?.journal(row.project);
+    if (!(await this.rt.read<boolean>('oob.stash_kept', { intent: row.id }))) return;
     await this.rt.engine('oob.stashed', { intent: row.id });
   }
 }

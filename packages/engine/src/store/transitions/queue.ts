@@ -457,8 +457,17 @@ function oobRow(db: Db, id: string): OobRow | undefined {
   return db.prepare('SELECT * FROM "out_of_band_changes" WHERE "id" = ?').get(id) as OobRow | undefined;
 }
 
+// A session's retained, uncommitted workspace at resume (D6 §2.4; D1 §7.6;
+// migration 0026): stashed or discarded, never adopted (the driver's
+// ruling, 2026-10-13).
+export const WORKSPACE_OOB_OPTIONS: OptionSpec[] = [
+  { key: 'stash', label: 'Stash', consequence: "The engine commits the workspace's content as it was found to an oob ref, and gives the workspace up.", effect: { disposition: 'stash' } },
+  { key: 'discard', label: 'Discard', consequence: "The engine gives the workspace up; what no checkpoint committed is not kept.", effect: { disposition: 'discard' } },
+];
+
 export function oobOptions(tx: Tx, o: { subject_kind: string; ref: string | null; found: string | null }): OptionSpec[] {
   if (o.subject_kind === 'repository') return [];
+  if (o.subject_kind === 'workspace') return WORKSPACE_OOB_OPTIONS;
   // An environment's (D4 §6.3; J6): `teardown` and `acknowledge`, never `adopt`.
   if (o.subject_kind === 'environment') return ENV_OOB_OPTIONS;
   if (o.subject_kind === 'checkout') {
@@ -522,6 +531,19 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
     return consumed(d, answerEnvironmentChange(tx, changeRow(tx.db, row.id)!, option) ?? []);
   }
   const repo = projectRepoRow(tx, row.project).dev_repo_path;
+  if (row.subject_kind === 'workspace') {
+    // Never `adopt` (D6 §2.4): only the two options it was offered.
+    if (option !== 'stash' && option !== 'discard') throw illegal(`answering a workspace's change ${option}`, { decision: d.id });
+    consumeDecision(tx, d, option, note);
+    if (option === 'discard') {
+      tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'discard', "closed_at" = ? WHERE "id" = ? AND "disposition" IS NULL`).run(tx.at, row.id);
+      tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ? AND "disposition" = 'retained'`).run(tx.at, row.workspace ?? null);
+      tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'discard', workspace: row.workspace ?? null });
+      return consumed(d, []);
+    }
+    const ws = tx.db.prepare('SELECT "path" FROM "workspaces" WHERE "id" = ?').get(row.workspace ?? null) as { path: string } | undefined;
+    return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, workspace: row.workspace ?? null, path: ws?.path ?? null, found: row.found } })]);
+  }
   if (row.subject_kind === 'checkout') {
     if (option === 'stash') {
       consumeDecision(tx, d, option, note);

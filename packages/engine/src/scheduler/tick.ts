@@ -249,10 +249,15 @@ export class Scheduler {
     let dispatched = 0;
     // The turns sessions admitted (D6 §2.2; SEAM.md §344): dispatched by the
     // tick, the choke point's one caller, never by the turn route.
+    // Sessions idle past their timeout, or with their budget spent, closed
+    // by the idle protocol (D6 §2.4; B01) before any turn is dispatched.
+    if (remaining() > 0 && this.rt.sessions) await this.rt.sessions.sweep().catch((err) => log('session sweep', err));
     if (remaining() > 0 && this.rt.sessions) dispatched += await this.rt.sessions.dispatchTurns().catch((err) => {
       log('turn dispatch', err);
       return 0;
     });
+    // One-shots held behind an open session record why (D6 §2.7; N01).
+    await this.rt.engine('session.mark_holds', {}).catch((err) => log('session holds', err));
     if (remaining() > 0) {
       const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates', { maxConcurrentRuns: this.rt.setting('max_concurrent_runs') });
       for (const c of candidates) {

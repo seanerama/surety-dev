@@ -33,9 +33,11 @@ export interface CheckoutRow {
 export interface OobRow {
   id: string;
   project: string;
-  subject_kind: 'ref' | 'checkout' | 'repository' | 'environment';
+  subject_kind: 'ref' | 'checkout' | 'repository' | 'environment' | 'workspace';
   ref: string | null;
   checkout: string | null;
+  // A session's retained workspace (migration 0026; D6 §2.4).
+  workspace?: string | null;
   expected: string;
   found: string | null;
   disposition: string | null;

@@ -12,7 +12,8 @@ import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
-import { engineSettings, projectPolicy } from './settings.js';
+import { engineSettings, projectPolicy, roleModel } from './settings.js';
+import { settleOpenTurns } from '../../sessions/session.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
@@ -260,6 +261,8 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
     }
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
+  // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended'`, item.project) > 0) return 'session_busy';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
@@ -358,9 +361,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       return undefined;
     }
   })();
-  // A Spec Writer's one-shot (D6 §4.3) has no deadline key of its own in
-  // this engine's policy: D6's `deadline_spec_writer` is per turn, and the
-  // one-shot takes the Architect's, as a session's turn does (sessions/session.ts).
+  // A Spec Writer's one-shot (D6 §4.3) takes `deadline_spec_writer` (D6 A.7).
   const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`] ?? policy.deadline_architect!;
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
@@ -417,6 +418,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // The roles of the chain this run belongs to (D1-34; E24 item 1).
   const chain = item.chain + 1;
 
+  // The model the run requests (D6 A.7, E139 Q6): its role's `model_<role>`
+  // key, Claude Code's alias, recorded on the run and its ledger row and
+  // passed to a real backend's launch; a canary's is its attempt's.
+  const requestedModel = backend.kind === 'attempt' ? backend.model : (roleModel(tx.db, item.project, role) ?? backend.model);
   const run = tx.newId('run_');
   const seq = nextSeq(tx, item.project, 'runs');
   const deadlineAt = addSeconds(tx.at, deadlineSeconds);
@@ -426,7 +431,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
          "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined", "chain")
        VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
-    .run(run, tx.at, item.project, seq, item.id, role, backend.backend, backend.version, backend.model, baseRevision, deadlineAt, parent, chain);
+    .run(run, tx.at, item.project, seq, item.id, role, backend.backend, backend.version, requestedModel, baseRevision, deadlineAt, parent, chain);
   // The acceptance content the run is given, fixed now (E41 item 4).
   const candidateId = (JSON.parse(item.subject) as { candidate?: string }).candidate;
   const candidateRow = candidateId ? getCandidate(tx.db, candidateId) : undefined;
@@ -438,6 +443,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // An automatic re-dispatch after a failed run counts one repair (D1 §4.3).
   const repairs = item.repair_due === 1 ? item.repair_attempts + 1 : item.repair_attempts;
   transitionWork(tx, item, 'claimed', { prior_status: 'eligible', repair_attempts: repairs, repair_due: 0 }, { run });
+  tx.db.prepare('UPDATE "work_items" SET "held" = NULL WHERE "id" = ?').run(item.id);
 
   const lease = tx.newId('lease_');
   tx.db
@@ -487,10 +493,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const profile = item.profile ?? 'role';
   tx.db
     .prepare(
-      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state")
-       VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, 'authorizable')`,
+      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state", "memory_max")
+       VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, 'authorizable', ?)`,
     )
-    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath);
+    // The memory maximum it is admitted at, the value the envelope counts
+    // (D6 A.3; K2): the configured domain_memory_max (slice 33).
+    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath, engineSettings().domain_memory_max ?? null);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
@@ -536,7 +544,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
             binary_path: backend.entry.binary_path,
             binary_sha256: backend.entry.binary_sha256,
             help_sha256: backend.entry.help_sha256,
-            model: backend.entry.model,
+            // The role's model (the driver's ruling (c), 2026-10-13).
+            model: requestedModel,
             key_ref: keyRef,
             // The destinations the entry's egress list allows (D2 §2.4).
             egress_hosts: (() => {
@@ -907,6 +916,11 @@ export function finishRun(
     observe(tx, run, receipt.id, terminal, terminal === 'refused' ? null : (exit ?? null));
     if (terminal !== 'refused') chargeInvocation(tx, run, receipt, args.egress ?? []);
   }
+
+  // A session's turn its run ended before it settled (D6 §2.1; B01): settled
+  // `unknown` on its own row now that its domain's termination is
+  // established and its invocation charged above, with no late reply.
+  if (run.kind === 'session') settleOpenTurns(tx, run.id);
 
   // A run whose role ran on the real boundary and whose end recorded no
   // collection lost its volatile filesystem before collection (an engine

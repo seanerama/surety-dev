@@ -29,7 +29,7 @@ import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { seamBackends, seamDescribe, seamRoute, seamTokenRead } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamDescribe, seamRoute, seamTokenRead } from '../testing/seam.js';
 import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
 import { SHELL_CSP, loadShell } from './shell.js';
 import { type TailSource, serveEvents, serveTail } from './streams.js';
@@ -533,6 +533,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           prepare: async (b) => {
             const body = onlyFields(b, ['role', 'model']);
             if (typeof body.role !== 'string' || body.role === '') throw new Refusal(400, 'invalid_value', '"role" must be one of vision, spec_writer, architect.', 'Open a session for an interactive role.', { field: 'role' });
+            // The opening's admission (D6 §2.7; SEAM.md §389): the project's
+            // guard read, the barrier, and the transaction's own re-check of
+            // it, so that an opening racing a one-shot's claim admits one.
+            await store().call('read', { name: 'session.open_guard', args: { project } });
+            await pausePoint('session.admission');
             return { project, role: body.role, model: body.model, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null };
           },
         };
@@ -541,6 +546,27 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const run = decodeSegment(rest[1]!);
         if (run === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'session.view', args: { project, run } }) }) };
+      }
+      // D6 §2.4, A.8 (SEAM.md §394): resume an ended session as a new run.
+      if (rest.length === 3 && rest[0] === 'sessions' && rest[2] === 'resume' && post) {
+        const run = decodeSegment(rest[1]!);
+        if (run === null) return null;
+        return {
+          kind: 'prepared',
+          name: 'session.resume',
+          prepare: async (b) => {
+            onlyFields(b, []);
+            if (!(await store().call<boolean>('read', { name: 'session.exists', args: { project, run } }))) {
+              throw new Refusal(404, 'not_found', `No session ${run} exists in project ${project}.`, 'Check the project and the run.', { project, run });
+            }
+            const sessions = runtime().sessions;
+            if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
+            const { dirty } = await sessions.resumeArgs(project, run);
+            await store().call('read', { name: 'session.open_guard', args: { project } });
+            await pausePoint('session.admission');
+            return { project, run, dirty, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null };
+          },
+        };
       }
       if (rest.length === 3 && rest[0] === 'sessions' && ['turns', 'save', 'close'].includes(rest[2]!) && post) {
         const run = decodeSegment(rest[1]!);
@@ -565,6 +591,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
               const body = onlyFields(b, ['text', 'expected_generation']);
               if (typeof body.text !== 'string' || body.text === '') throw new Refusal(400, 'invalid_value', '"text" must be a non-empty string.', 'Send what you say to the role.', { field: 'text' });
               const expectedGeneration = generation(body);
+              // The admission's read and barrier (B01; SEAM.md §389).
+              const read = await store().call<{ idle: boolean; idle_generation: number } | null>('read', { name: 'session.admission_read', args: { project, run } });
+              await pausePoint('session.admission');
+              const admittedAt = read !== null && read.idle ? read.idle_generation : null;
               // The admission first (D6 §2.2): the owner's entry, verbatim
               // and redacted, and the session `turn_running`, in one
               // transaction; then the entry's record, so a refused turn
@@ -576,6 +606,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
                 text: redactText(body.text),
                 textRecord: null,
                 expectedGeneration,
+                admittedAt,
                 scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null,
                 scope: runtime().boundary() === 'real' ? (runtime().scope?.path ?? null) : null,
               });

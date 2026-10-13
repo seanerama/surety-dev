@@ -74,6 +74,8 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   // D6 A.7 (E140 N4; SEAM.md §377): the size threshold of `adoption_mode`'s
   // recommendation, never the choice.
   adoption_full_max_files: int(2000, 100, 100_000),
+  // D6 A.7 (M5 slice 33; objection 077): an owner's turn, at most.
+  turn_max_bytes: int(65_536, 4096, 1_048_576),
 };
 
 // A numeric engine key that may not be below another's effective value
@@ -158,6 +160,8 @@ export const ENGINE_KEYS = [
   'service_link_buffer_max_bytes',
   // D6 A.7 (M5 slice 32).
   'adoption_full_max_files',
+  // D6 A.7 (M5 slice 33).
+  'turn_max_bytes',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
@@ -246,6 +250,11 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   deadline_reviewer: int(1200, 300, 10_800),
   deadline_architect: int(1800, 300, 10_800),
   session_idle_timeout: int(1200, 60, 7200),
+  // D6 A.7 (M5 slice 33; objection 077): a session's transcript, at most,
+  // and the per-turn deadlines of the two conversational roles without one.
+  transcript_max_bytes: int(8_388_608, 1_048_576, 67_108_864),
+  deadline_vision: int(1800, 300, 10_800),
+  deadline_spec_writer: int(1800, 300, 10_800),
   record_retention_days: int(90, 7, 3650),
   observation_cadence: int(30, 10, 3600),
   observation_freshness_bound: int(90, 30, 86_400),
@@ -291,7 +300,7 @@ export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
 // adds an element the effective value lacks, `coarser` when it names a
 // coarser budget boundary, `never` when no change does.
 export interface OptionSpec {
-  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths';
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model';
   default: unknown;
   values?: readonly string[];
   widening: 'added' | 'coarser' | 'later' | 'never';
@@ -313,6 +322,18 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
   backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // D6 A.7 (M5 slice 33; SEAM.md §391): the two conversational roles' backends.
+  backend_vision: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_spec_writer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // D6 A.7, E139 Q6: the model each role requests, Claude Code's aliases;
+  // Opus for the planners, Sonnet for the roles. Any non-empty model name is
+  // accepted until slice 38 (the driver's ruling (c), 2026-10-13).
+  model_vision: { type: 'model', default: 'opus', widening: 'never' },
+  model_spec_writer: { type: 'model', default: 'opus', widening: 'never' },
+  model_architect: { type: 'model', default: 'opus', widening: 'never' },
+  model_builder: { type: 'model', default: 'sonnet', widening: 'never' },
+  model_verifier: { type: 'model', default: 'sonnet', widening: 'never' },
+  model_reviewer: { type: 'model', default: 'sonnet', widening: 'never' },
   // D6 §6.5, K3 (E139 Q3): where the chaining boundary falls; `phase` by default.
   // Sean's decision (2026-10-12): loosening on an existing project (a value
   // later in the list: step → stage → phase) widens what the engine does

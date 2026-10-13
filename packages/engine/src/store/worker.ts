@@ -184,6 +184,14 @@ import {
   sessionWorkspace,
   settleTurn,
   turnClaim,
+  turnReply,
+  turnUsage,
+  turnStillOpen,
+  admissionRead,
+  dueCloses,
+  resumeFacts,
+  resumeSession,
+  markSessionHolds,
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
@@ -321,6 +329,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
   'session.open': (tx, a) => ({ status: 201, body: openSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
+  // D6 §2.4 (M5 slice 33; SEAM.md §394): a new run continuing an ended session.
+  'session.resume': (tx, a) => ({ status: 201, body: resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }) }),
   'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
 };
 
@@ -433,6 +443,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.context': (d, a: { run: string }) => sessionContextFacts(d, a.run),
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
   'session.view': (d, a: { project: string; run: string }) => sessionView(d, a.project, a.run),
+  // M5 slice 33: what an admission reads before its barrier; the sessions
+  // the idle protocol closes now; an ended session's workspace at resume.
+  'session.admission_read': (d, a: { project: string; run: string }) => admissionRead(d, a.project, a.run),
+  'session.open_guard': (d, a: { project: string }) =>
+    (d.prepare(`SELECT "id" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ORDER BY "seq" LIMIT 1`).get(a.project) as { id: string } | undefined)?.id ?? null,
+  'session.due_closes': (d, a: { at: string }) => dueCloses(d, a.at),
+  'session.resume_facts': (d, a: { project: string; run: string }) => resumeFacts(d, a.project, a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
@@ -666,6 +683,12 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
+  // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a
+  // time: its reply or failure, its usage, then the session idle.
+  'session.turn_reply': (tx, a) => turnReply(tx, a),
+  'session.turn_usage': (tx, a) => turnUsage(tx, a),
+  'session.turn_open': (tx, a) => turnStillOpen(tx, a),
+  'session.mark_holds': (tx) => markSessionHolds(tx),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.
