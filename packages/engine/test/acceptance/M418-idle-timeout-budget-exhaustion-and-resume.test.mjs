@@ -90,10 +90,10 @@ describe('M418 idle timeout, budget exhaustion and resume', () => {
     // The first turn spends the whole budget and settles; the session then closes at that settlement
     // (the slice-33 review's M5), so the turn is read with `say`, not as settled back to idle.
     await say(fx, p.id, run.id, 'Spend.');
-    await tick(fx.engine, p.id, { rounds: 2 });
+    // Closed at that settlement (objection 079): no later turn posted, no clock advanced.
+    const ended = await endedAs(fx, run.id);
     const res = await postTurnRaw(fx, p.id, run.id, 'One more.');
     assert.ok(res.status >= 400, `no further turn admitted (→ ${res.status} ${res.text})`);
-    const ended = await endedAs(fx, run.id);
     // `budget_exhausted` is the public code of reason class `budget`, not a RunOutcome (D6 A.2; the driver's ruling).
     assert.equal(ended.reason_class, 'budget', `ended with reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
     const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
