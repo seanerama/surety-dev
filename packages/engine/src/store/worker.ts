@@ -434,6 +434,17 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'presence.due': (d, a: { project: string }) => presenceDue(d, a),
   'presence.nomination': (d, a: { project: string }) => nominationPresenceDue(d, a),
   // The engine's own qualification fixture project, by its repository.
+  // The engine's fixture projects registered under another path (a home
+  // moved or copied): each with the commit its integration branch is
+  // expected at, for the rebind (trust/fixture.ts).
+  'qualification.moved_fixtures': (d, a: { name: string; repo: string }) =>
+    d
+      .prepare(
+        `SELECT p."id", p."dev_repo_path", r."expected_oid" AS "head" FROM "projects" p
+         JOIN "ref_registry" r ON r."project" = p."id" AND r."kind" = 'integration' AND r."ref" = 'refs/heads/' || p."integration_branch"
+         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p."created_at", p."id"`,
+      )
+      .all(a.name, a.repo),
   'qualification.engine_fixture': (d, a: { repo: string }) =>
     (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
