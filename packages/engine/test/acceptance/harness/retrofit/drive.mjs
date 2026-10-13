@@ -280,6 +280,11 @@ export const specClaimsOf = (home, project) => rows(home, 'SELECT c.* FROM "spec
 export const conformanceStages = (home, project) => rows(home, 'SELECT * FROM "stages" WHERE "project" = ? AND "conformance" = 1 ORDER BY rowid', project);
 export const projectsNamed = (home, name) => rows(home, 'SELECT * FROM "projects" WHERE "name" = ?', name);
 export const gateReasons = (evaluation) => (json(evaluation?.reasons) ?? []).map((r) => (typeof r === 'string' ? r : r.code));
+// `stages.implements` holds requirement ids (SEAM.md §70; objections 066, 075): the keys they name.
+export const keysOf = (home, project, ids) => {
+  const byId = Object.fromEntries(rows(home, 'SELECT "id", "key" FROM "requirements" WHERE "project" = ?', project).map((r) => [r.id, r.key]));
+  return (typeof ids === 'string' ? JSON.parse(ids) : ids ?? []).map((id) => byId[id] ?? id);
+};
 export const conformancePlan = (home, project) => planOfPhase(home, project, 1).find((p) => p.active === 1 || p.active === true) ?? null;
 
 export { answer, pump };

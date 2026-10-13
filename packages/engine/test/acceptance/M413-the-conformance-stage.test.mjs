@@ -41,12 +41,12 @@ import { describe, test } from 'node:test';
 import { commitEntries } from './harness/checks/fixtures.mjs';
 import { consume, decisionsOfKind } from './harness/decisions.mjs';
 import { evaluationsOf, findingsOf, raiseFindings, reasonSubjects, review, roleRun } from './harness/gates.mjs';
-import { alphaReady, architectSession, checkRows, createWithIdea, eventsAbout, evaluationsOfKind, resultsOf, specSession, visionSession, workOf } from './harness/journey/drive.mjs';
+import { alphaReady, architectSession, checkRows, createWithIdea, roadmapRevisions, eventsAbout, evaluationsOfKind, resultsOf, specSession, visionSession, workOf } from './harness/journey/drive.mjs';
 import { STAGES, phasePlan as tallyPlan } from './harness/journey/reference.mjs';
 import { commitOnRef, gitQuiet } from './harness/repos.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
-import { FULL_ANSWERS, adoptProject, advance, chooseMode, confirmAndApprove, conformanceStages, gateReasons, retrofitArchitectSession, retrofitEngine, retrofitSpecSession, toConformancePublished } from './harness/retrofit/drive.mjs';
+import { FULL_ANSWERS, adoptProject, advance, chooseMode, keysOf, confirmAndApprove, conformanceStages, gateReasons, retrofitArchitectSession, retrofitEngine, retrofitSpecSession, toConformancePublished } from './harness/retrofit/drive.mjs';
 import { FLOOR_CHECK, MODULES_JSON_SENSITIVE, MODULES_SENSITIVE, SENSITIVE_AREA, conformanceStage, phasePlan, retrofitArchitectFiles, retrofitSpecText, roadmapJson, sensitiveConformanceStage, serviceCheck } from './harness/retrofit/products.mjs';
 import { SERVER_MJS, refOid } from './harness/retrofit/repo.mjs';
 
@@ -174,7 +174,8 @@ describe('M413 the conformance stage', () => {
   test('(e) the stage implements the confirmed set of phase 1, not the defect', async (t) => {
     const { fx, p } = await published(t);
     const [stage] = conformanceStages(fx.home, p.id);
-    assert.deepEqual(JSON.parse(stage.implements).sort(), ['R1', 'R2', 'R3'], 'R1 to R3, never R4');
+    // `implements` holds requirement ids (§70; objection 075): read back as keys.
+    assert.deepEqual(keysOf(fx.home, p.id, stage.implements).sort(), ['R1', 'R2', 'R3'], 'R1 to R3, never R4');
   });
 
   test('(f) a failing required check: fix records the remediation and changes nothing; accept and defer do not override it; a protected correction with fresh evidence satisfies the gate', async (t) => {
@@ -240,9 +241,14 @@ describe('M413 the conformance stage', () => {
     const files = retrofitArchitectFiles({ revision, roadmap: { ...roadmapJson({ phase1: ['R1', 'R3'], phase2: ['R2', 'R4'] }), version: 2 } });
     delete files['.surety/phases/phase-1.json'];
     delete files['.surety/phases/phase-1.md'];
-    await retrofitArchitectSession(fx, p.id, p.repo, { files });
+    // A later Architect session with phase 1's plan open is architecture-only: it raises `architecture_approval` alone
+    // (D6 §3.4, §5.2; M404 (e); objection 075), which the owner approves.
+    const arch = await retrofitArchitectSession(fx, p.id, p.repo, { files, answer: 'none' });
+    assert.ok(arch.decisions.architecture_approval, `the close raised architecture_approval (${arch.closeRes.text})`);
+    await consume(fx, p.id, arch.decisions.architecture_approval, 'approve');
     await advance(fx, ctx, () => undefined, { exits, max: 4 }).catch(() => null);
     const now = conformanceStages(fx.home, p.id)[0];
+    assert.deepEqual(roadmapRevisions(fx.home, p.id).map((r) => r.version), [1, 2], 'the roadmap revision recorded');
     assert.deepEqual(JSON.parse(now.implements).sort(), JSON.parse(before.implements).sort(), 'the conformance stage\'s delivered set unchanged');
     assert.notEqual(stageGates(fx.home, p.id).at(-1).outcome, 'satisfied', 'the gate unchanged');
     const res = await fx.engine.post(`/v1/projects/${p.id}/deployments`, { candidate: c1.id, environment: 'alpha' });

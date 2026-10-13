@@ -61,6 +61,7 @@ import {
   chooseMode,
   confirmAndApprove,
   conformanceStages,
+  keysOf,
   pump,
   releasesOf,
   retrofitArchitectSession,
@@ -164,7 +165,8 @@ describe('M408 the retrofit journey on the project lane', () => {
     const stages = stagesOfPlan(fx.home, plan.id);
     assert.equal(stages.length, 1, 'one stage');
     assert.equal(Boolean(stages[0].conformance), true, 'conformance: true');
-    assert.deepEqual([...stages[0].implements].sort(), ['R1', 'R2', 'R3'], 'the confirmed set of phase 1, not R4');
+    // `implements` holds requirement ids (§70; objection 075): read back as keys.
+    assert.deepEqual(keysOf(fx.home, p.id, stages[0].implements).sort(), ['R1', 'R2', 'R3'], 'the confirmed set of phase 1, not R4');
     assert.equal(eventsAbout(fx.home, 'plan.published', p.id).length >= 1, true, 'plan.published');
   });
 
