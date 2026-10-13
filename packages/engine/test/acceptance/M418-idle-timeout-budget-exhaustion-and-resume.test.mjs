@@ -93,7 +93,10 @@ describe('M418 idle timeout, budget exhaustion and resume', () => {
     const res = await postTurnRaw(fx, p.id, run.id, 'One more.');
     assert.ok(res.status >= 400, `no further turn admitted (→ ${res.status} ${res.text})`);
     const ended = await endedAs(fx, run.id);
-    assert.equal(ended.outcome, 'budget_exhausted', `closed budget_exhausted (${ended.outcome})`);
+    // `budget_exhausted` is the public code of reason class `budget`, not a RunOutcome (D6 A.2; the driver's ruling).
+    assert.equal(ended.reason_class, 'budget', `ended with reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
+    const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
+    assert.equal(read.body?.run?.code, 'budget_exhausted', `its public code budget_exhausted (${read.text})`);
   });
 
   test('(c) resume: a new run with parent_run, the same role, the transcript continued; (e) the old run never continued', async (t) => {

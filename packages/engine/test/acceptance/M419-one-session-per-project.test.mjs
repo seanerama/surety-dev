@@ -4,8 +4,9 @@
 //   (a) a one-shot dispatch while a session is open: held `session_busy`, no
 //       run created;
 //   (b) a second session while one is open: refused `session_busy` (409);
-//   (c) the envelope's view of the session: its turn's domain admitted at
-//       `role_memory_max`;
+//   (c) the envelope's view of the session: its turn's domain records its
+//       `memory_max` as the configured `domain_memory_max`, the value the
+//       envelope counts (the per-profile maxima are slice 37's);
 //   (d) a session while a one-shot runs: refused `session_busy` until the run
 //       ends, then admitted;
 //   (e) a session's opening racing a one-shot's claim, in both orders (the
@@ -27,7 +28,8 @@ import { ADMISSION, domainsOfRun, pauseAt, reached, release, sessionProject } fr
 import { workOf } from './harness/journey/drive.mjs';
 
 const openRaw = (fx, project, role = 'vision') => fx.engine.post(`/v1/projects/${project}/sessions`, { role });
-const ROLE_MEMORY_MAX = 4 * 1024 * 1024 * 1024;
+// A value other than the 8 GiB default, so the record shows the configuration was read.
+const DOMAIN_MEMORY_MAX = 6 * 1024 * 1024 * 1024;
 
 describe('M419 one session per project', () => {
   test('(a) a one-shot dispatch while a session is open is held session_busy; (b) a second session is refused session_busy', async (t) => {
@@ -42,15 +44,16 @@ describe('M419 one session per project', () => {
     assertRefused(await openRaw(fx, p.id, 'spec_writer'), 409, 'session_busy', 'a second session');
   });
 
-  test('(c) the session\'s turn runs in a role domain admitted at role_memory_max', async (t) => {
-    const fx = await scriptedEngine(t);
+  test('(c) the session\'s turn domain records its memory_max as the configured domain_memory_max, the value the envelope counts', async (t) => {
+    // The per-profile maxima (role_memory_max, 4 GiB by default) are slice 37's (M438, M451); the driver's ruling.
+    const fx = await scriptedEngine(t, { config: { domain_memory_max: DOMAIN_MEMORY_MAX } });
     const p = await sessionProject(fx);
     const run = await openSession(fx, p.id, 'vision');
     scriptTurns(fx, run.id, [turnThatSays('Hello.')]);
     await sayAndSettle(fx, p.id, run.id, 'Hi.');
     const [domain] = domainsOfRun(fx.home, run.id);
     assert.ok(domain, 'the turn had a domain');
-    assert.equal(domain.memory_max, ROLE_MEMORY_MAX, `admitted at role_memory_max (${JSON.stringify(domain)})`);
+    assert.equal(domain.memory_max, DOMAIN_MEMORY_MAX, `its memory_max is the configured domain_memory_max (${JSON.stringify(domain)})`);
   });
 
   test('(d) a session while a one-shot runs: refused session_busy until the run ends, then admitted', async (t) => {

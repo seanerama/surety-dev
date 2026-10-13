@@ -98,7 +98,10 @@ describe('M415 a session is a run of settled turns, in real role domains', () =>
     const res = await postTurnRaw(fx, p.id, run.id, 'More.');
     assert.ok(res.status >= 400, `no turn admitted (→ ${res.status} ${res.text})`);
     const ended = await waitFor(() => (runRow(fx.home, run.id).state === 'ended' ? runRow(fx.home, run.id) : undefined), { what: 'the session to close' });
-    assert.equal(ended.outcome, 'budget_exhausted');
+    // `budget_exhausted` is the public code of reason class `budget`, not a RunOutcome (D6 A.2; the driver's ruling).
+    assert.equal(ended.reason_class, 'budget', `ended with reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
+    const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
+    assert.equal(read.body?.run?.code, 'budget_exhausted', `its public code budget_exhausted (${read.text})`);
   });
 
   test('(g) a turn whose termination is unknown: not idle until recovery settles it unknown on its own row', async (t) => {
