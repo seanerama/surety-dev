@@ -24,20 +24,19 @@
 // domains; the test signals nothing but its own engine (the verified kill).
 
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { tick } from './harness/runs.mjs';
-import { sandboxEngine } from './harness/sandbox/lane.mjs';
+import { roleAlive, sandboxEngine } from './harness/sandbox/lane.mjs';
+import { members } from './harness/sandbox/procs.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
 import { ledgerRowsOf, openSession, postTurn, runRow, say, sayAndSettle, scriptTurns, turnResult, turnRows, turnThatSays } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { countRows, domainsOfRun, invocationsOf, postTurnRaw, sessionProject, sessionState } from './harness/session-lane.mjs';
 
 const PROVIDER_FILE = '/surety/home/.claude/projects/session.jsonl';
-const alive = (pid) => existsSync(`/proc/${pid}`);
 const recordsOfKind = (home, project, kind) => withStore(home, (db) => db.prepare('SELECT * FROM "records" WHERE "project" = ? AND "kind" = ?').all(project, kind));
 
 async function session(t, turns, { config } = {}) {
@@ -68,7 +67,21 @@ describe('M415 a session is a run of settled turns, in real role domains', () =>
     assert.ok(Math.abs(deadline - (started + 1800 * 1000)) < 120_000, `the turn's deadline is deadline_vision, 30 m (${receipts[0].deadline_at ?? row.deadline_at})`);
     // (c)
     assert.equal(sessionState(fx.home, run.id), 'open_idle');
-    assert.deepEqual(fx.scripted.launches({ run: run.id }).filter((l) => alive(l.pid)).map((l) => l.pid), [], 'no live process between turns');
+    // Read host-side (the gate on mini-hp01, 2026-10-13): a launch's `pid` is its pid inside the domain's pid
+    // namespace and is never compared with the host's. Each turn's domain is terminated and its cgroup has no
+    // member, and no member of any of them is the role program of one of this session's invocations.
+    const live = domainsOfRun(fx.home, run.id).flatMap((d) => {
+      let inside = [];
+      try {
+        inside = d.cgroup_path ? members(d.cgroup_path) : [];
+      } catch {
+        inside = [];
+      }
+      return inside.map((m) => ({ domain: d.id, status: d.status, pid: m.pid, cmdline: m.cmdline }));
+    });
+    assert.ok(domainsOfRun(fx.home, run.id).every((d) => d.status === 'terminated'), 'every turn\'s domain terminated between turns');
+    assert.deepEqual(live, [], 'no live process in any of the session\'s domains between turns');
+    assert.deepEqual(fx.scripted.launches({ run: run.id }).filter((l) => { const d = domainsOfRun(fx.home, run.id).find((x) => x.invocation === l.invocation); return d ? roleAlive(d, l) : false; }).map((l) => l.invocation), [], 'no role program of the session alive');
     await sayAndSettle(fx, p.id, run.id, 'Second.');
     // (e)
     assert.equal(ledgerRowsOf(fx.home, p.id, run.id).length, 2, 'one ledger row a turn and none for the session');
