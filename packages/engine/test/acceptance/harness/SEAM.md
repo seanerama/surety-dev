@@ -3049,87 +3049,6 @@ On `verify/m2-s11-review` from `main` at `26ce607`. One case for the one confirm
 
 *The clock.* Sections 18 and 23 allow an engine timestamp to be "up to two seconds earlier than the `now`" of a clock advance, for a host whose wall clock steps back; that step was under a second when they were written and was measured at 2.93 s every 32 s on 2026-10-03. **No case compares with that allowance any more.** The one accepted case that did, `M15-lease-supervision.test.mjs` ("a role that sends no heartbeat for longer than lease_ttl keeps its lease …"), now reads "renewed since this step of the clock" as the lease row having moved on from the `renewed_at` it held before the step, which no step of the host's clock can confuse (a renewal after a step of a third of `lease_ttl` is later than any before it by that third less the host's step). `CLOCK_SLACK_MS` (`harness/runs.mjs`) is 4000 and its one use is `advanceClockInSteps`' bounded wait for a renewal, which asserts nothing. Every other comparison of an engine timestamp with a clock `now` in the suite crosses a margin of at least five seconds (a jump of `lease_ttl + 5`; a deadline passed by five seconds; a result accepted a whole `lease_ttl` and five seconds before the jump) or a window of a third of `lease_ttl`, and holds while the host's step stays under five seconds; `../COVERAGE.md` ("M2 slice 11", "The closing pass") lists each with what it pins. A jump meant to expire a lease is `lease_ttl + 5`, never `+ 1`: with a margin smaller than the host's step the lease may not have expired on the engine's own clock (M112 (b) had `+ 1`).
 
-# M5 slice 34: the specification and the Architect's products
-
-Sections 396 to 403 were written with the slice-34 acceptance tests (2026-10-13, on `verify/m5-s34` from `verify/m5-s33` at `4866861`; slice 32's §§376 to 387 are on `main`, so this slice starts at 396). They cover rows M421 to M424, M448 and M449 of the M5 plan §3.4, under the driver's approval of the outline and rulings of 2026-10-13, with the Builder's approved names where they differ from the Verifier's. Where something is left to the tests, it is marked †.
-
-## 396. The files, the lane and what is not re-tested
-
-- **Seven kernel-lane files under manifest slice `34`:** `M421-the-specification-parsed-at-save`, `M422-the-spec-approvals-floor`, `M423-the-roles-prohibitions`, `M424-the-replan-one-shot-and-its-repairs` ((a) to (e)), `M424-a-replan-under-a-moving-baseline` ((f)), `M448-the-prospective-bundle` and `M449-the-semantic-representation-and-open-questions`. They need no domain, no unit and nothing destructive.
-- **Shared helpers:** `harness/journey/spec34.mjs` holds the specification variants, the Spec Writer session that saves each text in turn (`specSaves`), and the readers of `spec_semantics` and of an option's blockers. `harness/journey/replan34.mjs` holds the replan's scripts (held, dumping, refused on R9), the pump to a held replan (`untilReplanHolds`, built on §374's `pumpNoIdle`), and the replan's runs.
-- **Not re-tested here.** M448 (c): a checkpoint and a refused close publish nothing (M405 (e), M403 (d), M404 (c)). M448 (d)'s competing proposal: M403 (f) and M405 (f). M405 (b): a kill before the effect. M404 (e): the replan package's approved bindings for ADR and requirement text. M401's thin path.
-
-## 397. The parse at save, extended (D6 §3.2; B04; A.6)
-
-§346's findings `{code, path, subject, message}` keep their codes. Slice 34 adds the following, in the Builder's names:
-- **`spec_keys_renumbered`**, with `subject` `{key, from}`: a requirement whose statement and criterion texts are unchanged against the previous save of the session but which now carries another key (R4 → R5 gives `{key: "R5", from: "R4"}`).
-- **`spec_key_withdrawn`**: a key of the previous save that is absent from this one. It covers criteria too. The save's representation keeps the vanished requirement, marked **`withdrawn: true`** †, and never drops it.
-- **`spec_requirement_duplicate`** † (`subject.key`) and **`spec_criterion_duplicate`** † (`subject.criterion`): two `### R<n>` headings, and a criterion ID listed twice. A criterion listed in the index but absent from the subsection stays `spec_criterion_mismatch` (§346).
-- **A missing `Tier`, or a tier outside the three**, is `spec_tier_invalid` (not `spec_header_invalid`).
-
-Each finding is answered on the save and also written as the engine's transcript entry, as §344 says. The entry's text names the code or the subject. Every save writes one `spec_semantics` row.
-
-**The representation** (`spec_semantics.representation`, A.3's names): `requirements[] {key, statement, criteria[] {id, text}, sensitive_areas[], human_test, descriptive, blocked_by_questions[], withdrawn?}`, `questions[] {id, text, blocks[], phase_hint | null}`, `modules[] {name, paths[], sensitive_areas[]}`, `environments[] {name, …}`. These come from B.2's forms alone. A `Q<k>` or `R<n>.<m>` line outside §10 or §4 is not read, and no finding names it (M449 (b)).
-
-## 398. `spec_approval`'s option blockers (D6 §3.4; reading 1 strict; the Builder's names)
-
-The blockers of `approve` are strings of the form `CODE:subject…`, the form M403 reads:
-- **`spec_semantics_invalid`**, plus one **`<finding code>:<subject>`** per defect (`spec_requirement_duplicate:R2`, `spec_criterion_duplicate:R2.1`, `spec_criterion_mismatch:R2.2`, `spec_requirement_uncertain:R5`);
-- **`QUESTION_BLOCKS_PHASE_1:Q1:R1`**: an open question that blocks a requirement the index places in phase 1;
-- **`QUESTION_NO_PHASE_HINT:Q2`**: a question with no trailing `(phase n)`, whatever the phase of the requirement it blocks (D6 reading 1 and the plan, over TPL §10's wording, which the owner will align);
-- **`REQUIREMENT_NO_PHASE_HINT:R3:Q1`**: a blocked requirement whose index row has no phase;
-- **`SPEC_REPRESENTATION_UNREADABLE:<cause>`**: the save's representation is unreadable.
-
-A question that blocks only phase-2 requirements, and carries a hint (`(phase 2)`, or even `(phase 1)`), leaves `approve` open. Answering a blocked `approve` gets 409, and no `spec_revisions` row is written.
-
-## 399. The approval's effect and the change log row (the driver's rulings, 2026-10-13)
-
-- **The answer is an effect intent.** On `approve`, `spec_approval`'s answer records an effect intent of kind **`spec_approval_application`**, which is executed before the 200 is returned. One intent is recorded, and it is `done` when the answer returns. `contract/decisions.json` marks `spec_approval` `effect: true`.
-- **The engine owns TPL §11's row for the version it approves.** As part of the effect, a journaled engine commit, whose parent is the session's checkpoint, writes the row `| 1 | <YYYY-MM-DD> | First approved version | human |`. It replaces any row the role wrote for that version (the reference SPEC's `| 1 | 2026-10-12 | First approved version | Sean |`); otherwise it is appended to the table. Nothing else in the file changes.
-- **`spec_revisions.git_blob` is the blob after that commit.** `semantic_digest` is the save's, unchanged, because §11 is outside the representation.
-- **At a spec change's approval** (D6 §4.5, "appended"), the row for version n+1 is replaced or appended the same way: `| n+1 | <date> | Specification change <seq> | human |`, where `<seq>` is the request's `seq`. That `spec_revisions` row's `git_blob` is also the blob after the row's commit.
-- The rest of the effect is §346's, plus `projects.spec_evidence_generation` 1 and one `baseline.spec_approved`.
-- **The straddle.** M403 (g) compared the head's spec.md with SPEC byte for byte. It now reads SPEC with its version-1 row the engine's (`harness/journey/spec34.mjs` `assertEngineRow`); the former case is superseded and recorded in COVERAGE.
-
-## 400. The roles' prohibitions (D6 §2.5; D1 §7.3; the driver's rulings)
-
-- **A save** touching a path outside the role's paths is refused whole with **422 `diff_violation`**, its subject naming the path; nothing is committed, the permitted part included. Evasions are refused the same way: a rename out of a path the role may not touch, a deletion of one, and **a symbolic link** placed inside the role's own directory that points outside it (`.surety/spec/checks` → `../checks`).
-- **A one-shot** whose diff holds such a path ends `failed` / **`diff_violation`** (SEAM §788's one rule). This covers an Architect replan writing `.surety/spec/spec.md`, and a Spec Writer change run writing `src/`; the latter raises no `spec_change` decision, and its side ref carries no source file.
-- **An Architect result carrying a requirement's new text** in a field of its own (the test uses `requirement_changes: [{key, statement}]` †) is refused by the closed result schema: `failed` / **`invalid_result`**, with nothing integrated.
-
-## 401. The prospective bundle; the publication barriers (D6 §3.4, §5.5; B02)
-
-- **The bundle record** (`phase_plans.bundle`, the `records` row the pair's manifest names) holds the spec, by `spec_version` or by the `spec_revision` id, and the integration head, as `baseline_revision` or `head`. It also holds `blobs {path: blob}` and `versions {architecture, roadmap, phase_plan}`, the versions the publication will allocate.
-- **A first plan prepared against versions the publication will not allocate** (architecture 2, roadmap 2) makes the close fail with 422 `plan_refused` naming `PLAN_STALE_BASELINE`.
-- **A spec change approved between the pair's preview and its answer**: answering `approve` on the current previews yields a committed **409 `plan_generation_stale`**, and the plan read lists the bundle **`stale`**. No architecture, roadmap, plan, stage or stage work is written.
-- **Barriers** † (each takes `kill` or `pause`, §18's rules; the driver has asked the Builder for both): **`plan.before_publication`** fires once per publication, after the authority check and before the publication's writes; **`plan.after_publication`** fires after the publication's transaction commits, before anything later in the same effect. With a kill at either one, recovery leaves exactly one `phase_plans` row, its stages, one `stage_build` per stage, one `check_authoring` and one `plan.published`.
-
-## 402. Open questions in the plan check (D6 §5.3 clause 1; D6-P07; B04)
-
-- **`PLAN_QUESTION_OPEN`** names each blocked requirement with its question as **`R<n>:Q<k>`** in the reasons' subjects. The close is refused 422 `plan_refused` with it in `subject`.
-- **The hint-less case is reached through an approvable spec change**, since `spec_change` carries no phase-hint guard (the driver's ruling). The change adds Q2 with no hint, blocking R4, and changes R4's statement so that the impact is not empty.
-- **The resolution** is a spec change that answers Q1 into R3's statement and empties §10. The same roadmap and plan, prepared against spec version 2, then pass.
-
-## 403. The replan as M424 reads it (D6 §3.5, §5.3 clause 2, §5.6; the driver's rulings)
-
-- **Dispatch.** At phase 1's completion, `replan` runs as a run of role `architect` that is not a session, under `deadline_architect`. With the clock advanced in steps (as M15 does, the held role heartbeating) to a minute before the deadline it is still running; past the deadline it ends `timed_out` / `deadline`.
-- **The package** † (the Builder's design) holds files named, without extension, `spec`, `index`, `roadmap`, `module_map`, `plan`, `evaluation`, `findings`, `deferrals`, `objections` and `generation`; the repair's package also carries the refusal. The tests read content, not shapes:
-  - the approved spec's requirement headings and every ADR;
-  - phase 2's roadmap goal and the module map's interfaces;
-  - each phase-1 stage's `integrated_revision`;
-  - the `phase` evaluation's id;
-  - an objection a Builder filed;
-  - the plan's generation and the spec version.
-  No file carries the first Architect session's owner turn or reply.
-- **Refusal.** A plan naming R9, which the spec lacks: the run ends `failed` / `invalid_result` with `reason_text` naming `PLAN_UNKNOWN_REQUIREMENT` and R9, and a `plan_checks` row is `refused`.
-- **One automatic repair at the default policy**, its package carrying the reasons. Then a `blocker` about the replan work item offers `retry` and `cancel`, and its question names the Architect session route. An engine restart between the refusal and the repair replenishes nothing: two runs in all.
-- **A manual re-entry** (the owner's Architect session, changing nothing, closed) publishes nothing. Phase-2 proposals are listed `stale` or `refused`, never `published` or `proposed`, and the refused `plan_checks` row is kept.
-- **(f).** The project runs one role run at a time (as built until slice 37) and holds one session, so nothing runs beside a held replan. Each competing change is therefore an owner's act during the hold:
-  - approving a `spec_change` proposed during phase 1;
-  - approving an `architecture_approval` raised by a roadmap-revising Architect session after the first publication;
-  - a policy commit (`deadline_reviewer` 900).
-  The first two refuse the replan's commit on recheck (`invalid_result` naming `PLAN_STALE_BASELINE`), and the proposal is listed **`stale`**. The policy commit is a harmless move: phase 2 is published by `engine:plan_check` with `routing` `registered` and `prepared_against_revision` the moved head.
-
 ## What was run
 
 See `../COVERAGE.md`, "M2 slice 11": each file alone with `node --test` after `npm run build`, on `main` at `47b2ef7` (the slice-10 engine, which has no launcher, no scope and no sandbox), never two at once.
@@ -6465,9 +6384,14 @@ The blockers of `approve` are strings of the form `CODE:subject…`, the form M4
 
 A question that blocks only phase-2 requirements, and carries a hint (`(phase 2)`, or even `(phase 1)`), leaves `approve` open. Answering a blocked `approve` gets 409, and no `spec_revisions` row is written.
 
-## 399. The approval's effect and the change log row (the driver's ruling, 2026-10-13)
+## 399. The approval's effect and the change log row (the driver's rulings, 2026-10-13)
 
-On `approve`, as part of the effect, the engine appends TPL §11's row for the version (version, date, change, approved by the human) to `.surety/spec/spec.md` in a journaled engine commit. That commit's parent is the session's checkpoint, and it changes nothing else in the file. **`spec_revisions.git_blob` is the blob after that commit**, and `semantic_digest` is the save's, unchanged, because §11 is outside the representation. The same applies at a `spec_change` approval (D6 §4.5, "appended"). The rest of the effect is §346's, plus `projects.spec_evidence_generation` 1 and one `baseline.spec_approved`.
+- **The answer is an effect intent.** On `approve`, `spec_approval`'s answer records an effect intent of kind **`spec_approval_application`**, which is executed before the 200 is returned. One intent is recorded, and it is `done` when the answer returns. `contract/decisions.json` marks `spec_approval` `effect: true`.
+- **The engine owns TPL §11's row for the version it approves.** As part of the effect, a journaled engine commit, whose parent is the session's checkpoint, writes the row `| 1 | <YYYY-MM-DD> | First approved version | human |`. It replaces any row the role wrote for that version (the reference SPEC's `| 1 | 2026-10-12 | First approved version | Sean |`). Where there is no such row, it is appended to the §11 table; where there is no §11, the engine adds one holding the row. Nothing else in the file changes.
+- **`spec_revisions.git_blob` is the blob after that commit.** `semantic_digest` is the save's, unchanged, because §11 is outside the representation.
+- **At a spec change's approval** (D6 §4.5, "appended"), the row for version n+1 is replaced or appended the same way: `| n+1 | <date> | Specification change <seq> | human |`, where `<seq>` is the request's `seq`. That `spec_revisions` row's `git_blob` is also the blob after the row's commit.
+- The rest of the effect is §346's, plus `projects.spec_evidence_generation` 1 and one `baseline.spec_approved`.
+- **The straddle.** M403 (g) compared the head's spec.md with SPEC byte for byte. It now reads SPEC with its version-1 row the engine's (`harness/journey/spec34.mjs` `assertEngineRow`); the former case is superseded and recorded in COVERAGE.
 
 ## 400. The roles' prohibitions (D6 §2.5; D1 §7.3; the driver's rulings)
 
@@ -6504,9 +6428,14 @@ On `approve`, as part of the effect, the engine appends TPL §11's row for the v
 - **A manual re-entry** (the owner's Architect session, changing nothing, closed) publishes nothing. Phase-2 proposals are listed `stale` or `refused`, never `published` or `proposed`, and the refused `plan_checks` row is kept.
 - **(f).** The project runs one role run at a time (as built until slice 37) and holds one session, so nothing runs beside a held replan. Each competing change is therefore an owner's act during the hold:
   - approving a `spec_change` proposed during phase 1;
-  - approving an `architecture_approval` raised by a roadmap-revising Architect session after the first publication;
+  - approving an `architecture_approval` raised by a roadmap-revising Architect session opened in the quiet moment after phase 1's last integration (an earlier one is invalidated by phase 1's later commits, with no next generation);
   - a policy commit (`deadline_reviewer` 900).
   The first two refuse the replan's commit on recheck (`invalid_result` naming `PLAN_STALE_BASELINE`), and the proposal is listed **`stale`**. The policy commit is a harmless move: phase 2 is published by `engine:plan_check` with `routing` `registered` and `prepared_against_revision` the moved head.
+
+## 404. Objections 080 and 081, upheld (the driver, 2026-10-13)
+
+- **080 (M422 (b)).** `requirements.criteria` keeps the criterion IDs that D3's index, the coverage primitive and the gates read. The criteria with their text are **`requirements.criteria_text`** (`[{id, text}]`, migration 0023), served by `GET …/spec` as `criteria`. An environment with no adapter carries **`adapter = 'none'`**, because the column has been NOT NULL since M4's 0005. M422 (b) reads both forms.
+- **081 (`M401-a-spec-change-application-is-done-once`).** When one pump round answers phase 1's check correction and CR-1 back to back, the protected application can finish first. CR-1's first `spec_change_application` intent is then invalidated `EFFECT_PRECONDITION_CHANGED` (D1 §10.5), and the re-raised generation's intent is the one applied. The case reads **the applied intent**: exactly one is `done`, any other is `invalidated`, and the applied one has `intent.done` once and `intent.executing` once, unchanged by later ticks.
 
 ## What was run
 
