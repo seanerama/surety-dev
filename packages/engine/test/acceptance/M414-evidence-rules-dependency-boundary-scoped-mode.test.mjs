@@ -35,6 +35,7 @@ import { ADOPTED, ADOPTED_SUM_TEST, DEFECT_STAGE, REQUIREMENTS, authoringFiles, 
 import { SERVER_MJS_FIXED, SUM_TEST, refOid } from './harness/retrofit/repo.mjs';
 
 const json = (t) => (typeof t === 'string' ? JSON.parse(t) : t);
+const phase2Both = (roadmap) => ({ ...roadmap, phases: roadmap.phases.map((ph) => (ph.number === 2 ? { ...ph, modules: ['lib', 'service'] } : ph)) });
 const PRIOR_RESULT = { 'ci/last-run.log': 'ok 1 - sum adds two numbers\nok 2 - the service sums\n# pass 2\n# fail 0\n' };
 
 describe('M414 the evidence rules, the dependency boundary and scoped mode', () => {
@@ -110,7 +111,8 @@ describe('M414 the evidence rules, the dependency boundary and scoped mode', () 
       policy: { alpha_deploy: 'manual' },
       spec: retrofitSpecText({ requirements: descriptive }),
       answers: { R2: 'confirm', R3: 'confirm', R4: 'defect' },
-      architect: { roadmap: roadmapJson({ phase1: ['R2', 'R3'], phase2: ['R1', 'R4'] }), stages: [conformanceStage({ implements: ['R2', 'R3'], modules: ['service'] })] },
+      // Phase 2 touches `lib` (R1) and `service` (R4): its roadmap phase names both modules (objection 075).
+      architect: { roadmap: phase2Both(roadmapJson({ phase1: ['R2', 'R3'], phase2: ['R1', 'R4'] })), stages: [conformanceStage({ implements: ['R2', 'R3'], modules: ['service'] })] },
     }).catch((err) => ({ err }));
     assert.ok(!J.err, `the fixture is live: the scoped conformance plan is published (${J.err?.message})`);
     const p = J.p.id;
@@ -119,13 +121,14 @@ describe('M414 the evidence rules, the dependency boundary and scoped mode', () 
     assert.ok(!obligationsOf(fx.home, p).some((o) => (o.criteria ?? []).some((c) => c.startsWith('R1'))), 'in no obligation');
     // The replans of phase 2: touching `lib` without the request, then with it, then (criteria approved) again.
     const stage = (criteria) => ({ ...DEFECT_STAGE, goal: 'describe and refuse', tasks: ['answer 400 on a non-number'], modules: ['lib', 'service'], implements: ['R1', 'R4'], validation: { ...DEFECT_STAGE.validation, criteria } });
-    const touch = ({ requests = false, criteria = ['R4.1'] } = {}) => ({
+    // The replans after the owner's approval are prepared against spec version 2 (D6 §5.3 clause 2; objection 075).
+    const touch = ({ requests = false, criteria = ['R4.1'], spec_version = 1 } = {}) => ({
       steps: [
-        { write: { path: '.surety/phases/phase-2.json', content: `${JSON.stringify({ ...phasePlan(2, { revision: '__HEAD__' }), stages: [stage(criteria)] }, null, 2)}\n`, substitute_head: true } },
+        { write: { path: '.surety/phases/phase-2.json', content: `${JSON.stringify({ ...phasePlan(2, { revision: '__HEAD__', spec_version }), stages: [stage(criteria)] }, null, 2)}\n`, substitute_head: true } },
         step.result({ status: 'completed', summary: 'phase 2 planned', plan: 'phase-2', conformance: 'within_baseline', ...(requests ? { spec_change_requests: [{ keys: ['R1'], text: 'Give R1 its criterion R1.1: sum(2, 3) returns 5.' }] } : {}) }),
       ],
     });
-    fx.scripted.kindScript('replan', [touch(), touch({ requests: true }), touch({ criteria: ['R1.1', 'R4.1'] }), touch({ criteria: ['R1.1', 'R4.1'] })]);
+    fx.scripted.kindScript('replan', [touch(), touch({ requests: true }), touch({ criteria: ['R1.1', 'R4.1'], spec_version: 2 }), touch({ criteria: ['R1.1', 'R4.1'], spec_version: 2 })]);
     const withCriteria = REQUIREMENTS.map((r) => (r.key === 'R1' ? { ...r, phase: 2 } : r));
     fx.scripted.kindScript('spec_change', roleThat([step.write('.surety/spec/spec.md', retrofitSpecText({ version: 2, requirements: withCriteria, changeLog: [{ version: 2, date: '2026-10-12', change: 'R1 criteria', by: 'Sean' }] }))], { changes: [{ key: 'R1', kind: 'criteria_added', reason: 'phase 2 touches lib' }] }));
     const done = await completeConformance(fx, J);
