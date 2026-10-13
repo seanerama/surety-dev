@@ -128,10 +128,10 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
 // highest); null where the model has no price (never 0). An estimate, never
 // a maximum: cache reads and the overshoot to each canary's deadline are
 // outside it (D2 §4.2).
-export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number): { usd: number; price_version: string } | null {
+export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number, invocations = 3): { usd: number; price_version: string } | null {
   const prices = provider === 'claude' ? CLAUDE_PRICE_TABLE.models[model] : undefined;
   if (!prices) return null;
-  return { usd: money((3 * runLimitTokens * prices.out) / 1_000_000), price_version: CLAUDE_PRICE_TABLE.version };
+  return { usd: money((invocations * runLimitTokens * prices.out) / 1_000_000), price_version: CLAUDE_PRICE_TABLE.version };
 }
 
 // The provider's normalization; the scripted one for every provider without

@@ -19,7 +19,7 @@ import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.j
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import { engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
-import { type Resolution, resolveBackend } from '../store/transitions/trust.js';
+import { type AttemptRow, type Resolution, getAttempt, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
@@ -199,7 +199,13 @@ export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number;
 
 // ---- open (D6 §2.1, §2.7; D1 §15.2) -------------------------------------------------------
 
-export function openSession(tx: Tx, args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null }): { run: Record<string, unknown> } {
+// `attempt`: the continuation canary's session (D6 §2.6; D2 §7.2, K10),
+// dispatched under that running attempt's authority alone, on its binary,
+// template and model; no project backend key and no entry is consulted.
+export function openSession(
+  tx: Tx,
+  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null },
+): { run: Record<string, unknown> } {
   const p = tx.db.prepare('SELECT "id", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; paused: number; registration_state: string } | undefined;
   if (!p) throw notFound('project', args.project);
   if (typeof args.role !== 'string' || !(SESSION_ROLES as readonly string[]).includes(args.role)) {
@@ -221,7 +227,13 @@ export function openSession(tx: Tx, args: { project: string; role: unknown; mode
   const role = args.role as SessionRole;
   // The backend first (D6 §2.6), then the Architect's approved
   // specification (D6 §3.3, §3.5).
-  const resolved = sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
+  const attempt = args.attempt ? getAttempt(tx.db, args.attempt) : undefined;
+  if (args.attempt && (!attempt || attempt.status !== 'running' || attempt.fixture_project !== p.id)) {
+    throw illegal('a canary session of an attempt that is not running on this project', { project: p.id, attempt: args.attempt });
+  }
+  const resolved: Resolution = attempt
+    ? { kind: 'scripted', backend: attempt.backend, version: attempt.version, model: attempt.model }
+    : sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   if (role === 'architect' && !tx.db.prepare('SELECT 1 FROM "spec_revisions" WHERE "project" = ?').get(p.id)) {
     throw illegal('an Architect session on a project with no approved specification', { project: p.id, role });
@@ -232,17 +244,17 @@ export function openSession(tx: Tx, args: { project: string; role: unknown; mode
   const policy = projectPolicy(tx.db, p.id);
   const options = projectEffective(tx.db, p.id) as Record<string, unknown>;
   const modelKey = `model_${role}`;
-  const model = typeof args.model === 'string' ? args.model : typeof options[modelKey] === 'string' ? (options[modelKey] as string) : resolved.model;
+  const model = attempt ? attempt.model : typeof args.model === 'string' ? args.model : typeof options[modelKey] === 'string' ? (options[modelKey] as string) : resolved.model;
   const run = tx.newId('run_');
   const seq = nextSeq(tx, p.id, 'runs');
   const idle = addSeconds(tx.at, policy.session_idle_timeout!);
   tx.db
     .prepare(
       `INSERT INTO "runs" ("id", "created_at", "project", "seq", "work_item", "role", "kind", "state", "session_state", "backend", "backend_version",
-         "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined", "chain", "idle_generation", "turn_count", "current_base")
-       VALUES (?, ?, ?, ?, NULL, ?, 'session', 'claimed', 'allocated', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
+         "model_requested", "base_revision", "deadline_at", "parent_run", "quarantined", "chain", "idle_generation", "turn_count", "current_base", "qualification_attempt")
+       VALUES (?, ?, ?, ?, NULL, ?, 'session', 'claimed', 'allocated', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
     )
-    .run(run, tx.at, p.id, seq, role, resolved.backend, resolved.version, model, head.expected_oid, idle, args.parent ?? null, head.expected_oid);
+    .run(run, tx.at, p.id, seq, role, resolved.backend, resolved.version, model, head.expected_oid, idle, args.parent ?? null, head.expected_oid, attempt?.id ?? null);
   const subject = { project: p.id, run };
   tx.emit('run.created', subject, { seq, role, kind: 'session', backend: resolved.backend, base_revision: head.expected_oid, parent_run: args.parent ?? null });
   tx.emit('run.claimed', subject, {});
@@ -253,9 +265,9 @@ export function openSession(tx: Tx, args: { project: string; role: unknown; mode
        VALUES (?, ?, 'run', ?, ?, 1, ?, ?, ?, 0, 0)`,
     )
     .run(lease, tx.at, run, args.incarnation, tx.at, tx.at, addSeconds(tx.at, engineSettings().lease_ttl));
-  const authMode = resolved.kind === 'entry' ? resolved.entry.auth_mode : 'api_key';
+  const authMode = attempt ? attempt.auth_mode : resolved.kind === 'entry' ? resolved.entry.auth_mode : 'api_key';
   const keyRef = credentialRef(resolved.backend, authMode);
-  const real = resolved.kind === 'entry';
+  const real = attempt ? attempt.backend !== 'scripted' : resolved.kind === 'entry';
   const grant = tx.newId('grant_');
   tx.db
     .prepare(
@@ -331,7 +343,8 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   }
   // Every next turn revalidates the backend and the cumulative budget (D6
   // §2.4; D1 §13.3).
-  const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
+  const canaryOf = (run as SessionRow & { qualification_attempt?: string | null }).qualification_attempt ?? null;
+  const resolved: Resolution = canaryOf ? { kind: 'scripted', backend: run.backend, version: run.backend_version, model: run.model_requested } : sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
   const exhausted = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true });
   if (exhausted.length > 0) {
@@ -385,9 +398,9 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   tx.db
     .prepare(
       `INSERT INTO "invocation_receipts" ("id", "created_at", "project", "run", "turn", "provider", "model_requested", "grant", "budget_snapshot", "trust_entry", "qualification_attempt", "provider_session_id")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(invocation, tx.at, run.project, run.id, turnId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), resolved.kind === 'entry' ? resolved.entry.id : null, session);
+    .run(invocation, tx.at, run.project, run.id, turnId, run.backend, run.model_requested, run.grant, JSON.stringify(budget), resolved.kind === 'entry' ? resolved.entry.id : null, canaryOf, session);
   tx.emit('invocation.receipt', { project: run.project, run: run.id, invocation }, { provider: run.backend, turn, ...(session ? { provider_session_id: session } : {}) });
   const cgroupPath = args.scope ? `${args.scope}/${domain}` : null;
   tx.db
@@ -410,6 +423,7 @@ export function pendingTurns(db: Tx['db'], project: string | null): { run: strin
       `SELECT r."id" AS "run", r."project", d."invocation", p."dev_repo_path" AS "repo", p."integration_branch" AS "branch"
        FROM "runs" r JOIN "execution_domains" d ON d."run" = r."id" AND d."status" = 'allocated' JOIN "projects" p ON p."id" = r."project"
        WHERE r."kind" = 'session' AND r."session_state" = 'turn_running' AND r."state" IN ('claimed', 'executing') AND (? IS NULL OR r."project" = ?)
+         AND r."qualification_attempt" IS NULL
          AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = d."invocation")
        ORDER BY r."created_at"`,
     )
@@ -426,6 +440,34 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
   if (!d || d.status !== 'allocated') return null;
   const lease = tx.db.prepare(`SELECT "generation", "renewed_at" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { generation: number; renewed_at: string } | undefined;
   if (!lease) return null;
+  // The continuation canary's turn: the attempt's binary and model, under
+  // the attempt's authority alone (D2 §7.2, K10).
+  const canaryOf = (run as SessionRow & { qualification_attempt?: string | null }).qualification_attempt ?? null;
+  if (canaryOf) {
+    const a = getAttempt(tx.db, canaryOf);
+    if (!a || a.status !== 'running') return null;
+    return {
+      run: run.id,
+      project: run.project,
+      work_item: null,
+      work_kind: 'session',
+      role: run.role,
+      invocation: args.invocation,
+      domain: turn.domain,
+      generation: lease.generation,
+      deadline_at: run.deadline_at,
+      base_revision: run.base_revision,
+      lease_renewed_at: lease.renewed_at,
+      cgroup_path: d.cgroup_path,
+      profile: 'role',
+      backend: a.backend,
+      trust_entry: null,
+      entry: attemptEntry(a),
+      attempt: { id: a.id, kind: 'continuation' },
+      refusal: null,
+      session: { turn: turn.number, role: run.role as SessionRole, idle_generation: run.idle_generation },
+    };
+  }
   const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
   // Refused since the admission: the claim carries the refusal, and the
   // launcher refuses the turn before any process (D2 §4.1).
@@ -477,7 +519,8 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
             binary_path: resolved.entry.binary_path,
             binary_sha256: resolved.entry.binary_sha256,
             help_sha256: resolved.entry.help_sha256,
-            model: resolved.entry.model,
+            // The role's model (the driver's ruling (c), 2026-10-13).
+            model: run.model_requested,
             key_ref: keyRef,
             egress_hosts: (() => {
               try {
@@ -491,6 +534,27 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
     attempt: null,
     refusal: null,
     session: { turn: turn.number, role: run.role as SessionRole, idle_generation: run.idle_generation },
+  };
+}
+
+// What the choke point launches for a canary of `a` (as runs.ts's claim of a
+// one-shot canary): the attempt's binary, mode, model and candidate list.
+function attemptEntry(a: AttemptRow): NonNullable<TurnClaim['entry']> {
+  return {
+    backend: a.backend,
+    auth_mode: a.auth_mode,
+    binary_path: a.binary_path,
+    binary_sha256: a.binary_sha256,
+    help_sha256: a.help_sha256,
+    model: a.model,
+    key_ref: credentialRef(a.backend, a.auth_mode),
+    egress_hosts: (() => {
+      try {
+        return JSON.parse(a.candidate_egress) as string[];
+      } catch {
+        return [];
+      }
+    })(),
   };
 }
 
@@ -1033,7 +1097,9 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
 // clock, which the harness controls (SEAM.md §389).
 export function dueCloses(db: Tx['db'], at: string): { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] {
   const idle = db
-    .prepare(`SELECT "id", "project", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') ORDER BY "created_at"`)
+    .prepare(
+      `SELECT "id", "project", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') AND "qualification_attempt" IS NULL ORDER BY "created_at"`,
+    )
     .all() as { id: string; project: string; deadline_at: string }[];
   const out: { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] = [];
   for (const r of idle) {

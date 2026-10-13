@@ -201,6 +201,8 @@ import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
   attemptUsage,
+  canarySession,
+  continuationFacts,
   attemptsDue,
   canaryItem,
   canaryRunFacts,
@@ -480,6 +482,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'records.paths': (d, a: { project: string; ids: string[] }) => recordPaths(d, a),
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
+  'qualification.continuation_facts': (d, a: { run: string }) => continuationFacts(d, a),
+  // D6 §2.6 (SEAM.md §393): the entry a session qualification names.
+  'trust.entry_row': (d, a: { entry: string }) =>
+    (d.prepare('SELECT "id", "status", "backend", "binary_path", "auth_mode", "egress_hosts", "session_qualified" FROM "trust_entries" WHERE "id" = ?').get(a.entry) as Record<string, unknown> | undefined) ?? null,
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
   'boundary.domains': (d) => boundaryDomains(d),
   'boundary.terminated_ids': (d, a: { ids: string[] }) =>
@@ -670,6 +676,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'qualify.artifact': (tx, a) => qualificationArtifact(tx, a),
   'qualify.intend': (tx, a) => intendQualificationOp(tx, a),
   'qualify.close_launch': (tx, a) => closeQualificationLaunch(tx, a),
+  // D6 §2.6 (M5 slice 33): the continuation canary's session.
+  'qualification.canary_session': (tx, a) => canarySession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'qualify.reconciled': (tx, a) => qualificationReconciled(tx, a),
   'qualify.end_op': (tx, a) => endQualificationOp(tx, a),
   'qualify.end': (tx, a) => endQualification(tx, a),

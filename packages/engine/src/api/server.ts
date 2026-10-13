@@ -212,7 +212,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'prepared',
         name: 'trust.qualify',
         prepare: async (b) => {
-          const request = await prepareQualify(b, { fixtureProject: engineFixtureProject, home: runtime().home });
+          const request = await prepareQualify(b, {
+            fixtureProject: engineFixtureProject,
+            home: runtime().home,
+            entryOf: (id) => store().call('read', { name: 'trust.entry_row', args: { entry: id } }),
+          });
           // The provider-side cap held with the key's reference, shown on
           // the attempt as configured, never as engine enforcement (Q2).
           const cap = heldProviderCaps()[credentialRef(request.backend, request.auth_mode)];

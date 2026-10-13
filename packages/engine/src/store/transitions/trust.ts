@@ -67,6 +67,9 @@ export interface AttemptRow {
   unexpected_contacts: string;
   trust_entry: string | null;
   invalidated_reason: string | null;
+  // M5 slice 33 (D6 §2.6; migration 0026).
+  mode: 'one_shot_headless' | 'session_headless';
+  session_entry: string | null;
 }
 
 export interface Boundary {
@@ -329,6 +332,10 @@ export interface AttemptInput {
   candidate_egress: string[];
   canary_deadlines: Record<string, number>;
   spend: Record<string, unknown>;
+  // D6 §2.6: `session_headless` adds the continuation canary; with
+  // `session_entry` it runs alone and qualifies that entry for sessions.
+  mode?: 'one_shot_headless' | 'session_headless';
+  session_entry?: string | null;
 }
 
 // An attempt is written proposed, binding everything before any launch; the
@@ -340,8 +347,8 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
   tx.db
     .prepare(
       `INSERT INTO "qualification_attempts" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "template", "template_version",
-         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
+         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "mode", "session_entry")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)`,
     )
     .run(
       id,
@@ -361,6 +368,8 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
       JSON.stringify(args.candidate_egress),
       JSON.stringify(args.canary_deadlines),
       JSON.stringify(args.spend),
+      args.mode ?? 'one_shot_headless',
+      args.session_entry ?? null,
     );
   tx.emit('qualification.proposed', { project: args.fixture_project, qualification_attempt: id }, { ...label, backend: args.backend, version: args.version, model: args.model });
   return getAttempt(tx.db, id)!;

@@ -23,9 +23,13 @@ import { resolveInstallation } from './fixture.js';
 import { pinBinary } from './pin.js';
 
 const FIELDS = ['backend', 'mode', 'model', 'auth_mode', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines'];
+// D6 §2.6 (SEAM.md §393): an active entry's session qualification, the
+// continuation canary alone; the rest is the entry's.
+const ENTRY_FIELDS = ['entry', 'mode', 'model', 'fixture_project', 'canary_deadlines'];
 
-// The canaries' default deadlines, in seconds (D2 §7.2: a deadline per canary).
-export const CANARY_DEADLINES = { positive: 900, cancellation: 600, containment: 900 };
+// The canaries' default deadlines, in seconds (D2 §7.2: a deadline per canary;
+// D6 §2.6: the continuation canary's covers both its turns).
+export const CANARY_DEADLINES = { positive: 900, cancellation: 600, containment: 900, continuation: 1800 };
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `${field} ${why}.`, 'Correct the request; nothing was written.', { field });
 
@@ -42,13 +46,18 @@ export interface QualifyRequest {
   template_version: string;
   candidate_egress: string[];
   fixture_project: string;
-  canary_deadlines: { positive: number; cancellation: number; containment: number };
+  canary_deadlines: { positive: number; cancellation: number; containment: number; continuation: number };
+  // D6 §2.6 (M5 slice 33).
+  mode_requested: 'one_shot_headless' | 'session_headless';
+  session_entry: string | null;
 }
 
 // Outside the test mode: the engine's own fixture project, made and
 // registered on first use (trust/fixture.ts; api/server.ts).
 export interface QualifyContext {
   fixtureProject: () => Promise<string>;
+  // The active entry a session qualification names (D6 §2.6), as the store holds it.
+  entryOf?: (id: string) => Promise<{ id: string; status: string; backend: string; binary_path: string; auth_mode: string; egress_hosts: string; session_qualified: number } | null>;
   // The engine home, where a production attempt's binary is pinned.
   home: string;
 }
@@ -59,6 +68,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   // In the engine's test mode only: a stand-in binary, a fixture project of
   // the test's, and the scripted backend (SEAM.md §148).
   const testMode = seamQualifyMode();
+  if (body.entry !== undefined) return prepareSessionQualify(body, ctx, testMode);
   const allowed = testMode ? FIELDS : FIELDS.filter((f) => f !== 'binary' && f !== 'fixture_project' && f !== 'version');
   for (const k of Object.keys(body)) if (!allowed.includes(k)) throw new Refusal(400, 'unknown_field', `${k} is not a field of a qualification request.`, 'Remove it.', { field: k });
   const backend = body.backend;
@@ -69,8 +79,11 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   if (typeof backend !== 'string' || !(backend in TEMPLATES || (testMode && backend === 'scripted'))) throw invalid('backend', `must be one of ${Object.keys(TEMPLATES).join(', ')}`);
   const template = templateOf(backend, { scripted: testMode, authMode });
   if (!template) throw invalid('auth_mode', `is not a mode ${backend} can be qualified in`);
+  // `session_headless` (D6 §2.6): D2's three canaries and the continuation
+  // canary; the entry is written for one-shot headless runs, qualified for
+  // sessions by the fourth. No provider continuation is qualified.
   const mode = body.mode ?? 'one_shot_headless';
-  if (mode !== 'one_shot_headless') throw invalid('mode', 'must be one_shot_headless: only it can be qualified in M2 (D2 §1.8)');
+  if (mode !== 'one_shot_headless' && mode !== 'session_headless') throw invalid('mode', 'must be one_shot_headless or session_headless');
   if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
   const list = body.candidate_egress ?? [];
   if (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0)) throw invalid('candidate_egress', 'must be a list of host names');
@@ -100,7 +113,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     const d = body.canary_deadlines;
     if (typeof d !== 'object' || d === null || Array.isArray(d)) throw invalid('canary_deadlines', 'must be an object');
     for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
-      if (!(k in deadlines) || !Number.isSafeInteger(v) || (v as number) < 1) throw invalid('canary_deadlines', 'must give positive whole seconds for positive, cancellation and containment');
+      if (!(k in deadlines) || !Number.isSafeInteger(v) || (v as number) < 1) throw invalid('canary_deadlines', 'must give positive whole seconds for positive, cancellation, containment and continuation');
       deadlines[k as keyof typeof deadlines] = v as number;
     }
   }
@@ -114,7 +127,9 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   const statics = await staticChecks(backend, path, testMode || ctx === null ? null : ctx.home);
   return {
     backend,
-    mode,
+    mode: 'one_shot_headless',
+    mode_requested: mode,
+    session_entry: null,
     model: body.model,
     auth_mode: authMode,
     binary_path: statics.path,
@@ -124,6 +139,66 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     template: template.text,
     template_version: template.version,
     candidate_egress: [...new Set(list.map((h) => canonicalHost(String(h))))],
+    fixture_project: fixtureProject,
+    canary_deadlines: deadlines,
+  };
+}
+
+// An active entry's session qualification (D6 §2.6; SEAM.md §393): the
+// continuation canary alone, on the entry's own binary (checked again now),
+// template, authentication mode and egress list, the model named in the
+// request. Nothing is launched before its qualification_approval.
+async function prepareSessionQualify(body: Record<string, unknown>, ctx: QualifyContext | null, testMode: boolean): Promise<QualifyRequest> {
+  const allowed = testMode ? ENTRY_FIELDS : ENTRY_FIELDS.filter((f) => f !== 'fixture_project');
+  for (const k of Object.keys(body)) if (!allowed.includes(k)) throw new Refusal(400, 'unknown_field', `${k} is not a field of a session qualification request.`, 'Send entry, mode and model.', { field: k });
+  if (body.mode !== 'session_headless') throw invalid('mode', 'must be session_headless for an entry\'s session qualification');
+  if (typeof body.entry !== 'string' || body.entry === '') throw invalid('entry', 'must name an active trust entry');
+  if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
+  const entry = ctx?.entryOf ? await ctx.entryOf(body.entry) : null;
+  if (entry === null) throw new Refusal(404, 'not_found', `No trust entry ${body.entry} exists.`, 'Name an active entry.', { entry: body.entry });
+  if (entry.status !== 'active') throw new Refusal(409, 'backend_refused', `Trust entry ${entry.id} is ${entry.status}, not active: only an active entry is qualified for sessions.`, 'Activate the entry first.', { entry: entry.id, status: entry.status });
+  if (entry.session_qualified === 1) throw new Refusal(409, 'illegal_transition', `Trust entry ${entry.id} is already qualified for sessions.`, 'Nothing to do.', { entry: entry.id });
+  let fixtureProject: string;
+  if (testMode) {
+    if (typeof body.fixture_project !== 'string' || body.fixture_project === '') throw invalid('fixture_project', 'must name the project the canary runs on');
+    fixtureProject = body.fixture_project;
+  } else {
+    if (ctx === null) throw new Refusal(500, 'store_error', 'The engine could not make its fixture project.', 'Start the engine again.', {});
+    fixtureProject = await ctx.fixtureProject();
+  }
+  const template = templateOf(entry.backend, { scripted: testMode, authMode: entry.auth_mode });
+  if (!template) throw invalid('entry', `names a backend and mode (${entry.backend}, ${entry.auth_mode}) this engine has no template for`);
+  const deadlines = { ...CANARY_DEADLINES };
+  if (body.canary_deadlines !== undefined) {
+    const d = body.canary_deadlines;
+    if (typeof d !== 'object' || d === null || Array.isArray(d)) throw invalid('canary_deadlines', 'must be an object');
+    for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+      if (k !== 'continuation' || !Number.isSafeInteger(v) || (v as number) < 1) throw invalid('canary_deadlines', 'must give positive whole seconds for continuation');
+      deadlines.continuation = v as number;
+    }
+  }
+  // The entry's own copy, as qualified: its hash and help checked again.
+  const statics = await staticChecks(entry.backend, entry.binary_path, null);
+  let egress: string[] = [];
+  try {
+    egress = JSON.parse(entry.egress_hosts) as string[];
+  } catch {
+    egress = [];
+  }
+  return {
+    backend: entry.backend,
+    mode: 'one_shot_headless',
+    mode_requested: 'session_headless',
+    session_entry: entry.id,
+    model: body.model,
+    auth_mode: entry.auth_mode,
+    binary_path: statics.path,
+    binary_sha256: statics.sha256,
+    help_sha256: statics.help,
+    version: statics.version,
+    template: template.text,
+    template_version: template.version,
+    candidate_egress: egress,
     fixture_project: fixtureProject,
     canary_deadlines: deadlines,
   };

@@ -86,3 +86,35 @@ WHEN NEW.id IS NOT OLD.id OR NEW.run IS NOT OLD.run OR NEW.project IS NOT OLD.pr
 BEGIN SELECT RAISE(ABORT, 'session_transcripts is append-only'); END;
 CREATE TRIGGER session_transcripts_no_delete BEFORE DELETE ON session_transcripts
 BEGIN SELECT RAISE(ABORT, 'session_transcripts is append-only'); END;
+
+-- ---- the continuation canary and session qualification (D6 §2.6; D2 §7.2; D6-S09) ---------
+-- An attempt's mode: `one_shot_headless`, D2's three canaries; or
+-- `session_headless`, which adds the continuation canary (and runs it alone
+-- for `session_entry`, an active entry it qualifies for sessions).
+ALTER TABLE qualification_attempts ADD COLUMN mode TEXT NOT NULL DEFAULT 'one_shot_headless' CHECK (mode IN ('one_shot_headless', 'session_headless'));
+ALTER TABLE qualification_attempts ADD COLUMN session_entry TEXT REFERENCES trust_entries(id);
+-- The continuation canary's session run, dispatched under its attempt's
+-- authority alone (K10): its turns' receipts name the attempt, no entry.
+ALTER TABLE runs ADD COLUMN qualification_attempt TEXT REFERENCES qualification_attempts(id);
+-- `session_qualified` is no longer frozen with what one-shot qualification
+-- established: it becomes true once, from a succeeded session attempt for
+-- that entry whose continuation canary passed, and is never withdrawn in
+-- place (a changed dependency revokes the entry, D2 §7.3).
+DROP TRIGGER trust_entries_qualified_fields_frozen;
+CREATE TRIGGER trust_entries_qualified_fields_frozen BEFORE UPDATE OF
+  backend, version, binary_path, binary_sha256, help_sha256, mode, template, template_version, model, auth_mode, capabilities,
+  host_id, host_qualification, isolation, boundary, profile_fingerprint, egress_hosts, usage_granularity, usage_semantics,
+  cost_reporting, enforceable_boundaries, result_channel, provider_files, term_to_exit_ms,
+  qualification_attempt, evidence, evidence_fingerprint ON trust_entries
+BEGIN SELECT RAISE(ABORT, 'trust_entries: what was qualified does not change; a change is a new attempt'); END;
+CREATE TRIGGER trust_entries_session_qualified BEFORE UPDATE OF session_qualified ON trust_entries
+WHEN NEW.session_qualified IS NOT OLD.session_qualified
+BEGIN
+  SELECT RAISE(ABORT, 'trust_entries: session_qualified is never withdrawn in place; the entry is revoked')
+  WHERE OLD.session_qualified = 1;
+  SELECT RAISE(ABORT, 'trust_entries: session_qualified only from a succeeded session attempt for this entry whose continuation canary passed')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM qualification_attempts a
+    WHERE a.session_entry = NEW.id AND a.mode = 'session_headless' AND a.status = 'succeeded'
+      AND EXISTS (SELECT 1 FROM json_each(a.canaries) c WHERE json_extract(c.value, '$.kind') = 'continuation' AND json_extract(c.value, '$.passed') = 1));
+END;

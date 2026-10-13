@@ -29,7 +29,8 @@ import {
   claudeModelFallback,
   claudeProviderError,
 } from '../invoke/adapters/claude.js';
-import { CANARY_BARRIER, CANARY_KINDS, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_RUN_BY, canaryEdit, canaryResult } from './canaries.js';
+import { CANARY_BARRIER, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_RUN_BY, canaryEdit, canaryKindsOf, canaryResult, continuationMessage, continuationToken } from './canaries.js';
+import { sameModel } from '../invoke/adapters/claude.js';
 import { ACTION_HARDENING, actionHardened } from '../invoke/probes/program.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
@@ -113,13 +114,24 @@ export class QualificationDriver {
     const unexpected: { destination: string; refused_at: string }[] = [];
     // The candidate destinations the canaries were let through to.
     const used = new Set<string>();
-    for (const kind of CANARY_KINDS) {
+    for (const kind of canaryKindsOf(a)) {
       if (canaries.length > 0) {
         const between = await this.drift(attempt);
         if (between !== null) {
           await this.rt.engine('qualification.invalidate', { attempt, reason: between });
           return;
         }
+      }
+      // The continuation canary (D6 §2.6): a session of two turns.
+      if (kind === 'continuation') {
+        const entry = await this.continuation(a, target);
+        canaries.push(entry);
+        await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected });
+        if (!entry.passed) {
+          await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: unexpected });
+          return;
+        }
+        continue;
       }
       const item = await this.rt.engine<string>('qualification.canary_item', { attempt, kind });
       // The host side's own witnesses (D2 §7.2), read before the
@@ -136,8 +148,136 @@ export class QualificationDriver {
         return;
       }
     }
+    // An active entry's session qualification writes no entry: the
+    // conclusion marks that entry qualified for sessions (D6 §2.6).
+    if (a.session_entry) {
+      await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: unexpected });
+      return;
+    }
     const input = await this.entryInput(a, canaries, [...used], history, capabilities);
     await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: unexpected, entry: input });
+  }
+
+  // The continuation canary (D6 §2.6; D2 §7.2; D6-S09): one session run on
+  // the fixture project under the attempt's authority, two turns, each a
+  // one-shot invocation in a fresh domain with a fresh volatile home. Turn 1
+  // writes the engine's token into the role's artifact; turn 2 is asked to
+  // answer from what the engine carried over (its package: the transcript
+  // and the artifact). It passes only if turn 2's reply carries the token,
+  // turn 1's domain had terminated (its invocation ended) before turn 2
+  // launched, and no provider file was carried (a fresh volatile home per
+  // turn; the first one inventoried at its collection). The session is then
+  // ended; nothing it wrote is committed.
+  private async continuation(a: AttemptRow, target: DispatchTarget): Promise<CanaryEntry> {
+    const kind = 'continuation';
+    let deadlineS = 1800;
+    try {
+      const d = (JSON.parse(a.canary_deadlines) as Record<string, number>)[kind];
+      if (typeof d === 'number' && d > 0) deadlineS = d;
+    } catch {
+      // the default
+    }
+    const until = performance.now() + deadlineS * 1000;
+    let run: string | null = null;
+    while (run === null && performance.now() < until) {
+      try {
+        run = (await this.rt.engine<{ run: { id: string } }>('qualification.canary_session', { attempt: a.id })).run.id;
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'session_busy') {
+          log('qualification', err, { attempt: a.id, canary: kind });
+          break;
+        }
+        if ((await this.rt.read<{ status: string } | null>('qualification.row', { attempt: a.id }))?.status !== 'running') break;
+        await sleep(500);
+      }
+    }
+    if (run === null) return this.failedToStart(a, kind);
+    const project = a.fixture_project!;
+    const scope = this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null;
+    let stopped: string | null = null;
+    for (const turn of [1, 2] as const) {
+      const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
+      if (read === null || !read.idle) {
+        stopped = `the session was not idle before turn ${turn}`;
+        break;
+      }
+      const text = continuationMessage(turn);
+      const admitted = await this.rt.engine<{ turn: number; invocation: string }>('session.admit_turn', { project, run, text, textRecord: null, admittedAt: read.idle_generation, scripted: null, scope }).catch((err) => {
+        log('qualification', err, { attempt: a.id, canary: kind, turn });
+        return null;
+      });
+      if (admitted === null) {
+        stopped = `turn ${turn} was not admitted`;
+        break;
+      }
+      const record = await writeWholeRecord(this.rt, { project, run, kind: 'session_transcript', content: Buffer.from(text) }).catch(() => null);
+      if (record !== null) await this.rt.engine('session.attach_text', { run, turn: admitted.turn, record }).catch(() => {});
+      await this.launcher.dispatchTurn(target, { run, invocation: admitted.invocation }).catch((err) => log('qualification', err, { attempt: a.id, canary: kind, turn }));
+      let settled = false;
+      while (performance.now() < until) {
+        const f = await this.rt.read<{ state: string; turns: { number: number; settled_at: string | null }[] }>('qualification.continuation_facts', { run });
+        if (f.turns.find((t) => t.number === admitted.turn)?.settled_at) {
+          settled = true;
+          break;
+        }
+        if (f.state === 'ended') break;
+        await sleep(POLL_MS);
+      }
+      if (!settled) {
+        stopped = `turn ${turn} did not settle within the canary's deadline`;
+        break;
+      }
+    }
+    const facts = await this.rt.read<ContinuationFacts>('qualification.continuation_facts', { run });
+    // The session is ended: closed raising nothing, or by its run's end
+    // protocol when a turn is still in flight (its turn settled unknown).
+    const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
+    if (read !== null && read.idle) {
+      await this.rt
+        .engine('session.close', { project, run, raise: { kind: 'none' }, admittedAt: read.idle_generation })
+        .then(() => this.rt.services?.endRun(run!, { outcome: 'completed', reason: 'none' }))
+        .catch((err) => log('qualification', err, { attempt: a.id, canary: kind }));
+    } else if (facts.state !== 'ended') {
+      await this.rt.services?.endRun(run, { outcome: 'failed', reason: 'infra_error', reasonText: stopped ?? 'the continuation canary did not complete' }).catch((err) => log('qualification', err, { attempt: a.id, canary: kind }));
+    }
+    const token = continuationToken(a.id);
+    const [t1, t2] = [facts.turns.find((t) => t.number === 1), facts.turns.find((t) => t.number === 2)];
+    const replyOf = (t: ContinuationFacts['turns'][number] | undefined): string | null => {
+      try {
+        const r = JSON.parse(t?.reply ?? 'null') as { reply?: unknown } | null;
+        return typeof r?.reply === 'string' ? r.reply : null;
+      } catch {
+        return null;
+      }
+    };
+    const answered = replyOf(t2);
+    const found = answered !== null && answered.includes(token);
+    const quiescent = t1 !== undefined && t2 !== undefined && t1.domain_status === 'terminated' && t1.ended_at !== null && t2.launched_at !== null && t1.ended_at <= t2.launched_at;
+    const real = a.backend === 'claude';
+    // A model the turns did not request answered (E86 item 3).
+    const others = real ? facts.models_observed.filter((m) => !sameModel(a.model, m)) : [];
+    const passed = stopped === null && t1?.outcome === 'replied' && t2?.outcome === 'replied' && found && quiescent && others.length === 0;
+    const detail = {
+      kind,
+      run,
+      turns: facts.turns.map((t) => ({ turn: t.number, invocation: t.invocation, outcome: t.outcome, usage_status: t.usage_status, launched_at: t.launched_at, ended_at: t.ended_at })),
+      instructed: { turn_1: 'write the engine\'s token into the artifact', turn_2: 'answer with every match of the token\'s pattern in the package (transcript and artifact)' },
+      token_in_reply: found,
+      quiescence: { turn_1_domain: t1?.domain_status ?? null, turn_1_ended_at: t1?.ended_at ?? null, turn_2_launched_at: t2?.launched_at ?? null, holds: quiescent },
+      provider_files: { carried: false, how: 'each turn ran with a fresh volatile home; the first turn\'s was inventoried at its collection and dropped before the second was placed', inventories: facts.inventories },
+      ...(others.length > 0 ? { model_fallback: others } : {}),
+      ...(stopped ? { stopped } : {}),
+    };
+    const evidence = await this.record(a, run, redactValue(detail));
+    return {
+      kind,
+      run,
+      passed,
+      failure_class: passed ? null : others.length > 0 ? 'model_fallback' : 'continuation_failed',
+      provider_error: passed ? null : evidence,
+      evidence,
+      term_to_exit_ms: null,
+    };
   }
 
   // The canary's run, dispatched under the attempt's authority alone. A
@@ -432,7 +572,8 @@ export class QualificationDriver {
       cost_reporting: usage.cost ? 'reported' : 'none',
       enforceable_boundaries: granularity === 'none' || evidence.length === 0 ? [] : [{ boundary: 'invocation', mechanism: 'dispatch_check', evidence: evidence[0]!, overshoot: 'deadline' }],
       result_channel: 'file',
-      session_qualified: false,
+      // D6 §2.6: only from a passing continuation canary of this attempt.
+      session_qualified: canaries.some((c) => c.kind === 'continuation' && c.passed),
       provider_files: providerFiles,
       term_to_exit_ms: canaries.find((c) => c.kind === 'cancellation')?.term_to_exit_ms ?? null,
       qualification_attempt: a.id,
@@ -514,7 +655,15 @@ export function judgeContainment(args: {
   return { actions, controls, backend, reason, passed: reason === null && shown && actions.every((x) => x.passed) && controls.every((x) => x.ran) };
 }
 
-const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellation: 'barrier_not_reached', containment: 'containment_failed' };
+const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellation: 'barrier_not_reached', containment: 'containment_failed', continuation: 'continuation_failed' };
+
+// What the continuation canary's judgement reads of its session run.
+interface ContinuationFacts {
+  state: string;
+  turns: { number: number; invocation: string; outcome: string | null; usage_status: string | null; settled_at: string | null; reply: string | null; domain_status: string | null; launched_at: string | null; ended_at: string | null }[];
+  inventories: number;
+  models_observed: string[];
+}
 
 // A real backend's failure class (D2 §7.2, A.2), from what the engine saw:
 // an authentication failure first, whatever else failed; a containment

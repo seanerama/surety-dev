@@ -143,6 +143,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
         attempt: claim.attempt.id,
         kind: claim.attempt.kind,
         deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)),
+        turn: claim.session?.turn ?? null,
       })
     : null;
   // The containment check's targets, for the domain init only (E83).
