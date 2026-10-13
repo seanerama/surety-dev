@@ -9,11 +9,12 @@
 // only that the journey is live.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 import { runningClassifier, setEngineConfig } from '../checks/classifier.mjs';
 import { answer, consume, decision, decisionsOfKind } from '../decisions.mjs';
-import { waitFor } from '../engine.mjs';
+import { CLI, waitFor } from '../engine.mjs';
 import { roleThat } from '../gitruns.mjs';
 import { getRow, scriptedEngine, tick, tickUntil, waitForIdle } from '../runs.mjs';
 import { closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from '../sessions.mjs';
@@ -106,6 +107,31 @@ export const adoptionModeRows = (home, project) => decisionsOfKind(home, project
 export async function chooseMode(fx, project, mode = 'full') {
   const row = await tickUntil(fx.engine, project, () => adoptionModeRows(fx.home, project).find((d) => d.status === 'open'), { max: 4, what: 'the open adoption_mode decision' });
   return consume(fx, project, row, mode);
+}
+
+// `surety project adopt <name> --repo <path> --branch <b> --tier <T>` in the
+// test's home (D6 §8.1 step 1, A.8; SEAM.md §377 †): exit 0 and one JSON
+// line, the route's answer. Returns {status, body, stdout, stderr}.
+export function adoptByCommand(fx, { repo, name = ADOPTED_NAME, tier = TIER, idea } = {}) {
+  const args = ['project', 'adopt', name, '--repo', repo.path, '--branch', repo.branch, '--tier', tier, ...(idea === undefined ? [] : ['--idea', idea])];
+  const done = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', timeout: 120_000, env: { ...process.env, SURETY_HOME: fx.home } });
+  let body;
+  try {
+    body = JSON.parse(done.stdout);
+  } catch {
+    body = undefined;
+  }
+  return { status: done.status, body, stdout: done.stdout ?? '', stderr: done.stderr ?? '' };
+}
+export function suretyCommand(fx, args) {
+  const done = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', timeout: 120_000, env: { ...process.env, SURETY_HOME: fx.home } });
+  let body;
+  try {
+    body = JSON.parse(done.stdout);
+  } catch {
+    body = undefined;
+  }
+  return { status: done.status, body, stdout: done.stdout ?? '', stderr: done.stderr ?? '' };
 }
 
 // ---- step 2: the retrofit Spec Writer session (D6 §8.1 step 2, §8.2; SEAM.md §379) --------------
