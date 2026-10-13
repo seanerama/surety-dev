@@ -6319,15 +6319,14 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387
 
 ## 393. The real continuation canary (M420 (d); the driver's, under E144 item 2)
 
-- **The preflight** is §160's with this file's own confirmation, `I accept the M5 slice-33 continuation canary on my Claude subscription, two Sonnet turns, under 0.25 USD as estimated`. Without the run directory, the token file, the pinned binary or the phrase, nothing starts.
-- **The home** is `<run dir>/home`, at most 56 bytes, checked before the engine starts.
-- **An active Claude entry** for the pinned binary must already exist there (an earlier attempt, activated by Sean). Without one the file refuses, and nothing is spent.
-- **The session qualification of that entry** is **`POST /v1/trust/qualify {entry, mode: "session_headless", model: "claude-sonnet-5-5"}`** †: an attempt running the continuation canary alone, which launches nothing before its `qualification_approval` is answered. The test waits for that answer and never gives it.
-- **What it reads:**
-  - exactly two invocation receipts under the attempt, in one session run;
-  - each turn's `model_requested` is Sonnet;
-  - the entry is `session_qualified` exactly when the canary passed.
-- **What it records**, in `observed/M420.json`: each ledger row's usage and `cost_usd`, and their sum, for the driver's report.
+- **The preflight** is §160's with this file's own confirmation, `I accept the M5 slice-33 continuation canary on my Claude subscription, one qualification attempt and two Sonnet turns, under 0.50 USD as estimated`. Without the run directory, the token file, the pinned binary or the phrase, nothing starts. The home is `<run dir>/home`, at most 56 bytes, checked before the engine starts.
+- **The path is chosen once**, as the step `m5_path` (a `realStep`, so a rerun never re-decides or pays twice), from the Claude entries the production engine shows at its start:
+  - **an active, eligible entry** for the pinned binary: its session qualification, **`POST /v1/trust/qualify {entry, mode: "session_headless", model: "claude-sonnet-5-5"}`** †, the continuation canary alone (step `m5_continuation`; exactly **two** invocations);
+  - **none** (the slice-33 engine revokes an M4 entry at start with `profile_changed`, since M5's profile is a changed profile, D6 §2.6; the driver found this at gate-s33 `6730b6a`): **one full attempt**, `POST /v1/trust/qualify {backend: "claude", mode: "session_headless", model: "claude-sonnet-5-5", candidate_egress, canary_deadlines (continuation 600 s), auth_mode}` (step `m5_session_attempt`). That is D2's three canaries plus the continuation canary's two turns, so **the attempt's one-shot canaries plus two** invocations. Its `trust_activation` follows;
+  - **an active entry already `session_qualified`**: nothing is spent, and that is recorded.
+- **Sean's answers.** The test waits for `qualification_approval` (and on the full path `trust_activation`) and never gives them.
+- **What it reads:** one session run among the attempt's runs; each invocation's `model_requested` is Sonnet; and when the attempt succeeded, the entry `active` and `session_qualified`.
+- **What it records**, in `observed/M420.json`: the entries at the start, the proposed attempt, the receipts, each ledger row's usage and `cost_usd` and their sum, and the outcome. This file has no rehearsal path.
 
 ## 394. Save, idle, budget and resume as M417 and M418 read them
 
