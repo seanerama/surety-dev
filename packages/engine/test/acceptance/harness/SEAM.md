@@ -6108,6 +6108,14 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12
 
   `buildActs(ctx)` reads them from the event at which the pump first ran for `ctx` (`ctx.sinceSeq`); M401 part 2 reads them from the switch (`toProjectLane` returns the switch's event `seq`). An answer refused on a superseded generation (409) consumed nothing and is no act. The pump's posts, with their statuses, stay in `ctx.humanActs` for diagnostics only. The counting is applied in M401 parts 1 and 2, the T1 variant and M406; M407 counts no human act.
 
+**M401 part 2 (h), "every gate afterwards on version 2"** (the driver's ruling, 2026-10-13; D6 §4.5). A spec change re-nominates nothing: the spec-evidence generation carries it. Under `autonomy: phase`, phase 2's stages may be nominated while CR-1 is still being applied. On this workstation, both phase-2 candidates were nominated about two minutes before v2 existed, and nothing was nominated after. (h) therefore reads:
+- **(1)** every candidate nominated after v2's creation (`spec_revisions.created_at`, which is its application) is on v2, and there may be none. The assertion names any candidate on v1, separately from the gate check.
+- **(2)** every gate evaluation made after v2's creation (each `checks[*].deciding.result`) decides from no result invalidated `spec_changed`. For a check the change obliged at generation 2 (`check_obligations`, reason `spec_changed`), it decides only from a result of generation 2.
+  - A result of a check the change did not list stays evidence across the generation. D6 §4.5 and B05 invalidate only the listed results, and a result of an earlier generation than an obligation on its check satisfies no gate.
+  - The first re-run read the ruling's "only results of generation 2" literally. It failed on stage gates deciding from `lint`, `smoke`, `accept-r3` and `integration-tally` results of generation 1, none of them listed by CR-1, so this narrower reading is the one D6 states.
+  - The generation is cross-checked in the store. D6 A.3 names `check_results.generation`; the engine as built records it on the result's execution (`check_executions.spec_generation`), and the test reads whichever the store has.
+- **(3)** phase 2's `completion_binding.spec_revision` is v2, and the phase sign-off the completion used is bound to v2's spec revision and the completion's protected version. This is where a candidate nominated under v1 legitimately meets the new version (the 31b review's S3).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a" and "M5 slice 31b".
