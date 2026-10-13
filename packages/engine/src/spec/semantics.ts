@@ -40,6 +40,10 @@ export interface SemanticRequirement {
   phase_hint: number | null;
   origin: 'intended' | 'observed';
   blocked_by_questions: string[];
+  // A key of an earlier save that this one no longer has (SEAM.md §397):
+  // kept in the save's representation, marked, never dropped; it is
+  // recorded withdrawn at approval and is no requirement of this text.
+  withdrawn?: boolean;
 }
 
 export interface SemanticQuestion {
@@ -388,7 +392,7 @@ export function digestOf(r: SpecRepresentation): string {
   return sha256(
     canonical({
       header: { tier: r.header.tier },
-      requirements: byKey(r.requirements).map((q) => ({
+      requirements: byKey(r.requirements.filter((q) => q.withdrawn !== true)).map((q) => ({
         key: q.key,
         statement: q.statement,
         criteria: [...q.criteria].sort((a, b) => a.id.localeCompare(b.id)),
@@ -465,6 +469,13 @@ export function parseSpecification(text: string): SemanticResult {
   });
   const representation: SpecRepresentation = { header, requirements, index, questions, modules, environments, claims };
   return { readable: true, representation, findings, digest: digestOf(representation) };
+}
+
+// The representation without the keys carried as withdrawn: the
+// requirements this text has.
+export function liveRepresentation<T extends SpecRepresentation | null>(r: T): T {
+  if (r === null || !Array.isArray(r.requirements)) return r;
+  return { ...r, requirements: r.requirements.filter((q) => q.withdrawn !== true) };
 }
 
 // The keys of KEY form in a list of requirement keys, for callers that want

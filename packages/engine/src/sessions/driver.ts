@@ -309,7 +309,9 @@ export class SessionDriver {
     if (tree === (await treeOf(ctx, ws.current_base))) return { sha: null };
     const diff = await validateDiff(facts.repo, ws.current_base, tree, facts.role, facts.caps, facts.roots, { plans: false });
     if (diff.violation) {
-      const paths = diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p));
+      // The paths outside the role's own, and the one the refusal names (a
+      // link inside them that resolves outside, D6-W03).
+      const paths = [...new Set([...diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p)), ...(diff.violation.path !== undefined ? [diff.violation.path] : [])])];
       const text = redactText(diff.violation.text);
       const status = diff.violation.klass === 'diff_violation' ? 422 : 500;
       return {

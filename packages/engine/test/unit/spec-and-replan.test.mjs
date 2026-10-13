@@ -185,10 +185,10 @@ test('the replan package: every file of one generation, the spec by its blob or 
     refusal: { run: 'run_1', reason_class: 'invalid_result', reason_text: 'x', plan_check: { id: 'pchk_1', phase: 2, reasons: [{ code: 'PLAN_CYCLE', subjects: ['stages:1->2->1'] }] } },
   };
   const files = replanFiles(facts);
-  assert.deepEqual(files.map((f) => f.path), ['generation.json', 'spec.md', 'index.json', 'roadmap.json', 'modules.json', 'completed-plan.json', 'phase-evaluation.json', 'phase-findings.json', 'deferrals.json', 'objections.json', 'refusal.json']);
+  assert.deepEqual(files.map((f) => f.path), ['generation.json', 'spec.md', 'index.json', 'roadmap.json', 'module_map.json', 'plan.json', 'evaluation.json', 'findings.json', 'deferrals.json', 'objections.json', 'refusal.json']);
   assert.ok(replanPromptText(facts).join('\n').includes('PLAN_CYCLE (stages:1->2->1)'));
   assert.ok(!files.some((f) => /transcript/.test(f.path)));
   const unread = replanFiles({ ...facts, spec_text: null, refusal: null });
-  assert.ok(unread.some((f) => f.path === 'spec-unreadable.json' && f.kind === 'spec'));
+  assert.ok(unread.some((f) => f.path === 'spec.json' && f.kind === 'spec'));
   assert.ok(!unread.some((f) => f.path === 'refusal.json'));
 });

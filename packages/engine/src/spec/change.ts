@@ -38,7 +38,7 @@ import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers } from './approval.js';
-import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 
 type Db = Tx['db'];
 
@@ -175,7 +175,7 @@ export function dependencyManifest(db: Db, project: string): Record<string, unkn
 export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown }): Impact {
   const spec = currentSpec(db, args.project);
   const row = spec?.semantics ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(spec.semantics) as { representation: string | null } | undefined) : undefined;
-  const approved = parseJson<SpecRepresentation>(row?.representation ?? null);
+  const approved = liveRepresentation(parseJson<SpecRepresentation>(row?.representation ?? null));
   // An impact the engine cannot compute refuses the proposal (D6 §4.4):
   // never an empty impact.
   if (!approved) throw illegal('computing a spec change impact with no readable approved representation', { project: args.project });
@@ -371,7 +371,7 @@ export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefin
 
 export function currentImpact(db: Db, r: RequestRow): Impact | null {
   const sem = proposalSemantics(db, r);
-  const representation = parseJson<SpecRepresentation>(sem?.representation ?? null);
+  const representation = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
   if (!representation) return null;
   try {
     return computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null });
@@ -440,7 +440,7 @@ export function specChangeKind(): KindSpec {
             effect: { request: r.id, revision: r.proposal_revision, spec_version: Number(manifest.spec_version) + 1 },
             // What could not be approved as a specification cannot be approved
             // as a change of one (D6 §3.4; the 31b review's S1).
-            blockers: specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project)),
+            blockers: specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }),
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal stays on its side ref as history; nothing of the specification changes.', effect: { request: r.id } },
         ],
@@ -559,7 +559,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
   // begun at a later tick, against what is there then.
   if (facts.head !== args.head) return null;
   const r = getRequest(tx.db, facts.request)!;
-  if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project)).length > 0) {
+  if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }).length > 0) {
     refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
     return null;
   }

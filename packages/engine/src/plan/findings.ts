@@ -118,8 +118,18 @@ export function specFindings(text: string, path = '.surety/spec/spec.md', prev: 
       findings.push({ code: 'spec_keys_renumbered', path, subject: { key: r.key, from: r.from, kind: r.kind }, message: `${r.from} is now ${r.key}: a key never changes once given; keep ${r.from} and add a new key for anything new` });
     }
     for (const k of keys.withdrawn) {
-      findings.push({ code: 'spec_key_withdrawn', path, subject: { key: k }, message: `${k} is no longer in the specification: at approval it is recorded withdrawn, never deleted, and its key is not reused` });
+      const criterion = k.includes('.');
+      findings.push({
+        code: 'spec_key_withdrawn',
+        path,
+        subject: criterion ? { key: k, criterion: k, requirement: k.split('.')[0] } : { key: k },
+        message: `${k} is no longer in the specification: at approval it is recorded withdrawn, never deleted, and its key is not reused`,
+      });
     }
+    // The vanished requirements stay in this save's representation, marked
+    // withdrawn (SEAM.md §397); the digest is over the live ones.
+    const here = new Set(semantics.representation.requirements.map((r) => r.key));
+    for (const r of prev?.requirements ?? []) if (!here.has(r.key)) semantics.representation.requirements.push({ ...r, withdrawn: true });
   }
   return { findings, semantics };
 }

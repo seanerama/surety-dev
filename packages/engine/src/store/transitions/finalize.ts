@@ -262,7 +262,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     plans.push(made.plan.id);
   }
   if (inputs.replan && inputs.run) {
-    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid });
+    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid, base: op.payload.old_oid ?? null });
     if (published) plans.push(published);
   }
   if (inputs.architect && item && status === 'integrated') {

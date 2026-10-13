@@ -38,6 +38,8 @@ export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresent
   if (prev === null) return { renumbered: [], withdrawn: [] };
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
   const renumbered: Renumbered[] = [];
+  prev = { ...prev, requirements: prev.requirements.filter((r) => r.withdrawn !== true) };
+  next = { ...next, requirements: next.requirements.filter((r) => r.withdrawn !== true) };
   const prevStatement = new Map(prev.requirements.map((r) => [r.key, norm(r.statement)]));
   const nextStatement = new Map(next.requirements.map((r) => [r.key, norm(r.statement)]));
   const prevByStatement = uniqueByValue([...prevStatement.entries()]);
@@ -62,15 +64,20 @@ export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresent
     if (prevCrit.get(id) === text) continue;
     renumbered.push({ kind: 'criterion', key: id, from });
   }
-  const keys = new Set(next.requirements.map((r) => r.key));
-  const withdrawn = prev.requirements.map((r) => r.key).filter((k) => !keys.has(k));
-  return { renumbered, withdrawn: [...new Set(withdrawn)].sort() };
+  // Keys and criteria of the earlier text that this one no longer has (a
+  // key carried there as withdrawn already is not reported again).
+  const live = (rep: SpecRepresentation) => rep.requirements.filter((r) => r.withdrawn !== true);
+  const keys = new Set(live(next).map((r) => r.key));
+  const ids = new Set(live(next).flatMap((r) => r.criteria.map((c) => c.id)));
+  const withdrawn = live(prev).map((r) => r.key).filter((k) => !keys.has(k));
+  const criteria = live(prev).filter((r) => keys.has(r.key)).flatMap((r) => r.criteria.map((c) => c.id)).filter((id) => !ids.has(id));
+  return { renumbered, withdrawn: [...new Set([...withdrawn, ...criteria])].sort() };
 }
 
 // `CODE:subject` strings, as every option blocker is written.
 export function questionBlockers(rep: SpecRepresentation): string[] {
   const out: string[] = [];
-  const byKey = new Map(rep.requirements.map((r) => [r.key, r]));
+  const byKey = new Map(rep.requirements.filter((r) => r.withdrawn !== true).map((r) => [r.key, r]));
   for (const q of rep.questions) {
     if (q.phase_hint === null) out.push(`QUESTION_NO_PHASE_HINT:${q.id}`);
     for (const key of q.blocks) {

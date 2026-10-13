@@ -194,9 +194,10 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       const b = bundleOfDecision(tx.db, d);
       if (!b) throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} names no bundle.`, 'Read the current decisions about the session.', { decision: d.id });
       const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
-      if (option === 'approve') recordApproval(tx, d, { consequence: made.published ? `bundle ${made.bundle} published${made.plan ? ` as plan ${made.plan}` : ''}` : `bundle ${made.bundle} approved in part (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
-      // The answer launches nothing (D1 §10.5): what the publication made
-      // eligible is dispatched by the next tick.
+      if (option === 'approve') recordApproval(tx, d, { consequence: `bundle ${made.bundle} approved (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
+      // The answer launches nothing (D1 §10.5). The answer that completes the
+      // bundle's authority is followed by its publication by the authorized
+      // finalizer, in a transaction of its own (plan/publish.ts).
       return consumed(d);
     },
   };

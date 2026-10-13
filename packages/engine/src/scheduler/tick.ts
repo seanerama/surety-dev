@@ -41,6 +41,7 @@ import type { RunEnder } from '../runs/end.js';
 import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
+import { publishAuthorized } from '../plan/publish.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
 import { Refusal } from '../refusal.js';
@@ -174,6 +175,9 @@ export class Scheduler {
     // project's tick: a dependency that changed raises their next generation.
     await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
+    // The authorized finalizer (D6 §5.5): a bundle whose authority is
+    // complete and which a restart left unpublished is published now, once.
+    await publishAuthorized(this.rt, project).catch((err) => log('publication', err, { project }));
     await deliverNotifications(this.rt, project);
   }
 

@@ -199,7 +199,7 @@ import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
-import { bundlePublished, publicationDue } from '../plan/bundle.js';
+import { authorizedBundles, publishAuthorized as publishAuthorizedBundle } from '../plan/bundle.js';
 import { previousRepresentation } from '../spec/approval.js';
 import { phaseStep } from '../plan/phase.js';
 import {
@@ -475,8 +475,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   // gone, M421 (c)); a bundle answer's publication around its barriers
   // (M448 (e)); a decision's effect intents (the answer's settle).
   'spec.previous_representation': (d, a: { project: string }) => previousRepresentation(d, a.project),
-  'plan.publication_due': (d, a: { project: string; decision: string; option: unknown }) => publicationDue(d, a),
-  'plan.bundle_published': (d, a: { bundle: string }) => bundlePublished(d, a),
+  'plan.authorized': (d, a: { project: string }) => authorizedBundles(d, a),
   'decision.intents': (d, a: { decisions: string[]; kind: string }) =>
     a.decisions.flatMap((id) => (d.prepare('SELECT "id" FROM "effect_intents" WHERE "decision" = ? AND "kind" = ?').all(id, a.kind) as { id: string }[]).map((r) => r.id)),
   'pace.view': (d, a) => paceView(d, a),
@@ -641,6 +640,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.approval_facts': (tx, a) => specApprovalFacts(tx, a),
   'spec.begin_approval': (tx, a) => beginSpecApproval(tx, a),
   'spec.refuse_approval': (tx, a) => refuseSpecApproval(tx, a),
+  // D6 §5.5 (slice 34): the authorized finalizer's publication.
+  'plan.publish': (tx, a) => publishAuthorizedBundle(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),

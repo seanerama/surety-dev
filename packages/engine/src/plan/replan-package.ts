@@ -204,16 +204,16 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
   out.push({ path: 'generation.json', kind: 'generation', source: spec?.id ?? null, content: j(r.generation) });
   out.push(
     r.spec_text === null || r.spec_text === undefined
-      ? { path: 'spec-unreadable.json', kind: 'spec', source: spec?.id ?? null, content: j({ spec_revision: spec, readable: false, why: spec ? `the approved specification's blob ${spec.git_blob} could not be read` : 'no specification is approved' }) }
+      ? { path: 'spec.json', kind: 'spec', source: spec?.id ?? null, content: j({ spec_revision: spec, readable: false, why: spec ? `the approved specification's blob ${spec.git_blob} could not be read` : 'no specification is approved' }) }
       : { path: 'spec.md', kind: 'spec', source: spec?.id ?? null, content: r.spec_text },
   );
   out.push({ path: 'index.json', kind: 'index', source: spec?.id ?? null, content: j(r.index) });
   out.push({ path: 'roadmap.json', kind: 'roadmap', source: r.generation.roadmap_revision?.id ?? null, content: j(r.roadmap) });
-  out.push({ path: 'modules.json', kind: 'module_map', source: r.generation.architecture_revision?.id ?? null, content: j(r.module_map) });
-  if (r.completed_plan) out.push({ path: 'completed-plan.json', kind: 'phase_plan', source: r.completed_plan.id, content: j(r.completed_plan) });
+  out.push({ path: 'module_map.json', kind: 'module_map', source: r.generation.architecture_revision?.id ?? null, content: j(r.module_map) });
+  if (r.completed_plan) out.push({ path: 'plan.json', kind: 'phase_plan', source: r.completed_plan.id, content: j(r.completed_plan) });
   if (r.open_plan) out.push({ path: 'open-plan.json', kind: 'phase_plan', source: r.open_plan.id, content: j(r.open_plan) });
-  out.push({ path: 'phase-evaluation.json', kind: 'evaluation', source: r.phase_evaluation?.id ?? null, content: j(r.phase_evaluation) });
-  out.push({ path: 'phase-findings.json', kind: 'findings', source: null, content: j(r.findings) });
+  out.push({ path: 'evaluation.json', kind: 'evaluation', source: r.phase_evaluation?.id ?? null, content: j(r.phase_evaluation) });
+  out.push({ path: 'findings.json', kind: 'findings', source: null, content: j(r.findings) });
   out.push({ path: 'deferrals.json', kind: 'deferrals', source: null, content: j(r.deferrals) });
   out.push({ path: 'objections.json', kind: 'objections', source: null, content: j(r.objections) });
   if (r.refusal) out.push({ path: 'refusal.json', kind: 'refusal', source: r.refusal.plan_check?.id ?? r.refusal.run, content: j(r.refusal) });
@@ -230,9 +230,9 @@ export function replanPromptText(r: ReplanFacts): string[] {
     `Plan the next phase (${r.open_plan ? `the open phase ${r.open_plan.phase_number}, replacing its plan` : `phase ${next}`}) from the approved baseline in this package; nothing else is approved.`,
     `It is generation spec version ${r.generation.spec_revision?.version ?? 'none'}, architecture version ${r.generation.architecture_revision?.version ?? 'none'}, roadmap version ${r.generation.roadmap_revision?.version ?? 'none'} (/surety/context/generation.json): your plan's prepared_against names these and the revision you start from (your workspace's HEAD).`,
     '- /surety/context/spec.md: the approved specification; /surety/context/index.json: its requirements with their criteria, areas and phases.',
-    '- /surety/context/adrs/: every approved ADR; /surety/context/roadmap.json and /surety/context/modules.json: the approved roadmap and module map.',
-    '- /surety/context/completed-plan.json: the completed phase with each stage and its integrated revision; /surety/context/phase-evaluation.json: its phase gate evaluation with each check\'s state.',
-    '- /surety/context/phase-findings.json, deferrals.json, objections.json: the phase\'s findings with their dispositions, what is deferred and the open objections.',
+    '- /surety/context/adrs/: every approved ADR; /surety/context/roadmap.json and /surety/context/module_map.json: the approved roadmap and module map.',
+    '- /surety/context/plan.json: the completed phase with each stage and its integrated revision; /surety/context/evaluation.json: its phase gate evaluation with each check\'s state.',
+    '- /surety/context/findings.json, deferrals.json, objections.json: the phase\'s findings with their dispositions, what is deferred and the open objections.',
     'Write the plan to .surety/phases/phase-<n>.json in Appendix B.5\'s form (and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner).',
     'Your result names the plan (`plan`: "phase-<n>") and declares `conformance` (within_baseline or uncertain).',
     ...(r.refusal

@@ -17,7 +17,7 @@ import { ensureModules, ensureRequirements } from '../store/transitions/baseline
 import { illegal, notFound } from '../store/transitions/common.js';
 import { markStale } from '../store/transitions/evidence.js';
 import type { Tx } from '../store/transitions/tx.js';
-import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 import { afterChange, applyConfirmations, isAdopted, recordClaims } from '../adopt/records.js';
 import { canonical } from '../store/transitions/common.js';
 import { blockerOf, specFinding } from '../plan/findings.js';
@@ -106,7 +106,7 @@ export function readRepresentation(row: SemanticsRow | undefined): { rep: SpecRe
   try {
     const rep = JSON.parse(row.representation) as SpecRepresentation;
     if (typeof rep !== 'object' || rep === null || !Array.isArray(rep.requirements) || !Array.isArray(rep.questions)) throw new Error('not a representation');
-    return { rep, findings };
+    return { rep: liveRepresentation(rep), findings };
   } catch {
     return { cause: 'the saved representation does not parse' };
   }
@@ -118,7 +118,7 @@ export function approvedRepresentation(db: Db, project: string): SpecRepresentat
   const row = db.prepare('SELECT s."representation" FROM "spec_revisions" v JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."project" = ? ORDER BY v."version" DESC LIMIT 1').get(project) as { representation: string | null } | undefined;
   if (!row?.representation) return null;
   try {
-    return JSON.parse(row.representation) as SpecRepresentation;
+    return liveRepresentation(JSON.parse(row.representation) as SpecRepresentation);
   } catch {
     return null;
   }
@@ -141,14 +141,16 @@ export function previousRepresentation(db: Db, project: string): SpecRepresentat
 // representation is unreadable, duplicate, contradictory or uncertain, then
 // one per finding that blocks; the open questions of reading 1; a key
 // renumbered against the approved revision (`approved`, when one exists).
-export function specBlockers(row: SemanticsRow | undefined, approved: SpecRepresentation | null = null): string[] {
+// `questions` false: a specification change's approval, which carries no
+// phase-hint guard (the driver's ruling; SEAM.md §402).
+export function specBlockers(row: SemanticsRow | undefined, approved: SpecRepresentation | null = null, opts: { questions?: boolean } = {}): string[] {
   if (!row) return ['spec_not_saved'];
   const read = readRepresentation(row);
   if ('cause' in read) return ['spec_semantics_invalid', `SPEC_REPRESENTATION_UNREADABLE:${read.cause}`];
   const out: string[] = [];
   const blocking = read.findings.filter((f) => BLOCKING_CODES.has(f.code));
   if (blocking.length > 0) out.push('spec_semantics_invalid', ...new Set(blocking.map((f) => blockerOf(specFinding(f)))));
-  out.push(...questionBlockers(read.rep));
+  if (opts.questions !== false) out.push(...questionBlockers(read.rep));
   for (const r of compareKeys(approved, read.rep).renumbered) out.push(`spec_keys_renumbered:${r.from}->${r.key}`);
   return out;
 }
@@ -162,7 +164,7 @@ function alteredKeys(db: Db, prev: string | null, r: SpecRepresentation): Set<st
   const row = db.prepare('SELECT s."representation" FROM "spec_revisions" v JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."id" = ?').get(prev) as { representation: string | null } | undefined;
   let before: SpecRepresentation | null = null;
   try {
-    before = row?.representation ? (JSON.parse(row.representation) as SpecRepresentation) : null;
+    before = row?.representation ? liveRepresentation(JSON.parse(row.representation) as SpecRepresentation) : null;
   } catch {
     before = null;
   }
@@ -184,7 +186,7 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   const read = readRepresentation(row);
   // Never a default (M449 (e)): what cannot be read is refused, naming why.
   if ('cause' in read) throw new Refusal(409, 'spec_semantics_invalid', `The specification cannot be approved: ${read.cause}.`, 'Correct the specification in a session, save, and approve the next preview.', { run: args.run, cause: read.cause });
-  const blockers = specBlockers(row, approvedRepresentation(tx.db, args.project));
+  const blockers = specBlockers(row, approvedRepresentation(tx.db, args.project), { questions: (args.via ?? 'session') === 'session' });
   if (blockers.length > 0) throw new Refusal(409, 'spec_semantics_invalid', `The specification cannot be approved: ${blockers.join(', ')}.`, 'Correct the specification in a session, save, and approve the next preview.', { run: args.run, blockers });
   const r = read.rep;
   const sem = row!;

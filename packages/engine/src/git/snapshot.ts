@@ -83,6 +83,8 @@ export async function captureMetadata(repo: string, path: string): Promise<Metad
 export interface Violation {
   klass: 'diff_violation' | 'ref_violation' | 'infra_error';
   text: string;
+  // The path the refusal names, where it names one.
+  path?: string;
 }
 
 export interface Caps {
@@ -201,11 +203,11 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   if (changes === null) return unknown('the diff');
   const entries = await listTree(ctx, tree);
   if (entries === null) return unknown('the snapshot tree');
-  const reject = (text: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text }, plans: [], changes });
+  const reject = (text: string, path?: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text, ...(path !== undefined ? { path } : {}) }, plans: [], changes });
 
   for (const c of changes) {
     const rule = pathRule(role, c.path, roots);
-    if (rule) return reject(`the run changed ${c.path}: ${rule}`);
+    if (rule) return reject(`the run changed ${c.path}: ${rule}`, c.path);
   }
   const added = changes.filter((c) => c.status !== 'D');
   // The targets of the tree's symbolic links, which a link may lead through.
@@ -221,13 +223,13 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
     if (c.newMode === '120000') {
       const target = links.get(c.path) ?? '/';
       const resolved = resolveLink(entries, links, c.path, target);
-      if (resolved === null) return reject(`${c.path} is a symbolic link that leads outside the workspace (${target})`);
+      if (resolved === null) return reject(`${c.path} is a symbolic link that leads outside the workspace (${target})`, c.path);
       // A link is a write through its target (D6 §2.5; D6-W03): judged by
       // where it resolves, as the role's paths judge any write, whether or
       // not the target exists. The workspace's root itself is no file a
       // role may write.
       const rule = resolved === '' ? `it resolves to the workspace's root` : pathRule(role, resolved, roots);
-      if (rule) return reject(`${c.path} is a symbolic link to ${target}, which resolves to ${resolved === '' ? '.' : resolved}: ${rule}`);
+      if (rule) return reject(`${c.path} is a symbolic link to ${target}, which resolves to ${resolved === '' ? '.' : resolved}: ${rule}`, c.path);
       continue;
     }
     if (c.newMode !== '100644' && c.newMode !== '100755') return reject(`${c.path} is not a regular file or a link (mode ${c.newMode})`);

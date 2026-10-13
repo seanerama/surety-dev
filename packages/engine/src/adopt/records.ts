@@ -20,6 +20,7 @@
 //   a defect) without criteria; in `scoped` mode the unanswered and the
 //   criterion-less are recorded `descriptive_unverified`.
 
+import { liveRepresentation } from '../spec/semantics.js';
 import { Refusal } from '../refusal.js';
 import { canonical, parseJson } from '../store/transitions/common.js';
 import { type DecisionRow, consumeDecision } from '../store/transitions/decisions.js';
@@ -178,7 +179,7 @@ function pendingSpecification(db: Db, project: string): { run: string; blob: str
   if (!d) return null;
   const row = semanticsOfRun(db, d.subject_id);
   if (!row || row.readable !== 1) return null;
-  const rep = parseJson<SpecRepresentation>(row.representation);
+  const rep = liveRepresentation(parseJson<SpecRepresentation>(row.representation));
   return rep ? { run: d.subject_id, blob: row.git_blob, rep } : null;
 }
 
@@ -262,7 +263,7 @@ export function raiseConfirmations(tx: Tx, args: { project: string; run: string;
   if (!a || !args.approval) return [];
   const batch = `retrofit:${args.run}`;
   const row = semanticsOfRun(tx.db, args.run);
-  const rep = row && row.readable === 1 ? parseJson<SpecRepresentation>(row.representation) : null;
+  const rep = row && row.readable === 1 ? liveRepresentation(parseJson<SpecRepresentation>(row.representation)) : null;
   const out: DecisionRow[] = [];
   for (const q of rep?.requirements ?? []) {
     if (boundToIdea(a, q)) continue;
@@ -283,7 +284,7 @@ export function retrofitBlockers(db: Db, project: string | null, run: string): s
   if (a.mode === null) return ['ADOPTION_MODE_UNANSWERED'];
   if (a.mode === 'scoped') return [];
   const row = semanticsOfRun(db, run);
-  const rep = row && row.readable === 1 ? parseJson<SpecRepresentation>(row.representation) : null;
+  const rep = row && row.readable === 1 ? liveRepresentation(parseJson<SpecRepresentation>(row.representation)) : null;
   if (!rep || !row) return [];
   const out: string[] = [];
   for (const q of rep.requirements) {

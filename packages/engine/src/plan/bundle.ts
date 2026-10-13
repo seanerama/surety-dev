@@ -25,7 +25,7 @@ import { raiseQuestion } from '../store/transitions/queue.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import type { CommandResult } from '../store/transitions/control.js';
 import { getWorkItem, transitionWork } from '../store/transitions/work.js';
-import type { SpecRepresentation } from '../spec/semantics.js';
+import { type SpecRepresentation, liveRepresentation } from '../spec/semantics.js';
 
 type Db = Tx['db'];
 
@@ -64,6 +64,9 @@ export interface BundleContent {
   plan: PhasePlanFile | null;
   adrs: Record<string, { text: string; status: string; supersedes?: string }>;
   architecture_text: string | null;
+  // A replan's: the head its commit was integrated onto, the revision the
+  // plan is prepared against once re-based (D6 §5.3 clause 2; B03).
+  prepared_against_revision?: string;
 }
 
 export function getBundle(db: Db, id: string): BundleRow | undefined {
@@ -115,7 +118,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   if (spec?.semantics) {
     const row = db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(spec.semantics) as { representation: string | null } | undefined;
     try {
-      representation = row?.representation ? (JSON.parse(row.representation) as SpecRepresentation) : null;
+      representation = row?.representation ? liveRepresentation(JSON.parse(row.representation) as SpecRepresentation) : null;
     } catch {
       representation = null;
     }
@@ -287,9 +290,44 @@ export function approveBundlePart(tx: Tx, args: { bundle: string; kind: 'archite
   // `plan_approval` alone (D6 §5.4): its approval publishes the plan.
   const needsArchitecture = tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
   if ((needsArchitecture && !approvals.architecture_approval) || (needsPlan && !approvals.plan_approval)) return { published: false, plan: null, bundle: b.id };
-  if (!needsArchitecture) return { published: true, plan: publishPlan(tx, { bundle: b.id, by: 'human', routing: 'human' }), bundle: b.id };
-  const made = publishBundle(tx, { bundle: b.id, by: 'human' });
-  return { published: true, plan: made.plan, bundle: b.id };
+  // The authority is complete: the authorized finalizer publishes it in a
+  // transaction of its own (publishAuthorized, D6 §5.5; M448 (e)), right
+  // after this answer and, after a restart, at the next tick; once.
+  return { published: false, plan: null, bundle: b.id };
+}
+
+// Whether a proposed bundle's authority is complete: every approval its
+// decisions ask for answered `approve`.
+function authorized(db: Db, b: BundleRow): boolean {
+  if (b.status !== 'proposed') return false;
+  const approvals = JSON.parse(b.approvals) as Record<string, string>;
+  const needsArchitecture = db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
+  const needsPlan = b.phase_number !== null && db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'plan_approval' AND "scope" = ?`).get(b.id) !== undefined;
+  if (!needsArchitecture && !needsPlan) return false;
+  return (!needsArchitecture || approvals.architecture_approval !== undefined) && (!needsPlan || approvals.plan_approval !== undefined);
+}
+
+// The bundles whose authority is complete and which are not yet published
+// (the main thread's read before `plan.before_publication`).
+export function authorizedBundles(db: Db, args: { project: string }): string[] {
+  return (db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY "created_at"`).all(args.project) as BundleRow[]).filter((b) => authorized(db, b)).map((b) => b.id);
+}
+
+// The authorized finalizer (D6 §5.5; B02): the bundle published once, its
+// baseline compared again; a bundle that can no longer publish is stale,
+// recorded, and publishes nothing. Idempotent: a bundle no longer proposed
+// or not authorized is left as it is.
+export function publishAuthorized(tx: Tx, args: { bundle: string }): { published: boolean; plan: string | null; stale: string | null } {
+  const b = getBundle(tx.db, args.bundle);
+  if (!b || !authorized(tx.db, b)) return { published: false, plan: null, stale: null };
+  const needsArchitecture = tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
+  const why = unpublishable(tx.db, b, needsArchitecture ? 'bundle' : 'plan');
+  if (why !== null) {
+    markBundleStale(tx, b, why);
+    return { published: false, plan: null, stale: why };
+  }
+  if (!needsArchitecture) return { published: true, plan: publishPlan(tx, { bundle: b.id, by: 'human', routing: 'human' }), stale: null };
+  return { published: true, plan: publishBundle(tx, { bundle: b.id, by: 'human' }).plan, stale: null };
 }
 
 // The authorized publication (D6 §5.5; B02): once, after the authority
@@ -356,7 +394,7 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
       tx,
       {
         project: b.project,
-        baseRevision: b.head,
+        baseRevision: content.prepared_against_revision ?? b.head,
         authority: { kind: 'publication', by: args.by === 'human' ? 'human' : 'engine:plan_check', bundle: b.id, check: b.plan_check, routing: args.by === 'human' ? 'human' : 'registered' },
         phase: plan.phase,
         gitPath: `.surety/phases/phase-${plan.phase}.json`,
@@ -493,8 +531,8 @@ export interface ReplanPrepared {
 // to the human waits for `plan_approval`; one for a phase that is not the
 // next, or whose phase has an open plan, is stale and registers nothing
 // (early replacement is slice 35's). Returns the published plan, if any.
-export function finalizeReplan(tx: Tx, args: { project: string; run: string; prepared: ReplanPrepared; integrated: string }): string | null {
-  const r = args.prepared;
+export function finalizeReplan(tx: Tx, args: { project: string; run: string; prepared: ReplanPrepared; integrated: string; base?: string | null }): string | null {
+  const r = args.base ? { ...args.prepared, content: { ...args.prepared.content, prepared_against_revision: args.base } } : args.prepared;
   if (getBundle(tx.db, r.bundle)) return null;
   if (r.spec_change_requests && r.spec_change_requests.length > 0) requestsFromReplan(tx, { project: args.project, run: args.run, requests: r.spec_change_requests });
   recordBundle(tx, {
@@ -573,7 +611,7 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
     tx,
     {
       project: b.project,
-      baseRevision: b.head,
+      baseRevision: content.prepared_against_revision ?? b.head,
       authority: { kind: 'publication', by: args.by, bundle: b.id, check: b.plan_check, routing: args.routing },
       phase: plan.phase,
       gitPath: `.surety/phases/phase-${plan.phase}.json`,
@@ -708,25 +746,4 @@ function afterPublication(tx: Tx, project: string, phase: number | null, plan: s
     const blocker = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
     for (const d of blocker) invalidateDecision(tx, d, `superseded: the plan of phase ${phase} (${plan}) was published`);
   }
-}
-
-// Whether answering `decision` with `option` would publish its bundle now
-// (the main thread's read before `plan.before_publication`; M448 (e)).
-export function publicationDue(db: Db, args: { project: string; decision: string; option: unknown }): { bundle: string } | null {
-  if (args.option !== 'approve') return null;
-  const d = db.prepare('SELECT * FROM "decisions" WHERE "id" = ? AND "project" = ?').get(args.decision, args.project) as DecisionRow | undefined;
-  if (!d || d.status !== 'open' || (d.kind !== 'architecture_approval' && d.kind !== 'plan_approval')) return null;
-  const b = bundleOfDecision(db, d);
-  if (!b || b.status !== 'proposed') return null;
-  const approvals = JSON.parse(b.approvals) as Record<string, string>;
-  const needsArchitecture = db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
-  const needsPlan = b.phase_number !== null;
-  const has = (k: string) => k === d.kind || approvals[k] !== undefined;
-  if ((needsArchitecture && !has('architecture_approval')) || (needsPlan && !has('plan_approval'))) return null;
-  return { bundle: b.id };
-}
-
-// Whether a bundle is published (the read after the answer's transaction).
-export function bundlePublished(db: Db, args: { bundle: string }): boolean {
-  return getBundle(db, args.bundle)?.status === 'published';
 }
