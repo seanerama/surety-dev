@@ -6238,7 +6238,7 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
   - (f) `surety qualify-adapter` and `alpha` configured (`alphaByCommand`), then `surety deploy c-1 --env alpha`.
 - **The reads.** (e) reads c-1's projection as §382 does, and every result from the self-tested runner. (h) reads the engine's teardown at the end of the `before` hook: no unit, cgroup or runtime file of the prefix.
 - **Case (i).** R4 is answered `confirm`, the roadmap is phase 1 alone with R1 to R4, and the authoring includes `accept-r4`. It runs for real against A and fails. The scripted Verifier reports the finding. Read: no `fix` work and no Builder; the stage gate unsatisfied, naming `accept-r4` or R4.1; c-1 `developing` with no authorization; `conformance_state` **`blocked`**, and `blocked` shown on `GET …/plan` or `…/spec`. No environment is configured, so there is no unit.
-- **Timing.** About 10 s a check execution, one domain at a time (§375). The journey is about 25 executions and 8 one-shots: some 6 to 9 minutes. Case (i) takes some 3 minutes. Both files run under the driver's timeout ruling.
+- **Timing** (the driver's ruling, 2026-10-13). The runner's default of 600 s per file stands. On `mini-hp01`, where the gates run, M401 part 1 took 76 s and part 2 took 140 s; part 2 took 612 to 638 s on the workstation. Case (i) is already its own file. If M408's journey goes over 600 s on `mini-hp01`, it is split further, §357's way.
 
 ## What was run
 
