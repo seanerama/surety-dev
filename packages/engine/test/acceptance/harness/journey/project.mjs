@@ -61,7 +61,9 @@ const previousQualification = (fx) => (existsSync(storePath(fx.home)) ? (activeQ
 // `authoritative` naming the running version (the ruling). `lane`: 'project'
 // starts on the project lane; 'kernel' starts the same home on the kernel
 // lane (`fx.startKernel`) for a seed that `toProjectLane` carries on from.
-export async function journeyEngine(t, guard, { lane = 'project' } = {}) {
+// `config`: further engine keys, set with the classifier's before the second
+// start (M408: `domain_memory_max` 4 GiB, objection 076; SEAM.md §386).
+export async function journeyEngine(t, guard, { lane = 'project', config = {} } = {}) {
   const fx = realAdapterStarts(await sandboxEngine(t, { start: false }));
   guard.track(fx);
   const inner = fx.start;
@@ -74,7 +76,7 @@ export async function journeyEngine(t, guard, { lane = 'project' } = {}) {
   };
   await start();
   const version = await runningClassifier(fx.engine);
-  setEngineConfig(fx, { classifier_authority: { mode: 'authoritative', version } });
+  setEngineConfig(fx, { classifier_authority: { mode: 'authoritative', version }, ...config });
   await fx.engine.kill();
   await start();
   journeyScripts(fx);

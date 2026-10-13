@@ -109,7 +109,7 @@ A tiny HTTP service that adds two numbers.
 - A request whose \`a\` or \`b\` is not a number is refused with 400.
 - \`sum(a, b)\` in \`src/sum.mjs\` is a pure function.
 
-Run it with \`node server.mjs\`; run the tests with \`node --test test/\`.
+Run it with \`node server.mjs\`; run the tests with \`node --test 'test/*.test.mjs'\`.
 `;
 export const README_CLAIMS = Object.freeze({ false: 'A request whose `a` or `b` is not a number is refused with 400.' });
 
@@ -123,7 +123,7 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - run: node --test test/
+      - run: node --test 'test/*.test.mjs'
 `;
 export const CI_ENVIRONMENT = 'production';
 

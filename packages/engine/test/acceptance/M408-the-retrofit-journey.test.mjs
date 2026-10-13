@@ -84,7 +84,11 @@ describe('M408 the retrofit journey on the project lane', () => {
   let J;
   before(async () => {
     guard = operatorGuard();
-    const fx = await journeyEngine(shared.context, guard, { lane: 'project' });
+    // Objection 076 (SEAM.md §386): the envelope as built counts every domain at
+    // `domain_memory_max`; with Alpha's service running, the change phase's
+    // role domain fits a 15 GiB host only at 4 GiB, Sean's N1 value (E140),
+    // which slice 37 makes the default.
+    const fx = await journeyEngine(shared.context, guard, { lane: 'project', config: { domain_memory_max: 4 * 1024 * 1024 * 1024 } });
     retrofitScripts(fx);
     J = { fx };
     // (a) the adoption by command, the mode.

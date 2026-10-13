@@ -336,7 +336,7 @@ export function authoringFiles({ withR4 = false, withoutR1 = false, extra = {} }
     [defs('accept-r2')]: definitionText('accept-r2', { inputs: [WRAPPER_PATH, '.surety/checks/tests/sum-route.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/sum-route.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R2.1'] } }),
     [defs('accept-r3')]: definitionText('accept-r3', { inputs: [WRAPPER_PATH, '.surety/checks/tests/health.test.mjs'], kind: 'acceptance', command: ['node', WRAPPER_PATH, '.surety/checks/tests/health.test.mjs'], timeout_s: 120, gate_kinds: GATES, covers: { criteria: ['R3.1'] } }),
     [defs('smoke')]: definitionText('smoke', { inputs: [], kind: 'smoke', command: ['node', '--check', 'server.mjs'], timeout_s: 60, gate_kinds: GATES }),
-    [defs('suite')]: definitionText('suite', { inputs: [], kind: 'acceptance', origin: 'developer', command: ['node', '--test', 'test/'], timeout_s: 120, gate_kinds: GATES }),
+    [defs('suite')]: definitionText('suite', { inputs: [], kind: 'acceptance', origin: 'developer', command: ['node', '--test', 'test/*.test.mjs'], timeout_s: 120, gate_kinds: GATES }),
     [defs('operation')]: definitionText('operation', { inputs: ['.surety/checks/post-deploy/operation.mjs'], kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
   };
   if (withR4) Object.assign(files, R4_CHECK);
