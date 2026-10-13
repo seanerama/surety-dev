@@ -131,9 +131,24 @@ export function paceView(db: Database, args: { project: string }) {
   }[]).map((s) => {
     // The human wait: the union of the open intervals of the decisions that
     // blocked the stage's work (D6 §7.6); none blocked it, a measured zero.
-    const blocking = decisions.filter((d) => s.work_item !== null && json<string[]>(d.blocked_while_open, []).includes(s.work_item));
-    const intervals: [number, number][] = [];
+    // `blocked_while_open` is {work_items: [...], operations?: [...]} (D1
+    // A.8); a value of another shape is not read as "blocks nothing".
     let open: string | null = null;
+    const blocking = decisions.filter((d) => {
+      if (s.work_item === null) return false;
+      const v = json<unknown>(d.blocked_while_open, undefined);
+      if (v === undefined) {
+        open = "a decision's blocked work could not be read";
+        return false;
+      }
+      const items = v !== null && typeof v === 'object' && !Array.isArray(v) ? ((v as { work_items?: unknown }).work_items ?? []) : v;
+      if (!Array.isArray(items)) {
+        open = "a decision's blocked work could not be read";
+        return false;
+      }
+      return items.includes(s.work_item);
+    });
+    const intervals: [number, number][] = [];
     for (const d of blocking) {
       const a = ms(d.raised_at);
       const b = ms(answeredAt(d));

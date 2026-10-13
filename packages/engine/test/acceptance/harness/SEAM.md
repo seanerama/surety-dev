@@ -6225,6 +6225,22 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
 - **Case (i).** R4 is answered `confirm`, the roadmap is phase 1 alone with R1 to R4, and the authoring includes `accept-r4`. It runs for real against A and fails. The scripted Verifier reports the finding. Read: no `fix` work and no Builder; the stage gate unsatisfied, naming `accept-r4` or R4.1; c-1 `developing` with no authorization; `conformance_state` **`blocked`**, and `blocked` shown on `GET …/plan` or `…/spec`. No environment is configured, so there is no unit.
 - **Timing.** About 10 s a check execution, one domain at a time (§375). The journey is about 25 executions and 8 one-shots: some 6 to 9 minutes. Case (i) takes some 3 minutes. Both files run under the driver's timeout ruling.
 
+**Objections 073 and 074** (2026-10-13; added to this section, both upheld):
+- **073.** `turnRows` orders `turns` by `"number"`, D1 A.3's column. The session read's `turns[].turn` is that number (§344). No other harness query names a `turn` column.
+- **074** (the driver's ruling). The journey's human acts are counted **from the store**, not from the pump's posts. `humanActsOf(home, project, {sinceSeq})` (`harness/journey/drive.mjs`) returns, after event `sinceSeq`, in event order:
+  - each decision consumed by a human answer: its `decision.consumed` event, with the decision's `answer.actor` `human` (D1 §4.6);
+  - each change request the owner submitted: `spec.change_requested` with `payload.source` `owner`.
+
+  `buildActs(ctx)` reads them from the event at which the pump first ran for `ctx` (`ctx.sinceSeq`); M401 part 2 reads them from the switch (`toProjectLane` returns the switch's event `seq`). An answer refused on a superseded generation (409) consumed nothing and is no act. The pump's posts, with their statuses, stay in `ctx.humanActs` for diagnostics only. The counting is applied in M401 parts 1 and 2, the T1 variant and M406; M407 counts no human act.
+
+**M401 part 2 (h), "every gate afterwards on version 2"** (the driver's ruling, 2026-10-13; D6 §4.5). A spec change re-nominates nothing: the spec-evidence generation carries it. Under `autonomy: phase`, phase 2's stages may be nominated while CR-1 is still being applied. On this workstation, both phase-2 candidates were nominated about two minutes before v2 existed, and nothing was nominated after. (h) therefore reads:
+- **(1)** every candidate nominated after v2's creation (`spec_revisions.created_at`, which is its application) is on v2, and there may be none. The assertion names any candidate on v1, separately from the gate check.
+- **(2)** every gate evaluation made after v2's creation (each `checks[*].deciding.result`) decides from no result invalidated `spec_changed`. For a check the change obliged at generation 2 (`check_obligations`, reason `spec_changed`), it decides only from a result of generation 2.
+  - A result of a check the change did not list stays evidence across the generation. D6 §4.5 and B05 invalidate only the listed results, and a result of an earlier generation than an obligation on its check satisfies no gate.
+  - The first re-run read the ruling's "only results of generation 2" literally. It failed on stage gates deciding from `lint`, `smoke`, `accept-r3` and `integration-tally` results of generation 1, none of them listed by CR-1, so this narrower reading is the one D6 states.
+  - The generation is cross-checked in the store. D6 A.3 names `check_results.generation`; the engine as built records it on the result's execution (`check_executions.spec_generation`), and the test reads whichever the store has.
+- **(3)** phase 2's `completion_binding.spec_revision` is v2, and the phase sign-off the completion used is bound to v2's spec revision and the completion's protected version. This is where a candidate nominated under v1 legitimately meets the new version (the 31b review's S3).
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a" and "M5 slice 31b".

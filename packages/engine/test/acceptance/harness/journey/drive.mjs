@@ -314,6 +314,8 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
   const { project } = ctx;
   ctx.humanActs ??= [];
   ctx.ticks ??= 0;
+  // Where the build's human acts begin, for `humanActsOf` (objection 074).
+  ctx.sinceSeq ??= lastEventSeq(fx.home);
   const started = Date.now();
   let seen = { seq: -1, at: started };
   let rounds = 0;
@@ -440,6 +442,31 @@ export function correctionOrigin(home, decisionId) {
     return row?.kind ?? null;
   });
 }
+
+// The human acts of a project as the store records them (objection 074; the
+// driver's ruling, 2026-10-13; SEAM.md §375): each decision consumed by a
+// human answer (`answer.actor` `human`) and each change request the owner
+// submitted (`spec.change_requested`, `source` `owner`), after event
+// `sinceSeq`, in event order: [{kind, id, option, seq}]. An answer the engine
+// refused (a stale preview, 409) consumed nothing and is no act; the pump's
+// posts stay in `ctx.humanActs`, with their statuses, for diagnostics.
+export function humanActsOf(home, project, { sinceSeq = 0 } = {}) {
+  const acts = [];
+  for (const e of eventsOfType(home, 'decision.consumed', sinceSeq)) {
+    if (e.subject?.project !== project) continue;
+    const d = one(home, 'SELECT * FROM "decisions" WHERE "id" = ?', e.subject.decision);
+    const answered = json(d?.answer);
+    if (answered?.actor !== 'human') continue;
+    acts.push({ kind: d.kind, id: d.id, option: answered.option, seq: e.seq });
+  }
+  for (const e of eventsOfType(home, 'spec.change_requested', sinceSeq)) {
+    if (e.subject?.project !== project || e.payload?.source !== 'owner') continue;
+    acts.push({ kind: 'spec_change_request', id: e.subject.spec_change_request, option: 'submit', seq: e.seq });
+  }
+  return acts.sort((a, b) => a.seq - b.seq);
+}
+// The build's human acts: those since the pump first ran for `ctx`.
+export const buildActs = (ctx) => humanActsOf(ctx.fx.home, ctx.project, { sinceSeq: ctx.sinceSeq ?? 0 });
 
 // The pace read (§355).
 export async function readPace(fx, project) {
