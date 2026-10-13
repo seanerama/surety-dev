@@ -22,6 +22,7 @@ import { engineSettings, projectEffective, projectPolicy } from '../store/transi
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
+import { launchModel } from '../invoke/adapters/model.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
 import { WORKSPACE_OOB_OPTIONS, raiseQuestion } from '../store/transitions/queue.js';
 import { raiseDecision } from '../store/transitions/decisions.js';
@@ -520,7 +521,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
             binary_sha256: resolved.entry.binary_sha256,
             help_sha256: resolved.entry.help_sha256,
             // The role's model (the driver's ruling (c), 2026-10-13).
-            model: run.model_requested,
+            model: launchModel(run.model_requested, resolved.entry.model),
             key_ref: keyRef,
             egress_hosts: (() => {
               try {
