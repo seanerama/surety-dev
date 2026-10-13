@@ -45,6 +45,7 @@ import {
   stagesOfPlan,
   workOf,
 } from './harness/journey/drive.mjs';
+import { buildActs } from './harness/journey/drive.mjs';
 import { journeyEngine, toPhaseTwoPublished } from './harness/journey/project.mjs';
 import { SPEC_DEFECT } from './harness/journey/reference.mjs';
 import { ledgerRowsOf, turnRows } from './harness/sessions.mjs';
@@ -116,8 +117,9 @@ describe('M401 the journey from an idea to Alpha, part 1: the idea to phase 2 pu
 
   test('(e) phase 1\'s check authoring: the proposal unclassifiable (check_commands), approved by the harness as the human; no Builder launched before the application; the checks exist in the effective version before any build', () => {
     const { fx, p, ctx, authoring } = J;
-    const toolchain = ctx.humanActs.filter((h) => h.kind === 'check_correction_unclassifiable');
-    assert.equal(toolchain.length, 1, `one toolchain decision answered by the harness (${JSON.stringify(ctx.humanActs)})`);
+    // Counted from the store (objection 074): decisions consumed by a human answer.
+    const toolchain = buildActs(ctx).filter((h) => h.kind === 'check_correction_unclassifiable');
+    assert.equal(toolchain.length, 1, `one toolchain decision answered by the harness (${JSON.stringify(buildActs(ctx))}; posts ${JSON.stringify(ctx.humanActs)})`);
     assert.ok(authoring.ready.authoring_ready_at, 'authoring_ready_at set');
     const readyAt = Date.parse(authoring.ready.authoring_ready_at);
     const builders = fx.scripted.launches({ work_kind: 'stage_build' });
@@ -172,8 +174,8 @@ describe('M401 the journey from an idea to Alpha, part 1: the idea to phase 2 pu
     const check = planChecks(fx.home, p.id).find((c) => c.plan === phase2Plan.id || c.bundle === phase2Plan.bundle);
     assert.ok(check, 'its plan check');
     assert.deepEqual([check.changes_architecture?.changed, check.changes_adrs?.added, check.changes_adrs?.changed, check.changes_adrs?.deleted, check.changes_roadmap?.assignments], [false, [], [], [], []], `changes_* all empty (${JSON.stringify(check)})`);
-    const acts = ctx.humanActs.filter((h) => h.kind !== 'check_correction_unclassifiable');
-    assert.deepEqual(acts, [], `no human act within the build but the toolchain proposal, none at the phase boundary (${JSON.stringify(ctx.humanActs)})`);
+    const acts = buildActs(ctx).filter((h) => h.kind !== 'check_correction_unclassifiable');
+    assert.deepEqual(acts, [], `no human act within the build but the toolchain proposal, none at the phase boundary (${JSON.stringify(buildActs(ctx))}; posts ${JSON.stringify(ctx.humanActs)})`);
   });
 
 });
