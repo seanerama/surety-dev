@@ -1546,6 +1546,15 @@ export function answerBatch(tx: Tx, args: { project: string; answers: unknown; f
       decisions: widenings.map((d) => d.id),
     });
   }
+  // Every answer's guard first (the review's N2): a guard's refusal is
+  // committed with what it records (a bundle marked stale) and refuses the
+  // whole batch, nothing of it consumed.
+  for (const [i, a] of answers.entries()) {
+    const d = rows[i]!;
+    if ((d.status !== 'open' && d.status !== 'invalidated') || typeof a.option !== 'string') continue;
+    const refused = KINDS[d.kind as DecisionKind]?.guard?.(tx, d, a.option) ?? null;
+    if (refused !== null) return refused;
+  }
   const effects: Effect[] = [];
   const results: unknown[] = [];
   for (const [i, a] of answers.entries()) {

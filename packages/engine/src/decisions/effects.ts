@@ -9,7 +9,7 @@
 // completes it.
 
 import { commitContent, messageText } from '../git/commit.js';
-import { gitOk, repoContext } from '../git/exec.js';
+import { git, gitOk, repoContext } from '../git/exec.js';
 import { checkoutContext } from '../git/integrity.js';
 import { checkoutBaseline, isAncestor, mergeBase, readRef, treeIndexHash } from '../git/repo.js';
 import type { ApplicationFacts as SpecApplicationFacts } from '../spec/change.js';
@@ -31,6 +31,16 @@ import type { ApplicationFacts } from '../store/transitions/protected.js';
 import { pausePoint } from '../testing/seam.js';
 
 const SPEC_PATH = '.surety/spec/spec.md';
+
+// The specification file at `rev`: its exact bytes and its mode, or null
+// when either cannot be read. `blob`, when given, must be the blob there.
+async function specFileAt(ctx: ReturnType<typeof repoContext>, rev: string, blob: string | null): Promise<{ bytes: Buffer; mode: string } | null> {
+  const entry = (await gitOk(ctx, ['ls-tree', '-z', rev, '--', SPEC_PATH]))?.split('\0')[0] ?? '';
+  const m = /^(100644|100755) blob ([0-9a-f]{40})\t/.exec(entry);
+  if (!m || (blob !== null && m[2] !== blob)) return null;
+  const r = await git(ctx, ['cat-file', 'blob', m[2]!]);
+  return r.code === 0 ? { bytes: r.bytes, mode: m[1]! } : null;
+}
 
 interface IntentRow {
   id: string;
@@ -160,10 +170,11 @@ export class Effects {
         if (rebased.conflict !== null) return void (await refuse(`rebase_conflict:${rebased.conflict}`));
         base = { tree: rebased.tree, parent: head };
       }
-      const proposed = await gitOk(ctx, ['cat-file', 'blob', `${facts.revision}:${SPEC_PATH}`]);
+      if (facts.approved_by === null) throw new Error(`answer_actor_unreadable: the answer approving specification change ${facts.request} names no actor the engine can read; the change log row is not written`);
+      const proposed = await specFileAt(ctx, facts.revision, null);
       if (proposed === null) return void (await refuse('proposal_unread'));
-      const text = appendChangeLog(proposed, { version: facts.version, date: nowIso().slice(0, 10), change: `Specification change ${facts.seq}`, approved_by: facts.approved_by });
-      const tree = await treeWith(facts.repo, base.tree, { [SPEC_PATH]: text }, this.rt.scratch);
+      const text = Buffer.from(appendChangeLog(proposed.bytes.toString('latin1'), { version: facts.version, date: nowIso().slice(0, 10), change: `Specification change ${facts.seq}`, approved_by: facts.approved_by }), 'latin1');
+      const tree = await treeWith(facts.repo, base.tree, { [SPEC_PATH]: { bytes: text, mode: proposed.mode } }, this.rt.scratch);
       const blob = await writeBlob(ctx, text);
       if (tree === null || blob === null) return void (await refuse('commit_unprepared'));
       const message = messageText({ title: `surety: apply specification change ${facts.request} as version ${facts.version}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
@@ -186,18 +197,23 @@ export class Effects {
       const refuse = (reason: string) => this.rt.engine('spec.refuse_approval', { intent: row.id, reason });
       const facts = await this.rt.engine<SpecApprovalFacts | null>('spec.approval_facts', { intent: row.id });
       if (facts === null || facts.blob === null || facts.head === null) return void (await refuse('specification_unsaved'));
+      // Who approved is part of the row: unread, the effect fails closed and
+      // the intent is not done (the review's N3 (a)).
+      if (facts.approved_by === null) throw new Error(`answer_actor_unreadable: the answer of decision ${facts.decision} names no actor the engine can read; the change log row is not written`);
       const ctx = repoContext(facts.repo);
       const read = await readRef(ctx, facts.ref);
       if (read.state !== 'ok' || read.oid === null) return void (await refuse('integration_revision_unread'));
       // The branch is somewhere the engine did not put it: the integrity
       // observation takes it (D1 §7.6); nothing is begun meanwhile.
       if (read.oid !== facts.head) return;
-      const saved = await gitOk(ctx, ['cat-file', 'blob', facts.blob]);
+      // The saved file's bytes and mode, kept outside §11 (the review's N7).
+      const saved = await specFileAt(ctx, facts.head, facts.blob);
       if (saved === null) return void (await refuse('specification_unread'));
-      const text = appendChangeLog(saved, { version: facts.version, date: nowIso().slice(0, 10), change: facts.version === 1 ? 'First approved version' : `Approved from Spec Writer session ${facts.run}`, approved_by: facts.approved_by });
+      const text = appendChangeLog(saved.bytes.toString('latin1'), { version: facts.version, date: nowIso().slice(0, 10), change: facts.version === 1 ? 'First approved version' : `Approved from Spec Writer session ${facts.run}`, approved_by: facts.approved_by });
+      const bytes = Buffer.from(text, 'latin1');
       const message = messageText({ title: `surety: specification version ${facts.version} approved`, trailers: [['Surety-Project', row.project], ['Surety-Decision', facts.decision]] });
-      const commit = await prepareCommit(facts.repo, facts.head, { [SPEC_PATH]: text }, message, this.rt.scratch);
-      const blob = await writeBlob(ctx, text);
+      const commit = await prepareCommit(facts.repo, facts.head, { [SPEC_PATH]: { bytes, mode: saved.mode } }, message, this.rt.scratch);
+      const blob = await writeBlob(ctx, bytes);
       if (commit === null || blob === null) return void (await refuse('commit_unprepared'));
       const made = await this.journal.withProject(row.project, () => this.journal.intend('spec.begin_approval', { intent: row.id, head: facts.head, commit, blob, deadlineSeconds: this.rt.setting('git_deadline') }, 'commit_tree'));
       if (made && 'operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));

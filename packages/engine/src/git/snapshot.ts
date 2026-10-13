@@ -228,7 +228,14 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
       // where it resolves, as the role's paths judge any write, whether or
       // not the target exists. The workspace's root itself is no file a
       // role may write.
-      const rule = resolved === '' ? `it resolves to the workspace's root` : pathRule(role, resolved, roots);
+      // As a file, the resolved path is judged; as a directory, a path under
+      // it, so that a link to a permitted directory itself (`.surety/spec`)
+      // is the role's and one to a directory holding what the role may not
+      // touch is not (the review's N6).
+      const asFile = resolved === '' ? `it resolves to the workspace's root` : pathRule(role, resolved, roots);
+      const asDir = resolved === '' ? asFile : pathRule(role, `${resolved}/${'\u0000'}`, roots);
+      const isDir = resolved === '' || [...entries.keys()].some((p) => p.startsWith(`${resolved}/`));
+      const rule = asDir === null ? null : isDir || asFile !== null ? (asFile ?? asDir) : null;
       if (rule) return reject(`${c.path} is a symbolic link to ${target}, which resolves to ${resolved === '' ? '.' : resolved}: ${rule}`, c.path);
       continue;
     }

@@ -25,10 +25,12 @@ export function changeLogLine(r: ChangeLogRow): string {
 const HEADER = ['| Version | Date | Change | Approved by |', '|---|---|---|---|'];
 const H2 = /^##\s+(\d+)\.\s/;
 
+// A table row's cells, a `\|` inside a cell being part of it (the
+// review's N1: the engine reads its own rows back).
 const cellsOf = (line: string): string[] | null => {
   const t = line.trim();
-  if (!t.startsWith('|') || !t.endsWith('|') || t.length < 2) return null;
-  return t.slice(1, -1).split('|').map((c) => c.trim());
+  if (!t.startsWith('|') || !t.endsWith('|') || t.length < 2 || t.endsWith('\\|')) return null;
+  return t.slice(1, -1).split(/(?<!\\)\|/).map((c) => c.trim());
 };
 
 // The table of a §11 section that parses: its header `| Version | Date |
@@ -60,9 +62,13 @@ function tableOf(lines: string[], start: number, end: number): { rows: number[];
 // is appended after the last row; rows of other versions are left alone.
 // When no §11 holds a table that parses, a new §11 with the table is
 // appended at the end of the file: an approval never fails on §11.
+// `text` is the file's bytes one character each (latin1), so that what lies
+// outside the row is written back byte for byte (the review's N7); the row
+// takes the line ending of the table it joins.
 export function appendChangeLog(text: string, row: ChangeLogRow): string {
-  const line = changeLogLine(row);
+  const bare = changeLogLine(row);
   const lines = text.split('\n');
+  const crlf = lines.length > 1 && lines[0]!.endsWith('\r');
   let chosen: { start: number; table: { rows: number[]; last: number } } | null = null;
   for (let i = 0; i < lines.length; i++) {
     if (H2.exec(lines[i]!)?.[1] !== '11') continue;
@@ -77,9 +83,11 @@ export function appendChangeLog(text: string, row: ChangeLogRow): string {
     if (table) chosen = { start: i, table };
   }
   if (chosen === null) {
-    const body = text.endsWith('\n') ? text : `${text}\n`;
-    return `${body}\n${['## 11. Change log', '', ...HEADER, line, ''].join('\n')}`;
+    const eol = crlf ? '\r\n' : '\n';
+    const body = text.endsWith('\n') ? text : `${text}${eol}`;
+    return `${body}${eol}${['## 11. Change log', '', ...HEADER, bare, ''].join(eol)}`;
   }
+  const line = lines[chosen.table.last]!.endsWith('\r') ? `${bare}\r` : bare;
   const own = chosen.table.rows.filter((n) => cellsOf(lines[n]!)![0] === String(row.version));
   if (own.length > 0) {
     const out = [...lines];

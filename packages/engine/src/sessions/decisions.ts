@@ -100,7 +100,7 @@ function specManifest(db: Db, run: string): Record<string, unknown> {
     readable: row ? row.readable === 1 : null,
     // D6-R09 (SEAM.md §384): an adopted project's mode rules, naming each
     // requirement that keeps `approve` blocked.
-    blocking: [...specBlockers(row, project === null ? null : approvedRepresentation(db, project)), ...retrofitBlockers(db, project, run)],
+    blocking: [...specBlockers(row, project === null ? undefined : approvedRepresentation(db, project)), ...retrofitBlockers(db, project, run)],
     policy_revision: project === null ? null : policyRevision(db, project),
   };
 }
@@ -110,7 +110,7 @@ export const SPEC_APPROVAL: KindSpec = {
     const manifest = specManifest(tx.db, d.subject_id);
     if (manifest.blob === null) return null;
     const row = latestSemantics(tx.db, d.subject_id);
-    const blockers = [...specBlockers(row, d.project === null ? null : approvedRepresentation(tx.db, d.project)), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
+    const blockers = [...specBlockers(row, d.project === null ? undefined : approvedRepresentation(tx.db, d.project)), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
     let findings: { where: string; code: string; why: string }[] = [];
     try {
       findings = row ? (JSON.parse(row.findings) as { where: string; code: string; why: string }[]) : [];

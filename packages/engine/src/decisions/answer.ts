@@ -23,7 +23,8 @@ export async function beforeAnswer(_rt: Runtime, project: string, answers: { dec
 
 export async function afterAnswer(rt: Runtime, waits: AnswerWaits | undefined): Promise<void> {
   if (!waits) return;
-  const intents = await rt.read<string[]>('decision.intents', { decisions: waits.decisions, kind: 'spec_approval_application' }).catch(() => [] as string[]);
+  // A read that fails is an error, never "no intent" (the review's N3 (c)).
+  const intents = await rt.read<string[]>('decision.intents', { decisions: waits.decisions, kind: 'spec_approval_application' });
   for (const intent of intents) await rt.services?.effect(intent);
   await publishAuthorized(rt, waits.project);
 }

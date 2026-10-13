@@ -100,6 +100,7 @@ export interface SemanticFinding {
     | 'criterion_mismatch'
     | 'module_table_invalid'
     | 'question_malformed'
+    | 'question_unknown_key'
     | 'claims_table_invalid'
     | 'claims_requirement_unknown';
   why: string;
@@ -456,7 +457,15 @@ export function parseSpecification(text: string): SemanticResult {
   }
   for (const req of requirements) if (!index.some((r) => r.key === req.key) && index.length > 0) findings.push({ where: req.key, code: 'index_subsection_mismatch', why: `${req.key} has a section 4 subsection and no index row` });
   const questions = parseQuestions(secs.get(10), findings);
-  for (const q of questions) for (const key of q.blocks) byKey.get(key)?.blocked_by_questions.push(q.id);
+  for (const q of questions) {
+    for (const key of q.blocks) {
+      const req = byKey.get(key);
+      if (req) req.blocked_by_questions.push(q.id);
+      // A question naming a key the specification lacks (the review's N3
+      // (d)): what it blocks cannot be told, so approval cannot be safe.
+      else findings.push({ where: q.id, code: 'question_unknown_key', why: `the question ${q.id} names ${key}, which is no requirement of this specification` });
+    }
+  }
   const modules = parseModules(secs.get(6), findings);
   const environments = parseEnvironments(secs.get(7));
   const claims = parseClaims(secs.get(12), findings);

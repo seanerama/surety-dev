@@ -180,7 +180,7 @@ export async function catBlob(ctx: GitContext, rev: string, path: string): Promi
 }
 
 // A blob written to the object store from `content`.
-export async function writeBlob(ctx: GitContext, content: string): Promise<string | null> {
+export async function writeBlob(ctx: GitContext, content: string | Buffer): Promise<string | null> {
   const out = await gitOk(ctx, ['hash-object', '-w', '--stdin'], { input: content });
   const t = out?.trim() ?? '';
   return SHA.test(t) ? t : null;

@@ -84,6 +84,8 @@ const BLOCKING_CODES = new Set([
   'question_malformed',
   'module_table_invalid',
   'claims_table_invalid',
+  // The review's N3 (d): a question naming a key the specification lacks.
+  'question_unknown_key',
 ]);
 
 // The findings of a parsed specification that block its approval (S1 of
@@ -114,22 +116,38 @@ export function readRepresentation(row: SemanticsRow | undefined): { rep: SpecRe
   }
 }
 
-// The approved revision's representation, or null when none is approved
-// (or it cannot be read: then nothing can be compared against it).
-export function approvedRepresentation(db: Db, project: string): SpecRepresentation | null {
-  const row = db.prepare('SELECT s."representation" FROM "spec_revisions" v JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."project" = ? ORDER BY v."version" DESC LIMIT 1').get(project) as { representation: string | null } | undefined;
-  if (!row?.representation) return null;
+// What the approved revision's keys are compared against: its
+// representation, null when no specification is approved, or `unreadable`
+// (the review's N3 (b): never a skipped comparison), with the keys the
+// project has withdrawn (the review's N4).
+export interface ApprovedKeys {
+  rep: SpecRepresentation | null | 'unreadable';
+  withdrawn: string[];
+}
+
+export function approvedRepresentation(db: Db, project: string): ApprovedKeys {
+  const withdrawn = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NOT NULL ORDER BY "key"').all(project) as { key: string }[]).map((r) => r.key);
+  const v = db.prepare('SELECT "semantics" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { semantics: string | null } | undefined;
+  if (!v) return { rep: null, withdrawn };
+  const row = v.semantics === null ? undefined : (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(v.semantics) as { representation: string | null } | undefined);
+  if (!row?.representation) return { rep: 'unreadable', withdrawn };
   try {
-    return liveRepresentation(JSON.parse(row.representation) as SpecRepresentation);
+    const rep = JSON.parse(row.representation) as SpecRepresentation;
+    if (typeof rep !== 'object' || rep === null || !Array.isArray(rep.requirements)) return { rep: 'unreadable', withdrawn };
+    return { rep: liveRepresentation(rep), withdrawn };
   } catch {
-    return null;
+    return { rep: 'unreadable', withdrawn };
   }
 }
 
 // The representation of the project's last readable save (any session's),
 // against which a save's keys are compared (M421 (c)); null when none.
 export function previousRepresentation(db: Db, project: string): SpecRepresentation | null {
-  const row = db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "project" = ? AND "readable" = 1 AND "representation" IS NOT NULL ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(project) as { representation: string } | undefined;
+  // A session's save only: a specification change's proposal is no save
+  // (the review's N5).
+  const row = db
+    .prepare(`SELECT s."representation" FROM "spec_semantics" s JOIN "runs" r ON r."id" = s."run" WHERE s."project" = ? AND s."readable" = 1 AND s."representation" IS NOT NULL AND r."kind" = 'session' ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .get(project) as { representation: string } | undefined;
   if (!row) return null;
   try {
     return JSON.parse(row.representation) as SpecRepresentation;
@@ -145,7 +163,7 @@ export function previousRepresentation(db: Db, project: string): SpecRepresentat
 // renumbered against the approved revision (`approved`, when one exists).
 // `questions` false: a specification change's approval, which carries no
 // phase-hint guard (the driver's ruling; SEAM.md §402).
-export function specBlockers(row: SemanticsRow | undefined, approved: SpecRepresentation | null = null, opts: { questions?: boolean } = {}): string[] {
+export function specBlockers(row: SemanticsRow | undefined, approved: ApprovedKeys = { rep: null, withdrawn: [] }, opts: { questions?: boolean } = {}): string[] {
   if (!row) return ['spec_not_saved'];
   const read = readRepresentation(row);
   if ('cause' in read) return ['spec_semantics_invalid', `SPEC_REPRESENTATION_UNREADABLE:${read.cause}`];
@@ -153,7 +171,10 @@ export function specBlockers(row: SemanticsRow | undefined, approved: SpecRepres
   const blocking = read.findings.filter((f) => BLOCKING_CODES.has(f.code));
   if (blocking.length > 0) out.push('spec_semantics_invalid', ...new Set(blocking.map((f) => blockerOf(specFinding(f)))));
   if (opts.questions !== false) out.push(...questionBlockers(read.rep));
-  for (const r of compareKeys(approved, read.rep).renumbered) out.push(`spec_keys_renumbered:${r.from}->${r.key}`);
+  if (approved.rep === 'unreadable') out.push('SPEC_REPRESENTATION_UNREADABLE:previous');
+  else for (const r of compareKeys(approved.rep, read.rep).renumbered) out.push(`spec_keys_renumbered:${r.from}->${r.key}`);
+  // A withdrawn key used again (TPL §4: never reused; the review's N4).
+  for (const r of read.rep.requirements) if (approved.withdrawn.includes(r.key)) out.push(`spec_key_reused:${r.key}`);
   return out;
 }
 

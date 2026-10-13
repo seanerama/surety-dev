@@ -469,7 +469,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             const waits = Array.isArray(body.answers) ? await beforeAnswer(runtime(), project, (body.answers as { decision?: unknown; option?: unknown }[]).map((a) => ({ decision: a?.decision, option: a?.option }))) : undefined;
             return { project, answers: body.answers, facts, waits };
           },
-          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits),
+          // A committed answer is answered 200 whatever follows it: a failed
+          // effect or publication is logged and carried by the next tick
+          // (the review's N8).
+          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits).catch((err) => log('answer', err, { project })),
         };
       }
       if (rest.length === 3 && rest[0] === 'decisions' && rest[2] === 'answer' && post) {
@@ -484,7 +487,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
             return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts, waits };
           },
-          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits),
+          // A committed answer is answered 200 whatever follows it: a failed
+          // effect or publication is logged and carried by the next tick
+          // (the review's N8).
+          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits).catch((err) => log('answer', err, { project })),
         };
       }
       if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && post) {

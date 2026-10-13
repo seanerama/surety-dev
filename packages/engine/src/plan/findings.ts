@@ -13,7 +13,8 @@
 // `roadmap_requirement_missing`, `roadmap_phase_cycle`, `adr_key_missing`,
 // `adr_status_invalid`, `machine_file_invalid`; slice 34:
 // `spec_requirement_duplicate`, `spec_criterion_duplicate`,
-// `spec_keys_renumbered`, `spec_key_withdrawn` (SEAM.md §397).
+// `spec_keys_renumbered`, `spec_key_withdrawn` (SEAM.md §397); the review:
+// `spec_question_unknown_key`, `spec_key_reused`.
 
 import { parseIdentityBlock } from '../spec/identity-block.js';
 import { type SemanticFinding, type SemanticResult, type SpecRepresentation, parseSpecification } from '../spec/semantics.js';
@@ -62,6 +63,7 @@ const SPEC_CODES: Record<string, string> = {
   criterion_mismatch: 'spec_criterion_mismatch',
   module_table_invalid: 'spec_modules_invalid',
   question_malformed: 'spec_question_invalid',
+  question_unknown_key: 'spec_question_unknown_key',
   claims_table_invalid: 'spec_claims_invalid',
   claims_requirement_unknown: 'spec_claims_invalid',
 };
@@ -86,6 +88,9 @@ export function specFinding(f: SemanticFinding, path = '.surety/spec/spec.md'): 
       code = 'spec_area_unknown';
       subject.area = area;
     }
+  } else if (f.code === 'question_unknown_key') {
+    subject.question = f.where;
+    subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
   } else if (f.code === 'claims_requirement_unknown') {
     subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
     subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
@@ -127,6 +132,9 @@ export function specFindings(text: string, path = '.surety/spec/spec.md', prev: 
         subject: criterion ? { key: k, criterion: k, requirement: k.split('.')[0] } : { key: k },
         message: `${k} is no longer in the specification: at approval it is recorded withdrawn, never deleted, and its key is not reused`,
       });
+    }
+    for (const k of keys.reused) {
+      findings.push({ code: 'spec_key_reused', path, subject: { key: k }, message: `${k} was withdrawn and is used again: a key is never reused; give the requirement a new key` });
     }
     // The vanished requirements stay in this save's representation, marked
     // withdrawn (SEAM.md §397); the digest is over the live ones.

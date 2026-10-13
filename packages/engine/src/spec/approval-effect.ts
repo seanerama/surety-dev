@@ -29,7 +29,9 @@ export interface ApprovalFacts {
   blob: string | null;
   // The version the approval allocates.
   version: number;
-  approved_by: string;
+  // Who answered, as the decision's answer records it; null when it cannot
+  // be read (the effect then fails closed, the review's N3 (a)).
+  approved_by: string | null;
 }
 
 export function approvalFacts(tx: Tx, args: { intent: string }): ApprovalFacts | null {
@@ -40,11 +42,12 @@ export function approvalFacts(tx: Tx, args: { intent: string }): ApprovalFacts |
   const ref = integrationRef(p.integration_branch);
   const latest = (tx.db.prepare('SELECT "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(row.project) as { version: number } | undefined)?.version ?? 0;
   const d = tx.db.prepare('SELECT "answer" FROM "decisions" WHERE "id" = ?').get(row.decision) as { answer: string | null } | undefined;
-  let actor = 'human';
+  let actor: string | null = null;
   try {
-    actor = (JSON.parse(d?.answer ?? 'null') as { actor?: string } | null)?.actor ?? actor;
+    const a = (JSON.parse(d?.answer ?? 'null') as { actor?: unknown } | null)?.actor;
+    actor = typeof a === 'string' && a.length > 0 ? a : null;
   } catch {
-    // the decision's answer is the owner's by its route
+    actor = null;
   }
   return {
     intent: row.id,

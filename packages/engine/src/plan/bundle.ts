@@ -563,14 +563,9 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
     // §5.4; the 31b review's S4): published together, or not at all.
     const c = r.check.changes;
     const baselineChanging = c.changes_architecture.changed || c.changes_adrs.added.length + c.changes_adrs.changed.length + c.changes_adrs.deleted.length > 0 || r.check.roadmap_revision;
-    if (baselineChanging) {
-      // Its publication allocates the next architecture version (and the
-      // next roadmap version when the roadmap changed): the versions the
-      // decisions bind are the ones publication will write (B02).
-      const v = r.versions;
-      tx.db.prepare('UPDATE "plan_bundles" SET "versions" = ? WHERE "id" = ?').run(JSON.stringify({ ...v, architecture: v.architecture + 1, roadmap: r.content.roadmap_changed ? v.roadmap + 1 : v.roadmap }), r.bundle);
-      raiseQuestion(tx, { project: args.project, kind: 'architecture_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
-    }
+    // Its versions are the ones its publication allocates: the replan was
+    // checked against them (runs/accept.ts; B02).
+    if (baselineChanging) raiseQuestion(tx, { project: args.project, kind: 'architecture_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
     raiseQuestion(tx, { project: args.project, kind: 'plan_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
     tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "subject_type" = ? AND "subject_id" = ? AND "scope" = ? AND "status" = ?').run(r.bundle, 'run', args.run, r.bundle, 'open');
     tx.db.prepare('UPDATE "plan_bundles" SET "batch_key" = ? WHERE "id" = ?').run(r.bundle, r.bundle);
@@ -746,4 +741,69 @@ function afterPublication(tx: Tx, project: string, phase: number | null, plan: s
     const blocker = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
     for (const d of blocker) invalidateDecision(tx, d, `superseded: the plan of phase ${phase} (${plan}) was published`);
   }
+}
+
+// ---- a proposed bundle under a moving head (B03; the review's gap) -----------------------
+
+// The approvals a bundle's authority still needs: each kind raised on it
+// (any generation) and not yet approved.
+function pendingKinds(db: Db, b: BundleRow): ('architecture_approval' | 'plan_approval')[] {
+  const approvals = JSON.parse(b.approvals) as Record<string, string>;
+  return (['architecture_approval', 'plan_approval'] as const).filter(
+    (k) => approvals[k] === undefined && db.prepare('SELECT 1 FROM "decisions" WHERE "kind" = ? AND "scope" = ?').get(k, b.id) !== undefined,
+  );
+}
+
+export interface RebindDue {
+  bundle: string;
+  repo: string;
+  from: string;
+  to: string;
+  paths: string[];
+}
+
+// The proposed bundles that a moved head, or a pending approval with no
+// open decision, leaves without a current question.
+export function rebindDue(db: Db, args: { project: string }): RebindDue[] {
+  const p = db.prepare('SELECT "dev_repo_path", "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string; integration_branch: string } | undefined;
+  if (!p) return [];
+  const head = (db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(args.project, integrationRef(p.integration_branch)) as { expected_oid: string } | undefined)?.expected_oid ?? null;
+  if (head === null) return [];
+  const out: RebindDue[] = [];
+  for (const b of db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY "created_at"`).all(args.project) as BundleRow[]) {
+    const pending = pendingKinds(db, b);
+    if (pending.length === 0) continue;
+    const unasked = pending.some((k) => db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = ? AND "scope" = ? AND "status" = 'open'`).get(k, b.id) === undefined);
+    if (b.head !== head || unasked) out.push({ bundle: b.id, repo: p.dev_repo_path, from: b.head, to: head, paths: Object.keys(JSON.parse(b.blobs) as Record<string, string>) });
+  }
+  return out;
+}
+
+// The bound inputs of a bundle a head move can touch (B03): the
+// specification's files, the Architect's paths, and every proposed path.
+const BOUND_PREFIXES = ['.surety/spec/', '.surety/architecture/', '.surety/adrs/', '.surety/roadmap/', '.surety/phases/'];
+export const touchesBundle = (changed: string[], paths: string[]): string[] => changed.filter((c) => paths.includes(c) || BOUND_PREFIXES.some((p) => c.startsWith(p)));
+
+// The bundle re-bound to the head: `touched` (the changed bound paths, or
+// null when the diff could not be read) makes it stale; otherwise, its
+// baseline still current, its head becomes `to` and every pending approval
+// is raised as the next generation, one batch. Never a proposed bundle
+// with no open decision.
+export function rebindBundle(tx: Tx, args: { bundle: string; from: string; to: string; touched: string[] | null }): { outcome: 'rebound' | 'stale' | 'moved' | 'none'; why?: string } {
+  const b = getBundle(tx.db, args.bundle);
+  if (!b || b.status !== 'proposed' || b.head !== args.from) return { outcome: 'none' };
+  const p = projectRepoRow(tx, b.project);
+  if ((registryRow(tx, b.project, integrationRef(p.integration_branch))?.expected_oid ?? null) !== args.to) return { outcome: 'moved' };
+  const stale = (why: string) => {
+    markBundleStale(tx, b, why);
+    return { outcome: 'stale' as const, why };
+  };
+  if (args.touched === null) return stale(`the integration head moved from ${args.from} to ${args.to}, and what changed could not be read`);
+  if (args.touched.length > 0) return stale(`the integration head moved from ${args.from} to ${args.to}, changing ${args.touched.join(', ')}, which the bundle is bound to`);
+  const why = unpublishable(tx.db, b, routeOf(tx.db, b), { head: false });
+  if (why !== null) return stale(why);
+  if (args.from !== args.to) tx.db.prepare('UPDATE "plan_bundles" SET "head" = ? WHERE "id" = ?').run(args.to, b.id);
+  for (const kind of pendingKinds(tx.db, b)) raiseQuestion(tx, { project: b.project, kind, subjectType: 'run', subjectId: b.run!, scope: b.id });
+  tx.db.prepare(`UPDATE "decisions" SET "batch_key" = ? WHERE "scope" = ? AND "status" = 'open' AND "kind" IN ('architecture_approval', 'plan_approval')`).run(b.id, b.id);
+  return { outcome: 'rebound' };
 }

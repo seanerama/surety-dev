@@ -14,14 +14,39 @@ import type { Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
 import { pausePoint } from '../testing/seam.js';
 
-const running = new Map<string, Promise<number>>();
+// One publication loop per project. A caller that arrives while a pass runs
+// asks for another, and is answered only after a pass that began after it:
+// so the reply to an answer waits for a publication that includes the
+// authority it completed (the review's M3).
+interface Loop {
+  again: boolean;
+  done: Promise<number>;
+}
+const loops = new Map<string, Loop>();
 
 export function publishAuthorized(rt: Runtime, project: string): Promise<number> {
-  const existing = running.get(project);
-  if (existing) return existing;
-  const p = publishAll(rt, project).finally(() => running.delete(project));
-  running.set(project, p);
-  return p;
+  const existing = loops.get(project);
+  if (existing) {
+    existing.again = true;
+    return existing.done;
+  }
+  const loop: Loop = { again: false, done: Promise.resolve(0) };
+  loop.done = (async () => {
+    let n = 0;
+    try {
+      do {
+        loop.again = false;
+        n += await publishAll(rt, project);
+      } while (loop.again);
+    } finally {
+      // Synchronously after the last pass's check: no caller can join a
+      // loop that will not run again.
+      loops.delete(project);
+    }
+    return n;
+  })();
+  loops.set(project, loop);
+  return loop.done;
 }
 
 async function publishAll(rt: Runtime, project: string): Promise<number> {

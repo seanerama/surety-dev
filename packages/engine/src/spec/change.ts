@@ -494,7 +494,7 @@ export interface ApplicationFacts {
   // approval allocates, and who approved.
   seq: number;
   version: number;
-  approved_by: string;
+  approved_by: string | null;
 }
 
 export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationFacts | null {
@@ -506,7 +506,9 @@ export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationF
   const p = projectRepoRow(tx, row.project);
   const ref = integrationRef(p.integration_branch);
   const d = tx.db.prepare('SELECT "answer" FROM "decisions" WHERE "id" = (SELECT "decision" FROM "effect_intents" WHERE "id" = ?)').get(row.id) as { answer: string | null } | undefined;
-  const approvedBy = parseJson<{ actor?: string }>(d?.answer ?? null)?.actor ?? 'human';
+  // Unread, the effect fails closed (the review's N3 (a)), never 'human'.
+  const actor = parseJson<{ actor?: unknown }>(d?.answer ?? null)?.actor;
+  const approvedBy = typeof actor === 'string' && actor.length > 0 ? actor : null;
   const version = (currentSpec(tx.db, row.project)?.version ?? 0) + 1;
   return { intent: row.id, status: row.status, project: row.project, repo: p.dev_repo_path, ref, head: registryRow(tx, row.project, ref)?.expected_oid ?? null, request: r.id, revision: r.proposal_revision, seq: r.seq, version, approved_by: approvedBy };
 }

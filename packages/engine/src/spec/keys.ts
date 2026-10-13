@@ -23,8 +23,11 @@ export interface Renumbered {
 
 export interface KeyComparison {
   renumbered: Renumbered[];
-  // Requirement keys of `prev` that `next` no longer has.
+  // Requirement keys and criteria of `prev` that `next` no longer has.
   withdrawn: string[];
+  // Keys `prev` carries as withdrawn that `next` uses again (TPL §4: a key
+  // is never reused).
+  reused: string[];
 }
 
 // The values of `pairs` that occur once, by value.
@@ -35,7 +38,8 @@ function uniqueByValue(pairs: [string, string][]): Map<string, string> {
 }
 
 export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresentation): KeyComparison {
-  if (prev === null) return { renumbered: [], withdrawn: [] };
+  if (prev === null) return { renumbered: [], withdrawn: [], reused: [] };
+  const carried = new Set(prev.requirements.filter((r) => r.withdrawn === true).map((r) => r.key));
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
   const renumbered: Renumbered[] = [];
   prev = { ...prev, requirements: prev.requirements.filter((r) => r.withdrawn !== true) };
@@ -53,16 +57,22 @@ export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresent
     if (prevStatement.get(r.key) === s) continue;
     renumbered.push({ kind: 'requirement', key: r.key, from });
   }
-  const crit = (rep: SpecRepresentation) => rep.requirements.flatMap((r) => r.criteria.map((c) => [c.id, norm(c.text)] as [string, string]));
-  const prevCrit = new Map(crit(prev));
-  const nextCrit = new Map(crit(next));
-  const prevByText = uniqueByValue([...prevCrit.entries()]);
-  for (const [id, text] of nextCrit) {
-    const from = prevByText.get(text);
-    if (from === undefined || from === id) continue;
-    if (nextCrit.get(from) === text) continue;
-    if (prevCrit.get(id) === text) continue;
-    renumbered.push({ kind: 'criterion', key: id, from });
+  // A criterion renumbered within its own requirement (the review's M1): a
+  // criterion's text moved to another requirement is a withdrawal there and
+  // an addition here, never a renumbering.
+  for (const r of next.requirements) {
+    const before = prev.requirements.find((q) => q.key === r.key);
+    if (!before) continue;
+    const prevCrit = new Map(before.criteria.map((c) => [c.id, norm(c.text)]));
+    const nextCrit = new Map(r.criteria.map((c) => [c.id, norm(c.text)]));
+    const prevByText = uniqueByValue([...prevCrit.entries()]);
+    for (const [id, text] of nextCrit) {
+      const from = prevByText.get(text);
+      if (from === undefined || from === id) continue;
+      if (nextCrit.get(from) === text) continue;
+      if (prevCrit.get(id) === text) continue;
+      renumbered.push({ kind: 'criterion', key: id, from });
+    }
   }
   // Keys and criteria of the earlier text that this one no longer has (a
   // key carried there as withdrawn already is not reported again).
@@ -71,7 +81,8 @@ export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresent
   const ids = new Set(live(next).flatMap((r) => r.criteria.map((c) => c.id)));
   const withdrawn = live(prev).map((r) => r.key).filter((k) => !keys.has(k));
   const criteria = live(prev).filter((r) => keys.has(r.key)).flatMap((r) => r.criteria.map((c) => c.id)).filter((id) => !ids.has(id));
-  return { renumbered, withdrawn: [...new Set([...withdrawn, ...criteria])].sort() };
+  const reused = live(next).map((r) => r.key).filter((k) => carried.has(k));
+  return { renumbered, withdrawn: [...new Set([...withdrawn, ...criteria])].sort(), reused: [...new Set(reused)].sort() };
 }
 
 // `CODE:subject` strings, as every option blocker is written.
