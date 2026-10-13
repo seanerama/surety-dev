@@ -27,7 +27,7 @@ import { armBarrier } from './harness/journal.mjs';
 import { refOid } from './harness/repos.mjs';
 import { advanceClock, scriptedEngine, tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
-import { openSession, postTurn, runRow, sayAndSettle, scriptTurns, transcriptEntries, turnRows, turnThatSays, turnThatWrites } from './harness/sessions.mjs';
+import { openSession, postTurn, runRow, say, sayAndSettle, scriptTurns, transcriptEntries, turnRows, turnThatSays, turnThatWrites } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { SETTLEMENT_FACTS, postTurnRaw, sessionProject, settling } from './harness/session-lane.mjs';
 import { waitFor } from './harness/engine.mjs';
@@ -87,8 +87,9 @@ describe('M418 idle timeout, budget exhaustion and resume', () => {
     await changePolicy(fx.engine, p.id, { budget_run_billable_tokens: 10000 });
     const run = await openSession(fx, p.id, 'vision');
     scriptTurns(fx, run.id, [{ steps: [step.usage({ input_tokens: 9990, output_tokens: 10 }), step.result({ status: 'completed', summary: 'spent', reply: 'Spent.', artifact_changed: false })] }, turnThatSays('Never.')]);
-    // The first turn spends the whole budget and settles; the next is checked before admission.
-    await sayAndSettle(fx, p.id, run.id, 'Spend.');
+    // The first turn spends the whole budget and settles; the session then closes at that settlement
+    // (the slice-33 review's M5), so the turn is read with `say`, not as settled back to idle.
+    await say(fx, p.id, run.id, 'Spend.');
     await tick(fx.engine, p.id, { rounds: 2 });
     const res = await postTurnRaw(fx, p.id, run.id, 'One more.');
     assert.ok(res.status >= 400, `no further turn admitted (→ ${res.status} ${res.text})`);
@@ -97,6 +98,41 @@ describe('M418 idle timeout, budget exhaustion and resume', () => {
     assert.equal(ended.reason_class, 'budget', `ended with reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
     const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
     assert.equal(read.body?.run?.code, 'budget_exhausted', `its public code budget_exhausted (${read.text})`);
+  });
+
+  test('(b) M4: earlier turns near the budget; a turn whose own usage is under the limit but takes the cumulative total over it is stopped on that observation', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await sessionProject(fx);
+    await changePolicy(fx.engine, p.id, { budget_run_billable_tokens: 10000 });
+    const run = await openSession(fx, p.id, 'vision');
+    const over = { steps: [step.usage({ input_tokens: 1990, output_tokens: 10 }), step.hold('gate'), step.result({ status: 'completed', summary: 'late', reply: 'Too late.', artifact_changed: false })] };
+    scriptTurns(fx, run.id, [{ steps: [step.usage({ input_tokens: 8990, output_tokens: 10 }), step.result({ status: 'completed', summary: 'near', reply: 'Near the budget.', artifact_changed: false })] }, over]);
+    await sayAndSettle(fx, p.id, run.id, 'Spend most of it.');
+    await postTurn(fx, p.id, run.id, 'Spend the rest.');
+    await tick(fx.engine, p.id, { rounds: 1 });
+    await waitFor(() => fx.scripted.launches({ run: run.id })[1], { what: 'the second turn to be running' });
+    // Not released: the turn's own 2,000 tokens are under the limit; the cumulative 11,000 is over it.
+    const ended = await waitFor(() => (runRow(fx.home, run.id)?.state === 'ended' ? runRow(fx.home, run.id) : undefined), { what: 'the session stopped on the usage observation', timeoutMs: 60_000 }).catch(() => null);
+    fx.scripted.release('all', 'gate');
+    assert.ok(ended, 'the turn was stopped on its usage observation, without its role finishing');
+    assert.equal(ended.reason_class, 'budget', `reason class budget (${JSON.stringify([ended.outcome, ended.reason_class])})`);
+    assert.deepEqual(transcriptEntries(fx.home, run.id).filter((e) => e.turn === 2 && e.speaker === 'role'), [], 'no reply from the stopped turn');
+  });
+
+  test('(b) M5: a turn whose settlement spends the budget closes the session budget_exhausted at that settlement, with no later turn and no idle deadline', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await sessionProject(fx);
+    await changePolicy(fx.engine, p.id, { budget_run_billable_tokens: 10000 });
+    const run = await openSession(fx, p.id, 'vision');
+    scriptTurns(fx, run.id, [{ steps: [step.usage({ input_tokens: 9990, output_tokens: 10 }), step.result({ status: 'completed', summary: 'spent', reply: 'Spent.', artifact_changed: false })] }]);
+    await say(fx, p.id, run.id, 'Spend it all.');
+    // No turn posted and the clock not advanced: the settlement itself closes it.
+    const ended = await waitFor(() => (runRow(fx.home, run.id)?.state === 'ended' ? runRow(fx.home, run.id) : undefined), { what: 'the session closed at the settlement', timeoutMs: 30_000 }).catch(() => null);
+    assert.ok(ended, `closed without a later turn or an idle deadline (${JSON.stringify(runRow(fx.home, run.id))})`);
+    assert.equal(ended.reason_class, 'budget', 'reason class budget');
+    const read = await fx.engine.get(`/v1/projects/${p.id}/runs/${run.id}`);
+    assert.equal(read.body?.run?.code, 'budget_exhausted', `public code budget_exhausted (${read.text})`);
+    assert.equal(transcriptEntries(fx.home, run.id).filter((e) => e.speaker === 'role').length, 1, 'the spending turn\'s reply kept');
   });
 
   test('(c) resume: a new run with parent_run, the same role, the transcript continued; (e) the old run never continued', async (t) => {

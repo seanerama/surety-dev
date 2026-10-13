@@ -6202,6 +6202,14 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (2026-10-12
 - **The race, in both orders** (§389): an opening held at its admission while a tick claims a one-shot, and a claim held at `dispatch.run_created` while the opening is tried. Exactly one is admitted, and a refused opening is `session_busy`.
 - **No project run counter.** `max_concurrent_runs` is not a project policy key.
 
+**The slice-33 review's moderate findings M1 to M6** (2026-10-13; the driver's relay; cases in the existing slice-33 files, kernel and sandbox only):
+- **M1** (M420 kernel; D6 A.7; D2 §4.1). A role whose `model_<role>` names a model no active entry has (`opus`, the only active entry being `claude-sonnet-5-5`) is refused `backend_refused` before any launch. A Claude Code alias (`opus`, `sonnet`, `haiku`) of the entry's family launches with the entry's own model id (`--model claude-opus-5-5`). A single word that is not a family (`claude`) is no alias. At session open, a `model` with a leading `-`, or one no active entry has, is refused **400**.
+- **M2** (M420 sandbox; D6 §2.6; D2 §7.2). An entry's session qualification naming a model other than the entry's is refused. So is one whose binary's hash differs from the entry's, either at the request or by the attempt never succeeding. The entry never becomes `session_qualified`.
+- **M3** (M420 sandbox). A continuation canary whose first turn's provider inventory is missing does not pass: here the screen refuses the inventory because turn 1 left a file holding a registered secret (§152). Its evidence does not claim `carried: false`.
+- **M4** (M418; D1 §13.3). After earlier turns near the session's budget, a turn whose own usage is under the limit but takes the cumulative total over it is stopped on that usage observation, with reason class `budget` and no reply.
+- **M5** (M418, M415 (f); D1 §13.3). A turn whose settlement spends the budget closes the session at that settlement: reason class `budget`, public code `budget_exhausted`, with no later turn and no idle deadline. M418 (b) and M415 (f) therefore read the spending turn with `say` rather than as settled back to idle. Their later turn is still refused.
+- **M6** (M420 sandbox; D6 §2.7). The engine restarts between the canary's two turns: held at `session.turn_settling.usage_recorded`, then killed at the second turn's `session.admission`. The attempt is invalidated and the canary's session run ended. A next attempt's continuation canary runs and passes on the same fixture project, so it is not held `session_busy`.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a" and "M5 slice 31b".

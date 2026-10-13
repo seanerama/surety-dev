@@ -84,3 +84,60 @@ describe('M420 (c) the conversational roles\' backends and the roles\' models', 
     }
   });
 });
+
+// The slice-33 review's M1 (D6 A.7; D2 §4.1; SEAM.md §391): which model a
+// conversational role's turn may launch with on a real entry.
+async function claudeSpecWriter(t, entryModel, policy = {}) {
+  const fx = await scriptedEngine(t);
+  const standIn = new StandIn(join(fx.root, 'standin'));
+  const p = await sessionProject(fx);
+  await holdSecret(fx.engine, apiKeyRef('claude'), 'sk-test-key-for-the-stand-in-0001');
+  await installTrustEntry(fx.engine, standIn, { status: 'active', session_qualified: true, model: entryModel });
+  await changePolicy(fx.engine, p.id, { backend_spec_writer: 'claude', ...policy });
+  return { fx, standIn, p };
+}
+// The owner opens a Spec Writer session and says one thing; returns how far it got.
+async function tryTurn(fx, p) {
+  const opened = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'spec_writer' });
+  if (opened.status !== 201) return { opened };
+  const run = opened.body.run.id;
+  const posted = await fx.engine.post(`/v1/projects/${p.id}/sessions/${run}/turns`, { text: 'Write the specification.' });
+  await tick(fx.engine, p.id, { rounds: 2 }).catch(() => null);
+  const read = await fx.engine.get(`/v1/projects/${p.id}/sessions/${run}`);
+  return { opened, posted, read };
+}
+const refusedBackend = (out) => out.opened.status === 409 ? out.opened.body?.code === 'backend_refused' : /backend_refused/.test(JSON.stringify(out.posted?.body ?? {}) + JSON.stringify(out.read?.body ?? {}));
+
+describe('M420 (c) M1: the model a conversational role launches with', () => {
+  test('a model_<role> no active entry has (opus, the only entry claude-sonnet-5-5): refused backend_refused before any launch', async (t) => {
+    const { fx, standIn, p } = await claudeSpecWriter(t, 'claude-sonnet-5-5');
+    const out = await tryTurn(fx, p);
+    assert.ok(refusedBackend(out), `refused backend_refused (${out.opened.status} ${out.opened.text?.slice(0, 300)} ${out.read?.text?.slice(0, 300) ?? ''})`);
+    assert.deepEqual(standIn.launches(), [], 'nothing launched');
+  });
+
+  test('an alias of the entry\'s family (opus, the entry claude-opus-5-5): the launch passes the entry\'s own model id', async (t) => {
+    const { fx, standIn, p } = await claudeSpecWriter(t, 'claude-opus-5-5');
+    const out = await tryTurn(fx, p);
+    assert.equal(out.opened.status, 201, `admitted (${out.opened.text})`);
+    const launch = await standIn.waitForLaunch({}, { timeoutMs: 30_000 });
+    const at = launch.args.indexOf('--model');
+    assert.ok(at >= 0 && launch.args[at + 1] === 'claude-opus-5-5', `--model claude-opus-5-5 (${JSON.stringify(launch.args)})`);
+  });
+
+  test('a single word that is not a family (claude) is no alias: refused backend_refused, nothing launched', async (t) => {
+    const { fx, standIn, p } = await claudeSpecWriter(t, 'claude-sonnet-5-5', { model_spec_writer: 'claude' });
+    const out = await tryTurn(fx, p);
+    assert.ok(refusedBackend(out), `refused backend_refused (${out.opened.status} ${out.opened.text?.slice(0, 300)} ${out.read?.text?.slice(0, 300) ?? ''})`);
+    assert.deepEqual(standIn.launches(), [], 'nothing launched');
+  });
+
+  test('at session open, a model with a leading "-", or one no active entry has: refused 400', async (t) => {
+    const { fx, standIn, p } = await claudeSpecWriter(t, 'claude-sonnet-5-5');
+    for (const model of ['--dangerously-skip-permissions', 'claude-haiku-9-9']) {
+      const res = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'spec_writer', model });
+      assert.equal(res.status, 400, `model ${model} refused 400 (→ ${res.status} ${res.text})`);
+    }
+    assert.deepEqual(standIn.launches(), [], 'nothing launched');
+  });
+});
