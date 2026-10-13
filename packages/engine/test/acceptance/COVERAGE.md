@@ -2648,6 +2648,10 @@ The answers are in `docs/acceptance/objections/042` to `045` `.answer.md`.
 
 Run times were 7 s to 30 s per file.
 
+**Objections 080 and 081, upheld (the driver, 2026-10-13; SEAM §404).**
+- **080:** M422 (b) reads criteria with their text from `requirements.criteria_text` and the IDs from `criteria`, and an environment with no adapter as `'none'`.
+- **081:** `M401-a-spec-change-application-is-done-once` (slice 31) reads the applied `spec_change_application` intent (exactly one `done`, any other `invalidated`), not the first one recorded.
+
 **An observation for the driver, not pinned:** on this build, approving a spec change before any roadmap exists (at `spec_ready`) registers a `replan`. An unscripted replan holds the project `session_busy`. D6 §4.5 registers a replan "when the impact touches the current or a later phase", and before a roadmap there is no phase. M449 (d) and M448 (d) let such side work end at once (a default script) rather than pin it.
 
 ## M5 slice 33: sessions on the real boundary (BS5 §9.2; D6 §2; the driver's approval of the outline, 2026-10-13)

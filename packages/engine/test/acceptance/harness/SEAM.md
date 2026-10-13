@@ -6290,6 +6290,11 @@ A question that blocks only phase-2 requirements, and carries a hint (`(phase 2)
   - a policy commit (`deadline_reviewer` 900).
   The first two refuse the replan's commit on recheck (`invalid_result` naming `PLAN_STALE_BASELINE`), and the proposal is listed **`stale`**. The policy commit is a harmless move: phase 2 is published by `engine:plan_check` with `routing` `registered` and `prepared_against_revision` the moved head.
 
+## 404. Objections 080 and 081, upheld (the driver, 2026-10-13)
+
+- **080 (M422 (b)).** `requirements.criteria` keeps the criterion IDs that D3's index, the coverage primitive and the gates read. The criteria with their text are **`requirements.criteria_text`** (`[{id, text}]`, migration 0023), served by `GET …/spec` as `criteria`. An environment with no adapter carries **`adapter = 'none'`**, because the column has been NOT NULL since M4's 0005. M422 (b) reads both forms.
+- **081 (`M401-a-spec-change-application-is-done-once`).** When one pump round answers phase 1's check correction and CR-1 back to back, the protected application can finish first. CR-1's first `spec_change_application` intent is then invalidated `EFFECT_PRECONDITION_CHANGED` (D1 §10.5), and the re-raised generation's intent is the one applied. The case reads **the applied intent**: exactly one is `done`, any other is `invalidated`, and the applied one has `intent.done` once and `intent.executing` once, unchanged by later ticks.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33" and "M5 slice 34".
