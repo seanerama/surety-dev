@@ -11,21 +11,27 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
-const { sameModel, launchModel } = await import(join(dist, 'invoke', 'adapters', 'model.js'));
+const { sameModel, familyOf, isModelName } = await import(join(dist, 'invoke', 'adapters', 'model.js'));
 const { canaryKindsOf, canaryInstructions, continuationToken, CONTINUATION_PATTERN } = await import(join(dist, 'trust', 'canaries.js'));
 const { artifactState } = await import(join(dist, 'sessions', 'turn-package.js'));
 
-test("an alias names its family; a full name only itself", () => {
+test("an alias names only the family token of a Claude model id; a full name only itself (the review's M1)", () => {
   assert.equal(sameModel('sonnet', 'claude-sonnet-5-5'), true);
   assert.equal(sameModel('opus', 'claude-sonnet-5-5'), false);
+  assert.equal(sameModel('claude', 'claude-sonnet-5-5'), false, "'claude' is not a family");
+  assert.equal(sameModel('five', 'claude-sonnet-5-5'), false);
+  assert.equal(sameModel('sonnet', 'sonnet-claude-5'), false, 'the family is the token after claude-');
   assert.equal(sameModel('claude-sonnet-5-5', 'claude-sonnet-5-5'), true);
   assert.equal(sameModel('claude-sonnet-5', 'claude-sonnet-5-5'), false);
+  assert.equal(familyOf('claude-opus-5-5'), 'opus');
+  assert.equal(familyOf('standin-model'), null);
 });
 
-test("a launch passes the entry's own model for an alias of its family, the role's model otherwise", () => {
-  assert.equal(launchModel('sonnet', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
-  assert.equal(launchModel('opus', 'claude-sonnet-5-5'), 'opus');
-  assert.equal(launchModel('scripted', 'scripted'), 'scripted');
+test('a model name is never an option', () => {
+  assert.equal(isModelName('opus'), true);
+  assert.equal(isModelName('--resume'), false);
+  assert.equal(isModelName(''), false);
+  assert.equal(isModelName('a b'), false);
 });
 
 test('the canaries by mode: three; three and the continuation; the continuation alone for an entry', () => {
@@ -57,4 +63,5 @@ test("the artifact state: the files under the role's paths, never through a link
   assert.deepEqual(s.files.map((f) => f.path), ['.surety/spec/spec.md']);
   assert.equal(s.unknown, null);
   assert.equal(artifactState(null, ['.surety/idea.md']).unknown !== null, true, 'no workspace: unknown, never empty');
+  assert.equal(artifactState(ws, ['.surety/absent/']).unknown, null, 'a permitted path not written is absent, not unknown');
 });

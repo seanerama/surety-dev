@@ -28,19 +28,31 @@ const ARTIFACT_FILES_MAX = 200;
 export function artifactState(workspace: string | null, paths: readonly string[]): ArtifactState {
   if (workspace === null) return { files: [], omitted: [], unknown: 'the session has no workspace yet' };
   const found: string[] = [];
+  // What the walk could not read is unknown, never "no files" (the review's
+  // N1): named, and the state as a whole is then unknown.
+  const unreadable: string[] = [];
+  const WALK_MAX = ARTIFACT_FILES_MAX * 4;
+  let stopped = false;
   const walk = (rel: string) => {
-    if (found.length > ARTIFACT_FILES_MAX * 4) return;
+    if (found.length >= WALK_MAX) {
+      stopped = true;
+      return;
+    }
     let st;
     try {
       st = lstatSync(join(workspace, rel));
-    } catch {
+    } catch (err) {
+      // A permitted path that does not exist is absent: the role has not
+      // written it. Anything else could not be read.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(`${rel}: ${(err as NodeJS.ErrnoException).code ?? 'unreadable'}`);
       return;
     }
     if (st.isDirectory()) {
       let names: string[] = [];
       try {
         names = readdirSync(join(workspace, rel)).sort();
-      } catch {
+      } catch (err) {
+        unreadable.push(`${rel}/: ${(err as NodeJS.ErrnoException).code ?? 'unreadable'}`);
         return;
       }
       for (const n of names) walk(rel === '' ? n : `${rel}/${n}`);
@@ -67,7 +79,9 @@ export function artifactState(workspace: string | null, paths: readonly string[]
     total += r.bytes.length;
     files.push({ path: rel, text: redactText(r.bytes.toString('utf8')) });
   }
-  return { files, omitted, unknown: null };
+  if (stopped) omitted.push({ path: paths.join(', '), why: `the walk stopped after ${WALK_MAX} files; what lies beyond is not listed` });
+  const unknown = unreadable.length > 0 ? `parts of the artifact could not be read: ${unreadable.join('; ')}` : stopped ? `the walk stopped after ${WALK_MAX} files` : null;
+  return { files, omitted, unknown };
 }
 
 export async function writeTurnPackage(rt: Runtime, claim: Claim, dir: string, workspace: string | null, canary: Record<string, unknown> | null = null): Promise<boolean> {

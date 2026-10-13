@@ -192,6 +192,7 @@ import {
   resumeFacts,
   resumeSession,
   markSessionHolds,
+  budgetSpent,
 } from '../sessions/session.js';
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
@@ -448,6 +449,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'session.open_guard': (d, a: { project: string }) =>
     (d.prepare(`SELECT "id" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ORDER BY "seq" LIMIT 1`).get(a.project) as { id: string } | undefined)?.id ?? null,
   'session.due_closes': (d, a: { at: string }) => dueCloses(d, a.at),
+  'session.budget_spent': (d, a: { run: string }) => budgetSpent(d, a.run),
   'session.resume_facts': (d, a: { project: string; run: string }) => resumeFacts(d, a.project, a.run),
   'session.open_facts': (d, a: { run: string }) =>
     d.prepare(`SELECT p."dev_repo_path" AS "repo", r."base_revision" AS "base" FROM "runs" r JOIN "projects" p ON p."id" = r."project" WHERE r."id" = ?`).get(a.run),
@@ -482,9 +484,16 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'alpha.check': (d, a: { run: string; finding: string }) => alphaCheck(d, a),
   'trust.view': (d, a: { scripted: boolean }) => trustView(d, a),
   'qualification.continuation_facts': (d, a: { run: string }) => continuationFacts(d, a),
+  'qualification.orphan_sessions': (d) =>
+    d
+      .prepare(
+        `SELECT r."id" AS "run", a."id" AS "attempt", a."status" FROM "runs" r JOIN "qualification_attempts" a ON a."id" = r."qualification_attempt"
+         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r."created_at"`,
+      )
+      .all(),
   // D6 §2.6 (SEAM.md §393): the entry a session qualification names.
   'trust.entry_row': (d, a: { entry: string }) =>
-    (d.prepare('SELECT "id", "status", "backend", "binary_path", "auth_mode", "egress_hosts", "session_qualified" FROM "trust_entries" WHERE "id" = ?').get(a.entry) as Record<string, unknown> | undefined) ?? null,
+    (d.prepare('SELECT "id", "status", "backend", "binary_path", "binary_sha256", "help_sha256", "model", "auth_mode", "egress_hosts", "session_qualified" FROM "trust_entries" WHERE "id" = ?').get(a.entry) as Record<string, unknown> | undefined) ?? null,
   'domain.may_create': (d, a: { domain: string }) => domainMayCreate(d, a),
   'boundary.domains': (d) => boundaryDomains(d),
   'boundary.terminated_ids': (d, a: { ids: string[] }) =>

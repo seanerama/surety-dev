@@ -22,7 +22,7 @@ import { engineSettings, projectEffective, projectPolicy } from '../store/transi
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
-import { launchModel } from '../invoke/adapters/model.js';
+import { isModelName } from '../invoke/adapters/model.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
 import { WORKSPACE_OOB_OPTIONS, raiseQuestion } from '../store/transitions/queue.js';
 import { raiseDecision } from '../store/transitions/decisions.js';
@@ -78,8 +78,8 @@ export const TURN_MAX_BYTES = 65_536;
 // refused `backend_refused` for a real entry not qualified for sessions. No
 // entry is until slice 33's continuation canary, so only the scripted
 // backend runs a session in slice 31.
-export function sessionBackend(db: Tx['db'], args: { project: string; role: string; scripted: string | null }): Resolution {
-  const resolved = resolveBackend(db, args);
+export function sessionBackend(db: Tx['db'], args: { project: string; role: string; scripted: string | null; model?: string | null }): Resolution {
+  const resolved = resolveBackend(db, { ...args, sessions: true });
   if (resolved.kind !== 'entry' || resolved.entry.session_qualified === 1) return resolved;
   return {
     kind: 'refused',
@@ -212,7 +212,9 @@ export function openSession(
   if (typeof args.role !== 'string' || !(SESSION_ROLES as readonly string[]).includes(args.role)) {
     throw new Refusal(400, 'invalid_value', `"role" must be one of ${SESSION_ROLES.join(', ')}.`, 'Open a session for an interactive role.', { field: 'role' });
   }
-  if (args.model !== undefined && (typeof args.model !== 'string' || args.model === '')) throw new Refusal(400, 'invalid_value', '"model" must be a non-empty string.', 'Name a model, or leave it out.', { field: 'model' });
+  // Validated as the policy's model keys are; it then selects the entry
+  // (the review's M1): no active entry of that model refuses the opening.
+  if (args.model !== undefined && !isModelName(args.model)) throw new Refusal(400, 'invalid_value', '"model" must be a model name (not an option).', 'Name a model, or leave it out.', { field: 'model' });
   if (p.registration_state !== 'registered') throw illegal('a session on a project that is not registered', { project: p.id, registration_state: p.registration_state });
   if (p.paused === 1) throw illegal('a session on a paused project', { project: p.id });
   // One open session per project, and no session beside a one-shot run
@@ -234,7 +236,7 @@ export function openSession(
   }
   const resolved: Resolution = attempt
     ? { kind: 'scripted', backend: attempt.backend, version: attempt.version, model: attempt.model }
-    : sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted });
+    : sessionBackend(tx.db, { project: p.id, role, scripted: args.scripted, model: typeof args.model === 'string' ? args.model : null });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   if (role === 'architect' && !tx.db.prepare('SELECT 1 FROM "spec_revisions" WHERE "project" = ?').get(p.id)) {
     throw illegal('an Architect session on a project with no approved specification', { project: p.id, role });
@@ -345,7 +347,7 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   // Every next turn revalidates the backend and the cumulative budget (D6
   // §2.4; D1 §13.3).
   const canaryOf = (run as SessionRow & { qualification_attempt?: string | null }).qualification_attempt ?? null;
-  const resolved: Resolution = canaryOf ? { kind: 'scripted', backend: run.backend, version: run.backend_version, model: run.model_requested } : sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
+  const resolved: Resolution = canaryOf ? { kind: 'scripted', backend: run.backend, version: run.backend_version, model: run.model_requested } : sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted, model: run.model_requested });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
   const exhausted = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true });
   if (exhausted.length > 0) {
@@ -469,7 +471,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
       session: { turn: turn.number, role: run.role as SessionRole, idle_generation: run.idle_generation },
     };
   }
-  const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted });
+  const resolved = sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted, model: run.model_requested });
   // Refused since the admission: the claim carries the refusal, and the
   // launcher refuses the turn before any process (D2 §4.1).
   if (resolved.kind === 'refused') {
@@ -521,7 +523,8 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
             binary_sha256: resolved.entry.binary_sha256,
             help_sha256: resolved.entry.help_sha256,
             // The role's model (the driver's ruling (c), 2026-10-13).
-            model: launchModel(run.model_requested, resolved.entry.model),
+            // The entry the run's model selected (the review's M1).
+            model: resolved.entry.model,
             key_ref: keyRef,
             egress_hosts: (() => {
               try {
@@ -775,7 +778,10 @@ export function sessionSpent(db: Tx['db'], run: string): number | null {
   }[];
   // (The scripted backend's invocation with nothing observed carries no
   // allowance by D2's policy, as on any run: it is charged nothing.)
-  if (rows.some((r) => r.provider !== 'scripted' && r.billable_in === null && r.unknown_allowance_tokens === null)) return null;
+  // An unknown figure is never counted as 0 (the review's N5): a real
+  // turn's row whose input or output is unknown carries its allowance, and
+  // one that carries none cannot be judged.
+  if (rows.some((r) => r.provider !== 'scripted' && (r.billable_in === null || r.out === null) && r.unknown_allowance_tokens === null)) return null;
   return rows.reduce((n, r) => n + (r.billable_in ?? 0) + (r.out ?? 0) + (r.unknown_allowance_tokens ?? 0), 0);
 }
 
@@ -970,7 +976,7 @@ export function resumeFacts(db: Tx['db'], project: string, run: string): { repo:
 // integrity route, `stash` or `discard`, never adopted (D1 §7.6).
 export function resumeSession(
   tx: Tx,
-  args: { project: string; run: string; scripted: string | null; incarnation: string; dirty: { workspace: string; base: string; tree: string } | null },
+  args: { project: string; run: string; scripted: string | null; incarnation: string; dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null },
 ): { run: Record<string, unknown>; offered: string | null } {
   const old = getSession(tx, args.project, args.run);
   if (old.state !== 'ended') {
@@ -992,19 +998,22 @@ export function resumeSession(
 // The retained workspace offered as an out-of-band change of subject
 // `workspace` (migration 0026): `stash` keeps its content under an oob ref,
 // `discard` gives it up; no `adopt`.
-function offerWorkspace(tx: Tx, args: { project: string; run: string; workspace: string; base: string; tree: string }): string {
+function offerWorkspace(tx: Tx, args: { project: string; run: string; workspace: string; base: string; tree: string | null; unknown?: string }): string {
   const existing = tx.db.prepare(`SELECT "id" FROM "out_of_band_changes" WHERE "workspace" = ? AND "disposition" IS NULL AND "closed_at" IS NULL`).get(args.workspace) as { id: string } | undefined;
   if (existing) return existing.id;
   const id = tx.newId('oob_');
   const ws = tx.db.prepare('SELECT "path" FROM "workspaces" WHERE "id" = ?').get(args.workspace) as { path: string };
   const expected = JSON.stringify({ head: args.base });
-  const found = JSON.stringify({ head: args.base, tracked_tree_hash: args.tree });
+  const found = JSON.stringify({ head: args.base, tracked_tree_hash: args.tree, ...(args.unknown ? { unknown: args.unknown } : {}) });
   const decision = raiseDecision(tx, {
     project: args.project,
     kind: 'out_of_band_change',
     subjectType: 'out_of_band_change',
     subjectId: id,
-    question: `The workspace ${ws.path} of session ${args.run} holds changes no checkpoint committed. Stash them under an oob ref, or discard them; they are never adopted.`,
+    question:
+      args.tree === null
+        ? `Whether the workspace ${ws.path} of session ${args.run} holds changes no checkpoint committed is unknown (${args.unknown ?? 'it could not be read'}). Discard it, or read it on the host; it is never adopted.`
+        : `The workspace ${ws.path} of session ${args.run} holds changes no checkpoint committed. Stash them under an oob ref, or discard them; they are never adopted.`,
     options: WORKSPACE_OOB_OPTIONS,
     manifest: { subject_kind: 'workspace', expected, found },
   });
@@ -1180,4 +1189,13 @@ export function markSessionHolds(tx: Tx): number {
   const held = tx.db.prepare(`UPDATE "work_items" SET "held" = 'session_busy' WHERE "status" = 'eligible' AND "held" IS NULL AND "project" IN (${open})`).run().changes;
   tx.db.prepare(`UPDATE "work_items" SET "held" = NULL WHERE "held" = 'session_busy' AND ("status" <> 'eligible' OR "project" NOT IN (${open}))`).run();
   return held;
+}
+
+// Whether the session's cumulative budget is spent (D1 §13.3): its spend at
+// or past budget_run_billable_tokens, or a spend that cannot be judged.
+export function budgetSpent(db: Tx['db'], run: string): boolean {
+  const r = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(run) as { project: string } | undefined;
+  if (!r) return false;
+  const spent = sessionSpent(db, run);
+  return spent === null || spent >= projectPolicy(db, r.project).budget_run_billable_tokens!;
 }

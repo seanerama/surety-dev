@@ -64,7 +64,7 @@ export class SessionDriver {
     return this.withWorkspace(project, made.run.id as string);
   }
 
-  async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
+  async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
     const made = await this.rt.engine<{ run: Record<string, unknown>; offered: string | null }>('session.resume_tx', { project, run, ...args });
@@ -231,7 +231,14 @@ export class SessionDriver {
       if (await ending()) {
         return;
       }
-      await this.rt.engine('session.settle', { run, invocation });
+      const settled = await this.rt.engine<{ settled: boolean }>('session.settle', { run, invocation });
+      // A settlement that leaves the session's cumulative budget spent
+      // closes it at once by the idle protocol (D1 §13.3 "between session
+      // turns"; D6 §2.4; the review's M5).
+      if (settled.settled && (await this.rt.read<boolean>('session.budget_spent', { run }).catch(() => false))) {
+        this.rt.handles.delete(run);
+        await this.closeByProtocol(project, run, 'budget_exhausted').catch((err) => log('session close', err, { run }));
+      }
     } finally {
       // A run the engine decided to end keeps its handle for the run-end
       // protocol; otherwise the turn is done with it.
@@ -427,8 +434,10 @@ export class SessionDriver {
 
   // ---- idle timeout and budget exhaustion: one protocol (D6 §2.4; B01) ----------------
 
-  // At each tick: every session idle past `session_idle_timeout`, or idle
-  // with its cumulative budget spent, is closed by the engine.
+  // At each tick: every session idle past `session_idle_timeout` is closed
+  // by the engine (`budget_exhausted` if its budget was spent meanwhile). A
+  // session whose budget a turn's settlement spends is closed at that
+  // settlement, and a turn refused on it closes it too (D1 §13.3).
   async sweep(): Promise<number> {
     const due = await this.rt.read<{ run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[]>('session.due_closes', { at: nowIso() });
     let n = 0;
@@ -450,18 +459,21 @@ export class SessionDriver {
   // `budget_exhausted`). Nothing in the workspace is lost; the grant and the
   // lease are released by the run's end. false when another admission won.
   async closeByProtocol(project: string, run: string, cause: 'idle_timeout' | 'budget_exhausted'): Promise<boolean> {
+    // The generation the save takes, and leaves (a save does not advance
+    // it, SEAM.md §394): the close holds that one, as close() does (the
+    // review's N4); a turn admitted meanwhile wins and the close is stale.
+    const before = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
+    if (before === null || !before.idle) return false;
     let answer: SaveAnswer | null = null;
     try {
-      answer = await this.save(project, run);
+      answer = await this.save(project, run, { expectedGeneration: before.idle_generation });
     } catch (err) {
       const code = (err as { code?: string }).code;
       if (code === 'session_not_idle' || code === 'session_generation_stale' || code === 'not_found') return false;
       // The save was refused and recorded: the close goes on.
       answer = null;
     }
-    const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
-    if (read === null || !read.idle) return false;
-    const admittedAt = read.idle_generation;
+    const admittedAt = answer?.idle_generation ?? before.idle_generation;
     const facts = await this.rt.engine<SaveFacts>('session.close_facts', { project, run, admittedAt });
     let raise: Record<string, unknown> = { kind: 'none' };
     // The product parses: a checkpoint of this session stands, the save
@@ -493,10 +505,13 @@ export class SessionDriver {
   // What the resume's transaction is given: whether the ended session's
   // retained workspace holds changes no checkpoint committed (its snapshot
   // differs from its checkpoint base), found here, never in a transaction.
-  async resumeArgs(project: string, run: string): Promise<{ dirty: { workspace: string; base: string; tree: string } | null }> {
+  async resumeArgs(project: string, run: string): Promise<{ dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null }> {
     const facts = await this.rt.read<{ repo: string; state: string; workspace: { id: string; path: string; current_base: string; metadata: Record<string, unknown> | null; disposition: string } | null }>('session.resume_facts', { project, run });
     const ws = facts.workspace;
-    if (facts.state !== 'ended' || ws === null || ws.disposition !== 'retained' || ws.metadata === null) return { dirty: null };
+    if (facts.state !== 'ended' || ws === null || ws.disposition !== 'retained') return { dirty: null };
+    // What lies outside its diff was never captured: whether it holds
+    // changes is unknown, never presumed clean (the review's N2).
+    if (ws.metadata === null) return { dirty: { workspace: ws.id, base: ws.current_base, tree: null, unknown: "what lies outside the workspace's diff was never captured, so it cannot be snapshotted" } };
     const metadata = ws.metadata as unknown as MetadataBaseline;
     const tree = await snapshotTree(worktreeContext(facts.repo, metadata.adminDir, ws.path), ws.current_base, this.rt.scratch).catch(() => null);
     const base = await treeOf(repoContext(facts.repo), ws.current_base).catch(() => null);

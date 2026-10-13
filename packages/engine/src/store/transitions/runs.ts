@@ -14,7 +14,6 @@ import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
 import { engineSettings, projectPolicy, roleModel } from './settings.js';
 import { settleOpenTurns } from '../../sessions/session.js';
-import { launchModel } from '../../invoke/adapters/model.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
 import { chargeInvocation, exhaustedLimits } from './ledger.js';
@@ -546,7 +545,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
             binary_sha256: backend.entry.binary_sha256,
             help_sha256: backend.entry.help_sha256,
             // The role's model (the driver's ruling (c), 2026-10-13).
-            model: launchModel(requestedModel, backend.entry.model),
+            // The entry the role's model selected (the review's M1).
+            model: backend.entry.model,
             key_ref: keyRef,
             // The destinations the entry's egress list allows (D2 §2.4).
             egress_hosts: (() => {

@@ -594,7 +594,10 @@ export function parseEntryFixture(body: unknown): EntryFixture {
       mode,
       template: template.text,
       template_version: opt('template_version', template.version),
-      model: opt('model', 'standin-model'),
+      // A Claude model id with its family token, so that a role's alias
+      // (`sonnet`) selects it (D6 A.7; the review's M1); a test names
+      // another to pin a mismatch.
+      model: opt('model', 'claude-sonnet-5-5'),
       auth_mode: 'api_key',
       capabilities: (b.capabilities as EntryInput['capabilities'] | undefined) ?? { tools: [], denied: [], features_disabled: [], delegation_verified: true },
       isolation,

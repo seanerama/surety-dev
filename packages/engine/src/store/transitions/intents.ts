@@ -10,7 +10,7 @@ import type { IntentResult, IntentSpec } from './journal.js';
 import { type PolicyCommit, intendPolicyCommit, policyFacts } from './project.js';
 import { completeIntent } from './protected.js';
 import { markStale } from './evidence.js';
-import { type Facts, invalidateIntent, revalidateIntent } from './queue.js';
+import { type Facts, intendWorkspaceRemoval, invalidateIntent, revalidateIntent } from './queue.js';
 import { nextCounter, projectRepoRow, registryRow } from './repo.js';
 import type { Tx } from './tx.js';
 
@@ -199,7 +199,8 @@ export function stashed(tx: Tx, args: { intent: string }): void {
   if (intent.status !== 'executing') return;
   const plan = JSON.parse(intent.plan) as { observation: string; checkout: string; workspace?: string | null };
   tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'stash' WHERE "id" = ? AND "disposition" IS NULL`).run(plan.observation);
-  if (plan.workspace) tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ? AND "disposition" = 'retained'`).run(tx.at, plan.workspace);
+  // The stashed workspace is removed through the journal (queue.ts).
+  if (plan.workspace) intendWorkspaceRemoval(tx, intent.project, plan.workspace);
   tx.emit('repo.reconciled', { project: intent.project, out_of_band_change: plan.observation }, { disposition: 'stash', checkout: plan.checkout });
   markStale(tx, { project: intent.project });
   completeIntent(tx, args.intent);

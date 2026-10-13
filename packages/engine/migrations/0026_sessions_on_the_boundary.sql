@@ -72,6 +72,9 @@ BEGIN SELECT RAISE(ABORT, 'a workspace out-of-band change names its workspace');
 CREATE TRIGGER out_of_band_changes_workspace_never_adopted BEFORE UPDATE OF disposition ON out_of_band_changes
 WHEN NEW.subject_kind = 'workspace' AND NEW.disposition IS NOT NULL AND NEW.disposition NOT IN ('stash', 'discard')
 BEGIN SELECT RAISE(ABORT, 'a session workspace is stashed or discarded, never adopted'); END;
+CREATE TRIGGER out_of_band_changes_workspace_never_adopted_insert BEFORE INSERT ON out_of_band_changes
+WHEN NEW.subject_kind = 'workspace' AND NEW.disposition IS NOT NULL AND NEW.disposition NOT IN ('stash', 'discard')
+BEGIN SELECT RAISE(ABORT, 'a session workspace is stashed or discarded, never adopted'); END;
 
 -- ---- session_transcripts: append-only (D6 §2.3, A.3; B01; SEAM.md §390) --------------------
 -- An entry once written keeps its turn, speaker, time and text; its text
@@ -105,7 +108,8 @@ ALTER TABLE runs ADD COLUMN qualification_attempt TEXT REFERENCES qualification_
 -- `session_qualified` is no longer frozen with what one-shot qualification
 -- established, nor held at 0 by the table: it is written true by an attempt
 -- whose continuation canary passed (validateEntry), or set true once on an
--- active entry by a succeeded session attempt for it, and is never withdrawn
+-- active entry by a succeeded session attempt for it on the entry's own
+-- model, binary and help (the review's M2), and is never withdrawn
 -- in place (a changed dependency revokes the entry, D2 §7.3). SQLite cannot
 -- relax a CHECK in place: rebuilt as 0011 rebuilt it, every row kept.
 CREATE TABLE trust_entries_0026 (
@@ -183,6 +187,7 @@ BEGIN
   WHERE NOT EXISTS (
     SELECT 1 FROM qualification_attempts a
     WHERE a.session_entry = NEW.id AND a.mode = 'session_headless' AND a.status = 'succeeded'
+      AND a.model = NEW.model AND a.binary_sha256 = NEW.binary_sha256 AND a.help_sha256 = NEW.help_sha256
       AND EXISTS (SELECT 1 FROM json_each(a.canaries) c WHERE json_extract(c.value, '$.kind') = 'continuation' AND json_extract(c.value, '$.passed') = 1));
 END;
 -- An entry written session_qualified names an attempt whose continuation

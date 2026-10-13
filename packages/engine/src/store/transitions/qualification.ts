@@ -24,6 +24,7 @@ import {
   profileWithEgress,
   startAttempt,
   getAttempt,
+  getHostRow,
   writeAttempt,
   writeEntry,
 } from './trust.js';
@@ -115,11 +116,24 @@ export function qualify(
   // An entry's session qualification (D6 §2.6): the entry active, not yet
   // qualified for sessions.
   if (a.session_entry) {
-    const e = tx.db.prepare('SELECT "status", "session_qualified" FROM "trust_entries" WHERE "id" = ?').get(a.session_entry) as { status: string; session_qualified: number } | undefined;
+    const e = tx.db.prepare('SELECT * FROM "trust_entries" WHERE "id" = ?').get(a.session_entry) as EntryRow | undefined;
     if (!e) throw notFound('trust entry', a.session_entry);
     if (e.status !== 'active' || e.session_qualified === 1) {
       throw new Refusal(409, 'illegal_transition', `Trust entry ${a.session_entry} is ${e.status}${e.session_qualified === 1 ? ' and already qualified for sessions' : ''}: only an active entry not yet qualified for sessions is.`, 'Name an active entry.', { entry: a.session_entry });
     }
+    // What the entry was qualified with holds now (the review's M2): its
+    // model, binary and help (checked by the route), its profile with its
+    // own egress list, and a host qualification of the same mechanism.
+    const mismatch = (what: string, expected: unknown, found: unknown) =>
+      new Refusal(409, 'backend_refused', `Trust entry ${e.id}'s ${what} is not what it was qualified with: a session qualification runs only on what the entry qualified.`, 'Qualify the entry anew with a new attempt.', { entry: e.id, field: what, expected, found });
+    if (e.model !== a.model) throw mismatch('model', e.model, a.model);
+    if (e.binary_sha256 !== a.binary_sha256 || e.help_sha256 !== a.help_sha256) throw mismatch('binary', e.binary_sha256, a.binary_sha256);
+    const now = currentProfileFingerprint();
+    const profileNow = now === null ? null : profileWithEgress(now, JSON.parse(e.egress_hosts) as string[]);
+    if (profileNow !== e.profile_fingerprint) throw mismatch('profile', e.profile_fingerprint, profileNow);
+    const hqNow = currentHostQualification(tx.db);
+    const then = e.host_qualification === null ? undefined : getHostRow(tx.db, e.host_qualification);
+    if (!hqNow || !then || then.mechanism_fingerprint !== hqNow.mechanism_fingerprint) throw mismatch('host qualification', then?.mechanism_fingerprint ?? null, hqNow?.mechanism_fingerprint ?? null);
   }
   const project = tx.db.prepare('SELECT "id", "registration_state" FROM "projects" WHERE "id" = ?').get(a.fixture_project) as { id: string; registration_state: string } | undefined;
   if (!project) throw notFound('project', a.fixture_project);
@@ -269,7 +283,9 @@ export function continuationFacts(db: Tx['db'], a: { run: string }) {
     const d = db.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(t.domain) as { status: string } | undefined;
     return { ...t, domain_status: d?.status ?? null, launched_at: at(['launched']), ended_at: at(['ended', 'unknown']) };
   });
-  const inventories = (db.prepare(`SELECT COUNT(*) AS n FROM "records" WHERE "run" = ? AND "kind" = 'provider_files'`).get(a.run) as { n: number }).n;
+  const inventories = db
+    .prepare(`SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at", "id"`)
+    .all(a.run) as { id: string; path: string | null; sha256: string | null; bytes: number | null }[];
   const models = (db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL').all(a.run) as { model_observed: string }[]).flatMap((r) => r.model_observed.split(','));
   return { state: run?.state ?? 'unknown', turns, inventories, models_observed: [...new Set(models.map((m) => m.trim()).filter((m) => m !== ''))] };
 }

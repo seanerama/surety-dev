@@ -71,7 +71,7 @@ const attemptInput = (hq) => ({
   help_sha256: '2'.repeat(64),
   template: 't',
   template_version: '1',
-  model: 'm',
+  model: 'claude-sonnet-5-5',
   auth_mode: 'api_key',
   host_qualification: hq,
   profile_fingerprint: 'prof-1',
@@ -91,7 +91,7 @@ function entryInput(hq, attempt, over = {}) {
     mode: 'one_shot_headless',
     template: 't',
     template_version: '1',
-    model: 'm',
+    model: 'claude-sonnet-5-5',
     auth_mode: 'api_key',
     capabilities: { tools: ['Read'], denied: ['Agent'], features_disabled: [], delegation_verified: true },
     host_id: hostIdentity(),
@@ -240,6 +240,10 @@ test('the dispatch rule: scripted only in harness; a named backend needs an acti
   assert.equal(resolve().code, 'backend_refused', 'an authorized attempt');
   answer(db, d, 'approve');
   assert.equal(resolve().kind, 'entry');
+  // The role's model selects the entry (D6 A.7; the review's M1): the
+  // builder's `sonnet` names this Sonnet entry; another model names none.
+  assert.equal(trust.resolveBackend(db, { project: 'prj_1', role: 'builder', scripted: 'scripted-1', model: 'opus' }).code, 'backend_refused', 'no active entry of the model');
+  assert.equal(trust.resolveBackend(db, { project: 'prj_1', role: 'builder', scripted: 'scripted-1', model: 'claude' }).code, 'backend_refused', "'claude' names no family");
 
   setPolicy({ n: 2, p: { backend_builder: 'claude', backend_mode: 'session_headless' } });
   assert.equal(resolve().code, 'backend_refused', 'session mode, no fallback');

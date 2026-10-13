@@ -68,6 +68,13 @@ export class QualificationDriver {
   // and is invalidated.
   async step(): Promise<void> {
     await this.rt.engine('qualification.sweep', {}).catch((err) => log('qualification', err, { what: 'sweep' }));
+    // A continuation canary's session whose attempt is no longer running
+    // (invalidated, or concluded while a turn was in flight) is ended, so
+    // the fixture project is never left `session_busy` (D6 §2.7; M6).
+    const orphans = await this.rt.read<{ run: string; attempt: string; status: string }[]>('qualification.orphan_sessions').catch(() => []);
+    for (const o of orphans) {
+      await this.rt.services?.endRun(o.run, { outcome: 'failed', reason: 'infra_error', reasonText: `the continuation canary's attempt ${o.attempt} is ${o.status}` }).catch((err) => log('qualification', err, { run: o.run }));
+    }
     const due = await this.rt.read<{ id: string; status: string }[]>('qualification.due');
     for (const a of due) {
       if (this.inFlight.has(a.id)) continue;
@@ -253,10 +260,14 @@ export class QualificationDriver {
     const answered = replyOf(t2);
     const found = answered !== null && answered.includes(token);
     const quiescent = t1 !== undefined && t2 !== undefined && t1.domain_status === 'terminated' && t1.ended_at !== null && t2.launched_at !== null && t1.ended_at <= t2.launched_at;
+    const carried = await this.carriedBetween(facts.inventories, facts.turns.map((t) => t.domain ?? null));
     const real = a.backend === 'claude';
     // A model the turns did not request answered (E86 item 3).
     const others = real ? facts.models_observed.filter((m) => !sameModel(a.model, m)) : [];
-    const passed = stopped === null && t1?.outcome === 'replied' && t2?.outcome === 'replied' && found && quiescent && others.length === 0;
+    // No provider file carried, established from the two turns' inventories
+    // (D2 §4.3); a missing or incomplete inventory is unknown, and the canary
+    // does not pass on it (the review's M3).
+    const passed = stopped === null && t1?.outcome === 'replied' && t2?.outcome === 'replied' && found && quiescent && carried.carried === false && others.length === 0;
     const detail = {
       kind,
       run,
@@ -264,7 +275,7 @@ export class QualificationDriver {
       instructed: { turn_1: 'write the engine\'s token into the artifact', turn_2: 'answer with every match of the token\'s pattern in the package (transcript and artifact)' },
       token_in_reply: found,
       quiescence: { turn_1_domain: t1?.domain_status ?? null, turn_1_ended_at: t1?.ended_at ?? null, turn_2_launched_at: t2?.launched_at ?? null, holds: quiescent },
-      provider_files: { carried: false, how: 'each turn ran with a fresh volatile home; the first turn\'s was inventoried at its collection and dropped before the second was placed', inventories: facts.inventories },
+      provider_files: carried,
       ...(others.length > 0 ? { model_fallback: others } : {}),
       ...(stopped ? { stopped } : {}),
     };
@@ -500,6 +511,48 @@ export class QualificationDriver {
     return { entry: { kind, run, passed, failure_class: failureClass, provider_error: providerError, evidence, term_to_exit_ms: kind === 'cancellation' ? termToExit : null }, capabilities };
   }
 
+  // Whether a provider file was carried from the first turn to the second
+  // (D2 §4.3; D6-S09), from the two turns' inventories: each turn ran in a
+  // domain of its own on a volatile filesystem placed empty, and both
+  // inventories are recorded, readable and complete, so nothing of the
+  // first's home reached the second; `unknown` (with why) otherwise, and
+  // the canary does not pass on it (the review's M3). Files of the same path
+  // and content in both homes are listed: a backend that writes the same
+  // startup file in each fresh home shows them, which is not a carry.
+  private async carriedBetween(
+    inventories: { id: string; path: string | null; sha256: string | null; bytes: number | null }[],
+    domains: (string | null)[],
+  ): Promise<{ carried: boolean | 'unknown'; how: string; inventories: string[]; same_in_both?: string[] }> {
+    const ids = inventories.map((r) => r.id);
+    if (inventories.length !== 2) return { carried: 'unknown', how: `${inventories.length} provider-files inventories are recorded for the two turns, not two`, inventories: ids };
+    if (domains.length !== 2 || domains.some((d) => d === null) || domains[0] === domains[1]) return { carried: 'unknown', how: 'the two turns did not run in two domains of their own', inventories: ids };
+    const parsed: { path: string; type: string; size?: number; content_base64?: string }[][] = [];
+    for (const r of inventories) {
+      const bytes = r.path === null ? null : await readRecordBytes(this.rt.home, { path: r.path, sha256: r.sha256, bytes: r.bytes }).catch(() => null);
+      let v: { locations?: unknown; complete?: unknown } | null = null;
+      try {
+        v = bytes === null ? null : (JSON.parse(bytes.toString('utf8')) as { locations?: unknown; complete?: unknown });
+      } catch {
+        v = null;
+      }
+      if (v === null || !Array.isArray(v.locations)) return { carried: 'unknown', how: `the inventory ${r.id} cannot be read`, inventories: ids };
+      if (v.complete !== true) return { carried: 'unknown', how: `the inventory ${r.id} is incomplete (a collection bound was reached)`, inventories: ids };
+      parsed.push(v.locations as { path: string; type: string; size?: number; content_base64?: string }[]);
+    }
+    const home = (e: { path: string; type: string }) => e.type === 'file' && e.path.startsWith('/surety/home/');
+    const first = new Map(parsed[0]!.filter(home).map((e) => [e.path, e]));
+    const same = parsed[1]!.filter(home).filter((e) => {
+      const f = first.get(e.path);
+      return f !== undefined && f.size === e.size && f.content_base64 !== undefined && f.content_base64 === e.content_base64;
+    });
+    return {
+      carried: false,
+      how: "each turn's volatile home was placed empty in a domain of its own, and both turns' inventories are recorded and complete",
+      inventories: ids,
+      same_in_both: same.map((e) => e.path),
+    };
+  }
+
   // The entry an attempt whose canaries all passed writes (D2 §§4.1, 7.2).
   private async entryInput(
     a: AttemptRow,
@@ -660,8 +713,8 @@ const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellati
 // What the continuation canary's judgement reads of its session run.
 interface ContinuationFacts {
   state: string;
-  turns: { number: number; invocation: string; outcome: string | null; usage_status: string | null; settled_at: string | null; reply: string | null; domain_status: string | null; launched_at: string | null; ended_at: string | null }[];
-  inventories: number;
+  turns: { number: number; invocation: string; domain?: string | null; outcome: string | null; usage_status: string | null; settled_at: string | null; reply: string | null; domain_status: string | null; launched_at: string | null; ended_at: string | null }[];
+  inventories: { id: string; path: string | null; sha256: string | null; bytes: number | null }[];
   models_observed: string[];
 }
 

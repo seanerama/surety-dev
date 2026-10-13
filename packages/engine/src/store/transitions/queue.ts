@@ -461,8 +461,13 @@ function oobRow(db: Db, id: string): OobRow | undefined {
 // migration 0026): stashed or discarded, never adopted (the driver's
 // ruling, 2026-10-13).
 export const WORKSPACE_OOB_OPTIONS: OptionSpec[] = [
-  { key: 'stash', label: 'Stash', consequence: "The engine commits the workspace's content as it was found to an oob ref, and gives the workspace up.", effect: { disposition: 'stash' } },
-  { key: 'discard', label: 'Discard', consequence: "The engine gives the workspace up; what no checkpoint committed is not kept.", effect: { disposition: 'discard' } },
+  {
+    key: 'stash',
+    label: 'Stash',
+    consequence: "The engine commits the workspace's content as the resume found it to an oob ref, then removes the workspace through the journal. A content the resume could not read is not stashed, and the workspace stays retained.",
+    effect: { disposition: 'stash' },
+  },
+  { key: 'discard', label: 'Discard', consequence: 'The engine removes the workspace through the journal; what no checkpoint committed is not kept.', effect: { disposition: 'discard' } },
 ];
 
 export function oobOptions(tx: Tx, o: { subject_kind: string; ref: string | null; found: string | null }): OptionSpec[] {
@@ -534,13 +539,22 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
   if (row.subject_kind === 'workspace') {
     // Never `adopt` (D6 §2.4): only the two options it was offered.
     if (option !== 'stash' && option !== 'discard') throw illegal(`answering a workspace's change ${option}`, { decision: d.id });
-    consumeDecision(tx, d, option, note);
     if (option === 'discard') {
+      consumeDecision(tx, d, option, note);
       tx.db.prepare(`UPDATE "out_of_band_changes" SET "disposition" = 'discard', "closed_at" = ? WHERE "id" = ? AND "disposition" IS NULL`).run(tx.at, row.id);
-      tx.db.prepare(`UPDATE "workspaces" SET "disposition" = 'discarded', "disposed_at" = ? WHERE "id" = ? AND "disposition" = 'retained'`).run(tx.at, row.workspace ?? null);
       tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'discard', workspace: row.workspace ?? null });
-      return consumed(d, []);
+      // The journal's own removal of a run's worktree (runs/end.ts's
+      // discard): its finalizer records the workspace discarded.
+      const removal = intendWorkspaceRemoval(tx, row.project, row.workspace ?? null);
+      return consumed(d, removal ? [{ kind: 'journal', project: row.project }] : []);
     }
+    // A content the resume could not read cannot be stashed (unknown is not
+    // a tree): the answer is refused, the workspace stays retained.
+    const found = parseJson<{ tracked_tree_hash?: string | null }>(row.found);
+    if (!found?.tracked_tree_hash) {
+      throw new Refusal(409, 'out_of_band_change', "The workspace's content could not be read when the session was resumed, so it cannot be stashed.", 'Read the workspace on the host, or answer discard.', { decision: d.id, workspace: row.workspace ?? null });
+    }
+    consumeDecision(tx, d, option, note);
     const ws = tx.db.prepare('SELECT "path" FROM "workspaces" WHERE "id" = ?').get(row.workspace ?? null) as { path: string } | undefined;
     return consumed(d, [recordIntent(tx, d, { approval: null, kind: 'oob_stash', plan: { observation: row.id, workspace: row.workspace ?? null, path: ws?.path ?? null, found: row.found } })]);
   }
@@ -1661,4 +1675,25 @@ export function decisionSubjectRead(db: Db, args: { project: string; decision: s
   const ref = row.ref ? (db.prepare('SELECT "ref" FROM "ref_registry" WHERE "id" = ?').get(row.ref) as { ref: string }).ref : null;
   const checkout = row.checkout ? (db.prepare('SELECT "path" FROM "managed_checkouts" WHERE "id" = ?').get(row.checkout) as { path: string }).path : null;
   return { kind: d.kind, oob: { subject_kind: row.subject_kind, repo, ref, checkout } };
+}
+
+// The removal of a session's retained workspace through the journal: the
+// same operation the run-end protocol's discard intends (runs/end.ts), whose
+// finalizer marks the workspace discarded and releases its checkout. No new
+// removal site: the journal's worktree_remove effect removes it.
+export function intendWorkspaceRemoval(tx: Tx, project: string, workspace: string | null): boolean {
+  if (workspace === null) return false;
+  const ws = tx.db.prepare('SELECT "id", "run", "path", "disposition" FROM "workspaces" WHERE "id" = ?').get(workspace) as { id: string; run: string; path: string; disposition: string } | undefined;
+  if (!ws || ws.disposition !== 'retained') return false;
+  const repo = projectRepoRow(tx, project).dev_repo_path;
+  const made = intendOperation(tx, {
+    project,
+    kind: 'worktree_remove',
+    payload: { repo, run: ws.run, path: ws.path, workspace: ws.id },
+    target: { repo, path: ws.path },
+    subject: { run: ws.run, action: 'worktree_remove' },
+    finalizer: { purpose: 'discard', run: ws.run, workspace: ws.id },
+    deadlineSeconds: engineSettings().git_deadline,
+  });
+  return 'operation' in made;
 }

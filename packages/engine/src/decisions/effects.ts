@@ -250,6 +250,8 @@ export class Effects {
     await this.rt.services?.journal(row.project);
     if (!(await this.rt.read<boolean>('oob.stash_kept', { intent: row.id }))) return;
     await this.rt.engine('oob.stashed', { intent: row.id });
+    // The workspace's removal, intended by the stash's end, driven now.
+    await this.rt.services?.journal(row.project);
   }
 }
 

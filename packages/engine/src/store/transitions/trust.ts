@@ -5,6 +5,7 @@
 // and a host's checks are run elsewhere, and answering either decision
 // launches nothing (CH incident 10).
 
+import { sameModel } from '../../invoke/adapters/model.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -14,7 +15,7 @@ import { seamHostChecks, seamTemplateVersions } from '../../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from '../../trust/host.js';
 import { canonical, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
-import { engineSettings, projectOptions } from './settings.js';
+import { engineSettings, projectOptions, roleModel } from './settings.js';
 import { templateOf } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
 
@@ -120,7 +121,7 @@ const json = <T>(text: string): T => JSON.parse(text) as T;
 
 export const getEntry = (db: Db, id: string): EntryRow | undefined => db.prepare('SELECT * FROM "trust_entries" WHERE "id" = ?').get(id) as EntryRow | undefined;
 export const getAttempt = (db: Db, id: string): AttemptRow | undefined => db.prepare('SELECT * FROM "qualification_attempts" WHERE "id" = ?').get(id) as AttemptRow | undefined;
-const getHostRow = (db: Db, id: string): HostQualificationRow | undefined =>
+export const getHostRow = (db: Db, id: string): HostQualificationRow | undefined =>
   db.prepare('SELECT * FROM "host_qualifications" WHERE "id" = ?').get(id) as HostQualificationRow | undefined;
 
 // ---- host qualifications (D2 §7.1) ----------------------------------------------------------
@@ -761,7 +762,11 @@ const ROLE_KEY: Record<string, string> = {
 // qualification attempt is never considered (K10). Then the policy's budget
 // boundary must be one the entry enforces (§4.2), and the host must be
 // eligible (§4.1).
-export function resolveBackend(db: Db, args: { project: string; role: string; scripted: string | null }): Resolution {
+// `model`: the model the run requests (its role's `model_<role>`, or the
+// owner's at a session's opening), which selects the entry: an active entry
+// whose model it is, or whose family its alias names (D6 A.7; the review's
+// M1). `sessions`: only an entry qualified for sessions (D6 §2.6).
+export function resolveBackend(db: Db, args: { project: string; role: string; scripted: string | null; model?: string | null; sessions?: boolean }): Resolution {
   const options = projectOptions(db, args.project) as unknown as Record<string, string>;
   const backend = options[ROLE_KEY[args.role] ?? ''] ?? 'scripted';
   const mode = options.backend_mode ?? 'one_shot_headless';
@@ -785,13 +790,25 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
     return { kind: 'scripted', backend, version: args.scripted, model: 'scripted' };
   }
   const running = hostIdentity();
-  const entry = db
-    .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
-    .get(backend, mode, running ?? '') as EntryRow | undefined;
-  if (!entry) {
+  const active = db
+    .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY "created_at" DESC, "id" DESC`)
+    .all(backend, mode, running ?? '') as EntryRow[];
+  if (active.length === 0) {
     const known = db.prepare(`SELECT "status" FROM "trust_entries" WHERE "backend" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(backend) as { status: string } | undefined;
     return backendRefused(known ? `${backend} has no active trust entry on this host (its latest is ${known.status}).` : `${backend} has no trust entry.`, { trust_entry_status: known?.status ?? null });
   }
+  const model = args.model ?? roleModel(db, args.project, args.role);
+  const ofModel = model === null ? active : active.filter((e) => sameModel(model, e.model));
+  if (ofModel.length === 0) {
+    return backendRefused(`No active ${backend} entry on this host is of the model ${model} the ${args.role} role requests (active: ${active.map((e) => e.model).join(', ')}).`, {
+      model_requested: model,
+      active_models: active.map((e) => e.model),
+    });
+  }
+  const qualified = args.sessions === true ? ofModel.filter((e) => e.session_qualified === 1) : ofModel;
+  // A session needs an entry qualified for sessions (sessions/session.ts
+  // says why when none is): the newest of the model's otherwise.
+  const entry = qualified[0] ?? ofModel[0]!;
   const boundaries = json<Boundary[]>(entry.enforceable_boundaries);
   if (!boundaries.some((b) => rank(b.boundary) >= 0 && rank(b.boundary) <= rank(required))) {
     return refuse(

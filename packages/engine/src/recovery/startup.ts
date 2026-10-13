@@ -52,7 +52,14 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   removeStagingLeftovers(rt.home);
   await recoverChecks(rt, ender.priorUnknown).catch((err) => log('recovery', err, { what: 'check executions' }));
 
-  const runs = (await rt.engine<RunRow[]>('run.unended')).filter((run) => !(run.kind === 'session' && ['allocated', 'open_idle'].includes((run as RunRow & { session_state?: string | null }).session_state ?? '')));
+  // An idle session survives a restart (it owns no process); a qualification
+  // canary's session does not: its attempt is invalidated at this start, so
+  // its session is ended now and the fixture project is not left busy
+  // (D6 §2.7; the review's M6).
+  const runs = (await rt.engine<RunRow[]>('run.unended')).filter((run) => {
+    const r = run as RunRow & { session_state?: string | null; qualification_attempt?: string | null };
+    return !(r.kind === 'session' && (r.qualification_attempt ?? null) === null && ['allocated', 'open_idle'].includes(r.session_state ?? ''));
+  });
   const recovery = { recovery: rt.incarnation };
   await Promise.all(
     runs.map(async (run) => {

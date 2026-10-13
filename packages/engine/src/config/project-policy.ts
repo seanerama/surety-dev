@@ -2,6 +2,7 @@
 // A.7). A submission is validated whole against the closed schema before
 // anything else happens.
 
+import { isModelName } from '../invoke/adapters/model.js';
 import { isAbsolute, normalize } from 'node:path';
 
 import { Refusal } from '../refusal.js';
@@ -62,7 +63,7 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
     case 'model':
       // A model name as the backend's command line takes it: never empty,
       // never an option, no whitespace or control character.
-      if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@\/-]{0,127}$/.test(value)) throw invalidValue(key, 'a model name');
+      if (!isModelName(value)) throw invalidValue(key, 'a model name');
       return value;
     case 'absolute_paths': {
       const ok = (p: unknown): p is string => typeof p === 'string' && p.length > 0 && !p.includes('\0') && isAbsolute(p) && normalize(p) === p;

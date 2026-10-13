@@ -336,7 +336,11 @@ function unknownAllowance(db: Db, invocation: string, project: string, n: Amount
   // charged to the ordinary ledger, its incomplete usage as any other).
   const real = (receipt?.trust_entry ?? null) !== null || ((receipt?.qualification_attempt ?? null) !== null && receipt?.provider !== 'scripted');
   if (!real && (observations === 0 || !engineEnded)) return null;
-  return Math.max(0, runLimit(db, invocation, project) - (billable(n) ?? 0));
+  // A session turn is charged the session's remainder (D6 §2.4; M447 (c);
+  // the review's N5): the run's limit less what its earlier turns were
+  // charged and what this one is known to have spent, not below zero.
+  const prior = sessionPriorSpend(db, invocation);
+  return Math.max(0, runLimit(db, invocation, project) - prior - (billable(n) ?? 0));
 }
 
 // ---- corrections (SEAM.md §54) ---------------------------------------------------
@@ -670,9 +674,36 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string; ter
   // there is nothing to judge the run's limit on, and only the day's limits
   // are checked.
   const observed = observationsOf(db, args.invocation).length > 0;
-  const spent = billable(observedSoFar(db, args.invocation));
+  // A session's turn counts the session's cumulative spend: its earlier
+  // turns' plus this one's (D1 §13.3; the review's M4).
+  const own = billable(observedSoFar(db, args.invocation));
+  const spent = sessionSpendAt(db, { invocation: args.invocation, current: own });
   if (observed && spent === null && args.terminal !== true) return 'budget_usage_unknown';
   if (spent !== null && spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
+}
+
+// What a session turn's earlier turns were charged (their billable tokens
+// and allowances), for its run's cumulative budget (D1 §13.3); 0 for an
+// invocation that is not a session turn. A row whose figure is unknown
+// counts its allowance, never 0 for the unknown part.
+function sessionPriorSpend(db: Db, invocation: string): number {
+  const r = db.prepare('SELECT "run", "turn" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { run: string; turn: string | null } | undefined;
+  if (!r || r.turn === null) return 0;
+  const rows = db.prepare('SELECT "billable_in", "out", "unknown_allowance_tokens" FROM "ledger_rows" WHERE "run" = ? AND "invocation" <> ? AND "corrects" IS NULL').all(r.run, invocation) as {
+    billable_in: number | null;
+    out: number | null;
+    unknown_allowance_tokens: number | null;
+  }[];
+  return rows.reduce((n, x) => n + (x.billable_in ?? 0) + (x.out ?? 0) + (x.unknown_allowance_tokens ?? 0), 0);
+}
+
+// The session's cumulative spend at a usage observation of one of its turns
+// (D1 §13.3 "on every usage observation"; the review's M4): its earlier
+// turns' charges plus what this turn has spent so far; null when this turn's
+// spend so far is unknown.
+export function sessionSpendAt(db: Db, args: { invocation: string; current: number | null }): number | null {
+  if (args.current === null) return null;
+  return sessionPriorSpend(db, args.invocation) + args.current;
 }
