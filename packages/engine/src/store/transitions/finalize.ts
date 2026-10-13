@@ -20,7 +20,8 @@ import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
-import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
+import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
+import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -58,7 +59,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -188,6 +189,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
       reraiseOnPolicy(tx, op.project);
+      // A pending bundle on the head the policy commit moved stays answerable
+      // (B03): the commit touches none of its bound inputs.
+      if (op.payload.old_oid) rebindHarmless(tx, { project: op.project, from: op.payload.old_oid, to: inputs.new_oid });
       if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }
@@ -199,6 +203,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return finalizeProposal(tx, op, inputs as unknown as ProposalInputs);
     case 'spec_applied':
       return finalizeApplied(tx, op, inputs as unknown as AppliedInputs);
+    // D6 §3.4: spec_approval's change log row integrated; the approval.
+    case 'spec_approved':
+      return finalizeApproved(tx, op, inputs as unknown as ApprovedInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':
@@ -258,7 +265,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     plans.push(made.plan.id);
   }
   if (inputs.replan && inputs.run) {
-    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid });
+    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid, base: op.payload.old_oid ?? null });
     if (published) plans.push(published);
   }
   if (inputs.architect && item && status === 'integrated') {

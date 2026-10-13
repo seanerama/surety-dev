@@ -106,6 +106,9 @@ const MAIN_BARRIERS: readonly string[] = [
   // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
   // save and before it enters `closing` and raises its decision.
   'session.close_saved',
+  // M5 slice 34 (D6 §3.4, §5.5; SEAM.md §401): around a bundle's publication.
+  'plan.before_publication',
+  'plan.after_publication',
   // SEAM.md §389 (M5 slice 33): a turn's settlement, after each of its four
   // facts; and the admission of a save, a turn, a close or an opening,
   // after its read and before its compare-and-swap.

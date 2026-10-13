@@ -13,11 +13,9 @@
 // criteria and questions sorted by key: reordering without a change of
 // value changes it by nothing (D6-C03; B04).
 //
-// Slice 31 parses to this depth and reports what does not parse. The
-// duplicate, contradiction and renumbering refusals and the phase-hint guard
-// are slice 34's (the driver's ruling on question 4); this module's
-// `findings` already names what it sees so that approval can block on them
-// then. Pure: it reads only the text.
+// It reports what does not parse; spec/approval.ts decides which findings
+// block approval, and spec/keys.ts compares keys across saves and applies
+// the open questions' guard. Pure: it reads only the text.
 
 import { SENSITIVE_AREAS } from '../checks/schema.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
@@ -40,6 +38,10 @@ export interface SemanticRequirement {
   phase_hint: number | null;
   origin: 'intended' | 'observed';
   blocked_by_questions: string[];
+  // A key of an earlier save that this one no longer has (SEAM.md §397):
+  // kept in the save's representation, marked, never dropped; it is
+  // recorded withdrawn at approval and is no requirement of this text.
+  withdrawn?: boolean;
 }
 
 export interface SemanticQuestion {
@@ -98,6 +100,7 @@ export interface SemanticFinding {
     | 'criterion_mismatch'
     | 'module_table_invalid'
     | 'question_malformed'
+    | 'question_unknown_key'
     | 'claims_table_invalid'
     | 'claims_requirement_unknown';
   why: string;
@@ -388,7 +391,7 @@ export function digestOf(r: SpecRepresentation): string {
   return sha256(
     canonical({
       header: { tier: r.header.tier },
-      requirements: byKey(r.requirements).map((q) => ({
+      requirements: byKey(r.requirements.filter((q) => q.withdrawn !== true)).map((q) => ({
         key: q.key,
         statement: q.statement,
         criteria: [...q.criteria].sort((a, b) => a.id.localeCompare(b.id)),
@@ -454,7 +457,15 @@ export function parseSpecification(text: string): SemanticResult {
   }
   for (const req of requirements) if (!index.some((r) => r.key === req.key) && index.length > 0) findings.push({ where: req.key, code: 'index_subsection_mismatch', why: `${req.key} has a section 4 subsection and no index row` });
   const questions = parseQuestions(secs.get(10), findings);
-  for (const q of questions) for (const key of q.blocks) byKey.get(key)?.blocked_by_questions.push(q.id);
+  for (const q of questions) {
+    for (const key of q.blocks) {
+      const req = byKey.get(key);
+      if (req) req.blocked_by_questions.push(q.id);
+      // A question naming a key the specification lacks (the review's N3
+      // (d)): what it blocks cannot be told, so approval cannot be safe.
+      else findings.push({ where: q.id, code: 'question_unknown_key', why: `the question ${q.id} names ${key}, which is no requirement of this specification` });
+    }
+  }
   const modules = parseModules(secs.get(6), findings);
   const environments = parseEnvironments(secs.get(7));
   const claims = parseClaims(secs.get(12), findings);
@@ -465,6 +476,13 @@ export function parseSpecification(text: string): SemanticResult {
   });
   const representation: SpecRepresentation = { header, requirements, index, questions, modules, environments, claims };
   return { readable: true, representation, findings, digest: digestOf(representation) };
+}
+
+// The representation without the keys carried as withdrawn: the
+// requirements this text has.
+export function liveRepresentation<T extends SpecRepresentation | null>(r: T): T {
+  if (r === null || !Array.isArray(r.requirements)) return r;
+  return { ...r, requirements: r.requirements.filter((q) => q.withdrawn !== true) };
 }
 
 // The keys of KEY form in a list of requirement keys, for callers that want

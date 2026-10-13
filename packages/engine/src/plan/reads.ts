@@ -155,9 +155,18 @@ export function planView(db: Database, args: { project: string }) {
       stages,
     };
   }
-  const proposals: { bundle: string | null; phase: number | null; status: string; run?: string | null; path?: string }[] = (
+  const proposals: { bundle: string | null; phase: number | null; status: string; run?: string | null; path?: string; plan_check?: string }[] = (
     db.prepare('SELECT "id", "phase_number", "status", "run" FROM "plan_bundles" WHERE "project" = ? ORDER BY "created_at"').all(args.project) as { id: string; phase_number: number | null; status: string; run: string | null }[]
   ).map((b) => ({ bundle: b.id, phase: b.phase_number, status: b.status, run: b.run }));
+  // A replan's plan its check refused (D6 §5.3, §5.6): recorded with no
+  // bundle, listed `stale` when its baseline moved under it
+  // (PLAN_STALE_BASELINE; M424 (f)), else `refused`; never current.
+  for (const c of db
+    .prepare(`SELECT "id", "phase_number", "reasons", json_extract("evidence", '$.run') AS "run" FROM "plan_checks" WHERE "project" = ? AND "bundle" IS NULL AND "outcome" = 'refused' ORDER BY "created_at"`)
+    .all(args.project) as { id: string; phase_number: number | null; reasons: string; run: string | null }[]) {
+    const reasons = json<{ code: string }[]>(c.reasons, []);
+    proposals.push({ bundle: null, phase: c.phase_number, status: reasons.some((r) => r.code === 'PLAN_STALE_BASELINE') ? 'stale' : 'refused', run: c.run, plan_check: c.id });
+  }
   // A checkpoint's plan no bundle carries: the last save of each session
   // whose notes name a phase plan file, while no plan of that phase is
   // published and no bundle of that session records it.

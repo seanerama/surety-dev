@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+Slice 34, the specification and the Architect's products, 2026-10-13, on `verify/m5-s34` (from `verify/m5-s33` at `4866861`): rows M421 to M424, M448 and M449 in seven kernel files under manifest slice `34`, with SEAM §§396 to 403. See "M5 slice 34" below for each case and how each file fails alone on `build/m5-s34` at `c2dc20a`. The paragraph that follows is the previous pass's.
+
 Objection 077 and the driver's two rulings, 2026-10-13, on `verify/m5-s33` (SEAM §§390, 394, 395):
 - **077 (upheld):** the contract gains D6 A.7's `turn_max_bytes` (engine), and `transcript_max_bytes`, `deadline_vision` and `deadline_spec_writer` (project).
 - **Budget exhaustion:** M415 (f) and M418 (b) read reason class `budget`, with the public code `budget_exhausted`, not a RunOutcome.
@@ -2655,6 +2657,74 @@ The project-lane files were not run here.
 **The safety rule (BS5 §4.1; E64).** Kernel lane only: no domain, no unit, no signal but the test's own engine's (`fx.engine.kill()` of the process it spawned, as every kernel file). Every secret-shaped value is absent; nothing paid; no session on a real model.
 
 **What was run, 2026-10-12, on this branch** (`main` at `15209c4` merged; `npm run build` clean; `node --check` of every new and changed `.mjs`): the four kernel files once each, alone, with `node --test --test-concurrency=1`: **M402 1/9, M403 0/9, M404 0/9, M405 0/6**, every failing case at `POST /v1/projects` with `idea` → 400 `unknown_field` ("idea" is not a field of a project), the first unbuilt route; M402 (e) passes as built. No engine process left; the two `/tmp/surety-static-*` directories present are dated 2026-10-11, before this pass (E137 names one). The migrated accepted files were not run.
+
+## M5 slice 34: the specification and the Architect's products (BS5 §9.2; D6 §§2.5, 3.2 to 3.5, 5.3, 5.5, 5.6, B.2; the driver's approval of the outline, 2026-10-13)
+
+2026-10-13, by the Verifier of slice 34, on `verify/m5-s34` cut from `verify/m5-s33` at `4866861`. This covers rows M421 to M424, M448 and M449 of the M5 plan §3.4, in seven kernel files under manifest slice `34`. The seams are §§396 to 403, and the names follow the Builder's approved design where it gave one.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M421 | kernel | `M421-the-specification-parsed-at-save.test.mjs` (13) | (a)–(d): an unparsable row, a requirement with no row, a row with no subsection, R4 renumbered R5, R3 vanished (kept `withdrawn`), an unknown area, a missing tier, `T4`. Each is committed as a checkpoint, named on the save and as the engine's entry. (e) uncertain, and the human-test mark; (f) a duplicate requirement, a duplicate criterion, an index-only criterion, each with its blocker; (g) the digest unchanged by reordering and changed by a statement | written |
+| M422 | kernel | `M422-the-spec-approvals-floor.test.mjs` (10) | (a) seven variants, with blockers in §398's strings: invalid, uncertain, `QUESTION_BLOCKS_PHASE_1`, phase 2 hinted (open), a `(phase 1)` hint on a phase-2-only question (open), `QUESTION_NO_PHASE_HINT`, `REQUIREMENT_NO_PHASE_HINT`. (b) the effect, with the engine's §11 row committed and `git_blob` after it. (c) a criterion-text-only save makes the answer stale. (d) a role's result and a policy key do not approve | written |
+| M423 | kernel | `M423-the-roles-prohibitions.test.mjs` (12) | (a) Spec Writer saves touching source, checks or architecture, a rename, a delete, a link; (b) Vision touching spec; (c) Architect touching source or checks; (d) a replan writing spec.md (`diff_violation`), a replan result carrying a requirement's text (`invalid_result`), a change run touching `src/` (`diff_violation`, no proposal) | written |
+| M424 (a)–(e) | kernel | `M424-the-replan-one-shot-and-its-repairs.test.mjs` (2) | (a)+(b) an Architect one-shot under `deadline_architect`; the package from records (§403's files), with no session transcript. (c)–(e) a refusal on R9; a restart; one repair with the reasons; a blocker with `retry`/`cancel` naming the session route; two runs in all; a manual re-entry revives nothing | written; deferrals and findings with dispositions read as package files, not seeded (a Builder's objection is seeded) |
+| M424 (f) | kernel | `M424-a-replan-under-a-moving-baseline.test.mjs` (3) | a spec change and a roadmap revision approved during the held replan give `PLAN_STALE_BASELINE` and a `stale` proposal; the owner's policy commit is a harmless move, re-based and published by `engine:plan_check` | written; each change is a decision raised before the hold and answered during it (§403: one run at a time as built) |
+| M448 | kernel | `M448-the-prospective-bundle.test.mjs` (6) | (a) checked against prospective versions; architecture 2 and roadmap 2 refused `PLAN_STALE_BASELINE`; (b) the bundle record; (d) a spec change between preview and answer: 409 `plan_generation_stale`, `stale`; (e) kills at `plan.before_publication` † and `plan.after_publication` †: one publication | written; (c) and (d)'s competing proposal not re-written (M405 (e), M403 (d), M404 (c), M403 (f), M405 (f)) |
+| M449 | kernel | `M449-the-semantic-representation-and-open-questions.test.mjs` (5) | (a)+(b) B.2's forms held with their text, questions' `blocks` and `phase_hint`, and prose absent; (c) one row per save, and the approved digest; (d) `PLAN_QUESTION_OPEN` `R3:Q1` before a resolving change and passing after it; `R4:Q2` for a hint-less question added by a change; (e) unreadable: `SPEC_REPRESENTATION_UNREADABLE:<cause>` | written |
+
+**Readings, each ruled by the driver (2026-10-13).**
+1. A path outside a one-shot's role is `diff_violation`; `invalid_result` is only the Architect's result carrying a requirement's text.
+2. One automatic replan repair at the default policy, then the blocker.
+3. The change log row is the engine's commit appending TPL §11's row.
+4. Reading 1 is applied strictly, over TPL §10's wording, which the owner will align.
+5. `spec_change` carries no phase-hint guard.
+6. (e) accepts `stale` or `refused`; (f) pins `stale`.
+
+**The harness:** `harness/journey/spec34.mjs` and `harness/journey/replan34.mjs` (SEAM §396).
+
+**The straddle of ruling 2** (the driver, 2026-10-13; SEAM §399). The engine now owns TPL §11's row for each approved version, and the `spec_approval` answer is an effect intent, `spec_approval_application`.
+- **M403-close-raises-the-products-decision (g):** the former case asserted `fileAt(head, '.surety/spec/spec.md') === SPEC` after the spec approval. That case is **superseded**. The head's spec.md is now SPEC with its version-1 row replaced by the engine's row `| 1 | <date> | First approved version | human |`, written in one engine commit, and nothing else differs.
+- **`contract/decisions.json`:** `spec_approval.effect` is now `true`.
+- **M422 (b):** reads the appended row, the replaced row, a change's `| 2 | <date> | Specification change <seq> | human |` row, `git_blob` after each commit, and the intent `done` before the 200.
+
+**What was run, 2026-10-13.** A scratch checkout of `build/m5-s34` at `c2dc20a` (slice 33 and `main`, with no slice-34 code), with this branch merged, `npm ci` and `npm run build`. Each file was run alone with `node --test` after checking that no other test run was under way. Nothing was left running. Each file fails, and every failure is for a reason of the unbuilt slice:
+- **M421 6/13:** no `spec_keys_renumbered` and no `spec_key_withdrawn`; a missing Tier is `spec_header_invalid`; duplicates are not detected; and the blockers are the bare `spec_semantics_invalid` with no per-defect string.
+- **M422 4/12:** (a)'s five blocked variants carry no blocker or only the bare one; in (b) the engine writes no §11 row and records no effect intent. (c) and (d) pass already.
+- **M423 11/12:** a Spec Writer save that places a link at `.surety/spec/checks` → `../checks` is **committed** (200, `saved: true`). This is a defect against D6-W03. The other eleven cases pass already.
+- **M424 (a)–(e) 0/2:** the replan's package holds `instructions.md`, `manifest.json`, `prompt.md`, `result-schema.json`, the ADR, `constraints/architecture.md` and `requirements/R1.md` to `R4.md`, and none of §403's files. A refused replan is repaired three times, four runs in all (`repair_attempts_max` 3), not once.
+- **M424 (f) 0/3:** for the spec change and the roadmap revision, the recheck already refuses with `PLAN_STALE_BASELINE`, but the plan read does not list the proposal as `stale`. The head move is published by `engine:plan_check` with `prepared_against_revision` the old head, not re-based.
+- **M448 3/6:** (d) answers 409 `decision_invalidated` on both rows, not `plan_generation_stale`; (e) both barriers are unknown (400).
+- **M449 2/5:** `PLAN_QUESTION_OPEN`'s subjects are `R3` and `R4`, not `R3:Q1` and `R4:Q2`; (e) the blocker is `spec_semantics_invalid`, not `SPEC_REPRESENTATION_UNREADABLE:<cause>`.
+- **M403-close-raises-the-products-decision 8/9:** (g) fails as the straddle expects, because the head's spec.md still holds the role's row.
+
+Run times were 7 s to 30 s per file.
+
+**Objections 080 and 081, upheld (the driver, 2026-10-13; SEAM §404).**
+- **080:** M422 (b) reads criteria with their text from `requirements.criteria_text` and the IDs from `criteria`, and an environment with no adapter as `'none'`.
+- **081:** `M401-a-spec-change-application-is-done-once` (slice 31) reads the applied `spec_change_application` intent (exactly one `done`, any other `invalidated`), not the first one recorded.
+
+**The slice-34 review's rulings** (the driver, 2026-10-13; no serious finding; SEAM §405), written after `main` was merged at `fa623cc`:
+
+| Ruling | Row | File | Cases | Status |
+|---|---|---|---|---|
+| M1 | M421 (c) | `M421-the-specification-parsed-at-save.test.mjs` | a criterion moved to another requirement is withdrawn plus added, not renumbered, and `approve` stays open; renumbered within its requirement it is still `spec_keys_renumbered` | written |
+| N3 | M421 (d) | same | a question citing an unknown key gives `spec_question_unknown_key`, and `approve` is blocked | written |
+| N4 | M421 (c) | same | a key withdrawn in an approved version 2 and added again gives `spec_key_reused`, and `approve` is blocked | written |
+| N1 | M422 (b) | `M422-the-spec-approvals-floor.test.mjs` | an escaped pipe in the role's row; no §11 at all | written |
+| M4 | M448 (a) | `M448-the-prospective-bundle.test.mjs` | a routed replan revising an ADR, prepared against architecture 2, is published against version 2; naming version 1 is refused `PLAN_STALE_BASELINE` | written |
+| the gap | M424 (f) | `M424-a-pending-plan-approval-and-a-moving-head.test.mjs` (new, slice `34`, 3 cases) | the first session's pending pair, and phase 2's routed bundle: a harmless head move leaves the pending decisions open on the same bundle, which then publishes; a spec change marks phase 2's bundle `stale`; no orphaned `proposed` bundle | written |
+
+**The straddle of ruling M4** (the driver, 2026-10-13; SEAM §405). `M401-a-replan-that-edits-an-adr-routes-to-the-owner` (slice 31, the 31b review's S4): both its replans, the revised ADR and the unparseable ADR, are now prepared against architecture 2, the version their publication allocates. The first still routes to the owner. The former form, an ADR edited while the plan names architecture 1, is **now refused** at the commit's check: `failed` / `invalid_result`, `PLAN_STALE_BASELINE`, no `plan_approval`. M448 (a) M4's "naming v" case pins it. Nothing of S4 is weakened: a replan that edits an ADR is still never registered by `engine:plan_check`.
+
+**What was run for the rulings, 2026-10-13.** A scratch checkout of `build/m5-s34` at `c9e25d4` (slice 34 built) with this branch merged (main at `fa623cc` included), built and each file run alone:
+- **M421 14/17:** M1 reports R1.2 → R4.2 as `spec_keys_renumbered` (`kind: criterion`); N3 and N4 give no finding. The within-requirement renumbering already passes.
+- **M422 13/14:** N1's escaped-pipe row adds a second `## 11. Change log`. The no-§11 case already passes.
+- **M448 6/8:** M4 v+1: the replan prepared against architecture 2 is refused `PLAN_STALE_BASELINE (architecture_version 2 (bundle 1))`. M4 v: the replan naming 1 while revising the ADR is `completed`, not refused.
+- **M424 pending 0/3:**
+  - The first session's pair after the owner's policy commit stays open, but answering its current preview gets 409 `decision_stale`: no next generation is raised. This is the gap itself.
+  - The two phase-2 cases fail at their precondition. The routed bundle prepared against architecture 2 is refused by the same M4 defect, so they show the gap only once M4 is built. They fail fast and name it.
+
+**An observation for the driver, not pinned:** on this build, approving a spec change before any roadmap exists (at `spec_ready`) registers a `replan`. An unscripted replan holds the project `session_busy`. D6 §4.5 registers a replan "when the impact touches the current or a later phase", and before a roadmap there is no phase. M449 (d) and M448 (d) let such side work end at once (a default script) rather than pin it.
 
 ## M5 slice 33: sessions on the real boundary (BS5 §9.2; D6 §2; the driver's approval of the outline, 2026-10-13)
 

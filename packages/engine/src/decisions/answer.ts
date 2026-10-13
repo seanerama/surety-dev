@@ -1,0 +1,30 @@
+// What the owner's answer route does after the answer's transaction (D1
+// §10.5), for the answers whose consequence the reply follows:
+//
+// - a bundle whose authority the answer completed is published by the
+//   authorized finalizer (plan/publish.ts, between `plan.before_publication`
+//   and `plan.after_publication`; D6 §5.5; M448 (e)) before the reply;
+// - a `spec_approval` answered `approve` is replied to once its effect, the
+//   change log row's commit and the approval (spec/approval-effect.ts), has
+//   run (SEAM.md §399). An effect that cannot run now is carried by the
+//   tick, as any intent is.
+
+import type { Runtime } from '../runtime.js';
+import { publishAuthorized } from '../plan/publish.js';
+
+export interface AnswerWaits {
+  project: string;
+  decisions: string[];
+}
+
+export async function beforeAnswer(_rt: Runtime, project: string, answers: { decision: unknown; option: unknown }[]): Promise<AnswerWaits> {
+  return { project, decisions: answers.map((a) => a.decision).filter((d): d is string => typeof d === 'string') };
+}
+
+export async function afterAnswer(rt: Runtime, waits: AnswerWaits | undefined): Promise<void> {
+  if (!waits) return;
+  // A read that fails is an error, never "no intent" (the review's N3 (c)).
+  const intents = await rt.read<string[]>('decision.intents', { decisions: waits.decisions, kind: 'spec_approval_application' });
+  for (const intent of intents) await rt.services?.effect(intent);
+  await publishAuthorized(rt, waits.project);
+}

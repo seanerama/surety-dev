@@ -83,6 +83,8 @@ export async function captureMetadata(repo: string, path: string): Promise<Metad
 export interface Violation {
   klass: 'diff_violation' | 'ref_violation' | 'infra_error';
   text: string;
+  // The path the refusal names, where it names one.
+  path?: string;
 }
 
 export interface Caps {
@@ -125,10 +127,11 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   return null;
 }
 
-// Does a symbolic link at `path` with `target` lead outside the workspace,
-// directly or through other links of the tree? Resolved component by
-// component within the workspace, following the tree's own links.
-function escapes(entries: Map<string, TreeEntry>, targets: Map<string, string>, path: string, target: string): boolean {
+// Where a symbolic link at `path` with `target` resolves, as a path within
+// the workspace, component by component, following the tree's own links;
+// null when it leads outside the workspace (or loops). Lexical: whether the
+// target exists does not matter.
+function resolveLink(entries: Map<string, TreeEntry>, targets: Map<string, string>, path: string, target: string): string | null {
   const resolveFrom = (dir: string[], link: string, hops: number): string[] | null => {
     if (hops > 40) return null;
     if (link.startsWith('/')) return null;
@@ -155,7 +158,8 @@ function escapes(entries: Map<string, TreeEntry>, targets: Map<string, string>, 
     }
     return out;
   };
-  return resolveFrom(posix.dirname(path) === '.' ? [] : posix.dirname(path).split('/'), target, 0) === null;
+  const parts = resolveFrom(posix.dirname(path) === '.' ? [] : posix.dirname(path).split('/'), target, 0);
+  return parts === null ? null : parts.join('/');
 }
 
 function parsePlan(path: string, phase: number, text: string): PlanFile | string {
@@ -199,11 +203,11 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   if (changes === null) return unknown('the diff');
   const entries = await listTree(ctx, tree);
   if (entries === null) return unknown('the snapshot tree');
-  const reject = (text: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text }, plans: [], changes });
+  const reject = (text: string, path?: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text, ...(path !== undefined ? { path } : {}) }, plans: [], changes });
 
   for (const c of changes) {
     const rule = pathRule(role, c.path, roots);
-    if (rule) return reject(`the run changed ${c.path}: ${rule}`);
+    if (rule) return reject(`the run changed ${c.path}: ${rule}`, c.path);
   }
   const added = changes.filter((c) => c.status !== 'D');
   // The targets of the tree's symbolic links, which a link may lead through.
@@ -217,7 +221,22 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   for (const c of added) {
     if (c.newMode === '160000') return reject(`${c.path} is a repository of its own (a gitlink), not a regular file or a link`);
     if (c.newMode === '120000') {
-      if (escapes(entries, links, c.path, links.get(c.path) ?? '/')) return reject(`${c.path} is a symbolic link that leads outside the workspace (${links.get(c.path)})`);
+      const target = links.get(c.path) ?? '/';
+      const resolved = resolveLink(entries, links, c.path, target);
+      if (resolved === null) return reject(`${c.path} is a symbolic link that leads outside the workspace (${target})`, c.path);
+      // A link is a write through its target (D6 §2.5; D6-W03): judged by
+      // where it resolves, as the role's paths judge any write, whether or
+      // not the target exists. The workspace's root itself is no file a
+      // role may write.
+      // As a file, the resolved path is judged; as a directory, a path under
+      // it, so that a link to a permitted directory itself (`.surety/spec`)
+      // is the role's and one to a directory holding what the role may not
+      // touch is not (the review's N6).
+      const asFile = resolved === '' ? `it resolves to the workspace's root` : pathRule(role, resolved, roots);
+      const asDir = resolved === '' ? asFile : pathRule(role, `${resolved}/${'\u0000'}`, roots);
+      const isDir = resolved === '' || [...entries.keys()].some((p) => p.startsWith(`${resolved}/`));
+      const rule = asDir === null ? null : isDir || asFile !== null ? (asFile ?? asDir) : null;
+      if (rule) return reject(`${c.path} is a symbolic link to ${target}, which resolves to ${resolved === '' ? '.' : resolved}: ${rule}`, c.path);
       continue;
     }
     if (c.newMode !== '100644' && c.newMode !== '100755') return reject(`${c.path} is not a regular file or a link (mode ${c.newMode})`);

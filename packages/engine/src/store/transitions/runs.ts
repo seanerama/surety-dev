@@ -1061,7 +1061,11 @@ function workAfterRun(tx: Tx, run: RunRow): void {
           } else progress = { progress_key: key };
         }
       }
-      if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause, progress);
+      // A replan takes one automatic repair, then parks for the owner (D6
+      // §5.6; M424 (d); the coordinator's ruling): never more than
+      // repair_attempts_max allows.
+      const repairs = item.kind === 'replan' ? Math.min(1, policy.repair_attempts_max!) : policy.repair_attempts_max!;
+      if (item.repair_attempts >= repairs) parkWork(tx, item, 'repair_attempts_max', cause, progress);
       else transitionWork(tx, item, 'eligible', { repair_due: 1, ...progress }, cause);
       return;
     }

@@ -37,8 +37,8 @@ import { integrationRef, projectRepoRow, registryRow } from '../store/transition
 import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
-import { type SemanticsRow, approveSpec, recordSemantics, specBlockers } from './approval.js';
-import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers } from './approval.js';
+import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 
 type Db = Tx['db'];
 
@@ -175,7 +175,7 @@ export function dependencyManifest(db: Db, project: string): Record<string, unkn
 export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown }): Impact {
   const spec = currentSpec(db, args.project);
   const row = spec?.semantics ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(spec.semantics) as { representation: string | null } | undefined) : undefined;
-  const approved = parseJson<SpecRepresentation>(row?.representation ?? null);
+  const approved = liveRepresentation(parseJson<SpecRepresentation>(row?.representation ?? null));
   // An impact the engine cannot compute refuses the proposal (D6 §4.4):
   // never an empty impact.
   if (!approved) throw illegal('computing a spec change impact with no readable approved representation', { project: args.project });
@@ -249,7 +249,9 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
   const phaseOf = (k: string): number | null => reqIds.get(k)?.assigned_phase ?? after.get(k)?.phase_hint ?? null;
   const phases = uniq(affectedKeys.map(phaseOf).filter((p): p is number => p !== null)).sort((a, b) => a - b);
   const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' AND "active" = 1`).get(args.project) as { done: number };
-  const touchesCurrent = affectedKeys.some((k) => {
+  // Before any roadmap there is no phase, current or later, to touch (D6 §4.5).
+  const hasRoadmap = db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
+  const touchesCurrent = hasRoadmap && affectedKeys.some((k) => {
     const p = phaseOf(k);
     return p === null || p > done;
   });
@@ -369,7 +371,7 @@ export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefin
 
 export function currentImpact(db: Db, r: RequestRow): Impact | null {
   const sem = proposalSemantics(db, r);
-  const representation = parseJson<SpecRepresentation>(sem?.representation ?? null);
+  const representation = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
   if (!representation) return null;
   try {
     return computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null });
@@ -438,7 +440,7 @@ export function specChangeKind(): KindSpec {
             effect: { request: r.id, revision: r.proposal_revision, spec_version: Number(manifest.spec_version) + 1 },
             // What could not be approved as a specification cannot be approved
             // as a change of one (D6 §3.4; the 31b review's S1).
-            blockers: specBlockers(proposalSemantics(tx.db, r)),
+            blockers: specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }),
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal stays on its side ref as history; nothing of the specification changes.', effect: { request: r.id } },
         ],
@@ -488,6 +490,11 @@ export interface ApplicationFacts {
   head: string | null;
   request: string;
   revision: string | null;
+  // The change log row (TPL §11): the request's number, the version the
+  // approval allocates, and who approved.
+  seq: number;
+  version: number;
+  approved_by: string | null;
 }
 
 export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationFacts | null {
@@ -498,7 +505,12 @@ export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationF
   if (!r) return null;
   const p = projectRepoRow(tx, row.project);
   const ref = integrationRef(p.integration_branch);
-  return { intent: row.id, status: row.status, project: row.project, repo: p.dev_repo_path, ref, head: registryRow(tx, row.project, ref)?.expected_oid ?? null, request: r.id, revision: r.proposal_revision };
+  const d = tx.db.prepare('SELECT "answer" FROM "decisions" WHERE "id" = (SELECT "decision" FROM "effect_intents" WHERE "id" = ?)').get(row.id) as { answer: string | null } | undefined;
+  // Unread, the effect fails closed (the review's N3 (a)), never 'human'.
+  const actor = parseJson<{ actor?: unknown }>(d?.answer ?? null)?.actor;
+  const approvedBy = typeof actor === 'string' && actor.length > 0 ? actor : null;
+  const version = (currentSpec(tx.db, row.project)?.version ?? 0) + 1;
+  return { intent: row.id, status: row.status, project: row.project, repo: p.dev_repo_path, ref, head: registryRow(tx, row.project, ref)?.expected_oid ?? null, request: r.id, revision: r.proposal_revision, seq: r.seq, version, approved_by: approvedBy };
 }
 
 export interface AppliedInputs {
@@ -508,6 +520,9 @@ export interface AppliedInputs {
   new_oid: string;
   request: string;
   intent: string;
+  // The approved file's blob as committed, with the engine's change log row
+  // (TPL §11): what spec_revisions.git_blob records.
+  blob?: string;
   // The impact recomputed at the effect's beginning, frozen with the intent
   // (D1 correction 14): the finalizer recomputes it and falls back to this,
   // never to the proposal's (the 31b review's M1).
@@ -535,7 +550,7 @@ export function refuseApplication(tx: Tx, args: { intent: string; reason: string
 // The intent begins (decisions/effects.ts): its preconditions read again,
 // then the integration branch moved to the proposal (or its rebase onto the
 // head, committed first) by a journaled compare-and-swap.
-export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string } | null; deadlineSeconds: number }): IntentResult | null {
+export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string } | null; deadlineSeconds: number }): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, {})) return null;
   const facts = applicationFacts(tx, { intent: args.intent });
   if (!facts || facts.revision === null) {
@@ -546,7 +561,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
   // begun at a later tick, against what is there then.
   if (facts.head !== args.head) return null;
   const r = getRequest(tx.db, facts.request)!;
-  if (specBlockers(proposalSemantics(tx.db, r)).length > 0) {
+  if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }).length > 0) {
     refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
     return null;
   }
@@ -562,7 +577,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
     payload: { repo: facts.repo, ref: facts.ref, old_oid: args.head, new_oid: target },
     target: { repo: facts.repo, ref: facts.ref },
     subject: { spec_change_request: facts.request, old_oid: args.head, new_oid: target },
-    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact } satisfies AppliedInputs as unknown as Record<string, unknown>,
+    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
     deadlineSeconds: args.deadlineSeconds,
   };
   const made = args.commit === null
@@ -572,7 +587,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
         repo: facts.repo,
         purpose: 'spec',
         tree: args.commit.tree,
-        parent: args.head,
+        parent: args.commit.parent ?? args.head,
         sha: args.commit.sha,
         content: args.commit.content,
         revisionKind: 'engine_commit',
@@ -602,7 +617,7 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Recomputed against the records as they are now (D6 §4.4; ruling Q1), or
   // as the effect's beginning recomputed them; never the proposal's.
   const impact = currentImpact(tx.db, r) ?? inputs.impact;
-  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision, via: 'change' });
+  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision, via: 'change', ...(inputs.blob ? { blob: inputs.blob } : {}) });
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(op.project) as { spec_evidence_generation: number }).spec_evidence_generation;
   tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'approved', "approved_revision" = ? WHERE "id" = ?`).run(made.spec_revision, r.id);
   // (The impact was recomputed above, against the records as they were
@@ -624,7 +639,10 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   }
   // The Architect's replan when the current or a later phase is touched
   // (F §3.10.7), the impact its triggering evidence.
-  if (impact.touches_current) {
+  // Before any roadmap there is no phase to touch (D6 §4.5; the
+  // coordinator's ruling on slice 34): no replan holds the project then.
+  const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
+  if (impact.touches_current && roadmap) {
     const open = tx.db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string } | undefined;
     observeTrigger(tx, { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id }, chain: 0 }, { spec_change_request: r.id });
   }

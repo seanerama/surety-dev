@@ -41,6 +41,8 @@ import type { RunEnder } from '../runs/end.js';
 import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
+import { publishAuthorized } from '../plan/publish.js';
+import { rebindBundles } from '../plan/rebind.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
 import { Refusal } from '../refusal.js';
@@ -169,11 +171,18 @@ export class Scheduler {
     // The classifier (D3 §1.6; SEAM.md §215): every captured proposal,
     // classified at a tick after its capture, its question raised.
     await classifyDue(this.rt, project).catch((err) => log('classification', err, { project }));
+    // A proposed bundle is never left without an open decision (B03): a
+    // head move re-binds it or makes it stale, before the decisions'
+    // review.
+    await rebindBundles(this.rt, project).catch((err) => log('bundle rebind', err, { project }));
     await this.rt.engine('decisions.review', { project, channel: seamNotifyChannel() ?? 'none' });
     // The engine-scoped decisions (SEAM.md §117) are reviewed with every
     // project's tick: a dependency that changed raises their next generation.
     await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
+    // The authorized finalizer (D6 §5.5): a bundle whose authority is
+    // complete and which a restart left unpublished is published now, once.
+    await publishAuthorized(this.rt, project).catch((err) => log('publication', err, { project }));
     await deliverNotifications(this.rt, project);
   }
 

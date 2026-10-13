@@ -17,6 +17,7 @@ import { runningClassifierVersion } from '../checks/classify.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
 import { answerFacts } from '../decisions/facts.js';
+import { type AnswerWaits, afterAnswer, beforeAnswer } from '../decisions/answer.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
@@ -465,8 +466,13 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
                 if (typeof a?.decision === 'string') facts[a.decision] = await answerFacts(runtime(), project, a.decision);
               }
             }
-            return { project, answers: body.answers, facts };
+            const waits = Array.isArray(body.answers) ? await beforeAnswer(runtime(), project, (body.answers as { decision?: unknown; option?: unknown }[]).map((a) => ({ decision: a?.decision, option: a?.option }))) : undefined;
+            return { project, answers: body.answers, facts, waits };
           },
+          // A committed answer is answered 200 whatever follows it: a failed
+          // effect or publication is logged and carried by the next tick
+          // (the review's N8).
+          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits).catch((err) => log('answer', err, { project })),
         };
       }
       if (rest.length === 3 && rest[0] === 'decisions' && rest[2] === 'answer' && post) {
@@ -477,8 +483,14 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           name: 'decision.answer',
           prepare: async (b) => {
             const body = onlyFields(b, ['option', 'preview_hash', 'note']);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts: await answerFacts(runtime(), project, decision) };
+            const facts = await answerFacts(runtime(), project, decision);
+            const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts, waits };
           },
+          // A committed answer is answered 200 whatever follows it: a failed
+          // effect or publication is logged and carried by the next tick
+          // (the review's N8).
+          settle: (prepared) => afterAnswer(runtime(), (prepared as { waits?: AnswerWaits }).waits).catch((err) => log('answer', err, { project })),
         };
       }
       if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'gates' && post) {

@@ -30,6 +30,7 @@ import { pausePoint } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
+import type { SpecRepresentation } from '../spec/semantics.js';
 import { SESSION_PATHS, type SaveFacts, type SaveOutcome, type SessionRole } from './session.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
@@ -308,7 +309,9 @@ export class SessionDriver {
     if (tree === (await treeOf(ctx, ws.current_base))) return { sha: null };
     const diff = await validateDiff(facts.repo, ws.current_base, tree, facts.role, facts.caps, facts.roots, { plans: false });
     if (diff.violation) {
-      const paths = diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p));
+      // The paths outside the role's own, and the one the refusal names (a
+      // link inside them that resolves outside, D6-W03).
+      const paths = [...new Set([...diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p)), ...(diff.violation.path !== undefined ? [diff.violation.path] : [])])];
       const text = redactText(diff.violation.text);
       const status = diff.violation.klass === 'diff_violation' ? 422 : 500;
       return {
@@ -372,7 +375,11 @@ export class SessionDriver {
     if (facts.role === 'spec_writer') {
       const text = texts['.surety/spec/spec.md'];
       if (text === undefined) return { blobs, findings: [], products: {} };
-      const r = specFindings(text);
+      // The project's previous save, against which a key renumbered or gone
+      // is named (M421 (c)); read before this save's representation exists.
+      const prev = await this.rt.read<SpecRepresentation | null>('spec.previous_representation', { project: facts.project });
+      const withdrawn = await this.rt.read<string[]>('spec.withdrawn_keys', { project: facts.project });
+      const r = specFindings(text, '.surety/spec/spec.md', prev, withdrawn);
       return {
         blobs,
         findings: r.findings,

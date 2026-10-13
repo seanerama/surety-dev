@@ -92,6 +92,11 @@ interface KindSpec {
   // (not for a question a command raises: SEAM.md §76).
   reraise: boolean;
   answer(tx: Tx, d: DecisionRow, option: string, note: string | null, facts: Facts): CommandResult;
+  // Before anything else of an answer (D6 §5.5; M448 (d)): a refusal the
+  // kind's subject itself gives, committed with what it records (a bundle
+  // marked stale), or null to go on. Asked of an open or invalidated
+  // decision only.
+  guard?(tx: Tx, d: DecisionRow, option: string): CommandResult | null;
   // An effect of this kind was invalidated: undo the consumption's local
   // transition; return whether the question is raised again.
   withdraw?(tx: Tx, d: DecisionRow): boolean;
@@ -197,7 +202,10 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
           { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
         ],
-        question: `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
+        question:
+          item.kind === 'replan'
+            ? `Work item ${item.id} (replan) is parked: ${what}${replanRefusal(tx, item.id)}. Retry it, or cancel it; or plan the phase yourself in an Architect session (POST /v1/projects/${item.project}/sessions with role architect; surety session open architect), whose published plan supersedes this item.`
+            : `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
         blockedWorkItems: [item.id],
       };
     }
@@ -298,6 +306,18 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
     };
   }
   return null;
+}
+
+// The reasons the replan's last plan check refused it, as the blocker's
+// question names them (D6 §5.6; M424 (d)).
+function replanRefusal(tx: Tx, item: string): string {
+  const c = tx.db
+    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c."created_at" DESC LIMIT 1`)
+    .get(item) as { reasons: string } | undefined;
+  const reasons = parseJson<{ code: string; subjects: string[] }[]>(c?.reasons ?? null) ?? [];
+  if (reasons.length > 0) return ` (the plan check refused it: ${reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')})`;
+  const run = tx.db.prepare('SELECT "reason_text" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { reason_text: string | null } | undefined;
+  return run?.reason_text ? ` (its last run: ${run.reason_text})` : '';
 }
 
 export const PARK_TEXT: Record<string, string> = {
@@ -1476,6 +1496,10 @@ const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.ma
 export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; facts?: Facts | undefined }): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
+  if ((d.status === 'open' || d.status === 'invalidated') && typeof args.option === 'string') {
+    const refused = KINDS[d.kind as DecisionKind]?.guard?.(tx, d, args.option) ?? null;
+    if (refused !== null) return refused;
+  }
   if (d.status === 'invalidated') {
     throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} was invalidated: what it was bound to changed, or its subject was settled another way.`, 'Read the current decision about its subject, if there is one.', {
       decision: d.id,
@@ -1522,10 +1546,25 @@ export function answerBatch(tx: Tx, args: { project: string; answers: unknown; f
       decisions: widenings.map((d) => d.id),
     });
   }
+  // Every answer's guard first (the review's N2): a guard's refusal is
+  // committed with what it records (a bundle marked stale) and refuses the
+  // whole batch, nothing of it consumed.
+  for (const [i, a] of answers.entries()) {
+    const d = rows[i]!;
+    if ((d.status !== 'open' && d.status !== 'invalidated') || typeof a.option !== 'string') continue;
+    const refused = KINDS[d.kind as DecisionKind]?.guard?.(tx, d, a.option) ?? null;
+    if (refused !== null) return refused;
+  }
   const effects: Effect[] = [];
   const results: unknown[] = [];
   for (const [i, a] of answers.entries()) {
     const r = answerQueued(tx, { project: args.project, decision: rows[i]!.id, option: a.option, preview_hash: a.preview_hash, note: null, facts: args.facts?.[rows[i]!.id] });
+    // A batch is consumed whole or not at all: a guard's refusal of one
+    // answer refuses the batch (D1 §10.3).
+    if (r.status >= 400) {
+      const b = r.body as { code: string; reason: string; what_to_do: string; subject: unknown };
+      throw new Refusal(r.status, b.code, b.reason, b.what_to_do, b.subject);
+    }
     effects.push(...(r.effects ?? []));
     results.push(r.body);
   }

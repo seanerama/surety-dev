@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { checkPlan } from '../plan/check.js';
+import { checkPlan, computeChanges } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -449,7 +449,25 @@ export class Acceptor {
     }
     const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
     const architectureText = parsedArch.parsed.architecture_text;
-    const check = checkPlan(b.baseline, { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan });
+    // A replan that changes the approved architecture, module map, ADRs or
+    // roadmap is published with the next architecture version (and the next
+    // roadmap version when its roadmap changes): it is checked against those
+    // versions, as the first close is (B02; M448 (a); the review's M4).
+    const artifacts = { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan };
+    const pre = computeChanges(b.baseline, artifacts);
+    const r0 = pre.changes_roadmap;
+    const roadmapChanging = plan.roadmap_revision !== undefined || r0.phases_added.length + r0.phases_removed.length + r0.goals.length + r0.memberships.length + r0.assignments.length + r0.dependencies.length > 0;
+    const changing = roadmapChanging || pre.changes_architecture.changed || pre.changes_adrs.added.length + pre.changes_adrs.changed.length + pre.changes_adrs.deleted.length > 0;
+    const against = changing
+      ? {
+          ...b.baseline,
+          architecture_version: b.baseline.architecture_version + 1,
+          roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version,
+          // An unchanged roadmap.json names the architecture it was made with.
+          roadmap_architecture_version: roadmapChanging ? b.baseline.architecture_version + 1 : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
+        }
+      : b.baseline;
+    const check = checkPlan(against, artifacts);
     const requests = facts.result?.report?.spec_change_requests ?? [];
     // A retrofit replan's field (D6 §8.3, B.7): carried by any other
     // project's replan, the result is not one this engine takes.
@@ -477,7 +495,7 @@ export class Acceptor {
         spec_revision: b.spec_revision,
         architecture_revision: b.architecture_revision,
         roadmap_revision: b.roadmap_revision,
-        versions: { architecture: b.baseline.architecture_version, roadmap: b.baseline.roadmap_version, phase_plan: 1 },
+        versions: { architecture: against.architecture_version, roadmap: against.roadmap_version, phase_plan: 1 },
         ...(requests.length > 0 ? { spec_change_requests: requests } : {}),
       },
     };
