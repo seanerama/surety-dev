@@ -517,7 +517,18 @@ export function validateEntry(db: Db, e: EntryInput): void {
   if (e.boundary !== BOUNDARY_MECHANISM) throw entryInvalid('boundary', `must be ${BOUNDARY_MECHANISM}, the boundary of D2 §3.1`);
   if (!(USAGE_GRANULARITIES as readonly string[]).includes(e.usage_granularity)) throw entryInvalid('usage_granularity', `must be one of ${USAGE_GRANULARITIES.join(', ')}`);
   if (!(COST_REPORTING as readonly string[]).includes(e.cost_reporting)) throw entryInvalid('cost_reporting', `must be one of ${COST_REPORTING.join(', ')}`);
-  if (e.session_qualified) throw entryInvalid('session_qualified', 'is never true: one-shot qualification never establishes continuation');
+  // `session_qualified` is established by the continuation canary alone (D6
+  // §2.6; D6-S09): only an attempt whose continuation canary passed writes it.
+  if (e.session_qualified) {
+    const a = db.prepare('SELECT "canaries" FROM "qualification_attempts" WHERE "id" = ?').get(e.qualification_attempt) as { canaries: string | null } | undefined;
+    let passed = false;
+    try {
+      passed = (JSON.parse(a?.canaries ?? '[]') as { kind?: string; passed?: boolean }[]).some((c) => c.kind === 'continuation' && c.passed === true);
+    } catch {
+      passed = false;
+    }
+    if (!passed) throw entryInvalid('session_qualified', 'is true only from a passing continuation canary of its qualification attempt (D6 §2.6)');
+  }
   if (!Array.isArray(e.evidence) || e.evidence.length === 0 || !e.evidence.every((r) => publishedRecord(db, r))) throw entryInvalid('evidence', 'must name published records');
   if (!Array.isArray(e.enforceable_boundaries)) throw entryInvalid('enforceable_boundaries', 'must be an array');
   for (const [i, b] of e.enforceable_boundaries.entries()) {

@@ -545,6 +545,9 @@ export interface EntryFixture {
 const ENTRY_FIELDS = [
   'backend', 'status', 'binary', 'mode', 'version', 'model', 'template_version', 'capabilities', 'profile_fingerprint', 'egress_hosts', 'usage_granularity',
   'usage_semantics', 'cost_reporting', 'enforceable_boundaries', 'isolation', 'boundary', 'evidence',
+  // SEAM.md §391 (M5 slice 33): the entry as qualified for sessions, its
+  // attempt then carrying a passing continuation canary.
+  'session_qualified',
 ];
 
 export function parseEntryFixture(body: unknown): EntryFixture {
@@ -604,7 +607,11 @@ export function parseEntryFixture(body: unknown): EntryFixture {
       usage_semantics: b.usage_semantics === undefined ? 'cumulative' : b.usage_semantics === null ? null : str(b, 'usage_semantics'),
       cost_reporting: opt('cost_reporting', 'reported'),
       result_channel: 'file',
-      session_qualified: false,
+      session_qualified: (() => {
+        if (b.session_qualified === undefined) return false;
+        if (typeof b.session_qualified !== 'boolean') throw invalid('session_qualified', 'must be true or false');
+        return b.session_qualified;
+      })(),
       provider_files: { locations: [], persistence_flags: [], excluded: [] },
       term_to_exit_ms: null,
     },
@@ -630,7 +637,7 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
       FIXTURE_LABEL,
     );
     tx.db.prepare(`UPDATE "qualification_attempts" SET "status" = 'succeeded', "canaries" = ? WHERE "id" = ?`).run(
-      JSON.stringify(['positive', 'cancellation', 'containment'].map((kind) => ({ kind, run: null, passed: true }))),
+      JSON.stringify([...['positive', 'cancellation', 'containment'], ...(f.entry.session_qualified ? ['continuation'] : [])].map((kind) => ({ kind, run: null, passed: true }))),
       attempt.id,
     );
     const input: EntryInput = {

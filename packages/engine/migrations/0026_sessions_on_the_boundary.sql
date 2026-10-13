@@ -13,7 +13,7 @@ ALTER TABLE runs ADD COLUMN current_base TEXT;
 -- Why an eligible item was not dispatched at the last tick that looked at
 -- it, or NULL. Engine-owned; cleared when the item is claimed. A status is
 -- not changed by it.
-ALTER TABLE work_items ADD COLUMN held TEXT CHECK (held IS NULL OR held IN (
+ALTER TABLE work_items ADD COLUMN held TEXT CHECK (held IN (
   'resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy'));
 
 -- ---- execution_domains.memory_max (D6 A.3; K2) ---------------------------------------------
@@ -66,3 +66,23 @@ BEGIN SELECT RAISE(ABORT, 'a workspace out-of-band change names its workspace');
 CREATE TRIGGER out_of_band_changes_workspace_never_adopted BEFORE UPDATE OF disposition ON out_of_band_changes
 WHEN NEW.subject_kind = 'workspace' AND NEW.disposition IS NOT NULL AND NEW.disposition NOT IN ('stash', 'discard')
 BEGIN SELECT RAISE(ABORT, 'a session workspace is stashed or discarded, never adopted'); END;
+
+-- ---- session_transcripts: append-only (D6 §2.3, A.3; B01; SEAM.md §390) --------------------
+-- An entry once written keeps its turn, speaker, time and text; its text
+-- record may be named once where the admission wrote none yet (the owner's
+-- entry, whose record is written after the admission so that a refused turn
+-- leaves none). Entries are only appended; a transcript is never deleted.
+CREATE TRIGGER session_transcripts_append_only BEFORE UPDATE ON session_transcripts
+WHEN NEW.id IS NOT OLD.id OR NEW.run IS NOT OLD.run OR NEW.project IS NOT OLD.project OR NEW.created_at IS NOT OLD.created_at
+  OR json_valid(NEW.entries) = 0
+  OR json_array_length(NEW.entries) < json_array_length(OLD.entries)
+  OR EXISTS (
+    SELECT 1 FROM json_each(OLD.entries) o
+    WHERE json_extract(NEW.entries, '$[' || o.key || '].turn') IS NOT json_extract(o.value, '$.turn')
+      OR json_extract(NEW.entries, '$[' || o.key || '].speaker') IS NOT json_extract(o.value, '$.speaker')
+      OR json_extract(NEW.entries, '$[' || o.key || '].at') IS NOT json_extract(o.value, '$.at')
+      OR json_extract(NEW.entries, '$[' || o.key || '].text') IS NOT json_extract(o.value, '$.text')
+      OR (json_extract(o.value, '$.text_ref') IS NOT NULL AND json_extract(NEW.entries, '$[' || o.key || '].text_ref') IS NOT json_extract(o.value, '$.text_ref')))
+BEGIN SELECT RAISE(ABORT, 'session_transcripts is append-only'); END;
+CREATE TRIGGER session_transcripts_no_delete BEFORE DELETE ON session_transcripts
+BEGIN SELECT RAISE(ABORT, 'session_transcripts is append-only'); END;

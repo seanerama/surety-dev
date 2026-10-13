@@ -515,14 +515,18 @@ export interface SessionReply {
 // A role's attempt to answer the owner's confirmation: it answers nothing.
 const OWNER_ONLY_FIELDS = ['requirement_confirmations'];
 
+// Fields a reply may carry that only the engine assigns (D6 §2.3; B01):
+// accepted and ignored, never read (SEAM.md §390).
+const ENGINE_ONLY_FIELDS = ['speaker', 'turn'];
+
 // The role's reply in B.7's form (SEAM.md §343: §68's `status` and `summary`
 // beside B.7's fields), or null. A `speaker` or `turn` field is role text
-// and assigns nothing (B01): the form is refused.
+// and assigns nothing (B01): it is ignored, and the engine writes both.
 export function parseSessionReply(value: unknown): SessionReply | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
   if (v.status !== 'completed' || typeof v.summary !== 'string') return null;
-  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...OWNER_ONLY_FIELDS].includes(k)) return null;
+  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...OWNER_ONLY_FIELDS, ...ENGINE_ONLY_FIELDS].includes(k)) return null;
   const answeredNothing = OWNER_ONLY_FIELDS.filter((k) => v[k] !== undefined);
   if (typeof v.reply !== 'string') return null;
   if (typeof v.artifact_changed !== 'boolean') return null;
