@@ -47,7 +47,9 @@ import { WORK } from './harness/transitions.mjs';
 
 const LOGIN = check('login', { requirements: ['R1'] });
 // M4 slice 23 (D4 §5.5; SEAM.md §§249, 253): `alpha_complete` is computed now, for an operation; the other kinds stay refused.
-const UNBUILT_KINDS = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
+// M5 slice 35 (D6 K5, C.2; the plan's §4.3; SEAM.md §411): `phase` is evaluated on the route now
+// (`{phase_plan}`), so its former 501 `unsupported` case is replaced by M428 (d), (g).
+const UNBUILT_KINDS = ['beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
 
 // A nominated candidate with one required check declared and, unless
 // `pass` is false, passed.

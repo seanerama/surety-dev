@@ -15,6 +15,7 @@ import { scriptedEngine, tick } from '../runs.mjs';
 import { withStore } from '../store.mjs';
 import {
   ROUTED_KINDS,
+  TALLY_PHASE_SIZE,
   architectSession,
   createWithIdea,
   journeyContext,
@@ -37,7 +38,8 @@ export async function journeyProject(t, { tier = 'T2', policy = {}, onePhase = f
   await fx.engine.kill();
   await fx.start();
   journeyScripts(fx);
-  const p = await createWithIdea(fx, { tier, policy: { autonomy: 'phase', alpha_deploy: 'manual', ...policy } });
+  // `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases, so a replan keeps computed routing.
+  const p = await createWithIdea(fx, { tier, policy: { autonomy: 'phase', alpha_deploy: 'manual', phase_size: TALLY_PHASE_SIZE, ...policy } });
   await visionSession(fx, p.id);
   await specSession(fx, p.id, onePhase ? { second: specText({ requirements: REQUIREMENTS.slice(0, 2) }) } : {});
   const over = onePhase ? { '.surety/roadmap/roadmap.json': { ...ROADMAP_JSON, phases: [ROADMAP_JSON.phases[0]] }, '.surety/roadmap/roadmap.md': ROADMAP_MD } : {};

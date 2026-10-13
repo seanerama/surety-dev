@@ -48,7 +48,8 @@ import {
 
 // The project's policy (the row; §356): `phase`, `on_phase_complete`, no
 // automatic deploy retry, the service's memory bound, an identity read per tick.
-export const PROJECT_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', deploy_auto_retries_max: 0, service_memory_max: 67108864, identity_observation_every: 1 });
+// `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases.
+export const PROJECT_POLICY = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', deploy_auto_retries_max: 0, service_memory_max: 67108864, identity_observation_every: 1, phase_size: { min: 2, max: 5 } });
 
 const SELF_TEST = ['--harness-runner-self-test', 'run'];
 
