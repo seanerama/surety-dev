@@ -15,11 +15,14 @@ import { runningClassifier, setEngineConfig } from '../checks/classifier.mjs';
 import { answer, consume, decision, decisionsOfKind } from '../decisions.mjs';
 import { waitFor } from '../engine.mjs';
 import { roleThat } from '../gitruns.mjs';
-import { getRow, scriptedEngine, tickUntil } from '../runs.mjs';
+import { getRow, scriptedEngine, tick, tickUntil, waitForIdle } from '../runs.mjs';
 import { closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from '../sessions.mjs';
 import { script, step } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
-import { activePlan, journeyContext, ownerPolicy, planOfPhase, pump } from '../journey/drive.mjs';
+import { ROUTED_KINDS, activePlan, alphaReady, candidatesOfProject, journeyContext, nextPhasePublished, openDecisions, ownerPolicy, phaseCompleted, planOfPhase, pump, queuedExecutions } from '../journey/drive.mjs';
+import { deploy } from '../deploy/kernel.mjs';
+import { recordExit } from '../checks/selection.mjs';
+import { executionRow } from '../checks/fixtures.mjs';
 import { ADOPTED_NAME, SERVER_MJS_FIXED, makeAdoptedRepo, refOid } from './repo.mjs';
 import { DEFECT_STAGE, R4_CHECK, SPEC, TIER, authoringFiles, authoringResult, phasePlan, retrofitArchitectFiles } from './products.mjs';
 
@@ -31,13 +34,13 @@ const json = (t) => (t === null || t === undefined ? t : typeof t === 'string' ?
 // The scripted engine with the classifier `authoritative` (slice 31's
 // ruling; SEAM.md §351), the retrofit scripts by kind in place. `config`
 // goes to the engine's configuration (e.g. `adoption_full_max_files`).
-export async function retrofitEngine(t, { config = {}, withR4 = false } = {}) {
+export async function retrofitEngine(t, { config = {}, withR4 = false, withoutR1 = false } = {}) {
   const fx = await scriptedEngine(t, { config });
   const version = await runningClassifier(fx.engine);
   setEngineConfig(fx, { classifier_authority: { mode: 'authoritative', version } });
   await fx.engine.kill();
   await fx.start();
-  retrofitScripts(fx, { withR4 });
+  retrofitScripts(fx, { withR4, withoutR1 });
   return fx;
 }
 
@@ -55,9 +58,9 @@ export const replanScript = ({ spec_version = 1 } = {}) => ({
 // The retrofit journey's scripts by work kind (§350's form). Phase 1's
 // authoring adopts the project's sum test (`authoringResult`); phase 2's adds
 // R4.1's check; phase 2's Builder refuses a non-number.
-export function retrofitScripts(fx, { withR4 = false } = {}) {
-  const phase1 = authoringFiles({ withR4 });
-  fx.scripted.kindScript('check_authoring', [roleThat(writes(phase1), authoringResult()), roleThat(writes(R4_CHECK), { proposal: { rationale: 'Phase 2: R4.1\'s check.', requested_change_kind: 'tightening' } })]);
+export function retrofitScripts(fx, { withR4 = false, withoutR1 = false } = {}) {
+  const phase1 = authoringFiles({ withR4, withoutR1 });
+  fx.scripted.kindScript('check_authoring', [roleThat(writes(phase1), authoringResult(withoutR1 ? { adopted: [] } : {})), roleThat(writes(R4_CHECK), { proposal: { rationale: 'Phase 2: R4.1\'s check.', requested_change_kind: 'tightening' } })]);
   fx.scripted.kindScript('stage_build', roleThat(writes({ 'server.mjs': SERVER_MJS_FIXED })));
   fx.scripted.kindScript('verification', script.complete());
   fx.scripted.kindScript('review', { steps: [{ review_auto: { reason: 'The approved specification requires these checks.' } }] });
@@ -187,6 +190,60 @@ export async function toConformancePublished(fx, { mode = 'full', answers = FULL
   const ctx = journeyContext(fx, { id: p.id, repo: p.repo }, { tier });
   return { p, ctx, modeAnswer, spec: specSession, confirmations, architect: arch };
 }
+
+// ---- the build by ticks (kernel lane) ----------------------------------------------------------
+
+// Like the journey's pump on the kernel lane, but an execution whose
+// `exits(x)` is null is left queued (a check held unrecorded), so a case can
+// act between the nomination and the checks' results. `max` ticks.
+export async function advance(fx, ctx, done, { max = 40, what = 'the conformance to advance', exits = () => 0 } = {}) {
+  ctx.humanActs ??= [];
+  for (let i = 0; i < max; i++) {
+    const value = await done();
+    if (value !== undefined && value !== null && value !== false) return value;
+    await waitForIdle(fx.home, ctx.project);
+    for (const x of queuedExecutions(fx.home, ctx.project)) {
+      const code = exits(x);
+      if (code === null || code === undefined) continue;
+      if (executionRow(fx.home, x.id)?.status === 'queued') await recordExit(fx.engine, x.id, code).catch(() => null);
+    }
+    for (const d of openDecisions(fx.home, ctx.project)) {
+      if (!ROUTED_KINDS.includes(d.kind)) continue;
+      const option = d.options.some((o) => o.key === 'approve') ? 'approve' : d.options[0].key;
+      const res = await answer(fx.engine, ctx.project, d, option);
+      ctx.humanActs.push({ kind: d.kind, id: d.id, option, status: res.status, at: new Date().toISOString() });
+    }
+    await tick(fx.engine, ctx.project, { rounds: 1 });
+    await waitForIdle(fx.home, ctx.project);
+  }
+  throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+}
+
+// Phase 1's completion on the kernel lane for a published adopted project
+// `J`, `alpha` configured and the adapter qualified first (`answers` queued
+// for its deploy). Returns {J, env, phase1, c1}.
+export async function completeConformance(fx, J, { answers = [{ result: 'issued', apply: true }] } = {}) {
+  const ready = await alphaReady(fx, J.ctx, { answers });
+  const phase1 = await phaseCompleted(fx, J.ctx, 1, { max: 120 });
+  const c1 = candidatesOfProject(fx.home, J.p.id).find((c) => c.id === phase1.completion_binding?.candidate);
+  assert.ok(c1, `the phase bound its candidate (${JSON.stringify(phase1.completion_binding)})`);
+  return { J, env: ready.env, phase1, c1 };
+}
+export async function toConformanceComplete(fx, { answers, ...opts } = {}) {
+  const J = await toConformancePublished(fx, { policy: { alpha_deploy: 'manual' }, ...opts });
+  return completeConformance(fx, J, answers === undefined ? {} : { answers });
+}
+
+// Through the Alpha barrier to phase 2 published (D6 §8.1 steps 6, 7): the
+// owner deploys c-1, the barrier opens, the replan publishes phase 2.
+export async function passAlphaBarrier(fx, done, { max = 40 } = {}) {
+  const { J, env, c1 } = done;
+  await deploy(fx.engine, J.p.id, c1.id, env.name);
+  await pump(fx, J.ctx, () => candidatesOfProject(fx.home, J.p.id).find((c) => c.id === c1.id && c.progress === 'alpha_deployed'), { what: 'c-1 to be alpha_deployed', max: 40 });
+  const phase2 = await nextPhasePublished(fx, J.ctx, 2, { max });
+  return { ...done, phase2 };
+}
+export const toPhaseTwoPublished = async (fx, opts = {}) => passAlphaBarrier(fx, await toConformanceComplete(fx, opts));
 
 // ---- readers (SEAM.md §§377 to 386) ----------------------------------------------------------
 

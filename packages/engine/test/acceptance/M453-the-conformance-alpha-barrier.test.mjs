@@ -20,23 +20,16 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { deploy, scriptCall } from './harness/deploy/kernel.mjs';
-import { alphaReady, candidatesOfProject, eventsAbout, phaseCompleted, planOfPhase, readPlan, workOf } from './harness/journey/drive.mjs';
+import { candidatesOfProject, eventsAbout, phaseCompleted, planOfPhase, readPlan, workOf } from './harness/journey/drive.mjs';
 import { journeyProject } from './harness/journey/review31b.mjs';
 import { tick } from './harness/runs.mjs';
-import { pump, retrofitEngine, toConformancePublished } from './harness/retrofit/drive.mjs';
+import { pump, retrofitEngine, toConformanceComplete } from './harness/retrofit/drive.mjs';
 
 const replans = (home, project) => workOf(home, project, 'replan');
 
-// The adopted fixture to phase 1's completion, the environment configured and
-// the adapter qualified (the deploy's answers queued by the caller).
-async function conformanceComplete(t, { answers = [{ result: 'issued', apply: true }] } = {}) {
+async function conformanceComplete(t, opts) {
   const fx = await retrofitEngine(t);
-  const J = await toConformancePublished(fx, { policy: { alpha_deploy: 'manual' } });
-  const ready = await alphaReady(fx, J.ctx, { answers });
-  const phase1 = await phaseCompleted(fx, J.ctx, 1, { max: 120 });
-  const c1 = candidatesOfProject(fx.home, J.p.id).find((c) => c.id === phase1.completion_binding?.candidate);
-  assert.ok(c1, `the phase bound its candidate (${JSON.stringify(phase1.completion_binding)})`);
-  return { fx, J, env: ready.env, phase1, c1 };
+  return { fx, ...(await toConformanceComplete(fx, opts)) };
 }
 
 describe('M453 the conformance Alpha barrier', () => {

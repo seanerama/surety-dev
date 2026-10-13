@@ -223,7 +223,7 @@ const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 
 // The files the retrofit Architect session writes, as {path: text}; `over`
 // replaces any (a null removes it).
-export function retrofitArchitectFiles({ revision, plan = phasePlan(1, { revision }), roadmap = roadmapJson(), modules = MODULES_JSON, over = {} } = {}) {
+export function retrofitArchitectFiles({ revision, stages, plan = phasePlan(1, { revision, stages }), roadmap = roadmapJson(), modules = MODULES_JSON, over = {} } = {}) {
   const files = {
     '.surety/architecture/architecture.md': ARCHITECTURE_MD,
     '.surety/architecture/modules.json': json(modules),
@@ -320,7 +320,7 @@ export const GOVERNED = governedText({
 // (covering nothing, counting toward no kind; D3 §2.9); the post-deploy
 // behaviour check. `withR4` (M408 (i)): R4.1's check too, when R4 is confirmed
 // into the conformance set.
-export function authoringFiles({ withR4 = false } = {}) {
+export function authoringFiles({ withR4 = false, withoutR1 = false } = {}) {
   const files = {
     '.surety/checks/protected-policy.json': GOVERNED,
     [WRAPPER_PATH]: WRAPPER,
@@ -337,6 +337,7 @@ export function authoringFiles({ withR4 = false } = {}) {
     [defs('operation')]: definitionText('operation', { inputs: ['.surety/checks/post-deploy/operation.mjs'], kind: 'post_deploy_behavior', command: ['node', '.surety/checks/post-deploy/operation.mjs'], timeout_s: 120, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
   };
   if (withR4) Object.assign(files, R4_CHECK);
+  if (withoutR1) for (const path of [ADOPTED.to, '.surety/checks/adopted/helpers/expect.mjs', defs('accept-r1')]) delete files[path];
   return files;
 }
 // R4.1's check (phase 2's authoring; or phase 1's when R4 is confirmed, M408 (i)).
