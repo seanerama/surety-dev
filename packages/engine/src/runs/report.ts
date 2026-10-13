@@ -29,7 +29,8 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
         optString(f.check) &&
         optString(f.criterion),
     ),
-  signoffs: (v) => listOf(v, (s) => ['candidate', 'module', 'security'].includes(s.scope as string) && optString(s.module)),
+  // `phase` (D6 §5.8): a Verifier's phase sign-off, on phase_verification work.
+  signoffs: (v) => listOf(v, (s) => ['candidate', 'module', 'security', 'phase'].includes(s.scope as string) && optString(s.module)),
   dispositions: (v) =>
     listOf(
       v,
@@ -59,6 +60,16 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // dropped, and the result stands.
   objections: (v) =>
     listOf(v, (o) => isString(o.check) && optString(o.criterion) && ['contract_conflict', 'requirement_conflict'].includes(o.category as string) && isString(o.message)),
+  // D6 §5.6: an Architect's replan names the plan it wrote and declares its
+  // conformance (a declaration adds uncertainty only, §5.4).
+  plan: (v) => isString(v) && /^phase-[1-9][0-9]*$/.test(v),
+  roadmap_revision: (v) => isString(v),
+  adrs_changed: (v) => Array.isArray(v) && v.every(isString),
+  conformance: (v) => v === 'within_baseline' || v === 'uncertain',
+  notes: (v) => isString(v),
+  // D6 §4.3: a Spec Writer's proposed change, each changed requirement with
+  // its kind and reason.
+  changes: (v) => listOf(v, (c) => isString(c.key) && isString(c.kind) && isString(c.reason)),
 };
 
 // Not built: objections from any role but the Builder; a Verifier reports a
@@ -66,7 +77,16 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
 // Fields only one role may send: carried by another role's result, they make
 // it invalid (D2 §5 C1: an Alpha exception proposal is a Reviewer's; D3 §5
 // X2: an objection is a Builder's).
-const ROLE_ONLY: Record<string, string> = { alpha_exception_proposals: 'reviewer', objections: 'builder' };
+const ROLE_ONLY: Record<string, string> = {
+  alpha_exception_proposals: 'reviewer',
+  objections: 'builder',
+  plan: 'architect',
+  roadmap_revision: 'architect',
+  adrs_changed: 'architect',
+  conformance: 'architect',
+  notes: 'architect',
+  changes: 'spec_writer',
+};
 
 // Fields no role's result may carry: no role registers a check execution or
 // records a result (D3 §2.5; SEAM.md §180).

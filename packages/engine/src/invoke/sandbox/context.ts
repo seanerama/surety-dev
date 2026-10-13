@@ -27,6 +27,10 @@ import { canaryPromptText } from '../../trust/canaries.js';
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
 export type ContextFacts = {
+  // A review of a protected proposal: the proposal it reviews.
+  proposal?: Record<string, unknown> | null;
+  // A spec change's request (D6 §4.3): the owner's words, for the Spec Writer.
+  change_request?: Record<string, unknown> | null;
   run: { id: string; role: string; base_revision: string; content_hash: string | null };
   work_item: { id: string; kind: string; subject: string; project: string };
   stage: Record<string, unknown> | null;
@@ -594,6 +598,8 @@ export function writeContextPackage(
       );
     }
   }
+  if (facts?.change_request) put('change_request.json', 'instructions', String(facts.change_request.id), `${JSON.stringify(facts.change_request, null, 2)}\n`);
+  if (facts?.proposal) put('proposal.json', 'instructions', String(facts.proposal.id), `${JSON.stringify(facts.proposal, null, 2)}\n`);
   if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);
   if (routed) put('finding.json', 'instructions', routed.id, `${JSON.stringify(routed, null, 2)}\n`);
   // Each failed repair check's output record, whole (SEAM.md §229): the

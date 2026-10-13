@@ -168,6 +168,16 @@ export const EVENT_OWNERS = {
   'session.turn_settled': 'sessions/session.ts',
   'session.saved': 'sessions/session.ts',
   'session.closed': 'sessions/session.ts',
+  // D6 §§4, 5.6, 5.8, 6.2, 6.8 (M5 slice 31b): readiness, completion, the
+  // replan's publication, the specification change, the policy's request.
+  'phase.authoring_ready': 'store/transitions/protected.ts',
+  'phase.completion_bound': 'plan/phase.ts',
+  'baseline.phase_complete': 'plan/phase.ts',
+  'spec.change_requested': 'spec/change.ts',
+  'spec.change_proposed': 'spec/change.ts',
+  'spec.change_approved': 'spec/change.ts',
+  'spec.change_failed': 'spec/change.ts',
+  'deploy.requested_by_policy': 'store/transitions/deploy.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

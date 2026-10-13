@@ -66,6 +66,12 @@ const BLOCKING_CODES = new Set([
   'areas_missing',
 ]);
 
+// The findings of a parsed specification that block its approval (S1 of
+// the 31b review: a spec change is refused on them at acceptance).
+export function blockingFindings(findings: readonly SemanticFinding[]): SemanticFinding[] {
+  return findings.filter((f) => BLOCKING_CODES.has(f.code));
+}
+
 export function specBlockers(row: SemanticsRow | undefined): string[] {
   if (!row) return ['spec_not_saved'];
   if (row.readable !== 1) return ['spec_semantics_invalid'];

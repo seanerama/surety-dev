@@ -33,7 +33,9 @@ export type DecisionKind =
   | 'idea_accept'
   | 'spec_approval'
   | 'architecture_approval'
-  | 'plan_approval';
+  | 'plan_approval'
+  // D6 §4.5 (M5 slice 31b).
+  | 'spec_change';
 
 export interface OptionSpec {
   key: string;

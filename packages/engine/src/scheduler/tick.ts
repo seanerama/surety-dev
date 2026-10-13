@@ -28,6 +28,7 @@
 // dispatches nothing further. Budgets are measured on the monotonic clock: a
 // wall clock that steps back cannot stretch them (E30).
 
+import type { PhaseStepResult } from '../plan/phase.js';
 import { performance } from 'node:perf_hooks';
 
 import { observeIntegrity } from '../git/integrity.js';
@@ -41,6 +42,9 @@ import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
+import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
+import { Refusal } from '../refusal.js';
+import { ENGINE_VERSION } from '../index.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -125,7 +129,21 @@ export class Scheduler {
     }
   }
 
+  private readonly observed = new Set<string>();
+
   private async decide(project: string): Promise<void> {
+    // The host as it is at this engine start, once per project (D6 §7.6).
+    if (!this.observed.has(project)) {
+      await this.rt.engine('pace.observe_host', {
+          project,
+          incarnation: this.rt.incarnation,
+          engine_version: ENGINE_VERSION,
+          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains', 'max_concurrent_runs'] as const).map((k) => [k, this.rt.setting(k)])),
+        }).then(
+        () => this.observed.add(project),
+        (err) => log('host observation', err, { project }),
+      );
+    }
     await ensureAncestry(this.rt, project);
     // The repairs failed checks owe (D3 §2.10): reconciled from durable
     // state at every tick, so a failure recorded while its item was not yet
@@ -142,6 +160,12 @@ export class Scheduler {
       const facts = await gateFacts(this.rt, project, g.candidate);
       await this.rt.engine('gate.evaluate', { project, candidate: g.candidate, kind: 'stage', stage: g.stage, ...facts }).catch((err) => log('stage gate', err, { project, ...g }));
     }
+    // The phase (D6 §5.8): its checks registered, its gate evaluated on the
+    // facts read here, its completion; once per tick.
+    await this.phase(project).catch((err) => log('phase', err, { project }));
+    // `alpha_deploy: on_phase_complete` (D6 §6.8; SEAM.md §354): the request
+    // a completed phase owes, made through requestDeployment's own path.
+    await this.alphaPolicy(project).catch((err) => log('alpha policy', err, { project }));
     // The classifier (D3 §1.6; SEAM.md §215): every captured proposal,
     // classified at a tick after its capture, its question raised.
     await classifyDue(this.rt, project).catch((err) => log('classification', err, { project }));
@@ -151,6 +175,37 @@ export class Scheduler {
     await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
     await deliverNotifications(this.rt, project);
+  }
+
+  private async phase(project: string): Promise<void> {
+    const step = await this.rt.engine<PhaseStepResult>('phase.step', { project });
+    if (!step.evaluate) return;
+    const facts = await gateFacts(this.rt, project, step.evaluate.candidate);
+    await this.rt.engine('gate.evaluate', { project, candidate: step.evaluate.candidate, kind: 'phase', phase_plan: step.evaluate.phase_plan, ...facts });
+    await this.rt.engine('phase.step', { project });
+  }
+
+  private async alphaPolicy(project: string): Promise<void> {
+    const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
+    if (!due) return;
+    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
+    try {
+      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    } catch (err) {
+      // Refused at its preparation (the runtime, the artifact): recorded
+      // `not_issued` under its key with the reason, never made again (the
+      // 31b review's S6). Anything else is retried at a later tick.
+      if (err instanceof Refusal) {
+        await this.rt.engine('deploy.policy_refused', { project, candidate: due.candidate, environment: due.environment, key: due.key, refusal: { code: err.code, reason: err.reason } });
+        return;
+      }
+      throw err;
+    }
+    try {
+      await this.rt.engine('deploy.policy_request', prepared);
+    } finally {
+      await settleDeployment(this.rt, prepared);
+    }
   }
 
   private async tick(): Promise<void> {

@@ -56,6 +56,7 @@ import {
   specRevisions,
   stagesOfPlan,
   workOf,
+  humanActsOf,
 } from './harness/journey/drive.mjs';
 import { alphaByCommand, endJourney, journeyEngine, toPhaseTwoPublished, toProjectLane } from './harness/journey/project.mjs';
 import { tick } from './harness/runs.mjs';
@@ -122,7 +123,7 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
   });
 
   test('(h) the spec change between the phases: version 2, spec_evidence_generation 2, the listed results invalidated spec_changed with obligations recorded, check_correction and replan done, every gate afterwards on version 2', () => {
-    const { fx, p, change } = J;
+    const { fx, p } = J;
     const [v1, v2] = specRevisions(fx.home, p.id);
     assert.ok(v2 && v2.supersedes === v1.id, 'version 2 supersedes 1');
     assert.equal(projectRow(fx.home, p.id).spec_evidence_generation, 2);
@@ -136,20 +137,60 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(correction.some((w) => w.status === 'complete'), 'check_correction done');
     const replans = workOf(fx.home, p.id, 'replan').filter((w) => w.trigger_source === 'spec_change');
     assert.ok(replans.some((w) => w.status === 'complete'), 'the replan the change registered is done');
-    const later = candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, change.approved.approved_at));
-    assert.ok(later.length > 0 && later.every((c) => c.spec_revision === v2.id), 'every later candidate is on version 2');
-    const onV2 = new Set(candidatesOfProject(fx.home, p.id).filter((c) => c.spec_revision === v2.id).map((c) => c.id));
-    const gates = withStore(fx.home, (db) => db.prepare('SELECT "id", "candidate", "gate_kind", "created_at" FROM "gate_evaluations" WHERE "project" = ?').all(p.id)).filter((g) => after_(g.created_at, change.approved.approved_at));
-    assert.ok(gates.length > 0, 'gates were evaluated after the approval');
-    assert.deepEqual(gates.filter((g) => !onV2.has(g.candidate)).map((g) => [g.gate_kind, g.candidate]), [], 'every gate evaluated afterwards is on a version-2 candidate');
+    // The driver's ruling (2026-10-13; SEAM.md §375; D6 §4.5): a spec change
+    // re-nominates nothing; the spec-evidence generation carries it. A candidate
+    // nominated after v2's creation is on v2, and there may be none (phase 2's
+    // stages can be nominated while CR-1 is still being applied).
+    const since = v2.created_at;
+    const later = candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, since));
+    assert.deepEqual(later.filter((c) => c.spec_revision !== v2.id).map((c) => [c.id, c.nominated_at, c.spec_revision]), [], `every candidate nominated after v2's creation (${since}) is on version 2 (${later.length} such candidates)`);
+    // "Every gate afterwards on version 2", read through the evidence (D6 §4.5,
+    // B05): the change invalidates the results it listed and records an
+    // obligation, at generation 2, on each listed check; a result of an earlier
+    // generation than an obligation on its check satisfies no gate, and a result
+    // of a check the change did not list stays evidence. So each evaluation
+    // after v2's creation decides from no result invalidated `spec_changed`, and
+    // for a check with a generation-2 obligation only from a generation-2
+    // result (generation cross-checked in the store).
+    const gates = withStore(fx.home, (db) => db.prepare('SELECT "id", "candidate", "gate_kind", "created_at", "checks" FROM "gate_evaluations" WHERE "project" = ?').all(p.id)).filter((g) => after_(g.created_at, since));
+    assert.ok(gates.length > 0, `gates were evaluated after v2's creation (${since})`);
+    // The result's spec-evidence generation (D6 A.3 names `check_results.generation`; the engine as built records it on the
+    // result's execution, `check_executions.spec_generation`; read from whichever the store has, SEAM.md §375).
+    const resultRow = (id) =>
+      withStore(fx.home, (db) => {
+        const cols = db.prepare('PRAGMA table_info("check_results")').all().map((c) => c.name);
+        const own = cols.includes('generation') ? 'r."generation"' : 'NULL';
+        return db.prepare(`SELECT r."id", COALESCE(${own}, x."spec_generation") AS "generation", r."invalidated_reason" FROM "check_results" r LEFT JOIN "check_executions" x ON x."id" = r."execution" WHERE r."id" = ?`).get(id);
+      });
+    const obligedKeys = new Set(obligations.filter((o) => o.reason === 'spec_changed' && o.generation === 2).map((o) => o.key));
+    assert.ok(obligedKeys.size > 0, 'the fixture is live: the change obliged checks at generation 2');
+    const offending = [];
+    let decided = 0;
+    for (const g of gates) {
+      for (const entry of Object.values(JSON.parse(g.checks ?? '{}'))) {
+        const id = entry?.deciding?.result;
+        if (!id) continue;
+        decided++;
+        const r = resultRow(id);
+        if (!r || r.invalidated_reason === 'spec_changed' || (obligedKeys.has(entry.key) && r.generation !== 2)) offending.push([g.gate_kind, g.id, entry.key, id, r?.generation ?? null, r?.invalidated_reason ?? null]);
+      }
+    }
+    assert.ok(decided > 0, 'the fixture is live: evaluations after v2 decided from results');
+    assert.deepEqual(offending, [], `every gate evaluated after v2 decides from no result invalidated spec_changed, and for the checks the change obliged (${[...obligedKeys]}) only from generation-2 results ([gate, evaluation, check, result, generation, invalidated_reason])`);
+    // Phase 2's completion, and the phase sign-off it used, are bound to v2 (the 31b review's S3).
+    const completion = J.phase2.completion_binding;
+    assert.equal(completion?.spec_revision, v2.id, `phase 2 completed bound to version 2 (${JSON.stringify(completion)})`);
+    const used = signoffsOfProject(fx.home, p.id).find((s) => s.scope === 'phase' && s.candidate === completion.candidate && s.binding?.spec_revision === completion.spec_revision && s.binding?.protected_version === completion.protected_version);
+    assert.ok(used, `the phase sign-off the completion used is bound to v2's spec revision (${JSON.stringify(signoffsOfProject(fx.home, p.id).filter((s) => s.scope === 'phase').map((s) => [s.candidate, s.binding]))})`);
     assert.ok(obligations.filter((o) => o.reason === 'spec_changed').every((o) => o.resolved_at), 'every spec_changed obligation resolved before the end');
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
-    const acts = J.ctx.humanActs.filter((h) => h.at > J.switched.at);
-    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(J.ctx.humanActs)})`);
+    // Counted from the store (objection 074): decisions consumed by a human answer, and the owner's request, after the switch.
+    const acts = humanActsOf(fx.home, J.ctx.project, { sinceSeq: J.switched.seq });
+    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)})`);
     const owned = acts.find((h) => h.kind === 'check_correction_unclassifiable');
     assert.equal(correctionOrigin(fx.home, owned.id), 'check_correction', 'the unclassifiable decision is CR-1\'s check correction');
-    assert.deepEqual([owned.option, owned.status], ['approve', 200], 'answered approve by the owner');
+    assert.equal(owned.option, 'approve', 'answered approve by the owner');
   });
 
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {

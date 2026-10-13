@@ -223,7 +223,9 @@ export async function toConformancePublished(fx, { mode = 'full', answers = FULL
 // `exits(x)` is null is left queued (a check held unrecorded), so a case can
 // act between the nomination and the checks' results. `max` ticks.
 export async function advance(fx, ctx, done, { max = 40, what = 'the conformance to advance', exits = () => 0 } = {}) {
+  // The posts stay in `ctx.humanActs` for diagnostics; the acts are counted from the store (`buildActs`, objection 074).
   ctx.humanActs ??= [];
+  ctx.sinceSeq ??= withStore(fx.home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
   for (let i = 0; i < max; i++) {
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return value;

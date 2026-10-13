@@ -4,6 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import { requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
@@ -151,6 +152,10 @@ export const ROLE_OF: Record<string, string> = {
   check_correction: 'verifier',
   // D6 K7: the phase's check authoring is the Verifier's.
   check_authoring: 'verifier',
+  // D6 §5.8: the phase's verification is the Verifier's; D6 §4.3 (K8): the
+  // proposed specification change is the Spec Writer's one-shot.
+  phase_verification: 'verifier',
+  spec_change: 'spec_writer',
   review: 'reviewer',
   replan: 'architect',
   assessment: 'architect',
@@ -240,6 +245,20 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   if (item.status !== 'eligible') return `status ${item.status}`;
   if (item.dispatch_hold === 1) return 'dispatch hold';
   if (!ROLE_OF[item.kind]) return `kind ${item.kind} is not dispatched`;
+  // A spec_change is dispatched only for an owner's change request (D6
+  // §4.2); one a finding's `change_spec` raised is not built in this slice
+  // and is never dispatched (the 31b review's S5).
+  if (item.kind === 'spec_change') {
+    let request: unknown;
+    try {
+      request = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      request = undefined;
+    }
+    if (typeof request !== 'string' || !db.prepare('SELECT 1 FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(request, item.project)) {
+      return 'a spec_change names no change request (a finding\'s spec change is not dispatched)';
+    }
+  }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
@@ -331,7 +350,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       return undefined;
     }
   })();
-  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`]!;
+  // A Spec Writer's one-shot (D6 §4.3) has no deadline key of its own in
+  // this engine's policy: D6's `deadline_spec_writer` is per turn, and the
+  // one-shot takes the Architect's, as a session's turn does (sessions/session.ts).
+  const deadlineSeconds = canaryDeadline ?? policy[`deadline_${role}`] ?? policy.deadline_architect!;
   // The backend, from the policy and the trust table (D2 §4.1). A refusal is
   // recorded with the run it refuses, before any domain is placed or any
   // process started.
@@ -1044,7 +1066,7 @@ const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'ass
 // A limit was reached, or a person must act: the item parks with a visible
 // blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;
 // SEAM.md §§15, 30).
-function parkWork(
+export function parkWork(
   tx: Tx,
   item: WorkRow,
   reason: string,
@@ -1057,6 +1079,9 @@ function parkWork(
   const blocker = JSON.stringify({ reason, raised_at: tx.at, decision: null, ...(worktree ? { worktree } : {}) });
   transitionWork(tx, item, 'parked', { blocker, ...extra }, { ...cause, reason });
   raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
+  // A spec change whose Spec Writer could not propose fails visibly (D6
+  // §4.2): the request names why (the coordinator's ruling on the 31b review).
+  if (item.kind === 'spec_change') requestFailed(tx, { workItem: item.id, reason });
 }
 
 // ---- reads for the run-end protocol and recovery -----------------------------------

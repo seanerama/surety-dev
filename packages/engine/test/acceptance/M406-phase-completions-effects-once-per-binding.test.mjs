@@ -32,6 +32,7 @@ import { assertRefused } from './harness/fixtures.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import {
   alphaReady,
+  buildActs,
   architectSession,
   authorizationsOfProject,
   candidatesOfProject,
@@ -120,8 +121,9 @@ describe('M406 phase completion\'s effects, once per binding (T2, the shared jou
     const items = replans(fx.home, ctx.project);
     assert.equal(items.length, 1, 'one replan item');
     assert.deepEqual([items[0].trigger_source, items[0].trigger_id, items[0].trigger_generation], ['phase_complete', plan.id, 1]);
-    const routed = ctx.humanActs.filter((h) => h.kind !== 'check_correction_unclassifiable');
-    assert.deepEqual(routed, [], `no human act within the phase but the toolchain proposal (${JSON.stringify(ctx.humanActs)})`);
+    // Counted from the store (objection 074).
+    const routed = buildActs(ctx).filter((h) => h.kind !== 'check_correction_unclassifiable');
+    assert.deepEqual(routed, [], `no human act within the phase but the toolchain proposal (${JSON.stringify(buildActs(ctx))}; posts ${JSON.stringify(ctx.humanActs)})`);
   });
 
   test('(c) the candidate\'s progress and the authorizations before and after: completion issues no authorization and advances no candidate (F §3.10.4)', () => {
@@ -201,7 +203,7 @@ describe('M406 at T1', () => {
     for (const key of ['accept-r1', 'accept-r2', 'integration-lib', 'integration', 'lint', 'smoke']) assert.ok(keys.includes(key), `${key} recorded on the phase's candidate (${keys.join(', ')})`);
     assert.ok(evaluationsOfKind(fx.home, ctx.project, 'stage').filter((e) => e.candidate === candidates[0].id && e.outcome === 'satisfied').length >= 2, 'both stage gates evaluated satisfied on that candidate');
     assert.equal(replans(fx.home, ctx.project).length, 1, 'one replan');
-    assert.deepEqual(ctx.humanActs.map((h) => h.kind), ['check_correction_unclassifiable'], 'the toolchain proposal was the one human act');
+    assert.deepEqual(buildActs(ctx).map((h) => h.kind), ['check_correction_unclassifiable'], `the toolchain proposal was the one human act (posts ${JSON.stringify(ctx.humanActs)})`);
   });
 });
 

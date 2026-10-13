@@ -42,8 +42,8 @@ describe('M08 excluded work never launches, and no real backend exists', () => {
     const project = (await addProject(fx)).id;
     assert.deepEqual(
       [...EXCLUDED].sort(),
-      ['adoption_baseline', 'conformance', 'deploy', 'export', 'phase_verification', 'publish', 'rollback', 'spec_change', 'triage_accept'],
-      'the kinds D1 names and build spec §3 leaves out of M1',
+      ['adoption_baseline', 'conformance', 'deploy', 'export', 'publish', 'rollback', 'triage_accept'],
+      'the kinds D1 names that build spec §3 and D6 K7, K8 leave undispatched (`spec_change` and `phase_verification` are dispatched since D6 K8; objection 072)',
     );
     const before = storeState(fx.home);
     const seq = maxEventSeq(fx.home);

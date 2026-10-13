@@ -158,7 +158,8 @@ export function transcriptEntries(home, run) {
 }
 
 // The turns of a session run as the store holds them (D1 A.3 `turns`), in order.
-export const turnRows = (home, run) => withStore(home, (db) => db.prepare('SELECT * FROM "turns" WHERE "run" = ? ORDER BY "turn"').all(run));
+// The column is `number` (D1 A.3; migration 0001); the session read calls it `turn` (§344; objection 073).
+export const turnRows = (home, run) => withStore(home, (db) => db.prepare('SELECT * FROM "turns" WHERE "run" = ? ORDER BY "number"').all(run));
 
 // Ledger rows of a project naming the given run.
 export const ledgerRowsOf = (home, project, run) => withStore(home, (db) => db.prepare('SELECT * FROM "ledger_rows" WHERE "project" = ? AND "run" = ? ORDER BY rowid').all(project, run));

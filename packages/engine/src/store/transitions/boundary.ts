@@ -124,8 +124,11 @@ export function authorizeLaunch(
   if (lease.expires_at <= tx.at) return refuse('the run lease has expired');
   if (lease.generation !== args.generation) return refuse('the lease generation is not current');
   if (lease.owner_incarnation !== args.incarnation) return refuse('the lease is held by another incarnation');
-  const run = tx.db.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(d.run) as { state: string };
-  if (run.state !== 'claimed') return refuse(`the run is ${run.state}`);
+  const run = tx.db.prepare('SELECT "state", "kind", "session_state" FROM "runs" WHERE "id" = ?').get(d.run) as { state: string; kind: string; session_state: string | null };
+  // A session's later turn launches in a domain of its own while the session
+  // run is `executing` (D6 §2.1): its turn is the one running.
+  const sessionTurn = run.kind === 'session' && run.state === 'executing' && run.session_state === 'turn_running';
+  if (run.state !== 'claimed' && !sessionTurn) return refuse(`the run is ${run.state}`);
 
   const binding: LaunchBinding = { invocation: args.invocation, incarnation: args.incarnation, lease_generation: args.generation };
   assertEdge('LaunchState', d.launch_state, 'authorized', { domain: d.id });

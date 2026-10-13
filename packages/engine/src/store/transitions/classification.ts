@@ -16,7 +16,8 @@ import type { Discovery } from '../../checks/discovery.js';
 import { specRevision } from './baseline.js';
 import { knownCriteria } from './checks.js';
 import { canonical, sha256 } from './common.js';
-import type { DecisionKind } from './decisions.js';
+import { type DecisionKind, type DecisionRow, invalidateDecision } from './decisions.js';
+import { observeTrigger } from './work.js';
 import { refuseOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal } from './protected.js';
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
@@ -130,6 +131,13 @@ export function recordClassification(tx: Tx, args: { proposal: string; effective
   tx.db.prepare('UPDATE "protected_proposals" SET "status" = ? WHERE "id" = ?').run(status, p.id);
   tx.emit('protected.classified', { project: p.project, proposal: p.id }, { change_kind: c.change_kind, from: p.status, to: status, classifier_version: c.classifier_version });
   raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
+  // Under `authoritative` (D3 §3.3; D6 §6.2; SEAM.md §351) a tightening is
+  // the Reviewer's to approve: its review work, about the proposal, from
+  // ("protected_proposal", <proposal>, 1). Under `recommend` none is made:
+  // the proposal reaches the owner with no role chained.
+  if (c.change_kind === 'tightening' && authorityNow() === 'authoritative') {
+    observeTrigger(tx, { project: p.project, kind: 'review', trigger_source: 'protected_proposal', trigger_id: p.id, trigger_generation: 1, subject: { proposal: p.id }, chain: 0 }, {});
+  }
   return { proposal: p.id, change_kind: c.change_kind };
 }
 
@@ -156,6 +164,10 @@ export function reviewerApprove(tx: Tx, args: { proposal: string; run: string })
     approveProposal(tx, p, args.run, 'reviewer');
     const binding = correctionManifest(tx, p.id);
     tx.db.prepare('UPDATE "protected_proposals" SET "approval_binding" = ? WHERE "id" = ?').run(JSON.stringify(binding), p.id);
+    // The approval is the Reviewer's: the human's question of the class no
+    // longer stands (a withdrawn approval raises it again).
+    const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "kind" = 'check_correction_tightening' AND "status" = 'open'`).all(p.id) as DecisionRow[];
+    for (const d of open) invalidateDecision(tx, d, 'approved by the Reviewer under authoritative');
     return true;
   }
   const row = tx.db.prepare('SELECT "recommendations" FROM "protected_proposals" WHERE "id" = ?').get(p.id) as { recommendations: string };

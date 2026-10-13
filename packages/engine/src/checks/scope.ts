@@ -62,7 +62,9 @@ export interface ScopeModule {
 }
 
 export interface ScopeInputs {
-  kind: ScopeKind;
+  // `phase` (D6 §5.8; K5): built by the engine's phase step, not a gate a
+  // route evaluates (SCOPE_KINDS stays the routes' list).
+  kind: ScopeKind | 'phase';
   projectTier: string;
   checks: ScopeCheck[];
   requirements: ScopeRequirement[];
@@ -122,17 +124,20 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   const reached = new Set([...inputs.delivered, ...inputs.partial]);
   // Obligations (as built): at `stage` the delivered requirements its stage
   // implements; at a deployment gate every delivered requirement.
-  const obligations = inputs.kind === 'stage' ? inputs.delivered.filter((r) => inputs.stageImplements.includes(r)) : [...inputs.delivered];
+  // At `phase`, the requirements of the phase and the phases before it,
+  // delivered or not (D3 §4.2 (b)).
+  const obligations = inputs.kind === 'stage' ? inputs.delivered.filter((r) => inputs.stageImplements.includes(r)) : inputs.kind === 'phase' ? [...inputs.stageImplements] : [...inputs.delivered];
   // Sensitivity categories (D3 §4.2; B04): the scope modules' areas and those
   // of every requirement the scope touches, delivered or partially delivered.
-  const touched = inputs.kind === 'stage' ? inputs.stageImplements.filter((r) => reached.has(r)) : [...reached];
+  const touched = inputs.kind === 'stage' ? inputs.stageImplements.filter((r) => reached.has(r)) : inputs.kind === 'phase' ? [...inputs.stageImplements] : [...reached];
   const categories = new Set<string>();
   for (const m of modules) for (const a of m.sensitive_areas) categories.add(a);
   for (const r of inputs.requirements) if (touched.includes(r.id)) for (const a of r.sensitive_areas) categories.add(a);
 
   // The required set (D3 §4.2): the version's required checks listing the
   // gate kind; (a) and (b) at the scope's tier, (c) whatever the tiers.
-  const listing = inputs.checks.filter((c) => c.required && c.gate_kinds.includes(inputs.kind));
+  // At `phase` the regression set too: every required check listing `stage`.
+  const listing = inputs.checks.filter((c) => c.required && (c.gate_kinds.includes(inputs.kind) || (inputs.kind === 'phase' && c.gate_kinds.includes('stage'))));
   const required = listing.filter((c) => {
     if (isFloor(c)) return c.sensitive_areas.some((a) => categories.has(a));
     if (!ofTier(c, tier)) return false;
