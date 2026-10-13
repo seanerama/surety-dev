@@ -47,6 +47,7 @@ import {
   workOf,
 } from './harness/journey/drive.mjs';
 import { ADR_001_REVISED, ADR_KEY, IDEA_RECORD, SPEC } from './harness/journey/reference.mjs';
+import { ENGINE_ROW, assertEngineRow } from './harness/journey/spec34.mjs';
 import { fileAt, refOid } from './harness/repos.mjs';
 import { addWork, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { roleThat } from './harness/gitruns.mjs';
@@ -252,7 +253,9 @@ describe('M403 close raises the product\'s decision; the consolidated approval p
     const arch = await architectSession(fx, p.id, p.repo, { answer: 'none' });
     const head = refOid(p.repo.path, p.repo.ref);
     assert.equal(fileAt(p.repo.path, head, '.surety/phases/phase-1.json'), arch.files['.surety/phases/phase-1.json'], 'the plan is committed as a checkpoint');
-    assert.equal(fileAt(p.repo.path, head, '.surety/spec/spec.md'), SPEC);
+    // Superseded by slice 34 (the driver's ruling, 2026-10-13; SEAM.md §399): the
+    // approved specification is SPEC with its §11 row for version 1 the engine's.
+    assertEngineRow(fileAt(p.repo.path, head, '.surety/spec/spec.md'), SPEC, 1, ENGINE_ROW.approval(1), 'the approved specification at the head');
     await tick(fx.engine, p.id, { rounds: 3 });
     assert.deepEqual(nothingPublished(fx.home, p.id), NOTHING, 'no architecture_revisions, roadmap_revisions, phase_plans, stages or work rows');
     assert.equal(fx.scripted.launches().filter((l) => l.work_kind !== null && l.work_kind !== 'session').length, 0, 'no one-shot run was launched from a checkpoint');

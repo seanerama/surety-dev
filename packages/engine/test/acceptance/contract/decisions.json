@@ -357,7 +357,7 @@
         "spec_version",
         "policy_revision"
       ],
-      "effect": false
+      "effect": true
     },
     "architecture_approval": {
       "subject_types": [
