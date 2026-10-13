@@ -5930,7 +5930,7 @@ Sections 341 to 349 were written with the slice-31a acceptance tests (2026-10-12
 
 # M5 slice 31b: the walking journey, phase, Alpha and the end
 
-Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386 with slice 32's) (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
+Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 387 with slice 32's) (2026-10-12, on `verify/m5-s31` from `main` at `ee6e8c8`, 31a merged): rows M406, M407 and M401 of the M5 plan §3.1, under the driver's rulings (the run caps as built, M401 (f) recording the serial path; M407 (i) the active planned set; the reference project under `classifier_authority: authoritative`, the first `check_commands` a human decision). They follow D6 §1, §5.6, §5.8, §6.2 to §6.8, §7.6, A.2, A.3, A.5, Appendix B.7 and D4 §4.1.
 
 ## 350. The journey's scripts by work kind; two steps of the role program
 
@@ -6240,6 +6240,18 @@ Sections 350 to 375 were written with the slice-31b acceptance tests (376 to 386
 - **The reads.** (e) reads c-1's projection as §382 does, and every result from the self-tested runner. (h) reads the engine's teardown at the end of the `before` hook: no unit, cgroup or runtime file of the prefix.
 - **Case (i).** R4 is answered `confirm`, the roadmap is phase 1 alone with R1 to R4, and the authoring includes `accept-r4`. It runs for real against A and fails. The scripted Verifier reports the finding. Read: no `fix` work and no Builder; the stage gate unsatisfied, naming `accept-r4` or R4.1; c-1 `developing` with no authorization; `conformance_state` **`blocked`**, and `blocked` shown on `GET …/plan` or `…/spec`. No environment is configured, so there is no unit.
 - **Timing** (the driver's ruling, 2026-10-13). The runner's default of 600 s per file stands. On `mini-hp01`, where the gates run, M401 part 1 took 76 s and part 2 took 140 s; part 2 took 612 to 638 s on the workstation. Case (i) is already its own file. If M408's journey goes over 600 s on `mini-hp01`, it is split further, §357's way.
+
+## 387. Sean's module-map rule and the slice-32 review's findings (S1 to S3, Q1)
+
+(Sean, 2026-10-13; the driver's relay of the slice-32 review of `build/m5-s32` at `efdc5b3`.) One kernel-lane file per finding, under manifest slice `32`, in the row it belongs to:
+
+| Finding | File | What it requires |
+|---|---|---|
+| Sean's rule | `M414-scoped-touching-is-decided-by-the-module-map` | **Scoped-mode "touching" is decided by the module map.** Each `modules.json` module entry lists the requirements it holds: **`requirements: [keys]`** † (B.3). The retrofit fixture's map now gives `lib` `["R1"]` and `service` `["R2", "R3", "R4"]`. In scoped mode, a stage touching a module that holds a descriptive, criteria-less requirement is refused `PLAN_DESCRIPTIVE_MODULE_TOUCHED`, whatever it implements: (a) a stage touching `lib` while implementing only R2 and R3 is refused, naming `lib`, while the same stage touching `service` alone is published. A map leaving the descriptive R1 unmapped (b), or naming an unknown R9 (c), gives the save a finding naming the key, and the close is refused (422). The finding codes are not pinned. |
+| S1 | `M403-a-settled-turn-leaves-no-failure-entry` | A turn whose role replied with no `requirement_confirmations` leaves the role's entry and no engine entry saying the turn failed. A reply with confirmations gets the engine's note and no failure entry either. |
+| S2 | `M413-a-fix-after-conformance-creates-no-work` | Once the conformance stage is `conformed` (the sensitive-area variant, §382), with the phase's own registrations held unrecorded, so there is no phase gate and no Alpha: the Verifier's High finding in the area on c-1, then a Reviewer's `fix` with `remediation`. The finding stays unresolved with its remediation, there is no `fix` work and no `stage_build`, and the application source is still A. |
+| S3 | `M411-a-withdrawn-requirement-stays-withdrawn-across-a-change` | The owner's change request about R2 alone, carried through `spec_change` work and the owner's approval to spec version 2. In full mode, R3 withdrawn by the owner stays `withdrawn`. In scoped mode, R1 has criteria but is unanswered, so it is `descriptive_unverified`, and it stays so. |
+| Q1 | `M409-the-same-repository-under-a-second-name` | Adopting a repository path that an adopted project holds, under another name: **409**, with the refusal's `subject` naming the holding project's id. There is no second project, and the holder's A and branch are unchanged. The code is not pinned (D6 has none): a repository that already carries Surety records is refused for that reason too (§377), so the refusal must name the holder. |
 
 ## What was run
 
