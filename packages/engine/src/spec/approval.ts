@@ -18,6 +18,8 @@ import { illegal, notFound } from '../store/transitions/common.js';
 import { markStale } from '../store/transitions/evidence.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { afterChange, applyConfirmations, isAdopted, recordClaims } from '../adopt/records.js';
+import { canonical } from '../store/transitions/common.js';
 
 type Db = Tx['db'];
 
@@ -64,6 +66,8 @@ const BLOCKING_CODES = new Set([
   'criterion_mismatch',
   'area_unknown',
   'areas_missing',
+  // K10 (SEAM.md §380): a claim naming a requirement the specification lacks.
+  'claims_requirement_unknown',
 ]);
 
 // The findings of a parsed specification that block its approval (S1 of
@@ -86,7 +90,29 @@ export function specBlockers(row: SemanticsRow | undefined): string[] {
 }
 
 // The effect of `approve` (D6 §3.4): one transaction.
-export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string }): { spec_revision: string; version: number } {
+// The keys of `r` whose requirement differs from the approved revision
+// `prev` (statement, criteria, areas, marks, phase hint), or is new.
+function alteredKeys(db: Db, prev: string | null, r: SpecRepresentation): Set<string> {
+  const all = new Set(r.requirements.map((q) => q.key));
+  if (prev === null) return all;
+  const row = db.prepare('SELECT s."representation" FROM "spec_revisions" v JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."id" = ?').get(prev) as { representation: string | null } | undefined;
+  let before: SpecRepresentation | null = null;
+  try {
+    before = row?.representation ? (JSON.parse(row.representation) as SpecRepresentation) : null;
+  } catch {
+    before = null;
+  }
+  // Unread, the change is taken to alter every key: nothing is kept on an
+  // unknown.
+  if (before === null) return all;
+  const shape = (q: SpecRepresentation['requirements'][number]) => canonical({ statement: q.statement, criteria: q.criteria, sensitive_areas: [...q.sensitive_areas].sort(), human_test: q.human_test, descriptive: q.descriptive, phase_hint: q.phase_hint });
+  const old = new Map(before.requirements.map((q) => [q.key, shape(q)]));
+  return new Set(r.requirements.filter((q) => old.get(q.key) !== shape(q)).map((q) => q.key));
+}
+
+// `via`: a Spec Writer session's `spec_approval` (the retrofit
+// confirmations apply), or a specification change's application.
+export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string; via?: 'session' | 'change' }): { spec_revision: string; version: number } {
   const row = latestSemantics(tx.db, args.run);
   if (!row || row.readable !== 1 || !row.representation || !row.semantic_digest) throw illegal('approving a specification with no readable representation', { run: args.run });
   if (specBlockers(row).length > 0) throw new Refusal(409, 'spec_semantics_invalid', 'The specification cannot be approved: its representation is unreadable or incomplete.', 'Correct the specification in a session, save, and approve the next preview.', { run: args.run });
@@ -103,7 +129,15 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   // as built, extended to the representation).
   ensureRequirements(tx, { project: args.project, keys: r.requirements.map((q) => q.key), texts: Object.fromEntries(r.requirements.map((q) => [q.key, q.statement])) });
   const keys = new Set(r.requirements.map((q) => q.key));
+  // An adopted project's specification change acts only on the keys it
+  // altered (the slice-32 review's S3; B10, D6-R03, E6): the owner's
+  // withdraw, defect and unanswered answers stand on every other key.
+  const altered = (args.via ?? 'session') === 'change' && isAdopted(tx.db, args.project) ? alteredKeys(tx.db, prev?.id ?? null, r) : null;
   for (const q of r.requirements) {
+    if (altered !== null && !altered.has(q.key)) {
+      tx.db.prepare('UPDATE "requirements" SET "spec_revision" = ? WHERE "project" = ? AND "key" = ?').run(id, args.project, q.key);
+      continue;
+    }
     tx.db
       .prepare(
         `UPDATE "requirements" SET "text" = ?, "criteria" = ?, "criteria_text" = ?, "sensitive_areas" = ?, "assigned_phase" = COALESCE(?, "assigned_phase"), "human_test" = ?, "descriptive" = ?, "origin" = ?,
@@ -114,6 +148,11 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   // A key that disappears is withdrawn, never deleted (D6 §4.1).
   const existing = tx.db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL').all(args.project) as { key: string }[];
   for (const e of existing) if (!keys.has(e.key)) tx.db.prepare(`UPDATE "requirements" SET "withdrawn_at" = ?, "status" = 'withdrawn' WHERE "project" = ? AND "key" = ?`).run(tx.at, args.project, e.key);
+  // An adopted project's confirmations (D6 §8.1 step 2; B10), and TPL §12's
+  // claims table (K10).
+  if ((args.via ?? 'session') === 'session') applyConfirmations(tx, { project: args.project, rep: r, blob: row.git_blob });
+  else afterChange(tx, { project: args.project, rep: r, altered: altered ?? new Set(r.requirements.map((q) => q.key)) });
+  recordClaims(tx, { project: args.project, specRevision: id, rep: r });
   recomputeIndexErrors(tx, args.project);
   // TPL §6's modules, with their sensitive areas (D6 §3.4).
   if (r.modules.length > 0) ensureModules(tx, { project: args.project, modules: r.modules.map((m) => ({ name: m.name, paths: m.paths.filter((p) => p !== ''), sensitive_areas: m.sensitive_areas })) });

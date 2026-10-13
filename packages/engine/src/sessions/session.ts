@@ -24,6 +24,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
+import { adoptionOf, raiseConfirmations } from '../adopt/records.js';
 import type { DecisionRow } from '../store/transitions/decisions.js';
 import { intendOperation } from '../store/transitions/journal.js';
 import type { IntentResult } from '../store/transitions/journal.js';
@@ -448,7 +449,14 @@ export interface SessionReply {
   artifact_changed: boolean;
   questions_for_owner?: string[];
   done?: boolean;
+  // Fields the reply carried that answer an owner's decision (D6 §8.1 step
+  // 2; SEAM.md §379): read as the role's claim, answering nothing, and
+  // named in the engine's entry of the transcript.
+  answered_nothing?: string[];
 }
+
+// A role's attempt to answer the owner's confirmation: it answers nothing.
+const OWNER_ONLY_FIELDS = ['requirement_confirmations'];
 
 // The role's reply in B.7's form (SEAM.md §343: §68's `status` and `summary`
 // beside B.7's fields), or null. A `speaker` or `turn` field is role text
@@ -457,12 +465,19 @@ export function parseSessionReply(value: unknown): SessionReply | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
   if (v.status !== 'completed' || typeof v.summary !== 'string') return null;
-  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done'].includes(k)) return null;
+  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...OWNER_ONLY_FIELDS].includes(k)) return null;
+  const answeredNothing = OWNER_ONLY_FIELDS.filter((k) => v[k] !== undefined);
   if (typeof v.reply !== 'string') return null;
   if (typeof v.artifact_changed !== 'boolean') return null;
   if (v.questions_for_owner !== undefined && !(Array.isArray(v.questions_for_owner) && v.questions_for_owner.every((q) => typeof q === 'string'))) return null;
   if (v.done !== undefined && typeof v.done !== 'boolean') return null;
-  return { reply: v.reply, artifact_changed: v.artifact_changed, ...(v.questions_for_owner ? { questions_for_owner: v.questions_for_owner as string[] } : {}), ...(v.done !== undefined ? { done: v.done } : {}) };
+  return {
+    reply: v.reply,
+    artifact_changed: v.artifact_changed,
+    ...(v.questions_for_owner ? { questions_for_owner: v.questions_for_owner as string[] } : {}),
+    ...(v.done !== undefined ? { done: v.done } : {}),
+    ...(answeredNothing.length > 0 ? { answered_nothing: answeredNothing } : {}),
+  };
 }
 
 export interface SettleArgs {
@@ -499,8 +514,12 @@ export function settleTurn(tx: Tx, args: SettleArgs): { turn: number; idle_gener
   const ledger = tx.db.prepare('SELECT "usage_complete" FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(args.invocation) as { usage_complete: number } | undefined;
   const usageStatus = ledger && ledger.usage_complete === 1 ? 'recorded' : 'unknown';
   const outcome: 'replied' | 'failed' = args.reply !== null ? 'replied' : 'failed';
-  if (args.reply !== null) appendTranscript(tx, run, { turn: turnRow.number, speaker: 'role', text: args.reply.reply, text_ref: args.textRecord });
-  else appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The turn failed: ${args.failure ?? 'the role left no reply the engine could take'}.`, text_ref: args.textRecord });
+  if (args.reply !== null) {
+    appendTranscript(tx, run, { turn: turnRow.number, speaker: 'role', text: args.reply.reply, text_ref: args.textRecord });
+    if (args.reply.answered_nothing && args.reply.answered_nothing.length > 0) {
+      appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The reply carried ${args.reply.answered_nothing.join(', ')}: a role cannot answer the owner's confirmations, and nothing was answered.`, text_ref: null });
+    }
+  } else appendTranscript(tx, run, { turn: turnRow.number, speaker: 'engine', text: `The turn failed: ${args.failure ?? 'the role left no reply the engine could take'}.`, text_ref: args.textRecord });
   tx.db
     .prepare('UPDATE "turns" SET "finished_at" = ?, "settled_at" = ?, "usage_status" = ?, "outcome" = ?, "reply" = ? WHERE "id" = ?')
     .run(tx.at, tx.at, usageStatus, outcome, args.reply === null ? JSON.stringify({ failure: args.failure }) : JSON.stringify(args.reply), turnRow.id);
@@ -602,7 +621,7 @@ export interface SaveOutcome {
   nothingToSave: boolean;
 }
 
-export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number; saved: boolean } {
+export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number; saved: boolean; standing: SaveFinding[] } {
   const run = getSession(tx, args.project, args.run);
   if (run.session_state !== 'saving') throw illegal(`finishing a save of a ${run.session_state ?? run.state} session`, { run: run.id });
   const generation = run.idle_generation + 1;
@@ -623,7 +642,7 @@ export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number
     : { ...prior, at: tx.at, refused: args.refused, findings: args.refused || args.findings.length > 0 ? args.findings : (prior.findings ?? []) };
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'open_idle', "idle_generation" = ?, "session_notes" = ? WHERE "id" = ?`).run(generation, JSON.stringify(notes), run.id);
   tx.emit('session.saved', { project: run.project, run: run.id }, { idle_generation: generation, revision: args.committed?.sha ?? null, refused: args.refused?.code ?? null, nothing_to_save: args.nothingToSave, findings: args.findings.length });
-  return { idle_generation: generation, saved: args.committed !== null };
+  return { idle_generation: generation, saved: args.committed !== null, standing: (notes.findings ?? []) as SaveFinding[] };
 }
 
 // ---- close (D6 §2.4, §3.4; SEAM.md §344) ---------------------------------------------------
@@ -649,7 +668,13 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
     if (d) decisions.push({ id: d.id, kind: d.kind, batch_key: d.batch_key ?? null });
   };
   if (args.raise.kind === 'idea_accept' || args.raise.kind === 'spec_approval') {
-    raised(raiseQuestion(tx, { project: run.project, kind: args.raise.kind, subjectType: 'run', subjectId: run.id }));
+    const approval = raiseQuestion(tx, { project: run.project, kind: args.raise.kind, subjectType: 'run', subjectId: run.id });
+    // In an adopted project, one requirement_confirm per produced
+    // requirement in the same batch (D6 §8.1 step 2; B10).
+    const confirms = args.raise.kind === 'spec_approval' ? raiseConfirmations(tx, { project: run.project, run: run.id, approval }) : [];
+    if (approval && confirms.length > 0) approval.batch_key = confirms[0]!.batch_key ?? null;
+    raised(approval);
+    for (const c of confirms) raised(c);
   } else if (args.raise.kind === 'bundle') {
     // The bundle is each decision's identity scope (B02): what it binds is
     // named, never found by the run.
@@ -790,7 +815,15 @@ export function sessionContextFacts(db: Tx['db'], run: string): import('./packag
     transcript: transcriptOf(db, run)?.map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text })) ?? null,
     findings: notes.findings ?? [],
     approved: approvedInputs(db, r.project, r.role),
+    retrofit: retrofitOf(db, r.project),
   };
+}
+
+// D6 §8.2: an adopted project's sessions are in retrofit mode.
+function retrofitOf(db: Tx['db'], project: string): NonNullable<import('./package.js').SessionContextFacts['retrofit']> | null {
+  const a = adoptionOf(db, project);
+  if (!a) return null;
+  return { pinned_revision: a.pinned_revision, mode: a.mode, paths: (a.tracked_paths ?? []).filter((p) => !p.startsWith('.surety/')), total: a.tracked_paths_total ?? { unknown: 'not recorded at adoption' } };
 }
 
 function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { name: string; blob: string; what: string }[] {

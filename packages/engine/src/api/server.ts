@@ -5,6 +5,7 @@
 // mutating request past the Host check is audited, refusals included, once
 // the store is open. Every response carries the defensive headers.
 
+import { prepareAdopt, settleAdopt } from '../adopt/adopt.js';
 import { prepareQualify } from '../trust/qualify.js';
 import { credentialRef } from '../invoke/adapters/templates.js';
 import { ensureFixtureProject, findFixtureProject } from '../trust/fixture.js';
@@ -234,6 +235,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           return { run: await qualifier.run(adapter) };
         },
       };
+    }
+    // D6 §8.1 step 1, A.8 (SEAM.md §377): the adoption of an existing repository.
+    if (s.length === 3 && s[1] === 'projects' && s[2] === 'adopt' && post) {
+      return { kind: 'prepared', name: 'project.adopt', prepare: (b) => prepareAdopt(runtime(), b), settle: (p) => settleAdopt(runtime(), p) };
     }
     if (s.length === 2 && s[1] === 'projects' && post) {
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };

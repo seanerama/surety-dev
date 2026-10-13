@@ -61,6 +61,9 @@ export interface ModuleMapEntry {
   sensitive_areas: string[];
   tier_override?: 'T1' | 'T2' | 'T3';
   interfaces: ModuleInterface[];
+  // The requirements the module holds (Sean, 2026-10-13): what scoped
+  // mode's "a stage touching a descriptive requirement's module" reads.
+  requirements?: string[];
 }
 
 export interface ModuleMap {
@@ -82,9 +85,11 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
   const modules: ModuleMapEntry[] = [];
   const names = new Set<string>();
   for (const [i, m] of o.modules.entries()) {
-    const at = `modules[${i}]`;
+    // A module is named by its name where it has one (E6: the floor from day
+    // one; SEAM.md §381: a dropped classification names the module).
+    const at = isObj(m) && typeof m.name === 'string' && m.name !== '' ? `modules[${i}] (${m.name})` : `modules[${i}]`;
     if (!isObj(m)) return refuse(file, at, 'must be an object');
-    const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
+    const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
     if (cm) return { ok: false, finding: cm };
     if (typeof m.name !== 'string' || m.name === '') return refuse(file, `${at}.name`, 'must be a non-empty string');
     if (names.has(m.name)) return refuse(file, `${at}.name`, `the module ${m.name} is listed twice`);
@@ -93,6 +98,10 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
     if (!strings(m.sensitive_areas)) return refuse(file, `${at}.sensitive_areas`, 'must be an array of sensitive areas');
     for (const a of m.sensitive_areas) if (!SENSITIVE_AREAS.includes(a)) return refuse(file, `${at}.sensitive_areas`, `"${a}" is not a sensitive area of the closed list`);
     if (m.tier_override !== undefined && m.tier_override !== 'T1' && m.tier_override !== 'T2' && m.tier_override !== 'T3') return refuse(file, `${at}.tier_override`, 'must be T1, T2 or T3');
+    if (m.requirements !== undefined) {
+      if (!strings(m.requirements)) return refuse(file, `${at}.requirements`, 'must be an array of requirement keys');
+      for (const k of m.requirements) if (!KEY.test(k)) return refuse(file, `${at}.requirements`, `"${k}" is not a requirement key R<n>`);
+    }
     if (!Array.isArray(m.interfaces)) return refuse(file, `${at}.interfaces`, 'must be an array');
     const interfaces: ModuleInterface[] = [];
     for (const [j, f] of m.interfaces.entries()) {
@@ -106,7 +115,14 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
       if (typeof f.description !== 'string') return refuse(file, `${fat}.description`, 'must be a string');
       interfaces.push({ name: f.name, kind: f.kind, ...(f.path !== undefined ? { path: f.path } : {}), description: f.description });
     }
-    modules.push({ name: m.name, paths: m.paths, sensitive_areas: m.sensitive_areas, ...(m.tier_override !== undefined ? { tier_override: m.tier_override as 'T1' } : {}), interfaces });
+    modules.push({
+      name: m.name,
+      paths: m.paths,
+      sensitive_areas: m.sensitive_areas,
+      ...(m.tier_override !== undefined ? { tier_override: m.tier_override as 'T1' } : {}),
+      interfaces,
+      ...(m.requirements !== undefined ? { requirements: m.requirements as string[] } : {}),
+    });
   }
   if (!Array.isArray(o.mapping_from_spec)) return refuse(file, 'mapping_from_spec', 'must be an array');
   const mapping: ModuleMap['mapping_from_spec'] = [];
@@ -300,6 +316,8 @@ export interface AdrFrontMatter {
   key: string;
   status: 'proposed' | 'accepted' | 'superseded';
   supersedes?: string;
+  // D6 §8.1 step 3, §8.2: an ADR reconstructed from adopted code.
+  reconstructed?: boolean;
 }
 
 export const ADR_FILE = /^\.surety\/adrs\/(ADR-[0-9]{3,})\.md$/;
@@ -317,7 +335,7 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
     if (line.trim() === '') continue;
     const m = /^([a-z_]+):\s*(.*)$/.exec(line);
     if (!m) return refuse(file, null, `the front matter line "${line.trim()}" is not a field`);
-    if (!['key', 'status', 'supersedes'].includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
+    if (!['key', 'status', 'supersedes', 'reconstructed'].includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
     fields.set(m[1]!, m[2]!.trim().replace(/^["']|["']$/g, ''));
   }
   const key = fields.get('key');
@@ -328,9 +346,11 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
   if (status === undefined || !ADR_STATUSES.includes(status)) return refuse(file, 'status', status === undefined ? '"status" is missing' : `"${status}" is not proposed, accepted or superseded`);
   const supersedes = fields.get('supersedes');
   if (supersedes !== undefined && !ADR_KEY.test(supersedes)) return refuse(file, 'supersedes', `"${supersedes}" is not an ADR key`);
+  const reconstructed = fields.get('reconstructed');
+  if (reconstructed !== undefined && reconstructed !== 'true' && reconstructed !== 'false') return refuse(file, 'reconstructed', `"${reconstructed}" is not true or false`);
   const body = lines.slice(end + 1).join('\n');
   for (const heading of ['Context', 'Decision', 'Consequences']) {
     if (!new RegExp(`^#{1,3}\\s+${heading}\\b`, 'm').test(body)) return refuse(file, null, `has no ${heading} heading`);
   }
-  return { ok: true, value: { key, status: status as AdrFrontMatter['status'], ...(supersedes !== undefined ? { supersedes } : {}) } };
+  return { ok: true, value: { key, status: status as AdrFrontMatter['status'], ...(supersedes !== undefined ? { supersedes } : {}), ...(reconstructed !== undefined ? { reconstructed: reconstructed === 'true' } : {}) } };
 }

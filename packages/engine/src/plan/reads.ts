@@ -10,6 +10,8 @@ import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
 import { buildComplete } from './phase.js';
+import { alphaBarrier, conformancePhaseComplete, conformanceStateOf } from '../adopt/conformance.js';
+import { isAdopted } from '../adopt/records.js';
 
 const json = <T>(text: unknown, fallback: T): T => {
   try {
@@ -75,6 +77,9 @@ export function specView(db: Database, args: { project: string }) {
   const ids = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
   const statusOf = (r: Record<string, unknown>): string | { unknown: string } => {
     if (r.withdrawn_at !== null) return 'withdrawn';
+    // Scoped mode's criterion-less requirements, visibly pending with their
+    // mark, never silently promoted (E6; D6 §8.1 step 2).
+    if (r.status === 'descriptive_unverified') return 'descriptive_unverified';
     const key = r.key as string;
     const at = deliveredAt.get(ids.get(key) ?? '') ?? deliveredAt.get(key);
     if (at === undefined) return stagesUnread ? { unknown: "a completed phase's stage could not be read, so whether it delivered this requirement is not known" } : 'pending';
@@ -90,7 +95,7 @@ export function specView(db: Database, args: { project: string }) {
   const versions = db.prepare('SELECT "version", "git_blob", "semantic_digest", "approved_by", "approved_at" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version"').all(args.project);
   const requirements = (
     db
-      .prepare('SELECT "key", "text", "criteria", "criteria_text", "sensitive_areas", "assigned_phase", "status", "human_test", "withdrawn_at" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
+      .prepare('SELECT "key", "text", "criteria", "criteria_text", "sensitive_areas", "assigned_phase", "status", "human_test", "withdrawn_at", "origin", "defect", "reverse_engineered" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
       .all(args.project) as Record<string, unknown>[]
   ).map((r) => ({
     key: r.key,
@@ -102,6 +107,10 @@ export function specView(db: Database, args: { project: string }) {
     status: statusOf(r),
     human_test: r.human_test === 1,
     withdrawn: r.withdrawn_at !== null,
+    // K10 (SEAM.md §379): the role's claim, and the engine's marks.
+    origin: r.origin,
+    defect: r.defect === 1,
+    reverse_engineered: r.reverse_engineered === 1,
   }));
   const modules = (db.prepare('SELECT "name", "paths", "sensitive_areas", "tier_override" FROM "modules" WHERE "project" = ? ORDER BY "name"').all(args.project) as Record<string, unknown>[]).map((m) => ({
     name: m.name,
@@ -110,7 +119,7 @@ export function specView(db: Database, args: { project: string }) {
     tier_override: m.tier_override,
   }));
   const environments = db.prepare('SELECT "name", "adapter" FROM "environments" WHERE "project" = ? ORDER BY "name"').all(args.project);
-  return { versions, requirements, modules, environments, change_requests: [] };
+  return { versions, requirements, modules, environments, change_requests: [], ...(isAdopted(db, args.project) ? { conformance: conformanceStateOf(db, args.project) } : {}) };
 }
 
 export function planView(db: Database, args: { project: string }) {
@@ -175,6 +184,21 @@ export function planView(db: Database, args: { project: string }) {
     changes_roadmap: json<unknown>(c.changes_roadmap, null),
     obligations: json<unknown>(c.obligations, null),
   }));
+  // The requirements with their phase and marks (SEAM.md §379).
+  // Their status is the spec read's (delivery from the completed phases).
+  const requirements = specView(db, args).requirements.map((r) => ({ key: r.key, status: r.status, reverse_engineered: r.reverse_engineered, defect: r.defect, assigned_phase: r.assigned_phase, origin: r.origin }));
+  // An adopted project (D6 §8.1 steps 5, 6; B11): the conformance stage's
+  // state with its last gate's reasons, and the Alpha barrier while it holds
+  // the change-phase replan.
+  let adopted: Record<string, unknown> = {};
+  if (isAdopted(db, args.project)) {
+    const done = conformancePhaseComplete(db, args.project);
+    const barrier = alphaBarrier(db, args.project);
+    adopted = {
+      conformance: conformanceStateOf(db, args.project),
+      alpha_barrier: done === null ? { phase_complete: false, open: false, reasons: [] } : { phase_complete: true, open: barrier.open, candidate: barrier.candidate, reasons: barrier.open ? [] : [{ code: 'CONFORMANCE_ALPHA_PENDING', reason: barrier.reason }] },
+    };
+  }
   // The build is complete when every phase of the roadmap is (SEAM.md §352).
-  return { roadmap: road ? { version: road.version, phases: json<unknown>(road.phases, []) } : null, plan, proposals, checks, build: { complete: buildComplete(db, args.project) } };
+  return { roadmap: road ? { version: road.version, phases: json<unknown>(road.phases, []) } : null, plan, proposals, checks, build: { complete: buildComplete(db, args.project) }, requirements, ...adopted };
 }

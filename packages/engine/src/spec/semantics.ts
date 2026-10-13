@@ -98,7 +98,8 @@ export interface SemanticFinding {
     | 'criterion_mismatch'
     | 'module_table_invalid'
     | 'question_malformed'
-    | 'claims_table_invalid';
+    | 'claims_table_invalid'
+    | 'claims_requirement_unknown';
   why: string;
 }
 
@@ -424,7 +425,12 @@ export function parseSpecification(text: string): SemanticResult {
     if (!table) findings.push({ where: 'index', code: 'index_missing', why: 'section 5 has no index table' });
     else {
       const parsed = parseRequirementIndex(table.join('\n'));
-      if (!parsed.ok) findings.push({ where: 'index', code: 'index_invalid', why: `${parsed.row === 0 ? 'the index' : `index row ${parsed.row}`} is refused: ${parsed.why}` });
+      if (!parsed.ok) {
+        // The row named by its key where it has one (A.6: `spec_index_invalid`,
+        // naming the row).
+        const rowKey = parsed.row === 0 ? null : (/^\|\s*(R[1-9][0-9]*)\s*\|/.exec(parsed.text ?? '')?.[1] ?? null);
+        findings.push({ where: 'index', code: 'index_invalid', why: `${parsed.row === 0 ? 'the index' : `index row ${parsed.row}${rowKey ? ` (${rowKey})` : ''}`} is refused: ${parsed.why}` });
+      }
       else index = parsed.rows;
     }
   }
@@ -452,6 +458,11 @@ export function parseSpecification(text: string): SemanticResult {
   const modules = parseModules(secs.get(6), findings);
   const environments = parseEnvironments(secs.get(7));
   const claims = parseClaims(secs.get(12), findings);
+  // A claim recorded against a requirement the specification lacks (K10;
+  // SEAM.md §380): the row is named, and approval is blocked.
+  claims.forEach((c, i) => {
+    if (c.requirement !== null && !byKey.has(c.requirement)) findings.push({ where: 'claims', code: 'claims_requirement_unknown', why: `the claims row ${i + 1} ("${c.claim}") names ${c.requirement}, which is no requirement of this specification` });
+  });
   const representation: SpecRepresentation = { header, requirements, index, questions, modules, environments, claims };
   return { readable: true, representation, findings, digest: digestOf(representation) };
 }

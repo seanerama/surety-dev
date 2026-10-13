@@ -7,6 +7,8 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { reraiseOnPolicy } from '../../adopt/records.js';
+import { conformanceNominated } from '../../adopt/conformance.js';
 import { illegal } from './common.js';
 import { markStale } from './evidence.js';
 import { type AppliedInputs, type ProposalInputs, finalizeApplied, finalizeProposal } from '../../spec/change.js';
@@ -184,6 +186,8 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
       // The policy is part of every evaluation's inputs (D1 §9.5).
       markStale(tx, { project: op.project });
+      // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
+      reraiseOnPolicy(tx, op.project);
       if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }
@@ -301,6 +305,8 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
     .prepare('INSERT INTO "lineages" ("id", "created_at", "project", "branch", "started_from_candidate", "open") VALUES (?, ?, ?, ?, ?, 1)')
     .run(tx.newId('lin_'), tx.at, op.project, branch, candidate);
   tx.emit('candidate.nominated', { project: op.project, candidate }, { seq: inputs.seq, revision: inputs.new_oid, nominated_by: inputs.by });
+  // A conformance stage bound at publication is held from here (K11).
+  conformanceNominated(tx, { project: op.project, candidate });
   // The candidate whose lineage this nomination closes is superseded by it
   // (D1 A.3 `superseded_by`, A.6; SEAM.md §192): the one change a later
   // nomination makes to an earlier candidate. Its queued executions are

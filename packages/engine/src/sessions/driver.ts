@@ -149,9 +149,12 @@ export class SessionDriver {
       const lines = [...(outcome.refused ? [`The save was refused (${outcome.refused.code}): ${outcome.refused.text} The workspace keeps the change.`] : []), ...outcome.findings.map((f) => `${f.code}${f.path ? ` (${f.path})` : ''}: ${f.message}`)];
       outcome.notesRecord = await writeWholeRecord(this.rt, { project, run, kind: 'session_transcript', content: Buffer.from(lines.join('\n')) }).catch(() => null);
     }
-    const done = await this.rt.engine<{ idle_generation: number; saved: boolean }>('session.finish_save', outcome);
+    const done = await this.rt.engine<{ idle_generation: number; saved: boolean; standing?: Finding[] }>('session.finish_save', outcome);
     if (refusal) throw refusal;
-    return { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.findings };
+    // A save with nothing new answers with what the engine found at the
+    // checkpoint that stands: the artifact as saved is unchanged, and so is
+    // what is wrong with it.
+    return { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.nothingToSave ? (done.standing ?? []) : outcome.findings };
   }
 
   // The snapshot, its validation against the role's paths, the checkpoint
@@ -239,7 +242,7 @@ export class SessionDriver {
       };
     }
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules });
+    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys });
     return { blobs, findings: r.findings, products: {} };
   }
 
@@ -306,7 +309,7 @@ export class SessionDriver {
     if (changed.length === 0) return { kind: 'none' };
     const plans = changed.filter((p) => PLAN_FILE.test(p)).map((p) => Number(PLAN_FILE.exec(p)![1]));
     const probe = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules });
+    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules, descriptive_keys: probe.descriptive_keys });
     const parsed = found.parsed;
     const findings = [...found.findings];
     if (!parsed.modules) findings.push({ code: 'machine_file_invalid', path: MODULES_FILE, subject: { path: MODULES_FILE, field: null }, message: `${MODULES_FILE} is missing or does not parse` });

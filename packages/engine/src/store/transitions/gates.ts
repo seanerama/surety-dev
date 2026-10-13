@@ -11,6 +11,7 @@
 // recorded beforehand (evidence.ts), and the protected fingerprint of the
 // integration branch's head is handed in.
 
+import { type ConformanceFacts, conformanceAfterEvaluation, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
 import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -355,6 +356,9 @@ export interface EvaluateArgs {
   // The gate's own reads of its registered refs (D3 §5 X1, A.2 RefRead):
   // absent when nothing was read, which is unread, never unchanged.
   refs?: RefFact[] | undefined;
+  // An adopted project's application-source projection digests (D6 §8.1
+  // step 5; B11), as the main thread read them; absent is unread.
+  conformance?: ConformanceFacts | undefined;
 }
 
 export interface RefFact {
@@ -548,6 +552,15 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // (slice 16 review m4).
   const refUnread = unreadRefs.length > 0;
   if (pending.length > 0) add('GIT_JOURNAL_PENDING', pending.map((op) => op.id));
+  // The candidate's projection digest, recorded once read (B11).
+  recordCandidateDigest(tx, { candidate: candidate.id, facts: args.conformance });
+  // (3a) A conformance stage (K11; B11): the application source is A's in
+  // the candidate, on the integration branch and in the stage's binding.
+  const conformance = kind === 'stage' && isConformanceStage(db, target.stage);
+  if (conformance) {
+    const moved = sourceMoved(db, { project: args.project, stage: target.stage!, facts: args.conformance });
+    if (moved.length > 0) add('CONFORMANCE_SOURCE_MOVED', moved);
+  }
 
   // (4) Every required check passed.
   const states: Record<string, CheckState> = {};
@@ -583,7 +596,16 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   }
   const entries = checkEntries(scope, selected, dueEntry);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
-  if (notPassed.length > 0) add('CHECK_NOT_PASSED', notPassed);
+  if (notPassed.length > 0) {
+    add('CHECK_NOT_PASSED', notPassed);
+    // A conformance stage's gate names the checks by key and criterion, so
+    // the owner sees which confirmed behaviour the adopted code does not
+    // meet (D6 §8.1 step 5: "the gate names the check").
+    if (conformance) {
+      const reason = reasons.at(-1)! as Reason & { checks?: { check: string; key: string; state: string; criteria: string[] }[] };
+      reason.checks = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => ({ check: c.id, key: c.key, state: states[c.id]!, criteria: JSON.parse((c as { criteria?: string }).criteria ?? '[]') as string[] }));
+    }
+  }
   for (const r of verdict?.reasons ?? []) add(r.code, r.subjects);
 
   // J4 (D4 §4.1; E121): `alpha_authorize` is not satisfied unless the
@@ -798,6 +820,14 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   }
 
   if (outcome === 'satisfied' && kind === 'stage' && !refUnread) completeStageWork(tx, candidate, scope.stage!, id);
+  // The conformance stage's lifecycle (A.5): conformed on a satisfied gate;
+  // blocked on a failed required check, a moved source or a blocking
+  // finding; verifying otherwise.
+  if (conformance && superseded === null) {
+    const failed = scope.required.some((c) => states[c.id] === 'failed');
+    const blockedBy = reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED' || r.code === 'FINDING_BLOCKING' || r.code === 'FINDING_UNSATISFIED') || failed;
+    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id });
+  }
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
   if (kind === 'alpha_complete') {
     afterCompletion(tx, { operation: target.operation!.id, candidate: candidate.id, satisfied: outcome === 'satisfied' && !refUnread, evaluation: id, reasons: reasons.map((r) => r.code) });
@@ -957,6 +987,8 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
         .get(c.id, stage) as { stale: number } | undefined;
       if (!latest || latest.stale === 1) out.push({ candidate: c.id, stage });
     }
+    // A conformance stage's gate (K11): due through its own lifecycle.
+    for (const stage of dueConformanceGates(db, c)) out.push({ candidate: c.id, stage });
   }
   return out;
 }

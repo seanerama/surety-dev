@@ -293,6 +293,14 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
 
 // Why a milestone is unmet (D6 §6.4), or null.
 function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
+  if (m.milestone === 'spec_change_requests') {
+    for (const id of m.requests) {
+      const r = db.prepare('SELECT "status" FROM "spec_change_requests" WHERE "id" = ?').get(id) as { status: string } | undefined;
+      if (!r) return `request ${id} missing`;
+      if (r.status === 'requested' || r.status === 'proposed') return `waits for the owner's decision on spec change request ${id}`;
+    }
+    return null;
+  }
   if (m.milestone === 'authoring_ready') {
     const plan = db.prepare('SELECT "authoring_ready_at", "active" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number } | undefined;
     if (!plan) return `plan ${m.phase_plan} missing`;
@@ -1001,6 +1009,21 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       return;
     case 'failed': {
       if ((item.status === 'integrating' && integrationPending) || item.status === 'integrated' || item.status === 'verifying') return;
+      // D6 §8.3 (B10; SEAM.md §383): a retrofit replan whose plan was refused
+      // while the requests for criteria its result made are open waits for
+      // the owner's decision on them, spending no repair attempt: planning
+      // cannot proceed on the request alone, and the owner's answer is not
+      // the Architect's to race.
+      if (item.kind === 'replan' && (tx.db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(item.project) as { adoption: string | null } | undefined)?.adoption != null) {
+        const open = (tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "run" = ? AND "source" = 'replan' AND "status" IN ('requested', 'proposed') ORDER BY "seq"`).all(run.id) as { id: string }[]).map((r) => r.id);
+        if (open.length > 0) {
+          transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'awaiting_spec_change', requests: open });
+          const deps = JSON.parse(item.depends_on ?? '[]') as (string | Milestone)[];
+          deps.push({ milestone: 'spec_change_requests', requests: open });
+          tx.db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), item.id);
+          return;
+        }
+      }
       if (run.reason_class === 'integration_conflict') {
         const detail = run.reason_detail ? (JSON.parse(run.reason_detail) as { park?: string; worktree?: string }) : {};
         parkWork(tx, item, detail.park ?? 'integration_conflict', cause, {}, detail.worktree);

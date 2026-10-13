@@ -493,6 +493,9 @@
       "oob",
       "keep"
     ],
+    "ReleaseStateFact": [
+      "external_unverified"
+    ],
     "RequirementOrigin": [
       "intended",
       "observed"
@@ -560,7 +563,8 @@
     ],
     "SpecChangeRequestsSource": [
       "owner",
-      "finding"
+      "finding",
+      "replan"
     ],
     "SpecChangeRequestsStatus": [
       "requested",
@@ -829,7 +833,12 @@
       "spec.change_proposed",
       "spec.change_approved",
       "spec.change_failed",
-      "deploy.requested_by_policy"
+      "deploy.requested_by_policy",
+      "project.adopted",
+      "requirement.confirmed",
+      "conformance.source_bound",
+      "stage.conformance_integrated",
+      "conformance.alpha_barrier_opened"
     ],
     "EngineMode": [
       "restricted",
@@ -1390,6 +1399,9 @@
           "required": false
         },
         "module_presence": {
+          "required": false
+        },
+        "source_digest": {
           "required": false
         }
       }
@@ -2306,6 +2318,9 @@
         "qualification_run": {
           "required": false,
           "references": "adapter_qualification_runs"
+        },
+        "origin": {
+          "required": false
         }
       }
     },
@@ -2599,6 +2614,9 @@
           "required": false
         },
         "criterion": {
+          "required": false
+        },
+        "remediation": {
           "required": false
         }
       }
@@ -3876,6 +3894,12 @@
         },
         "approval_binding": {
           "required": false
+        },
+        "adopted_tests": {
+          "required": false
+        },
+        "boundary_errors": {
+          "required": false
         }
       }
     },
@@ -4106,6 +4130,37 @@
         },
         "immutable": {
           "required": true
+        }
+      }
+    },
+    "releases": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "name": {
+          "required": true
+        },
+        "revision": {
+          "required": false
+        },
+        "state": {
+          "required": true,
+          "enum": "ReleaseStateFact"
+        },
+        "artifact": {
+          "required": false
+        },
+        "candidate": {
+          "required": false,
+          "references": "candidates"
         }
       }
     },
@@ -4574,6 +4629,43 @@
         },
         "last_refusal": {
           "required": false
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "keys": {
+          "required": false
+        }
+      }
+    },
+    "spec_claims": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "spec_revision": {
+          "required": true,
+          "references": "spec_revisions"
+        },
+        "ordinal": {
+          "required": true
+        },
+        "claim_source": {
+          "required": true
+        },
+        "claim": {
+          "required": true
+        },
+        "observed": {
+          "required": true
+        },
+        "requirement": {
+          "required": false,
+          "references": "requirements"
         }
       }
     },
@@ -4724,6 +4816,15 @@
           "required": false
         },
         "cancelled_at": {
+          "required": false
+        },
+        "source_revision": {
+          "required": false
+        },
+        "conformance_source_digest": {
+          "required": false
+        },
+        "conformance_state": {
           "required": false
         }
       }
@@ -5822,10 +5923,23 @@
       "enabled": false
     },
     "adoption_mode": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "pinned_revision",
+        "signals",
+        "policy_revision"
+      ],
+      "target_seconds": 172800
     },
     "requirement_confirm": {
-      "enabled": false
+      "enabled": true,
+      "manifest": [
+        "key",
+        "text",
+        "criteria",
+        "blob"
+      ],
+      "target_seconds": 172800
     },
     "stop_confirm": {
       "enabled": true,
@@ -6441,6 +6555,21 @@
     },
     "deploy.requested_by_policy": {
       "owner": "store/transitions/deploy.ts"
+    },
+    "project.adopted": {
+      "owner": "adopt/records.ts"
+    },
+    "requirement.confirmed": {
+      "owner": "adopt/records.ts"
+    },
+    "conformance.source_bound": {
+      "owner": "adopt/conformance.ts"
+    },
+    "stage.conformance_integrated": {
+      "owner": "adopt/conformance.ts"
+    },
+    "conformance.alpha_barrier_opened": {
+      "owner": "plan/phase.ts"
     }
   },
   "config": {
@@ -6571,7 +6700,9 @@
           "spec_approval": 172800,
           "architecture_approval": 172800,
           "plan_approval": 172800,
-          "spec_change": 259200
+          "spec_change": 259200,
+          "adoption_mode": 172800,
+          "requirement_confirm": 172800
         }
       },
       "ui_bootstrap": {
@@ -6814,6 +6945,12 @@
         "default": 1048576,
         "min": 65536,
         "max": 16777216,
+        "integer": true
+      },
+      "adoption_full_max_files": {
+        "default": 2000,
+        "min": 100,
+        "max": 100000,
         "integer": true
       }
     },

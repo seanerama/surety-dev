@@ -10,6 +10,7 @@
 // classification itself is computed here, against the requirement index as
 // it stands in the transaction that records it.
 
+import { proposalBoundaryErrors } from './checks.js';
 import { type AuthoritySetting, type Classified, type ClassifiedKind, DEFAULT_AUTHORITY, authorityInForce, classify, runningClassifierVersion } from '../../checks/classify.js';
 import type { ClassifyInputs } from '../../checks/classify-inputs.js';
 import type { Discovery } from '../../checks/discovery.js';
@@ -154,6 +155,9 @@ export function recordClassification(tx: Tx, args: { proposal: string; effective
 export function reviewerApprove(tx: Tx, args: { proposal: string; run: string }): boolean {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'classified' || p.classified_change_kind !== 'tightening') return false;
+  // An import that leaves the protected root undeclared (D6 §8.3; B13) is
+  // applied by no one's approval.
+  if (proposalBoundaryErrors(tx.db, p.id).length > 0) return false;
   // A change to `required_checks` also needs the validation-scope approval
   // (D3 §3.2; SEAM.md §69; the human's `approve` carries APPROVAL_MISSING
   // without it): with none recorded, even an authoritative Reviewer's

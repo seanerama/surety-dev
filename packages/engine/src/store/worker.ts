@@ -251,6 +251,11 @@ import {
   treeHeld,
   recordLinkLog,
 } from './transitions/checks.js';
+// Last: adopt/records.ts and queue.ts import each other (queue's KINDS needs
+// records' kinds evaluated first).
+import { adoptProject, appliedAdoptedTests, isAdopted, projectRepositories } from '../adopt/records.js';
+import { conformanceFactsRead } from '../adopt/conformance.js';
+import { recordRefusedReplan } from '../plan/bundle.js';
 
 export interface WorkerData {
   file: string;
@@ -281,6 +286,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'project.resume': (tx, a: { project: string }) => ok(setPaused(tx, { project: a.project, paused: false })),
   'project.policy_submit': (tx, a) => submitPolicy(tx, a),
   'project.create': (tx, a) => ({ status: 201, body: bootstrapProject(tx, a), effects: [{ kind: 'journal', project: a.id }] }),
+  // D6 §8.1 step 1, A.8 (SEAM.md §377): the adoption, A pinned before the bootstrap.
+  'project.adopt': (tx, a) => ({ status: 201, body: adoptProject(tx, a), effects: [{ kind: 'journal', project: a.id }] }),
   'project.tick': (tx, a: { project: string }) => requestTick(tx, a),
   'run.stop': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean; exited?: boolean }) =>
     controlRun(tx, { project: a.project, run: a.run, kind: 'stop', previewHash: a.preview_hash, decided: a.decided, exited: a.exited === true }),
@@ -437,6 +444,11 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     return row ? { repo: row.dev_repo_path } : null;
   },
   'gate.facts': (d, a: { project: string; candidate: string }) => gateFactsRead(d, a),
+  // D6 §8.1 step 5 (B11): what a conformance stage's projection is read of.
+  'conformance.facts': (d, a: { project: string; candidate: string }) => conformanceFactsRead(d, a),
+  'project.adopted': (d, a: { project: string }) => isAdopted(d, a.project),
+  'projects.repositories': (d) => projectRepositories(d),
+  'project.adopted_tests': (d, a: { project: string }) => appliedAdoptedTests(d, a.project),
   'gate.ref_registry': (d, a: { project: string; candidate: string }) => gateRefRegistry(d, a),
   'gates.due': (d, a: { project: string }) => dueStageGates(d, a),
   'candidate.revision': (d, a: { candidate: string }) => (d.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ?').get(a.candidate) as { revision: string } | undefined)?.revision ?? null,
@@ -664,6 +676,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.finish_save': (tx, a) => finishSave(tx, a),
   'session.close_facts': (tx, a) => closeFacts(tx, a),
   'session.record_bundle': (tx, a) => recordBundle(tx, a),
+  // D6 §5.3, §8.3 (SEAM.md §383): a refused replan's check, and its requests.
+  'replan.record_refused': (tx, a) => recordRefusedReplan(tx, a),
   'session.bundle_stale': (tx, a: { bundle: string; reason: string }) =>
     tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'stale', "stale_reason" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(a.reason, a.bundle).changes,
   'session.close': (tx, a) => {
