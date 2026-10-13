@@ -361,3 +361,21 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   const checks = conformance ? set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage')) : set.required;
   registerExecutions(tx, { project: args.project, candidate, checks, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
 }
+
+// A protected application re-registers what the new version requires (D3
+// §2.5, §3.5): on a candidate the phase step has registered its scope on,
+// the phase scope's checks too, phase-only ones included, so an execution
+// cancelled with the old version is not left without a successor.
+export function registerPhaseAtApplication(tx: Tx, args: { project: string; proposal: string; version: string }): void {
+  const plan = openPlan(tx.db, args.project);
+  if (!plan) return;
+  const rows = tx.db
+    .prepare(`SELECT DISTINCT x."candidate" FROM "check_executions" x JOIN "candidates" c ON c."id" = x."candidate" WHERE x."project" = ? AND json_extract(x."trigger", '$.source') = 'phase' AND json_extract(x."trigger", '$.id') = ? AND c."superseded_by" IS NULL`)
+    .all(args.project, plan.id) as { candidate: string }[];
+  for (const r of rows) {
+    const candidate = getCandidate(tx.db, r.candidate);
+    if (!candidate) continue;
+    const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: args.version, phasePlan: plan.id });
+    registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger: { source: 'protected_application', id: args.proposal, generation: 1 } });
+  }
+}
