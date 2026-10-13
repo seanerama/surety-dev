@@ -1279,9 +1279,15 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   plan_approval: PLAN_APPROVAL,
   // D6 §4.5 (M5 slice 31b): the specification change (spec/change.ts).
   spec_change: specChangeKind(),
-  // D6 §8.1 (M5 slice 32): the adoption (adopt/records.ts).
-  adoption_mode: ADOPTION_MODE,
-  requirement_confirm: REQUIREMENT_CONFIRM,
+  // D6 §8.1 (M5 slice 32): the adoption (adopt/records.ts). Read when asked
+  // for, not when this module is evaluated: adopt/records.ts and this module
+  // import each other, and either may be evaluated first.
+  get adoption_mode() {
+    return ADOPTION_MODE;
+  },
+  get requirement_confirm() {
+    return REQUIREMENT_CONFIRM;
+  },
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1311,8 +1317,12 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
   spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
-  adoption_mode: ADOPTION_MODE_KEYS,
-  requirement_confirm: REQUIREMENT_CONFIRM_KEYS,
+  get adoption_mode() {
+    return ADOPTION_MODE_KEYS;
+  },
+  get requirement_confirm() {
+    return REQUIREMENT_CONFIRM_KEYS;
+  },
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,

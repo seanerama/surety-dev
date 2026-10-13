@@ -138,7 +138,9 @@ export const ADOPTION_MODE: KindSpec = {
     };
   },
   manifest: (tx, d) => modeManifest(tx.db, d.subject_id) ?? {},
-  reraise: false,
+  // The question stands until answered: a changed binding (a policy
+  // revision) raises its next generation.
+  reraise: true,
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
     const a = adoptionOf(tx.db, d.subject_id)!;
@@ -227,7 +229,7 @@ export const REQUIREMENT_CONFIRM: KindSpec = {
     const q = pending?.rep.requirements.find((r) => r.key === d.subject_id);
     return pending && q ? confirmManifest(d.project, q, pending.blob, pending.run, tx.db) : {};
   },
-  reraise: false,
+  reraise: true,
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
     recordApproval(tx, d, { consequence: `requirement ${d.subject_id} answered ${option}`, subjectType: 'requirement', subjectId: d.subject_id });
@@ -353,4 +355,16 @@ export function afterChange(tx: Tx, args: { project: string; rep: SpecRepresenta
 export function appliedAdoptedTests(db: Db, project: string): unknown[] {
   const rows = db.prepare(`SELECT "adopted_tests" FROM "protected_proposals" WHERE "project" = ? AND "status" = 'applied' AND "adopted_tests" IS NOT NULL ORDER BY "seq"`).all(project) as { adopted_tests: string }[];
   return rows.flatMap((r) => parseJson<unknown[]>(r.adopted_tests) ?? []);
+}
+
+// A policy revision committed (store/transitions/finalize.ts): the open
+// retrofit questions bind it, so each is raised in its next generation in
+// the same transaction, never left stale for the owner to answer.
+export function reraiseOnPolicy(tx: Tx, project: string): void {
+  if (!isAdopted(tx.db, project)) return;
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "kind" IN ('adoption_mode', 'requirement_confirm') AND "status" = 'open' ORDER BY "seq"`).all(project) as DecisionRow[];
+  for (const d of open) {
+    const next = raiseQuestion(tx, { project, kind: d.kind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope });
+    if (next && next.id !== d.id && d.batch_key) tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "id" = ?').run(d.batch_key, next.id);
+  }
 }

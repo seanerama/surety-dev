@@ -7,6 +7,7 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { reraiseOnPolicy } from '../../adopt/records.js';
 import { conformanceNominated } from '../../adopt/conformance.js';
 import { illegal } from './common.js';
 import { markStale } from './evidence.js';
@@ -185,6 +186,8 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
       // The policy is part of every evaluation's inputs (D1 §9.5).
       markStale(tx, { project: op.project });
+      // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
+      reraiseOnPolicy(tx, op.project);
       if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }

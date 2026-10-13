@@ -219,6 +219,10 @@ const COLUMN_ENUMS: Record<string, string> = {
   'plan_checks.routing': 'PlanRouting',
   'phase_plans.routing': 'PlanRouting',
   'phase_plans.status': 'PhasePlanStatus',
+  // D6 A.2 (M5 slice 32).
+  'stages.conformance_state': 'ConformanceStageState',
+  'releases.state': 'ReleaseStateFact',
+  'environments.origin': 'EnvironmentOrigin',
 };
 
 const pascal = (text: string): string =>
