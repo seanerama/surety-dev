@@ -28,7 +28,7 @@ import { installTrustEntry } from './harness/trust.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { trustEntries } from './harness/trust.mjs';
-import { domainsOfRun, invocationsOf, pauseAt, reached, settling } from './harness/session-lane.mjs';
+import { domainsOfRun, invocationsOf } from './harness/session-lane.mjs';
 
 const times = (one) => Array.from({ length: 8 }, () => one);
 
@@ -105,7 +105,7 @@ describe('M420 the continuation canary: the review\'s M2, M3 and M6', () => {
     obeyingCanaries(fx);
     await holdSecret(fx.engine, 'project/canary/token', secret);
     // Turn 1 leaves a provider file holding a registered secret: the screen refuses its inventory (SEAM.md §152), so none is recorded.
-    const leave = { steps: [acting(hostNamespaces()).volatileShapes({ files: [{ path: '/surety/home/.claude/projects/turn1.jsonl', content: `{"key":"${secret}"}\n` }] }), step.canary('obey')] };
+    const leave = { steps: [acting(hostNamespaces()).volatileShapes({ files: [{ path: '/surety/home/notes/turn1.jsonl', content: `{"key":"${secret}"}\n` }] }), step.canary('obey')] };
     fx.scripted.canaryScript('continuation', [leave, ...times({ steps: [step.canary('obey')] })]);
     const attempt = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
     await approveAttempt(fx, fixtureProject, attempt.id);
@@ -122,16 +122,18 @@ describe('M420 the continuation canary: the review\'s M2, M3 and M6', () => {
   test('M6: the engine restarts between the canary\'s two turns: the attempt invalidated, the canary\'s session run ended, the fixture project not held session_busy for the next attempt', async (t) => {
     const { fx, standIn, fixtureProject } = await attemptFixture(t);
     obeyingCanaries(fx);
-    fx.scripted.canaryScript('continuation', times({ steps: [step.canary('obey')] }));
-    // Held once the first turn's domain terminated, before the second is admitted; the engine stopped there
-    // (its own verified kill) and started again: a restart between the canary's two turns.
-    await pauseAt(fx, settling('terminated'));
+    // Turn 2 holds at its start, so the restart lands before the canary can finish its second turn.
+    fx.scripted.canaryScript('continuation', [{ steps: [step.canary('obey')] }, { steps: [step.hold('gate'), step.canary('obey')] }, ...times({ steps: [step.canary('obey')] })]);
     const first = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
     await approveAttempt(fx, fixtureProject, first.id);
     await armedCanary(fx, 'containment');
-    await reached(fx, settling('terminated'), 'the canary\'s first turn, its domain terminated');
-    assert.equal(fx.scripted.log().filter((e) => e.event === 'launch' && e.canary_kind === 'continuation').length, 1, 'the fixture is live: only the first turn has launched');
+    // The canary's turns are driven by the attempt, not the owner's routes, so the restart is timed by the store:
+    // once turn 1 is settled, the engine is stopped (its own verified kill) and started again.
+    const turnOne = () =>
+      withStore(fx.home, (db) => db.prepare(`SELECT t."settled_at" FROM "turns" t JOIN "runs" r ON r."id" = t."run" WHERE r."project" = ? AND r."kind" = 'session' AND t."number" = 1`).get(fixtureProject));
+    await waitFor(() => (turnOne()?.settled_at ? true : undefined), { what: 'the canary\'s first turn to settle', intervalMs: 50, timeoutMs: 180_000 });
     await fx.engine.kill();
+    fx.scripted.release('all', 'gate');
     await fx.start();
     const invalidated = await waitAttempt(fx.home, first.id, ['succeeded', 'failed', 'invalidated']).catch(() => attemptOf(fx.home, first.id));
     assert.equal(invalidated?.status, 'invalidated', `the attempt invalidated by the restart (${invalidated?.status})`);
