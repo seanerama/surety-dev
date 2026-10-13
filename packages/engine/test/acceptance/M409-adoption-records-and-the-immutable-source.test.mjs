@@ -53,7 +53,9 @@ describe('M409 adoption: the records, the signals and the immutable source revis
     // Held where the bootstrap's commit is intended (SEAM.md §33): A must already be recorded.
     await armBarrier(fx.engine, 'journal.commit_tree.intent_committed', 'pause');
     const pending = postAdopt(fx, { repo });
-    await waitFor(() => barrierWaiting(fx, 'journal.commit_tree.intent_committed'), { what: 'the bootstrap commit to be intended' });
+    // An answer that arrives before the barrier is reached is not an adoption whose bootstrap is pending.
+    const first = await Promise.race([pending.then((res) => ({ res })), waitFor(() => barrierWaiting(fx, 'journal.commit_tree.intent_committed'), { what: 'the bootstrap commit to be intended' }).then(() => ({ held: true }))]);
+    if (first.res) assert.equal(first.res.status, 201, `POST /v1/projects/adopt (→ ${first.res.status} ${first.res.text})`);
     const [held] = projectsNamed(fx.home, ADOPTED_NAME);
     assert.ok(held, 'the project row exists while its bootstrap is intended');
     assert.equal(adoptionOf(fx.home, held.id)?.pinned_revision, A, `pinned_revision is A before the bootstrap commit is made (${JSON.stringify(adoptionOf(fx.home, held.id))})`);
