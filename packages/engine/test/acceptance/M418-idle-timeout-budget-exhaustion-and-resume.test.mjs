@@ -50,7 +50,7 @@ async function oneTurn(t, files) {
   const fx = await scriptedEngine(t);
   const p = await sessionProject(fx);
   const run = await openSession(fx, p.id, 'vision');
-  scriptTurns(fx, run.id, [turnThatWrites(files, { reply: 'Written.' }), turnThatSays('Resumed.')]);
+  scriptTurns(fx, run.id, [turnThatWrites(files, { reply: 'Written.' })]);
   await sayAndSettle(fx, p.id, run.id, 'Rewrite the idea.');
   return { fx, p, run };
 }
@@ -111,6 +111,8 @@ describe('M418 idle timeout, budget exhaustion and resume', () => {
     assert.equal(row.current_base, refOid(p.repo.path, p.repo.ref), 'the workspace at the last checkpoint');
     const continued = transcriptEntries(fx.home, next.id).map((e) => [e.speaker, e.text]);
     assert.deepEqual(continued.slice(0, before.length), before.map((e) => [e.speaker, e.text]), 'the transcript continued from the record');
+    // The resumed run is a new run, scripted by its own id (objection 078).
+    scriptTurns(fx, next.id, [turnThatSays('Resumed.')]);
     await sayAndSettle(fx, p.id, next.id, 'Carry on.');
     assert.equal(turnRows(fx.home, run.id).length, 1, '(e) the old run gained no turn');
     assert.equal(transcriptEntries(fx.home, run.id).length, before.length, '(e) nor any transcript entry');

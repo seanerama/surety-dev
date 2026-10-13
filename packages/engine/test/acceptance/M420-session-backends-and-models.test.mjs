@@ -24,6 +24,7 @@ import { addWork, runsOf, scriptedEngine, tick, waitForRun } from './harness/run
 import { ledgerRowsOf, openSession, sayAndSettle, scriptTurns, turnThatSays } from './harness/sessions.mjs';
 import { StandIn, apiKeyRef, installTrustEntry, standInProcesses } from './harness/trust.mjs';
 import { holdSecret } from './harness/records.mjs';
+import { script } from './harness/scripted.mjs';
 import { sessionProject } from './harness/session-lane.mjs';
 
 const Q6 = Object.freeze({ vision: 'opus', spec_writer: 'opus', architect: 'opus', builder: 'sonnet', verifier: 'sonnet', reviewer: 'sonnet' });
@@ -47,6 +48,8 @@ describe('M420 (c) the conversational roles\' backends and the roles\' models', 
     assert.equal(turnRow?.model_requested, 'opus', `the Spec Writer's turn requested opus (${JSON.stringify(turnRow)})`);
     await fx.engine.post(`/v1/projects/${p.id}/sessions/${run.id}/close`, { refuse: true });
     const item = await addWork(fx.engine, p.id, 'fix');
+    // Scripted to complete, so the run ends and its ledger row is written (objection 078).
+    fx.scripted.script(item, [script.complete()]);
     await tick(fx.engine, p.id, { rounds: 1 });
     const [builder] = runsOf(fx.home, item);
     await waitForRun(fx.home, item, { state: 'ended' });
