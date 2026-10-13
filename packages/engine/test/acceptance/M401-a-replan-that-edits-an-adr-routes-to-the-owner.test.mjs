@@ -9,11 +9,19 @@
 // `plan_approval` is raised to the owner. A second case: the ADR rewritten
 // with front matter that does not parse is not counted as an accepted,
 // unchanged ADR: the replan is not registered either.
+//
+// Migrated under the slice-34 review's M4 (the driver, 2026-10-13; SEAM.md
+// §405): a replan that changes the architecture is checked against the
+// version its publication allocates, so both replans here are prepared
+// against architecture 2. The former form, an ADR edited while the plan
+// names architecture 1, is now refused `PLAN_STALE_BASELINE` at the commit's
+// check, with no `plan_approval` (pinned by M448 (a) M4, "naming v").
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { phaseCompleted, planOfPhase, pump, replanScript, decisionsOf, runsOfProject, workOf } from './harness/journey/drive.mjs';
+import { phaseCompleted, planOfPhase, pump, decisionsOf, runsOfProject, workOf } from './harness/journey/drive.mjs';
+import { replanWith } from './harness/journey/replan34.mjs';
 import { ADR_001, ADR_001_REVISED, ADR_KEY } from './harness/journey/reference.mjs';
 import { journeyProject } from './harness/journey/review31b.mjs';
 import { step } from './harness/scripted.mjs';
@@ -22,11 +30,9 @@ const ADR_PATH = `.surety/adrs/${ADR_KEY}.md`;
 // The ADR's front matter left unclosed: it does not parse, whatever it claims.
 const ADR_UNPARSEABLE = ADR_001.replace('status: accepted\n---\n', 'status: accepted\n');
 
-// The replan's script for phase 2, with the ADR file written beside it.
-const replanWith = (adr) => {
-  const base = replanScript();
-  return { ...base, steps: [step.write(ADR_PATH, adr), ...base.steps] };
-};
+// The replan's script for phase 2, with the ADR file written beside it,
+// prepared against the architecture version its publication allocates (2).
+const replanEditingAdr = (adr) => replanWith({ architecture_version: 2, before: [step.write(ADR_PATH, adr)] });
 
 // Rounds until phase 2 is published, plan_approval is open, or the replan's run failed.
 async function routed(fx, ctx, p) {
@@ -50,7 +56,7 @@ async function routed(fx, ctx, p) {
 describe('M401 (g) S4: a replan that edits an ADR', () => {
   test('a replan whose commit edits ADR-001 raises plan_approval; phase 2 is not published by engine:plan_check', async (t) => {
     const { fx, p, ctx } = await journeyProject(t);
-    fx.scripted.kindScript('replan', [replanWith(ADR_001_REVISED)]);
+    fx.scripted.kindScript('replan', [replanEditingAdr(ADR_001_REVISED)]);
     await phaseCompleted(fx, ctx, 1);
     const out = await routed(fx, ctx, p);
     assert.ok(!out.published || (out.published.approved_by !== 'engine:plan_check' && out.published.routing !== 'registered'), `phase 2 is not registered by computed routing (${JSON.stringify(out.published ?? null)})`);
@@ -59,7 +65,7 @@ describe('M401 (g) S4: a replan that edits an ADR', () => {
 
   test('an ADR rewritten with front matter that does not parse is not counted as accepted: the replan is not registered', async (t) => {
     const { fx, p, ctx } = await journeyProject(t);
-    fx.scripted.kindScript('replan', [replanWith(ADR_UNPARSEABLE)]);
+    fx.scripted.kindScript('replan', [replanEditingAdr(ADR_UNPARSEABLE)]);
     await phaseCompleted(fx, ctx, 1);
     const out = await routed(fx, ctx, p);
     assert.ok(!out.published || (out.published.approved_by !== 'engine:plan_check' && out.published.routing !== 'registered'), `phase 2 is not registered by computed routing on an ADR that does not parse (${JSON.stringify(out.published ?? null)})`);
