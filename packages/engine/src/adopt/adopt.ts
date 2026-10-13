@@ -133,7 +133,7 @@ export const ADOPTED_IDEA = (name: string): string =>
   `# Idea: ${name}\n\nThis project was adopted from an existing repository. Its intent is pending: the owner has not yet stated it.\n`;
 
 function signal<T>(name: string, read: () => T | null, why: string): Signal<T> {
-  if (seamAdoptionSignalFault(name)) return { unknown: `the ${name} signal could not be read (harness fault)` };
+  if (seamAdoptionSignalFault(name)) return { unknown: `the ${name} signal could not be read from the repository` };
   const v = read();
   return v === null ? { unknown: why } : v;
 }
