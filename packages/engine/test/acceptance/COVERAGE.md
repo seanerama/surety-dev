@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+Slice 33, sessions on the real boundary, 2026-10-13, on `verify/m5-s33` (from `main` at `5b85ddf`): rows M415 to M420 and M447 in ten files under manifest slice `33`, plus the driver's real file `M420-the-continuation-canary-on-the-real-backend`, with SEAM §§388 to 395. See "M5 slice 33" below for each case and how each file fails alone on `main`. The contract additions make M07, and M73 where it reads the configuration, require the slice-33 engine. The paragraph that follows is the previous pass's.
+
 Objection 076, 2026-10-13, on `verify/m5-s32`: all three parts upheld, SEAM §386. (1) The developer suite's command is `node --test 'test/*.test.mjs'`, and the README and CI file name it too. (2) M408's engine runs at `domain_memory_max` 4 GiB (N1). (3) The project lane's stall bound resets on progress events only, and its message names the blockers; this is shared with M401. On `build/m5-s32` at `355cf3c`, each file alone: `M408-the-retrofit-journey` 8/8 in 310 s and M408 (i) 1/1 in 278 s, nothing left. The paragraph that follows is the previous pass's.
 
 Sean's module-map rule and the slice-32 review's findings, 2026-10-13, on `verify/m5-s32` (SEAM §387). Five kernel-lane files under manifest slice `32`, each run alone on a scratch copy of `build/m5-s32` at `efdc5b3`, each failing for its finding:
@@ -2646,6 +2648,42 @@ The project-lane files were not run here.
 **The safety rule (BS5 §4.1; E64).** Kernel lane only: no domain, no unit, no signal but the test's own engine's (`fx.engine.kill()` of the process it spawned, as every kernel file). Every secret-shaped value is absent; nothing paid; no session on a real model.
 
 **What was run, 2026-10-12, on this branch** (`main` at `15209c4` merged; `npm run build` clean; `node --check` of every new and changed `.mjs`): the four kernel files once each, alone, with `node --test --test-concurrency=1`: **M402 1/9, M403 0/9, M404 0/9, M405 0/6**, every failing case at `POST /v1/projects` with `idea` → 400 `unknown_field` ("idea" is not a field of a project), the first unbuilt route; M402 (e) passes as built. No engine process left; the two `/tmp/surety-static-*` directories present are dated 2026-10-11, before this pass (E137 names one). The migrated accepted files were not run.
+
+## M5 slice 33: sessions on the real boundary (BS5 §9.2; D6 §2; the driver's approval of the outline, 2026-10-13)
+
+2026-10-13, by the Verifier of slice 33, on `verify/m5-s33` cut from `main` at `5b85ddf`. This covers rows M415 to M420 and M447 of the M5 plan §3.3. The seams are §§388 to 395. That gives ten files under manifest slice `33`, plus one real file the driver runs (E144 item 2).
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M415 | sandbox | `M415-a-session-is-a-run-of-settled-turns.test.mjs` (4) | (a)–(c), (e): opening a session creates its grant, workspace and lease but no domain or process; a turn gets one receipt, one role domain, one ledger row and the role's deadline; nothing stays alive between turns; the session itself gets no ledger row. (d): each turn gets a fresh volatile home, and a provider file left by the first turn is absent at the second. (f): exhaustion of the cumulative budget. (g): a turn of unknown termination is settled by recovery. | written |
+| M416 | kernel | `M416-the-transcript-and-its-speakers.test.mjs` (5) | (a) the owner's entry is recorded at admission; (b) the reply is appended on acceptance; (c) append-only, forged speaker and turn fields are ignored, and an artifact's marker makes no entry; (d) redaction; (e) `turn_too_large` and `transcript_max_bytes`; (g) a failed turn, and a replayed result | written; (g)'s reconstruction after a restore not written (SEAM §390) |
+| M416 | sandbox | `M416-the-next-turns-package-in-the-domain.test.mjs` (2) | (f) the package at /surety/context holds the transcript and the artifact; (d) the raw stream record is redacted | written |
+| M417 | kernel | `M417-save-validates-under-one-idle-generation.test.mjs` (5) | (a)+(e) a checkpoint is saved with the generation unchanged and no baseline change; (b) `diff_violation`; (c) `session_not_idle`; (d) save vs turn and save vs close at `session.admission`; a save while collection is in flight | written |
+| M418 | kernel | `M418-idle-timeout-budget-exhaustion-and-resume.test.mjs` (9) | (a) the idle timeout, saved and refused-save variants; (b) budget exhaustion; (c)+(e) resume; (d) a retained workspace offered `stash` or `discard`; (f) a crash at each of the four settlement facts, then resume | written; (e)'s late callback of the old run's last turn is read as "the old run gains no turn and no entry" |
+| M419 | kernel | `M419-one-session-per-project.test.mjs` (5) | (a)+(b) `session_busy` both ways; (c) `role_memory_max`; (d) a session after a one-shot ends; (e) the race in both orders; (f) no project run counter | written |
+| M420 (c) | kernel | `M420-session-backends-and-models.test.mjs` (3) | `backend_vision` and `backend_spec_writer`; Q6's `model_<role>` defaults and `model_requested` per turn and run; an entry that is not session_qualified gives `backend_refused` | written (a kernel file beside the sandbox row, approved) |
+| M420 (a)–(c) | sandbox | `M420-the-continuation-canary.test.mjs` (2) | a `session_headless` attempt's continuation canary: two turns, the token answered from the package, `session_qualified`, quiescence; a failing canary | written |
+| M420 (d) | real | `M420-the-continuation-canary-on-the-real-backend.test.mjs` (1) | two real Sonnet turns on the active entry, recording usage and cost; it fails closed on preflight, on the home bound, and when no active entry exists | written; run by the driver only, never here |
+| M447 | kernel | `M447-turn-settlement-in-order.test.mjs` (8) | (a) once per turn, after the four facts, generation +1; (b) not idle at each barrier; (c) unknown usage, never zero; (d) a crash at collection; (e) the successor's package | written |
+| M447 | sandbox | `M447-turn-settlement-in-a-real-domain.test.mjs` (2) | (a)+(c) settlement order and unknown usage in a real domain; (d) a Stop after termination, before collection | written |
+
+**The contract and the harness.**
+- **Contract:** `backend_vision`, `backend_spec_writer` and the six `model_<role>` keys (Q6: `opus` for Vision, Spec Writer and Architect, `sonnet` for the rest). M07, and M73 where it reads the configuration, therefore require the engine to accept and export them; that is the slice-33 Builder's work.
+- **Harness:** `harness/session-lane.mjs`; the scripted program's `continuation` canary (and its `forget` mode); and a trust-entry fixture field, `session_qualified` †.
+
+**Not re-tested** (M401, slice 31b): a turn's result parsed as its reply, a second turn launching, and writes materialized at settlement.
+
+**What was run, 2026-10-13.** A scratch copy of `main` at `5b85ddf` with this branch's tests, each file run alone after the machine was idle (the slice-32 Builder's probes held it for a while). No engine or unit was left. Each file fails, for reasons of the unbuilt slice:
+- **M415 1/4:** (d) passes. (a) fails because the workspace is null at open; (f) because a turn is admitted after the budget is spent; (g) because recovery does not settle the turn.
+- **M416 kernel 3/5:** (c) fails because a reply carrying `speaker` or `turn` fails the turn; (e) because `transcript_max_bytes` is not a policy key.
+- **M416 sandbox 1/2:** (f) fails because the package in the domain lacks the transcript.
+- **M417 2/5:** (a) fails because a save advances the idle generation; (d) because the `session.*` barriers are unknown.
+- **M418 0/9:** no idle timeout, a turn admitted after exhaustion, and the barriers unknown.
+- **M419 2/5:** no `session_busy` hold, no `memory_max`, and no `session.admission`.
+- **M420 kernel 0/3:** the keys are absent, `model_requested` is not the role's key, and the fixture lacks `session_qualified`.
+- **M420 sandbox 0/2:** `mode` must be `one_shot_headless`.
+- **M447 kernel 3/8:** the barriers are unknown.
+- **M447 sandbox 1/2:** the barrier is unknown.
 
 ## M5 slice 31b: the walking journey, phase, Alpha and the end (BS5 §9.2; D6 §1, §§5.6, 5.8, 6.8; the driver's rulings of 2026-10-12)
 

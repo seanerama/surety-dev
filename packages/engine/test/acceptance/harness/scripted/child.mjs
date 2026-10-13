@@ -45,7 +45,7 @@
 //                                                           success event; outside one, the line only
 //           {"result_file": <any JSON value>}               M2 slice 13: the file only, no line (no event)
 //           {"result_event": <any JSON value>}              M2 slice 13: the line only (the event), no file
-//           {"canary": {"mode": "obey" | "wrong_result" | "finish_early" | "say_denied" | "forge_reports" | "result_only"}}
+//           {"canary": {"mode": "obey" | "wrong_result" | "finish_early" | "say_denied" | "forge_reports" | "result_only" | "forget"}}
 //                                                           M2 slice 13 part 2 (SEAM.md §149): a qualification
 //                                                           canary's role, following /surety/context/canary.json
 //           {"stdout": "<raw text written as is>"}
@@ -1828,6 +1828,55 @@ async function runCanary(spec) {
       writeFileSync(at(c.edit.path), c.edit.content);
     }
     finishWith(mode === 'wrong_result' ? { status: 'completed', summary: 'not the result the canary asked for' } : c.result);
+    return;
+  }
+  // The continuation canary (M5 slice 33; D6 §2.6; SEAM.md §392 †): two
+  // turns of one session. Turn 1 writes the canary's edit (a file holding a
+  // token) and ends with the canary's result; turn 2 answers from what the
+  // engine carried over, the transcript and the artifact in its package
+  // (/surety/context), never from anything the first turn's process kept:
+  // obeying, it replies with every match of `token_pattern` found there; with
+  // mode `forget` it replies without looking (a failing canary).
+  if (c.kind === 'continuation') {
+    if (c.turn === 1 || c.turn === undefined) {
+      if (c.edit?.path && typeof c.edit.content === 'string' && !isAbsolute(c.edit.path) && !c.edit.path.split('/').includes('..')) {
+        mkdirSync(dirname(at(c.edit.path)), { recursive: true });
+        writeFileSync(at(c.edit.path), c.edit.content);
+      }
+      finishWith(c.result ?? { status: 'completed', summary: 'continuation canary, turn 1', reply: 'Remembered.', artifact_changed: true });
+      return;
+    }
+    const found = new Set();
+    if (mode !== 'forget' && typeof c.token_pattern === 'string') {
+      let re = null;
+      try {
+        re = new RegExp(c.token_pattern, 'g');
+      } catch {
+        re = null;
+      }
+      const walk = (d) => {
+        let names = [];
+        try {
+          names = readdirSync(d, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const e of names) {
+          const p = join(d, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.isFile() && re) {
+            try {
+              for (const m of readFileSync(p, 'utf8').matchAll(re)) found.add(m[0]);
+            } catch {
+              // unreadable: nothing found there
+            }
+          }
+        }
+      };
+      walk('/surety/context');
+    }
+    log('canary', { mode, kind: c.kind, outcome: 'answered', found: [...found] });
+    finishWith({ status: 'completed', summary: 'continuation canary, turn 2', reply: found.size > 0 ? [...found].join(' ') : 'I do not know.', artifact_changed: false });
     return;
   }
   if (c.kind === 'cancellation') {
