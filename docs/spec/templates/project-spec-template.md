@@ -153,6 +153,8 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 
 ## 11. Change log
 
+*[Written by the engine (D6 §3.4, §4.5): on each approval it writes the row for the approved version in one engine commit, replacing a row with that version if one is there. A session leaves this table as it is.]*
+
 | Version | Date | Change | Approved by |
 |---|---|---|---|
 | 1 | [date] | First approved version | [name] |
