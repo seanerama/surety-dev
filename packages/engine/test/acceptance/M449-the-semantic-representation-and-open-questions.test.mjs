@@ -28,8 +28,8 @@ import { REQUIREMENTS, ROADMAP_JSON, SPEC, SPEC_DEFECTIVE, STAGES, phasePlan, sp
 import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { Q, SPEC_PATH, blockersOf, findingNaming, requirementsWith, semanticsOf, specSaves, withEnvironmentSubsection, withQuestions, withR5 } from './harness/journey/spec34.mjs';
 import { refOid } from './harness/repos.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
-import { step } from './harness/scripted.mjs';
+import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { closeSession } from './harness/sessions.mjs';
 
 // (a) and (b): B.2's forms, with prose that only looks like them in §1 and §3.
@@ -67,10 +67,16 @@ function movedIntoPhaseOne(key, stageNumber, revision, specVersion) {
 
 // The owner's change request carried to its approval: the Spec Writer's run writes `text`.
 async function specChangeTo(fx, p, text, version, changes) {
+  fx.scripted.defaultScript(script.complete());
   fx.scripted.kindScript('spec_change', { steps: [step.write(SPEC_PATH, text), step.result({ status: 'completed', summary: 'the change', changes })] });
   const ctx = journeyContext(fx, p);
   await postChange(fx, ctx, 'Resolve the open question.');
-  return pumpNoIdle(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === version), { what: `spec version ${version}`, answerKinds: ['spec_change'] });
+  const approved = await pumpNoIdle(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === version), { what: `spec version ${version}`, answerKinds: ['spec_change'] });
+  // Whatever the approval registered (a check correction, a replan) ends at
+  // once, so the Architect's session that follows is not held session_busy.
+  await tick(fx.engine, p.id, { rounds: 2 });
+  await waitForIdle(fx.home, p.id);
+  return approved;
 }
 
 const reasonsOf = (res) => JSON.stringify(res.body?.subject ?? {});

@@ -10,8 +10,12 @@
 // (b) the effect: `spec_revisions` 1 with `git_blob` and `semantic_digest`,
 //     requirements with criteria text and areas, `modules` from TPL §6,
 //     environments by name with no adapter, `spec_ready`,
-//     `spec_evidence_generation` 1, and the TPL §11 row appended by the engine
-//     in its own commit (`git_blob` the blob after it, the digest unchanged);
+//     `spec_evidence_generation` 1, the answer an effect intent
+//     (`spec_approval_application`) done before the 200, and the TPL §11 row
+//     for the version owned by the engine in its own commit (appended, or
+//     replacing the role's row for that version; `git_blob` the blob after
+//     it, the digest unchanged); a spec change's approval writes its n+1 row
+//     the same way (the driver's ruling, 2026-10-13; SEAM.md §399);
 // (c) a save between preview and answer changing a criterion's text only:
 //     the answer stale (the manifest binds the semantics);
 // (d) a role's attempt; the automated approval: neither approves.
@@ -19,15 +23,16 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, assertStaleAnswer, consume, decision } from './harness/decisions.mjs';
+import { answer, assertStaleAnswer, consume, decision, intentsOf } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
-import { createWithIdea, environmentsOf, eventsAbout, modulesOf, projectRow, requirementsOf, specRevisions } from './harness/journey/drive.mjs';
+import { createWithIdea, environmentsOf, eventsAbout, journeyContext, modulesOf, projectRow, requirementsOf, specChangeScript, specRevisions } from './harness/journey/drive.mjs';
+import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { REQUIREMENTS, SPEC, specText } from './harness/journey/reference.mjs';
-import { Q, SPEC_PATH, VARIANTS, blockersOf, requirementsWith, semanticsOf, specSaves, withQuestions, withoutPhaseOf } from './harness/journey/spec34.mjs';
+import { ENGINE_ROW, Q, SPEC_PATH, VARIANTS, assertEngineRow, blockersOf, logRows, requirementsWith, semanticsOf, specSaves, withQuestions, withoutPhaseOf } from './harness/journey/spec34.mjs';
 import { fileAt, gitQuiet, parentsOf, refOid } from './harness/repos.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
 import { openSession, say, scriptTurns, turnResult } from './harness/sessions.mjs';
-import { step } from './harness/scripted.mjs';
+import { script, step } from './harness/scripted.mjs';
 
 // (a)'s specifications and what `approve` must carry (SEAM.md §398): `null` is open.
 const FLOOR = [
@@ -43,11 +48,6 @@ const FLOOR = [
 // TPL §11 without the role's row: the engine's is the only one after approval.
 const ROLE_LOG_ROW = '| 1 | 2026-10-12 | First approved version | Sean |\n';
 const SPEC_NO_LOG = SPEC.replace(ROLE_LOG_ROW, '');
-const logRows = (text) => {
-  const at = text.indexOf('## 11. Change log');
-  assert.ok(at > 0, 'the specification has §11');
-  return text.slice(at).split('\n').filter((l) => /^\|\s*\d+\s*\|/.test(l));
-};
 
 describe('M422 the spec approval\'s floor', () => {
   for (const c of FLOOR) {
@@ -79,15 +79,14 @@ describe('M422 the spec approval\'s floor', () => {
     const checkpoint = refOid(p.repo.path, p.repo.ref);
     assert.equal(s.approval.manifest?.semantic_digest, saved.semantic_digest, 'the manifest binds the save\'s semantics');
     await consume(fx, p.id, s.approval, 'approve');
+    // The 200 came after the effect: one intent, done.
+    const intents = intentsOf(fx.home, s.approval.id);
+    assert.deepEqual(intents.map((i) => [i.kind, i.status]), [['spec_approval_application', 'done']], 'the answer is an effect intent, done before the 200');
     // The TPL §11 row, appended by the engine in its own commit on the checkpoint.
     const head = refOid(p.repo.path, p.repo.ref);
     assert.notEqual(head, checkpoint, 'the engine committed the change log row');
     assert.deepEqual(parentsOf(p.repo.path, head), [checkpoint], 'one engine commit on the session\'s checkpoint');
-    const after = fileAt(p.repo.path, head, SPEC_PATH);
-    const rows = logRows(after);
-    assert.equal(rows.length, 1, `one change log row, the engine's (${JSON.stringify(rows)})`);
-    assert.match(rows[0], /^\|\s*1\s*\|/, 'for version 1');
-    assert.equal(after.replace(`${rows[0]}\n`, ''), SPEC_NO_LOG, 'the commit appends the row and changes nothing else');
+    assertEngineRow(fileAt(p.repo.path, head, SPEC_PATH), SPEC_NO_LOG, 1, ENGINE_ROW.approval(1), 'appended');
     const [rev] = specRevisions(fx.home, p.id);
     assert.equal(rev.version, 1);
     assert.equal(rev.git_blob, gitQuiet(p.repo.path, ['rev-parse', `${head}:${SPEC_PATH}`]), 'git_blob is the blob after the engine\'s commit');
@@ -109,6 +108,35 @@ describe('M422 the spec approval\'s floor', () => {
     const project = projectRow(fx.home, p.id);
     assert.deepEqual([project.baseline_state, project.spec_evidence_generation], ['spec_ready', 1]);
     assert.equal(eventsAbout(fx.home, 'baseline.spec_approved', p.id).length, 1, 'baseline.spec_approved once');
+  });
+
+  test('(b) the role\'s own row for the version approved is replaced by the engine\'s; nothing else of the file changes', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const s = await specSaves(fx, p.id, [SPEC]);
+    assert.equal(logRows(SPEC, 1).length, 1, 'the fixture is live: the role wrote a row for version 1');
+    await consume(fx, p.id, s.approval, 'approve');
+    const head = refOid(p.repo.path, p.repo.ref);
+    assertEngineRow(fileAt(p.repo.path, head, SPEC_PATH), SPEC, 1, ENGINE_ROW.approval(1), 'replaced');
+    assert.equal(specRevisions(fx.home, p.id)[0].git_blob, gitQuiet(p.repo.path, ['rev-parse', `${head}:${SPEC_PATH}`]), 'git_blob is the blob after the engine\'s commit');
+  });
+
+  test('(b) a spec change\'s approval: the engine\'s row for version 2, Specification change <seq>, and git_blob after it', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const s = await specSaves(fx, p.id, [SPEC]);
+    await consume(fx, p.id, s.approval, 'approve');
+    fx.scripted.defaultScript(script.complete());
+    fx.scripted.kindScript('spec_change', specChangeScript());
+    const ctx = journeyContext(fx, p);
+    const request = await postChange(fx, ctx, 'Two clarifications: R2.1 names the content type; R4 counts successful sums only.');
+    await pumpNoIdle(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === 2), { what: 'spec version 2', answerKinds: ['spec_change'] });
+    const head = refOid(p.repo.path, p.repo.ref);
+    const text = fileAt(p.repo.path, head, SPEC_PATH);
+    const rows = logRows(text, 2);
+    assert.equal(rows.length, 1, `one §11 row for version 2 (${JSON.stringify(logRows(text))})`);
+    assert.match(rows[0], ENGINE_ROW.change(2, request.seq), 'the engine\'s row naming the change');
+    assert.equal(specRevisions(fx.home, p.id)[1].git_blob, gitQuiet(p.repo.path, ['rev-parse', `${head}:${SPEC_PATH}`]), 'git_blob is the blob after the engine\'s commit');
   });
 
   test('(c) a save between the preview and the answer, changing a criterion\'s text only: the answer is stale', async (t) => {

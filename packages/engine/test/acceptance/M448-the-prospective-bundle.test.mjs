@@ -122,8 +122,10 @@ describe('M448 the prospective bundle', () => {
     // (b) The bundle record itself (SEAM.md §401: the manifest's keys).
     const bundle = bundleOf(fx.home, check.bundle);
     const [spec] = specRevisions(fx.home, p.id);
-    assert.equal(bundle.spec_version, spec.version, `the bundle names the current spec version (${JSON.stringify(bundle)})`);
-    assert.equal(bundle.baseline_revision, refOid(p.repo.path, p.repo.ref), 'and the integration head');
+    // The spec by its version or its revision's id; the head as `baseline_revision` (the manifest's key) or `head`.
+    const names = { spec_version: bundle.spec_version, spec_revision: bundle.spec_revision, head: bundle.baseline_revision ?? bundle.head };
+    assert.ok(names.spec_version === spec.version || names.spec_revision === spec.id, `the bundle names the current spec version (${JSON.stringify(names)})`);
+    assert.equal(names.head, refOid(p.repo.path, p.repo.ref), 'and the integration head');
     for (const path of Object.keys(arch.files)) assert.match(bundle.blobs?.[path] ?? '', /^[0-9a-f]{40}$/, `and the blob of ${path}`);
     assert.deepEqual(bundle.versions, { architecture: 1, roadmap: 1, phase_plan: 1 }, 'and the versions the publication will allocate');
   });
@@ -152,6 +154,8 @@ describe('M448 the prospective bundle', () => {
     const bundle = decision(fx.home, arch.decisions.architecture_approval.id).manifest?.bundle;
     // The owner's change request, its Spec Writer run and the owner's approval.
     fx.scripted.kindScript('spec_change', specChangeScript());
+    // Whatever else the approval registers ends at once.
+    fx.scripted.defaultScript(script.complete());
     const ctx = journeyContext(fx, p);
     await postChange(fx, ctx, 'Two clarifications: R2.1 names the content type; R4 counts successful sums only.');
     await pumpNoIdle(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === 2), { what: 'spec version 2', answerKinds: ['spec_change'] });

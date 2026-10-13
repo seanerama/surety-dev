@@ -7,7 +7,7 @@
 //   phase 1, approved during the hold): `PLAN_STALE_BASELINE`, the proposal
 //   `stale`, nothing prepared against spec 1 published;
 // - a roadmap revision approved while it runs (an Architect session's
-//   `architecture_approval` raised after the first publication, answered
+//   `architecture_approval` raised after phase 1's last integration, answered
 //   during the hold): `PLAN_STALE_BASELINE`;
 // - a harmless head move (the owner's policy change, an engine commit):
 //   re-based and published by `engine:plan_check`, prepared against the head
@@ -22,10 +22,10 @@ import { describe, test } from 'node:test';
 
 import { answer, decision, decisionsOfKind } from './harness/decisions.mjs';
 import { waitFor } from './harness/engine.mjs';
-import { ROUTED_KINDS, ownerPolicy, planChecks, planOfPhase, readPlan, roadmapRevisions, specChangeScript, specRevisions } from './harness/journey/drive.mjs';
+import { ROUTED_KINDS, ownerPolicy, planChecks, planOfPhase, readPlan, roadmapRevisions, runsOfProject, specChangeScript, specRevisions, stagesOfPlan } from './harness/journey/drive.mjs';
 import { ROADMAP_JSON } from './harness/journey/reference.mjs';
 import { replanHeld, replanRuns, replanScript, untilReplanHolds } from './harness/journey/replan34.mjs';
-import { journeyProject, postChange } from './harness/journey/review31b.mjs';
+import { journeyProject, postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { refOid } from './harness/repos.mjs';
 import { tick } from './harness/runs.mjs';
 import { closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from './harness/sessions.mjs';
@@ -82,15 +82,21 @@ describe('M424 (f) a replan under a moving baseline', () => {
   test('a roadmap revision approved while the replan runs: rechecked on commit, PLAN_STALE_BASELINE', async (t) => {
     const { fx, p, ctx } = await journeyProject(t);
     fx.scripted.kindScript('replan', [replanHeld(), replanScript({ roadmap_version: 2 }), replanScript({ roadmap_version: 2 })]);
-    // An Architect session revising phase 2's goal, once nothing runs; its approval left for the owner.
-    const session = await waitFor(
+    // An Architect session revising phase 2's goal, opened in a quiet moment
+    // after phase 1's last integration (its checks queued, no role run), so
+    // no later commit of phase 1 moves the head under its approval; the
+    // approval left for the owner.
+    const session = await pumpNoIdle(
+      fx,
+      ctx,
       async () => {
+        const stages = stagesOfPlan(fx.home, planOfPhase(fx.home, p.id, 1)[0].id);
+        if (!stages.every((st) => ['integrated', 'verified'].includes(st.status))) return undefined;
+        if (runsOfProject(fx.home, p.id).some((r) => r.state !== 'ended')) return undefined;
         const res = await fx.engine.post(`/v1/projects/${p.id}/sessions`, { role: 'architect' });
-        if (res.status === 201) return res.body.run;
-        await tick(fx.engine, p.id, { rounds: 1 });
-        return undefined;
+        return res.status === 201 ? res.body.run : undefined;
       },
-      { timeoutMs: 60_000, intervalMs: 300, what: 'an Architect session to be admitted' },
+      { what: 'an Architect session after phase 1\'s last integration', max: 400 },
     );
     const roadmap = { ...ROADMAP_JSON, version: 2, phases: [ROADMAP_JSON.phases[0], { ...ROADMAP_JSON.phases[1], goal: 'count the sums, then show them on /stats' }] };
     scriptTurns(fx, session.id, [turnThatWrites({ '.surety/roadmap/roadmap.json': json(roadmap) }, { reply: 'Phase 2\'s goal restated.', done: true })]);

@@ -154,3 +154,38 @@ export function blockersOf(row, option = 'approve') {
   assert.ok(o, `the decision offers ${option} (${JSON.stringify(row?.options)})`);
   return (o.blockers ?? []).map((b) => (typeof b === 'string' ? b : JSON.stringify(b)));
 }
+
+// ---- TPL §11, the engine's change log row (SEAM.md §399) --------------------------------------------
+
+// The §11 rows of `text` for `version` (all rows when it is omitted).
+export function logRows(text, version) {
+  const at = text.indexOf('## 11. Change log');
+  assert.ok(at > 0, 'the specification has §11');
+  return text
+    .slice(at)
+    .split('\n')
+    .filter((l) => /^\|\s*\d+\s*\|/.test(l))
+    .filter((l) => version === undefined || new RegExp(`^\\|\\s*${version}\\s*\\|`).test(l));
+}
+// `text` with every §11 row for `version` removed.
+export const withoutLogRow = (text, version) => {
+  const rows = new Set(logRows(text, version));
+  return text
+    .split('\n')
+    .filter((l) => !rows.has(l))
+    .join('\n');
+};
+// The engine's row: `| n | <date> | First approved version | human |` at a
+// session's approval, `| n | <date> | Specification change <seq> | human |`
+// at a change's.
+export const ENGINE_ROW = Object.freeze({
+  approval: (version) => new RegExp(`^\\|\\s*${version}\\s*\\|\\s*\\d{4}-\\d{2}-\\d{2}\\s*\\|\\s*First approved version\\s*\\|\\s*human\\s*\\|\\s*$`),
+  change: (version, seq) => new RegExp(`^\\|\\s*${version}\\s*\\|\\s*\\d{4}-\\d{2}-\\d{2}\\s*\\|\\s*Specification change ${seq}\\s*\\|\\s*human\\s*\\|\\s*$`),
+});
+// The specification at `head` is `saved` with its row for `version` the engine's, and nothing else changed.
+export function assertEngineRow(actual, saved, version, pattern, what = 'the specification') {
+  const rows = logRows(actual, version);
+  assert.equal(rows.length, 1, `${what}: one §11 row for version ${version} (${JSON.stringify(logRows(actual))})`);
+  assert.match(rows[0], pattern, `${what}: the row is the engine's`);
+  assert.equal(withoutLogRow(actual, version), withoutLogRow(saved, version), `${what}: nothing but that row differs from what was saved`);
+}
