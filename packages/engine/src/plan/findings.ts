@@ -60,6 +60,7 @@ const SPEC_CODES: Record<string, string> = {
   module_table_invalid: 'spec_modules_invalid',
   question_malformed: 'spec_question_invalid',
   claims_table_invalid: 'spec_claims_invalid',
+  claims_requirement_unknown: 'spec_claims_invalid',
 };
 
 export function specFindings(text: string, path = '.surety/spec/spec.md'): { findings: Finding[]; semantics: SemanticResult } {
@@ -76,11 +77,16 @@ export function specFindings(text: string, path = '.surety/spec/spec.md'): { fin
       subject.criterion = /\b(R[1-9][0-9]*\.[1-9][0-9]*)\b/.exec(f.why)?.[1] ?? null;
     } else if (f.code === 'index_invalid') {
       subject.row = /index row (\d+)/.exec(f.why) ? Number(/index row (\d+)/.exec(f.why)![1]) : 0;
+      const rowKey = /index row \d+ \((R[1-9][0-9]*)\)/.exec(f.why)?.[1];
+      if (rowKey) subject.key = rowKey;
       const area = /"([a-z_]+)" is not a sensitive area/.exec(f.why)?.[1];
       if (area) {
         code = 'spec_area_unknown';
         subject.area = area;
       }
+    } else if (f.code === 'claims_requirement_unknown') {
+      subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
+      subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
     } else if (f.code === 'area_unknown' || f.code === 'areas_missing') {
       subject.area = valueNamed(f.why);
       subject.where = f.where;

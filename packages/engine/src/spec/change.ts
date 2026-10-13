@@ -105,6 +105,34 @@ export function requestSpecChange(tx: Tx, args: { project: string; text: string;
   return { status: 201, body: { request: { id, seq, status: 'requested' }, work_item: { id: work.work_item.id } }, effects: [{ kind: 'tick' }] };
 }
 
+// A retrofit replan's requests (D6 §8.3; B.7): each an ordinary request,
+// source `replan`, its spec_change work registered as the owner's is; the
+// owner approves its proposal like any. A request the same replan work
+// already made with the same keys and text, still open, is not made twice.
+export function requestsFromReplan(tx: Tx, args: { project: string; run: string; requests: { keys: string[]; text: string }[] }): string[] {
+  const spec = currentSpec(tx.db, args.project);
+  if (!spec) return [];
+  const out: string[] = [];
+  for (const r of args.requests) {
+    const keys = JSON.stringify([...r.keys].sort());
+    const open = tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "project" = ? AND "source" = 'replan' AND "keys" = ? AND "request_text" = ? AND "status" IN ('requested', 'proposed')`).get(args.project, keys, r.text) as { id: string } | undefined;
+    if (open) continue;
+    const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS seq FROM "spec_change_requests" WHERE "project" = ?').get(args.project) as { seq: number };
+    const id = tx.newId('scr_');
+    tx.db
+      .prepare(
+        `INSERT INTO "spec_change_requests" ("id", "created_at", "project", "seq", "spec_revision", "text", "request_text", "source", "status", "run", "keys")
+         VALUES (?, ?, ?, ?, ?, NULL, ?, 'replan', 'requested', ?, ?)`,
+      )
+      .run(id, tx.at, args.project, seq, spec.id, r.text, args.run, keys);
+    const work = observeTrigger(tx, { project: args.project, kind: 'spec_change', trigger_source: 'spec_change_request', trigger_id: id, trigger_generation: 1, subject: { request: id }, chain: 0 }, { request: id });
+    tx.db.prepare('UPDATE "spec_change_requests" SET "work_item" = ? WHERE "id" = ?').run(work.work_item.id, id);
+    tx.emit('spec.change_requested', { project: args.project, spec_change_request: id }, { seq, spec_revision: spec.id, work_item: work.work_item.id, source: 'replan', run: args.run, keys: r.keys });
+    out.push(id);
+  }
+  return out;
+}
+
 // The request a `spec_change` run's work names (runs/accept.ts).
 export function requestOfRun(db: Db, run: string): RequestRow | null {
   const row = db.prepare('SELECT w."subject" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(run) as { subject: string } | undefined;
@@ -572,7 +600,7 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Recomputed against the records as they are now (D6 §4.4; ruling Q1), or
   // as the effect's beginning recomputed them; never the proposal's.
   const impact = currentImpact(tx.db, r) ?? inputs.impact;
-  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision });
+  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision, via: 'change' });
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(op.project) as { spec_evidence_generation: number }).spec_evidence_generation;
   tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'approved', "approved_revision" = ? WHERE "id" = ?`).run(made.spec_revision, r.id);
   // (The impact was recomputed above, against the records as they were

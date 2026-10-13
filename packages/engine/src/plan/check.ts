@@ -24,7 +24,10 @@ export interface PlanReason {
 export interface BundleBaseline {
   spec_version: number;
   // The approved requirements: key → criteria ids, areas, withdrawn.
-  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[] }[];
+  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean }[];
+  // D6 §8 (K11; B10): the project was adopted (a conformance stage belongs
+  // only to its phase 1), and its adoption mode.
+  adopted?: boolean;
   // The versions the bundle names (the approved ones, or the ones
   // publication will allocate).
   architecture_version: number;
@@ -259,6 +262,25 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     const areas = uniq([...phase.requirement_ids.flatMap((k) => reqs.get(k)?.sensitive_areas ?? []), ...moduleRows.filter((m) => phase.modules.includes(m.name)).flatMap((m) => m.sensitive_areas)]).sort();
     obligations.push({ scope: { kind: 'phase', number: phase.number }, tier, criteria, kinds: [...KIND_INVENTORY[tier]], sensitive_areas: areas });
   }
+  // 5. Retrofit (D6 §8; K11; B10, B11): the conformance stage is phase 1's
+  // one stage of an adopted project, with no tasks, implementing no defect;
+  // phase 1 of an adopted project changes no source (no repair before
+  // conformance, E142 item 3); and in scoped mode no stage implements a
+  // requirement still descriptive_unverified until its criteria are
+  // approved (the engine knows a requirement's module through the stages
+  // that implement it: the reading recorded in the slice-32 report).
+  const conformanceStages = plan.stages.filter((s) => s.conformance === true);
+  const misplaced: string[] = [];
+  if (!baseline.adopted) misplaced.push(...conformanceStages.map((s) => `stage ${s.number}: the project is not adopted`));
+  else {
+    if (plan.phase !== 1) misplaced.push(...conformanceStages.map((s) => `stage ${s.number}: phase ${plan.phase} is not the conformance phase`));
+    misplaced.push(...conformanceStages.slice(1).map((s) => `stage ${s.number}: a second conformance stage`));
+    misplaced.push(...conformanceStages.filter((s) => s.tasks.length > 0).map((s) => `stage ${s.number}: a conformance stage has no tasks`));
+    for (const s of conformanceStages) for (const k of s.implements) if (reqs.get(k)?.defect) misplaced.push(`stage ${s.number}:${k}: a defect is delivered by a later phase, never by conformance`);
+    if (plan.phase === 1) misplaced.push(...plan.stages.filter((s) => s.conformance !== true).map((s) => `stage ${s.number}: phase 1 of an adopted project changes no source`));
+  }
+  add('PLAN_CONFORMANCE_MISPLACED', misplaced);
+  add('PLAN_DESCRIPTIVE_MODULE_TOUCHED', plan.stages.flatMap((s) => s.implements.filter((k) => reqs.get(k)?.descriptive_unverified === true).map((k) => `stage ${s.number}:${k}`)));
   add('PLAN_CRITERION_UNVALIDATED', unvalidatedCriteria);
   add('PLAN_AREA_UNVALIDATED', unvalidatedAreas);
   add('PLAN_KIND_MISSING', missingKinds);
@@ -311,6 +333,7 @@ export const PLAN_REASONS = [
   'PLAN_AREA_UNVALIDATED',
   'PLAN_KIND_MISSING',
   'PLAN_DESCRIPTIVE_MODULE_TOUCHED',
+  'PLAN_CONFORMANCE_MISPLACED',
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;

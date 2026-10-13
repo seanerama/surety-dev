@@ -3,6 +3,7 @@
 // Resume. Every status change goes through transitionWork, which checks the
 // table in work-table.ts and writes exactly one work.* event.
 
+import { bindConformanceStage } from '../../adopt/conformance.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
 import { raiseQuestion } from './queue.js';
@@ -367,6 +368,13 @@ export function registerPlan(
         stage.execution_inputs_digest ?? null,
         stage.conformance === true ? 1 : 0,
       );
+    // K11 (B11): a conformance stage has no stage_build at any point; its
+    // lifecycle is its own (adopt/conformance.ts), its source bound to A here.
+    if (stage.conformance === true && publication) {
+      bindConformanceStage(tx, { project: args.project, stage: id, head: args.baseRevision });
+      out.push({ id, number: stage.number, work_item: '' });
+      continue;
+    }
     // D6 §6.4 (B07, B08): a published stage's work waits on the phase's
     // authoring readiness and on the stage-code milestone of each stage it
     // depends on. A fixture's or an Architect integration's plan is as D1

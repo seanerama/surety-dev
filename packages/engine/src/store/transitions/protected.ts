@@ -123,6 +123,10 @@ export interface CaptureArgs {
   rationale: string | null;
   requested: ChangeKind;
   changesRequiredSet: boolean;
+  // D6 §8.3 (B13): the Verifier's adopted tests and the import-boundary
+  // refusals found in its tree (adopted projects).
+  adoptedTests?: unknown[] | null;
+  boundaryErrors?: unknown[];
 }
 
 // A proposal is recorded, captured: nothing is applied (D1 §7.3 step 2,
@@ -137,7 +141,9 @@ export function captureProposal(tx: Tx, args: CaptureArgs, label: Record<string,
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, 'captured', ?)`,
     )
     .run(id, tx.at, args.project, n, args.proposedBy, args.run, args.base, args.tree, args.diffHash, args.rationale, args.requested, args.changesRequiredSet ? 1 : 0);
-  tx.emit('protected.proposed', { project: args.project, proposal: id, run: args.run }, { ...label, proposed_by: args.proposedBy, requested_change_kind: args.requested, tree: args.tree });
+  if (args.adoptedTests !== undefined && args.adoptedTests !== null) tx.db.prepare('UPDATE "protected_proposals" SET "adopted_tests" = ? WHERE "id" = ?').run(JSON.stringify(args.adoptedTests), id);
+  if (args.boundaryErrors !== undefined && args.boundaryErrors.length > 0) tx.db.prepare('UPDATE "protected_proposals" SET "boundary_errors" = ? WHERE "id" = ?').run(JSON.stringify(args.boundaryErrors), id);
+  tx.emit('protected.proposed', { project: args.project, proposal: id, run: args.run }, { ...label, proposed_by: args.proposedBy, requested_change_kind: args.requested, tree: args.tree, ...(args.boundaryErrors && args.boundaryErrors.length > 0 ? { boundary_errors: args.boundaryErrors } : {}) });
   return getProposal(tx, id)!;
 }
 

@@ -22,6 +22,7 @@
 // issued is in flight (D1 §4.5 step 4); an effect on behalf of a run whose
 // lease is closing is refused in the store.
 
+import { type BoundaryError, boundaryErrors } from '../adopt/boundary.js';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -449,7 +450,13 @@ export class Acceptor {
     const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
     const architectureText = parsedArch.parsed.architecture_text;
     const check = checkPlan(b.baseline, { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan });
-    if (check.outcome !== 'passed') return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+    const requests = facts.result?.report?.spec_change_requests ?? [];
+    if (check.outcome !== 'passed') {
+      // Recorded as a refused check, with the requests the result carried
+      // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.
+      await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests });
+      return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+    }
     const content: BundleContent = { modules: parsedArch.parsed.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined || check.roadmap_revision, plan, adrs, architecture_text: architectureText };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
     const obligations = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) });
@@ -466,6 +473,7 @@ export class Acceptor {
         architecture_revision: b.architecture_revision,
         roadmap_revision: b.roadmap_revision,
         versions: { architecture: b.baseline.architecture_version, roadmap: b.baseline.roadmap_version, phase_plan: 1 },
+        ...(requests.length > 0 ? { spec_change_requests: requests } : {}),
       },
     };
   }
@@ -504,10 +512,18 @@ export class Acceptor {
         return 'unreadable';
       }
     };
+    // An adopted project (D6 §8.3; B13): the adopted tests as declared, and
+    // the protected root's import boundary checked against them.
+    const adopted = await this.rt.read<boolean>('project.adopted', { project: facts.project.id });
+    const adoptedTests = report.adopted_tests ?? [];
+    let boundary: BoundaryError[] | null = [];
+    if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, adoptedTests);
     await this.rt.engine('accept.capture_proposal', {
       run,
       base,
       tree,
+      adoptedTests: report.adopted_tests ?? null,
+      boundaryErrors: boundary === null ? [{ file: null, import: null, resolved: null, why: "the proposal's tree under the protected root could not be read, so its import boundary is unknown" }] : boundary,
       diffHash: diffHashOf(diff.changes),
       rationale,
       requested: proposal?.requested_change_kind ?? 'unclassifiable',

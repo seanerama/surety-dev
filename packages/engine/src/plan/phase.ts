@@ -19,6 +19,8 @@
 //   from (`phase_complete`, <plan>, 1) when the roadmap has a next phase.
 // Phase completion establishes nothing about deployment.
 
+import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
+import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
 import { registerExecutions } from '../store/transitions/checks.js';
@@ -88,6 +90,11 @@ function phaseCandidate(tx: Tx, plan: PlanRow, tier: string): CandidateRow | nul
 }
 
 export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
+  // An adopted project (K11; B11): the conformance stage's nomination once
+  // its phase's authoring is ready, and the Alpha barrier before the
+  // change-phase replan.
+  conformanceNominationDue(tx, args);
+  alphaBarrierStep(tx, args.project);
   const plan = openPlan(tx.db, args.project);
   if (!plan) return NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
@@ -103,6 +110,10 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
       .get(plan.id);
     if (open) return NONE;
   }
+  // A conformance stage completes only through its own lifecycle (K11): the
+  // phase waits for it conformed, never for the absence of stage-build work.
+  const unconformed = tx.db.prepare(`SELECT 1 FROM "stages" WHERE "phase_plan" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL AND COALESCE("conformance_state", '') <> 'conformed'`).get(plan.id);
+  if (unconformed) return NONE;
   // The phase scope's checks on this candidate (D6 §5.8): registered once
   // per candidate, plan and generation.
   const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
@@ -162,14 +173,40 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   }
   tx.emit('phase.completion_bound', { project: args.project, phase_plan: plan.id, candidate: candidate.id }, binding);
   tx.emit('baseline.phase_complete', { project: args.project, phase_plan: plan.id }, { phase: plan.phase_number, generation: plan.generation, candidate: candidate.id, evaluation: evaluation.id });
-  // The Architect's re-entry (D6 §5.6), when the roadmap has a next phase.
-  const road = tx.db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { phases: string } | undefined;
-  const phases = parseJson<{ number: number }[]>(road?.phases ?? null) ?? [];
-  if (phases.some((p) => p.number > plan.phase_number)) {
-    observeTrigger(tx, { project: args.project, kind: 'replan', trigger_source: 'phase_complete', trigger_id: plan.id, trigger_generation: 1, subject: { phase_plan: plan.id }, chain: 0 }, {});
+  // An adopted project's requirements delivered by the completed phase
+  // are recorded verified (D6 §8.1 steps 6, 7; SEAM.md §386).
+  if (isAdopted(tx.db, args.project)) {
+    const delivered = tx.db.prepare(`SELECT "implements" FROM "stages" WHERE "phase_plan" = ? AND "cancelled_at" IS NULL`).all(plan.id) as { implements: string }[];
+    for (const s of delivered) for (const key of parseJson<string[]>(s.implements) ?? []) {
+      tx.db.prepare(`UPDATE "requirements" SET "status" = 'verified' WHERE "project" = ? AND ("key" = ? OR "id" = ?) AND "status" = 'pending'`).run(args.project, key, key);
+    }
   }
+  // The Architect's re-entry (D6 §5.6), when the roadmap has a next phase.
+  // In an adopted project the conformance phase's replan waits behind the
+  // Alpha barrier (B11; alphaBarrierStep).
+  if (!(isAdopted(tx.db, args.project) && plan.phase_number === 1)) replanAfter(tx, args.project, plan.id, plan.phase_number);
   markStale(tx, { project: args.project });
   return { evaluate: null, completed: plan.id };
+}
+
+// The replan of the phase after `plan`, once, when the roadmap has one.
+function replanAfter(tx: Tx, project: string, plan: string, phase: number): void {
+  const road = tx.db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
+  const phases = parseJson<{ number: number }[]>(road?.phases ?? null) ?? [];
+  if (!phases.some((p) => p.number > phase)) return;
+  if (tx.db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'phase_complete' AND "trigger_id" = ?`).get(project, plan)) return;
+  observeTrigger(tx, { project, kind: 'replan', trigger_source: 'phase_complete', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, {});
+}
+
+// The Alpha barrier (D6 §8.1 step 6; B11; D6-R10): the conformance phase of
+// an adopted project complete, the change-phase replan is created only once
+// `alpha_complete` is satisfied for a candidate whose application source is
+// A. Read from durable rows at every tick, so a restart changes nothing.
+function alphaBarrierStep(tx: Tx, project: string): void {
+  const done = conformancePhaseComplete(tx.db, project);
+  if (!done) return;
+  if (!alphaBarrier(tx.db, project).open) return;
+  replanAfter(tx, project, done.plan, done.phase);
 }
 
 // Whether every phase of the current roadmap has a completed plan (the plan

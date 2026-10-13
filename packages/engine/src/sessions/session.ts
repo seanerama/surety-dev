@@ -24,6 +24,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
 import { assertEdge } from '../store/transitions/lifecycle.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
+import { adoptionOf, raiseConfirmations } from '../adopt/records.js';
 import type { DecisionRow } from '../store/transitions/decisions.js';
 import { intendOperation } from '../store/transitions/journal.js';
 import type { IntentResult } from '../store/transitions/journal.js';
@@ -649,7 +650,13 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
     if (d) decisions.push({ id: d.id, kind: d.kind, batch_key: d.batch_key ?? null });
   };
   if (args.raise.kind === 'idea_accept' || args.raise.kind === 'spec_approval') {
-    raised(raiseQuestion(tx, { project: run.project, kind: args.raise.kind, subjectType: 'run', subjectId: run.id }));
+    const approval = raiseQuestion(tx, { project: run.project, kind: args.raise.kind, subjectType: 'run', subjectId: run.id });
+    // In an adopted project, one requirement_confirm per produced
+    // requirement in the same batch (D6 §8.1 step 2; B10).
+    const confirms = args.raise.kind === 'spec_approval' ? raiseConfirmations(tx, { project: run.project, run: run.id, approval }) : [];
+    if (approval && confirms.length > 0) approval.batch_key = confirms[0]!.batch_key ?? null;
+    raised(approval);
+    for (const c of confirms) raised(c);
   } else if (args.raise.kind === 'bundle') {
     // The bundle is each decision's identity scope (B02): what it binds is
     // named, never found by the run.
@@ -790,7 +797,15 @@ export function sessionContextFacts(db: Tx['db'], run: string): import('./packag
     transcript: transcriptOf(db, run)?.map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text })) ?? null,
     findings: notes.findings ?? [],
     approved: approvedInputs(db, r.project, r.role),
+    retrofit: retrofitOf(db, r.project),
   };
+}
+
+// D6 §8.2: an adopted project's sessions are in retrofit mode.
+function retrofitOf(db: Tx['db'], project: string): NonNullable<import('./package.js').SessionContextFacts['retrofit']> | null {
+  const a = adoptionOf(db, project);
+  if (!a) return null;
+  return { pinned_revision: a.pinned_revision, mode: a.mode, paths: (a.tracked_paths ?? []).filter((p) => !p.startsWith('.surety/')), total: a.tracked_paths_total ?? { unknown: 'not recorded at adoption' } };
 }
 
 function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { name: string; blob: string; what: string }[] {

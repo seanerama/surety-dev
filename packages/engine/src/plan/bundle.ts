@@ -10,6 +10,7 @@
 // A checkpoint invokes none of this; `finalizeIntegration` registers nothing
 // from one (B02).
 
+import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest } from './check.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, Roadmap } from './schemas.js';
@@ -116,8 +117,17 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   }
   const blocked = new Map((representation?.requirements ?? []).map((r) => [r.key, r.blocked_by_questions]));
   const requirements = (
-    db.prepare('SELECT "key", "criteria", "sensitive_areas", "withdrawn_at" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(args.project) as { key: string; criteria: string | null; sensitive_areas: string; withdrawn_at: string | null }[]
+    db.prepare('SELECT "key", "criteria", "sensitive_areas", "withdrawn_at", "defect", "status" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(args.project) as {
+      key: string;
+      criteria: string | null;
+      sensitive_areas: string;
+      withdrawn_at: string | null;
+      defect: number;
+      status: string;
+    }[]
   ).map((r) => ({
+    defect: r.defect === 1,
+    descriptive_unverified: r.status === 'descriptive_unverified',
     key: r.key,
     criteria: r.criteria === null ? [] : (JSON.parse(r.criteria) as string[]),
     sensitive_areas: JSON.parse(r.sensitive_areas) as string[],
@@ -150,6 +160,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
       project_tier: p.tier,
       completed_phases: completed,
       approved,
+      adopted: (db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption !== null,
     },
     spec_revision: spec?.id ?? null,
     spec_version: spec?.version ?? 0,
@@ -387,6 +398,40 @@ export function checkBundle(facts: BaselineFacts, artifacts: BundleArtifacts): P
 
 export type { AdrFrontMatter };
 
+// A replan's plan the check refused (D6 §5.3; SEAM.md §383): its check is
+// recorded, with no bundle, so the refusal and its reasons are on the plan
+// read; and the requests its result carried are made (D6 §8.3). The run
+// itself fails its acceptance as before.
+export function recordRefusedReplan(tx: Tx, args: { project: string; run: string; phase: number; check: PlanCheckResult; requests: { keys: string[]; text: string }[] }): { plan_check: string; requests: string[] } {
+  const id = tx.newId('pchk_');
+  const c = args.check;
+  tx.db
+    .prepare(
+      `INSERT INTO "plan_checks" ("id", "created_at", "project", "bundle", "plan", "phase_number", "outcome", "reasons", "conformance", "changes_architecture", "changes_adrs", "changes_roadmap",
+         "changes_goals", "roadmap_revision", "needs_spec_change", "routing", "planned_obligations", "obligations", "evidence")
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+    )
+    .run(
+      id,
+      tx.at,
+      args.project,
+      args.phase,
+      c.outcome,
+      JSON.stringify(c.reasons),
+      c.conformance,
+      JSON.stringify(c.changes.changes_architecture),
+      JSON.stringify(c.changes.changes_adrs),
+      JSON.stringify(c.changes.changes_roadmap),
+      c.changes_goals ? 1 : 0,
+      c.roadmap_revision ? 1 : 0,
+      c.needs_spec_change ? 1 : 0,
+      JSON.stringify(c.planned_obligations),
+      JSON.stringify({ run: args.run }),
+    );
+  tx.emit('plan.checked', { project: args.project, plan_check: id, run: args.run }, { phase: args.phase, outcome: c.outcome, reasons: c.reasons.map((r) => r.code), routing: null, run: args.run });
+  return { plan_check: id, requests: requestsFromReplan(tx, { project: args.project, run: args.run, requests: args.requests }) };
+}
+
 // ---- a replan's plan (D6 §5.6, §5.4, §5.5; B03; SEAM.md §352) --------------------------
 
 // What a replan's plan is checked against: the approved baseline as it is,
@@ -432,6 +477,8 @@ export interface ReplanPrepared {
   architecture_revision: string | null;
   roadmap_revision: string | null;
   versions: BundleVersions;
+  // D6 §8.3 (B.7): the requests for criteria a retrofit replan carried.
+  spec_change_requests?: { keys: string[]; text: string }[];
 }
 
 // The replan's commit integrated (its finalizer, store/transitions/
@@ -443,6 +490,7 @@ export interface ReplanPrepared {
 export function finalizeReplan(tx: Tx, args: { project: string; run: string; prepared: ReplanPrepared; integrated: string }): string | null {
   const r = args.prepared;
   if (getBundle(tx.db, r.bundle)) return null;
+  if (r.spec_change_requests && r.spec_change_requests.length > 0) requestsFromReplan(tx, { project: args.project, run: args.run, requests: r.spec_change_requests });
   recordBundle(tx, {
     project: args.project,
     run: args.run,

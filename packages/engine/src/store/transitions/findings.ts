@@ -24,7 +24,7 @@ const BLOCKING = ['critical', 'high'];
 export interface Report {
   findings?: { category: string; severity: string; message: string; scope?: string; sensitive_area?: string; check?: string; criterion?: string }[];
   signoffs?: { scope: string; module?: string }[];
-  dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string }[];
+  dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string; remediation?: string }[];
   severity_changes?: { finding: string; to: string }[];
   applicability?: { finding: string; candidate: string; reason: string; evidence: string }[];
   assessments?: { assessment: string; verdict: 'not_applicable' | 'applicable' }[];
@@ -42,6 +42,10 @@ export interface Report {
   notes?: string;
   // A Spec Writer's proposed change (D6 §4.3): the changed requirements.
   changes?: { key: string; kind: string; reason: string }[];
+  // D6 §8.3, B.7 (B13): a Verifier's adopted tests with their boundary.
+  adopted_tests?: import('../../adopt/boundary.js').AdoptedTest[];
+  // D6 §8.3 (B.7): an Architect's retrofit replan's requests for criteria.
+  spec_change_requests?: { keys: string[]; text: string }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
@@ -207,7 +211,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       if (isObjection(f as FindingRow & { source_role: string | null })) continue;
       const deferLow = d.disposition === 'defer' && f.effective_severity === 'low' && d.linked_issue && d.defer_target;
       if (d.disposition === 'fix' || deferLow) {
-        recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null });
+        recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null, remediation: d.remediation ?? null });
         continue;
       }
       // Beyond a Reviewer's authority (F §6.2): the human owner decides.

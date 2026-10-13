@@ -2,7 +2,7 @@
 // `surety` command. `serve` runs the engine (D1 §1.1); every other command is
 // refused until it exists.
 
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 import { EXIT, serve } from './engine.js';
@@ -48,6 +48,9 @@ if (command === 'qualify-adapter') {
 }
 if (command === 'deploy') {
   await deployCommand(args);
+}
+if (command === 'project') {
+  await projectCommand(args);
 }
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
@@ -435,6 +438,59 @@ async function deployCommand(argv: string[]): Promise<never> {
       );
       process.exit(1);
     }
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
+}
+
+// `surety project adopt <name> --repo <path> --branch <b> --tier <T>
+// [--idea <file>]` (D6 §8.1 step 1, A.8; SEAM.md §377): one POST of
+// /v1/projects/adopt to the engine of $SURETY_HOME. A 2xx answer is printed
+// as one line of JSON, exit 0; any other answer as `<status> <body>` on
+// standard error, exit 1. The idea file's text is sent as the owner's own,
+// never interpolated into a command.
+async function projectCommand(argv: string[]): Promise<never> {
+  const [sub, name, ...rest] = argv;
+  if (sub !== 'adopt') usage('project takes adopt: surety project adopt <name> --repo <path> --branch <b> --tier <T> [--idea <file>]');
+  if (name === undefined || name.startsWith('-')) usage('project adopt needs a name');
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i]!;
+    const value = rest[i + 1];
+    if (!['--repo', '--branch', '--tier', '--idea'].includes(flag) || value === undefined) usage(`unknown or incomplete argument ${flag} for project adopt`);
+    if (flag in flags) usage(`${flag} is given twice`);
+    flags[flag] = value!;
+  }
+  for (const f of ['--repo', '--branch', '--tier']) if (!(f in flags)) usage(`project adopt needs ${f}`);
+  const repo = flags['--repo']!;
+  if (!isAbsolute(repo)) usage('--repo takes an absolute path');
+  const body: Record<string, unknown> = { name, tier: flags['--tier'], dev_repo_path: repo, integration_branch: flags['--branch'] };
+  if (flags['--idea'] !== undefined) {
+    try {
+      body.idea = readFileSync(flags['--idea'], 'utf8');
+    } catch (err) {
+      usage(`--idea ${flags['--idea']} could not be read: ${(err as Error).message}`);
+    }
+  }
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text } = await sendEnv(home, { method: 'POST', path: '/v1/projects/adopt', body }, 300_000);
+    let shown: string;
+    try {
+      shown = JSON.stringify(JSON.parse(text));
+    } catch {
+      shown = text.trim().replace(/\n/g, ' ');
+    }
+    if (status >= 200 && status < 300) {
+      process.stdout.write(`${shown}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${status} ${shown}\n`);
+    process.exit(1);
+  } catch (err) {
     process.stderr.write(
       `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
     );

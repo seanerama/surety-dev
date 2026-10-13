@@ -10,6 +10,8 @@
 // - whether the bytes of each record a candidate's executions name are
 //   whole, so that evidence that is gone is reported missing.
 
+import type { ConformanceFacts } from '../adopt/conformance.js';
+import { projectionDigest } from '../adopt/projection.js';
 import { repoContext } from '../git/exec.js';
 import { isAncestor, listTree, readRefs } from '../git/repo.js';
 import { presentModules } from '../checks/scope.js';
@@ -114,6 +116,27 @@ export interface GateFacts {
   unreadable: { head: boolean; ancestry: boolean; records: string[] };
   // The gate's own reads of its registered refs (D3 §5 X1).
   refs: RefFact[];
+  // An adopted project's application-source projection digests (D6 §8.1
+  // step 5; B11): absent where the project has no conformance stage.
+  conformance?: ConformanceFacts;
+}
+
+// The projection digests a conformance stage's gate compares (B11): of the
+// candidate, of the integration head and of each stage's bound source; null
+// where git could not say (unknown is moved, never equal).
+export async function conformanceFacts(rt: Runtime, project: string, candidate: string): Promise<ConformanceFacts | undefined> {
+  const read = await rt.read<{ repo: string; candidate_revision: string; head: string | null; stages: { id: string; source_revision: string | null }[] } | null>('conformance.facts', { project, candidate });
+  if (!read) return undefined;
+  const ctx = repoContext(read.repo);
+  const source_digests: Record<string, string | null> = {};
+  for (const s of read.stages) source_digests[s.id] = s.source_revision === null ? null : await projectionDigest(ctx, s.source_revision);
+  return {
+    candidate_revision: read.candidate_revision,
+    candidate_digest: await projectionDigest(ctx, read.candidate_revision),
+    head: read.head,
+    head_digest: read.head === null ? null : await projectionDigest(ctx, read.head),
+    source_digests,
+  };
 }
 
 // Read the integration branch's ref and the candidate's nomination ref, and
@@ -185,6 +208,7 @@ export async function gateFacts(rt: Runtime, project: string, candidate: string)
   unreadable.head = headFingerprint === null;
   // A test may hold the evaluation here, its facts read and its
   // transaction not begun (SEAM.md §193).
+  const conformance = await conformanceFacts(rt, project, candidate);
   await pausePoint('gate.facts_read');
-  return { headFingerprint, head, unreadable, refs };
+  return { headFingerprint, head, unreadable, refs, ...(conformance ? { conformance } : {}) };
 }

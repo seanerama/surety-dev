@@ -3,6 +3,7 @@
 // SEAM.md §72): the staleness of evaluations, the delivery of requirements
 // to a candidate, a candidate's ancestry, and the acceptance content hash.
 
+import { conformanceHeldBy } from '../../adopt/conformance.js';
 import { canonical, sha256 } from './common.js';
 import type { Tx } from './tx.js';
 
@@ -406,6 +407,8 @@ export function stagesHeld(db: Db, candidate: CandidateRow): string[] {
     const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
     if (stage && !out.includes(stage)) out.push(stage);
   }
+  // A conformance stage has no work item: its lifecycle holds it (K11).
+  for (const stage of conformanceHeldBy(db, candidate)) if (!out.includes(stage)) out.push(stage);
   return out;
 }
 

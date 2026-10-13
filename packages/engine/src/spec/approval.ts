@@ -18,6 +18,7 @@ import { illegal, notFound } from '../store/transitions/common.js';
 import { markStale } from '../store/transitions/evidence.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { afterChange, applyConfirmations, recordClaims } from '../adopt/records.js';
 
 type Db = Tx['db'];
 
@@ -64,6 +65,8 @@ const BLOCKING_CODES = new Set([
   'criterion_mismatch',
   'area_unknown',
   'areas_missing',
+  // K10 (SEAM.md §380): a claim naming a requirement the specification lacks.
+  'claims_requirement_unknown',
 ]);
 
 // The findings of a parsed specification that block its approval (S1 of
@@ -86,7 +89,9 @@ export function specBlockers(row: SemanticsRow | undefined): string[] {
 }
 
 // The effect of `approve` (D6 §3.4): one transaction.
-export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string }): { spec_revision: string; version: number } {
+// `via`: a Spec Writer session's `spec_approval` (the retrofit
+// confirmations apply), or a specification change's application.
+export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string; via?: 'session' | 'change' }): { spec_revision: string; version: number } {
   const row = latestSemantics(tx.db, args.run);
   if (!row || row.readable !== 1 || !row.representation || !row.semantic_digest) throw illegal('approving a specification with no readable representation', { run: args.run });
   if (specBlockers(row).length > 0) throw new Refusal(409, 'spec_semantics_invalid', 'The specification cannot be approved: its representation is unreadable or incomplete.', 'Correct the specification in a session, save, and approve the next preview.', { run: args.run });
@@ -114,6 +119,11 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   // A key that disappears is withdrawn, never deleted (D6 §4.1).
   const existing = tx.db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL').all(args.project) as { key: string }[];
   for (const e of existing) if (!keys.has(e.key)) tx.db.prepare(`UPDATE "requirements" SET "withdrawn_at" = ?, "status" = 'withdrawn' WHERE "project" = ? AND "key" = ?`).run(tx.at, args.project, e.key);
+  // An adopted project's confirmations (D6 §8.1 step 2; B10), and TPL §12's
+  // claims table (K10).
+  if ((args.via ?? 'session') === 'session') applyConfirmations(tx, { project: args.project, rep: r, blob: row.git_blob });
+  else afterChange(tx, { project: args.project, rep: r });
+  recordClaims(tx, { project: args.project, specRevision: id, rep: r });
   recomputeIndexErrors(tx, args.project);
   // TPL §6's modules, with their sensitive areas (D6 §3.4).
   if (r.modules.length > 0) ensureModules(tx, { project: args.project, modules: r.modules.map((m) => ({ name: m.name, paths: m.paths.filter((p) => p !== ''), sensitive_areas: m.sensitive_areas })) });

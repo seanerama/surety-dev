@@ -9,6 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
+import { inConformancePhase } from '../../adopt/conformance.js';
 import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
 import { configuredAuthority, discoveryHash } from './classification.js';
 import { runningClassifierVersion } from '../../checks/classify.js';
@@ -47,6 +48,7 @@ import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { hostIdentity } from '../../trust/host.js';
 import { specChangeKind } from '../../spec/change.js';
+import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
 type Db = Tx['db'];
@@ -888,7 +890,7 @@ const ALPHA_SCOPE = 'alpha_exception';
 export function recordDisposition(
   tx: Tx,
   f: FindingRow,
-  args: { disposition: 'fix' | 'defer' | 'accept'; authority: 'reviewer' | 'human'; by: string; linked_issue: string | null; defer_target: string | null },
+  args: { disposition: 'fix' | 'defer' | 'accept'; authority: 'reviewer' | 'human'; by: string; linked_issue: string | null; defer_target: string | null; remediation?: string | null },
 ): void {
   // The watermark from the project's one sequence, registrations included
   // (L7; T06), never from the highest result recorded.
@@ -899,7 +901,18 @@ export function recordDisposition(
          "linked_issue" = ?, "defer_target" = ? WHERE "id" = ?`,
     )
     .run(args.disposition, args.authority, args.by, tx.at, n, args.linked_issue, args.defer_target, f.id);
+  // The proposed remediation a `fix` carries (B12; SEAM.md §382).
+  if (args.remediation !== undefined && args.remediation !== null) tx.db.prepare('UPDATE "findings" SET "remediation" = ? WHERE "id" = ?').run(args.remediation, f.id);
   tx.emit('finding.dispositioned', { project: f.project, finding: f.id }, { disposition: args.disposition, authority: args.authority });
+  // In the conformance phase of an adopted project a `fix` records the
+  // unresolved finding and its proposed remediation, and nothing else: no
+  // fix work, no source change before conformance (B12; reading 10; E142
+  // item 3). The failed required check stays failed and the gate unsatisfied
+  // until a protected correction or a specification change.
+  if (args.disposition === 'fix' && inConformancePhase(tx.db, f.project)) {
+    markStale(tx, { project: f.project });
+    return;
+  }
   if (args.disposition === 'fix') {
     registerFixWork(tx, f, args.by);
     // A finding no required acceptance check can verify is routed to the
@@ -1266,6 +1279,9 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   plan_approval: PLAN_APPROVAL,
   // D6 §4.5 (M5 slice 31b): the specification change (spec/change.ts).
   spec_change: specChangeKind(),
+  // D6 §8.1 (M5 slice 32): the adoption (adopt/records.ts).
+  adoption_mode: ADOPTION_MODE,
+  requirement_confirm: REQUIREMENT_CONFIRM,
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1295,6 +1311,8 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
   spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
+  adoption_mode: ADOPTION_MODE_KEYS,
+  requirement_confirm: REQUIREMENT_CONFIRM_KEYS,
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
   abandon_confirm: CONTROL_KEYS,

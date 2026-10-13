@@ -178,6 +178,12 @@ export const EVENT_OWNERS = {
   'spec.change_approved': 'spec/change.ts',
   'spec.change_failed': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
+  // D6 §8 (M5 slice 32): the adoption, the confirmations, the conformance
+  // stage's binding and its integration at publication.
+  'project.adopted': 'adopt/records.ts',
+  'requirement.confirmed': 'adopt/records.ts',
+  'conformance.source_bound': 'adopt/conformance.ts',
+  'stage.conformance_integrated': 'adopt/conformance.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

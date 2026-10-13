@@ -106,6 +106,9 @@ const MAIN_BARRIERS: readonly string[] = [
   // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
   // save and before it enters `closing` and raises its decision.
   'session.close_saved',
+  // SEAM.md §377 (M5 slice 32): an adoption has read its branch's head and
+  // not yet compared it again before the pin and the bootstrap.
+  'adoption.observed',
   // SEAM.md §56: a streamed record's four crash points.
   'stream.before_registration',
   'stream.chunk_durable',
@@ -279,6 +282,10 @@ const mainFaults: MainFault[] = [];
 // fails, as a git read that fails, `times` times.
 type PresenceFault = { point: 'module_presence_read'; project: string; times: number; remaining: number; hit: number };
 const presenceFaults: PresenceFault[] = [];
+// SEAM.md §377: the next adoption cannot read the named signal.
+type SignalFault = { point: 'adoption_signal'; signal: string; times: number; remaining: number; hit: number };
+const signalFaults: SignalFault[] = [];
+const ADOPTION_SIGNALS = ['files', 'bytes', 'commits', 'languages', 'test_files', 'ci_files', 'deploy_files'];
 
 type SeamMessage = { seam: 'barrier'; name: string; state: BarrierState };
 
@@ -822,6 +829,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         tickFaults.length = 0;
         mainFaults.length = 0;
         presenceFaults.length = 0;
+        signalFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
         connectHangs.clear();
@@ -857,6 +865,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           faults: [
             ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...presenceFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...signalFaults.map((f) => ({ point: f.point, signal: f.signal, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...tickFaults.map((f) => ({ ...f })),
             ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
           ],
@@ -1164,6 +1173,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           ? armTickFault(body)
           : isObject(body) && body.point === 'module_presence_read'
           ? armPresenceFault(body)
+          : isObject(body) && body.point === 'adoption_signal'
+          ? armSignalFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
             ? armMainFault(body)
             : await storeOp(OP.armFault, body),
@@ -1529,6 +1540,26 @@ function armPresenceFault(body: Record<string, unknown>): { point: 'module_prese
   }
   presenceFaults.push({ point: 'module_presence_read', project: body.project, times, remaining: times, hit: 0 });
   return { point: 'module_presence_read', project: body.project, times };
+}
+
+function armSignalFault(body: Record<string, unknown>): { point: 'adoption_signal'; signal: string; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => !['point', 'signal', 'times'].includes(k)) || typeof body.signal !== 'string' || !ADOPTION_SIGNALS.includes(body.signal) || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown adoption_signal fault.', `Send {"point":"adoption_signal","signal": one of ${ADOPTION_SIGNALS.join(', ')},"times"?: <n>}.`, { field: 'point' });
+  }
+  signalFaults.push({ point: 'adoption_signal', signal: body.signal, times, remaining: times, hit: 0 });
+  return { point: 'adoption_signal', signal: body.signal, times };
+}
+
+// SEAM.md §377: true where an adoption's read of `signal` is to fail, once
+// per arming. Always false outside harness mode.
+export function seamAdoptionSignalFault(signal: string): boolean {
+  if (!init.harness) return false;
+  const f = signalFaults.find((m) => m.signal === signal && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 // SEAM.md §224: true where a read of the project's module presence is to

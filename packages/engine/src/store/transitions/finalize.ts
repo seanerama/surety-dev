@@ -7,6 +7,7 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { conformanceNominated } from '../../adopt/conformance.js';
 import { illegal } from './common.js';
 import { markStale } from './evidence.js';
 import { type AppliedInputs, type ProposalInputs, finalizeApplied, finalizeProposal } from '../../spec/change.js';
@@ -301,6 +302,8 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
     .prepare('INSERT INTO "lineages" ("id", "created_at", "project", "branch", "started_from_candidate", "open") VALUES (?, ?, ?, ?, ?, 1)')
     .run(tx.newId('lin_'), tx.at, op.project, branch, candidate);
   tx.emit('candidate.nominated', { project: op.project, candidate }, { seq: inputs.seq, revision: inputs.new_oid, nominated_by: inputs.by });
+  // A conformance stage bound at publication is held from here (K11).
+  conformanceNominated(tx, { project: op.project, candidate });
   // The candidate whose lineage this nomination closes is superseded by it
   // (D1 A.3 `superseded_by`, A.6; SEAM.md §192): the one change a later
   // nomination makes to an earlier candidate. Its queued executions are

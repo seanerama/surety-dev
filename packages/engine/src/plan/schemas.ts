@@ -82,7 +82,9 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
   const modules: ModuleMapEntry[] = [];
   const names = new Set<string>();
   for (const [i, m] of o.modules.entries()) {
-    const at = `modules[${i}]`;
+    // A module is named by its name where it has one (E6: the floor from day
+    // one; SEAM.md §381: a dropped classification names the module).
+    const at = isObj(m) && typeof m.name === 'string' && m.name !== '' ? `modules[${i}] (${m.name})` : `modules[${i}]`;
     if (!isObj(m)) return refuse(file, at, 'must be an object');
     const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
     if (cm) return { ok: false, finding: cm };
@@ -300,6 +302,8 @@ export interface AdrFrontMatter {
   key: string;
   status: 'proposed' | 'accepted' | 'superseded';
   supersedes?: string;
+  // D6 §8.1 step 3, §8.2: an ADR reconstructed from adopted code.
+  reconstructed?: boolean;
 }
 
 export const ADR_FILE = /^\.surety\/adrs\/(ADR-[0-9]{3,})\.md$/;
@@ -317,7 +321,7 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
     if (line.trim() === '') continue;
     const m = /^([a-z_]+):\s*(.*)$/.exec(line);
     if (!m) return refuse(file, null, `the front matter line "${line.trim()}" is not a field`);
-    if (!['key', 'status', 'supersedes'].includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
+    if (!['key', 'status', 'supersedes', 'reconstructed'].includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
     fields.set(m[1]!, m[2]!.trim().replace(/^["']|["']$/g, ''));
   }
   const key = fields.get('key');
@@ -328,9 +332,11 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
   if (status === undefined || !ADR_STATUSES.includes(status)) return refuse(file, 'status', status === undefined ? '"status" is missing' : `"${status}" is not proposed, accepted or superseded`);
   const supersedes = fields.get('supersedes');
   if (supersedes !== undefined && !ADR_KEY.test(supersedes)) return refuse(file, 'supersedes', `"${supersedes}" is not an ADR key`);
+  const reconstructed = fields.get('reconstructed');
+  if (reconstructed !== undefined && reconstructed !== 'true' && reconstructed !== 'false') return refuse(file, 'reconstructed', `"${reconstructed}" is not true or false`);
   const body = lines.slice(end + 1).join('\n');
   for (const heading of ['Context', 'Decision', 'Consequences']) {
     if (!new RegExp(`^#{1,3}\\s+${heading}\\b`, 'm').test(body)) return refuse(file, null, `has no ${heading} heading`);
   }
-  return { ok: true, value: { key, status: status as AdrFrontMatter['status'], ...(supersedes !== undefined ? { supersedes } : {}) } };
+  return { ok: true, value: { key, status: status as AdrFrontMatter['status'], ...(supersedes !== undefined ? { supersedes } : {}), ...(reconstructed !== undefined ? { reconstructed: reconstructed === 'true' } : {}) } };
 }

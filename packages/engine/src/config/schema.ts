@@ -71,6 +71,9 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   service_link_tunnel_max_seconds: int(1800, 60, 10_800),
   service_link_tunnels_max: int(16, 1, 128),
   service_link_buffer_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  // D6 A.7 (E140 N4; SEAM.md §377): the size threshold of `adoption_mode`'s
+  // recommendation, never the choice.
+  adoption_full_max_files: int(2000, 100, 100_000),
 };
 
 // A numeric engine key that may not be below another's effective value
@@ -153,6 +156,8 @@ export const ENGINE_KEYS = [
   'service_link_tunnel_max_seconds',
   'service_link_tunnels_max',
   'service_link_buffer_max_bytes',
+  // D6 A.7 (M5 slice 32).
+  'adoption_full_max_files',
 ] as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
@@ -220,6 +225,10 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   plan_approval: 172_800,
   // D6 A.8 (D1 A.8): the specification change, 3 d.
   spec_change: 259_200,
+  // D1 A.8 (M5 slice 32; SEAM.md §§377, 379): the adoption's mode and the
+  // retrofit confirmations, 2 d each.
+  adoption_mode: 172_800,
+  requirement_confirm: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). Project

@@ -5,6 +5,7 @@
 // it, is the store's (store/transitions/findings.ts).
 
 import type { Report } from '../store/transitions/findings.js';
+import { adoptedTestsValid } from '../adopt/boundary.js';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'];
@@ -34,7 +35,13 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   dispositions: (v) =>
     listOf(
       v,
-      (d) => isString(d.finding) && ['fix', 'defer', 'accept'].includes(d.disposition as string) && optString(d.linked_issue) && (d.defer_target === undefined || isTime(d.defer_target)),
+      (d) =>
+        isString(d.finding) &&
+        ['fix', 'defer', 'accept'].includes(d.disposition as string) &&
+        optString(d.linked_issue) &&
+        (d.defer_target === undefined || isTime(d.defer_target)) &&
+        // B12 (SEAM.md §382): the remediation a `fix` proposes.
+        optString(d.remediation),
     ),
   severity_changes: (v) => listOf(v, (c) => isString(c.finding) && SEVERITIES.includes(c.to as string)),
   applicability: (v) => listOf(v, (a) => isString(a.finding) && isString(a.candidate) && isString(a.reason) && isString(a.evidence)),
@@ -70,6 +77,12 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §4.3: a Spec Writer's proposed change, each changed requirement with
   // its kind and reason.
   changes: (v) => listOf(v, (c) => isString(c.key) && isString(c.kind) && isString(c.reason)),
+  // D6 §8.3, B.7 (B13): a Verifier's adopted tests with their dependency
+  // boundary, recorded on its authoring proposal.
+  adopted_tests: (v) => adoptedTestsValid(v),
+  // D6 §8.3 (B.7): an Architect's replan in retrofit asks for criteria of
+  // descriptive requirements its phase touches; each an ordinary request.
+  spec_change_requests: (v) => listOf(v, (r) => Array.isArray(r.keys) && r.keys.every(isString) && isString(r.text) && Object.keys(r).every((k) => k === 'keys' || k === 'text')),
 };
 
 // Not built: objections from any role but the Builder; a Verifier reports a
@@ -86,6 +99,8 @@ const ROLE_ONLY: Record<string, string> = {
   conformance: 'architect',
   notes: 'architect',
   changes: 'spec_writer',
+  adopted_tests: 'verifier',
+  spec_change_requests: 'architect',
 };
 
 // Fields no role's result may carry: no role registers a check execution or
