@@ -408,7 +408,8 @@
       "M424-the-replan-one-shot-and-its-repairs.test.mjs",
       "M424-a-replan-under-a-moving-baseline.test.mjs",
       "M448-the-prospective-bundle.test.mjs",
-      "M449-the-semantic-representation-and-open-questions.test.mjs"
+      "M449-the-semantic-representation-and-open-questions.test.mjs",
+      "M424-a-pending-plan-approval-and-a-moving-head.test.mjs"
     ]
   },
   "sandbox": [

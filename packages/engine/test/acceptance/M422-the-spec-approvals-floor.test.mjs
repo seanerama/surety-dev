@@ -16,6 +16,9 @@
 //     replacing the role's row for that version; `git_blob` the blob after
 //     it, the digest unchanged); a spec change's approval writes its n+1 row
 //     the same way (the driver's ruling, 2026-10-13; SEAM.md §399);
+//     N1 (the slice-34 review): a §11 row with an escaped pipe in a cell is
+//     one row, and approval writes into the one §11, never a second; a
+//     specification with no §11 gains one (SEAM.md §405);
 // (c) a save between preview and answer changing a criterion's text only:
 //     the answer stale (the manifest binds the semantics);
 // (d) a role's attempt; the automated approval: neither approves.
@@ -140,6 +143,32 @@ describe('M422 the spec approval\'s floor', () => {
     assert.equal(rows.length, 1, `one §11 row for version 2 (${JSON.stringify(logRows(text))})`);
     assert.match(rows[0], ENGINE_ROW.change(2, request.seq), 'the engine\'s row naming the change');
     assert.equal(specRevisions(fx.home, p.id)[1].git_blob, gitQuiet(p.repo.path, ['rev-parse', `${head}:${SPEC_PATH}`]), 'git_blob is the blob after the engine\'s commit');
+  });
+
+  test('(b) N1: the role\'s row carrying an escaped pipe is one row, replaced by the engine\'s; one §11 only', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const escaped = SPEC.replace(ROLE_LOG_ROW, '| 1 | 2026-10-12 | First approved version \\| draft one | Sean |\n');
+    assert.notEqual(escaped, SPEC, 'the fixture is live: the role\'s row carries an escaped pipe');
+    const s = await specSaves(fx, p.id, [escaped]);
+    await consume(fx, p.id, s.approval, 'approve');
+    const text = fileAt(p.repo.path, refOid(p.repo.path, p.repo.ref), SPEC_PATH);
+    assert.equal(text.split('## 11. Change log').length - 1, 1, `one §11 heading (${text.slice(text.indexOf('## 10.'))})`);
+    assertEngineRow(text, escaped, 1, ENGINE_ROW.approval(1), 'the escaped row replaced');
+  });
+
+  test('(b) N1: a specification with no §11 gains one §11 holding the engine\'s row; nothing before it changes', async (t) => {
+    const fx = await scriptedEngine(t);
+    const p = await createWithIdea(fx);
+    const noLog = SPEC.slice(0, SPEC.indexOf('## 11. Change log'));
+    const s = await specSaves(fx, p.id, [noLog]);
+    await consume(fx, p.id, s.approval, 'approve');
+    const text = fileAt(p.repo.path, refOid(p.repo.path, p.repo.ref), SPEC_PATH);
+    assert.equal(text.split('## 11. Change log').length - 1, 1, 'one §11 heading, added by the engine');
+    assert.ok(text.startsWith(noLog.trimEnd()), 'everything before it is the saved text');
+    const rows = logRows(text, 1);
+    assert.equal(rows.length, 1, `one row for version 1 (${JSON.stringify(logRows(text))})`);
+    assert.match(rows[0], ENGINE_ROW.approval(1), 'the engine\'s');
   });
 
   test('(c) a save between the preview and the answer, changing a criterion\'s text only: the answer is stale', async (t) => {

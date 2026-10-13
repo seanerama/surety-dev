@@ -189,3 +189,12 @@ export function assertEngineRow(actual, saved, version, pattern, what = 'the spe
   assert.match(rows[0], pattern, `${what}: the row is the engine's`);
   assert.equal(withoutLogRow(actual, version), withoutLogRow(saved, version), `${what}: nothing but that row differs from what was saved`);
 }
+
+// ---- the slice-34 review's rulings (SEAM.md §405) ---------------------------------------------------
+
+// R1 with a second criterion; R1.2 moved to R4 as R4.2 (same text); R1.2
+// renumbered R1.3 within R1 (same text).
+export const R1_2 = Object.freeze({ id: 'R1.2', text: 'Given the numbers 0.5 and 0.25, when `sum(0.5, 0.25)` is called, then it returns 0.75.' });
+export const SPEC_R1_TWO = specText({ requirements: requirementsWith({ R1: { criteria: [...req('R1').criteria, R1_2] } }) });
+export const SPEC_R1_2_MOVED = specText({ requirements: requirementsWith({ R4: { criteria: [...req('R4').criteria, { id: 'R4.2', text: R1_2.text }] } }) });
+export const SPEC_R1_2_RENUMBERED = specText({ requirements: requirementsWith({ R1: { criteria: [...req('R1').criteria, { id: 'R1.3', text: R1_2.text }] } }) });
