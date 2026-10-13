@@ -56,6 +56,7 @@ import {
   specRevisions,
   stagesOfPlan,
   workOf,
+  humanActsOf,
 } from './harness/journey/drive.mjs';
 import { alphaByCommand, endJourney, journeyEngine, toPhaseTwoPublished, toProjectLane } from './harness/journey/project.mjs';
 import { tick } from './harness/runs.mjs';
@@ -145,11 +146,12 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(obligations.filter((o) => o.reason === 'spec_changed').every((o) => o.resolved_at), 'every spec_changed obligation resolved before the end');
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
-    const acts = J.ctx.humanActs.filter((h) => h.at > J.switched.at);
-    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(J.ctx.humanActs)})`);
+    // Counted from the store (objection 074): decisions consumed by a human answer, and the owner's request, after the switch.
+    const acts = humanActsOf(fx.home, J.ctx.project, { sinceSeq: J.switched.seq });
+    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)})`);
     const owned = acts.find((h) => h.kind === 'check_correction_unclassifiable');
     assert.equal(correctionOrigin(fx.home, owned.id), 'check_correction', 'the unclassifiable decision is CR-1\'s check correction');
-    assert.deepEqual([owned.option, owned.status], ['approve', 200], 'answered approve by the owner');
+    assert.equal(owned.option, 'approve', 'answered approve by the owner');
   });
 
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {

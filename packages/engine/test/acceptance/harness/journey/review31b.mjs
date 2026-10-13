@@ -52,6 +52,7 @@ export async function journeyProject(t, { tier = 'T2', policy = {}, onePhase = f
 // asks for one tick. Returns what `done` answers.
 export async function pumpNoIdle(fx, ctx, done, { max = 60, what = 'the expected state', exits = () => 0, answerKinds = ROUTED_KINDS } = {}) {
   ctx.humanActs ??= [];
+  ctx.sinceSeq ??= withStore(fx.home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
   for (let i = 0; i < max; i++) {
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return value;

@@ -26,7 +26,7 @@ import { cgroupsNamed, endEnvironment, realAdapterStarts, unitsOfHome } from '..
 import { qualifyByCommand } from '../deploy/qualify.mjs';
 import { freePort } from '../engine.mjs';
 import { sandboxEngine } from '../sandbox/lane.mjs';
-import { storePath } from '../store.mjs';
+import { storePath, withStore } from '../store.mjs';
 import {
   architectSession,
   authoringReady,
@@ -123,7 +123,8 @@ export async function toProjectLane(fx, ctx) {
   await fx.start();
   const qualification = await waitSelfTest(fx, { notRow: previous });
   ctx.lane = 'project';
-  return { at: new Date().toISOString(), qualification };
+  const seq = withStore(fx.home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
+  return { at: new Date().toISOString(), seq, qualification };
 }
 
 // D6 §1 step 12: the adapter qualified by command in the test's home, then

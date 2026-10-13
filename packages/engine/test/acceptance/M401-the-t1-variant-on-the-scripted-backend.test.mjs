@@ -19,6 +19,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import {
   correctionOrigin,
   alphaDeployed,
+  buildActs,
   alphaReady,
   architectSession,
   candidatesOfProject,
@@ -102,14 +103,16 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     assert.ok(requests.some((r) => r.requested_by === 'policy' && r.request_key?.candidate === J.deployed.id), `the policy requested the deployed candidate (${JSON.stringify(requests.map((r) => [r.requested_by, r.request_key?.candidate]))})`);
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
+    // Counted from the store (objection 074): a refused post on a superseded generation is no act.
+    const acts = buildActs(ctx);
     assert.deepEqual(
-      ctx.humanActs.map((h) => h.kind).sort(),
+      acts.map((h) => h.kind).sort(),
       ['check_correction_unclassifiable', 'check_correction_unclassifiable', 'spec_change', 'spec_change_request'].sort(),
-      `the human acts: the toolchain proposal, CR-1's submission, its approval and its check correction, nothing else (${JSON.stringify(ctx.humanActs)})`,
+      `the human acts: the toolchain proposal, CR-1's submission, its approval and its check correction, nothing else (${JSON.stringify(acts)}; posts ${JSON.stringify(ctx.humanActs)})`,
     );
-    const corrections = ctx.humanActs.filter((h) => h.kind === 'check_correction_unclassifiable');
+    const corrections = acts.filter((h) => h.kind === 'check_correction_unclassifiable');
     assert.deepEqual(corrections.map((h) => correctionOrigin(fx.home, h.id)).sort(), ['check_authoring', 'check_correction'], 'one from phase 1\'s check authoring, one from CR-1\'s check correction');
-    assert.ok(corrections.every((h) => h.option === 'approve' && h.status === 200), 'each answered approve by the owner');
+    assert.ok(corrections.every((h) => h.option === 'approve'), 'each answered approve by the owner');
     assert.ok(planOfPhase(fx.home, ctx.project, 2).some((p) => p.completed_at));
   });
 });
