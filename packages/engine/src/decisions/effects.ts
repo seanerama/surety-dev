@@ -13,6 +13,10 @@ import { gitOk, repoContext } from '../git/exec.js';
 import { checkoutContext } from '../git/integrity.js';
 import { checkoutBaseline, isAncestor, mergeBase, readRef, treeIndexHash } from '../git/repo.js';
 import type { ApplicationFacts as SpecApplicationFacts } from '../spec/change.js';
+import type { ApprovalFacts as SpecApprovalFacts } from '../spec/approval-effect.js';
+import { appendChangeLog } from '../spec/changelog.js';
+import { prepareCommit, treeWith } from '../projects/commands.js';
+import { writeBlob } from '../git/repo.js';
 import { rebaseTree } from '../git/rebase.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
@@ -26,12 +30,14 @@ import { type Runtime, log } from '../runtime.js';
 import type { ApplicationFacts } from '../store/transitions/protected.js';
 import { pausePoint } from '../testing/seam.js';
 
+const SPEC_PATH = '.surety/spec/spec.md';
+
 interface IntentRow {
   id: string;
   project: string;
   decision: string;
   status: 'pending' | 'executing' | 'done' | 'invalidated';
-  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt' | 'alpha_exception' | 'spec_change_application';
+  kind: 'protected_application' | 'policy_widening' | 'oob_stash' | 'oob_adopt' | 'alpha_exception' | 'spec_change_application' | 'spec_approval_application';
   plan: Record<string, unknown>;
   operation: string | null;
 }
@@ -98,6 +104,9 @@ export class Effects {
       case 'spec_change_application':
         await this.applySpecChange(row);
         return;
+      case 'spec_approval_application':
+        await this.applySpecApproval(row);
+        return;
       case 'alpha_exception':
         // A store-only effect: its preconditions read again and the
         // exception written in one transaction (D2 §5 C1).
@@ -124,31 +133,73 @@ export class Effects {
       // The branch is somewhere the engine did not put it: the integrity
       // observation takes it (D1 §7.6); nothing is begun meanwhile.
       if (head !== facts.head) return;
-      let commit: { sha: string; tree: string; content: string } | null = null;
+      // The approved text is the proposal's; the engine's change log row is
+      // appended to it in the one commit the branch moves to (TPL §11; D6
+      // §4.5 "appended"; the coordinator's ruling on question 2): on the
+      // proposal when the head is its ancestor, else on the head with the
+      // proposal rebased.
+      let base: { tree: string; parent: string };
       const ancestor = await isAncestor(ctx, head, facts.revision);
       if (ancestor === null) return void (await refuse('integration_revision_unread'));
-      if (ancestor !== true) {
-        const base = await mergeBase(ctx, head, facts.revision);
-        if (base === null) return void (await refuse('merge_base_unread'));
+      if (ancestor === true) {
+        const tree = (await gitOk(ctx, ['rev-parse', '--verify', '--quiet', `${facts.revision}^{tree}`]))?.trim() ?? null;
+        if (tree === null) return void (await refuse('proposal_unread'));
+        base = { tree, parent: facts.revision };
+      } else {
+        const mb = await mergeBase(ctx, head, facts.revision);
+        if (mb === null) return void (await refuse('merge_base_unread'));
         // The approved representation is the proposal's: a rebase onto a
         // head whose spec files moved since the proposal's base would commit
         // a specification nobody approved (the 31b review's M4).
         const specAt = async (rev: string) => (await gitOk(ctx, ['rev-parse', '--verify', '--quiet', `${rev}:.surety/spec`]))?.trim() ?? null;
-        const [atBase, atHead] = [await specAt(base), await specAt(head)];
+        const [atBase, atHead] = [await specAt(mb), await specAt(head)];
         if (atBase === null || atHead === null) return void (await refuse('spec_files_unread'));
         if (atBase !== atHead) return void (await refuse('spec_files_moved'));
-        const rebased = await rebaseTree(facts.repo, base, facts.revision, head, this.rt.scratch);
+        const rebased = await rebaseTree(facts.repo, mb, facts.revision, head, this.rt.scratch);
         if (rebased === 'unknown') return void (await refuse('rebase_unread'));
         if (rebased.conflict !== null) return void (await refuse(`rebase_conflict:${rebased.conflict}`));
-        const message = messageText({ title: `surety: apply specification change ${facts.request}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
-        const content = commitContent({ tree: rebased.tree, parent: head, message, at: nowIso() });
-        const sha = await commitId(facts.repo, content);
-        if (sha === null) return void (await refuse('commit_unprepared'));
-        commit = { sha, tree: rebased.tree, content };
+        base = { tree: rebased.tree, parent: head };
       }
-      const made = await this.journal.withProject(row.project, () =>
-        this.journal.intend('spec.begin_application', { intent: row.id, head, commit, deadlineSeconds: this.rt.setting('git_deadline') }, commit === null ? 'ref_update' : 'commit_tree'),
-      );
+      const proposed = await gitOk(ctx, ['cat-file', 'blob', `${facts.revision}:${SPEC_PATH}`]);
+      if (proposed === null) return void (await refuse('proposal_unread'));
+      const text = appendChangeLog(proposed, { version: facts.version, date: nowIso().slice(0, 10), change: `Specification change ${facts.seq}`, approved_by: facts.approved_by });
+      const tree = await treeWith(facts.repo, base.tree, { [SPEC_PATH]: text }, this.rt.scratch);
+      const blob = await writeBlob(ctx, text);
+      if (tree === null || blob === null) return void (await refuse('commit_unprepared'));
+      const message = messageText({ title: `surety: apply specification change ${facts.request} as version ${facts.version}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
+      const content = commitContent({ tree, parent: base.parent, message, at: nowIso() });
+      const sha = await commitId(facts.repo, content);
+      if (sha === null) return void (await refuse('commit_unprepared'));
+      const commit = { sha, tree, content, parent: base.parent, blob };
+      const made = await this.journal.withProject(row.project, () => this.journal.intend('spec.begin_application', { intent: row.id, head, commit, deadlineSeconds: this.rt.setting('git_deadline') }, 'commit_tree'));
+      if (made && 'operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));
+    }
+    await this.rt.services?.journal(row.project);
+  }
+
+  // A specification approved (D6 §3.4): TPL §11's change log row appended
+  // to the saved text and committed on the head the decision was answered
+  // at; the branch's move is finalized by the approval itself
+  // (spec/approval-effect.ts).
+  private async applySpecApproval(row: IntentRow): Promise<void> {
+    if (row.status === 'pending') {
+      const refuse = (reason: string) => this.rt.engine('spec.refuse_approval', { intent: row.id, reason });
+      const facts = await this.rt.engine<SpecApprovalFacts | null>('spec.approval_facts', { intent: row.id });
+      if (facts === null || facts.blob === null || facts.head === null) return void (await refuse('specification_unsaved'));
+      const ctx = repoContext(facts.repo);
+      const read = await readRef(ctx, facts.ref);
+      if (read.state !== 'ok' || read.oid === null) return void (await refuse('integration_revision_unread'));
+      // The branch is somewhere the engine did not put it: the integrity
+      // observation takes it (D1 §7.6); nothing is begun meanwhile.
+      if (read.oid !== facts.head) return;
+      const saved = await gitOk(ctx, ['cat-file', 'blob', facts.blob]);
+      if (saved === null) return void (await refuse('specification_unread'));
+      const text = appendChangeLog(saved, { version: facts.version, date: nowIso().slice(0, 10), change: facts.version === 1 ? 'First approved version' : `Approved from Spec Writer session ${facts.run}`, approved_by: facts.approved_by });
+      const message = messageText({ title: `surety: specification version ${facts.version} approved`, trailers: [['Surety-Project', row.project], ['Surety-Decision', facts.decision]] });
+      const commit = await prepareCommit(facts.repo, facts.head, { [SPEC_PATH]: text }, message, this.rt.scratch);
+      const blob = await writeBlob(ctx, text);
+      if (commit === null || blob === null) return void (await refuse('commit_unprepared'));
+      const made = await this.journal.withProject(row.project, () => this.journal.intend('spec.begin_approval', { intent: row.id, head: facts.head, commit, blob, deadlineSeconds: this.rt.setting('git_deadline') }, 'commit_tree'));
       if (made && 'operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));
     }
     await this.rt.services?.journal(row.project);

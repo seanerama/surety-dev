@@ -8,11 +8,11 @@
 // answers any of them (E12): the route is the owner's.
 
 import { Refusal } from '../refusal.js';
-import { type KindSpec, type Subject, consumed, recordApproval } from '../store/transitions/queue.js';
+import { type KindSpec, type Subject, consumed, recordApproval, recordIntent } from '../store/transitions/queue.js';
 import { consumeDecision } from '../store/transitions/decisions.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { approveBundlePart, bundleManifest, bundleOfDecision } from '../plan/bundle.js';
-import { approveSpec, latestSemantics, specBlockers } from '../spec/approval.js';
+import { approveBundlePart, bundleGuard, bundleManifest, bundleOfDecision } from '../plan/bundle.js';
+import { approvedRepresentation, latestSemantics, specBlockers } from '../spec/approval.js';
 import { integrationRef } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
 import { saveNotesOf } from './session.js';
@@ -100,7 +100,7 @@ function specManifest(db: Db, run: string): Record<string, unknown> {
     readable: row ? row.readable === 1 : null,
     // D6-R09 (SEAM.md §384): an adopted project's mode rules, naming each
     // requirement that keeps `approve` blocked.
-    blocking: [...specBlockers(row), ...retrofitBlockers(db, project, run)],
+    blocking: [...specBlockers(row, project === null ? null : approvedRepresentation(db, project)), ...retrofitBlockers(db, project, run)],
     policy_revision: project === null ? null : policyRevision(db, project),
   };
 }
@@ -110,7 +110,7 @@ export const SPEC_APPROVAL: KindSpec = {
     const manifest = specManifest(tx.db, d.subject_id);
     if (manifest.blob === null) return null;
     const row = latestSemantics(tx.db, d.subject_id);
-    const blockers = [...specBlockers(row), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
+    const blockers = [...specBlockers(row, d.project === null ? null : approvedRepresentation(tx.db, d.project)), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
     let findings: { where: string; code: string; why: string }[] = [];
     try {
       findings = row ? (JSON.parse(row.findings) as { where: string; code: string; why: string }[]) : [];
@@ -138,11 +138,16 @@ export const SPEC_APPROVAL: KindSpec = {
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
     if (option !== 'approve') return consumed(d);
-    const made = approveSpec(tx, { project: d.project!, run: d.subject_id, decision: d.id });
-    recordApproval(tx, d, { consequence: `specification version ${made.version} approved`, subjectType: 'spec_revision', subjectId: made.spec_revision });
-    // The answer launches nothing (D1 §10.5): the next tick sees the baseline.
-    return consumed(d);
+    // The effect (D6 §3.4; the coordinator's ruling on question 2): TPL §11's
+    // change log row committed by the engine through the journal, whose
+    // finalizer is the approval (spec/approval-effect.ts). The answer
+    // launches nothing (D1 §10.5).
+    const m = specManifest(tx.db, d.subject_id);
+    const approval = recordApproval(tx, d, { consequence: `specification version ${String(m.spec_version)} approved`, subjectType: 'spec_blob', subjectId: String(m.blob) });
+    return consumed(d, [recordIntent(tx, d, { approval, kind: 'spec_approval_application', plan: { run: d.subject_id } })]);
   },
+  // An effect whose precondition failed: the question is asked again.
+  withdraw: () => true,
 };
 
 // ---- architecture_approval and plan_approval (D6 §3.4, §5.5; B02) ---------------------------
@@ -180,6 +185,9 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       };
     },
     manifest: (tx, d) => bundleManifest(tx.db, d.subject_id, bundleOfDecision(tx.db, d), kind),
+    // A bundle that can no longer publish (D6 §5.5; M448 (d)): marked
+    // stale, and the answer refused `plan_generation_stale`, committed.
+    guard: (tx, d, option) => bundleGuard(tx, d, option),
     reraise: false,
     answer(tx, d, option, note) {
       consumeDecision(tx, d, option, note);

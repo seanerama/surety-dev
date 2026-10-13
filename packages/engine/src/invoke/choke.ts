@@ -10,6 +10,7 @@
 // supervision of the role's callbacks until it exits. No transaction is held
 // across the spawn, a git call or a read of the role's output.
 
+import { loadReplanSpec } from '../plan/replan-package.js';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
@@ -644,6 +645,7 @@ export class Launcher {
         if (!(await writeTurnPackage(this.rt, claim, dir, handle.workspacePath))) return;
       } else {
         const facts = await this.rt.read<ContextFacts | null>('context.facts', { run: claim.run });
+        await loadReplanSpec(facts);
         const paths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
         writeContextPackage(dir, claim, facts, {
           probe: claim.profile === 'probe',

@@ -21,6 +21,7 @@ import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
+import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -58,7 +59,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -199,6 +200,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return finalizeProposal(tx, op, inputs as unknown as ProposalInputs);
     case 'spec_applied':
       return finalizeApplied(tx, op, inputs as unknown as AppliedInputs);
+    // D6 §3.4: spec_approval's change log row integrated; the approval.
+    case 'spec_approved':
+      return finalizeApproved(tx, op, inputs as unknown as ApprovedInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':

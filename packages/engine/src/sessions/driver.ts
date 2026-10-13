@@ -30,6 +30,7 @@ import { pausePoint } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
+import type { SpecRepresentation } from '../spec/semantics.js';
 import { SESSION_PATHS, type SaveFacts, type SaveOutcome, type SessionRole } from './session.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
@@ -372,7 +373,10 @@ export class SessionDriver {
     if (facts.role === 'spec_writer') {
       const text = texts['.surety/spec/spec.md'];
       if (text === undefined) return { blobs, findings: [], products: {} };
-      const r = specFindings(text);
+      // The project's previous save, against which a key renumbered or gone
+      // is named (M421 (c)); read before this save's representation exists.
+      const prev = await this.rt.read<SpecRepresentation | null>('spec.previous_representation', { project: facts.project });
+      const r = specFindings(text, '.surety/spec/spec.md', prev);
       return {
         blobs,
         findings: r.findings,

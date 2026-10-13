@@ -20,6 +20,9 @@ import type { Tx } from '../store/transitions/tx.js';
 import type { SemanticFinding, SpecRepresentation } from './semantics.js';
 import { afterChange, applyConfirmations, isAdopted, recordClaims } from '../adopt/records.js';
 import { canonical } from '../store/transitions/common.js';
+import { blockerOf, specFinding } from '../plan/findings.js';
+import { compareKeys, questionBlockers } from './keys.js';
+import { staleUnpublishable } from '../plan/bundle.js';
 
 type Db = Tx['db'];
 
@@ -68,6 +71,17 @@ const BLOCKING_CODES = new Set([
   'areas_missing',
   // K10 (SEAM.md §380): a claim naming a requirement the specification lacks.
   'claims_requirement_unknown',
+  // Slice 34 (D6 §3.2, B04; M421 (f)): a duplicate or contradictory
+  // representation, and one part of which could not be read (a statement, a
+  // criterion, a question, the module or claims table): what is unread is
+  // unknown, never registered as none.
+  'duplicate_requirement',
+  'duplicate_criterion',
+  'criterion_malformed',
+  'no_statement',
+  'question_malformed',
+  'module_table_invalid',
+  'claims_table_invalid',
 ]);
 
 // The findings of a parsed specification that block its approval (S1 of
@@ -76,17 +90,67 @@ export function blockingFindings(findings: readonly SemanticFinding[]): Semantic
   return findings.filter((f) => BLOCKING_CODES.has(f.code));
 }
 
-export function specBlockers(row: SemanticsRow | undefined): string[] {
-  if (!row) return ['spec_not_saved'];
-  if (row.readable !== 1) return ['spec_semantics_invalid'];
-  let findings: SemanticFinding[] = [];
+// The representation a row holds, or why it cannot be read (never a
+// default: D6 §3.4, M449 (e)).
+export function readRepresentation(row: SemanticsRow | undefined): { rep: SpecRepresentation; findings: SemanticFinding[] } | { cause: string } {
+  if (!row) return { cause: 'the specification was never saved' };
+  let findings: SemanticFinding[];
   try {
     findings = JSON.parse(row.findings) as SemanticFinding[];
+    if (!Array.isArray(findings)) throw new Error('not a list');
   } catch {
-    return ['spec_semantics_invalid'];
+    return { cause: "the save's findings cannot be read" };
   }
-  const blocking = findings.filter((f) => BLOCKING_CODES.has(f.code));
-  return blocking.length > 0 ? ['spec_semantics_invalid'] : [];
+  if (row.readable !== 1) return { cause: findings.map((f) => f.why).join('; ') || 'the specification has neither section 4 nor section 5' };
+  if (row.representation === null || row.semantic_digest === null) return { cause: 'the save recorded no representation' };
+  try {
+    const rep = JSON.parse(row.representation) as SpecRepresentation;
+    if (typeof rep !== 'object' || rep === null || !Array.isArray(rep.requirements) || !Array.isArray(rep.questions)) throw new Error('not a representation');
+    return { rep, findings };
+  } catch {
+    return { cause: 'the saved representation does not parse' };
+  }
+}
+
+// The approved revision's representation, or null when none is approved
+// (or it cannot be read: then nothing can be compared against it).
+export function approvedRepresentation(db: Db, project: string): SpecRepresentation | null {
+  const row = db.prepare('SELECT s."representation" FROM "spec_revisions" v JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."project" = ? ORDER BY v."version" DESC LIMIT 1').get(project) as { representation: string | null } | undefined;
+  if (!row?.representation) return null;
+  try {
+    return JSON.parse(row.representation) as SpecRepresentation;
+  } catch {
+    return null;
+  }
+}
+
+// The representation of the project's last readable save (any session's),
+// against which a save's keys are compared (M421 (c)); null when none.
+export function previousRepresentation(db: Db, project: string): SpecRepresentation | null {
+  const row = db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "project" = ? AND "readable" = 1 AND "representation" IS NOT NULL ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(project) as { representation: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.representation) as SpecRepresentation;
+  } catch {
+    return null;
+  }
+}
+
+// The blockers of `approve` (D6 §3.4; B04; M421 (f), M422 (a), M449 (e)),
+// each `CODE:subject`: `spec_semantics_invalid` first whenever the
+// representation is unreadable, duplicate, contradictory or uncertain, then
+// one per finding that blocks; the open questions of reading 1; a key
+// renumbered against the approved revision (`approved`, when one exists).
+export function specBlockers(row: SemanticsRow | undefined, approved: SpecRepresentation | null = null): string[] {
+  if (!row) return ['spec_not_saved'];
+  const read = readRepresentation(row);
+  if ('cause' in read) return ['spec_semantics_invalid', `SPEC_REPRESENTATION_UNREADABLE:${read.cause}`];
+  const out: string[] = [];
+  const blocking = read.findings.filter((f) => BLOCKING_CODES.has(f.code));
+  if (blocking.length > 0) out.push('spec_semantics_invalid', ...new Set(blocking.map((f) => blockerOf(specFinding(f)))));
+  out.push(...questionBlockers(read.rep));
+  for (const r of compareKeys(approved, read.rep).renumbered) out.push(`spec_keys_renumbered:${r.from}->${r.key}`);
+  return out;
 }
 
 // The effect of `approve` (D6 §3.4): one transaction.
@@ -112,19 +176,30 @@ function alteredKeys(db: Db, prev: string | null, r: SpecRepresentation): Set<st
 
 // `via`: a Spec Writer session's `spec_approval` (the retrofit
 // confirmations apply), or a specification change's application.
-export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string; via?: 'session' | 'change' }): { spec_revision: string; version: number } {
+export function approveSpec(tx: Tx, args: { project: string; run: string; decision: string; via?: 'session' | 'change'; blob?: string }): { spec_revision: string; version: number } {
+  // Once per decision: a finalizer replayed by recovery writes nothing twice.
+  const done = tx.db.prepare('SELECT "id", "version" FROM "spec_revisions" WHERE "project" = ? AND "decision" = ?').get(args.project, args.decision) as { id: string; version: number } | undefined;
+  if (done) return { spec_revision: done.id, version: done.version };
   const row = latestSemantics(tx.db, args.run);
-  if (!row || row.readable !== 1 || !row.representation || !row.semantic_digest) throw illegal('approving a specification with no readable representation', { run: args.run });
-  if (specBlockers(row).length > 0) throw new Refusal(409, 'spec_semantics_invalid', 'The specification cannot be approved: its representation is unreadable or incomplete.', 'Correct the specification in a session, save, and approve the next preview.', { run: args.run });
-  const r = JSON.parse(row.representation) as SpecRepresentation;
+  const read = readRepresentation(row);
+  // Never a default (M449 (e)): what cannot be read is refused, naming why.
+  if ('cause' in read) throw new Refusal(409, 'spec_semantics_invalid', `The specification cannot be approved: ${read.cause}.`, 'Correct the specification in a session, save, and approve the next preview.', { run: args.run, cause: read.cause });
+  const blockers = specBlockers(row, approvedRepresentation(tx.db, args.project));
+  if (blockers.length > 0) throw new Refusal(409, 'spec_semantics_invalid', `The specification cannot be approved: ${blockers.join(', ')}.`, 'Correct the specification in a session, save, and approve the next preview.', { run: args.run, blockers });
+  const r = read.rep;
+  const sem = row!;
   const project = tx.db.prepare('SELECT "id", "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; spec_evidence_generation: number } | undefined;
   if (!project) throw notFound('project', args.project);
   const prev = tx.db.prepare('SELECT "id", "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string; version: number } | undefined;
   const version = (prev?.version ?? 0) + 1;
   const id = tx.newId('spec_');
+  // The blob is the approved file as committed with the engine's change log
+  // row (TPL §11; the coordinator's ruling on question 2), when the effect
+  // made that commit; the digest is the saved representation's, which §11
+  // is not part of.
   tx.db
     .prepare('INSERT INTO "spec_revisions" ("id", "created_at", "project", "version", "git_path", "git_blob", "semantic_digest", "semantics", "approved_by", "approved_at", "supersedes", "decision") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tx.at, args.project, version, '.surety/spec/spec.md', row.git_blob, row.semantic_digest, row.id, tx.actor.actor_kind, tx.at, prev?.id ?? null, args.decision);
+    .run(id, tx.at, args.project, version, '.surety/spec/spec.md', args.blob ?? sem.git_blob, sem.semantic_digest, sem.id, tx.actor.actor_kind, tx.at, prev?.id ?? null, args.decision);
   // The requirements with their criteria and text (registerRequirementIndex
   // as built, extended to the representation).
   ensureRequirements(tx, { project: args.project, keys: r.requirements.map((q) => q.key), texts: Object.fromEntries(r.requirements.map((q) => [q.key, q.statement])) });
@@ -150,7 +225,7 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   for (const e of existing) if (!keys.has(e.key)) tx.db.prepare(`UPDATE "requirements" SET "withdrawn_at" = ?, "status" = 'withdrawn' WHERE "project" = ? AND "key" = ?`).run(tx.at, args.project, e.key);
   // An adopted project's confirmations (D6 §8.1 step 2; B10), and TPL §12's
   // claims table (K10).
-  if ((args.via ?? 'session') === 'session') applyConfirmations(tx, { project: args.project, rep: r, blob: row.git_blob });
+  if ((args.via ?? 'session') === 'session') applyConfirmations(tx, { project: args.project, rep: r, blob: sem.git_blob });
   else afterChange(tx, { project: args.project, rep: r, altered: altered ?? new Set(r.requirements.map((q) => q.key)) });
   recordClaims(tx, { project: args.project, specRevision: id, rep: r });
   recomputeIndexErrors(tx, args.project);
@@ -167,8 +242,11 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   }
   const generation = project.spec_evidence_generation + 1;
   tx.db.prepare(`UPDATE "projects" SET "baseline_state" = 'spec_ready', "spec_evidence_generation" = ? WHERE "id" = ?`).run(generation, args.project);
-  tx.emit('baseline.spec_approved', { project: args.project, spec_revision: id }, { version, semantic_digest: row.semantic_digest, requirements: r.requirements.length, spec_evidence_generation: generation, decision: args.decision });
+  tx.emit('baseline.spec_approved', { project: args.project, spec_revision: id }, { version, semantic_digest: sem.semantic_digest, git_blob: args.blob ?? sem.git_blob, requirements: r.requirements.length, spec_evidence_generation: generation, decision: args.decision });
   markStale(tx, { project: args.project });
+  // A proposal checked against the superseded specification can never
+  // publish (D6 §5.5; B02): it is stale now, not at its answer (M448 (d)).
+  staleUnpublishable(tx, args.project, `the approved specification advanced to version ${version}`);
   return { spec_revision: id, version };
 }
 

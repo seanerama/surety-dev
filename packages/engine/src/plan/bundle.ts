@@ -22,6 +22,9 @@ import type { Tx } from '../store/transitions/tx.js';
 import { registerPlan } from '../store/transitions/work.js';
 import { markStale } from '../store/transitions/evidence.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
+import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
+import type { CommandResult } from '../store/transitions/control.js';
+import { getWorkItem, transitionWork } from '../store/transitions/work.js';
 import type { SpecRepresentation } from '../spec/semantics.js';
 
 type Db = Tx['db'];
@@ -163,6 +166,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
       completed_phases: completed,
       approved,
       adopted: (db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption !== null,
+      questions: (representation?.questions ?? []).map((q) => ({ id: q.id, blocks: q.blocks, phase_hint: q.phase_hint })),
     },
     spec_revision: spec?.id ?? null,
     spec_version: spec?.version ?? 0,
@@ -301,21 +305,12 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
   if (b.status !== 'proposed') throw illegal(`publishing a ${b.status} bundle`, { plan_bundle: b.id });
   // An architecture is published only on an approved specification (D6 §3.3).
   if (b.spec_revision === null) throw illegal('publishing an architecture with no approved specification', { plan_bundle: b.id });
-  const p = projectRepoRow(tx, b.project);
-  const head = registryRow(tx, b.project, integrationRef(p.integration_branch));
-  const stale = (why: string): never => {
-    tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'stale', "stale_reason" = ? WHERE "id" = ?`).run(why, b.id);
-    tx.emit('plan.generation_refused', { project: b.project, plan_bundle: b.id }, { phase: b.phase_number, cause: why });
-    throw new Refusal(409, 'plan_generation_stale', `The bundle ${b.id} cannot be published: ${why}.`, 'The proposal is stale, not current; a new Architect session or replan proposes again.', { plan_bundle: b.id, phase: b.phase_number });
-  };
-  if (!head || head.expected_oid !== b.head) stale(`the integration head moved from ${b.head} to ${head?.expected_oid ?? 'none'} since the bundle was checked`);
-  const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string } | undefined;
-  if ((spec?.id ?? null) !== b.spec_revision) stale('the approved specification changed since the bundle was checked');
+  const why = unpublishable(tx.db, b, 'bundle');
+  if (why !== null) {
+    markBundleStale(tx, b, why);
+    throw staleRefusal(b, why);
+  }
   const versions = JSON.parse(b.versions) as BundleVersions;
-  const arch = tx.db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { version: number } | undefined;
-  if ((arch?.version ?? 0) + 1 !== versions.architecture) stale(`architecture version ${versions.architecture} is no longer the next`);
-  const open = tx.db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published'`).get(b.project) as { id: string } | undefined;
-  if (b.phase_number !== null && open) stale(`a plan (${open.id}) was published first`);
   const content = JSON.parse(b.artifacts) as BundleContent;
   const blobs = JSON.parse(b.blobs) as Record<string, string>;
   const approvals = JSON.parse(b.approvals) as Record<string, string>;
@@ -390,6 +385,7 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
   }
   tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'published', "published_at" = ? WHERE "id" = ?`).run(tx.at, b.id);
   markStale(tx, { project: b.project });
+  afterPublication(tx, b.project, planId === null ? null : (content.plan?.phase ?? null), planId);
   return { plan: planId, architecture_revision: archId, roadmap_revision: roadId };
 }
 
@@ -529,10 +525,25 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
     // §5.4; the 31b review's S4): published together, or not at all.
     const c = r.check.changes;
     const baselineChanging = c.changes_architecture.changed || c.changes_adrs.added.length + c.changes_adrs.changed.length + c.changes_adrs.deleted.length > 0 || r.check.roadmap_revision;
-    if (baselineChanging) raiseQuestion(tx, { project: args.project, kind: 'architecture_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
+    if (baselineChanging) {
+      // Its publication allocates the next architecture version (and the
+      // next roadmap version when the roadmap changed): the versions the
+      // decisions bind are the ones publication will write (B02).
+      const v = r.versions;
+      tx.db.prepare('UPDATE "plan_bundles" SET "versions" = ? WHERE "id" = ?').run(JSON.stringify({ ...v, architecture: v.architecture + 1, roadmap: r.content.roadmap_changed ? v.roadmap + 1 : v.roadmap }), r.bundle);
+      raiseQuestion(tx, { project: args.project, kind: 'architecture_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
+    }
     raiseQuestion(tx, { project: args.project, kind: 'plan_approval', subjectType: 'run', subjectId: args.run, scope: r.bundle });
     tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "subject_type" = ? AND "subject_id" = ? AND "scope" = ? AND "status" = ?').run(r.bundle, 'run', args.run, r.bundle, 'open');
     tx.db.prepare('UPDATE "plan_bundles" SET "batch_key" = ? WHERE "id" = ?').run(r.bundle, r.bundle);
+    return null;
+  }
+  // The recheck at publication (D6 §5.5): a baseline that moved since the
+  // main thread's check leaves the proposal stale, with its reason.
+  const recorded = getBundle(tx.db, r.bundle)!;
+  const why = unpublishable(tx.db, recorded, 'plan');
+  if (why !== null) {
+    markBundleStale(tx, recorded, why);
     return null;
   }
   return publishPlan(tx, { bundle: r.bundle, by: 'engine:plan_check', routing: 'registered' });
@@ -549,6 +560,12 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
   const content = JSON.parse(b.artifacts) as BundleContent;
   const plan = content.plan;
   if (!plan) throw illegal('publishing a bundle with no plan as a plan', { plan_bundle: b.id });
+  // The baseline the plan was checked against, compared again (D6 §5.5).
+  const why = unpublishable(tx.db, b, 'plan');
+  if (why !== null) {
+    markBundleStale(tx, b, why);
+    throw staleRefusal(b, why);
+  }
   const arch = tx.db.prepare('SELECT "id" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string } | undefined;
   const road = tx.db.prepare('SELECT "id" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string } | undefined;
   const obligations = b.plan_check ? (tx.db.prepare('SELECT "planned_obligations" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { planned_obligations: string | null }).planned_obligations : null;
@@ -583,5 +600,133 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
   tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'published', "published_at" = ? WHERE "id" = ?`).run(tx.at, b.id);
   tx.emit('baseline.plan_approved', { project: b.project, phase_plan: made.plan.id, plan_bundle: b.id }, { phase: plan.phase, generation: made.plan.generation, approved_by: args.by, routing: args.routing });
   markStale(tx, { project: b.project });
+  afterPublication(tx, b.project, plan.phase, made.plan.id);
   return made.plan.id;
+}
+
+// ---- staleness (D6 §5.5; B02, B08; M448 (d)) ------------------------------------------------
+
+// Why a proposed bundle can no longer publish, or null. `route`: 'bundle'
+// for publishBundle (the architecture with its plan, checked against the
+// head it was checked at and the architecture version it allocates);
+// 'plan' for publishPlan (a plan alone, against the approved revisions it
+// was checked against; a harmless head move is the plan's re-base, B03).
+// `head` false: a moved head is not judged (an answer's guard leaves it to
+// the decision's manifest, which a save after the preview stales, D1 §4.6).
+export function unpublishable(db: Db, b: BundleRow, route: 'bundle' | 'plan', opts: { head?: boolean } = {}): string | null {
+  const spec = db.prepare('SELECT "id", "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string; version: number } | undefined;
+  if ((spec?.id ?? null) !== b.spec_revision) return `the approved specification changed since the bundle was checked (now version ${spec?.version ?? 'none'})`;
+  const versions = JSON.parse(b.versions) as BundleVersions;
+  const arch = db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { version: number } | undefined;
+  const road = db.prepare('SELECT "version" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { version: number } | undefined;
+  if (route === 'bundle') {
+    const p = db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(b.project) as { integration_branch: string };
+    const head = (db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(b.project, integrationRef(p.integration_branch)) as { expected_oid: string } | undefined)?.expected_oid ?? null;
+    if (opts.head !== false && head !== b.head) return `the integration head moved from ${b.head} to ${head ?? 'none'} since the bundle was checked`;
+    if ((arch?.version ?? 0) + 1 !== versions.architecture) return `architecture version ${versions.architecture} is no longer the next`;
+  } else {
+    if ((arch?.version ?? 0) !== versions.architecture) return `the approved architecture is version ${arch?.version ?? 0}, not ${versions.architecture}, which the plan was checked against`;
+    if ((road?.version ?? 0) !== versions.roadmap) return `the approved roadmap is version ${road?.version ?? 0}, not ${versions.roadmap}, which the plan was checked against`;
+  }
+  if (b.phase_number !== null) {
+    const open = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1`).get(b.project) as { id: string } | undefined;
+    if (open) return `a plan (${open.id}) was published first`;
+    const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(b.project) as { done: number };
+    if (b.phase_number !== done + 1) return `phase ${b.phase_number} is not the next phase (${done + 1})`;
+  }
+  return null;
+}
+
+// The route a proposed bundle is published by: a plan alone when no
+// architecture approval was raised on it.
+const routeOf = (db: Db, b: BundleRow): 'bundle' | 'plan' =>
+  b.phase_number !== null && db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) === undefined && b.run !== null && db.prepare(`SELECT 1 FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(b.run) === undefined ? 'plan' : 'bundle';
+
+function staleRefusal(b: BundleRow, why: string): Refusal {
+  return new Refusal(409, 'plan_generation_stale', `The bundle ${b.id} cannot be published: ${why}.`, 'The proposal is stale, not current; a new Architect session or replan proposes again.', { plan_bundle: b.id, phase: b.phase_number, cause: why });
+}
+
+// The proposal stale with its reason, once; its open decisions invalidated.
+export function markBundleStale(tx: Tx, b: BundleRow, why: string): void {
+  if (b.status !== 'proposed') return;
+  tx.db.prepare(`UPDATE "plan_bundles" SET "status" = 'stale', "stale_reason" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(why, b.id);
+  tx.emit('plan.generation_refused', { project: b.project, plan_bundle: b.id }, { phase: b.phase_number, cause: why, code: 'plan_generation_stale' });
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "scope" = ? AND "kind" IN ('architecture_approval', 'plan_approval') AND "status" = 'open'`).all(b.id) as DecisionRow[];
+  for (const d of open) invalidateDecision(tx, d, `plan_generation_stale: ${why}`);
+}
+
+// Every proposed bundle of the project that can no longer publish, stale
+// (called by a specification's approval and after each publication).
+export function staleUnpublishable(tx: Tx, project: string, cause: string): void {
+  const rows = tx.db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed'`).all(project) as BundleRow[];
+  for (const b of rows) {
+    const why = unpublishable(tx.db, b, routeOf(tx.db, b));
+    if (why !== null) markBundleStale(tx, b, `${cause}: ${why}`);
+  }
+}
+
+// The answer to a bundle's decision (KindSpec.guard): a bundle that is no
+// longer proposed refuses every answer; one that can no longer publish is
+// marked stale and refuses `approve`; both as a committed 409
+// `plan_generation_stale`.
+export function bundleGuard(tx: Tx, d: DecisionRow, option: string): CommandResult | null {
+  const b = bundleOfDecision(tx.db, d);
+  if (!b || b.status === 'published') return null;
+  if (b.status === 'proposed') {
+    if (option !== 'approve') return null;
+    const why = unpublishable(tx.db, b, routeOf(tx.db, b), { head: false });
+    if (why === null) return null;
+    markBundleStale(tx, b, why);
+    return { status: 409, body: staleRefusal(b, why).body() };
+  }
+  const row = tx.db.prepare('SELECT "stale_reason" FROM "plan_bundles" WHERE "id" = ?').get(b.id) as { stale_reason: string | null };
+  return { status: 409, body: staleRefusal(b, row.stale_reason ?? `the bundle is ${b.status}`).body() };
+}
+
+// After a publication: what can no longer publish is stale, and a replan
+// parked for the phase just published is superseded (the coordinator's
+// ruling on slice 34's question 5).
+function afterPublication(tx: Tx, project: string, phase: number | null, plan: string | null): void {
+  staleUnpublishable(tx, project, 'another proposal was published');
+  if (phase === null || plan === null) return;
+  const parked = tx.db.prepare(`SELECT "id", "trigger_source", "trigger_id" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "status" = 'parked'`).all(project) as { id: string; trigger_source: string; trigger_id: string }[];
+  for (const w of parked) {
+    let target: number | null = null;
+    if (w.trigger_source === 'phase_complete') {
+      const p = tx.db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(w.trigger_id) as { phase_number: number } | undefined;
+      target = p ? p.phase_number + 1 : null;
+    }
+    if (target === null) {
+      const c = tx.db
+        .prepare(`SELECT c."phase_number" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? ORDER BY c."created_at" DESC LIMIT 1`)
+        .get(w.id) as { phase_number: number | null } | undefined;
+      target = c?.phase_number ?? null;
+    }
+    if (target !== phase) continue;
+    const item = getWorkItem(tx, w.id)!;
+    transitionWork(tx, item, 'cancelled', { blocker: null }, { cause: 'superseded', phase_plan: plan });
+    const blocker = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
+    for (const d of blocker) invalidateDecision(tx, d, `superseded: the plan of phase ${phase} (${plan}) was published`);
+  }
+}
+
+// Whether answering `decision` with `option` would publish its bundle now
+// (the main thread's read before `plan.before_publication`; M448 (e)).
+export function publicationDue(db: Db, args: { project: string; decision: string; option: unknown }): { bundle: string } | null {
+  if (args.option !== 'approve') return null;
+  const d = db.prepare('SELECT * FROM "decisions" WHERE "id" = ? AND "project" = ?').get(args.decision, args.project) as DecisionRow | undefined;
+  if (!d || d.status !== 'open' || (d.kind !== 'architecture_approval' && d.kind !== 'plan_approval')) return null;
+  const b = bundleOfDecision(db, d);
+  if (!b || b.status !== 'proposed') return null;
+  const approvals = JSON.parse(b.approvals) as Record<string, string>;
+  const needsArchitecture = db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'architecture_approval' AND "scope" = ?`).get(b.id) !== undefined;
+  const needsPlan = b.phase_number !== null;
+  const has = (k: string) => k === d.kind || approvals[k] !== undefined;
+  if ((needsArchitecture && !has('architecture_approval')) || (needsPlan && !has('plan_approval'))) return null;
+  return { bundle: b.id };
+}
+
+// Whether a bundle is published (the read after the answer's transaction).
+export function bundlePublished(db: Db, args: { bundle: string }): boolean {
+  return getBundle(db, args.bundle)?.status === 'published';
 }

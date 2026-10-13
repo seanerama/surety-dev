@@ -25,6 +25,9 @@ export interface BundleBaseline {
   spec_version: number;
   // The approved requirements: key → criteria ids, areas, withdrawn.
   requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean }[];
+  // TPL §10's open questions of the bundle's specification (B04; D6-P07),
+  // each with the keys it blocks and its `(phase n)` hint.
+  questions?: { id: string; blocks: string[]; phase_hint: number | null }[];
   // D6 §8 (K11; B10): the project was adopted (a conformance stage belongs
   // only to its phase 1), and its adoption mode.
   adopted?: boolean;
@@ -178,7 +181,8 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     for (const k of s.implements) {
       const r = reqs.get(k);
       if (!r || r.withdrawn) unknownReq.push(k);
-      else if (r.blocked_by_questions.length > 0) questionOpen.push(k);
+      // Each requirement named with the question that blocks it (`R<n>:Q<k>`).
+      else for (const q of r.blocked_by_questions) questionOpen.push(`${k}:${q}`);
     }
     for (const m of s.modules) if (!moduleNames.has(m)) unknownModule.push(m);
     for (const k of s.adrs) if (!adrKeys.has(k)) unknownAdr.push(k);
@@ -196,6 +200,14 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   add('PLAN_UNKNOWN_STAGE', unknownStage);
   const dup = stageNumbers.filter((n, i) => stageNumbers.indexOf(n) !== i);
   add('PLAN_DUPLICATE_STAGE', dup.map((n) => `stage ${n}`));
+  // A question with no phase hint whose requirement no phase holds blocks
+  // every plan, whatever it implements, until the question is resolved or
+  // the requirement assigned (D6 §5.3 clause 1; D6-P07).
+  const held = new Set(a.roadmap.phases.flatMap((p) => p.requirement_ids));
+  for (const q of baseline.questions ?? []) {
+    if (q.phase_hint !== null) continue;
+    for (const k of q.blocks) if (reqs.has(k) && !reqs.get(k)!.withdrawn && !held.has(k)) questionOpen.push(`${k}:${q.id}`);
+  }
   add('PLAN_QUESTION_OPEN', questionOpen);
   // The roadmap's own references (D6 §3.3, §5.1): every approved requirement
   // in exactly one phase; phase modules in the module map; phase

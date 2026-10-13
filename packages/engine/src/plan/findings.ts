@@ -14,7 +14,8 @@
 // `adr_status_invalid`, `machine_file_invalid`.
 
 import { parseIdentityBlock } from '../spec/identity-block.js';
-import { type SemanticResult, parseSpecification } from '../spec/semantics.js';
+import { type SemanticFinding, type SemanticResult, type SpecRepresentation, parseSpecification } from '../spec/semantics.js';
+import { compareKeys } from '../spec/keys.js';
 import { ADR_FILE, type AdrFrontMatter, MODULES_FILE, type ModuleMap, PLAN_FILE, type PhasePlanFile, ROADMAP_FILE, type Roadmap, parseAdr, parseModuleMap, parsePhasePlan, parseRoadmap } from './schemas.js';
 
 export interface Finding {
@@ -63,39 +64,63 @@ const SPEC_CODES: Record<string, string> = {
   claims_requirement_unknown: 'spec_claims_invalid',
 };
 
-export function specFindings(text: string, path = '.surety/spec/spec.md'): { findings: Finding[]; semantics: SemanticResult } {
+// One finding of the representation as the save answers it (SEAM.md §346).
+export function specFinding(f: SemanticFinding, path = '.surety/spec/spec.md'): Finding {
+  let code = SPEC_CODES[f.code] ?? 'spec_semantics_invalid';
+  const subject: Record<string, unknown> = {};
+  if (f.code === 'index_subsection_mismatch') {
+    // A §4 requirement without a row, or a row without a subsection.
+    code = /no index row/.test(f.why) ? 'spec_requirement_unindexed' : 'spec_row_unmatched';
+    subject.key = f.where;
+  } else if (f.code === 'criterion_mismatch' || f.code === 'criterion_malformed' || f.code === 'duplicate_criterion') {
+    subject.key = f.where;
+    subject.criterion = /\b(R[1-9][0-9]*\.[1-9][0-9]*)\b/.exec(f.why)?.[1] ?? null;
+  } else if (f.code === 'index_invalid') {
+    subject.row = /index row (\d+)/.exec(f.why) ? Number(/index row (\d+)/.exec(f.why)![1]) : 0;
+    const rowKey = /index row \d+ \((R[1-9][0-9]*)\)/.exec(f.why)?.[1];
+    if (rowKey) subject.key = rowKey;
+    const area = /"([a-z_]+)" is not a sensitive area/.exec(f.why)?.[1];
+    if (area) {
+      code = 'spec_area_unknown';
+      subject.area = area;
+    }
+  } else if (f.code === 'claims_requirement_unknown') {
+    subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
+    subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
+  } else if (f.code === 'area_unknown' || f.code === 'areas_missing') {
+    subject.area = valueNamed(f.why);
+    subject.where = f.where;
+  } else if ((f.code === 'header_invalid' || f.code === 'header_missing') && /Tier/.test(f.why)) {
+    // A fourth tier, or none (M421 (d)).
+    code = 'spec_tier_invalid';
+    subject.tier = f.code === 'header_missing' ? null : valueNamed(f.why);
+  } else if (f.where !== 'header' && f.where !== 'index' && f.where !== 'modules' && f.where !== 'questions' && f.where !== 'claims') subject.key = f.where;
+  return { code, path, subject, message: f.why };
+}
+
+// What a blocker names of a finding (`CODE:subject`): the criterion, the
+// key, the area, the row, else where it was found.
+export function blockerOf(f: Finding): string {
+  const s = f.subject;
+  const name = s.criterion ?? s.key ?? s.area ?? (typeof s.row === 'number' && s.row > 0 ? `row ${s.row}` : null) ?? (s.tier !== undefined ? 'Tier' : null) ?? f.path ?? 'spec';
+  return `${f.code}:${String(name)}`;
+}
+
+// `prev`: the representation of the project's previous save, against which
+// a key renumbered or gone is named (D6 §3.2; M421 (c)); neither refuses the
+// save, which is committed as a checkpoint like any other.
+export function specFindings(text: string, path = '.surety/spec/spec.md', prev: SpecRepresentation | null = null): { findings: Finding[]; semantics: SemanticResult } {
   const semantics = parseSpecification(text);
-  const findings: Finding[] = semantics.findings.map((f) => {
-    let code = SPEC_CODES[f.code] ?? 'spec_semantics_invalid';
-    const subject: Record<string, unknown> = {};
-    if (f.code === 'index_subsection_mismatch') {
-      // A §4 requirement without a row, or a row without a subsection.
-      code = /no index row/.test(f.why) ? 'spec_requirement_unindexed' : 'spec_row_unmatched';
-      subject.key = f.where;
-    } else if (f.code === 'criterion_mismatch' || f.code === 'criterion_malformed' || f.code === 'duplicate_criterion') {
-      subject.key = f.where;
-      subject.criterion = /\b(R[1-9][0-9]*\.[1-9][0-9]*)\b/.exec(f.why)?.[1] ?? null;
-    } else if (f.code === 'index_invalid') {
-      subject.row = /index row (\d+)/.exec(f.why) ? Number(/index row (\d+)/.exec(f.why)![1]) : 0;
-      const rowKey = /index row \d+ \((R[1-9][0-9]*)\)/.exec(f.why)?.[1];
-      if (rowKey) subject.key = rowKey;
-      const area = /"([a-z_]+)" is not a sensitive area/.exec(f.why)?.[1];
-      if (area) {
-        code = 'spec_area_unknown';
-        subject.area = area;
-      }
-    } else if (f.code === 'claims_requirement_unknown') {
-      subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
-      subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
-    } else if (f.code === 'area_unknown' || f.code === 'areas_missing') {
-      subject.area = valueNamed(f.why);
-      subject.where = f.where;
-    } else if (f.code === 'header_invalid' && /Tier/.test(f.why)) {
-      code = 'spec_tier_invalid';
-      subject.tier = valueNamed(f.why);
-    } else if (f.where !== 'header' && f.where !== 'index' && f.where !== 'modules' && f.where !== 'questions' && f.where !== 'claims') subject.key = f.where;
-    return { code, path, subject, message: f.why };
-  });
+  const findings: Finding[] = semantics.findings.map((f) => specFinding(f, path));
+  if (semantics.representation !== null) {
+    const keys = compareKeys(prev, semantics.representation);
+    for (const r of keys.renumbered) {
+      findings.push({ code: 'spec_keys_renumbered', path, subject: { key: r.key, from: r.from, kind: r.kind }, message: `${r.from} is now ${r.key}: a key never changes once given; keep ${r.from} and add a new key for anything new` });
+    }
+    for (const k of keys.withdrawn) {
+      findings.push({ code: 'spec_key_withdrawn', path, subject: { key: k }, message: `${k} is no longer in the specification: at approval it is recorded withdrawn, never deleted, and its key is not reused` });
+    }
+  }
   return { findings, semantics };
 }
 

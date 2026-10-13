@@ -1,5 +1,6 @@
 // Read-only queries. Reads never write and never call out of the store.
 
+import { replanFacts } from '../plan/replan-package.js';
 import type { Database } from 'better-sqlite3';
 
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
@@ -102,7 +103,15 @@ export function contextFacts(db: Database, args: { run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   // A session's turn has its own package (sessions/package.ts).
   if (!run || run.work_item === null) return null;
-  const item = db.prepare('SELECT "id", "kind", "subject", "project" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { id: string; kind: string; subject: string; project: string };
+  const item = db.prepare('SELECT "id", "kind", "subject", "project", "trigger_source", "trigger_id", "trigger_generation" FROM "work_items" WHERE "id" = ?').get(run.work_item) as {
+    id: string;
+    kind: string;
+    subject: string;
+    project: string;
+    trigger_source: string | null;
+    trigger_id: string | null;
+    trigger_generation: number | null;
+  };
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
       return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
@@ -300,10 +309,12 @@ export function contextFacts(db: Database, args: { run: string }) {
   const requestId = subjectId('request');
   const changeRequest = requestId === null ? undefined : (db.prepare('SELECT "id", "seq", "spec_revision", "request_text" AS "text", "source" FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(requestId, item.project) as Record<string, unknown> | undefined);
   return {
+    // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
+    replan: item.kind === 'replan' ? replanFacts(db, item) : null,
     change_request: changeRequest ?? null,
     proposal: proposalRow ?? null,
     run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },
-    work_item: item,
+    work_item: { id: item.id, kind: item.kind, subject: item.subject, project: item.project },
     stage: stage ? { number: stage.number, goal: stage.goal, modules: parse<unknown>(stage.modules, []), requirement_ids: parse<unknown>(stage.requirement_ids, []), implements: parse<unknown>(stage.implements, []) } : null,
     requirements,
     adrs,
