@@ -837,7 +837,8 @@
       "project.adopted",
       "requirement.confirmed",
       "conformance.source_bound",
-      "stage.conformance_integrated"
+      "stage.conformance_integrated",
+      "conformance.alpha_barrier_opened"
     ],
     "EngineMode": [
       "restricted",
@@ -6566,6 +6567,9 @@
     },
     "stage.conformance_integrated": {
       "owner": "adopt/conformance.ts"
+    },
+    "conformance.alpha_barrier_opened": {
+      "owner": "plan/phase.ts"
     }
   },
   "config": {
