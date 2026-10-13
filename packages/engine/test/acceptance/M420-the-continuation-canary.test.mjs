@@ -28,8 +28,7 @@ import { installTrustEntry } from './harness/trust.mjs';
 import { acting, hostNamespaces, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { trustEntries } from './harness/trust.mjs';
-import { ADMISSION, domainsOfRun, invocationsOf, pauseAt, reached, release, settling } from './harness/session-lane.mjs';
-import { armBarrier } from './harness/journal.mjs';
+import { domainsOfRun, invocationsOf, pauseAt, reached, settling } from './harness/session-lane.mjs';
 
 const times = (one) => Array.from({ length: 8 }, () => one);
 
@@ -124,15 +123,15 @@ describe('M420 the continuation canary: the review\'s M2, M3 and M6', () => {
     const { fx, standIn, fixtureProject } = await attemptFixture(t);
     obeyingCanaries(fx);
     fx.scripted.canaryScript('continuation', times({ steps: [step.canary('obey')] }));
-    await pauseAt(fx, settling('usage_recorded'));
+    // Held once the first turn's domain terminated, before the second is admitted; the engine stopped there
+    // (its own verified kill) and started again: a restart between the canary's two turns.
+    await pauseAt(fx, settling('terminated'));
     const first = await qualify(fx, scriptedBody(standIn, fixtureProject, { mode: 'session_headless' }));
     await approveAttempt(fx, fixtureProject, first.id);
     await armedCanary(fx, 'containment');
-    await reached(fx, settling('usage_recorded'), 'the canary\'s first turn, settling');
-    // Between the turns: the first settles; the engine dies at the second's admission.
-    await armBarrier(fx.engine, ADMISSION, 'kill');
-    await release(fx, settling('usage_recorded'));
-    await waitFor(() => (fx.engine.isRunning() ? undefined : true), { what: 'the engine to kill itself between the canary\'s turns', timeoutMs: 60_000 });
+    await reached(fx, settling('terminated'), 'the canary\'s first turn, its domain terminated');
+    assert.equal(fx.scripted.log().filter((e) => e.event === 'launch' && e.canary_kind === 'continuation').length, 1, 'the fixture is live: only the first turn has launched');
+    await fx.engine.kill();
     await fx.start();
     const invalidated = await waitAttempt(fx.home, first.id, ['succeeded', 'failed', 'invalidated']).catch(() => attemptOf(fx.home, first.id));
     assert.equal(invalidated?.status, 'invalidated', `the attempt invalidated by the restart (${invalidated?.status})`);
