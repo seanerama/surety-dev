@@ -157,13 +157,29 @@ export function classifyStages(db: Db, plan: string, digests: Map<number, string
 }
 
 // The difference between what a check counted and what the swap would do
-// now, named; null when they agree (the review's S1).
-export function classesDiffer(counted: Record<string, StageClass> | null | undefined, now: Map<string, StageClass>): string | null {
+// now that changes what the replacement holds, named; null when none (the
+// review's S1). A stage counted carried (kept or retained) and no longer
+// carried, or carried now though counted dropped, differs; except a stage
+// carried now that the replacement lists under its number with the same
+// inputs, which the replacement holds either way. A dropped stage counted
+// cancelled and now superseded (or the reverse) is dropped either way.
+export function classesDiffer(counted: Record<string, StageClass> | null | undefined, now: Map<string, StageClass>, listed: Map<string, boolean> = new Map()): string | null {
   if (!counted) return null;
+  const carried = (c: StageClass | undefined) => c === 'kept' || c === 'retained';
   const diffs: string[] = [];
-  for (const [id, cls] of now) if (counted[id] !== cls) diffs.push(`${id} counted ${counted[id] ?? 'absent'}, now ${cls}`);
-  for (const id of Object.keys(counted)) if (!now.has(id)) diffs.push(`${id} counted ${counted[id]}, now not active`);
+  for (const [id, cls] of now) {
+    if (carried(counted[id]) === carried(cls)) continue;
+    if (carried(cls) && listed.get(id) === true) continue;
+    diffs.push(`${id} counted ${counted[id] ?? 'absent'}, now ${cls}`);
+  }
+  for (const id of Object.keys(counted)) if (!now.has(id) && carried(counted[id])) diffs.push(`${id} counted ${counted[id]}, now not active`);
   return diffs.length === 0 ? null : diffs.join('; ');
+}
+
+// Which active stages the replacement lists under their number with the
+// same execution inputs.
+export function listedSame(db: Db, plan: string, digests: Map<number, string | null>): Map<string, boolean> {
+  return new Map(stagesOf(db, plan).map((s) => [s.id, digests.get(s.number) !== undefined && digests.get(s.number) === s.execution_inputs_digest]));
 }
 
 export interface SwapResult {

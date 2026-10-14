@@ -406,6 +406,7 @@ test('M4: an integrated stage whose work is parked is kept, unless it is the tri
   assert.deepEqual([subject.get(s1.id), subject.get(s2.id)], ['superseded', 'kept'], 'the trigger\'s own subject is superseded');
   assert.equal(classesDiffer(Object.fromEntries(plain), plain), null);
   assert.match(classesDiffer(Object.fromEntries(plain), subject), new RegExp(`${s1.id} counted kept, now superseded`));
+  assert.equal(classesDiffer({ [s1.id]: 'cancelled', [s2.id]: 'kept' }, plain, new Map([[s1.id, true]])), null, 'a stage now carried that the replacement lists unchanged is held either way');
 });
 
 test('N3: a published plan whose planned obligations are absent or unreadable is unknown, never complete', async (t) => {

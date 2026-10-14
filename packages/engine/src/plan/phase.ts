@@ -141,7 +141,10 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // phase waits for it conformed, never for the absence of stage-build work.
   const unconformed = active.some((st) => st.conformance === 1 && st.conformance_state !== 'conformed');
   if (unconformed) return NONE;
-  registerExecutions(tx, { project: args.project, candidate, checks: tier === 'T1' ? onceOn(tx.db, candidate.id, set.required) : set.required, trigger });
+  // At the phase's own T1 nomination its scope was registered with the
+  // nomination's: each stage check once per candidate (the review's N1).
+  const atNomination = parseJson<{ registered_at_nomination?: string }>(plan.verification)?.registered_at_nomination === candidate.id;
+  registerExecutions(tx, { project: args.project, candidate, checks: atNomination ? onceOn(tx.db, candidate.id, set.required) : set.required, trigger });
   // Every one of them recorded on this candidate before the gate is read.
   const pending = tx.db
     .prepare(
@@ -378,6 +381,7 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   const conformance = activeStages<{ conformance: number }>(tx.db, plan.id).some((st) => st.conformance === 1);
   const checks = conformance ? set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage')) : set.required;
   registerExecutions(tx, { project: args.project, candidate, checks: onceOn(tx.db, candidate.id, checks), trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
+  if (!conformance) tx.db.prepare('UPDATE "phase_plans" SET "verification" = ? WHERE "id" = ?').run(JSON.stringify({ ...(parseJson<Record<string, unknown>>(plan.verification) ?? {}), registered_at_nomination: candidate.id }), plan.id);
 }
 
 // A protected application re-registers what the new version requires (D3

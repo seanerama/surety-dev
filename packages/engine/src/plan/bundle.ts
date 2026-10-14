@@ -14,7 +14,7 @@ import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest, specChangeRoute } from './check.js';
 import { ADR_FILE, type AdrFrontMatter, type ModuleMap, type PhasePlanFile, type Roadmap } from './schemas.js';
-import { type Replaces, classesDiffer, classifyStages, keptOf, replacementOf, subjectWorkOf } from './replace.js';
+import { type Replaces, classesDiffer, classifyStages, keptOf, listedSame, replacementOf, subjectWorkOf } from './replace.js';
 import { ensureBaselineTexts, ensureModules, moduleIds, requirementIds } from '../store/transitions/baseline.js';
 import { illegal, notFound } from '../store/transitions/common.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
@@ -899,8 +899,9 @@ export function unpublishable(db: Db, b: BundleRow, route: 'bundle' | 'plan', op
       // stage integrated, parked or ended since changes what the swap does.
       const c = JSON.parse(b.artifacts) as BundleContent;
       if (c.plan) {
-        const now = classifyStages(db, replaces.phase_plan, new Map(c.plan.stages.map((st) => [st.number, executionInputsDigest(st)])), subjectWorkOf(replaces));
-        const diff = classesDiffer(replaces.counted, now);
+        const digests = new Map<number, string | null>(c.plan.stages.map((st) => [st.number, executionInputsDigest(st)]));
+        const now = classifyStages(db, replaces.phase_plan, digests, subjectWorkOf(replaces));
+        const diff = classesDiffer(replaces.counted, now, listedSame(db, replaces.phase_plan, digests));
         if (diff !== null) return `${STAGES_CHANGED} ${replaces.generation} of plan ${replaces.phase_plan} changed since the check: ${diff}`;
       }
     } else if (open) return `a plan (${open.id}) was published first`;
