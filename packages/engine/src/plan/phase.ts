@@ -25,7 +25,7 @@ import { parseJson } from '../store/transitions/common.js';
 import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
 import { coverageMissing } from '../checks/scope.js';
 import type { ScopeObligation } from './check.js';
-import { activeStages } from './replace.js';
+import { activeStages, settleReplacements } from './replace.js';
 import { registerExecutions } from '../store/transitions/checks.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
 import { integrationRef, registryRow, projectRepoRow } from '../store/transitions/repo.js';
@@ -98,6 +98,8 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // change-phase replan.
   conformanceNominationDue(tx, args);
   alphaBarrierStep(tx, args.project);
+  // What an early replacement left behind (D6 §5.7; the review's M3, N2).
+  settleReplacements(tx, args.project);
   const plan = openPlan(tx.db, args.project);
   if (!plan) return NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
@@ -139,7 +141,7 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // phase waits for it conformed, never for the absence of stage-build work.
   const unconformed = active.some((st) => st.conformance === 1 && st.conformance_state !== 'conformed');
   if (unconformed) return NONE;
-  registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger });
+  registerExecutions(tx, { project: args.project, candidate, checks: tier === 'T1' ? onceOn(tx.db, candidate.id, set.required) : set.required, trigger });
   // Every one of them recorded on this candidate before the gate is read.
   const pending = tx.db
     .prepare(
@@ -169,16 +171,19 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
       // One phase_verification at a time per candidate; one whose sign-off
       // no longer binds is followed by the next generation, so a stale
       // sign-off is replaced, never waited on.
+      // Keyed by the candidate and the plan generation (its plan row): a new
+      // generation on the same candidate has its own Verifier (the review's M2).
+      const verificationKey = `${candidate.id}:${plan.id}`;
       const last = tx.db
         .prepare(`SELECT "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' AND "trigger_source" = 'phase' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
-        .get(args.project, candidate.id) as { status: string; trigger_generation: number } | undefined;
+        .get(args.project, verificationKey) as { status: string; trigger_generation: number } | undefined;
       // A Verifier who signed nothing is not asked again by the engine.
       const stale = signoffs.length > 0 && last !== undefined && (last.status === 'complete' || last.status === 'cancelled');
       const generation = !last ? 1 : stale ? last.trigger_generation + 1 : last.trigger_generation;
       // Registered once the phase evaluation is recorded, satisfied or not
       // (§5.8: "when the phase checks have run"; the driver's ruling 3): the
       // Verifier reads the evaluation and the phase's findings.
-      observeTrigger(tx, { project: args.project, kind: 'phase_verification', trigger_source: 'phase', trigger_id: candidate.id, trigger_generation: generation, subject: { candidate: candidate.id, phase_plan: plan.id }, chain: 0 }, { plan_generation: plan.generation });
+      observeTrigger(tx, { project: args.project, kind: 'phase_verification', trigger_source: 'phase', trigger_id: verificationKey, trigger_generation: generation, subject: { candidate: candidate.id, phase_plan: plan.id }, chain: 0 }, { plan_generation: plan.generation });
       return NONE;
     }
   }
@@ -275,11 +280,24 @@ export function unplannedRequirements(db: Db, planId: string): string[] {
 // Subjects `stage <n>:<criterion>`, `stage <n>:kind:<k>`, `phase <n>:area:<a>`.
 // A plan with no recorded check (a fixture's) has no planned obligations.
 export function authoringShortfall(db: Db, planId: string, version: string): string[] {
-  const row = db.prepare('SELECT p."project", c."obligations" FROM "phase_plans" p LEFT JOIN "plan_checks" c ON c."id" = p."check" WHERE p."id" = ?').get(planId) as
-    | { project: string; obligations: string | null }
+  const row = db.prepare('SELECT p."project", p."bundle", p."check", c."obligations" FROM "phase_plans" p LEFT JOIN "plan_checks" c ON c."id" = p."check" WHERE p."id" = ?').get(planId) as
+    | { project: string; bundle: string | null; check: string | null; obligations: string | null }
     | undefined;
-  if (!row) return [];
-  const planned = parseJson<ScopeObligation[]>(row.obligations) ?? [];
+  if (!row) return [`plan ${planId}: planned obligations unknown (no such plan)`];
+  // A published plan's planned obligations are its check's; absent or
+  // unreadable they are unknown, never none (the review's N3). A fixture's
+  // plan, published by no check, records none.
+  let planned: ScopeObligation[] = [];
+  if (row.bundle !== null) {
+    let parsed: unknown = null;
+    try {
+      parsed = row.obligations === null ? null : JSON.parse(row.obligations);
+    } catch {
+      parsed = null;
+    }
+    if (!Array.isArray(parsed)) return [`plan ${planId}: planned obligations unknown (${row.check === null ? 'no plan check recorded' : row.obligations === null ? 'absent from its check' : 'unreadable'})`];
+    planned = parsed as ScopeObligation[];
+  }
   const checks = (db.prepare('SELECT * FROM "checks" WHERE "protected_version" = ? AND "required" = 1').all(version) as CheckRow[]).filter((c) => (c.origin ?? 'acceptance') !== 'developer');
   const out: string[] = [];
   for (const o of planned) {
@@ -359,7 +377,7 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   // conformance, as phaseStep registers it; the phase-only checks now.
   const conformance = activeStages<{ conformance: number }>(tx.db, plan.id).some((st) => st.conformance === 1);
   const checks = conformance ? set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage')) : set.required;
-  registerExecutions(tx, { project: args.project, candidate, checks, trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
+  registerExecutions(tx, { project: args.project, candidate, checks: onceOn(tx.db, candidate.id, checks), trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
 }
 
 // A protected application re-registers what the new version requires (D3
@@ -378,4 +396,11 @@ export function registerPhaseAtApplication(tx: Tx, args: { project: string; prop
     const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: args.version, phasePlan: plan.id });
     registerExecutions(tx, { project: args.project, candidate, checks: set.required, trigger: { source: 'protected_application', id: args.proposal, generation: 1 } });
   }
+}
+
+// At T1 each stage check is registered once per candidate (the review's N1):
+// one the nomination already registered there, under this version's row, is
+// the phase's too; a cancelled one is not.
+function onceOn(db: Db, candidate: string, checks: CheckRow[]): CheckRow[] {
+  return checks.filter((c) => db.prepare(`SELECT 1 FROM "check_executions" WHERE "candidate" = ? AND "check" = ? AND "status" <> 'cancelled' LIMIT 1`).get(candidate, c.id) === undefined);
 }

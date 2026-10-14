@@ -40,7 +40,7 @@ import { raiseQuestion } from './queue.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from './work.js';
-import { REPLAN_OPTION } from '../../plan/replace.js';
+import { REPLAN_OPTION, stageInActiveSet } from '../../plan/replace.js';
 
 type Db = Tx['db'];
 
@@ -353,9 +353,11 @@ export function conflictPreview(item: WorkRow, db?: Tx['db']): { manifest: Recor
   if (item.status !== 'awaiting_decision' || blocker?.reason !== 'check_conflict') return null;
   // Answered `replan` (D6 §5.7): the item waits for the replacement.
   if (blocker.replan) return null;
-  // D6 §5.7, A.2: an objection upheld as being against the plan; offered on
-  // every D3 X2 blocker (the Verifier's five options).
-  const replan = db !== undefined;
+  // D6 §5.7, A.2: an objection upheld as being against the plan, on a
+  // stage's own work in the active obligation set; never on a fix item
+  // (the review's M3).
+  const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
+  const replan = db !== undefined && item.kind === 'stage_build' && typeof stage === 'string' && stageInActiveSet(db, stage);
   const findings = blocker.findings ?? [];
   const checks = blocker.checks ?? [];
   return {

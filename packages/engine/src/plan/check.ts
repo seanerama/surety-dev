@@ -44,8 +44,11 @@ export interface BundleBaseline {
   roadmap_version: number;
   head: string;
   project_tier: string;
-  // Phases complete already (their numbers).
+  // Phases complete already and still held by the newest candidate (their
+  // numbers); a completed phase not held is named in `phase_unknown` with
+  // what it lacks (D6 §5.8; the review's N4).
   completed_phases: number[];
+  phase_unknown?: Record<number, string[]>;
   // D6 §5.2, A.7 (F §9.2): the project's `phase_size`; a plan outside it is
   // `uncertain` and routed to the human, never refused. Absent: not judged.
   phase_size?: { min: number; max: number };
@@ -279,7 +282,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     // A `descriptive_unverified` requirement is no obligation of the phase
     // (D6 §8.2, K10; the driver's ruling 7): still held to the roadmap.
     add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k) && reqs.get(k)?.descriptive_unverified !== true));
-    add('PLAN_DEPENDENCY_INCOMPLETE', phase.depends_on.filter((d) => !baseline.completed_phases.includes(d)).map((d) => `phase ${d}`));
+    add('PLAN_DEPENDENCY_INCOMPLETE', phase.depends_on.filter((d) => !baseline.completed_phases.includes(d)).map((d) => (baseline.phase_unknown?.[d] ? `phase ${d} (${baseline.phase_unknown[d]!.join('; ')})` : `phase ${d}`)));
     // A stage may implement only what the roadmap assigns to the phase.
     add('PLAN_MODULE_OUTSIDE_PHASE', plan.stages.flatMap((s) => s.implements.filter((k) => reqs.has(k) && !phase.requirement_ids.includes(k)).map((k) => `stage ${s.number}:${k}`)));
   }

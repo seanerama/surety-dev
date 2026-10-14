@@ -18,9 +18,11 @@
 // is registered. Filing alone triggers nothing.
 
 import { parseJson } from '../store/transitions/common.js';
+import { activeStages as activeStagesOf } from './active.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
+import { raiseQuestion } from '../store/transitions/queue.js';
 
 type Db = Tx['db'];
 
@@ -38,6 +40,9 @@ export interface Replaces extends ReplacementTarget {
   trigger: { source: string; id: string; generation: number } | null;
   evidence: unknown;
   stale: unknown;
+  // What the check counted of the generation's active stages, by id (the
+  // review's S1): compared again at publication.
+  counted?: Record<string, StageClass>;
 }
 
 // The project's open plan: published, active, not complete.
@@ -83,30 +88,82 @@ function workStatus(db: Db, id: string | null): string | null {
   return (db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status ?? null;
 }
 
-// The active stages of a plan generation (D6 §5.7; B08): its own, and those
-// an earlier generation it replaced kept or retained, under their ids and
-// on their own plan rows, none cancelled or superseded.
-export const ACTIVE_STAGES = `WITH RECURSIVE "gen"("id") AS (SELECT ? UNION SELECT p."id" FROM "phase_plans" p JOIN "gen" g ON p."replaced_by" = g."id")
-  SELECT s.* FROM "stages" s JOIN "gen" g ON s."phase_plan" = g."id" WHERE s."cancelled_at" IS NULL`;
-export const activeStages = <T = StageRow>(db: Db, plan: string): T[] => db.prepare(`${ACTIVE_STAGES} ORDER BY s."number"`).all(plan) as T[];
-const stagesOf = (db: Db, plan: string): StageRow[] => activeStages<StageRow>(db, plan);
+export { ACTIVE_STAGES, activeStages } from './active.js';
+const stagesOf = (db: Db, plan: string): StageRow[] => activeStagesOf<StageRow>(db, plan);
 
-// Kept: `integrated` or `verified`, its work neither parked nor waiting on
-// a decision (A.5: integrated → parked closes the stage; a parked stage is
-// superseded, its integration history).
-function isKept(db: Db, s: StageRow): boolean {
+// The work a replacement's trigger is about (D6 §5.7; the review's M4): a
+// stage's work parked or waiting on a decision whose owner answered
+// `replan`. Only that stage, if integrated, is superseded by the swap.
+export function subjectWorkOf(r: { trigger?: { source: string; id: string } | null; evidence?: unknown } | null | undefined): string | null {
+  if (!r?.trigger) return null;
+  if (r.trigger.source !== 'blocker_replan' && r.trigger.source !== 'objection_upheld') return null;
+  const w = (r.evidence as { work_item?: unknown } | null | undefined)?.work_item;
+  return typeof w === 'string' ? w : r.trigger.source === 'blocker_replan' ? r.trigger.id : null;
+}
+
+// Kept: `integrated` or `verified`, whatever its work's state (parked or
+// waiting on a decision included, its open decision standing), unless it is
+// the replan trigger's own subject (the review's M4).
+function isKept(s: StageRow, subjectWork: string | null): boolean {
   if (s.status !== 'integrated' && s.status !== 'verified') return false;
-  const w = workStatus(db, s.work_item);
-  return w !== 'parked' && w !== 'awaiting_decision';
+  return s.work_item === null || s.work_item !== subjectWork;
 }
 
 // The kept stages of a plan, for the check (BundleBaseline.kept): numbers,
 // digests and the requirement keys they implement.
-export function keptOf(db: Db, plan: string): { number: number; digest: string | null; implements: string[] }[] {
+export function keptOf(db: Db, plan: string, subjectWork: string | null = null): { number: number; digest: string | null; implements: string[] }[] {
   const keyOf = (r: string) => (db.prepare('SELECT "key" FROM "requirements" WHERE "id" = ?').get(r) as { key: string } | undefined)?.key ?? r;
   return stagesOf(db, plan)
-    .filter((s) => isKept(db, s))
+    .filter((s) => isKept(s, subjectWork))
     .map((s) => ({ number: s.number, digest: s.execution_inputs_digest, implements: (parseJson<string[]>(s.implements) ?? []).map(keyOf) }));
+}
+
+export type StageClass = 'kept' | 'retained' | 'superseded' | 'cancelled';
+
+// What the swap does with each active stage of a generation, given the new
+// plan's execution-inputs digests by number: kept; retained (building, its
+// run live or due, the digest unchanged, every stage it depends on carried,
+// to a fixpoint); otherwise cancelled (no code and no live run) or
+// superseded. The check counts it, and publication compares it again
+// (the review's S1).
+export function classifyStages(db: Db, plan: string, digests: Map<number, string | null>, subjectWork: string | null): Map<string, StageClass> {
+  const stages = stagesOf(db, plan);
+  const kept = stages.filter((s) => isKept(s, subjectWork));
+  let retained = stages.filter((s) => {
+    if (s.status !== 'building' || isKept(s, subjectWork)) return false;
+    const w = workStatus(db, s.work_item);
+    if (w === null || w === 'parked' || w === 'awaiting_decision' || w === 'cancelled' || w === 'complete') return false;
+    const digest = digests.get(s.number);
+    return digest !== undefined && digest !== null && digest === s.execution_inputs_digest;
+  });
+  for (let grew = true; grew; ) {
+    grew = false;
+    const carried = new Set([...kept, ...retained].map((s) => s.id));
+    const next = retained.filter((s) => (parseJson<string[]>(s.depends_on) ?? []).every((d) => carried.has(d)));
+    if (next.length !== retained.length) {
+      retained = next;
+      grew = true;
+    }
+  }
+  const out = new Map<string, StageClass>();
+  for (const s of kept) out.set(s.id, 'kept');
+  for (const s of retained) out.set(s.id, 'retained');
+  for (const s of stages) {
+    if (out.has(s.id)) continue;
+    const running = RUNNING.includes(workStatus(db, s.work_item) ?? '');
+    out.set(s.id, s.status === 'planned' || (s.status === 'building' && !running) ? 'cancelled' : 'superseded');
+  }
+  return out;
+}
+
+// The difference between what a check counted and what the swap would do
+// now, named; null when they agree (the review's S1).
+export function classesDiffer(counted: Record<string, StageClass> | null | undefined, now: Map<string, StageClass>): string | null {
+  if (!counted) return null;
+  const diffs: string[] = [];
+  for (const [id, cls] of now) if (counted[id] !== cls) diffs.push(`${id} counted ${counted[id] ?? 'absent'}, now ${cls}`);
+  for (const id of Object.keys(counted)) if (!now.has(id)) diffs.push(`${id} counted ${counted[id]}, now not active`);
+  return diffs.length === 0 ? null : diffs.join('; ');
 }
 
 export interface SwapResult {
@@ -121,56 +178,36 @@ export interface SwapResult {
 }
 
 // The swap (B08): the CAS on the named generation, then each stage of the
-// replaced generation kept, retained or superseded. `digests` are the new
-// plan's stages' execution-inputs digests by number. Returns null when the
-// named generation is no longer the active one (the caller refuses
-// `plan_generation_stale`).
-export function swapGeneration(tx: Tx, args: { project: string; replaces: ReplacementTarget; plan: string; generation: number; digests: Map<number, string | null> }): SwapResult | null {
+// replaced generation kept, retained or superseded as classifyStages says.
+// Returns null when the named generation is no longer the active one (the
+// caller refuses `plan_generation_stale`).
+export function swapGeneration(tx: Tx, args: { project: string; replaces: ReplacementTarget; plan: string; generation: number; digests: Map<number, string | null>; subjectWork: string | null }): SwapResult | null {
+  const classes = classifyStages(tx.db, args.replaces.phase_plan, args.digests, args.subjectWork);
   const changed = tx.db
     .prepare(`UPDATE "phase_plans" SET "active" = 0, "status" = 'replaced', "replaced_by" = ? WHERE "id" = ? AND "project" = ? AND "active" = 1 AND "status" = 'published' AND "generation" = ? AND "completed_at" IS NULL`)
     .run(args.plan, args.replaces.phase_plan, args.project, args.replaces.generation).changes;
   if (changed !== 1) return null;
   const stages = stagesOf(tx.db, args.replaces.phase_plan);
-  const kept = stages.filter((s) => isKept(tx.db, s));
-  // Retained: building, its work not idle in a parked or decision state, the
-  // digest unchanged, and every stage it depends on carried under its id;
-  // to a fixpoint, since a dependency superseded changes its identity.
-  let retained = stages.filter((s) => {
-    if (s.status !== 'building' || isKept(tx.db, s)) return false;
-    const w = workStatus(tx.db, s.work_item);
-    if (w === null || w === 'parked' || w === 'awaiting_decision' || w === 'cancelled' || w === 'complete') return false;
-    const digest = args.digests.get(s.number);
-    return digest !== undefined && digest !== null && digest === s.execution_inputs_digest;
-  });
-  for (let grew = true; grew; ) {
-    grew = false;
-    const carried = new Set([...kept, ...retained].map((s) => s.id));
-    const next = retained.filter((s) => (parseJson<string[]>(s.depends_on) ?? []).every((d) => carried.has(d)));
-    if (next.length !== retained.length) {
-      retained = next;
-      grew = true;
-    }
-  }
-  const carriedIds = new Set([...kept, ...retained].map((s) => s.id));
-  const out: SwapResult = { carried: new Map(), kept: kept.map((s) => s.id), retained: retained.map((s) => s.id), cancelled: [], superseded: [] };
-  for (const s of [...kept, ...retained]) out.carried.set(s.number, s.id);
-  // A retained stage's work, if it must be dispatched again, waits on the
-  // new generation's authoring readiness.
-  for (const s of retained) {
-    const w = s.work_item ? getWorkItem(tx, s.work_item) : undefined;
-    if (!w) continue;
-    const deps = (parseJson<{ milestone?: string; phase_plan?: string }[]>(w.depends_on) ?? []).map((m) => (m.milestone === 'authoring_ready' ? { ...m, phase_plan: args.plan } : m));
-    tx.db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), w.id);
-  }
-  // Superseded: a stage with no code and no live run is `cancelled` with its
-  // work; one whose Builder still runs finishes it as history (its status
-  // left to the integration); an integrated one parked or waiting on a
-  // decision keeps its integration as history. Each has `cancelled_at`.
+  const out: SwapResult = { carried: new Map(), kept: [], retained: [], cancelled: [], superseded: [] };
   for (const s of stages) {
-    if (carriedIds.has(s.id)) continue;
-    const running = RUNNING.includes(workStatus(tx.db, s.work_item) ?? '');
-    const unbuilt = s.status === 'planned' || (s.status === 'building' && !running);
-    if (unbuilt) {
+    const cls = classes.get(s.id) ?? 'superseded';
+    if (cls === 'kept' || cls === 'retained') {
+      out.carried.set(s.number, s.id);
+      (cls === 'kept' ? out.kept : out.retained).push(s.id);
+      // Its work follows the active generation's authoring readiness (the
+      // review's S2): a kept stage repaired after the swap is dispatched again.
+      const w = s.work_item ? getWorkItem(tx, s.work_item) : undefined;
+      if (w) {
+        const deps = (parseJson<{ milestone?: string; phase_plan?: string }[]>(w.depends_on) ?? []).map((m) => (m.milestone === 'authoring_ready' ? { ...m, phase_plan: args.plan } : m));
+        tx.db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), w.id);
+      }
+      continue;
+    }
+    // Superseded: a stage with no code and no live run is `cancelled` with
+    // its work; one whose Builder still runs finishes it as history (its
+    // status left to the integration); the trigger's own integrated stage
+    // keeps its integration as history. Each has `cancelled_at`.
+    if (cls === 'cancelled') {
       tx.db.prepare(`UPDATE "stages" SET "status" = 'cancelled', "cancelled_at" = ? WHERE "id" = ?`).run(tx.at, s.id);
       out.cancelled.push(s.id);
     } else {
@@ -249,12 +286,23 @@ export const RUNNING_STATUSES = RUNNING;
 export function replanOffered(db: Db, item: Pick<WorkRow, 'kind' | 'subject' | 'project'>): boolean {
   if (item.kind !== 'stage_build') return false;
   const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
-  if (!stage) return false;
-  const p = db
-    .prepare(`SELECT p."id" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE s."id" = ? AND s."cancelled_at" IS NULL AND p."active" = 1 AND p."status" = 'published' AND p."bundle" IS NOT NULL`)
-    .get(stage) as { id: string } | undefined;
-  if (!p) return false;
+  if (!stage || !stageInActiveSet(db, stage)) return false;
+  const own = db.prepare(`SELECT p."bundle" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE s."id" = ?`).get(stage) as { bundle: string | null } | undefined;
+  if (!own || own.bundle === null) return false;
   return db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(item.project) !== undefined;
+}
+
+// Whether a stage is in its phase's active obligation set (D6 §5.7): not
+// cancelled or superseded, on a plan that is, or was replaced into, the
+// active generation (the review's M1, M3).
+export function stageInActiveSet(db: Db, stage: string): boolean {
+  const s = db.prepare('SELECT "phase_plan", "cancelled_at" FROM "stages" WHERE "id" = ?').get(stage) as { phase_plan: string; cancelled_at: string | null } | undefined;
+  if (!s || s.cancelled_at !== null) return false;
+  let plan = db.prepare('SELECT "active", "status", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(s.phase_plan) as { active: number; status: string; replaced_by: string | null } | undefined;
+  for (let hops = 0; plan && plan.status === 'replaced' && plan.replaced_by && hops < 64; hops++) {
+    plan = db.prepare('SELECT "active", "status", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(plan.replaced_by) as typeof plan;
+  }
+  return plan !== undefined && plan.active === 1 && (plan.status === 'published' || plan.status === 'completed');
 }
 
 export const REPLAN_OPTION = (item: { id: string }) => ({
@@ -279,3 +327,74 @@ export function answerReplan(tx: Tx, item: WorkRow, decision: string, source: 'b
   return replan;
 }
 
+
+// Whether every generation of an early replan's trigger has ended without a
+// publication: refused, parked, cancelled or stale, none still running or
+// awaiting the owner (the review's M3). Unknown is never "published".
+export function replanAbandoned(db: Db, project: string, source: string, id: string): boolean {
+  const items = db.prepare('SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = \'replan\' AND "trigger_source" = ? AND "trigger_id" = ?').all(project, source, id) as { id: string; status: string }[];
+  if (items.length === 0) return false;
+  for (const w of items) {
+    const bundles = db.prepare(`SELECT b."status" FROM "plan_bundles" b JOIN "runs" r ON r."id" = b."run" WHERE r."work_item" = ?`).all(w.id) as { status: string }[];
+    if (bundles.some((b) => b.status === 'published' || b.status === 'proposed')) return false;
+    if (!['complete', 'cancelled', 'parked'].includes(w.status)) return false;
+  }
+  return true;
+}
+
+// Each tick, before dispatch: what an early replacement left behind is
+// settled from durable rows (D6 §5.7; the review's M3 and N2).
+// - A superseded stage's work that is idle (its run ended without
+//   integrating, or it was never run again) is cancelled `superseded`: no
+//   orphan eligible or parked item.
+// - A stage's blocker answered `replan` whose replan never publishes is
+//   raised again for the owner.
+// - A Reviewer's plan-targeted `fix` whose replan never publishes is opened
+//   again to the owner as a proposed disposition.
+export function settleReplacements(tx: Tx, project: string): void {
+  const orphans = tx.db
+    .prepare(
+      `SELECT w."id" FROM "work_items" w JOIN "stages" s ON s."id" = json_extract(w."subject", '$.stage')
+       WHERE w."project" = ? AND w."kind" = 'stage_build' AND s."cancelled_at" IS NOT NULL AND w."status" IN ('eligible', 'held', 'parked', 'awaiting_decision')`,
+    )
+    .all(project) as { id: string }[];
+  for (const o of orphans) {
+    const w = getWorkItem(tx, o.id);
+    if (!w) continue;
+    transitionWork(tx, w, 'cancelled', { blocker: null }, { cause: 'superseded' });
+    tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(w.id);
+    for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[]) {
+      invalidateDecision(tx, d, 'the stage was superseded by an early replacement');
+    }
+  }
+  const waiting = tx.db
+    .prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" IN ('parked', 'awaiting_decision') AND json_extract("blocker", '$.replan') IS NOT NULL`)
+    .all(project) as WorkRow[];
+  for (const w of waiting) {
+    const blocker = parseJson<Record<string, unknown>>(w.blocker) ?? {};
+    const replan = tx.db.prepare('SELECT "trigger_source", "trigger_id" FROM "work_items" WHERE "id" = ?').get(String(blocker.replan)) as { trigger_source: string; trigger_id: string } | undefined;
+    if (replan && !replanAbandoned(tx.db, project, replan.trigger_source, replan.trigger_id)) continue;
+    const { replan: _gone, ...rest } = blocker;
+    void _gone;
+    tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ ...rest, decision: null }), w.id);
+    raiseQuestion(tx, { project, kind: 'blocker', subjectType: 'work_item', subjectId: w.id });
+  }
+  const conflicts = tx.db
+    .prepare(`SELECT DISTINCT "trigger_id" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'contract_conflict'`)
+    .all(project) as { trigger_id: string }[];
+  for (const { trigger_id: finding } of conflicts) {
+    const f = tx.db.prepare(`SELECT "id", "status", "disposition", "proposed_disposition" FROM "findings" WHERE "id" = ? AND "project" = ?`).get(finding, project) as
+      | { id: string; status: string; disposition: string | null; proposed_disposition: string | null }
+      | undefined;
+    if (!f || f.status !== 'dispositioned' || f.disposition !== 'fix') continue;
+    if (!replanAbandoned(tx.db, project, 'contract_conflict', finding)) continue;
+    const ev = tx.db
+      .prepare(`SELECT "trigger_evidence" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'contract_conflict' AND "trigger_id" = ? ORDER BY "trigger_generation" LIMIT 1`)
+      .get(project, finding) as { trigger_evidence: string | null };
+    const by = (parseJson<{ evidence?: { run?: string } }>(ev.trigger_evidence)?.evidence?.run as string | undefined) ?? 'engine';
+    tx.db
+      .prepare(`UPDATE "findings" SET "status" = 'open', "disposition" = NULL, "disposition_authority" = NULL, "disposition_by" = NULL, "disposition_at" = NULL, "disposition_seq" = NULL, "proposed_disposition" = ? WHERE "id" = ?`)
+      .run(JSON.stringify({ disposition: 'fix', linked_issue: null, defer_target: null, run: by }), f.id);
+    raiseQuestion(tx, { project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id });
+  }
+}

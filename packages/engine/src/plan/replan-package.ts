@@ -11,6 +11,7 @@
 // open objections; and, on a repair, the reasons the last proposal was
 // refused.
 
+import { activeStages } from './active.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import type { Tx } from '../store/transitions/tx.js';
 
@@ -87,7 +88,8 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
   if (!p) return null;
   const keyOf = (r: string) => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(project, r, r) as { key: string } | undefined)?.key ?? r;
   const nameOf = (m: string) => (db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(project, m, m) as { name: string } | undefined)?.name ?? m;
-  const stages = (db.prepare('SELECT * FROM "stages" WHERE "phase_plan" = ? ORDER BY "number"').all(p.id) as Record<string, unknown>[]).map((s) => ({
+  // The generation's active stages (D6 §5.7; the review's M1).
+  const stages = activeStages<Record<string, unknown>>(db, p.id).map((s) => ({
     number: s.number as number,
     goal: s.goal as string,
     status: s.status as string,

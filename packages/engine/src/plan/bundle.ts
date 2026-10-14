@@ -14,7 +14,7 @@ import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest, specChangeRoute } from './check.js';
 import { ADR_FILE, type AdrFrontMatter, type ModuleMap, type PhasePlanFile, type Roadmap } from './schemas.js';
-import { type Replaces, keptOf, replacementOf } from './replace.js';
+import { type Replaces, classesDiffer, classifyStages, keptOf, replacementOf, subjectWorkOf } from './replace.js';
 import { ensureBaselineTexts, ensureModules, moduleIds, requirementIds } from '../store/transitions/baseline.js';
 import { illegal, notFound } from '../store/transitions/common.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
@@ -165,7 +165,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   // blocks current effects (the next plan's dependency clause) through the
   // gates that reread"): its completion stays history, and the dependency
   // clause reads it as incomplete.
-  const regressed = regressedPhases(db, args.project);
+  const held = phasesNotHeld(db, args.project);
   const open = (db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as { id: string; phase_number: number; generation: number } | undefined) ?? null;
   const phase = (completed.at(-1) ?? 0) + 1;
   const roadmapChanged = !road || (args.roadmapBlob !== undefined && args.roadmapBlob !== null && args.roadmapBlob !== road.git_blob);
@@ -185,7 +185,8 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
       roadmap_version: versions.roadmap,
       head: args.head,
       project_tier: p.tier,
-      completed_phases: completed.filter((n) => !regressed.includes(n)),
+      completed_phases: completed.filter((n) => !(n in held)),
+      phase_unknown: held,
       approved,
       adopted: (db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption !== null,
       phase_size: projectOptions(db, args.project).phase_size,
@@ -215,19 +216,31 @@ export function approvedAdrs(db: Db, project: string, archBlobs: string): Record
     .reduce<Record<string, string>>((o, a) => ({ ...o, [a.key]: a.text }), {});
 }
 
-// The completed phases whose own scope has a required check failing on the
-// newest candidate: a regression observed. A check not run there is no
-// regression observed, and the completion record stands for it.
-export function regressedPhases(db: Db, project: string): number[] {
+// The completed phases whose completion the newest candidate does not hold
+// now (D6 §5.8; the review's N4): each named with what it lacks, a check
+// failed there (a regression observed) or not passed there (not run,
+// pending or stale: unknown, never "no regression"). With no candidate or
+// no effective version the reading is unknown too.
+export function phasesNotHeld(db: Db, project: string): Record<number, string[]> {
+  const plans = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as { id: string; phase_number: number }[];
+  if (plans.length === 0) return {};
   const newest = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
   const candidate = newest ? getCandidate(db, newest.id) : undefined;
   const effective = effectiveVersion(db, project);
-  if (!candidate || !effective) return [];
-  const out: number[] = [];
-  const plans = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as { id: string; phase_number: number }[];
+  const out: Record<number, string[]> = {};
   for (const plan of plans) {
+    if (!candidate || !effective) {
+      out[plan.phase_number] = [`unknown: ${!candidate ? 'no current candidate' : 'no effective protected version'}`];
+      continue;
+    }
     const set = requiredSet(db, { project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
-    if (set.required.some((c) => checkState(db, project, c, { candidate, effective, environment: null, artifact: null }).state === 'failed')) out.push(plan.phase_number);
+    const lacking: string[] = [];
+    for (const c of set.required) {
+      const state = checkState(db, project, c, { candidate, effective, environment: null, artifact: null }).state;
+      if (state === 'failed') lacking.push(`failed: ${c.key} on ${candidate.id}`);
+      else if (state !== 'passed') lacking.push(`unknown: ${c.key} ${state} on ${candidate.id}`);
+    }
+    if (lacking.length > 0) out[plan.phase_number] = lacking;
   }
   return out;
 }
@@ -390,17 +403,23 @@ export function approveBundlePart(tx: Tx, args: { bundle: string; kind: 'archite
 }
 
 function rejectedReplan(tx: Tx, b: BundleRow, decision: string, note: string | null): string | null {
+  return nextReplanGeneration(tx, b, { rejected: { bundle: b.id, decision, note } });
+}
+
+// The next generation of the trigger of the replan whose run proposed `b`,
+// carrying its evidence and `extra` (a rejection's note, a staleness).
+function nextReplanGeneration(tx: Tx, b: BundleRow, extra: Record<string, unknown>): string | null {
   if (b.run === null) return null;
   const item = tx.db
     .prepare(`SELECT w."id", w."trigger_source", w."trigger_id", w."subject", w."trigger_evidence" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'replan'`)
     .get(b.run) as { id: string; trigger_source: string; trigger_id: string; subject: string; trigger_evidence: string | null } | undefined;
   if (!item) return null;
   const { g } = tx.db.prepare('SELECT MAX("trigger_generation") AS g FROM "work_items" WHERE "project" = ? AND "trigger_source" = ? AND "trigger_id" = ?').get(b.project, item.trigger_source, item.trigger_id) as { g: number };
-  const trigger_evidence = { ...((item.trigger_evidence ? JSON.parse(item.trigger_evidence) : {}) as Record<string, unknown>), rejected: { bundle: b.id, decision, note, work_item: item.id } };
+  const trigger_evidence = { ...((item.trigger_evidence ? JSON.parse(item.trigger_evidence) : {}) as Record<string, unknown>), ...extra, from_work_item: item.id };
   return observeTrigger(
     tx,
     { project: b.project, kind: 'replan', trigger_source: item.trigger_source, trigger_id: item.trigger_id, trigger_generation: g + 1, subject: JSON.parse(item.subject) as Record<string, unknown>, trigger_evidence, chain: 0 },
-    { rejected_bundle: b.id, decision },
+    { from_bundle: b.id },
   ).work_item.id;
 }
 
@@ -439,8 +458,8 @@ export function publishAuthorized(tx: Tx, args: { bundle: string }): { published
   // what changed (plan/rebind.ts): a bound input makes the bundle stale; any
   // other engine commit re-bases it, and the next pass publishes it.
   if (needsArchitecture && headOf(tx.db, b.project) !== boundHead(b)) return { published: false, plan: null, stale: null };
-  if (!needsArchitecture) return { published: true, plan: publishPlan(tx, { bundle: b.id, by: 'human', routing: 'human' }), stale: null };
-  return { published: true, plan: publishBundle(tx, { bundle: b.id, by: 'human' }).plan, stale: null };
+  const made = guarded(tx, b, () => (needsArchitecture ? publishBundle(tx, { bundle: b.id, by: 'human' }).plan : publishPlan(tx, { bundle: b.id, by: 'human', routing: 'human' })));
+  return made.ok ? { published: true, plan: made.value, stale: null } : { published: false, plan: null, stale: made.why };
 }
 
 // The authorized publication (D6 §5.5; B02): once, after the authority
@@ -624,7 +643,7 @@ export interface ReplanBaseline {
   replacement: (Replaces & { phase: number; kept: { number: number; digest: string | null; implements: string[] }[] }) | null;
 }
 
-export function replanBaseline(db: Db, args: { project: string; head: string; work_item?: string }): ReplanBaseline {
+export function replanBaseline(db: Db, args: { project: string; head: string; work_item?: string; digests?: [number, string][] }): ReplanBaseline {
   const facts = bundleBaselineFacts(db, { project: args.project, head: args.head, withPlan: true });
   const arch = db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number } | undefined;
   const road = db.prepare('SELECT "version", "architecture_revision" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number; architecture_revision: string | null } | undefined;
@@ -641,11 +660,11 @@ export function replanBaseline(db: Db, args: { project: string; head: string; wo
     requirement_keys: facts.requirement_keys,
     descriptive_keys: facts.descriptive_keys,
     spec_modules: facts.spec_modules,
-    replacement: replacementFacts(db, args.work_item),
+    replacement: replacementFacts(db, args.work_item, new Map(args.digests ?? [])),
   };
 }
 
-function replacementFacts(db: Db, workItem: string | undefined): ReplanBaseline['replacement'] {
+function replacementFacts(db: Db, workItem: string | undefined, digests: Map<number, string>): ReplanBaseline['replacement'] {
   if (!workItem) return null;
   const item = db.prepare('SELECT "trigger_source", "trigger_id", "trigger_generation", "subject", "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(workItem) as
     | { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string; trigger_evidence: string | null }
@@ -654,7 +673,10 @@ function replacementFacts(db: Db, workItem: string | undefined): ReplanBaseline[
   if (!target) return null;
   const plan = db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(target.phase_plan) as { phase_number: number } | undefined;
   if (!plan) return null;
-  return { ...target, phase: plan.phase_number, kept: keptOf(db, target.phase_plan) };
+  const subject = subjectWorkOf(target);
+  // What the check counts: the kept stages, and what the swap would do with
+  // each active stage given this plan's stages (the review's S1).
+  return { ...target, phase: plan.phase_number, kept: keptOf(db, target.phase_plan, subject), counted: Object.fromEntries(classifyStages(db, target.phase_plan, digests, subject)) };
 }
 
 export interface ReplanPrepared {
@@ -748,7 +770,8 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
     markBundleStale(tx, recorded, why);
     return null;
   }
-  return publishPlan(tx, { bundle: r.bundle, by: 'engine:plan_check', routing: 'registered' });
+  const made = guarded(tx, recorded, () => publishPlan(tx, { bundle: r.bundle, by: 'engine:plan_check', routing: 'registered' }));
+  return made.ok ? made.value : null;
 }
 
 // A bundle that carries a plan and changes nothing of the approved
@@ -809,6 +832,25 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
   return made.plan.id;
 }
 
+// A publication run in a savepoint of the finalizer's transaction: a
+// refusal from inside it (registerPlan's, or a staleness found only there)
+// rolls back what the publication wrote and leaves the bundle stale, named,
+// never a throw out of the finalizer and never a pass the engine retries
+// forever (the review's S1).
+function guarded<T>(tx: Tx, b: BundleRow, fn: () => T): { ok: true; value: T } | { ok: false; why: string } {
+  const events = tx.events.length;
+  try {
+    return { ok: true, value: tx.db.transaction(fn)() };
+  } catch (err) {
+    if (!(err instanceof Refusal)) throw err;
+    tx.events.length = events;
+    const why = `publication refused ${err.code}: ${err.reason}`;
+    const now = getBundle(tx.db, b.id);
+    if (now) markBundleStale(tx, now, why);
+    return { ok: false, why };
+  }
+}
+
 // ---- staleness (D6 §5.5; B02, B08; M448 (d)) ------------------------------------------------
 
 // Why a proposed bundle can no longer publish, or null. `route`: 'bundle'
@@ -853,12 +895,24 @@ export function unpublishable(db: Db, b: BundleRow, route: 'bundle' | 'plan', op
     // be the active one; any other open plan was published first.
     if (replaces) {
       if (!open || open.id !== replaces.phase_plan || open.generation !== replaces.generation) return `generation ${replaces.generation} of plan ${replaces.phase_plan}, which the replacement names, is no longer the active one${open ? ` (${open.id}, generation ${open.generation})` : ''}`;
+      // The stages the check counted, compared again (the review's S1): a
+      // stage integrated, parked or ended since changes what the swap does.
+      const c = JSON.parse(b.artifacts) as BundleContent;
+      if (c.plan) {
+        const now = classifyStages(db, replaces.phase_plan, new Map(c.plan.stages.map((st) => [st.number, executionInputsDigest(st)])), subjectWorkOf(replaces));
+        const diff = classesDiffer(replaces.counted, now);
+        if (diff !== null) return `${STAGES_CHANGED} ${replaces.generation} of plan ${replaces.phase_plan} changed since the check: ${diff}`;
+      }
     } else if (open) return `a plan (${open.id}) was published first`;
     const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(b.project) as { done: number };
     if (b.phase_number !== done + 1) return `phase ${b.phase_number} is not the next phase (${done + 1})`;
   }
   return null;
 }
+
+// The cause a replacement goes stale with when the generation's stages
+// changed since its check: its replan proposes again (the review's S1).
+const STAGES_CHANGED = 'the stages of generation';
 
 // The route a proposed bundle is published by: a plan alone when no
 // architecture approval was raised on it.
@@ -876,6 +930,9 @@ export function markBundleStale(tx: Tx, b: BundleRow, why: string): void {
   tx.emit('plan.generation_refused', { project: b.project, plan_bundle: b.id }, { phase: b.phase_number, cause: why, code: 'plan_generation_stale' });
   const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "scope" = ? AND "kind" IN ('architecture_approval', 'plan_approval') AND "status" = 'open'`).all(b.id) as DecisionRow[];
   for (const d of open) invalidateDecision(tx, d, `plan_generation_stale: ${why}`);
+  // A replacement whose generation's stages moved under it: its replan
+  // proposes again, the next generation of its trigger (the review's S1).
+  if (b.replaces && why.includes(STAGES_CHANGED)) nextReplanGeneration(tx, b, { stale: why });
 }
 
 // Every proposed bundle of the project that can no longer publish, stale

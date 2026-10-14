@@ -390,3 +390,31 @@ test('an early trigger\'s replan names the active generation on its trigger evid
   assert.equal(work(db, again).trigger_generation, 2, 'a repeated trigger takes the next generation');
   assert.equal(replacementOf(db, w).generation, 1);
 });
+
+test('M4: an integrated stage whose work is parked is kept, unless it is the trigger\'s own subject; S1: what the check counted is compared again', async (t) => {
+  const { classifyStages, classesDiffer } = await import(join(dist, 'plan', 'replace.js'));
+  const db = store(t);
+  const first = publish(db, [stage(1), stage(2, { depends_on: [1] })]);
+  const [s1, s2] = first.stages;
+  db.prepare(`UPDATE stages SET status = 'integrated', integrated_revision = 'r' WHERE id IN (?, ?)`).run(s1.id, s2.id);
+  db.prepare(`UPDATE work_items SET status = 'parked' WHERE id = ?`).run(s1.work_item);
+  db.prepare(`UPDATE work_items SET status = 'verifying' WHERE id = ?`).run(s2.work_item);
+  const digests = new Map([[1, executionInputsDigest(stage(1))], [2, executionInputsDigest(stage(2, { depends_on: [1] }))]]);
+  const plain = classifyStages(db, first.plan.id, digests, null);
+  assert.deepEqual([plain.get(s1.id), plain.get(s2.id)], ['kept', 'kept'], 'a parked integrated stage is kept');
+  const subject = classifyStages(db, first.plan.id, digests, s1.work_item);
+  assert.deepEqual([subject.get(s1.id), subject.get(s2.id)], ['superseded', 'kept'], 'the trigger\'s own subject is superseded');
+  assert.equal(classesDiffer(Object.fromEntries(plain), plain), null);
+  assert.match(classesDiffer(Object.fromEntries(plain), subject), new RegExp(`${s1.id} counted kept, now superseded`));
+});
+
+test('N3: a published plan whose planned obligations are absent or unreadable is unknown, never complete', async (t) => {
+  const { authoringShortfall } = await import(join(dist, 'plan', 'phase.js'));
+  const db = store(t);
+  const first = publish(db, [stage(1)]);
+  db.prepare(`UPDATE phase_plans SET bundle = 'b1', "check" = NULL WHERE id = ?`).run(first.plan.id);
+  assert.match(authoringShortfall(db, first.plan.id, 'pv_x')[0], /planned obligations unknown \(no plan check recorded\)/);
+  db.prepare(`INSERT INTO plan_checks (id, created_at, project, outcome, reasons, conformance, changes_architecture, changes_adrs, changes_roadmap, changes_goals, roadmap_revision, needs_spec_change, obligations) VALUES ('pchk_1', 'x', 'prj_1', 'passed', '[]', 'within_baseline', '{}', '{}', '{}', 0, 0, 0, 'not json')`).run();
+  db.prepare(`UPDATE phase_plans SET "check" = 'pchk_1' WHERE id = ?`).run(first.plan.id);
+  assert.match(authoringShortfall(db, first.plan.id, 'pv_x')[0], /planned obligations unknown \(unreadable\)/);
+});

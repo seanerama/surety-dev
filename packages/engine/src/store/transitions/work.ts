@@ -4,7 +4,7 @@
 // table in work-table.ts and writes exactly one work.* event.
 
 import { bindConformanceStage } from '../../adopt/conformance.js';
-import { type Replaces, swapGeneration } from '../../plan/replace.js';
+import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
 import { authoringShortfall } from '../../plan/phase.js';
 import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
@@ -372,9 +372,18 @@ export function registerPlan(
   const ids = new Map<number, string>();
   let swap: ReturnType<typeof swapGeneration> = null;
   if (replaces) {
-    swap = swapGeneration(tx, { project: args.project, replaces, plan, generation, digests: new Map(args.stages.map((st) => [st.number, st.execution_inputs_digest ?? null])) });
+    swap = swapGeneration(tx, { project: args.project, replaces, plan, generation, digests: new Map(args.stages.map((st) => [st.number, st.execution_inputs_digest ?? null])), subjectWork: subjectWorkOf(replaces) });
     if (swap === null) throw illegal('a replacement whose named generation is no longer active', { project: args.project, phase_plan: replaces.phase_plan, generation: replaces.generation });
     for (const [n, id] of swap.carried) ids.set(n, id);
+    // A listed stage the swap carries under its number must be that stage
+    // with its inputs: never a silent drop of the listed one (the review's
+    // S1). Publication compares first; this refuses what it could not.
+    for (const st of args.stages) {
+      const carriedId = swap.carried.get(st.number);
+      if (!carriedId) continue;
+      const row = tx.db.prepare('SELECT "execution_inputs_digest" FROM "stages" WHERE "id" = ?').get(carriedId) as { execution_inputs_digest: string | null };
+      if (row.execution_inputs_digest !== (st.execution_inputs_digest ?? null)) throw new Refusal(409, 'plan_generation_stale', `Stage ${st.number} is carried by the swap under other inputs than the replacement lists.`, 'The proposal is stale; the replan proposes again.', { project: args.project, stage: carriedId, number: st.number });
+    }
     tx.db
       .prepare('UPDATE "phase_plans" SET "replacement" = ? WHERE "id" = ?')
       .run(

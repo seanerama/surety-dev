@@ -6,6 +6,7 @@
 // checkpoint's plan file no bundle carries yet (reading 2: `proposed` is a
 // listing, never a `phase_plans` row).
 
+import { activeStages } from './active.js';
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
@@ -44,9 +45,10 @@ export function specView(db: Database, args: { project: string }) {
   };
   let stagesUnread = false;
   const deliveredAt = new Map<string, string>();
-  for (const s of db
-    .prepare(`SELECT s."implements", p."completed_at" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."active" = 1 AND p."completed_at" IS NOT NULL AND s."cancelled_at" IS NULL`)
-    .all(args.project) as { implements: string | null; completed_at: string }[]) {
+  // Each completed generation's active stages, kept ones from the
+  // generations it replaced included (D6 §5.7; the review's M1).
+  const completedPlans = db.prepare(`SELECT "id", "completed_at" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NOT NULL`).all(args.project) as { id: string; completed_at: string }[];
+  for (const s of completedPlans.flatMap((cp) => activeStages<{ implements: string | null }>(db, cp.id).map((st) => ({ implements: st.implements, completed_at: cp.completed_at })))) {
     const list = strict<unknown>(s.implements);
     if (!Array.isArray(list)) {
       stagesUnread = true;
@@ -130,7 +132,9 @@ export function planView(db: Database, args: { project: string }) {
     | undefined;
   let plan: Record<string, unknown> | null = null;
   if (p) {
-    const stages = (db.prepare('SELECT * FROM "stages" WHERE "phase_plan" = ? ORDER BY "number"').all(p.id) as Record<string, unknown>[]).map((s) => ({
+    // The active generation's stages, kept ones on earlier generations' rows
+    // included (D6 §5.7; the review's M1).
+    const stages = activeStages<Record<string, unknown>>(db, p.id as string).map((s) => ({
       id: s.id,
       number: s.number,
       goal: s.goal,

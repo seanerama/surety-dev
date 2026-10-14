@@ -392,7 +392,9 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
 // `implements` cannot be read: the plan is then unknown, never empty.
 function stagePlan(db: Database, project: string, requirements: readonly { id: string; key: string }[]): { number: number; status: string; implements: string[] }[] | null {
   try {
-    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
+    // The active obligation set: no stage an early replacement cancelled or
+    // superseded (D6 §5.7; the review's N5).
+    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
     const keyOf = (r: string): string => requirements.find((q) => q.id === r || q.key === r)?.key ?? r;
     return rows.map((s) => {
       const ids = JSON.parse(s.implements) as unknown;

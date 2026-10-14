@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { artifactDiff, checkPlan, computeChanges } from '../plan/check.js';
+import { artifactDiff, checkPlan, computeChanges, executionInputsDigest } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -413,7 +413,7 @@ export class Acceptor {
       plan = parsed.value;
     }
     if (plan === null) return null;
-    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base, work_item: facts.run.work_item });
+    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base, work_item: facts.run.work_item, digests: plan.stages.map((st) => [st.number, executionInputsDigest(st)]) });
     // An early replan's plan for the phase it replaces (D6 §5.7; B08): its
     // kept stages are stages of the plan; any other plan replaces nothing.
     const replacement = b.replacement !== null && b.replacement.phase === plan.phase ? b.replacement : null;
@@ -522,7 +522,7 @@ export class Acceptor {
         versions: { architecture: against.architecture_version, roadmap: against.roadmap_version, phase_plan: replacement ? replacement.generation + 1 : 1 },
         diff,
         declared,
-        replaces: replacement ? { phase_plan: replacement.phase_plan, generation: replacement.generation, trigger: replacement.trigger, evidence: replacement.evidence, stale: replacement.stale } : null,
+        replaces: replacement ? { phase_plan: replacement.phase_plan, generation: replacement.generation, trigger: replacement.trigger, evidence: replacement.evidence, stale: replacement.stale, ...(replacement.counted ? { counted: replacement.counted } : {}) } : null,
         ...(requests.length > 0 ? { spec_change_requests: requests } : {}),
       },
     };
