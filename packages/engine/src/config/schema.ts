@@ -26,13 +26,13 @@ export const ENGINE_NUMBERS: Record<string, NumberSpec> = {
   api_latency_bound: int(250, 50, 2000), // milliseconds
   request_body_deadline: int(10, 1, 60),
   backup_keep: int(14, 1, 365),
-  max_concurrent_runs: int(2, 1, 8),
   api_port: int(DEFAULT_API_PORT, 1024, 65535),
   git_deadline: int(60, 1, 600),
   git_deadline_long: int(600, 60, 3600),
   git_output_cap: int(8_388_608, 65_536, 268_435_456),
   // D2 A.7, bytes in bytes (SEAM.md §115).
-  max_concurrent_domains: int(2, 1, 8),
+  // D6 K2 (E140 N2): 4, was 2; the engine run count is removed (K2).
+  max_concurrent_domains: int(4, 1, 8),
   host_reserve_memory: int(2_147_483_648, 536_870_912, 68_719_476_736),
   host_reserve_disk: int(5_368_709_120, 1_073_741_824, 1_099_511_627_776),
   domain_memory_max: int(8_589_934_592, 536_870_912, 68_719_476_736),
@@ -105,7 +105,6 @@ export const ENGINE_KEYS = [
   'body_cap',
   'upload_cap',
   'backup_keep',
-  'max_concurrent_runs',
   'api_port',
   'api_authority',
   'git_deadline',
@@ -235,10 +234,15 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   requirement_confirm: 172_800,
 };
 
-// Ungoverned project keys, held in .surety/policy.json (RN R2). Project
-// concurrency is exactly 1 through M3 (E18).
+// Ungoverned project keys, held in .surety/policy.json (RN R2). The project
+// run count of E18 is removed by D6 K2 (M5 slice 37): no run count caps
+// admission at either scope.
 export const PROJECT_POLICY: Record<string, NumberSpec> = {
-  max_concurrent_runs: int(1, 1, 1),
+  // D6 K2, A.7 (E140 N1; B09): the per-profile memory maxima, each at most
+  // the engine's `domain_memory_max` (checked against the ceiling at the
+  // policy route; the effective value is min(this, the ceiling)).
+  role_memory_max: int(4_294_967_296, 536_870_912, 68_719_476_736),
+  check_memory_max: int(2_147_483_648, 536_870_912, 68_719_476_736),
   // D6 K3 (N02): a bound on inherited chain depth under the autonomy profile,
   // not a budget; default 24 under `phase`.
   max_chained_roles: int(24, 1, 64),

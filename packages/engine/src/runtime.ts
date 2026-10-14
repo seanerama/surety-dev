@@ -336,7 +336,6 @@ export class Runtime {
       | 'tick_step_budget'
       | 'terminate_grace'
       | 'kill_grace'
-      | 'max_concurrent_runs'
       | 'git_deadline'
       | 'lease_ttl'
       | 'domain_memory_max'

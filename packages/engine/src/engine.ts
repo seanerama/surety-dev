@@ -34,7 +34,7 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { seamChecktreesMaxBytes, seamHostChecks, seamQualifyMode, seamScopeBarrier, seamSelfTestAtStart } from './testing/seam.js';
+import { seamChecktreesMaxBytes, seamHostChecks, seamProfileMaxima, seamQualifyMode, seamScopeBarrier, seamSelfTestAtStart } from './testing/seam.js';
 import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
@@ -291,18 +291,26 @@ export async function serve(opts: ServeOptions): Promise<void> {
         // maximum a domain is recorded as admitted at (the driver's ruling (b)).
         turn_max_bytes: config.values.turn_max_bytes,
         domain_memory_max: config.values.domain_memory_max,
+        // D6 K2, B09 (M5 slice 37): the role profile's other bounds, and the
+        // harness's profile maxima (SEAM.md §427).
+        domain_writable_bytes: config.values.domain_writable_bytes,
+        domain_writable_inodes: config.values.domain_writable_inodes,
+        domain_tasks_max: config.values.domain_tasks_max,
+        profile_maxima: seamProfileMaxima(),
       },
-      // The resource envelope's admission (D2 §3.7), on the real boundary.
-      envelope: checksRun && scope.scope !== null
-        ? {
-            max_concurrent_domains: config.values.max_concurrent_domains,
-            host_reserve_memory: config.values.host_reserve_memory,
-            host_reserve_disk: config.values.host_reserve_disk,
-            domain_memory_max: config.values.domain_memory_max,
-            domain_writable_bytes: config.values.domain_writable_bytes,
-            home: opts.home,
-          }
-        : null,
+      // The resource envelope's admission (D2 §3.7): its memory and disk
+      // arithmetic on the real boundary; its domain slots on every lane (the
+      // driver's ruling Q2, slice 37), the kernel lane's memory only as the
+      // harness scripts it (SEAM.md §427).
+      envelope: {
+        real: checksRun && scope.scope !== null,
+        max_concurrent_domains: config.values.max_concurrent_domains,
+        host_reserve_memory: config.values.host_reserve_memory,
+        host_reserve_disk: config.values.host_reserve_disk,
+        domain_memory_max: config.values.domain_memory_max,
+        domain_writable_bytes: config.values.domain_writable_bytes,
+        home: opts.home,
+      },
     });
   } catch (err) {
     return fail('store', err);
@@ -331,6 +339,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
   runtime.sessions = sessions;
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
+  // D6 K1: the ticks committed transitions request reach D1 §1.5's flag.
+  store.onTickRequests((n) => tick.request(n));
   runtime.services = {
     endRun: (run, end) => ender.endRun(run, end),
     completeEnd: (run) => ender.complete(run),

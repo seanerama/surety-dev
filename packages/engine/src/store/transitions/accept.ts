@@ -15,7 +15,7 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import type { ReplanPrepared } from '../../plan/bundle.js';
-import { transitionWork, workItemOfRun } from './work.js';
+import { type ChainOrigin, originOfItem, transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
 
@@ -338,6 +338,7 @@ export function intendIntegration(
     architect: run.role === 'architect',
     nominate,
     chain: extra.chain,
+    chain_origin: originOfItem(tx.db, item.id),
     fence: true,
   };
   return intendOperation(tx, {
@@ -360,7 +361,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
   const row = tx.db.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
   if (!row) throw notFound('project', args.project);
   if (row.nomination_due === null) return null;
-  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number; presence?: Presence };
+  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number; origin?: ChainOrigin | null; presence?: Presence };
   const pending = tx.db
     .prepare(
       `SELECT o."id" FROM "operations" o WHERE o."project" = ? AND o."kind" = 'git_ref_update' AND json_extract(o."finalizer_inputs", '$.purpose') = 'nomination'
@@ -383,6 +384,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
     seq,
     by: due.by,
     chain: due.chain,
+    chain_origin: due.origin ?? null,
     ...(due.presence ? { module_presence: due.presence } : {}),
   };
   return intendOperation(tx, {

@@ -44,7 +44,7 @@ import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
-import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
@@ -245,6 +245,8 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           work_item: item.id,
           subject_status: 'eligible',
           cause: 'max_chained_roles',
+          // The chain the cap binds (D6 §6.5; K3; SEAM.md §429).
+          chain_origin: originOfItem(tx.db, item.id),
           quarantined: false,
           evidence: workEvidence(tx, item.id),
           continuation: { status: 'dispatch', from: item.continue_from },
@@ -379,7 +381,11 @@ const BLOCKER: KindSpec = {
         if (option === 'continue') {
           // D6 K3: the boundary passed is recorded, so the `stage` profile
           // does not hold the same item at it again.
-          tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL, "chain" = 0, "boundary_passed_at" = ? WHERE "id" = ?').run(tx.at, item.id);
+          // A person's `continue` begins a new chain whose origin is the
+          // continued item's own trigger (D6 §6.5; K3; SEAM.md §429).
+          tx.db
+            .prepare(`UPDATE "work_items" SET "blocker" = NULL, "chain" = 0, "boundary_passed_at" = ?, "chain_origin" = json_object('trigger_source', "trigger_source", 'trigger_id', "trigger_id", 'trigger_generation', "trigger_generation") WHERE "id" = ?`)
+            .run(tx.at, item.id);
           return consumed(d, [{ kind: 'tick' }]);
         }
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
@@ -1040,7 +1046,7 @@ export function recordDisposition(
     // Verifier in this transaction (D3 §2.11; Q8 (a); SEAM.md §231),
     // chained as the fix is.
     const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(args.by) as { chain: number } | undefined;
-    routeMissingVerification(tx, f, Math.max(run?.chain ?? 1, 1));
+    routeMissingVerification(tx, f, Math.max(run?.chain ?? 1, 1), originOfRun(tx.db, args.by));
   }
   markStale(tx, { project: f.project });
 }
@@ -1068,7 +1074,7 @@ function registerFixWork(tx: Tx, f: FindingRow, by: string): void {
   const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(by) as { chain: number } | undefined;
   observeTrigger(
     tx,
-    { project: f.project, kind: 'fix', trigger_source: 'finding', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id }, chain: Math.max(run?.chain ?? 1, 1) },
+    { project: f.project, kind: 'fix', trigger_source: 'finding', trigger_id: f.id, trigger_generation: n, subject: { finding: f.id }, chain: Math.max(run?.chain ?? 1, 1), chain_origin: originOfRun(tx.db, by) },
     { finding: f.id },
   );
 }

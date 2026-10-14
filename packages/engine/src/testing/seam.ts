@@ -42,6 +42,7 @@ import { holdSecret, registerDetector } from '../records/redact.js';
 import type { Runtime } from '../runtime.js';
 import type { StoreClient } from '../store/client.js';
 import { appendCorrection } from '../store/transitions/ledger.js';
+import { type ScriptedEnvelope, envelopeIsReal, setScriptedEnvelope } from '../store/transitions/envelope.js';
 import { type Actor, transact } from '../store/transitions/tx.js';
 import type { ResultInput } from '../store/transitions/baseline.js';
 import type { ProtectedSet } from '../store/transitions/protected.js';
@@ -103,6 +104,12 @@ const MAIN_BARRIERS: readonly string[] = [
   'launch.before_ownership',
   'run.result_received',
   'run_end.before_ended',
+  // M5 slice 37 (SEAM.md §§428, 430): the running tick, after its
+  // prerequisite steps and before select; an authoring run's proposal not yet
+  // captured; an authoring version applied, readiness recorded.
+  'scheduler.tick_running',
+  'check_authoring.before_proposal',
+  'check_authoring.applied',
   // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
   // save and before it enters `closing` and raises its decision.
   'session.close_saved',
@@ -237,6 +244,8 @@ export interface HarnessSwitches {
   classifierVersion?: number | null;
   // SEAM.md §247: `--harness-deploy-adapter <scripted|real>`.
   deployAdapter?: 'scripted' | 'real';
+  // SEAM.md §427: `--harness-profile-maxima`.
+  profileMaxima?: { role?: number; check?: number } | null;
   // SEAM.md §260: `--harness-artifact-free-bytes <n>`.
   artifactFreeBytes?: number | null;
   // SEAM.md §§323, 324: `--harness-adapter-qualification-case`,
@@ -771,6 +780,7 @@ const OP = {
   scriptedStep: 'harness.scripted_step',
   adapterQualification: 'harness.adapter_qualification',
   fixtureAuthorization: 'harness.fixture_authorization',
+  scriptedEnvelope: 'harness.scripted_envelope',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -782,6 +792,31 @@ const decodeSegment = (segment: string): string => {
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// SEAM.md §427: {mem_available: <bytes> | "unreadable" | null,
+// memory_current?: {<domain id>: <bytes> | "unreadable"}, default_current?:
+// <bytes>}; `mem_available: null` clears it.
+function parseScriptedEnvelope(body: unknown): ScriptedEnvelope | null {
+  const bad = (field: string) => new Refusal(400, 'invalid_value', `The scripted envelope's "${field}" is not valid.`, 'Send {"mem_available": <bytes> | "unreadable" | null, "memory_current"?: {<domain>: <bytes> | "unreadable"}, "default_current"?: <bytes>}.', { field });
+  if (!isObject(body) || Object.keys(body).some((k) => !['mem_available', 'memory_current', 'default_current'].includes(k))) throw bad('body');
+  const bytes = (v: unknown) => typeof v === 'number' && Number.isSafeInteger(Math.round(v)) && v >= 0;
+  if (body.mem_available === null) return null;
+  if (!(bytes(body.mem_available) || body.mem_available === 'unreadable')) throw bad('mem_available');
+  const current: Record<string, number | 'unreadable'> = {};
+  if (body.memory_current !== undefined) {
+    if (!isObject(body.memory_current)) throw bad('memory_current');
+    for (const [k, v] of Object.entries(body.memory_current)) {
+      if (!(bytes(v) || v === 'unreadable')) throw bad('memory_current');
+      current[k] = v === 'unreadable' ? 'unreadable' : Math.round(v as number);
+    }
+  }
+  if (body.default_current !== undefined && !bytes(body.default_current)) throw bad('default_current');
+  return {
+    mem_available: body.mem_available === 'unreadable' ? 'unreadable' : Math.round(body.mem_available as number),
+    memory_current: current,
+    default_current: body.default_current === undefined ? null : Math.round(body.default_current as number),
+  };
+}
 
 function advanceClock(body: unknown): { now: string } {
   const seconds = isObject(body) ? body.seconds : undefined;
@@ -1119,9 +1154,9 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'runner-qualification') {
     return route(201, async (body) => {
-      parseRunnerQualification(body);
+      const { check_memory_max } = parseRunnerQualification(body);
       const { checkProfileFingerprint } = await import('../checks/profile.js');
-      return storeOp(OP.runnerQualification, { fingerprint: checkProfileFingerprint(), actor: hooks.actor });
+      return storeOp(OP.runnerQualification, { fingerprint: checkProfileFingerprint(), actor: hooks.actor, check_memory_max });
     });
   }
   if (s.length === 2 && s[0] === 'fixtures' && s[1] === 'legacy-fingerprint') {
@@ -1166,6 +1201,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     return route(200, (body) => storeOp(OP.workTransition, { workItem: decodeSegment(s[1]!), body, actor: hooks.actor }));
   }
   if (s.length === 2 && s[0] === 'clock' && s[1] === 'advance') return route(200, async (body) => advanceClock(body));
+  // SEAM.md §427: the kernel lane's scripted envelope.
+  if (s.length === 1 && s[0] === 'envelope') return route(200, async (body) => storeOp(OP.scriptedEnvelope, { envelope: parseScriptedEnvelope(body) }));
   if (s.length === 1 && s[0] === 'allocate') return route(200, (body) => storeOp(OP.allocate, { body, actor: hooks.actor }));
   if (s.length === 1 && s[0] === 'faults') {
     return route(200, async (body) => ({
@@ -1197,6 +1234,10 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           ? armSpecBlobFault(body)
           : isObject(body) && body.point === 'adoption_signal'
           ? armSignalFault(body)
+          : isObject(body) && body.point === 'domain_peak'
+          ? armPeakFault(body)
+          : isObject(body) && body.point === 'deploy.prepare_error'
+          ? armPrepareErrorFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
             ? armMainFault(body)
             : await storeOp(OP.armFault, body),
@@ -1424,7 +1465,7 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
     case OP.fixtureClassification:
       return installClassification(store(), a.actor, a.body, (a.discovery as Discovery | null | undefined) ?? null);
     case OP.runnerQualification:
-      return installRunnerQualification(store(), a.actor, a.fingerprint as string);
+      return installRunnerQualification(store(), a.actor, a.fingerprint as string, (a.check_memory_max as number | null | undefined) ?? null);
     case OP.legacySource:
       return versionSourceOf(store(), a.version as string);
     case OP.legacyFingerprint:
@@ -1456,6 +1497,12 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return allocateFixtureReceipt(store(), a.actor, a.body);
     case OP.armFault:
       return armFault(args);
+    case OP.scriptedEnvelope: {
+      // The kernel lane only: an engine on the real boundary reads the host.
+      if (envelopeIsReal()) throw new Refusal(409, 'illegal_transition', 'This engine admits domains on the real boundary; its envelope reads the host and is not scripted.', 'Script the envelope on a kernel-lane engine.', { field: 'mem_available' });
+      setScriptedEnvelope((a.envelope as ScriptedEnvelope | null) ?? null);
+      return { envelope: a.envelope ?? null };
+    }
     case OP.clearFaults:
       faults.length = 0;
       return { cleared: true };
@@ -1581,6 +1628,42 @@ export function seamSpecBlobFault(project: string): boolean {
   if (!f) return false;
   f.remaining -= 1;
   f.hit += 1;
+  return true;
+}
+
+// SEAM.md §432: the next domain of the project to terminate has its
+// memory.peak unreadable, or its cgroup removed before the read. One-shot.
+const peakFaults: { project: string; mode: 'unreadable' | 'after_removal' }[] = [];
+function armPeakFault(body: Record<string, unknown>): { point: 'domain_peak'; project: string; mode: string } {
+  if (Object.keys(body).some((k) => !['point', 'project', 'mode'].includes(k)) || typeof body.project !== 'string' || body.project.length === 0 || (body.mode !== 'unreadable' && body.mode !== 'after_removal')) {
+    throw new Refusal(400, 'invalid_value', 'Unknown domain_peak fault.', 'Send {"point":"domain_peak","mode":"unreadable"|"after_removal","project":"proj_…"}.', { field: 'point' });
+  }
+  peakFaults.push({ project: body.project, mode: body.mode });
+  return { point: 'domain_peak', project: body.project, mode: body.mode };
+}
+export function seamPeakFault(project: string): 'unreadable' | 'after_removal' | null {
+  if (!init.harness) return null;
+  const at = peakFaults.findIndex((f) => f.project === project);
+  if (at < 0) return null;
+  return peakFaults.splice(at, 1)[0]!.mode;
+}
+
+// SEAM.md §433: the policy's preparation of the project's deploy request
+// throws an error that is not a refusal, `times` times.
+const prepareErrorFaults: { project: string; remaining: number }[] = [];
+function armPrepareErrorFault(body: Record<string, unknown>): { point: 'deploy.prepare_error'; project: string; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => !['point', 'project', 'times'].includes(k)) || typeof body.project !== 'string' || body.project.length === 0 || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown deploy.prepare_error fault.', 'Send {"point":"deploy.prepare_error","project":"proj_…","times"?: <n>}.', { field: 'point' });
+  }
+  prepareErrorFaults.push({ project: body.project, remaining: times });
+  return { point: 'deploy.prepare_error', project: body.project, times };
+}
+export function seamPrepareError(project: string): boolean {
+  if (!init.harness) return false;
+  const f = prepareErrorFaults.find((x) => x.project === project && x.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
   return true;
 }
 
@@ -1775,6 +1858,7 @@ export function setHarnessSwitches(values: {
   adapterVersions?: string[];
   serviceProfileVariant?: string | null;
   hostFactsUnread?: string[];
+  profileMaxima?: string | null;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -1843,6 +1927,16 @@ export function setHarnessSwitches(values: {
     if (!['host_id', 'kernel', 'tool_versions', 'mechanism_fingerprint'].includes(v) || hostFactsUnread.includes(v)) return `--harness-host-fact-unread takes host_id, kernel, tool_versions or mechanism_fingerprint, each once, not ${v}`;
     hostFactsUnread.push(v);
   }
+  // SEAM.md §427: `--harness-profile-maxima role=<bytes>[,check=<bytes>]`.
+  let profileMaxima: { role?: number; check?: number } | null = null;
+  if (values.profileMaxima != null) {
+    profileMaxima = {};
+    for (const part of values.profileMaxima.split(',')) {
+      const m = /^(role|check)=([1-9][0-9]{0,14})$/.exec(part);
+      if (!m || profileMaxima[m[1] as 'role' | 'check'] !== undefined) return `--harness-profile-maxima takes role=<bytes>[,check=<bytes>], not ${values.profileMaxima}`;
+      profileMaxima[m[1] as 'role' | 'check'] = Number(m[2]);
+    }
+  }
   // SEAM.md §274: a restart near a deadline the test moved the clock to.
   if (values.clockOffset != null && !/^[1-9][0-9]{0,9}$/.test(values.clockOffset)) return `--harness-clock-offset takes a positive number of seconds, not ${values.clockOffset}`;
   if (!init.harness) return null;
@@ -1867,6 +1961,7 @@ export function setHarnessSwitches(values: {
       adapterVersions,
       serviceProfileVariant: values.serviceProfileVariant ?? null,
       hostFactsUnread,
+      profileMaxima,
     },
   };
   return null;
@@ -1879,6 +1974,8 @@ export const seamMechanismVariant = (): string | null => (init.harness ? (init.s
 // SEAM.md §217: the classifier version this harness start reports.
 export const seamClassifierVersion = (): number | null => (init.harness ? (init.switches?.classifierVersion ?? null) : null);
 export const seamChecktreesMaxBytes = (): number | null => (init.harness ? (init.switches?.checktreesMaxBytes ?? null) : null);
+// SEAM.md §427: the per-profile maxima of this start, below the contract's range.
+export const seamProfileMaxima = (): { role?: number; check?: number } | null => (init.harness ? (init.switches?.profileMaxima ?? null) : null);
 // SEAM.md §208: whether this harness start runs the runner self-test, the
 // cases it records with a forced result, and the profile variant.
 // Outside the test mode the self-test runs at every start whose host

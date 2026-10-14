@@ -51,6 +51,7 @@ import {
   claimDispatch,
   dispatchStarted,
   domainTerminated,
+  recordPeak,
   endFacts,
   expireRun,
   expiredRunLeases,
@@ -65,7 +66,7 @@ import {
   renewLease,
   unendedRuns,
  dispatchEntryProbe } from './transitions/runs.js';
-import { budgetCheck, ledgerView } from './transitions/ledger.js';
+import { budgetCheck, exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import {
   chunkReceipt,
   expirableRecords,
@@ -236,6 +237,9 @@ import {
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
+import { markHolds } from '../scheduler/holds.js';
+import { acquireIntegrationLease, releaseIntegrationLease } from './transitions/integration-lease.js';
+import { takeCommittedTickRequests } from './transitions/tick-requests.js';
 import { type EnvelopeSettings, type SelfTestBox, serviceAdmissionHold, setEnvelope, setSelfTestBoxes } from './transitions/envelope.js';
 import {
   admitExecution,
@@ -278,7 +282,7 @@ export interface WorkerData {
 }
 
 export type Request = { id: number; op: string; args: unknown };
-export type Reply = ({ id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> }) & { seq?: number | null };
+export type Reply = ({ id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> }) & { seq?: number | null; tick?: number };
 
 const data = workerData as WorkerData;
 const port = parentPort!;
@@ -418,8 +422,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
   'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
-  'scheduler.candidates': (d, a: { maxConcurrentRuns: number }) => dispatchCandidates(d, a),
+  'scheduler.candidates': (d) => dispatchCandidates(d),
   'scheduler.projects': (d) => projectIds(d),
+  // D1 §8.1 step 4: the project's day limits, read before select (throws on a failed read).
+  'scheduler.budgets': (d, a: { project: string }) => exhaustedLimits(d, a.project, { check: true, dispatch: true }),
   'runs.quarantined': (d) => quarantinedRuns(d),
   'runs.expired_leases': (d) => expiredRunLeases(d, nowIso()),
   'run.state': (d, a: { run: string }) => (d.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(a.run) as { state: string } | undefined)?.state ?? null,
@@ -586,6 +592,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'run.end_facts': (tx, a: { run: string }) => endFacts(tx, a.run),
   'run.unended': (tx) => unendedRuns(tx),
   'domain.terminated': (tx, a) => domainTerminated(tx, a),
+  'domain.peak': (tx, a) => recordPeak(tx, a),
+  // D1 §7.5; K2 (the driver's ruling 7, slice 37): the project's integration lease.
+  'integration.acquire': (tx, a) => acquireIntegrationLease(tx, a),
+  'integration.release': (tx, a) => releaseIntegrationLease(tx, a),
   'run.quarantine': (tx, a) => quarantineRun(tx, a),
   'run.finish': (tx, a) => finishRun(tx, a),
   'record.register_stream': (tx, a) => registerStream(tx, a),
@@ -742,6 +752,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.open_tx': (tx, a) => openSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'session.resume_tx': (tx, a) => resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'session.mark_holds': (tx) => markSessionHolds(tx),
+  // N01 (the driver's ruling Q3; SEAM.md §431): every eligible item's hold as an interval.
+  'work.mark_holds': (tx) => markHolds(tx),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.
@@ -871,5 +883,8 @@ port.on('message', (msg: Request) => {
     reply = { id: msg.id, ok: false, refusal: asRefusal(err).toWire() };
   }
   reply.seq = lastSeq();
+  // The ticks the committed transitions requested (D6 K1).
+  const ticks = takeCommittedTickRequests();
+  if (ticks > 0) reply.tick = ticks;
   port.postMessage(reply);
 });

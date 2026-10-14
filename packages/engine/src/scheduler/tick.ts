@@ -38,7 +38,8 @@ import type { ProjectCandidates } from '../store/reads.js';
 import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
-import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
+import { pausePoint, seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
+import { nowMs } from '../clock.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { publishAuthorized } from '../plan/publish.js';
@@ -72,9 +73,15 @@ async function withinBudget(work: Promise<void>, ms: number): Promise<boolean> {
 
 export class Scheduler {
   private flag = false;
+  // Requests set since the running tick began (D6 K1): what the next tick
+  // coalesces, recorded on its engine.tick.
+  private requests = 0;
   private running = false;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  // When the last tick began, on the engine's clock: the interval tick falls
+  // due at it plus tick_interval (the driver's ruling Q12, slice 37).
+  private lastTickAt = nowMs();
 
   constructor(
     private readonly rt: Runtime,
@@ -85,7 +92,14 @@ export class Scheduler {
   ) {}
 
   start(): void {
-    this.timer = setInterval(() => this.request(), this.rt.setting('tick_interval') * 1000);
+    this.lastTickAt = nowMs();
+    // `tick_interval` stays the ceiling of idle (K1): a tick falls due on the
+    // engine's clock, polled each second; a clock that steps back only delays
+    // what is due by the step.
+    this.timer = setInterval(() => {
+      if (this.running || this.flag) return;
+      if (nowMs() - this.lastTickAt >= this.rt.setting('tick_interval') * 1000) this.request();
+    }, 1000);
     this.timer.unref();
   }
 
@@ -94,12 +108,16 @@ export class Scheduler {
     if (this.timer) clearInterval(this.timer);
   }
 
-  request(): void {
+  // D1 §1.5's flag, set by the API, the engine's own requests and the
+  // transitions of K1 (`n` requests at once); never a re-entry into a
+  // running tick: the loop below runs one tick after another.
+  request(n = 1): void {
     // The observation job runs off the tick (D4 §6.2; deploy/observe.ts):
     // woken here, never awaited, so a tick held by an effect holds no
     // observation.
     this.rt.deploy?.observer.wake();
     this.flag = true;
+    this.requests += Math.max(1, n);
     if (!this.running && !this.stopped) void this.loop();
   }
 
@@ -108,7 +126,9 @@ export class Scheduler {
     try {
       while (this.flag && !this.stopped) {
         this.flag = false;
-        await this.tick().catch((err) => log('tick', err));
+        const coalesced = this.requests;
+        this.requests = 0;
+        await this.tick(coalesced).catch((err) => log('tick', err));
       }
     } finally {
       this.running = false;
@@ -140,7 +160,7 @@ export class Scheduler {
           project,
           incarnation: this.rt.incarnation,
           engine_version: ENGINE_VERSION,
-          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains', 'max_concurrent_runs'] as const).map((k) => [k, this.rt.setting(k)])),
+          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains'] as const).map((k) => [k, this.rt.setting(k)])),
         }).then(
         () => this.observed.add(project),
         (err) => log('host observation', err, { project }),
@@ -217,19 +237,32 @@ export class Scheduler {
     }
   }
 
-  private async tick(): Promise<void> {
+  private async tick(requests: number): Promise<void> {
     const started = performance.now();
+    this.lastTickAt = nowMs();
+    // The steps this tick ran, in order (engine.tick.payload.steps; D1 §8.1).
+    const steps: string[] = [];
     const tickBudget = this.rt.setting('tick_budget') * 1000;
     const stepBudget = this.rt.setting('tick_step_budget') * 1000;
     const remaining = () => tickBudget - (performance.now() - started);
     const projects = await this.rt.read<string[]>('scheduler.projects');
     const ineligible = new Set<string>();
     for (const name of PREREQUISITES) {
+      steps.push(name);
       for (const project of projects) {
         if (ineligible.has(project)) continue;
         const limit = Math.min(stepBudget, remaining());
         if (limit <= 0 || !(await withinBudget(this.step(name, project), limit))) ineligible.add(project);
       }
+    }
+    // 4. Budgets (D1 §8.1 step 4): a project whose day has passed a day limit
+    // is not dispatched, nor one whose limits could not be read; the claim
+    // checks it again.
+    steps.push('budgets');
+    for (const project of projects) {
+      if (ineligible.has(project)) continue;
+      const over = await this.rt.read<string[]>('scheduler.budgets', { project }).catch(() => null);
+      if (over === null || over.length > 0) ineligible.add(project);
     }
     // The gates, the attention queue, the effects of consumed decisions and
     // the notifications of escalated ones (D1 §8.1 steps 5 to 7). Not
@@ -266,32 +299,40 @@ export class Scheduler {
       log('turn dispatch', err);
       return 0;
     });
-    // One-shots held behind an open session record why (D6 §2.7; N01).
-    await this.rt.engine('session.mark_holds', {}).catch((err) => log('session holds', err));
+    await pausePoint('scheduler.tick_running');
+    steps.push('select');
     if (remaining() > 0) {
-      const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates', { maxConcurrentRuns: this.rt.setting('max_concurrent_runs') });
-      for (const c of candidates) {
-        if (ineligible.has(c.project) || c.items.length === 0) continue;
-        if (remaining() <= 0) break;
-        for (const item of c.items) {
+      const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates');
+      steps.push('dispatch');
+      // D6 K2 (B09): every eligible item in priority order, each admitted
+      // or held by the envelope; no run count caps either scope. The
+      // projects are taken in turn, one item each round, so no project's
+      // queue starves another's under tick_budget (N02).
+      const queues = candidates.filter((c) => !ineligible.has(c.project) && c.items.length > 0).map((c) => ({ c, items: [...c.items] }));
+      while (queues.some((q) => q.items.length > 0) && remaining() > 0) {
+        for (const q of queues) {
+          const item = q.items.shift();
+          if (!item || remaining() <= 0) continue;
           try {
             if (item.boundary) {
               // D1-34: the next step is a decision, asked once.
               await this.rt.engine('scheduler.chain_boundary', { workItem: item.id });
               continue;
             }
-            if (await this.launcher.dispatch(c, item)) dispatched++;
+            if (await this.launcher.dispatch(q.c, item)) dispatched++;
           } catch (err) {
             log('dispatch', err);
           }
-          break;
         }
       }
+      // Why each item still eligible waits, recorded as intervals by reason
+      // (N01; the driver's ruling Q3): one interval per hold, never one per tick.
+      await this.rt.engine('work.mark_holds', {}).catch((err) => log('work holds', err));
     }
     // Records nothing live refers to expire once their retention has passed
     // (D1 §14.3). Not a prerequisite of dispatch.
     await expireRecords(this.rt).catch((err) => log('record expiry', err));
-    await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched });
+    await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched, requests, steps });
   }
 }
 

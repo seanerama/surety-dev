@@ -128,7 +128,7 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
   const all = body as Record<string, unknown>;
   const governedKeys = Object.keys(all).filter((k) => (GOVERNED_KEYS as readonly string[]).includes(k));
   const ordinaryBody = Object.fromEntries(Object.entries(all).filter(([k]) => !governedKeys.includes(k)));
-  const change = validatePolicySubmission(ordinaryBody);
+  const change = validatePolicySubmission(ordinaryBody, rt.setting('domain_memory_max'));
   // What the project's journal has in hand (its bootstrap, an earlier policy
   // change) is settled first: the change is made on the branch they leave.
   await rt.services?.journal(project);

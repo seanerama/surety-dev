@@ -150,7 +150,6 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   const bodyDeadlineMs = state.config.values.request_body_deadline * 1000;
   const shell = loadShell(opts.shellDir);
   const reader = new EventReader(homePaths(opts.home).store);
-  const maxConcurrentRuns = state.config.values.max_concurrent_runs;
 
   // Reading a body is what earns a `100 Continue`: only a request that has
   // passed the Host and token checks and reached a command that reads its
@@ -249,7 +248,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }
     if (s.length === 2 && s[1] === 'projects' && get) {
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: { maxConcurrentRuns } }) }) };
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: {} }) }) };
     }
     if (s.length === 2 && s[1] === 'events' && method === 'GET') {
       return {
@@ -264,7 +263,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (s.length === 3 && s[1] === 'projects' && get) {
       const project = decodeSegment(s[2]!);
       if (project === null) return null;
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project, maxConcurrentRuns } }) }) };
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project } }) }) };
     }
 
     if (s[1] === 'projects' && s.length >= 4) {

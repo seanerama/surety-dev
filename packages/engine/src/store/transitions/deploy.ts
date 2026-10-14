@@ -30,7 +30,7 @@ import { raiseFinding } from './findings.js';
 import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
-import { engineSettings, projectOptions, projectPolicy } from './settings.js';
+import { effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
@@ -1986,7 +1986,9 @@ export function startDeployAttempt(
   if (op.kind === 'deploy') {
     domain = tx.newId('dom_');
     const policy = projectPolicy(tx.db, op.project) as Record<string, number>;
-    const reservation = { memory: policy.service_memory_max ?? null, check_capacity: args.service?.checkCapacity ?? null };
+    // The check capacity it reserves: its project's effective check maximum
+    // (D6 K2, E126; B09), no longer the ceiling.
+    const reservation = { memory: policy.service_memory_max ?? null, check_capacity: args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
     const runtimeDir = args.service ? serviceRuntimeDir(args.service.home, env.id, g) : null;
     tx.db
       .prepare(

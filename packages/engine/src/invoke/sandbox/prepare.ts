@@ -88,13 +88,15 @@ export function protectedBinds(workspace: string, roots: string[], empty: string
 }
 
 // A domain's cgroup limits (D2 §3.7): `pids.max` from `domain_tasks_max`,
-// `memory.max` from `domain_memory_max`, `memory.swap.max` 0.
+// `memory.max` the maximum the domain was admitted at (D6 K2, B09: its
+// profile's, recorded on it; `domain_memory_max` for a domain recorded with
+// none), `memory.swap.max` 0.
 // In harness mode a test may cap an item's domains below the configured
 // minimums (E69; seamDomainLimits); the limits are then those, written and
 // read back like any other.
-export function domainLimits(rt: Runtime, workItem: string): DomainLimits {
+export function domainLimits(rt: Runtime, workItem: string, memoryMax?: number | null): DomainLimits {
   const o = seamDomainLimits(workItem);
-  return { memoryMax: o?.memory_max ?? rt.setting('domain_memory_max'), tasksMax: o?.pids_max ?? rt.setting('domain_tasks_max') };
+  return { memoryMax: o?.memory_max ?? memoryMax ?? rt.setting('domain_memory_max'), tasksMax: o?.pids_max ?? rt.setting('domain_tasks_max') };
 }
 
 // The volatile filesystem's bounds (D2 §§2.3, 3.7), likewise.
@@ -211,7 +213,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // The recorded path must be this domain's directory in this engine's own
   // scope; anything else is never created, entered or killed.
   if (rt.scope === null || may.cgroup_path !== join(rt.scope.path, claim.domain)) throw new Error(`the domain's recorded cgroup ${may.cgroup_path} is not ${claim.domain} in this engine's scope`);
-  const limits = domainLimits(rt, claim.work_item ?? claim.run);
+  const limits = domainLimits(rt, claim.work_item ?? claim.run, claim.memory_max);
   const inode = createDomainCgroup(may.cgroup_path, limits);
   await rt.engine('domain.cgroup_created', { domain: claim.domain, inode });
   // The probe profile (D2 §2.8, A.6 P15; SEAM.md §127): the domain's own

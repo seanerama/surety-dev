@@ -24,6 +24,13 @@ export interface EngineSettings {
   // D6 A.7 (M5 slice 33).
   turn_max_bytes?: number;
   domain_memory_max?: number;
+  // D6 K2, B09 (M5 slice 37): the engine's volatile and task bounds, part of
+  // a role profile's qualification identity; the harness's profile maxima
+  // for this start (`--harness-profile-maxima`, SEAM.md §427).
+  domain_writable_bytes?: number;
+  domain_writable_inodes?: number;
+  domain_tasks_max?: number;
+  profile_maxima?: { role?: number; check?: number } | null;
 }
 
 let settings: EngineSettings | null = null;
@@ -35,6 +42,56 @@ export function setEngineSettings(value: EngineSettings): void {
 export function engineSettings(): EngineSettings {
   if (!settings) throw new Error('engine settings were not handed to the store');
   return settings;
+}
+
+// D6 K2, A.7 (the driver's ruling Q1, slice 37): the memory maximum a
+// project's `role` or `check` domain is admitted at: min(the project's value
+// or its default, the engine's `domain_memory_max`); the harness's profile
+// maxima, where given, stand for it at this start.
+export function effectiveProfileMax(db: Database, project: string, profile: 'role' | 'check'): number {
+  const s = settings;
+  const override = s?.profile_maxima?.[profile];
+  if (override !== undefined) return override;
+  const value = projectPolicy(db, project)[`${profile}_memory_max`]!;
+  const ceiling = s?.domain_memory_max;
+  return ceiling === undefined ? value : Math.min(value, ceiling);
+}
+
+// The engine's effective default maximum of a profile, for no project: the
+// schema default under the ceiling (a qualification attempt's, the runner's).
+export function defaultProfileMax(profile: 'role' | 'check'): number {
+  const s = settings;
+  const override = s?.profile_maxima?.[profile];
+  if (override !== undefined) return override;
+  const value = projectPolicyDefaults()[`${profile}_memory_max`]!;
+  const ceiling = s?.domain_memory_max;
+  return ceiling === undefined ? value : Math.min(value, ceiling);
+}
+
+// The role maximum a qualification attempt qualifies (D6-X09; SEAM.md
+// §432): the profile it recorded, else the engine's default.
+export function attemptProfileMax(db: Database, attempt: string): number {
+  const row = db.prepare('SELECT "profile" FROM "qualification_attempts" WHERE "id" = ?').get(attempt) as { profile: string | null } | undefined;
+  try {
+    const p = row?.profile ? (JSON.parse(row.profile) as { memory_max?: unknown }) : null;
+    if (p && Number.isSafeInteger(p.memory_max) && (p.memory_max as number) > 0) return p.memory_max as number;
+  } catch {
+    // an unreadable profile is the default's
+  }
+  return defaultProfileMax('role');
+}
+
+// The role profile a dispatch is qualified for (D6 §2.6, B09): its memory
+// maximum and the engine's volatile and task bounds.
+export interface RoleProfile {
+  memory_max: number;
+  writable_bytes: number | null;
+  writable_inodes: number | null;
+  tasks_max: number | null;
+}
+export function roleProfileOf(memoryMax: number): RoleProfile {
+  const s = settings;
+  return { memory_max: memoryMax, writable_bytes: s?.domain_writable_bytes ?? null, writable_inodes: s?.domain_writable_inodes ?? null, tasks_max: s?.domain_tasks_max ?? null };
 }
 
 // A project's effective ungoverned policy (E23 item 3; SEAM.md §27): the

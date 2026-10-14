@@ -905,14 +905,14 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
 
 // The unresolved obligations of a project's checks, by check key.
 export function unresolvedObligations(db: Db, project: string): Map<string, number> {
-  const rows = db.prepare(`SELECT "key", MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL GROUP BY "key"`).all(project) as { key: string; g: number }[];
+  const rows = db.prepare(`SELECT "key", MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL GROUP BY "key"`).all(project) as { key: string; g: number }[];
   return new Map(rows.map((r) => [r.key, r.g]));
 }
 
 // The highest generation of any obligation, resolved or not, on a check key:
 // a result registered under an earlier generation is history (D6 §4.5).
 export function obligationGeneration(db: Db, project: string, key: string): number | null {
-  const row = db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ?`).get(project, key) as { g: number | null };
+  const row = db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed'`).get(project, key) as { g: number | null };
   return row.g;
 }
 
@@ -934,7 +934,7 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
   const named = new Set((parseJson<{ check: string }[]>(row.affected_checks) ?? []).map((a) => a.check));
   // Whichever request recorded an obligation (the 31b review's M2, A): an
   // obligation a later change's correction meets is resolved by it.
-  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as {
+  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(args.project) as {
     id: string;
     key: string;
     criteria: string;
@@ -983,7 +983,7 @@ interface OpenObligation {
 }
 
 const openObligations = (db: Db, project: string): OpenObligation[] =>
-  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
+  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
     (o) => ({ id: o.id, key: o.key, criteria: parseJson<string[]>(o.criteria) ?? [], request: o.request }),
   );
 

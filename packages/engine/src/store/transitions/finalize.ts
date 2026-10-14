@@ -18,7 +18,7 @@ import { intendOperation } from './journal.js';
 import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
 import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
-import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
+import { type ChainOrigin, getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
 import { supersededWhileRunning } from '../../plan/replace.js';
@@ -80,6 +80,8 @@ export interface RefInputs {
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
+  // The origin of the chain (D6 §6.5; K3): carried to the work it makes.
+  chain_origin?: ChainOrigin | null;
   // nomination
   seq?: number;
   by?: 'engine_cadence' | 'builder_request';
@@ -290,7 +292,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   if (inputs.nominate) {
     tx.db
       .prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?')
-      .run(JSON.stringify({ revision: inputs.new_oid, by: inputs.nominate.by, chain: inputs.chain ?? 1 }), op.project);
+      .run(JSON.stringify({ revision: inputs.new_oid, by: inputs.nominate.by, chain: inputs.chain ?? 1, origin: inputs.chain_origin ?? null }), op.project);
   }
   return { plans };
 }
@@ -357,7 +359,7 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   registerPhaseAtNomination(tx, { project: op.project, candidate });
   const verification = observeTrigger(
     tx,
-    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
+    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1, chain_origin: inputs.chain_origin ?? null },
     {},
   );
   cancelSuperseded(tx, op.project);

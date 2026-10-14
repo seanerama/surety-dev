@@ -24,7 +24,7 @@ import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
@@ -512,7 +512,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // A check with an unresolved spec-change obligation (D6 §4.5, B05) is
   // named until the correction lands: the scope is not complete.
   const owed = new Set(
-    (db.prepare(`SELECT DISTINCT "key" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { key: string }[]).map((o) => o.key),
+    (db.prepare(`SELECT DISTINCT "key" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(args.project) as { key: string }[]).map((o) => o.key),
   );
   const obligated = scope.required.filter((c) => owed.has(c.key)).map((c) => c.id);
   const missingNamed = [...missingSubjects(scope.missing), ...obligated];
@@ -922,7 +922,7 @@ function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Reco
   const run = tx.db.prepare(`SELECT "chain" FROM "runs" WHERE "work_item" = ? AND "outcome" = 'completed' ORDER BY "seq" DESC LIMIT 1`).get(verification.id) as { chain: number } | undefined;
   observeTrigger(
     tx,
-    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: 1, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1 },
+    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: 1, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1, chain_origin: originOfItem(tx.db, verification.id) },
     {},
   );
 }

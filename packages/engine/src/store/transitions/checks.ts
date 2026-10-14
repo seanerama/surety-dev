@@ -19,7 +19,7 @@ import { checkLimits } from '../../checks/limits.js';
 import { raiseFinding } from './findings.js';
 import { quarantineDomain } from './runs.js';
 import { envelopeHold } from './envelope.js';
-import { engineSettings, projectPolicy } from './settings.js';
+import { defaultProfileMax, effectiveProfileMax, engineSettings, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { reconcileRepairs } from './repair.js';
 
@@ -522,9 +522,33 @@ export function readCandidateExecutions(db: Db, args: { project: string; candida
   // shows its hold (D3 §2.5, "a hold shows as resource_envelope"; SEAM.md
   // §210): no domain is allocated for it meanwhile.
   const queued = (r: Record<string, unknown>) => r.status === 'queued' && r.runner_class === 'direct';
-  const hold = rows.some((r) => queued(r) && r.deployment === null) ? envelopeHold(db, { kind: 'check' }) : null;
-  const boundHold = rows.some((r) => queued(r) && r.deployment !== null) ? envelopeHold(db, { kind: 'check', bound: true }) : null;
+  // The check profile the runner has not qualified holds the execution
+  // before the envelope is consulted (D6-X09; B09; SEAM.md §432).
+  const profileHold = runnerProfileHold(db, args.project);
+  const hold = profileHold ?? (rows.some((r) => queued(r) && r.deployment === null) ? envelopeHold(db, { kind: 'check', project: args.project }) : null);
+  const boundHold = profileHold ?? (rows.some((r) => queued(r) && r.deployment !== null) ? envelopeHold(db, { kind: 'check', bound: true, project: args.project }) : null);
   return { ...head, executions: rows.map((r) => ({ ...executionView(r), hold: queued(r) ? (r.deployment !== null ? boundHold : hold) : null })) };
+}
+
+// D6-X09 (B09; the driver's ruling 3, slice 37): the check profiles the
+// runner's qualification covers are those its start self-test (or the
+// harness's fixture) qualified: the default and every registered project's
+// effective `check_memory_max` at that time. A project's check profile
+// outside them holds its queued executions `runner_unqualified`, with no
+// domain, until the next start qualifies it. null while the runner is not
+// qualified at all (recordUnrunnable's case) or covers the profile.
+export function runnerProfileHold(db: Db, project: string): { code: 'runner_unqualified'; reason: string; what_to_do: string; subject: Record<string, unknown> } | null {
+  const q = runnerQualification(db);
+  if (q === null || q.check_runner === null || q.check_runner.qualified !== true) return null;
+  const memory = effectiveProfileMax(db, project, 'check');
+  const profiles = Array.isArray(q.check_runner.profiles) ? (q.check_runner.profiles as { memory_max?: unknown }[]) : [];
+  if (profiles.some((p) => p?.memory_max === memory)) return null;
+  return {
+    code: 'runner_unqualified',
+    reason: `The check runner is not qualified for the check profile of ${memory} bytes (check_memory_max) on this host: its qualification covers ${profiles.map((p) => String(p?.memory_max)).join(', ') || 'no profile'}.`,
+    what_to_do: "Restart the engine: the runner's self-test at the start qualifies every registered project's check profile.",
+    subject: { profile: { memory_max: memory } },
+  };
 }
 
 // ---- the runner's qualification (D3 §2.8; A.3 host_qualifications.check_runner) --------
@@ -545,11 +569,20 @@ export function runnerQualification(db: Db): { id: string; check_runner: CheckRu
 
 // Record the runner's state on the active host qualification. Returns its
 // id, or null when there is none (the runner cannot be qualified then).
+// The check profiles qualified with it (D6-X09; the driver's ruling 3,
+// slice 37): the engine's default and every registered project's effective
+// `check_memory_max` now, unless the caller names its own (`profiles`).
 export function setCheckRunner(tx: Tx, state: CheckRunnerState): string | null {
   const q = runnerQualification(tx.db);
   if (q === null) return null;
-  tx.db.prepare('UPDATE "host_qualifications" SET "check_runner" = ? WHERE "id" = ?').run(JSON.stringify(state), q.id);
+  const profiles = Array.isArray(state.profiles) ? state.profiles : checkProfilesNow(tx.db);
+  tx.db.prepare('UPDATE "host_qualifications" SET "check_runner" = ? WHERE "id" = ?').run(JSON.stringify({ ...state, profiles }), q.id);
   return q.id;
+}
+
+export function checkProfilesNow(db: Db): { memory_max: number }[] {
+  const projects = (db.prepare('SELECT "id" FROM "projects" ORDER BY rowid').all() as { id: string }[]).map((p) => effectiveProfileMax(db, p.id, 'check'));
+  return [...new Set([defaultProfileMax('check'), ...projects])].map((memory_max) => ({ memory_max }));
 }
 
 // ---- one execution's life (D3 §§2.5 to 2.7, A.5; L1) ---------------------------------------
@@ -574,6 +607,8 @@ export interface Admission {
   lease_generation: number;
   runner_id: string;
   runner_qualification: string;
+  // The domain's memory maximum recorded at admission (D6 K2, B09).
+  memory_max: number;
   execution_seq: number;
   // An environment-bound execution's service link (D4 §5.2; J8): the
   // attempt and generation frozen on it, its environment, and the targets
@@ -611,7 +646,10 @@ export function admitExecution(
     .prepare(`SELECT * FROM "check_executions" WHERE "project" = ? AND "status" = 'queued' AND "runner_class" = 'direct' ORDER BY ("deployment" IS NULL), "execution_seq" LIMIT 1`)
     .get(args.project) as Record<string, unknown> | undefined;
   if (!x) return null;
-  if (envelopeHold(tx.db, { kind: 'check', bound: typeof x.deployment === 'string' }) !== null) return null;
+  if (runnerProfileHold(tx.db, args.project) !== null) return null;
+  // The check domain's maximum, fixed at admission (D6 §6.4, K2, B09).
+  const memoryMax = effectiveProfileMax(tx.db, args.project, 'check');
+  if (envelopeHold(tx.db, { kind: 'check', bound: typeof x.deployment === 'string', project: args.project, memory: memoryMax }) !== null) return null;
   const check = tx.db.prepare('SELECT * FROM "checks" WHERE "id" = ?').get(x.check) as { key: string; definition: string; input_manifest: string };
   const version = tx.db.prepare('SELECT "roots", "governed" FROM "protected_versions" WHERE "id" = ?').get(x.protected_version) as { roots: string; governed: string | null };
   const manifests = (tx.db.prepare('SELECT "input_manifest" FROM "checks" WHERE "protected_version" = ?').all(x.protected_version) as { input_manifest: string }[]).map(
@@ -622,10 +660,10 @@ export function admitExecution(
   const cgroup = `${args.scope}/${domain}`;
   tx.db
     .prepare(
-      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "check_execution", "status", "profile", "cgroup_path", "launch_state")
-       VALUES (?, ?, ?, NULL, NULL, ?, 'allocated', 'check', ?, 'authorizable')`,
+      `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "check_execution", "status", "profile", "cgroup_path", "launch_state", "memory_max")
+       VALUES (?, ?, ?, NULL, NULL, ?, 'allocated', 'check', ?, 'authorizable', ?)`,
     )
-    .run(domain, tx.at, args.project, x.id, cgroup);
+    .run(domain, tx.at, args.project, x.id, cgroup, memoryMax);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "check_execution", "incarnation") VALUES (?, ?, ?, ?, NULL, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, args.project, domain, x.id, args.incarnation);
@@ -658,6 +696,7 @@ export function admitExecution(
     lease_generation: 1,
     runner_id: runner,
     runner_qualification: q.id,
+    memory_max: memoryMax,
     execution_seq: x.execution_seq as number,
     link: linkOf(tx.db, x),
     deployment: typeof x.deployment === 'string',

@@ -3,6 +3,7 @@
 // a decision, and the run representation. Each command is one transition and
 // commits with its api.act record (store worker, `mutate`).
 
+import { recordApiTickRequest } from './tick-requests.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, consumeDecision, currentPreview, openDecision, stale } from './decisions.js';
@@ -35,6 +36,7 @@ export interface CommandResult {
 // own loop, never in this call (D1 §1.5).
 export function requestTick(tx: Tx, args: { project: string }): CommandResult {
   if (!tx.db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
+  recordApiTickRequest(tx, args.project);
   return { status: 202, body: { tick: 'requested' }, effects: [{ kind: 'tick' }] };
 }
 

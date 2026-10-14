@@ -26,8 +26,10 @@ export function schedulerStarted(tx: Tx, incarnation: string): void {
 
 // The heartbeat that ends every tick (D1 §8.1 step 10), written after
 // everything else the tick wrote.
-export function recordTick(tx: Tx, args: { incarnation: string; dispatched: number }): { seq: number } {
-  const ref = tx.emit('engine.tick', { incarnation: args.incarnation }, { dispatched: args.dispatched });
+export function recordTick(tx: Tx, args: { incarnation: string; dispatched: number; requests?: number; steps?: string[] }): { seq: number } {
+  // D6 K1 (SEAM.md §430): the requests coalesced into this tick, and the
+  // steps it ran, in order.
+  const ref = tx.emit('engine.tick', { incarnation: args.incarnation }, { dispatched: args.dispatched, requests: args.requests ?? 0, steps: args.steps ?? [] });
   return { seq: ref.seq };
 }
 

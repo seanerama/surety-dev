@@ -303,7 +303,6 @@ export class Launcher {
       workItem: item.id,
       incarnation: this.rt.incarnation,
       scripted: backend?.version ?? null,
-      maxConcurrentRuns: this.rt.setting('max_concurrent_runs'),
       providerCaps: heldProviderCaps(),
       // The domain is a cgroup of the incarnation's scope on the real
       // boundary (D2 §3.2); the kernel lane's scripted boundary has none.
@@ -886,7 +885,7 @@ export class Launcher {
           if (handle.ending || handle.abort) return false;
           // The domain's limits, read back again at the grant (D2 §3.7): no
           // role code is authorized into a domain without them.
-          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt, claim.work_item ?? claim.run));
+          const wrong = verifyLimits(claim.cgroup_path!, domainLimits(this.rt, claim.work_item ?? claim.run, claim.memory_max));
           if (wrong !== null) {
             log('launch', new Error(`the domain's limits do not read as written: ${wrong}`), { run: claim.run, domain: claim.domain });
             this.rt.requestEnd(handle, {

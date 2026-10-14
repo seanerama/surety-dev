@@ -12,7 +12,7 @@ import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
-import { engineSettings, projectPolicy, roleModel } from './settings.js';
+import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy, roleModel } from './settings.js';
 import { settleOpenTurns } from '../../sessions/session.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
@@ -169,7 +169,6 @@ export interface ClaimArgs {
   // The scripted backend's version where this engine has it (harness mode
   // with a scripted directory), else null.
   scripted: string | null;
-  maxConcurrentRuns: number;
   // The provider-side cap held with each secret reference that has one
   // (D2 §4.2, Q2; SEAM.md §120).
   providerCaps?: Record<string, number>;
@@ -206,6 +205,9 @@ export interface Claim {
   cgroup_path: string | null;
   // The sandbox profile (D2 §§2.8, 3.8).
   profile: string;
+  // The memory maximum the domain was admitted at (D6 K2, B09): what its
+  // cgroup's memory.max is written as.
+  memory_max?: number | null;
   // The backend the run is dispatched to (D2 §4.1): the trust entry that
   // authorizes it, if any; or why it is refused before any domain or
   // process (`backend_refused`, `isolation_unqualified`,
@@ -231,7 +233,7 @@ export interface Claim {
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 // `check`: false for a projection, which reads the budget without being a
 // budget check (D1 §6.6 governs the check, not the read).
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean; canary?: boolean } = {}): string | null {
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean } = {}): string | null {
   // A canary's item is run only by its attempt's own dispatch (K10).
   if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
@@ -275,12 +277,32 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended'`, item.project) > 0) return 'session_busy';
-  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
+  // D6 K2 (E139 item 4; B09): no run count caps admission at either scope.
+  // What stays: one run per work item; integration serial under its lease
+  // (runs/accept.ts); the session's exclusivity above; and, so that D3's
+  // protected process keeps the order one run per project gave it (the
+  // driver's ruling 1, slice 37), at most one protected-path writer
+  // (`check_correction`, `check_authoring`) run of a project at a time and
+  // none while a review of a protected proposal is eligible or running.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended'`, item.id) > 0) return 'work item has a run';
+  if (PROTECTED_WRITERS.includes(item.kind)) {
+    const writer = live(
+      `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" IN ('check_correction', 'check_authoring')`,
+      item.project,
+    );
+    if (writer > 0) return 'depends on a protected-path writer running';
+    const review = live(
+      `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.proposal') IS NOT NULL
+         AND "status" IN ('eligible', 'claimed', 'executing')`,
+      item.project,
+    );
+    if (review > 0) return 'depends on the review of a protected proposal';
+  }
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
-  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   // A stage an early replacement superseded is never dispatched again (D6
   // §5.7; the review's N2): its work is settled by the phase step.
   if (item.kind === 'stage_build') {
@@ -353,6 +375,8 @@ export function dispatchEntryProbe(db: Tx['db'], args: { project: string; workIt
 }
 
 export const CHAIN_BOUNDARY = 'chaining boundary';
+// The kinds that write the protected path through a proposal (D3 §3).
+export const PROTECTED_WRITERS = ['check_correction', 'check_authoring'];
 export const RESOURCE_ENVELOPE = 'resource_envelope';
 
 // D1 §8.1 step 9, one transaction: the run (claimed), its work item claimed,
@@ -365,7 +389,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
   const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
   if (args.attempt && !canary) return null;
-  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns, { canary }) !== null) return null;
+  if (dispatchBlocker(tx.db, item, { canary }) !== null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -428,7 +452,11 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // max_concurrent_domains and the host's reserves; otherwise the work stays
   // eligible, nothing is written, and its read shows the hold. A dispatch
   // refused before launch admits no domain and is not held.
-  if (backend.kind !== 'refused' && envelopeHold(tx.db) !== null) return null;
+  // The domain's memory maximum, fixed now and never resized (D6 §6.4, K2,
+  // B09): the project's effective `role_memory_max`, or, for a canary, the
+  // profile its attempt qualifies.
+  const memoryMax = canary ? attemptProfileMax(tx.db, args.attempt!) : effectiveProfileMax(tx.db, item.project, 'role');
+  if (backend.kind !== 'refused' && envelopeHold(tx.db, { kind: 'role', project: item.project, memory: memoryMax }) !== null) return null;
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
@@ -527,8 +555,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
        VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, 'authorizable', ?)`,
     )
     // The memory maximum it is admitted at, the value the envelope counts
-    // (D6 A.3; K2): the configured domain_memory_max (slice 33).
-    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath, engineSettings().domain_memory_max ?? null);
+    // (D6 A.3; K2; B09).
+    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath, memoryMax);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
@@ -550,6 +578,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     ...(outputs === undefined ? {} : { check_outputs: outputs }),
     cgroup_path: cgroupPath,
     profile,
+    memory_max: memoryMax,
     backend: backend.backend,
     trust_entry: trustEntry,
     attempt: backend.kind === 'attempt' ? { id: backend.attempt.id, kind: canaryOf.canary_kind ?? 'positive' } : null,
@@ -836,6 +865,9 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
   // scripted boundary of the kernel lane, where no launcher exists, it is
   // recorded here.
   closeLaunch(tx, { domain: d.id, cause: 'termination' });
+  // D6 §6.4, §7.6 (K2; N01): a domain's peak is recorded before its
+  // termination; one not read by then is unknown, never zero.
+  recordPeak(tx, { domain: d.id, memory_peak: null, why: 'memory.peak was not read before the domain was removed (no cgroup of the real boundary, or its record lost)' });
   // `observed_at` is when emptiness was read, which a barrier may hold apart
   // from this record (SEAM.md §126).
   tx.db
@@ -851,6 +883,24 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
     const seen = statuses(tx, d.invocation);
     if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
   }
+}
+
+// D6 §6.4, §7.6, A.2 (K2; N01; SEAM.md §432): a domain's `memory.peak`,
+// read before its cgroup is removed, bound to the domain and its
+// observation time; null with why when it could not be read. Once per
+// domain: a later record of it changes nothing.
+export function recordPeak(tx: Tx, args: { domain: string; memory_peak: number | null; why?: string; observed_at?: string }): void {
+  const d = tx.db.prepare('SELECT "id", "project", "run", "peak_recorded_at" FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
+    | { id: string; project: string; run: string | null; peak_recorded_at: string | null }
+    | undefined;
+  if (!d) throw notFound('domain', args.domain);
+  if (d.peak_recorded_at !== null) return;
+  const value = Number.isSafeInteger(args.memory_peak) && (args.memory_peak as number) > 0 ? (args.memory_peak as number) : null;
+  tx.db.prepare('UPDATE "execution_domains" SET "memory_peak" = ?, "peak_recorded_at" = ? WHERE "id" = ?').run(value, tx.at, d.id);
+  tx.emit('domain.peak_recorded', { project: d.project, domain: d.id, run: d.run }, {
+    memory_peak: value ?? { unknown: args.why ?? 'memory.peak could not be read' },
+    observed_at: args.observed_at ?? tx.at,
+  });
 }
 
 // A check execution's domain whose termination is unknown (L1; SEAM.md

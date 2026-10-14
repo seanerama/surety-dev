@@ -55,7 +55,7 @@ export interface ProjectCandidates {
 // Every project with work that could be dispatched now, as far as the store
 // alone can tell. The scheduler's prerequisite steps decide the rest, and the
 // claim transaction checks it all again.
-export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: number }): ProjectCandidates[] {
+export function dispatchCandidates(db: Database): ProjectCandidates[] {
   const projects = db.prepare('SELECT "id", "dev_repo_path", "integration_branch" FROM "projects" ORDER BY rowid, "id"').all() as {
     id: string;
     dev_repo_path: string;
@@ -68,7 +68,7 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
       const eligible = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[];
       const reviewPending = eligible.some(isProposalReview);
       items = eligible
-        .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
+        .map((item) => ({ item, blocker: dispatchBlocker(db, item) }))
         .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
         .sort((a, b) => priorityOf(a.item, reviewPending) - priorityOf(b.item, reviewPending) || a.item.seq - b.item.seq)
         .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));

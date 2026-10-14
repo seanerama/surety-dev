@@ -18,7 +18,7 @@ import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
 import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.js';
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
-import { engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
+import { attemptProfileMax, effectiveProfileMax, engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
@@ -410,7 +410,9 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
     .prepare(
       `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state", "memory_max") VALUES (?, ?, ?, ?, ?, 'allocated', 'role', ?, 'authorizable', ?)`,
     )
-    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, engineSettings().domain_memory_max ?? null);
+    // The project's effective role maximum (D6 §2.7, K2, B09), or the profile
+    // a continuation canary's attempt qualifies.
+    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, canaryOf ? attemptProfileMax(tx.db, canaryOf) : effectiveProfileMax(tx.db, run.project, 'role'));
   tx.db.prepare('INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('proc_'), tx.at, run.project, domain, invocation, args.incarnation);
   const deadlineSeconds = policy[`deadline_${run.role}`]!;
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'turn_running', "turn_count" = ?, "deadline_at" = ? WHERE "id" = ?`).run(turn, addSeconds(tx.at, deadlineSeconds), run.id);
@@ -439,7 +441,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
   if (!run || run.kind !== 'session' || run.session_state !== 'turn_running') return null;
   const turn = tx.db.prepare('SELECT "number", "domain" FROM "turns" WHERE "run" = ? AND "invocation" = ?').get(run.id, args.invocation) as { number: number; domain: string } | undefined;
   if (!turn) return null;
-  const d = tx.db.prepare('SELECT "cgroup_path", "status" FROM "execution_domains" WHERE "id" = ?').get(turn.domain) as { cgroup_path: string | null; status: string } | undefined;
+  const d = tx.db.prepare('SELECT "cgroup_path", "status", "memory_max" FROM "execution_domains" WHERE "id" = ?').get(turn.domain) as { cgroup_path: string | null; status: string; memory_max: number | null } | undefined;
   if (!d || d.status !== 'allocated') return null;
   const lease = tx.db.prepare(`SELECT "generation", "renewed_at" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { generation: number; renewed_at: string } | undefined;
   if (!lease) return null;
@@ -462,6 +464,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
       base_revision: run.base_revision,
       lease_renewed_at: lease.renewed_at,
       cgroup_path: d.cgroup_path,
+      memory_max: d.memory_max,
       profile: 'role',
       backend: a.backend,
       trust_entry: null,
@@ -488,6 +491,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
       base_revision: run.base_revision,
       lease_renewed_at: lease.renewed_at,
       cgroup_path: d.cgroup_path,
+      memory_max: d.memory_max,
       profile: 'role',
       backend: resolved.backend,
       trust_entry: null,
@@ -511,6 +515,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
     base_revision: run.base_revision,
     lease_renewed_at: lease.renewed_at,
     cgroup_path: d.cgroup_path,
+    memory_max: d.memory_max,
     profile: 'role',
     backend: resolved.backend,
     trust_entry: resolved.kind === 'entry' ? resolved.entry.id : null,

@@ -90,6 +90,7 @@ let engineBuildVariantValue: string | null = null;
 const adapterVersionValues: string[] = [];
 let serviceProfileVariantValue: string | null = null;
 const hostFactUnreadValues: string[] = [];
+let profileMaximaValue: string | null = null;
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -146,7 +147,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-engine-build-variant' ||
     flag === '--harness-adapter-version' ||
     flag === '--harness-service-profile-variant' ||
-    flag === '--harness-host-fact-unread'
+    flag === '--harness-host-fact-unread' ||
+    flag === '--harness-profile-maxima'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -218,6 +220,9 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-host-fact-unread') {
       // SEAM.md §328: this start records that host fact as unread.
       hostFactUnreadValues.push(value);
+    } else if (flag === '--harness-profile-maxima') {
+      // SEAM.md §427: every role (or check) domain of this start admitted at this maximum.
+      profileMaximaValue = value;
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -256,6 +261,7 @@ const switchProblem = setHarnessSwitches({
   adapterVersions: adapterVersionValues,
   serviceProfileVariant: serviceProfileVariantValue,
   hostFactsUnread: hostFactUnreadValues,
+  profileMaxima: profileMaximaValue,
 });
 if (switchProblem !== null) usage(switchProblem);
 

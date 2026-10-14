@@ -32,7 +32,7 @@ import type { RunHandle, Runtime } from '../runtime.js';
 import { log } from '../runtime.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
 import { ownedHomeEntry } from '../home-entries.js';
-import { pausePoint, seamMainFault } from '../testing/seam.js';
+import { pausePoint, seamMainFault, seamPeakFault } from '../testing/seam.js';
 import { DOMAIN_ID, SUPERVISOR_LEAF, cgroupInode, homeScopes, isHomeScope, readPopulated, readProcs, removeCgroup, verifyDomainPath, writeKill } from './cgroup.js';
 import { managerReachable } from './scope.js';
 
@@ -251,6 +251,23 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
   }
   if (launch && launch.alive && launch.placedPid === null) return unknown('the launcher is outstanding and is not a member');
   await pausePoint('boundary.before_terminated');
+  // D6 §6.4, §7.6 (K2; N01; SEAM.md §432): the domain's memory.peak, read
+  // from its own verified cgroup before the cgroup is removed and recorded
+  // before its termination; unknown when it cannot be read, never zero and
+  // never read late. A read only (the harness's `after_removal` fault removes
+  // the empty cgroup first, as the record below would).
+  {
+    const fault = seamPeakFault(d.project);
+    if (fault === 'after_removal' && final.state === 'populated') removeCgroup(path);
+    const peakAt = nowIso();
+    const value = fault === 'unreadable' || final.state !== 'populated' ? null : readPeak(path);
+    await rt.engine('domain.peak', {
+      domain: d.id,
+      memory_peak: value,
+      observed_at: peakAt,
+      why: fault === 'unreadable' ? 'memory.peak could not be read (injected fault)' : final.state !== 'populated' ? "the domain's cgroup was gone before memory.peak was read" : 'memory.peak could not be read',
+    }).catch((err) => log('domain peak', err, { domain: d.id }));
+  }
   // Both counters always, each null where its file could not be read
   // (SEAM.md §145): an unread counter is unknown, never 0.
   const resources = final.state === 'populated' ? counters(path) : { oom_kill: null, pids_max: null };
@@ -296,6 +313,16 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
     }
   }
   return { terminated: true };
+}
+
+// A cgroup's memory.peak in bytes, or null when it cannot be read.
+function readPeak(path: string): number | null {
+  try {
+    const text = readFileSync(join(path, 'memory.peak'), 'utf8').trim();
+    return /^\d+$/.test(text) && Number(text) > 0 ? Number(text) : null;
+  } catch {
+    return null;
+  }
 }
 
 // One member, by its host pid as the verified domain's cgroup.procs listed it:

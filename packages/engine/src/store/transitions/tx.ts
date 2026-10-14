@@ -10,6 +10,7 @@ import { newId } from '../../ids.js';
 import { beforeEventWrite } from '../../testing/seam.js';
 
 import type { EventType } from './event-types.js';
+import { addCommittedTickRequests, recordTickRequests } from './tick-requests.js';
 
 export type { EventType };
 
@@ -77,5 +78,16 @@ export class Tx {
 }
 
 export function transact<T>(db: Database, actor: Actor, fn: (tx: Tx) => T): T {
-  return db.transaction(() => fn(new Tx(db, actor))).immediate();
+  let requested = 0;
+  const value = db
+    .transaction(() => {
+      const tx = new Tx(db, actor);
+      const out = fn(tx);
+      // D6 K1: the ticks this transition requests, in its own transaction.
+      requested = recordTickRequests(tx);
+      return out;
+    })
+    .immediate();
+  if (requested > 0) addCommittedTickRequests(requested);
+  return value;
 }
