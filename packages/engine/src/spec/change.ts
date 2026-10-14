@@ -34,11 +34,14 @@ import { intendOperation, type IntentResult } from '../store/transitions/journal
 import { completeIntent, effectiveVersion, invalidateResults } from '../store/transitions/protected.js';
 import { type KindSpec, consumed, invalidateIntent, raiseQuestion, recordApproval, recordIntent, revalidateIntent } from '../store/transitions/queue.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
-import { policyRevision } from '../store/transitions/settings.js';
+import { parkWork } from '../store/transitions/runs.js';
+import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
-import { type SemanticsRow, approveSpec, recordSemantics, specBlockers } from './approval.js';
-import type { SemanticFinding, SpecRepresentation } from './semantics.js';
+import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
+import { ADR_FILE } from '../plan/schemas.js';
+import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
+import { compareKeys } from './keys.js';
+import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 
 type Db = Tx['db'];
 
@@ -105,6 +108,62 @@ export function requestSpecChange(tx: Tx, args: { project: string; text: string;
   return { status: 201, body: { request: { id, seq, status: 'requested' }, work_item: { id: work.work_item.id } }, effects: [{ kind: 'tick' }] };
 }
 
+// D3 §5 X2's `change_spec` answer about a finding (D6 §4.2; M431 (c)): a
+// request with source `finding` naming it, its text the finding's message,
+// and its `spec_change` work, dispatched like the owner's (one proposal at a
+// time). Returns the request, or null when the project has no approved
+// specification to change: then, as before, a `spec_change` item about the
+// finding is recorded and never dispatched (the driver's ruling Q14).
+export function requestFromFinding(tx: Tx, args: { project: string; finding: string; decision: string }): string | null {
+  const spec = currentSpec(tx.db, args.project);
+  if (!spec) {
+    observeTrigger(tx, { project: args.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: args.finding, trigger_generation: 1, subject: { finding: args.finding }, chain: 0, engineRaised: true }, { finding: args.finding, decision: args.decision });
+    return null;
+  }
+  const open = tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "project" = ? AND "finding" = ? AND "status" IN ('requested', 'proposed')`).get(args.project, args.finding) as { id: string } | undefined;
+  if (open) return open.id;
+  const f = tx.db.prepare('SELECT "message" FROM "findings" WHERE "id" = ? AND "project" = ?').get(args.finding, args.project) as { message: string } | undefined;
+  if (!f) throw notFound('finding', args.finding);
+  const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS seq FROM "spec_change_requests" WHERE "project" = ?').get(args.project) as { seq: number };
+  const id = tx.newId('scr_');
+  tx.db
+    .prepare(
+      `INSERT INTO "spec_change_requests" ("id", "created_at", "project", "seq", "spec_revision", "text", "request_text", "source", "status", "finding")
+       VALUES (?, ?, ?, ?, ?, NULL, ?, 'finding', 'requested', ?)`,
+    )
+    .run(id, tx.at, args.project, seq, spec.id, f.message, args.finding);
+  // A finding asked about again after an earlier request of it ended is a
+  // new generation of the same trigger.
+  const { n } = tx.db.prepare('SELECT COUNT(*) AS n FROM "spec_change_requests" WHERE "project" = ? AND "finding" = ?').get(args.project, args.finding) as { n: number };
+  const work = observeTrigger(
+    tx,
+    { project: args.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: args.finding, trigger_generation: n, subject: { request: id }, chain: 0 },
+    { request: id, finding: args.finding, decision: args.decision },
+  );
+  tx.db.prepare('UPDATE "spec_change_requests" SET "work_item" = ? WHERE "id" = ?').run(work.work_item.id, id);
+  tx.emit('spec.change_requested', { project: args.project, spec_change_request: id }, { seq, spec_revision: spec.id, work_item: work.work_item.id, source: 'finding', finding: args.finding, decision: args.decision });
+  return id;
+}
+
+// The `change_spec` answer about a set of conflicts: one request per
+// distinct conflict (the same criterion and message reported again, by a
+// repair of the same work, is one conflict), naming its earliest finding.
+export function requestsFromFindings(tx: Tx, args: { project: string; findings: string[]; decision: string }): (string | null)[] {
+  const rows = args.findings
+    .map((id) => tx.db.prepare('SELECT "id", "seq", "criterion", "message" FROM "findings" WHERE "id" = ? AND "project" = ?').get(id, args.project) as { id: string; seq: number; criterion: string | null; message: string } | undefined)
+    .filter((f): f is { id: string; seq: number; criterion: string | null; message: string } => f !== undefined)
+    .sort((a, b) => a.seq - b.seq);
+  const seen = new Set<string>();
+  const out: (string | null)[] = [];
+  for (const f of rows) {
+    const k = canonical([f.criterion, f.message]);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(requestFromFinding(tx, { project: args.project, finding: f.id, decision: args.decision }));
+  }
+  return out;
+}
+
 // A retrofit replan's requests (D6 §8.3; B.7): each an ordinary request,
 // source `replan`, its spec_change work registered as the owner's is; the
 // owner approves its proposal like any. A request the same replan work
@@ -155,30 +214,81 @@ export interface Impact {
   stages: { stage: string; number: number; status: string; phase_plan: string }[];
   phases: number[];
   touches_current: boolean;
+  // A phase after the current one (the slice-36 review's M1).
+  touches_later: boolean;
   evidence: { results: string[]; evaluations: string[] };
   work: string[];
+  // D6 §4.4 (B05): the findings naming a removed, changed or affected
+  // criterion; the ADRs whose text cites an affected key (a textual
+  // dependency, not semantic analysis); the modules whose sensitive areas
+  // the change alters (structural); the requirements whose independence is
+  // not established (a statement changed, the key cited by no ADR), whose
+  // scope is therefore the conservative one.
+  findings: string[];
+  adrs: { key: string; class: 'textual'; cites: string[] }[];
+  modules: { name: string; class: 'structural' }[];
+  uncertain_scope: { key: string; reason: string }[];
   claimed: unknown;
-  dependency_manifest: Record<string, unknown>;
+  dependency_manifest: DependencyManifest;
+}
+
+// The dependency generations the impact is bound to (B05; A.3): each
+// subject it lists, by class, with what it is now. Preview and effect
+// recompute it; a material change to a listed subject makes the answer stale.
+export type ManifestEntry = { id: string; generation: number | string | null };
+export interface DependencyManifest {
+  plans: ManifestEntry[];
+  requirements: ManifestEntry[];
+  checks: ManifestEntry[];
+  findings: ManifestEntry[];
+  results: ManifestEntry[];
+  work: ManifestEntry[];
 }
 
 const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
+// A short digest of a subject's material fields: its generation where the
+// row keeps no counter of its own.
+const digestOf = (v: unknown): string => sha256(canonical(v)).slice(0, 16);
 
-// What every material dependency of the impact is now (B05; A.3): the
-// generations of the active plans, the requirements' registration and the
-// effective protected version.
-export function dependencyManifest(db: Db, project: string): Record<string, unknown> {
-  const plans = db.prepare(`SELECT "id", "generation", "status" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 ORDER BY "phase_number"`).all(project);
-  const reqs = db.prepare('SELECT "key", "spec_revision", "status" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(project);
-  return { plans, requirements: sha256(canonical(reqs)), protected_version: effectiveVersion(db, project)?.id ?? null };
+// A proposal the engine refuses before any impact (D6 §4.4): a key or a
+// criterion renumbered, a withdrawn key used again, an approved
+// representation it cannot read. The run fails `invalid_result` naming it.
+export class ImpactRefused extends Error {
+  constructor(readonly code: string, readonly detail: string) {
+    super(`${code}: ${detail}`);
+  }
+}
+
+// The ADRs of the approved architecture with their approved texts (as
+// plan/bundle.ts's approvedAdrs), read from the store.
+function approvedAdrTexts(db: Db, project: string): { key: string; text: string }[] {
+  const arch = db.prepare('SELECT "blobs" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { blobs: string } | undefined;
+  if (!arch) return [];
+  const keys = new Set(Object.keys(parseJson<Record<string, string>>(arch.blobs) ?? {}).flatMap((p) => ADR_FILE.exec(p)?.[1] ?? []));
+  return (db.prepare(`SELECT "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' ORDER BY "key"`).all(project) as { key: string; text: string }[]).filter((a) => keys.has(a.key));
+}
+
+// The requirement keys an ADR's body cites (`R<n>`, or a criterion `R<n>.<m>`
+// of it), its front matter apart.
+function citedKeys(text: string): string[] {
+  const body = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  return uniq([...body.matchAll(/\bR([1-9][0-9]*)(?:\.[0-9]+)?\b/g)].map((m) => `R${m[1]}`));
 }
 
 export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown }): Impact {
   const spec = currentSpec(db, args.project);
   const row = spec?.semantics ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(spec.semantics) as { representation: string | null } | undefined) : undefined;
-  const approved = parseJson<SpecRepresentation>(row?.representation ?? null);
+  const approved = liveRepresentation(parseJson<SpecRepresentation>(row?.representation ?? null));
   // An impact the engine cannot compute refuses the proposal (D6 §4.4):
   // never an empty impact.
-  if (!approved) throw illegal('computing a spec change impact with no readable approved representation', { project: args.project });
+  if (!approved) throw new ImpactRefused('spec_semantics_unreadable', 'the approved specification\'s representation cannot be read, so the impact cannot be computed');
+  // A key renumbered is a refusal of the diff, not an impact (D6 §4.4); a
+  // withdrawn key is never used again (TPL §4).
+  const keys = compareKeys(approved, liveRepresentation(args.proposed));
+  if (keys.renumbered.length > 0) throw new ImpactRefused('spec_keys_renumbered', keys.renumbered.map((r) => `${r.from} -> ${r.key}`).join(', '));
+  const vanished = vanishedKeys(db, args.project, approved);
+  const reused = liveRepresentation(args.proposed).requirements.map((q) => q.key).filter((k) => vanished.includes(k));
+  if (reused.length > 0) throw new ImpactRefused('spec_key_reused', reused.join(', '));
   const before = new Map(approved.requirements.map((r) => [r.key, r]));
   const after = new Map(args.proposed.requirements.map((r) => [r.key, r]));
   const requirements: Impact['requirements'] = [];
@@ -249,15 +359,55 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
   const phaseOf = (k: string): number | null => reqIds.get(k)?.assigned_phase ?? after.get(k)?.phase_hint ?? null;
   const phases = uniq(affectedKeys.map(phaseOf).filter((p): p is number => p !== null)).sort((a, b) => a - b);
   const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' AND "active" = 1`).get(args.project) as { done: number };
-  const touchesCurrent = affectedKeys.some((k) => {
-    const p = phaseOf(k);
-    return p === null || p > done;
-  });
+  // Before any roadmap there is no phase, current or later, to touch (D6 §4.5).
+  const hasRoadmap = db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
+  // The current phase: the open plan's (published, active, not complete),
+  // else the first not completed (the slice-36 review's M1). The change
+  // touches it when an affected requirement is in it or has no phase yet (a
+  // requirement a change adds is in none until the roadmap places it); it
+  // touches a later phase when one is beyond it. Only the first is an early
+  // replacement of the current plan; either registers a replan (F §3.10.7).
+  const touch = phasesTouched(db, args.project, affectedKeys.map((k) => reqIds.get(k)?.assigned_phase ?? null));
+  const touchesCurrent = hasRoadmap && touch.current;
+  const touchesLater = hasRoadmap && touch.later;
   const work = stages.length === 0
     ? []
     : (db
         .prepare(`SELECT w."id" FROM "work_items" w WHERE w."project" = ? AND w."status" NOT IN ('complete', 'cancelled') AND json_extract(w."subject", '$.stage') IN (SELECT value FROM json_each(?)) ORDER BY w."seq"`)
         .all(args.project, JSON.stringify(stages.map((s) => s.stage))) as { id: string }[]).map((w) => w.id);
+  // Findings naming a removed, changed or affected criterion.
+  const named = uniq([...affectedCriteria, ...removed]);
+  const findings = named.length === 0
+    ? []
+    : (db.prepare(`SELECT "id" FROM "findings" WHERE "project" = ? AND "criterion" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(args.project, JSON.stringify(named)) as { id: string }[]).map((f) => f.id);
+  // The textual class: approved ADRs citing an affected key.
+  const adrs = approvedAdrTexts(db, args.project)
+    .map((a) => ({ key: a.key, class: 'textual' as const, cites: citedKeys(a.text).filter((k) => affectedKeys.includes(k)).sort() }))
+    .filter((a) => a.cites.length > 0);
+  const cited = new Set(adrs.flatMap((a) => a.cites));
+  // The structural class: §6 modules whose areas differ, and the modules of
+  // the stages implementing a requirement whose areas changed.
+  const areas = (m: { sensitive_areas: string[] } | undefined) => canonical([...(m?.sensitive_areas ?? [])].sort());
+  const beforeModules = new Map(approved.modules.map((m) => [m.name, m]));
+  const afterModules = new Map(args.proposed.modules.map((m) => [m.name, m]));
+  const moduleNames = uniq([...beforeModules.keys(), ...afterModules.keys()]).filter((n) => areas(beforeModules.get(n)) !== areas(afterModules.get(n)));
+  const areaKeys = requirements.filter((q) => q.changes.includes('areas_changed')).map((q) => q.key);
+  const areaIds = areaKeys.map((k) => reqIds.get(k)?.id).filter((x): x is string => typeof x === 'string');
+  const stageModuleIds = stageRows.filter((s) => (parseJson<string[]>(s.implements) ?? []).some((x) => areaIds.includes(x) || areaKeys.includes(x))).flatMap((s) => {
+    const m = db.prepare('SELECT "modules" FROM "stages" WHERE "id" = ?').get(s.id) as { modules: string } | undefined;
+    return parseJson<string[]>(m?.modules ?? null) ?? [];
+  });
+  for (const id of uniq(stageModuleIds)) {
+    const m = db.prepare('SELECT "name" FROM "modules" WHERE "id" = ? OR ("project" = ? AND "name" = ?)').get(id, args.project, id) as { name: string } | undefined;
+    if (m) moduleNames.push(m.name);
+  }
+  const modules = uniq(moduleNames).sort().map((name) => ({ name, class: 'structural' as const }));
+  // Where independence is not established (D6 §4.4): a statement changed
+  // and no ADR cites the key; its scope is every check of its criteria.
+  const uncertain = requirements
+    .filter((q) => q.changes.includes('text_changed') && !cited.has(q.key))
+    .map((q) => ({ key: q.key, reason: `the statement of ${q.key} changed and no ADR cites it: every check of its criteria is in scope` }));
+  const listedChecks = [...obligations, ...unknown].map((c) => c.check);
   return {
     approved_digest: spec?.semantic_digest ?? null,
     proposed_digest: args.proposedDigest,
@@ -269,16 +419,91 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     stages,
     phases,
     touches_current: touchesCurrent,
+    touches_later: touchesLater,
     evidence: { results, evaluations },
     work,
+    findings,
+    adrs,
+    modules,
+    uncertain_scope: uncertain,
     claimed: args.claimed,
-    dependency_manifest: dependencyManifest(db, args.project),
+    dependency_manifest: dependencyManifest(db, { project: args.project, phases, stages: stages.map((s) => s.stage), keys: affectedKeys, checks: listedChecks, findings, results, work }),
   };
 }
 
-// The main thread's read before the side ref's intent (runs/accept.ts).
-export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown }): Impact {
-  return computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed });
+// Whether requirements placed in these phases (null: none yet) touch the
+// project's current phase or a later one (the slice-36 review's M1). The
+// current phase is the open plan's (published, active, not complete), else
+// the first not completed.
+export function phasesTouched(db: Db, project: string, placed: (number | null)[]): { current: boolean; later: boolean; phase: number } {
+  const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' AND "active" = 1`).get(project) as { done: number };
+  const open = db.prepare(`SELECT "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { phase_number: number } | undefined;
+  const phase = open?.phase_number ?? done + 1;
+  return { current: placed.some((p) => p === null || p === phase), later: placed.some((p) => p !== null && p > phase), phase };
+}
+
+// What each subject the impact lists is now (B05; A.3; SEAM.md §418): the
+// active plans of the phases it names or holding its stages, at their
+// generation; its requirements, findings and open work by a digest of what
+// is material about them; its checks at their protected version; every
+// result of its checks not invalidated, at the spec-evidence generation it
+// was registered under (null where that is not recorded).
+export function dependencyManifest(
+  db: Db,
+  args: { project: string; phases: number[]; stages: string[]; keys: string[]; checks: string[]; findings: string[]; results: string[]; work: string[] },
+): DependencyManifest {
+  const list = (xs: string[]) => JSON.stringify(xs);
+  const plans = db
+    .prepare(
+      `SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1
+         AND ("phase_number" IN (SELECT value FROM json_each(?)) OR "id" IN (SELECT "phase_plan" FROM "stages" WHERE "id" IN (SELECT value FROM json_each(?))))
+       ORDER BY "phase_number", "id"`,
+    )
+    .all(args.project, JSON.stringify(args.phases), list(args.stages)) as { id: string; generation: number }[];
+  const requirements = (
+    db.prepare('SELECT "id", "spec_revision", "status", "assigned_phase", "withdrawn_at" FROM "requirements" WHERE "project" = ? AND "key" IN (SELECT value FROM json_each(?)) ORDER BY "key"').all(args.project, list(args.keys)) as {
+      id: string;
+    }[]
+  ).map((r) => ({ id: r.id, generation: digestOf(r) }));
+  const checks = (
+    db.prepare(`SELECT c."id", v."seq" FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version" WHERE c."id" IN (SELECT value FROM json_each(?)) ORDER BY c."id"`).all(list(args.checks)) as {
+      id: string;
+      seq: number;
+    }[]
+  ).map((c) => ({ id: c.id, generation: c.seq }));
+  const findings = (
+    db.prepare(`SELECT "id", "status", "disposition", "effective_severity" FROM "findings" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.findings)) as { id: string }[]
+  ).map((f) => ({ id: f.id, generation: digestOf(f) }));
+  const results = (
+    db.prepare(`SELECT r."id", x."spec_generation" AS g FROM "check_results" r LEFT JOIN "check_executions" x ON x."id" = r."execution" WHERE r."id" IN (SELECT value FROM json_each(?)) ORDER BY r."execution_seq", r."id"`).all(list(args.results)) as {
+      id: string;
+      g: number | null;
+    }[]
+  ).map((r) => ({ id: r.id, generation: r.g }));
+  // A work item's generation is its class (the driver's ruling on the
+  // slice-36 report): active, held (parked or held) or terminal. A parked
+  // item retried changes it (M433 (a)); a build's routine progress does not.
+  const work = (
+    db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.work)) as { id: string; status: string }[]
+  ).map((w) => ({ id: w.id, generation: workClass(w.status) }));
+  return { plans: plans.map((p) => ({ id: p.id, generation: p.generation })), requirements, checks, findings, results, work };
+}
+
+export function workClass(status: string): 'active' | 'held' | 'terminal' {
+  if (status === 'parked' || status === 'held') return 'held';
+  if (status === 'complete' || status === 'cancelled') return 'terminal';
+  return 'active';
+}
+
+// The main thread's read before the side ref's intent (runs/accept.ts): the
+// impact, or the reason the proposal is refused (D6 §4.4).
+export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown }): { impact: Impact } | { refused: string } {
+  try {
+    return { impact: computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed }) };
+  } catch (err) {
+    if (err instanceof ImpactRefused) return { refused: err.message };
+    throw err;
+  }
 }
 
 // ---- the proposal on its side ref (D6 §4.3) ------------------------------------------------
@@ -286,7 +511,7 @@ export function impactRead(db: Db, args: { project: string; representation: Spec
 export interface ProposalInputs {
   purpose: 'spec_change';
   ref: string;
-  ref_kind: 'keep';
+  ref_kind: 'spec_change';
   new_oid: string;
   request: string;
   run: string;
@@ -306,14 +531,13 @@ export function intendProposal(
   const r = requestOfRun(tx.db, args.run);
   if (!r) throw illegal('a spec_change run whose work names no request', { run: args.run });
   const ref = sideRef(r.seq);
-  // The side ref is a registered ref of the engine's (D6 §4.3). D6 A.2's
-  // `spec_change` RefKind is not in this engine's registry kinds yet; the
-  // ref is registered as a keep ref, which makes the revision reachable and
-  // is never moved.
+  // The side ref is a registered ref of the engine's (D6 §4.3), of RefKind
+  // `spec_change` (A.2): it makes the revision reachable and is never moved
+  // by the engine; on `reject` it is kept as history.
   const inputs: ProposalInputs = {
     purpose: 'spec_change',
     ref,
-    ref_kind: 'keep',
+    ref_kind: 'spec_change',
     new_oid: args.commit,
     request: r.id,
     run: args.run,
@@ -363,19 +587,38 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
 export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefined {
   if (r.proposal_blob === null) return undefined;
   return db
-    .prepare(`SELECT s.* FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .prepare(`SELECT s.* FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s.rowid DESC, s."id" DESC LIMIT 1`)
     .get(r.work_item, r.proposal_blob) as SemanticsRow | undefined;
 }
 
 export function currentImpact(db: Db, r: RequestRow): Impact | null {
+  const out = impactNow(db, r);
+  return 'impact' in out ? out.impact : null;
+}
+
+// The impact as it stands now, or why it cannot be computed (D6 §4.4).
+export function impactNow(db: Db, r: RequestRow): { impact: Impact } | { reason: string } {
   const sem = proposalSemantics(db, r);
-  const representation = parseJson<SpecRepresentation>(sem?.representation ?? null);
-  if (!representation) return null;
+  const representation = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
+  if (!representation) return { reason: "the proposal's representation cannot be read" };
   try {
-    return computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null });
-  } catch {
-    return null;
+    return { impact: computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null }) };
+  } catch (err) {
+    return { reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// A pending proposal whose impact can no longer be computed is refused with
+// the reason (D6 §4.4; the slice-36 review's S2): the request ends `failed`
+// naming it, its work ends, and the one-at-a-time slot frees for the next.
+function refuseProposal(tx: Tx, r: RequestRow, reason: string): void {
+  if (r.status !== 'proposed') return;
+  const failure = `spec_impact_uncomputable: the proposal is refused, its impact cannot be computed against the specification now approved: ${reason}`;
+  tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(failure, r.id);
+  tx.emit('spec.change_failed', { project: r.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'spec_impact_uncomputable', failure });
+  settleWork(tx, r, 'refused');
+  // A request waiting for the slot may now be dispatched.
+  markStale(tx, { project: r.project });
 }
 
 // ---- the decision (D6 §4.5; floor) ---------------------------------------------------------
@@ -394,7 +637,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   impact: 'its impact could not be computed',
 };
 
-export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'];
+export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'];
 
 function changeManifest(db: Db, id: string): Record<string, unknown> {
   const r = getRequest(db, id);
@@ -412,10 +655,31 @@ function changeManifest(db: Db, id: string): Record<string, unknown> {
     impact:
       impact === null
         ? null
-        : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current })),
-    dependency_manifest: project === null ? null : dependencyManifest(db, project),
+        : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current, touches_later: impact.touches_later })),
+    // The dependency generations of what the impact lists, recomputed (D6
+    // §4.4): a new result, finding, work status or plan generation touching
+    // a listed subject makes the answer stale; one touching nothing listed
+    // does not.
+    dependency_manifest: impact === null ? null : impact.dependency_manifest,
+    // The side ref as the engine observes it (D6 §4.3; M431 (f)): moved out
+    // of band, the answer is stale. The proposal's identity is the revision
+    // the request recorded, whatever the ref holds.
+    side_ref: r ? sideRefObservation(db, r) : null,
     policy_revision: project === null ? null : policyRevision(db, project),
   };
+}
+
+// An open out-of-band observation of the request's side ref: what was found
+// there, or null when the ref is where the engine put it.
+function sideRefObservation(db: Db, r: RequestRow): { ref: string; found: string | null } | null {
+  if (r.side_ref === null) return null;
+  const o = db
+    .prepare(
+      `SELECT o."found" FROM "out_of_band_changes" o JOIN "ref_registry" g ON g."id" = o."ref"
+       WHERE o."project" = ? AND g."ref" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o.rowid DESC, o."id" DESC LIMIT 1`,
+    )
+    .get(r.project, r.side_ref) as { found: string | null } | undefined;
+  return o ? { ref: r.side_ref, found: o.found } : null;
 }
 
 export function specChangeKind(): KindSpec {
@@ -423,9 +687,13 @@ export function specChangeKind(): KindSpec {
     preview(tx, d) {
       const r = getRequest(tx.db, d.subject_id);
       if (!r || r.status !== 'proposed' || r.proposal_revision === null) return null;
+      const now = impactNow(tx.db, r);
+      if ('reason' in now) {
+        refuseProposal(tx, r, now.reason);
+        return null;
+      }
+      const impact = now.impact;
       const manifest = changeManifest(tx.db, r.id);
-      const impact = currentImpact(tx.db, r);
-      if (impact === null) return null;
       const listed = impact.checks.obligations.map((c) => c.key);
       return {
         manifest,
@@ -438,7 +706,7 @@ export function specChangeKind(): KindSpec {
             effect: { request: r.id, revision: r.proposal_revision, spec_version: Number(manifest.spec_version) + 1 },
             // What could not be approved as a specification cannot be approved
             // as a change of one (D6 §3.4; the 31b review's S1).
-            blockers: specBlockers(proposalSemantics(tx.db, r)),
+            blockers: specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }),
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal stays on its side ref as history; nothing of the specification changes.', effect: { request: r.id } },
         ],
@@ -456,6 +724,8 @@ export function specChangeKind(): KindSpec {
       if (!r) throw notFound('spec_change_request', d.subject_id);
       if (option !== 'approve') {
         tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'rejected' WHERE "id" = ?`).run(r.id);
+        // The side ref stays where it is, registered, as history (D6 §4.5).
+        tx.emit('spec.change_rejected', { project: r.project, spec_change_request: r.id }, { decision: d.id, side_ref: r.side_ref, revision: r.proposal_revision });
         settleWork(tx, r, 'rejected');
         return consumed(d);
       }
@@ -488,6 +758,11 @@ export interface ApplicationFacts {
   head: string | null;
   request: string;
   revision: string | null;
+  // The change log row (TPL §11): the request's number, the version the
+  // approval allocates, and who approved.
+  seq: number;
+  version: number;
+  approved_by: string | null;
 }
 
 export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationFacts | null {
@@ -498,7 +773,12 @@ export function applicationFacts(tx: Tx, args: { intent: string }): ApplicationF
   if (!r) return null;
   const p = projectRepoRow(tx, row.project);
   const ref = integrationRef(p.integration_branch);
-  return { intent: row.id, status: row.status, project: row.project, repo: p.dev_repo_path, ref, head: registryRow(tx, row.project, ref)?.expected_oid ?? null, request: r.id, revision: r.proposal_revision };
+  const d = tx.db.prepare('SELECT "answer" FROM "decisions" WHERE "id" = (SELECT "decision" FROM "effect_intents" WHERE "id" = ?)').get(row.id) as { answer: string | null } | undefined;
+  // Unread, the effect fails closed (the review's N3 (a)), never 'human'.
+  const actor = parseJson<{ actor?: unknown }>(d?.answer ?? null)?.actor;
+  const approvedBy = typeof actor === 'string' && actor.length > 0 ? actor : null;
+  const version = (currentSpec(tx.db, row.project)?.version ?? 0) + 1;
+  return { intent: row.id, status: row.status, project: row.project, repo: p.dev_repo_path, ref, head: registryRow(tx, row.project, ref)?.expected_oid ?? null, request: r.id, revision: r.proposal_revision, seq: r.seq, version, approved_by: approvedBy };
 }
 
 export interface AppliedInputs {
@@ -508,6 +788,9 @@ export interface AppliedInputs {
   new_oid: string;
   request: string;
   intent: string;
+  // The approved file's blob as committed, with the engine's change log row
+  // (TPL §11): what spec_revisions.git_blob records.
+  blob?: string;
   // The impact recomputed at the effect's beginning, frozen with the intent
   // (D1 correction 14): the finalizer recomputes it and falls back to this,
   // never to the proposal's (the 31b review's M1).
@@ -535,7 +818,7 @@ export function refuseApplication(tx: Tx, args: { intent: string; reason: string
 // The intent begins (decisions/effects.ts): its preconditions read again,
 // then the integration branch moved to the proposal (or its rebase onto the
 // head, committed first) by a journaled compare-and-swap.
-export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string } | null; deadlineSeconds: number }): IntentResult | null {
+export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string } | null; deadlineSeconds: number }): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, {})) return null;
   const facts = applicationFacts(tx, { intent: args.intent });
   if (!facts || facts.revision === null) {
@@ -546,7 +829,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
   // begun at a later tick, against what is there then.
   if (facts.head !== args.head) return null;
   const r = getRequest(tx.db, facts.request)!;
-  if (specBlockers(proposalSemantics(tx.db, r)).length > 0) {
+  if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }).length > 0) {
     refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
     return null;
   }
@@ -562,7 +845,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
     payload: { repo: facts.repo, ref: facts.ref, old_oid: args.head, new_oid: target },
     target: { repo: facts.repo, ref: facts.ref },
     subject: { spec_change_request: facts.request, old_oid: args.head, new_oid: target },
-    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact } satisfies AppliedInputs as unknown as Record<string, unknown>,
+    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
     deadlineSeconds: args.deadlineSeconds,
   };
   const made = args.commit === null
@@ -572,7 +855,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
         repo: facts.repo,
         purpose: 'spec',
         tree: args.commit.tree,
-        parent: args.head,
+        parent: args.commit.parent ?? args.head,
         sha: args.commit.sha,
         content: args.commit.content,
         revisionKind: 'engine_commit',
@@ -602,7 +885,7 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Recomputed against the records as they are now (D6 §4.4; ruling Q1), or
   // as the effect's beginning recomputed them; never the proposal's.
   const impact = currentImpact(tx.db, r) ?? inputs.impact;
-  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision, via: 'change' });
+  const made = approveSpec(tx, { project: op.project, run: run.id, decision: intent.decision, via: 'change', ...(inputs.blob ? { blob: inputs.blob } : {}) });
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" FROM "projects" WHERE "id" = ?').get(op.project) as { spec_evidence_generation: number }).spec_evidence_generation;
   tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'approved', "approved_revision" = ? WHERE "id" = ?`).run(made.spec_revision, r.id);
   // (The impact was recomputed above, against the records as they were
@@ -620,13 +903,51 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // The Verifier's correction, naming the affected and uncovered criteria
   // (D3 §2.11's route).
   if (impact.checks.obligations.length > 0 || impact.checks.uncovered.length > 0 || impact.checks.criterion_unknown.length > 0) {
-    observeTrigger(tx, { project: op.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, chain: 0 }, { spec_change_request: r.id });
+    // It names what it is to correct (D6 §4.5; M433 (d)): the affected
+    // criteria, the uncovered ones, the removed ones, and the checks owed.
+    const criteria = { affected: impact.affected_criteria, uncovered: impact.checks.uncovered, removed: impact.removed_criteria };
+    const owed = uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)).sort();
+    observeTrigger(
+      tx,
+      { project: op.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, trigger_evidence: { criteria, checks: owed, generation }, chain: 0 },
+      { spec_change_request: r.id, criteria, checks: owed },
+    );
   }
   // The Architect's replan when the current or a later phase is touched
   // (F §3.10.7), the impact its triggering evidence.
-  if (impact.touches_current) {
-    const open = tx.db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string } | undefined;
-    observeTrigger(tx, { project: op.project, kind: 'replan', trigger_source: 'spec_change', trigger_id: r.id, trigger_generation: 1, subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id }, chain: 0 }, { spec_change_request: r.id });
+  // Before any roadmap there is no phase to touch (D6 §4.5; the
+  // coordinator's ruling on slice 34): no replan holds the project then.
+  const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
+  if ((impact.touches_current || impact.touches_later === true) && roadmap) {
+    // Only a change touching the current phase replaces its plan early (D6
+    // §5.7; the slice-36 review's M1): a later-only change's replan binds no
+    // open plan and supersedes none of the current phase's stages.
+    const open = impact.touches_current
+      ? (tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string; generation: number } | undefined)
+      : undefined;
+    // An early replan (D6 §5.7; B08): it names the generation it replaces,
+    // and records the impact as its evidence and what the impact made stale.
+    const stale = [
+      ...impact.stages.map((st) => `stage ${st.number}`),
+      ...impact.requirements.map((q) => `requirement:${q.key}`),
+      ...uniq([...impact.affected_criteria, ...impact.removed_criteria, ...impact.added_criteria]).map((c) => `criterion:${c}`),
+      ...uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)).map((k) => `check:${k}`),
+    ];
+    const evidence = { request: r.id, impact: r.impact ?? null, spec_revision: made.spec_revision };
+    observeTrigger(
+      tx,
+      {
+        project: op.project,
+        kind: 'replan',
+        trigger_source: 'spec_change',
+        trigger_id: r.id,
+        trigger_generation: 1,
+        subject: open ? { phase_plan: open.id, request: r.id } : { request: r.id },
+        trigger_evidence: { ...(open ? { phase_plan: open.id, generation: open.generation } : {}), evidence, stale },
+        chain: 0,
+      },
+      { spec_change_request: r.id },
+    );
   }
   settleWork(tx, getRequest(tx.db, r.id)!, 'approved');
   // The approval's intent is done with its effect (the 31b review's S8).
@@ -667,7 +988,9 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
   const request = row ? parseJson<{ request?: string }>(row.subject)?.request : undefined;
   if (!row || !request) return;
   const named = new Set((parseJson<{ check: string }[]>(row.affected_checks) ?? []).map((a) => a.check));
-  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "request" = ? AND "resolved_at" IS NULL`).all(args.project, request) as {
+  // Whichever request recorded an obligation (the 31b review's M2, A): an
+  // obligation a later change's correction meets is resolved by it.
+  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as {
     id: string;
     key: string;
     criteria: string;
@@ -684,7 +1007,167 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
     const owed = parseJson<string[]>(o.criteria) ?? [];
     // A check the correction removed names nothing it owed.
     if (check && !owed.every((c) => (known.has(c) ? covers.includes(c) : !covers.includes(c)))) continue;
-    changed += tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL`).run(args.proposal, tx.at, o.id).changes;
+    // Resolved by the applied protected version (A.3; Q7).
+    if (resolveObligation(tx, { project: args.project, obligation: o.id, by: args.version, how: 'correction' })) changed++;
   }
   if (changed > 0) markStale(tx, { project: args.project });
+}
+
+// ---- the correction of a specification change (D6 §4.5; Q6, Q13) -------------------------
+
+// The Verifier's applicability assessment as its result carries it.
+export interface ApplicabilityEntry {
+  check: string;
+  criteria: string[];
+  rationale: string;
+}
+
+// The request a `check_correction` item corrects for, when it is a
+// specification change's (registered by finalizeApplied), else null.
+export function correctionRequestOf(db: Db, workItem: string): string | null {
+  const w = db.prepare(`SELECT "subject", "trigger_source" FROM "work_items" WHERE "id" = ? AND "kind" = 'check_correction'`).get(workItem) as { subject: string; trigger_source: string } | undefined;
+  if (!w || w.trigger_source !== 'spec_obligation') return null;
+  const request = parseJson<{ request?: unknown }>(w.subject)?.request;
+  return typeof request === 'string' ? request : null;
+}
+
+interface OpenObligation {
+  id: string;
+  key: string;
+  criteria: string[];
+  request: string | null;
+}
+
+const openObligations = (db: Db, project: string): OpenObligation[] =>
+  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
+    (o) => ({ id: o.id, key: o.key, criteria: parseJson<string[]>(o.criteria) ?? [], request: o.request }),
+  );
+
+// What a correction run's acceptance needs (runs/accept.ts): whether its
+// item is a specification change's, the open obligations of that request,
+// and, per assessment entry, the open obligations it would resolve.
+export function correctionFacts(db: Db, args: { run: string; entries: ApplicabilityEntry[] }): { request: string | null; open: string[]; resolves: string[][]; outside: string[] } {
+  const run = db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string | null } | undefined;
+  if (!run || run.work_item === null) return { request: null, open: [], resolves: args.entries.map(() => []), outside: [] };
+  // An assessment is of a check of the effective protected version (the
+  // slice-36 review's N3): one naming a key the version does not have is
+  // refused, never recorded against an obligation by its key alone.
+  const effective = effectiveVersion(db, run.project);
+  const keys = new Set(effective ? checksOfVersion(db, effective.id).map((c) => c.key) : []);
+  const outside = uniq(args.entries.map((e) => e.check).filter((k) => !keys.has(k))).sort();
+  const request = correctionRequestOf(db, run.work_item);
+  const all = openObligations(db, run.project);
+  return {
+    request,
+    open: request === null ? [] : uniq(all.filter((o) => o.request === request).map((o) => o.key)).sort(),
+    resolves: args.entries.map((e) => all.filter((o) => o.key === e.check && o.criteria.every((c) => e.criteria.includes(c))).map((o) => o.id)),
+    outside,
+  };
+}
+
+// The Verifier's assessments recorded with their provenance, each resolving
+// the open obligations of its check it covers (D6 §4.5; A.3; Q6): a role's
+// claim (`claimed`), on which fresh evidence under the current generation is
+// still required. Returns the assessments' ids.
+export function recordAssessments(tx: Tx, args: { run: string; entries: ApplicabilityEntry[]; rationales: string[] }): string[] {
+  const run = tx.db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string } | undefined;
+  if (!run) throw notFound('run', args.run);
+  const done = tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ? ORDER BY rowid, "id"').all(args.run) as { id: string }[];
+  if (done.length > 0) return done.map((a) => a.id);
+  const request = correctionRequestOf(tx.db, run.work_item);
+  const effective = effectiveVersion(tx.db, run.project);
+  const out: string[] = [];
+  args.entries.forEach((e, i) => {
+    const id = tx.newId('asmt_');
+    const check = effective ? (tx.db.prepare('SELECT "id" FROM "checks" WHERE "protected_version" = ? AND "key" = ?').get(effective.id, e.check) as { id: string } | undefined) : undefined;
+    const resolves = openObligations(tx.db, run.project).filter((o) => o.key === e.check && o.criteria.every((c) => e.criteria.includes(c)));
+    tx.db
+      .prepare(
+        `INSERT INTO "assessments" ("id", "created_at", "project", "run", "work_item", "request", "check_key", "check", "criteria", "rationale", "provenance", "obligations")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'claimed', ?)`,
+      )
+      .run(id, tx.at, run.project, args.run, run.work_item, request, e.check, check?.id ?? null, JSON.stringify(e.criteria), args.rationales[i], JSON.stringify(resolves.map((o) => o.id)));
+    tx.emit('spec.assessment_recorded', { project: run.project, assessment: id, run: args.run }, { check: e.check, criteria: e.criteria, provenance: 'claimed', obligations: resolves.map((o) => o.id) });
+    for (const o of resolves) resolveObligation(tx, { project: run.project, obligation: o.id, by: id, how: 'assessment' });
+    out.push(id);
+  });
+  if (out.length > 0) markStale(tx, { project: run.project });
+  return out;
+}
+
+function resolveObligation(tx: Tx, args: { project: string; obligation: string; by: string; how: 'correction' | 'assessment' }): boolean {
+  const changed = tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL`).run(args.by, tx.at, args.obligation).changes;
+  if (changed > 0) tx.emit('check.obligation_resolved', { project: args.project, check_obligation: args.obligation }, { resolved_by: args.by, how: args.how });
+  return changed > 0;
+}
+
+// A specification change's correction item whose run captured a proposal
+// waits for it (the driver's ruling Q13; the `block` template): applied, the
+// item completes; rejected, it takes its repair, then parks with a blocker
+// naming the open obligations. Called when the proposal is decided.
+export function correctionProposalDecided(tx: Tx, args: { proposal: string; applied: boolean }): void {
+  const row = tx.db.prepare('SELECT r."work_item" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE p."id" = ?').get(args.proposal) as { work_item: string | null } | undefined;
+  if (!row?.work_item || correctionRequestOf(tx.db, row.work_item) === null) return;
+  const item = getWorkItem(tx, row.work_item);
+  if (!item || item.status !== 'awaiting_decision') return;
+  const blocker = parseJson<{ reason?: string; proposal?: string }>(item.blocker);
+  if (blocker?.reason !== 'correction_proposed' || blocker.proposal !== args.proposal) return;
+  const resumed = transitionWork(tx, item, 'executing', { blocker: null }, { proposal: args.proposal, cause: args.applied ? 'proposal_applied' : 'proposal_rejected' });
+  if (args.applied) {
+    correctionApplied(tx, resumed, { proposal: args.proposal });
+    return;
+  }
+  correctionFailed(tx, resumed, { proposal: args.proposal, cause: 'proposal_rejected' });
+}
+
+// A specification change's correction whose proposal was applied, or whose
+// run's assessments were recorded (the slice-36 review's S3): it completes
+// only when none of its request's obligations is open. One that resolved
+// some returns the rest to the Verifier, with the open obligations listed;
+// one that resolved none takes its repair, then parks (Q13).
+export function correctionApplied(tx: Tx, item: WorkRow, args: { proposal?: string; run?: string }): void {
+  const request = correctionRequestOf(tx.db, item.id);
+  const open = correctionOpenKeys(tx.db, item.id);
+  const cause = { ...(args.proposal ? { proposal: args.proposal } : {}), ...(args.run ? { run: args.run } : {}) };
+  if (request === null || open.length === 0) {
+    transitionWork(tx, item, 'complete', {}, { ...cause, cause: 'obligations_resolved' });
+    return;
+  }
+  const version = args.proposal ? ((tx.db.prepare('SELECT "resulting_version" FROM "protected_proposals" WHERE "id" = ?').get(args.proposal) as { resulting_version: string | null } | undefined)?.resulting_version ?? null) : null;
+  const assessed = args.run ? (tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ?').all(args.run) as { id: string }[]).map((a) => a.id) : [];
+  const by = [...(version ? [version] : []), ...assessed];
+  const resolved = by.length === 0 ? 0 : (tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_obligations" WHERE "request" = ? AND "resolved_by" IN (SELECT value FROM json_each(?))`).get(request, JSON.stringify(by)) as { n: number }).n;
+  if (resolved === 0) {
+    correctionFailed(tx, item, { ...cause, cause: 'nothing_resolved', open });
+    return;
+  }
+  const te = tx.db.prepare('SELECT "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(item.id) as { trigger_evidence: string | null } | undefined;
+  const evidence = parseJson<Record<string, unknown>>(te?.trigger_evidence ?? null) ?? {};
+  tx.db.prepare('UPDATE "work_items" SET "trigger_evidence" = ? WHERE "id" = ?').run(JSON.stringify({ ...evidence, open }), item.id);
+  transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'obligations_open', open });
+}
+
+// The open obligations of a request, for its correction's package.
+export function openObligationsOf(db: Db, request: string): { check: string; criteria: string[]; generation: number }[] {
+  return (db.prepare(`SELECT "key", "criteria", "generation" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY rowid`).all(request) as { key: string; criteria: string; generation: number }[]).map((o) => ({
+    check: o.key,
+    criteria: parseJson<string[]>(o.criteria) ?? [],
+    generation: o.generation,
+  }));
+}
+
+// A correction attempt that ended with nothing applied (Q13): its repair,
+// then, at the limit, a park whose blocker names the open obligations.
+export function correctionFailed(tx: Tx, item: WorkRow, cause: Record<string, unknown>): void {
+  const policy = projectPolicy(tx.db, item.project);
+  if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause);
+  else transitionWork(tx, item, 'eligible', { repair_due: 1 }, cause);
+}
+
+// The open obligations a specification change's correction item leaves, by
+// check key: what its parked blocker names (Q13).
+export function correctionOpenKeys(db: Db, workItem: string): string[] {
+  const request = correctionRequestOf(db, workItem);
+  if (request === null) return [];
+  return uniq((db.prepare(`SELECT "key" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY "key"`).all(request) as { key: string }[]).map((o) => o.key));
 }

@@ -197,7 +197,10 @@ import {
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
-import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
+import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
+import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
+import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
 import { phaseStep } from '../plan/phase.js';
 import {
   attemptTarget,
@@ -442,11 +445,11 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
       .prepare(
         `SELECT p."id", p."dev_repo_path", r."expected_oid" AS "head" FROM "projects" p
          JOIN "ref_registry" r ON r."project" = p."id" AND r."kind" = 'integration' AND r."ref" = 'refs/heads/' || p."integration_branch"
-         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p."created_at", p."id"`,
+         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p.rowid, p."id"`,
       )
       .all(a.name, a.repo),
   'qualification.engine_fixture': (d, a: { repo: string }) =>
-    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
+    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY rowid LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
   // D6 §2 (M5 slice 31): the sessions' reads.
   'session.pending_turns': (d) => pendingTurns(d, null),
@@ -468,6 +471,16 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'replan.baseline': (d, a) => replanBaseline(d, a),
   'spec.view': (d, a) => specView(d, a),
   'spec.change_impact': (d, a) => impactRead(d, a),
+  'spec.correction_facts': (d, a) => correctionFacts(d, a),
+  // M5 slice 34: the previous save's representation (keys renumbered or
+  // gone, M421 (c)); a bundle answer's publication around its barriers
+  // (M448 (e)); a decision's effect intents (the answer's settle).
+  'spec.previous_representation': (d, a: { project: string }) => previousRepresentation(d, a.project),
+  'spec.withdrawn_keys': (d, a: { project: string }) => approvedRepresentation(d, a.project).withdrawn,
+  'plan.authorized': (d, a: { project: string }) => authorizedBundles(d, a),
+  'plan.rebind_due': (d, a: { project: string }) => rebindDue(d, a),
+  'decision.intents': (d, a: { decisions: string[]; kind: string }) =>
+    a.decisions.flatMap((id) => (d.prepare('SELECT "id" FROM "effect_intents" WHERE "decision" = ? AND "kind" = ?').all(id, a.kind) as { id: string }[]).map((r) => r.id)),
   'pace.view': (d, a) => paceView(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
@@ -499,7 +512,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     d
       .prepare(
         `SELECT r."id" AS "run", a."id" AS "attempt", a."status" FROM "runs" r JOIN "qualification_attempts" a ON a."id" = r."qualification_attempt"
-         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r."created_at"`,
+         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r.rowid`,
       )
       .all(),
   // D6 §2.6 (SEAM.md §393): the entry a session qualification names.
@@ -509,7 +522,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'boundary.domains': (d) => boundaryDomains(d),
   'boundary.terminated_ids': (d, a: { ids: string[] }) =>
     a.ids.filter((id) => (d.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status === 'terminated'),
-  'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY "created_at", "id"`).all(),
+  'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY rowid, "id"`).all(),
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
@@ -526,7 +539,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
   'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
   'qualification.provider_files': (d, a: { run: string }) =>
-    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(a.run) ?? null,
+    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
 };
 
@@ -626,6 +639,13 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.application_facts': (tx, a) => specApplicationFacts(tx, a),
   'spec.begin_application': (tx, a) => beginSpecApplication(tx, a),
   'spec.refuse_application': (tx, a) => refuseSpecApplication(tx, a),
+  // D6 §3.4 (slice 34): spec_approval's effect, the change log row's commit.
+  'spec.approval_facts': (tx, a) => specApprovalFacts(tx, a),
+  'spec.begin_approval': (tx, a) => beginSpecApproval(tx, a),
+  'spec.refuse_approval': (tx, a) => refuseSpecApproval(tx, a),
+  // D6 §5.5 (slice 34): the authorized finalizer's publication.
+  'plan.publish': (tx, a) => publishAuthorizedBundle(tx, a),
+  'plan.rebind': (tx, a) => rebindBundle(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
   'oob.begin_adopt': (tx, a) => beginAdopt(tx, a),

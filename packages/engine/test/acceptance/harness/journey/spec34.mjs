@@ -133,8 +133,9 @@ export async function specSaves(fx, project, texts, { close = true } = {}) {
 // ---- readers ---------------------------------------------------------------------------------------
 
 const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
+// In insertion order (rowid), never by wall time (the driver's ruling, SEAM §425).
 export const semanticsOf = (home, run) =>
-  withStore(home, (db) => db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY "created_at", rowid').all(run)).map((r) => ({
+  withStore(home, (db) => db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY rowid').all(run)).map((r) => ({
     ...r,
     representation: r.representation ? parse(r.representation) : null,
     findings: parse(r.findings ?? '[]'),

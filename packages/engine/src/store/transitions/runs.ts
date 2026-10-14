@@ -4,7 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
-import { requestFailed } from '../../spec/change.js';
+import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
@@ -259,6 +259,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
     if (typeof request !== 'string' || !db.prepare('SELECT 1 FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(request, item.project)) {
       return 'a spec_change names no change request (a finding\'s spec change is not dispatched)';
     }
+    // One proposal at a time per project (D6 §4.2; D6-C01): while another
+    // request is dispatched, or its proposal awaits the owner's decision,
+    // this one waits eligible, so every impact is computed against one
+    // current version and no second proposal is approved meanwhile.
+    const pending = db
+      .prepare(
+        `SELECT r."seq" FROM "spec_change_requests" r LEFT JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE r."project" = ? AND r."id" <> ? AND (r."status" = 'proposed' OR (r."status" = 'requested' AND w."status" IN ('claimed', 'executing', 'awaiting_decision')))
+         ORDER BY r."seq" LIMIT 1`,
+      )
+      .get(item.project, request) as { seq: number } | undefined;
+    if (pending) return `spec_change_pending: specification change ${pending.seq} is dispatched or awaits its decision`;
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
@@ -269,6 +281,12 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
+  // A stage an early replacement superseded is never dispatched again (D6
+  // §5.7; the review's N2): its work is settled by the phase step.
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    if (stage && db.prepare('SELECT 1 FROM "stages" WHERE "id" = ? AND "cancelled_at" IS NOT NULL').get(stage)) return 'stage superseded';
+  }
   for (const dep of JSON.parse(item.depends_on ?? '[]') as (string | Milestone)[]) {
     if (typeof dep === 'string') {
       const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -305,7 +323,13 @@ function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
     return null;
   }
   if (m.milestone === 'authoring_ready') {
-    const plan = db.prepare('SELECT "authoring_ready_at", "active" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number } | undefined;
+    // The active generation's readiness (D6 §5.7; the review's S2): a plan
+    // an early replacement replaced is followed to the generation that
+    // replaced it.
+    let plan = db.prepare('SELECT "authoring_ready_at", "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number; replaced_by: string | null } | undefined;
+    for (let hops = 0; plan && plan.active !== 1 && plan.replaced_by && hops < 64; hops++) {
+      plan = db.prepare('SELECT "authoring_ready_at", "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(plan.replaced_by) as typeof plan;
+    }
     if (!plan) return `plan ${m.phase_plan} missing`;
     if (plan.active !== 1) return 'plan not active';
     if (plan.authoring_ready_at === null) return 'authoring not ready';
@@ -444,6 +468,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const repairs = item.repair_due === 1 ? item.repair_attempts + 1 : item.repair_attempts;
   transitionWork(tx, item, 'claimed', { prior_status: 'eligible', repair_attempts: repairs, repair_due: 0 }, { run });
   tx.db.prepare('UPDATE "work_items" SET "held" = NULL WHERE "id" = ?').run(item.id);
+  // D1 A.5 StageStatus: a stage whose Builder is first claimed is
+  // `building` (D6 §5.7 tells a building stage from a planned one).
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    if (stage) tx.db.prepare(`UPDATE "stages" SET "status" = 'building' WHERE "id" = ? AND "status" = 'planned'`).run(stage);
+  }
 
   const lease = tx.newId('lease_');
   tx.db
@@ -780,7 +810,7 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
       `SELECT r."id" AS "run", r."project", r."state" FROM "leases" l JOIN "runs" r ON r."id" = l."resource_id"
        WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ?
          AND NOT (r."kind" = 'session' AND r."session_state" IN ('allocated', 'open_idle', 'saving'))
-       ORDER BY r."created_at", r."id"`,
+       ORDER BY r.rowid, r."id"`,
     )
     .all(at) as { run: string; project: string; state: RunState }[];
 }
@@ -911,7 +941,7 @@ export function finishRun(
     if (terminal === undefined) terminal = seen.includes('launched') ? 'ended' : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     if (seen.includes('launched') && terminal === 'refused') terminal = 'unknown';
     // How the backend ended, as the boundary established it (D2 §1.6, A.3).
-    const exit = tx.db.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "invocation" = ? ORDER BY "created_at" DESC LIMIT 1').get(receipt.id) as
+    const exit = tx.db.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "invocation" = ? ORDER BY rowid DESC LIMIT 1').get(receipt.id) as
       | { exit_class: string | null; exit_evidence: string | null }
       | undefined;
     observe(tx, run, receipt.id, terminal, terminal === 'refused' ? null : (exit ?? null));
@@ -951,7 +981,7 @@ export function finishRun(
   // The run's transcript, once it is a published record (SEAM.md §56). A
   // stream that was not published is never named.
   const transcript = tx.db
-    .prepare(`SELECT "id" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+    .prepare(`SELECT "id" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 ORDER BY rowid DESC, "id" DESC LIMIT 1`)
     .get(run.id) as { id: string } | undefined;
   setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0, ...(transcript ? { transcript: transcript.id } : {}) });
   const payload: Record<string, unknown> = { outcome: run.outcome, reason_class: run.reason_class };
@@ -1003,12 +1033,7 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   // review of 662cd7f, S2): it applied to the work. Whatever the run's
   // outcome, the work is held (Stop) or under its dispatch hold (Abandon),
   // as a Stop or an Abandon during validating leaves it (SEAM.md §47).
-  const afterExit = tx.db
-    .prepare(
-      `SELECT "kind" FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "kind" IN ('stop_confirm', 'abandon_confirm') AND "status" = 'consumed'
-         AND json_extract("answer", '$.applied_to') = 'work' ORDER BY "consumed_at" LIMIT 1`,
-    )
-    .get(run.id) as { kind: string } | undefined;
+  const afterExit = stopAfterExitOf(tx.db, run.id);
   if (afterExit && item.status !== 'verifying' && !['stopped', 'abandoned'].includes(run.outcome ?? '')) {
     if (afterExit.kind === 'stop_confirm') transitionWork(tx, item, 'held', {}, { ...cause, cause: 'stop_after_exit' });
     else transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon_after_exit' });
@@ -1016,6 +1041,24 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   }
   switch (run.outcome) {
     case 'completed':
+      // A specification change's correction whose run captured a proposal
+      // waits for it (the driver's ruling Q13): applied, it completes;
+      // rejected, it takes its repair, then parks (spec/change.ts).
+      if (item.status === 'executing' && correctionRequestOf(tx.db, item.id) !== null) {
+        const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
+        if (p && p.status === 'rejected') {
+          correctionFailed(tx, item, { ...cause, proposal: p.id, cause: 'proposal_rejected' });
+          return;
+        }
+        if (p && p.status !== 'applied') {
+          transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'correction_proposed', raised_at: tx.at, proposal: p.id }) }, { ...cause, proposal: p.id });
+          return;
+        }
+        // Applied already, or assessed only: complete only with every
+        // obligation resolved (the slice-36 review's S3).
+        correctionApplied(tx, item, { run: run.id, ...(p ? { proposal: p.id } : {}) });
+        return;
+      }
       // A Verifier's or a Reviewer's work is complete with its accepted run.
       // A candidate's verification no longer completes the work it holds: a
       // stage's work completes with its stage gate, a fix's with its finding's
@@ -1061,7 +1104,11 @@ function workAfterRun(tx: Tx, run: RunRow): void {
           } else progress = { progress_key: key };
         }
       }
-      if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause, progress);
+      // A replan takes one automatic repair, then parks for the owner (D6
+      // §5.6; M424 (d); the coordinator's ruling): never more than
+      // repair_attempts_max allows.
+      const repairs = item.kind === 'replan' ? Math.min(1, policy.repair_attempts_max!) : policy.repair_attempts_max!;
+      if (item.repair_attempts >= repairs) parkWork(tx, item, 'repair_attempts_max', cause, progress);
       else transitionWork(tx, item, 'eligible', { repair_due: 1, ...progress }, cause);
       return;
     }
@@ -1097,6 +1144,17 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     default:
       return;
   }
+}
+
+// The first Stop or Abandon of a run confirmed as applying to its work, by
+// insertion order, never by `consumed_at` (the slice-36 review's N1).
+export function stopAfterExitOf(db: Tx['db'], run: string): { kind: string } | undefined {
+  return db
+    .prepare(
+      `SELECT "kind" FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "kind" IN ('stop_confirm', 'abandon_confirm') AND "status" = 'consumed'
+         AND json_extract("answer", '$.applied_to') = 'work' ORDER BY rowid LIMIT 1`,
+    )
+    .get(run) as { kind: string } | undefined;
 }
 
 const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];
@@ -1166,5 +1224,5 @@ export function endFacts(tx: Tx, runId: string): EndFacts {
 
 // Runs that have not ended, oldest first.
 export function unendedRuns(tx: Tx): RunRow[] {
-  return tx.db.prepare(`SELECT * FROM "runs" WHERE "state" <> 'ended' ORDER BY "created_at", "id"`).all() as RunRow[];
+  return tx.db.prepare(`SELECT * FROM "runs" WHERE "state" <> 'ended' ORDER BY rowid, "id"`).all() as RunRow[];
 }

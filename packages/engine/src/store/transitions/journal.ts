@@ -520,7 +520,7 @@ export function unfinishedOperations(db: Tx['db'], project?: string): { id: stri
   return db
     .prepare(
       `SELECT o."id", o."project", s."journal_kind" AS "kind" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id"
-       WHERE s."state" NOT IN ('finalized', 'failed') AND (? IS NULL OR o."project" = ?) ORDER BY o."created_at", o."seq"`,
+       WHERE s."state" NOT IN ('finalized', 'failed') AND (? IS NULL OR o."project" = ?) ORDER BY o.rowid, o."seq"`,
     )
     .all(project ?? null, project ?? null) as { id: string; project: string; kind: string }[];
 }

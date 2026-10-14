@@ -36,9 +36,11 @@ export interface Trigger {
 // The criteria of the registered requirement index, or null when no index
 // is registered (D3 §4.5: until spec approval, the plan fixture's).
 export function knownCriteria(db: Db, project: string): Set<string> | null {
-  const rows = db.prepare('SELECT "criteria" FROM "requirements" WHERE "project" = ? AND "criteria" IS NOT NULL').all(project) as { criteria: string }[];
+  // A withdrawn requirement's criteria are no longer known (D6 §4.4): a
+  // check on one is `criterion_unknown` at discovery.
+  const rows = db.prepare('SELECT "criteria", "withdrawn_at" FROM "requirements" WHERE "project" = ? AND "criteria" IS NOT NULL').all(project) as { criteria: string; withdrawn_at: string | null }[];
   if (rows.length === 0) return null;
-  return new Set(rows.flatMap((r) => JSON.parse(r.criteria) as string[]));
+  return new Set(rows.filter((r) => r.withdrawn_at === null).flatMap((r) => JSON.parse(r.criteria) as string[]));
 }
 
 function requirementIdsOf(db: Db, project: string, criteria: string[]): string[] {

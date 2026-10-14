@@ -19,7 +19,7 @@ import type { Launcher } from '../invoke/choke.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
-import { type BundleArtifacts, type PlanCheckResult, checkPlan } from '../plan/check.js';
+import { type BundleArtifacts, type PlanCheckResult, artifactDiff, checkPlan, specChangeRoute } from '../plan/check.js';
 import type { BaselineFacts, BundleContent } from '../plan/bundle.js';
 import { type Finding, architectFindings, ideaFindings, specFindings } from '../plan/findings.js';
 import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE } from '../plan/schemas.js';
@@ -30,6 +30,7 @@ import { pausePoint } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
+import type { SpecRepresentation } from '../spec/semantics.js';
 import { SESSION_PATHS, type SaveFacts, type SaveOutcome, type SessionRole } from './session.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
@@ -308,7 +309,9 @@ export class SessionDriver {
     if (tree === (await treeOf(ctx, ws.current_base))) return { sha: null };
     const diff = await validateDiff(facts.repo, ws.current_base, tree, facts.role, facts.caps, facts.roots, { plans: false });
     if (diff.violation) {
-      const paths = diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p));
+      // The paths outside the role's own, and the one the refusal names (a
+      // link inside them that resolves outside, D6-W03).
+      const paths = [...new Set([...diff.changes.map((c) => c.path).filter((p) => !inPaths(facts.role, p)), ...(diff.violation.path !== undefined ? [diff.violation.path] : [])])];
       const text = redactText(diff.violation.text);
       const status = diff.violation.klass === 'diff_violation' ? 422 : 500;
       return {
@@ -372,7 +375,11 @@ export class SessionDriver {
     if (facts.role === 'spec_writer') {
       const text = texts['.surety/spec/spec.md'];
       if (text === undefined) return { blobs, findings: [], products: {} };
-      const r = specFindings(text);
+      // The project's previous save, against which a key renumbered or gone
+      // is named (M421 (c)); read before this save's representation exists.
+      const prev = await this.rt.read<SpecRepresentation | null>('spec.previous_representation', { project: facts.project });
+      const withdrawn = await this.rt.read<string[]>('spec.withdrawn_keys', { project: facts.project });
+      const r = specFindings(text, '.surety/spec/spec.md', prev, withdrawn);
       return {
         blobs,
         findings: r.findings,
@@ -577,6 +584,7 @@ export class SessionDriver {
     const plan = phase === null ? null : (parsed.plans[phase] ?? null);
     if (phase !== null && plan === null) throw planRefused(facts.run, [], [{ code: 'machine_file_invalid', path: `.surety/phases/phase-${phase}.json`, subject: { path: `.surety/phases/phase-${phase}.json` }, message: 'the phase plan does not parse' }]);
     let check: PlanCheckResult | null = null;
+    let diff: ReturnType<typeof artifactDiff> | null = null;
     if (plan !== null) {
       const artifacts: BundleArtifacts = {
         modules: parsed.modules!,
@@ -587,11 +595,14 @@ export class SessionDriver {
         plan,
       };
       check = checkPlan(base.baseline, artifacts);
+      diff = artifactDiff(base.baseline, artifacts, check.changes);
     }
     const content: BundleContent = { modules: parsed.modules!, roadmap: parsed.roadmap, roadmap_changed: roadmapChanged, plan, adrs, architecture_text: parsed.architecture_text };
     const bundleBody = { project: facts.project, run: facts.run, head: facts.head, spec_revision: base.spec_revision, phase, blobs, versions: base.versions, content, check };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project, run: facts.run, kind: 'plan_check', content: Buffer.from(`${canonical(bundleBody)}\n`) });
     const obligations = check ? await writeWholeRecord(this.rt, { project: facts.project, run: facts.run, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) }) : null;
+    // The complete diff of every changed artifact, the decision's evidence (D6 §5.4).
+    const diffRecord = diff ? await writeWholeRecord(this.rt, { project: facts.project, run: facts.run, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, diff }, null, 2)}\n`) }) : null;
     await this.rt.engine('session.record_bundle', {
       project: facts.project,
       run: facts.run,
@@ -604,19 +615,25 @@ export class SessionDriver {
       check,
       spec_revision: base.spec_revision,
       versions: base.versions,
+      diff: diffRecord,
     });
-    if (check && check.outcome === 'refused') throw planRefused(facts.run, check.reasons, [], bundle);
+    if (check && check.outcome === 'refused') throw planRefused(facts.run, check.reasons, [], bundle, check.needs_spec_change ? facts.project : null);
     return { kind: 'bundle', bundle, withPlan: phase !== null };
   }
 }
 
-function planRefused(run: string, reasons: { code: string; subjects: string[] }[], findings: Finding[], bundle: string | null = null): Refusal {
+// `specChange`: the project whose plan named a requirement the specification
+// lacks; the refusal offers the spec-change workflow by its route, and
+// creates no request (D6 §5.4; the driver's ruling 5).
+function planRefused(run: string, reasons: { code: string; subjects: string[] }[], findings: Finding[], bundle: string | null = null, specChange: string | null = null): Refusal {
   const named = [...reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`), ...findings.map((f) => `${f.code}: ${f.message}`)];
-  return new Refusal(422, 'plan_refused', `The Architect's products of session ${run} are refused: ${named.join('; ')}.`, 'Correct them in the session, save, and close again; or close with refuse, which records the products and raises nothing.', {
+  const offer = specChange === null ? '' : ` A requirement the plan implements is not in the approved specification: request the change through the spec-change workflow (${specChangeRoute(specChange)}), never through a plan.`;
+  return new Refusal(422, 'plan_refused', `The Architect's products of session ${run} are refused: ${named.join('; ')}.`, `Correct them in the session, save, and close again; or close with refuse, which records the products and raises nothing.${offer}`, {
     run,
     reasons,
     findings,
     ...(bundle ? { bundle } : {}),
+    ...(specChange === null ? {} : { needs_spec_change: true, spec_change_route: specChangeRoute(specChange) }),
   });
 }
 

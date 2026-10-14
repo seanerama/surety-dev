@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { checkPlan } from '../plan/check.js';
+import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -51,6 +51,8 @@ import { redactText } from '../records/redact.js';
 import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
+import { seamSpecBlobFault } from '../testing/seam.js';
+import type { ApplicabilityEntry } from '../spec/change.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
@@ -360,8 +362,11 @@ export class Acceptor {
     if (entries === null) return failed('infra_error', "the spec change's tree could not be read");
     const entry = [...entries.values()].find((e) => e.path === path && e.type === 'blob');
     if (!entry) return failed('invalid_result', `the spec change left no ${path}`);
-    const text = await catBlob(ctx, sha, path);
-    if (text === null) return failed('infra_error', `${path} at ${sha} could not be read`);
+    // A blob the engine cannot read leaves the impact uncomputable: the
+    // proposal is refused naming why, never given an empty impact (D6 §4.4;
+    // SEAM.md §419's `spec_blob_read` fault).
+    const text = seamSpecBlobFault(project) ? null : await catBlob(ctx, sha, path);
+    if (text === null) return failed('invalid_result', `spec_blob_unreadable: ${path} at ${sha} could not be read, so the impact of the proposed specification cannot be computed`);
     const parsed = parseSpecification(text);
     if (!parsed.readable || parsed.representation === null) return failed('invalid_result', `the proposed specification is not readable: ${parsed.findings.map((f) => f.why).join('; ')}`);
     // A specification that could not be approved is never proposed (D6 §3.4;
@@ -372,7 +377,11 @@ export class Acceptor {
     const claimed = (facts.result?.report as { changes?: unknown } | undefined)?.changes ?? null;
     let impact: unknown;
     try {
-      impact = await this.rt.read('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed });
+      const read = await this.rt.read<{ impact: unknown } | { refused: string }>('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed });
+      // A renumbered key, a withdrawn key used again or an unreadable
+      // approved version refuses the proposal at the run (D6 §4.4; Q1).
+      if ('refused' in read) return failed('invalid_result', `the proposed specification is refused: ${read.refused}`);
+      impact = read.impact;
     } catch (err) {
       return failed('invalid_result', `the impact of the proposed specification could not be computed: ${(err as Error).message}`);
     }
@@ -413,7 +422,10 @@ export class Acceptor {
       plan = parsed.value;
     }
     if (plan === null) return null;
-    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base });
+    const b = await this.rt.read<ReplanBaseline>('replan.baseline', { project: facts.project.id, head: base, work_item: facts.run.work_item, digests: plan.stages.map((st) => [st.number, executionInputsDigest(st)]) });
+    // An early replan's plan for the phase it replaces (D6 §5.7; B08): its
+    // kept stages are stages of the plan; any other plan replaces nothing.
+    const replacement = b.replacement !== null && b.replacement.phase === plan.phase ? b.replacement : null;
     const approved = b.baseline.approved;
     if (approved === null) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
     // The commit's own architecture, module map, ADRs and roadmap, read from
@@ -449,7 +461,44 @@ export class Acceptor {
     }
     const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
     const architectureText = parsedArch.parsed.architecture_text;
-    const check = checkPlan(b.baseline, { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan });
+    // A replan that changes the approved architecture text, module map or an
+    // ADR is published with the next architecture version; one that changes
+    // the roadmap with the next roadmap version; a roadmap-only change
+    // allocates no architecture version (the driver's ruling, slice 35). It
+    // is checked against the versions its publication allocates, as the
+    // first close is (B02; M448 (a); the review's M4).
+    const artifacts = { modules: parsedArch.parsed.modules, roadmap, adrs: adrTexts, adr_front_matter: adrFront, architecture_text: architectureText, plan };
+    const pre = computeChanges(b.baseline, artifacts);
+    const r0 = pre.changes_roadmap;
+    const roadmapChanging = plan.roadmap_revision !== undefined || r0.phases_added.length + r0.phases_removed.length + r0.goals.length + r0.memberships.length + r0.assignments.length + r0.dependencies.length > 0;
+    const architectureChanging = pre.changes_architecture.changed || pre.changes_adrs.added.length + pre.changes_adrs.changed.length + pre.changes_adrs.deleted.length > 0;
+    const architectureVersion = architectureChanging ? b.baseline.architecture_version + 1 : b.baseline.architecture_version;
+    const against = {
+      ...b.baseline,
+      architecture_version: architectureVersion,
+      roadmap_version: roadmapChanging ? b.baseline.roadmap_version + 1 : b.baseline.roadmap_version,
+      // An unchanged roadmap.json names the architecture it was made with; a
+      // changed one the architecture it is published with.
+      roadmap_architecture_version: roadmapChanging ? architectureVersion : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
+    };
+    const check = checkPlan(replacement ? { ...against, kept: replacement.kept } : against, artifacts);
+    const report = facts.result?.report as Record<string, unknown> | undefined;
+    const declared = Object.fromEntries(['conformance', 'adrs_changed', 'roadmap_revision', 'notes'].filter((k) => report?.[k] !== undefined).map((k) => [k, report![k]]));
+    // The Architect's findings (B.7, as D3 X2): recorded with the run, a
+    // `requirement_conflict` routed to `change_spec` (D6 §5.4), whatever
+    // the check decides.
+    if (Array.isArray(report?.findings) && (report.findings as unknown[]).length > 0) await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: [] });
+    // A requirement it cannot plan (D6 §5.4): routed to `change_spec` by
+    // the owner through the replan's blocker (D3 X2), never a plan taken
+    // over a conflict and never a silent change.
+    const conflicts = ((report?.findings as { category?: string; criterion?: string; message?: string }[] | undefined) ?? []).filter((f) => f.category === 'requirement_conflict');
+    if (conflicts.length > 0) return { refused: `requirement_conflict: the Architect reports a requirement it cannot plan (${conflicts.map((f) => f.criterion ?? f.message ?? '').join('; ')}); it is the owner's to route to a specification change` };
+    // The result's declaration can add uncertainty, never remove a detected
+    // change (D6 §5.4).
+    if (report?.conformance === 'uncertain') {
+      check.conformance = 'uncertain';
+      check.routing = 'human';
+    }
     const requests = facts.result?.report?.spec_change_requests ?? [];
     // A retrofit replan's field (D6 §8.3, B.7): carried by any other
     // project's replan, the result is not one this engine takes.
@@ -459,12 +508,17 @@ export class Acceptor {
     if (check.outcome !== 'passed') {
       // Recorded as a refused check, with the requests the result carried
       // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.
-      await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests });
-      return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+      await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests, declared });
+      // An unknown requirement is offered through the spec-change workflow,
+      // named in the refusal itself (D6 §5.4; the driver's ruling 5).
+      const offer = check.needs_spec_change ? `; propose it through ${specChangeRoute(facts.project.id)}` : '';
+      return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}${offer}` };
     }
     const content: BundleContent = { modules: parsedArch.parsed.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined || check.roadmap_revision, plan, adrs, architecture_text: architectureText };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
     const obligations = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, planned_obligations: check.planned_obligations }, null, 2)}\n`) });
+    // The complete diff of every changed artifact, the decision's evidence (D6 §5.4).
+    const diff = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${JSON.stringify({ bundle, diff: artifactDiff(against, artifacts, check.changes) }, null, 2)}\n`) });
     return {
       replan: {
         bundle,
@@ -477,7 +531,10 @@ export class Acceptor {
         spec_revision: b.spec_revision,
         architecture_revision: b.architecture_revision,
         roadmap_revision: b.roadmap_revision,
-        versions: { architecture: b.baseline.architecture_version, roadmap: b.baseline.roadmap_version, phase_plan: 1 },
+        versions: { architecture: against.architecture_version, roadmap: against.roadmap_version, phase_plan: replacement ? replacement.generation + 1 : 1 },
+        diff,
+        declared,
+        replaces: replacement ? { phase_plan: replacement.phase_plan, generation: replacement.generation, trigger: replacement.trigger, evidence: replacement.evidence, stale: replacement.stale, ...(replacement.counted ? { counted: replacement.counted } : {}) } : null,
         ...(requests.length > 0 ? { spec_change_requests: requests } : {}),
       },
     };
@@ -495,8 +552,18 @@ export class Acceptor {
     const ws = facts.workspace!;
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
     if (outside) return failed(outside.klass, outside.text);
+    // A specification change's correction (D6 §4.5; the driver's rulings Q6,
+    // Q13, Q-D; the slice-36 review's S1): the Verifier's applicability
+    // assessments are validated against the open obligations here, and
+    // recorded only in the transaction that records the run's report or
+    // captures its correction, so a run that fails or is retried resolves
+    // nothing. A correction that changes no check and assesses nothing while
+    // its obligations are open is refused.
+    const assessed = await this.correctionAssessments(facts, diff.changes.length);
+    if ('outcome' in assessed) return assessed;
+    const assessments = assessed.assessments;
     if (diff.changes.length === 0) {
-      await this.recordReport(facts);
+      await this.recordReport(facts, assessments);
       return { outcome: 'completed', reason: 'none' };
     }
     const report = facts.result?.report ?? {};
@@ -536,8 +603,30 @@ export class Acceptor {
       requested: proposal?.requested_change_kind ?? 'unclassifiable',
       changesRequiredSet: (await required(base)) !== (await required(tree)),
       evidence,
+      ...(assessments ? { assessments } : {}),
     });
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  private async correctionAssessments(facts: AcceptFacts, changes: number): Promise<RunEnd | { assessments: { entries: ApplicabilityEntry[]; rationales: string[] } | null }> {
+    const entries = facts.result?.report?.spec_applicability ?? [];
+    if (facts.work.kind !== 'check_correction') {
+      return entries.length > 0 ? failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only') : { assessments: null };
+    }
+    const c = await this.rt.read<{ request: string | null; open: string[]; resolves: string[][]; outside: string[] }>('spec.correction_facts', { run: facts.run.id, entries });
+    if (entries.length > 0 && c.request === null) return failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only; this correction is not one');
+    if (c.outside.length > 0) return failed('invalid_result', `spec_applicability names a check the effective protected version does not have: ${c.outside.join(', ')}`);
+    const unmatched = entries.filter((_, i) => (c.resolves[i] ?? []).length === 0);
+    if (unmatched.length > 0) {
+      return failed('invalid_result', `spec_applicability names no open obligation it covers: ${unmatched.map((e) => `${e.check} (${e.criteria.join(', ')})`).join('; ')}`);
+    }
+    if (c.request !== null && c.open.length > 0 && changes === 0 && entries.length === 0) {
+      return failed('invalid_result', `the correction changed no check and assessed none: the specification change's obligations on ${c.open.join(', ')} stay open`);
+    }
+    if (entries.length === 0) return { assessments: null };
+    const rationales: string[] = [];
+    for (const e of entries) rationales.push(await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'assessment_evidence', content: Buffer.from(e.rationale) }));
+    return { assessments: { entries, rationales } };
   }
 
   // The records an applicability proposal's evidence is published as.
@@ -553,8 +642,8 @@ export class Acceptor {
   }
 
   // What a Verifier's or a Reviewer's role reported, recorded with its run.
-  private async recordReport(facts: AcceptFacts): Promise<void> {
-    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts), alpha: await this.alphaOf(facts) });
+  private async recordReport(facts: AcceptFacts, assessments: { entries: ApplicabilityEntry[]; rationales: string[] } | null = null): Promise<void> {
+    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts), alpha: await this.alphaOf(facts), ...(assessments ? { assessments } : {}) });
   }
 
   // A Reviewer's Alpha exception proposals (D2 §5 C1): one that may be made

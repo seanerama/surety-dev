@@ -7,6 +7,7 @@
 // backend's argument array, its constructed environment, its working
 // directory, its standard input and the egress forwarder.
 
+import { loadReplanSpec } from '../../plan/replan-package.js';
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
@@ -124,6 +125,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   for (const d of ['root', 'vol', 'context', 'git']) mkdirSync(join(made, d), { recursive: true, mode: 0o700 });
   const area = realpathSync(made);
   const facts = await rt.read<ContextFacts | null>('context.facts', { run: claim.run });
+  await loadReplanSpec(facts);
   const recordPaths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
   // The failed repair checks' output records the claim names (D3 §2.10),
   // read as the API would serve them: only a record it serves, and only

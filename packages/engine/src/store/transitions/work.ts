@@ -4,6 +4,9 @@
 // table in work-table.ts and writes exactly one work.* event.
 
 import { bindConformanceStage } from '../../adopt/conformance.js';
+import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
+import { authoringShortfall } from '../../plan/phase.js';
+import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
 import { raiseQuestion } from './queue.js';
@@ -167,6 +170,9 @@ export interface TriggerInput {
   // §4.1), which the Release Operator (engine code, D4 §8.1) takes on. The
   // API still refuses both kinds, and the scheduler never runs either.
   engineRaised?: boolean;
+  // D6 §5.7: an early replan's triggering evidence (the generation it
+  // replaces, the evidence, what became stale), kept beside the subject.
+  trigger_evidence?: Record<string, unknown>;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization', 'phase_plan', 'request'];
@@ -211,10 +217,24 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   tx.db
     .prepare(
       `INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "depends_on",
-         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile")
-       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile", "trigger_evidence")
+       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)`,
     )
-    .run(id, tx.at, input.project, seq, input.kind, JSON.stringify(subject), JSON.stringify(dependsOn), input.trigger_source, input.trigger_id, input.trigger_generation, input.chain ?? 0, input.profile ?? null);
+    .run(
+      id,
+      tx.at,
+      input.project,
+      seq,
+      input.kind,
+      JSON.stringify(subject),
+      JSON.stringify(dependsOn),
+      input.trigger_source,
+      input.trigger_id,
+      input.trigger_generation,
+      input.chain ?? 0,
+      input.profile ?? null,
+      input.trigger_evidence ? JSON.stringify(input.trigger_evidence) : null,
+    );
   tx.emit('work.created', { project: input.project, work_item: id }, { ...label, to: 'eligible', kind: input.kind, seq });
   return { work_item: { id }, created: true };
 }
@@ -250,7 +270,7 @@ export interface PlanStageInput {
 // - `fixture`: the labelled test fixture (src/testing/fixtures.ts; K4; M74),
 //   `approved_by` `test fixture`, the label on its rows' events.
 export type PlanAuthority =
-  | { kind: 'publication'; by: 'human' | 'engine:plan_check'; bundle: string; check: string | null; routing: 'human' | 'registered' }
+  | { kind: 'publication'; by: 'human' | 'engine:plan_check'; bundle: string; check: string | null; routing: 'human' | 'registered'; replaces?: Replaces | null }
   | { kind: 'architect_integration' }
   | { kind: 'fixture' };
 
@@ -294,10 +314,22 @@ export function registerPlan(
         next: done + 1,
       });
     }
-    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as
+    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY rowid DESC LIMIT 1`).get(args.project) as
       | { id: string; generation: number }
       | undefined;
-    if (open) {
+    const replaces = publication.replaces ?? null;
+    // Early replacement (D6 §5.7; B08): the one exemption, a compare-and-swap
+    // on the active generation the replacement names.
+    if (replaces && (!open || open.id !== replaces.phase_plan || open.generation !== replaces.generation)) {
+      throw new Refusal(409, 'plan_generation_stale', `The replacement names generation ${replaces.generation} of plan ${replaces.phase_plan}, which is no longer the active one${open ? ` (${open.id}, generation ${open.generation})` : ''}.`, 'The proposal is stale, not current; a new replan proposes against the active generation.', {
+        project: args.project,
+        phase,
+        phase_plan: replaces.phase_plan,
+        named_generation: replaces.generation,
+        active: open ? { phase_plan: open.id, generation: open.generation } : null,
+      });
+    }
+    if (open && !replaces) {
       throw new Refusal(409, 'plan_generation_stale', `Project ${args.project} already has an open plan (${open.id}, generation ${open.generation}); a second plan is registered only by early replacement.`, 'Replace the open plan through the replacement route, or complete it.', {
         project: args.project,
         phase,
@@ -306,9 +338,10 @@ export function registerPlan(
       });
     }
   }
+  const replaces = publication?.replaces ?? null;
   const approvedBy = publication ? publication.by : authority.kind === 'fixture' ? 'test fixture' : null;
   const plan = tx.newId('plan_');
-  const generation = 1;
+  const generation = replaces ? replaces.generation + 1 : 1;
   tx.db
     .prepare(
       `INSERT INTO "phase_plans" ("id", "created_at", "project", "phase_number", "prepared_against_revision", "git_path", "approved_by", "approved_at",
@@ -335,13 +368,49 @@ export function registerPlan(
       publication ? tx.at : null,
       args.plannedObligations ?? null,
     );
+  // The swap and the stages it carries (kept, retained) under their ids.
   const ids = new Map<number, string>();
-  for (const stage of args.stages) {
-    if (ids.has(stage.number)) throw illegal(`a plan with stage ${stage.number} twice`, { project: args.project, phase, stage: stage.number });
+  let swap: ReturnType<typeof swapGeneration> = null;
+  if (replaces) {
+    swap = swapGeneration(tx, { project: args.project, replaces, plan, generation, digests: new Map(args.stages.map((st) => [st.number, st.execution_inputs_digest ?? null])), subjectWork: subjectWorkOf(replaces) });
+    if (swap === null) throw illegal('a replacement whose named generation is no longer active', { project: args.project, phase_plan: replaces.phase_plan, generation: replaces.generation });
+    for (const [n, id] of swap.carried) ids.set(n, id);
+    // A listed stage the swap carries under its number must be that stage
+    // with its inputs: never a silent drop of the listed one (the review's
+    // S1). Publication compares first; this refuses what it could not.
+    for (const st of args.stages) {
+      const carriedId = swap.carried.get(st.number);
+      if (!carriedId) continue;
+      const row = tx.db.prepare('SELECT "execution_inputs_digest" FROM "stages" WHERE "id" = ?').get(carriedId) as { execution_inputs_digest: string | null };
+      if (row.execution_inputs_digest !== (st.execution_inputs_digest ?? null)) throw new Refusal(409, 'plan_generation_stale', `Stage ${st.number} is carried by the swap under other inputs than the replacement lists.`, 'The proposal is stale; the replan proposes again.', { project: args.project, stage: carriedId, number: st.number });
+    }
+    tx.db
+      .prepare('UPDATE "phase_plans" SET "replacement" = ? WHERE "id" = ?')
+      .run(
+        JSON.stringify({ replaces: replaces.phase_plan, generation: replaces.generation, trigger: replaces.trigger, evidence: replaces.evidence, stale: replaces.stale, kept: swap.kept, retained: swap.retained, cancelled: swap.cancelled, superseded: swap.superseded }),
+        plan,
+      );
+  }
+  // A Reviewer's plan-targeted `fix` is resolved by the replacement its
+  // replan publishes (D6 §5.7; the driver's ruling 2).
+  if (replaces?.trigger?.source === 'contract_conflict') {
+    const f = replaces.trigger.id;
+    const open = tx.db.prepare(`SELECT 1 FROM "findings" WHERE "id" = ? AND "project" = ? AND "status" <> 'resolved'`).get(f, args.project);
+    if (open) {
+      tx.db.prepare(`UPDATE "findings" SET "status" = 'resolved', "resolution_verification" = ? WHERE "id" = ?`).run(JSON.stringify({ phase_plan: plan, generation, bundle: publication?.bundle ?? null }), f);
+      tx.emit('finding.resolved', { project: args.project, finding: f }, { phase_plan: plan, generation, bundle: publication?.bundle ?? null });
+    }
+  }
+  const carried = new Set(ids.keys());
+  const fresh = args.stages.filter((st) => !carried.has(st.number));
+  const seen = new Set<number>();
+  for (const stage of fresh) {
+    if (seen.has(stage.number)) throw illegal(`a plan with stage ${stage.number} twice`, { project: args.project, phase, stage: stage.number });
+    seen.add(stage.number);
     ids.set(stage.number, tx.newId('stage_'));
   }
   const out: { id: string; number: number; work_item: string }[] = [];
-  for (const stage of args.stages) {
+  for (const stage of fresh) {
     const id = ids.get(stage.number)!;
     const deps = (stage.depends_on ?? []).map((n) => {
       const dep = ids.get(n);
@@ -394,11 +463,38 @@ export function registerPlan(
     out.push({ id, number: stage.number, work_item: made.work_item.id });
   }
   let authoring: string | null = null;
+  // An early replacement whose planned obligations the effective protected
+  // version already meets is ready as published: the authorized version
+  // that establishes them is applied (D6 §6.2; B07), so no authoring is
+  // owed; otherwise it registers its own, as any plan (the driver's ruling 8).
+  let inherited = false;
+  if (publication && replaces) {
+    const effective = effectiveVersion(tx.db, args.project);
+    if (effective && authoringShortfall(tx.db, plan, effective.id).length === 0) {
+      tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ?').run(tx.at, effective.id, plan);
+      tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: effective.id, inherited_from: replaces.phase_plan });
+      inherited = true;
+    }
+  }
   if (publication) {
     // The phase's check authoring (D6 §6.2; K7), registered with the plan.
-    authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
-    tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
-    tx.emit('plan.published', { project: args.project, phase_plan: plan }, { ...label, phase, generation, approved_by: publication.by, routing: publication.routing, stages: out.map((s) => s.id), check_authoring: authoring, bundle: publication.bundle });
+    if (!inherited) authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
+    if (authoring !== null) tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
+    tx.emit('plan.published', { project: args.project, phase_plan: plan }, {
+      ...label,
+      phase,
+      generation,
+      approved_by: publication.by,
+      routing: publication.routing,
+      stages: out.map((s) => s.id),
+      check_authoring: authoring,
+      bundle: publication.bundle,
+      // An early replacement's swap (D6 §5.7): what it replaced, carried and
+      // cancelled, and what became stale.
+      ...(replaces && swap
+        ? { replaces: { phase_plan: replaces.phase_plan, generation: replaces.generation }, trigger: replaces.trigger, stale: replaces.stale, kept: swap.kept, retained: swap.retained, cancelled: swap.cancelled, superseded: swap.superseded }
+        : {}),
+    });
   }
   return { plan: { id: plan, phase, generation }, stages: out, check_authoring: authoring };
 }

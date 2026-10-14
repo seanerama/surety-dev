@@ -58,7 +58,7 @@ export function expectedService(db: Db, environment: string, anyGeneration = fal
   const a = db
     .prepare(
       `SELECT a.*, o."finalizer_inputs" AS "frozen_text" FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation"
-       WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND a."deployment_generation" = ? ORDER BY a."created_at" DESC LIMIT 1`,
+       WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND a."deployment_generation" = ? ORDER BY a.rowid DESC LIMIT 1`,
     )
     .get(environment, generation) as (AttemptLike & { frozen_text: string }) | undefined;
   if (!a) return null;
@@ -146,7 +146,7 @@ export const ENV_OOB_OPTIONS = [
 ];
 
 const changeRows = (db: Db, environment: string): EnvChangeRow[] =>
-  db.prepare(`SELECT * FROM "out_of_band_changes" WHERE "subject_kind" = 'environment' AND "environment" = ? ORDER BY "detected_at", "id"`).all(environment) as EnvChangeRow[];
+  db.prepare(`SELECT * FROM "out_of_band_changes" WHERE "subject_kind" = 'environment' AND "environment" = ? ORDER BY rowid, "id"`).all(environment) as EnvChangeRow[];
 
 // Not settled: open, or acknowledged and not yet replaced.
 export const unresolvedChanges = (db: Db, environment: string): EnvChangeRow[] => changeRows(db, environment).filter((r) => r.closed_at === null && (r.disposition === null || r.disposition === 'acknowledge'));
@@ -394,7 +394,7 @@ function newestIdentity(db: Db, environment: string): { at: string; match: strin
   const row = db
     .prepare(
       `SELECT "id", "facts", "deployment_generation" FROM "observation_history"
-       WHERE "environment" = ? AND json_extract("facts", '$.identity.observation') = "id" ORDER BY "observed_at" DESC, rowid DESC LIMIT 1`,
+       WHERE "environment" = ? AND json_extract("facts", '$.identity.observation') = "id" ORDER BY rowid DESC LIMIT 1`,
     )
     .get(environment) as { id: string; facts: string; deployment_generation: number | null } | undefined;
   if (!row) return null;
@@ -712,7 +712,7 @@ export function readLogs(db: Db, args: { project: string; environment: string })
   const env = environmentByName(db, args.project, args.environment);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   const requested = (db.prepare('SELECT "logs_requested_at" FROM "environments" WHERE "id" = ?').get(env.id) as { logs_requested_at: string | null }).logs_requested_at;
-  const logs = db.prepare('SELECT "record", "generation", "at", "collected_at", "bytes" FROM "environment_logs" WHERE "environment" = ? ORDER BY "collected_at" DESC, "id" DESC').all(env.id) as {
+  const logs = db.prepare('SELECT "record", "generation", "at", "collected_at", "bytes" FROM "environment_logs" WHERE "environment" = ? ORDER BY rowid DESC, "id" DESC').all(env.id) as {
     record: string;
     generation: number | null;
     at: string;

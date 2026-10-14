@@ -20,7 +20,10 @@ import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
-import { type ReplanPrepared, finalizeReplan } from '../../plan/bundle.js';
+import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
+import { supersededWhileRunning } from '../../plan/replace.js';
+import { registerPhaseAtNomination } from '../../plan/phase.js';
+import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -58,7 +61,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -188,6 +191,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
       reraiseOnPolicy(tx, op.project);
+      // A pending bundle on the head the policy commit moved stays answerable
+      // (B03): the commit touches none of its bound inputs.
+      if (op.payload.old_oid) rebindHarmless(tx, { project: op.project, from: op.payload.old_oid, to: inputs.new_oid });
       if (inputs.intent) completeIntent(tx, inputs.intent);
       return { policy_revision: id };
     }
@@ -199,6 +205,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return finalizeProposal(tx, op, inputs as unknown as ProposalInputs);
     case 'spec_applied':
       return finalizeApplied(tx, op, inputs as unknown as AppliedInputs);
+    // D6 §3.4: spec_approval's change log row integrated; the approval.
+    case 'spec_approved':
+      return finalizeApproved(tx, op, inputs as unknown as ApprovedInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':
@@ -241,6 +250,19 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   }
   if (inputs.stage) {
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
+    // A stage an early replacement superseded while its Builder ran (D6
+    // §5.7; the driver's ruling 10): its late integration is history, the
+    // code on the branch; its work completes `superseded` and is never
+    // verified, and it fulfils no replacement work.
+    if (item && supersededWhileRunning(tx.db, inputs.stage)) {
+      const now = getWorkItem(tx, item.id)!;
+      if (now.status === 'integrated') {
+        const verifying = transitionWork(tx, now, 'verifying', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
+        transitionWork(tx, verifying, 'complete', {}, { cause: 'superseded', stage: inputs.stage, revision: inputs.new_oid });
+        tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(item.id);
+        status = 'complete';
+      }
+    }
   }
   const plans: string[] = [];
   // B02 (D6 §5.5): a checkpoint registers nothing, whatever it carries: a
@@ -258,7 +280,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     plans.push(made.plan.id);
   }
   if (inputs.replan && inputs.run) {
-    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid });
+    const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid, base: op.payload.old_oid ?? null });
     if (published) plans.push(published);
   }
   if (inputs.architect && item && status === 'integrated') {
@@ -320,11 +342,6 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
       markStale(tx, { candidate: earlier });
     }
   }
-  const verification = observeTrigger(
-    tx,
-    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
-    {},
-  );
   for (const id of held) {
     const item = getWorkItem(tx, id)!;
     transitionWork(tx, item, 'verifying', {}, { candidate });
@@ -333,8 +350,16 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   if (due.nomination_due !== null && (JSON.parse(due.nomination_due) as { revision: string }).revision === inputs.new_oid) {
     tx.db.prepare('UPDATE "projects" SET "nomination_due" = NULL WHERE "id" = ?').run(op.project);
   }
-  // The nomination's checks, registered in its finalizer (D3 §2.5; L2).
+  // The nomination's checks, registered in its finalizer (D3 §2.5; L2);
+  // at T1 the phase's own nomination registers the phase scope's too (D6
+  // §5.8; reading 8): all of them before the verification work.
   registerAtNomination(tx, { project: op.project, candidate });
+  registerPhaseAtNomination(tx, { project: op.project, candidate });
+  const verification = observeTrigger(
+    tx,
+    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
+    {},
+  );
   cancelSuperseded(tx, op.project);
   // The items now verifying are reconciled (D3 §2.10): a failure already
   // recorded at their current candidate is repaired here.

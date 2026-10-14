@@ -8,11 +8,11 @@
 // answers any of them (E12): the route is the owner's.
 
 import { Refusal } from '../refusal.js';
-import { type KindSpec, type Subject, consumed, recordApproval } from '../store/transitions/queue.js';
+import { type KindSpec, type Subject, consumed, recordApproval, recordIntent } from '../store/transitions/queue.js';
 import { consumeDecision } from '../store/transitions/decisions.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { approveBundlePart, bundleManifest, bundleOfDecision } from '../plan/bundle.js';
-import { approveSpec, latestSemantics, specBlockers } from '../spec/approval.js';
+import { approveBundlePart, bundleGuard, bundleManifest, bundleOfDecision } from '../plan/bundle.js';
+import { approvedRepresentation, latestSemantics, specBlockers } from '../spec/approval.js';
 import { integrationRef } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
 import { saveNotesOf } from './session.js';
@@ -100,7 +100,7 @@ function specManifest(db: Db, run: string): Record<string, unknown> {
     readable: row ? row.readable === 1 : null,
     // D6-R09 (SEAM.md §384): an adopted project's mode rules, naming each
     // requirement that keeps `approve` blocked.
-    blocking: [...specBlockers(row), ...retrofitBlockers(db, project, run)],
+    blocking: [...specBlockers(row, project === null ? undefined : approvedRepresentation(db, project)), ...retrofitBlockers(db, project, run)],
     policy_revision: project === null ? null : policyRevision(db, project),
   };
 }
@@ -110,7 +110,7 @@ export const SPEC_APPROVAL: KindSpec = {
     const manifest = specManifest(tx.db, d.subject_id);
     if (manifest.blob === null) return null;
     const row = latestSemantics(tx.db, d.subject_id);
-    const blockers = [...specBlockers(row), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
+    const blockers = [...specBlockers(row, d.project === null ? undefined : approvedRepresentation(tx.db, d.project)), ...retrofitBlockers(tx.db, d.project, d.subject_id)];
     let findings: { where: string; code: string; why: string }[] = [];
     try {
       findings = row ? (JSON.parse(row.findings) as { where: string; code: string; why: string }[]) : [];
@@ -138,11 +138,16 @@ export const SPEC_APPROVAL: KindSpec = {
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
     if (option !== 'approve') return consumed(d);
-    const made = approveSpec(tx, { project: d.project!, run: d.subject_id, decision: d.id });
-    recordApproval(tx, d, { consequence: `specification version ${made.version} approved`, subjectType: 'spec_revision', subjectId: made.spec_revision });
-    // The answer launches nothing (D1 §10.5): the next tick sees the baseline.
-    return consumed(d);
+    // The effect (D6 §3.4; the coordinator's ruling on question 2): TPL §11's
+    // change log row committed by the engine through the journal, whose
+    // finalizer is the approval (spec/approval-effect.ts). The answer
+    // launches nothing (D1 §10.5).
+    const m = specManifest(tx.db, d.subject_id);
+    const approval = recordApproval(tx, d, { consequence: `specification version ${String(m.spec_version)} approved`, subjectType: 'spec_blob', subjectId: String(m.blob) });
+    return consumed(d, [recordIntent(tx, d, { approval, kind: 'spec_approval_application', plan: { run: d.subject_id } })]);
   },
+  // An effect whose precondition failed: the question is asked again.
+  withdraw: () => true,
 };
 
 // ---- architecture_approval and plan_approval (D6 §3.4, §5.5; B02) ---------------------------
@@ -158,10 +163,11 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
       if (!b || b.status !== 'proposed') return null;
       if (kind === 'plan_approval' && b.phase_number === null) return null;
       const manifest = bundleManifest(tx.db, d.subject_id, b, kind);
-      const check = b.plan_check ? (tx.db.prepare('SELECT "outcome", "conformance" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { outcome: string; conformance: string } | undefined) : undefined;
+      const check = b.plan_check ? (tx.db.prepare('SELECT "outcome", "conformance", "diff", "uncertain" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { outcome: string; conformance: string; diff: string | null; uncertain: string } | undefined) : undefined;
+      const uncertain = check ? (JSON.parse(check.uncertain) as string[]) : [];
       return {
         manifest,
-        question: `Approve ${what} the Architect session ${d.subject_id} proposed${b.phase_number === null ? '' : ` for phase ${b.phase_number}`} (bundle ${b.id})?${check ? ` The mechanical check ${check.outcome}; conformance declared ${check.conformance}.` : ''}${b.phase_number === null ? '' : ' Both approvals of the batch publish it once.'}`,
+        question: `Approve ${what} the Architect ${b.run !== null && tx.db.prepare(`SELECT 1 FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(b.run) === undefined ? 'replan' : 'session'} ${d.subject_id} proposed${b.phase_number === null ? '' : ` for phase ${b.phase_number}`} (bundle ${b.id})?${check ? ` The mechanical check ${check.outcome}; conformance ${check.conformance}${uncertain.length > 0 ? ` (${uncertain.join('; ')})` : ''}.` : ''}${check?.diff ? ` The complete diff of every changed artifact is record ${check.diff}.` : ''}${b.phase_number === null ? '' : ' Both approvals of the batch publish it once.'}`,
         options: [
           {
             key: 'approve',
@@ -176,19 +182,25 @@ function bundleSpec(kind: 'architecture_approval' | 'plan_approval'): KindSpec {
           },
           { key: 'reject', label: 'Reject', consequence: 'The bundle is refused; the saves stay committed as checkpoints with no effect.', effect: { bundle: b.id, refused: true } },
         ],
-        evidence: evidenceOf(JSON.parse(b.blobs) as Record<string, string>),
+        // The bundle's blobs, and the complete diff of every changed
+        // artifact recorded by the check (D6 §5.4; B03).
+        evidence: [...evidenceOf(JSON.parse(b.blobs) as Record<string, string>), ...(check?.diff ? [{ record: check.diff, path: 'plan_check.diff', provenance: 'observed' as const }] : [])],
       };
     },
     manifest: (tx, d) => bundleManifest(tx.db, d.subject_id, bundleOfDecision(tx.db, d), kind),
+    // A bundle that can no longer publish (D6 §5.5; M448 (d)): marked
+    // stale, and the answer refused `plan_generation_stale`, committed.
+    guard: (tx, d, option) => bundleGuard(tx, d, option),
     reraise: false,
     answer(tx, d, option, note) {
       consumeDecision(tx, d, option, note);
       const b = bundleOfDecision(tx.db, d);
       if (!b) throw new Refusal(409, 'decision_invalidated', `Decision ${d.id} names no bundle.`, 'Read the current decisions about the session.', { decision: d.id });
-      const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject' });
-      if (option === 'approve') recordApproval(tx, d, { consequence: made.published ? `bundle ${made.bundle} published${made.plan ? ` as plan ${made.plan}` : ''}` : `bundle ${made.bundle} approved in part (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
-      // The answer launches nothing (D1 §10.5): what the publication made
-      // eligible is dispatched by the next tick.
+      const made = approveBundlePart(tx, { bundle: b.id, kind, decision: d.id, option: option === 'approve' ? 'approve' : 'reject', note: note ?? null });
+      if (option === 'approve') recordApproval(tx, d, { consequence: `bundle ${made.bundle} approved (${kind})`, subjectType: 'plan_bundle', subjectId: made.bundle });
+      // The answer launches nothing (D1 §10.5). The answer that completes the
+      // bundle's authority is followed by its publication by the authorized
+      // finalizer, in a transaction of its own (plan/publish.ts).
       return consumed(d);
     },
   };

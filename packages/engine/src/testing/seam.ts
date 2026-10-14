@@ -106,6 +106,9 @@ const MAIN_BARRIERS: readonly string[] = [
   // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
   // save and before it enters `closing` and raises its decision.
   'session.close_saved',
+  // M5 slice 34 (D6 §3.4, §5.5; SEAM.md §401): around a bundle's publication.
+  'plan.before_publication',
+  'plan.after_publication',
   // SEAM.md §389 (M5 slice 33): a turn's settlement, after each of its four
   // facts; and the admission of a save, a turn, a close or an opening,
   // after its read and before its compare-and-swap.
@@ -290,6 +293,10 @@ const mainFaults: MainFault[] = [];
 // fails, as a git read that fails, `times` times.
 type PresenceFault = { point: 'module_presence_read'; project: string; times: number; remaining: number; hit: number };
 const presenceFaults: PresenceFault[] = [];
+// SEAM.md §419: the next `times` reads of a specification change's proposed
+// blob for the project fail as an unreadable object.
+type SpecBlobFault = { point: 'spec_blob_read'; project: string; times: number; remaining: number; hit: number };
+const specBlobFaults: SpecBlobFault[] = [];
 // SEAM.md §377: the next adoption cannot read the named signal.
 type SignalFault = { point: 'adoption_signal'; signal: string; times: number; remaining: number; hit: number };
 const signalFaults: SignalFault[] = [];
@@ -778,8 +785,11 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 function advanceClock(body: unknown): { now: string } {
   const seconds = isObject(body) ? body.seconds : undefined;
-  if (!isObject(body) || Object.keys(body).some((k) => k !== 'seconds') || typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 1) {
-    throw new Refusal(400, 'invalid_value', '"seconds" must be a positive integer.', 'Send {"seconds": <n>}.', { field: 'seconds' });
+  // SEAM.md §425: a negative `seconds` moves the controlled clock back and
+  // leaves it there (the wall clock of a host that steps back), harness
+  // mode only; zero moves nothing and is refused.
+  if (!isObject(body) || Object.keys(body).some((k) => k !== 'seconds') || typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds === 0) {
+    throw new Refusal(400, 'invalid_value', '"seconds" must be a non-zero integer (negative: the clock steps back).', 'Send {"seconds": <n>}.', { field: 'seconds' });
   }
   Atomics.add(clockCell!, 0, BigInt(seconds * 1000));
   return { now: new Date(Date.now() + clockOffsetMs()).toISOString() };
@@ -837,6 +847,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         tickFaults.length = 0;
         mainFaults.length = 0;
         presenceFaults.length = 0;
+        specBlobFaults.length = 0;
         signalFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
@@ -873,6 +884,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           faults: [
             ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...presenceFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...specBlobFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...signalFaults.map((f) => ({ point: f.point, signal: f.signal, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...tickFaults.map((f) => ({ ...f })),
             ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
@@ -1181,6 +1193,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           ? armTickFault(body)
           : isObject(body) && body.point === 'module_presence_read'
           ? armPresenceFault(body)
+          : isObject(body) && body.point === 'spec_blob_read'
+          ? armSpecBlobFault(body)
           : isObject(body) && body.point === 'adoption_signal'
           ? armSignalFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
@@ -1548,6 +1562,26 @@ function armPresenceFault(body: Record<string, unknown>): { point: 'module_prese
   }
   presenceFaults.push({ point: 'module_presence_read', project: body.project, times, remaining: times, hit: 0 });
   return { point: 'module_presence_read', project: body.project, times };
+}
+
+function armSpecBlobFault(body: Record<string, unknown>): { point: 'spec_blob_read'; project: string; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => !['point', 'project', 'times'].includes(k)) || typeof body.project !== 'string' || body.project.length === 0 || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown spec_blob_read fault.', 'Send {"point":"spec_blob_read","project":"proj_…","times"?: <n>}.', { field: 'point' });
+  }
+  specBlobFaults.push({ point: 'spec_blob_read', project: body.project, times, remaining: times, hit: 0 });
+  return { point: 'spec_blob_read', project: body.project, times };
+}
+
+// SEAM.md §419: true where a read of the project's proposed specification
+// blob is to fail. Always false outside harness mode.
+export function seamSpecBlobFault(project: string): boolean {
+  if (!init.harness) return false;
+  const f = specBlobFaults.find((m) => m.project === project && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 function armSignalFault(body: Record<string, unknown>): { point: 'adoption_signal'; signal: string; times: number } {

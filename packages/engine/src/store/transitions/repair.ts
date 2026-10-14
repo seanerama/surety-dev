@@ -28,6 +28,7 @@
 //   as a finding);
 // - re-arming a hold after a spec change: see `heldByChangeSpec`.
 
+import { requestsFromFindings } from '../../spec/change.js';
 import { requirementKeyOf } from '../../checks/schema.js';
 import { canonical, parseJson, sha256 } from './common.js';
 import type { Effect } from './control.js';
@@ -40,6 +41,7 @@ import { raiseQuestion } from './queue.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { REPLAN_OPTION, stageInActiveSet } from '../../plan/replace.js';
 
 type Db = Tx['db'];
 
@@ -347,9 +349,16 @@ function raiseConflict(tx: Tx, item: WorkRow, view: RepairView, ids: string[]): 
 
 // The X2 blocker's preview (queue.ts's blocker kind), or null when the item
 // is not at one.
-export function conflictPreview(item: WorkRow): { manifest: Record<string, unknown>; options: { key: string; label: string; consequence: string; effect: Record<string, unknown> }[]; question: string } | null {
-  const blocker = parseJson<{ reason?: string; checks?: string[]; findings?: string[]; candidate?: string }>(item.blocker);
+export function conflictPreview(item: WorkRow, db?: Tx['db']): { manifest: Record<string, unknown>; options: { key: string; label: string; consequence: string; effect: Record<string, unknown> }[]; question: string } | null {
+  const blocker = parseJson<{ reason?: string; checks?: string[]; findings?: string[]; candidate?: string; replan?: string }>(item.blocker);
   if (item.status !== 'awaiting_decision' || blocker?.reason !== 'check_conflict') return null;
+  // Answered `replan` (D6 §5.7): the item waits for the replacement.
+  if (blocker.replan) return null;
+  // D6 §5.7, A.2: an objection upheld as being against the plan, on a
+  // stage's own work in the active obligation set; never on a fix item
+  // (the review's M3).
+  const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
+  const replan = db !== undefined && item.kind === 'stage_build' && typeof stage === 'string' && stageInActiveSet(db, stage);
   const findings = blocker.findings ?? [];
   const checks = blocker.checks ?? [];
   return {
@@ -365,6 +374,7 @@ export function conflictPreview(item: WorkRow): { manifest: Record<string, unkno
       { key: 'correct_check', label: 'Correct the check', consequence: 'The Verifier is given check_correction work for each conflict; the check stays in force until a corrected version is approved.', effect: { work_item: item.id, register: 'check_correction', findings } },
       { key: 'change_spec', label: 'Change the spec', consequence: 'spec_change work is raised for each conflict (F §3.8); nothing of the spec changes until it is approved.', effect: { work_item: item.id, register: 'spec_change', findings } },
       { key: 'retry', label: 'Retry', consequence: 'You see no conflict: the Builder is sent back once to make the check pass.', effect: { work_item: item.id, to: 'eligible' } },
+      ...(replan ? [{ ...REPLAN_OPTION(item), label: 'Replan', consequence: 'The objection is upheld as being against the plan: the Architect replans the open phase with it as evidence; the item waits for the replacement.' }] : []),
       { key: 'cancel', label: 'Cancel', consequence: 'The work item is cancelled.', effect: { work_item: item.id, to: 'cancelled' } },
     ],
     question:
@@ -388,11 +398,10 @@ export function answerConflict(tx: Tx, item: WorkRow, option: string, decision: 
     return [];
   }
   if (option === 'change_spec') {
-    // Not built: any process for spec_change work. The item is recorded and
-    // waits; the scheduler never dispatches it (no role performs the kind).
-    for (const f of findings) {
-      observeTrigger(tx, { project: item.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: f, trigger_generation: 1, subject: { finding: f }, chain: 0, engineRaised: true }, { finding: f, decision });
-    }
+    // A request per conflict, from its finding (D6 §4.2; M431 (c)); where
+    // the project has no approved specification, the item is recorded and
+    // waits, never dispatched (the driver's ruling Q14).
+    requestsFromFindings(tx, { project: item.project, findings, decision });
   }
   // Back to the status it left, `verifying`; a retry then takes its one
   // repair in this transaction (the answered conflicts no longer stop it).

@@ -434,7 +434,9 @@
       "M433-the-decision-stales-on-each-dependency.test.mjs",
       "M433-old-generation-runs-and-what-resolves-an-obligation.test.mjs",
       "M434-an-unassigned-requirement.test.mjs",
-      "M422-the-latest-save-by-insertion-not-wall-time.test.mjs"
+      "M422-the-latest-save-by-insertion-not-wall-time.test.mjs",
+      "M433-a-failed-correction-and-a-partial-one.test.mjs",
+      "M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change.test.mjs"
     ],
     "37": [
       "M435-check-authoring-and-readiness.test.mjs",

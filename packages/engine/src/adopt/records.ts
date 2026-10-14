@@ -20,6 +20,7 @@
 //   a defect) without criteria; in `scoped` mode the unanswered and the
 //   criterion-less are recorded `descriptive_unverified`.
 
+import { liveRepresentation } from '../spec/semantics.js';
 import { Refusal } from '../refusal.js';
 import { canonical, parseJson } from '../store/transitions/common.js';
 import { type DecisionRow, consumeDecision } from '../store/transitions/decisions.js';
@@ -169,7 +170,7 @@ interface SemanticsRowLite {
 }
 
 const semanticsOfRun = (db: Db, run: string): SemanticsRowLite | undefined =>
-  db.prepare('SELECT "git_blob", "representation", "readable" FROM "spec_semantics" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run) as SemanticsRowLite | undefined;
+  db.prepare('SELECT "git_blob", "representation", "readable" FROM "spec_semantics" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run) as SemanticsRowLite | undefined;
 
 // The specification awaiting approval: the run of the newest open
 // `spec_approval`, and its last save's representation.
@@ -178,7 +179,7 @@ function pendingSpecification(db: Db, project: string): { run: string; blob: str
   if (!d) return null;
   const row = semanticsOfRun(db, d.subject_id);
   if (!row || row.readable !== 1) return null;
-  const rep = parseJson<SpecRepresentation>(row.representation);
+  const rep = liveRepresentation(parseJson<SpecRepresentation>(row.representation));
   return rep ? { run: d.subject_id, blob: row.git_blob, rep } : null;
 }
 
@@ -262,7 +263,7 @@ export function raiseConfirmations(tx: Tx, args: { project: string; run: string;
   if (!a || !args.approval) return [];
   const batch = `retrofit:${args.run}`;
   const row = semanticsOfRun(tx.db, args.run);
-  const rep = row && row.readable === 1 ? parseJson<SpecRepresentation>(row.representation) : null;
+  const rep = row && row.readable === 1 ? liveRepresentation(parseJson<SpecRepresentation>(row.representation)) : null;
   const out: DecisionRow[] = [];
   for (const q of rep?.requirements ?? []) {
     if (boundToIdea(a, q)) continue;
@@ -283,7 +284,7 @@ export function retrofitBlockers(db: Db, project: string | null, run: string): s
   if (a.mode === null) return ['ADOPTION_MODE_UNANSWERED'];
   if (a.mode === 'scoped') return [];
   const row = semanticsOfRun(db, run);
-  const rep = row && row.readable === 1 ? parseJson<SpecRepresentation>(row.representation) : null;
+  const rep = row && row.readable === 1 ? liveRepresentation(parseJson<SpecRepresentation>(row.representation)) : null;
   if (!rep || !row) return [];
   const out: string[] = [];
   for (const q of rep.requirements) {
@@ -305,6 +306,10 @@ export function applyConfirmations(tx: Tx, args: { project: string; rep: SpecRep
   if (!a) return;
   if (a.mode === null) throw new Refusal(409, 'illegal_transition', 'The specification of an adopted project cannot be approved before the adoption mode is chosen.', 'Answer the adoption_mode decision, then approve the next preview.', { project: args.project });
   const set = (key: string, sql: string, ...params: unknown[]) => tx.db.prepare(`UPDATE "requirements" SET ${sql} WHERE "project" = ? AND "key" = ?`).run(...params, args.project, key);
+  // A defect's later phase is set here only before any roadmap: once one
+  // exists, a requirement's phase is the roadmap's (D6 §4.5; the driver's
+  // ruling Q-G), and the Architect places it.
+  const later = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) === undefined ? 1 : 0;
   for (const q of args.rep.requirements) {
     set(q.key, '"reverse_engineered" = 1, "defect" = 0, "confirmed_at" = NULL, "confirmed_by" = NULL');
     if (boundToIdea(a, q)) {
@@ -320,7 +325,7 @@ export function applyConfirmations(tx: Tx, args: { project: string; rep: SpecRep
       set(q.key, `"status" = 'withdrawn', "withdrawn_at" = ?`, tx.at);
     } else if (option === 'defect' && q.criteria.length > 0) {
       // A defect's delivery belongs to a later phase (§8.1 step 2).
-      set(q.key, `"status" = 'pending', "defect" = 1, "confirmed_at" = ?, "confirmed_by" = ?, "assigned_phase" = MAX(COALESCE("assigned_phase", 2), 2)`, tx.at, answer!.decision);
+      set(q.key, `"status" = 'pending', "defect" = 1, "confirmed_at" = ?, "confirmed_by" = ?, "assigned_phase" = CASE WHEN ? = 1 THEN MAX(COALESCE("assigned_phase", 2), 2) ELSE "assigned_phase" END`, tx.at, answer!.decision, later);
     } else if (option === 'confirm' && q.criteria.length > 0) {
       set(q.key, `"status" = 'pending', "confirmed_at" = ?, "confirmed_by" = ?`, tx.at, answer!.decision);
       tx.emit('requirement.confirmed', { project: args.project, requirement: q.key }, { decision: answer!.decision, origin: q.origin });
@@ -328,7 +333,7 @@ export function applyConfirmations(tx: Tx, args: { project: string; rep: SpecRep
       // Scoped mode: never silently promoted (E6). A defect answered for a
       // requirement with no criteria yet keeps the owner's mark (the slice-32
       // review's M6).
-      set(q.key, `"status" = 'descriptive_unverified', "defect" = ?, "assigned_phase" = CASE WHEN ? = 1 THEN MAX(COALESCE("assigned_phase", 2), 2) ELSE "assigned_phase" END`, option === 'defect' ? 1 : 0, option === 'defect' ? 1 : 0);
+      set(q.key, `"status" = 'descriptive_unverified', "defect" = ?, "assigned_phase" = CASE WHEN ? = 1 THEN MAX(COALESCE("assigned_phase", 2), 2) ELSE "assigned_phase" END`, option === 'defect' ? 1 : 0, option === 'defect' ? later : 0);
     }
   }
   // Every open confirmation of this approval is settled by it.
@@ -380,5 +385,5 @@ export function reraiseOnPolicy(tx: Tx, project: string): void {
 
 // Every project's repository path (Q1: one project per repository).
 export function projectRepositories(db: Db): { id: string; name: string; dev_repo_path: string }[] {
-  return db.prepare('SELECT "id", "name", "dev_repo_path" FROM "projects" ORDER BY "created_at"').all() as { id: string; name: string; dev_repo_path: string }[];
+  return db.prepare('SELECT "id", "name", "dev_repo_path" FROM "projects" ORDER BY rowid').all() as { id: string; name: string; dev_repo_path: string }[];
 }

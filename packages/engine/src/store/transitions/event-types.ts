@@ -81,13 +81,16 @@ export const EVENT_OWNERS = {
   'finding.raised': 'store/transitions/findings.ts',
   'finding.severity_changed': 'store/transitions/queue.ts',
   'finding.dispositioned': 'store/transitions/queue.ts',
-  'finding.resolved': 'store/transitions/gates.ts',
+  'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
   'assessment.proposed': 'store/transitions/findings.ts',
   'assessment.assessed': 'store/transitions/findings.ts',
   'assessment.approved': 'store/transitions/queue.ts',
   'assessment.rejected': 'store/transitions/findings.ts, store/transitions/queue.ts',
   'signoff.recorded': 'store/transitions/findings.ts',
+  // D6 §5.8 (B06): a phase sign-off bound to a replaced plan generation or a
+  // superseded candidate, refused and not recorded.
+  'signoff.refused': 'store/transitions/findings.ts',
   'intent.recorded': 'store/transitions/queue.ts',
   'intent.executing': 'store/transitions/intents.ts, store/transitions/protected.ts',
   'intent.done': 'store/transitions/protected.ts',
@@ -170,13 +173,18 @@ export const EVENT_OWNERS = {
   'session.closed': 'sessions/session.ts',
   // D6 §§4, 5.6, 5.8, 6.2, 6.8 (M5 slice 31b): readiness, completion, the
   // replan's publication, the specification change, the policy's request.
-  'phase.authoring_ready': 'store/transitions/protected.ts',
+  'phase.authoring_ready': 'store/transitions/protected.ts, store/transitions/work.ts',
   'phase.completion_bound': 'plan/phase.ts',
   'baseline.phase_complete': 'plan/phase.ts',
   'spec.change_requested': 'spec/change.ts',
   'spec.change_proposed': 'spec/change.ts',
   'spec.change_approved': 'spec/change.ts',
   'spec.change_failed': 'spec/change.ts',
+  // D6 §4.5 (M5 slice 36): the rejection keeping its side ref; an
+  // obligation resolved; the Verifier's applicability assessment.
+  'spec.change_rejected': 'spec/change.ts',
+  'check.obligation_resolved': 'spec/change.ts',
+  'spec.assessment_recorded': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
   // D6 §8 (M5 slice 32): the adoption, the confirmations, the conformance
   // stage's binding and its integration at publication.

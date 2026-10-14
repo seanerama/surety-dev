@@ -5,7 +5,8 @@
 // approved proposal through the journal. The git work (fingerprints, trees,
 // commits) is done on the main thread and handed in.
 
-import { resolveByCorrection } from '../../spec/change.js';
+import { registerPhaseAtApplication } from '../../plan/phase.js';
+import { correctionProposalDecided, resolveByCorrection } from '../../spec/change.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
@@ -336,6 +337,7 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   // The new version's checks, registered in the transaction that invalidates
   // the old results (D3 §2.5, §3.5; L2).
   registerAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  registerPhaseAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // Queued executions of the superseded version never launch (T15).
   cancelSuperseded(tx, op.project);
   // A finding the new version leaves without a verifying check is routed
@@ -345,6 +347,8 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // A spec change's correction applied resolves its obligations (D6 §4.5).
   resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // Its item, waiting for the proposal, completes (the driver's ruling Q13).
+  correctionProposalDecided(tx, { proposal: inputs.proposal, applied: true });
   return { version: v.id };
 }
 

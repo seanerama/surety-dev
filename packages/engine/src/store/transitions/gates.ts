@@ -26,14 +26,15 @@ import { type OobRow, blockingObservation, candidateObservation, nominationRef, 
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
+import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 
 type Db = Tx['db'];
 
 export const COMPUTED_GATES = ['stage', 'alpha_authorize', 'alpha_complete'] as const;
-// `phase` is among them: D3 §4.2 defines its scope (checks/scope.ts), and the
-// gate stays `unsupported` until its milestone (SEAM.md §70; slice 20, not built).
-export const UNBUILT_GATES = ['phase', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
+// `phase` is no longer among them (D6 §5.8; K5): evaluated by the engine's
+// phase step and by the route for a named plan.
+export const UNBUILT_GATES = ['beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'] as const;
 // `phase` (D6 §5.8; K5; M5 slice 31b): evaluated by the engine's own phase
 // step (plan/phase.ts) on the phase's candidate, never through the gate route.
 export type GateKind = (typeof COMPUTED_GATES)[number] | 'phase';
@@ -424,11 +425,15 @@ export function evaluationTarget(
   args: EvaluateArgs,
 ): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null; phasePlan?: string } {
   // The `phase` gate is the engine's own (plan/phase.ts names the plan).
-  if (args.kind === 'phase' && typeof args.phase_plan === 'string') {
+  if (args.kind === 'phase') {
     const candidate = getCandidate(db, args.candidate);
     if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
-    const plan = db.prepare('SELECT "id", "project" FROM "phase_plans" WHERE "id" = ?').get(args.phase_plan) as { id: string; project: string } | undefined;
-    if (!plan || plan.project !== args.project) throw notFound('phase_plan', args.phase_plan);
+    // The plan the phase gate is evaluated for: named, and the project's.
+    const plan =
+      typeof args.phase_plan === 'string' ? (db.prepare('SELECT "id", "project" FROM "phase_plans" WHERE "id" = ?').get(args.phase_plan) as { id: string; project: string } | undefined) : undefined;
+    if (!plan || plan.project !== args.project) {
+      throw new Refusal(400, 'invalid_value', typeof args.phase_plan === 'string' ? `"phase_plan" ${args.phase_plan} is not a phase plan of project ${args.project}.` : '"phase_plan" is required for the phase gate.', 'Name the phase plan whose gate is evaluated.', { field: 'phase_plan' });
+    }
     return { candidate, kind: 'phase', stage: null, authorization: null, operation: null, phasePlan: plan.id };
   }
   if ((UNBUILT_GATES as readonly string[]).includes(args.kind) || !(COMPUTED_GATES as readonly string[]).includes(args.kind)) {
@@ -513,6 +518,23 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const missingNamed = [...missingSubjects(scope.missing), ...obligated];
   const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
   if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
+  // The `phase` gate's own (D6 §5.8; A.4; K5, B07): an assigned requirement
+  // no active stage implements, and planned obligations the actual
+  // protected checks do not meet.
+  if (kind === 'phase' && target.phasePlan) {
+    const unplanned = unplannedRequirements(db, target.phasePlan);
+    if (unplanned.length > 0) add('PLAN_REQUIREMENT_UNPLANNED', unplanned);
+    const shortfall = authoringShortfall(db, target.phasePlan, scope.effective.id);
+    if (shortfall.length > 0) add('AUTHORING_INCOMPLETE', shortfall);
+    // D6 §4.5, reading 6 (A.4): a requirement a change added that no
+    // approved roadmap revision has placed blocks every phase gate, shown by
+    // key, until one does; never dropped.
+    const roadmap = db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
+    if (roadmap) {
+      const unassigned = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NULL AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project) as { key: string }[]).map((r) => r.key);
+      if (unassigned.length > 0) add('REQUIREMENT_UNASSIGNED', unassigned);
+    }
+  }
 
   // (2) The protected path is authorized and effective. A protected set
   // that could not be read is not shown authorized.
@@ -595,6 +617,24 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     }
   }
   const entries = checkEntries(scope, selected, dueEntry);
+  // D6 §4.5 (B05; A.4; the driver's ruling Q12): a check with a
+  // `spec_changed` obligation whose latest result on this candidate was
+  // registered under an earlier spec-evidence generation is decided by no
+  // current evidence; it is named.
+  const generationStale = scope.required
+    .filter((c) => {
+      const g = (db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed'`).get(args.project, c.key) as { g: number | null }).g;
+      if (g === null) return false;
+      const latest = db
+        .prepare(
+          `SELECT x."spec_generation" AS sg FROM "check_results" r JOIN "checks" k ON k."id" = r."check" LEFT JOIN "check_executions" x ON x."id" = r."execution"
+           WHERE r."project" = ? AND r."candidate" = ? AND k."key" = ? ORDER BY r."execution_seq" DESC, r.rowid DESC LIMIT 1`,
+        )
+        .get(args.project, candidate.id, c.key) as { sg: number | null } | undefined;
+      return latest !== undefined && (latest.sg ?? 0) < g;
+    })
+    .map((c) => c.id);
+  if (generationStale.length > 0) add('EVIDENCE_GENERATION_STALE', generationStale);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) {
     add('CHECK_NOT_PASSED', notPassed);
@@ -733,12 +773,17 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     artifact: scope.artifact,
   };
   const policy = db.prepare('SELECT "policy_revision" FROM "projects" WHERE "id" = ?').get(args.project) as { policy_revision: string | null };
+  // The approved specification the scope is built under, as it is now (D6
+  // §4.6; D1 §9.1): a candidate nominated before a change keeps its own
+  // `spec_revision` as history; its evaluations after it are under the new
+  // version (M433 (e)). Null before any approved specification.
+  const specNow = (db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string } | undefined)?.id ?? null;
   tx.db
     .prepare(
       `INSERT INTO "acceptance_scopes" ("id", "created_at", "project", "candidate", "gate_kind", "stage", "policy_revision", "effective_protected_version", "source_revision",
          "delivered_requirement_ids", "partial_requirement_ids", "sensitivity_categories", "required_check_ids", "runner_classes", "required_signoffs",
-         "environment", "artifact_digest", "evidence_reuse", "validated", "scope_hash", "acceptance_content_hash")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "environment", "artifact_digest", "evidence_reuse", "validated", "scope_hash", "acceptance_content_hash", "spec_revision")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       scopeId,
@@ -762,6 +807,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       scopeComplete ? 1 : 0,
       sha256(canonical(scopeBody)),
       scope.contentHash,
+      specNow,
     );
   tx.emit('gate.scope_built', { project: args.project, candidate: candidate.id, scope: scopeId }, { gate_kind: kind, stage: scope.stage, required, delivered: scope.delivered });
 
@@ -983,7 +1029,7 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
       const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
       if (!stage) continue;
       const latest = db
-        .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+        .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
         .get(c.id, stage) as { stale: number } | undefined;
       if (!latest || latest.stale === 1) out.push({ candidate: c.id, stage });
     }

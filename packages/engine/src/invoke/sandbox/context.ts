@@ -23,10 +23,16 @@ import { fileURLToPath } from 'node:url';
 import type { Claim } from '../../store/transitions/runs.js';
 import { type CheckWritingFacts, checkWritingText } from '../../checks/guide.js';
 import { canaryPromptText } from '../../trust/canaries.js';
+import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
+import type { PhaseVerificationFacts } from '../../plan/phase.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
 export type ContextFacts = {
+  // A replan's package (plan/replan-package.ts; D6 §3.5, §5.6).
+  replan?: ReplanFacts | null;
+  // A phase Verifier's (D6 §5.8): the phase evaluation and its findings.
+  phase?: PhaseVerificationFacts | null;
   // A review of a protected proposal: the proposal it reviews.
   proposal?: Record<string, unknown> | null;
   // A spec change's request (D6 §4.3): the owner's words, for the Spec Writer.
@@ -176,7 +182,11 @@ export type ContextKind =
   | 'acceptance_content_hash'
   | 'prior_run'
   // A failed repair check's output record (D3 §2.10; SEAM.md §229).
-  | 'check_output';
+  | 'check_output'
+  // A replan's (D6 §5.6; M424 (b)).
+  | ReplanFileKind
+  // The phase Verifier's (D6 §5.8).
+  | 'phase_evaluation';
 
 // What every role is told, and what it may not do (F §4.1).
 const PROHIBITIONS = [
@@ -267,6 +277,17 @@ const VERIFIER_FIELDS: Record<string, Record<string, unknown>> = {
     required: ['rationale', 'requested_change_kind'],
     properties: { rationale: { type: 'string' }, requested_change_kind: { enum: ['tightening', 'loosening', 'unclassifiable'] } },
   },
+  spec_applicability: {
+    type: 'array',
+    description:
+      'Only on the correction of a specification change: your assessment that a check applies unchanged to the changed meaning of the criteria it covers, with your rationale. It resolves that check\'s open obligation as your claim; fresh evidence under the new generation still decides. Each entry must name a check with an open obligation and cover its criteria, or the run is refused. With no change to the checks and no assessment, the correction is refused while its obligations are open.',
+    items: {
+      type: 'object',
+      required: ['check', 'criteria', 'rationale'],
+      additionalProperties: false,
+      properties: { check: { type: 'string', description: 'The check key.' }, criteria: { type: 'array', items: { type: 'string' } }, rationale: { type: 'string' } },
+    },
+  },
 };
 const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
   signoffs: {
@@ -286,6 +307,7 @@ const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
         disposition: { enum: ['fix', 'defer', 'accept'] },
         linked_issue: { type: 'string' },
         defer_target: { type: 'string', format: 'date-time' },
+        target: { enum: ['plan'], description: 'With fix, on a contract_conflict finding you raised: the conflict is with the phase plan, not the code. The engine asks the Architect to replan the open phase instead of registering fix work, and the replacement resolves the finding.' },
       },
     },
   },
@@ -549,6 +571,16 @@ export function writeContextPackage(
     ...routedText,
     ...writingText,
     ...repairText,
+    ...(facts?.replan ? replanPromptText(facts.replan) : []),
+    ...(facts?.phase
+      ? [
+          '',
+          '## The phase',
+          '',
+          `Phase ${facts.phase.phase_plan.phase_number} (plan ${facts.phase.phase_plan.id}, generation ${facts.phase.phase_plan.generation}) on candidate ${facts.phase.candidate}: its \`phase\` gate evaluation is ${facts.phase.evaluation ? `${facts.phase.evaluation.outcome} (${facts.phase.evaluation.id})` : 'not recorded'}. /surety/context/phase.json holds the evaluation with every check's state and the phase's findings.`,
+          'Read them, raise any finding, and sign the phase off in `signoffs` with scope `phase` if you find it complete. A sign-off binds this candidate\'s acceptance content, the protected version, the specification and this plan generation.',
+        ]
+      : []),
     '',
     ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
@@ -571,7 +603,9 @@ export function writeContextPackage(
   const reports = role === 'verifier' || role === 'reviewer';
   const keys = facts?.checks && reports ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : role === 'builder' && facts?.check_keys ? facts.check_keys : undefined;
   const criteria = (reports || role === 'builder') && facts && facts.criteria !== undefined ? (facts.criteria ?? []) : undefined;
-  const schema = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
+  const base = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
+  // A replan's result (Appendix B.7): the plan it wrote and its declaration.
+  const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings } } : base;
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(schema, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);
@@ -598,6 +632,8 @@ export function writeContextPackage(
       );
     }
   }
+  if (facts?.replan) for (const f of replanFiles(facts.replan)) put(f.path, f.kind, f.source, f.content);
+  if (facts?.phase) put('phase.json', 'phase_evaluation', facts.phase.evaluation?.id ?? null, `${JSON.stringify(facts.phase, null, 2)}\n`);
   if (facts?.change_request) put('change_request.json', 'instructions', String(facts.change_request.id), `${JSON.stringify(facts.change_request, null, 2)}\n`);
   if (facts?.proposal) put('proposal.json', 'instructions', String(facts.proposal.id), `${JSON.stringify(facts.proposal, null, 2)}\n`);
   if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);

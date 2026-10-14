@@ -90,9 +90,9 @@ async function withLock<T>(home: string, work: () => Promise<T>): Promise<T> {
 // commits it refers to.
 export function closureOf(db: Database.Database): { records: { id: string; path: string; sha256: string; bytes: number }[]; git: Manifest['git']; projects: string[]; repos: Map<string, string> } {
   const records = db
-    .prepare('SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at", "id"')
+    .prepare('SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY rowid, "id"')
     .all() as { id: string; path: string; sha256: string; bytes: number }[];
-  const rows = db.prepare('SELECT "id", "dev_repo_path" FROM "projects" ORDER BY "created_at", "id"').all() as { id: string; dev_repo_path: string }[];
+  const rows = db.prepare('SELECT "id", "dev_repo_path" FROM "projects" ORDER BY rowid, "id"').all() as { id: string; dev_repo_path: string }[];
   const projects = rows.map((p) => p.id);
   const repos = new Map(rows.map((p) => [p.id, p.dev_repo_path]));
   const git = projects.map((project) => {

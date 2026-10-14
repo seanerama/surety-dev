@@ -65,6 +65,15 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
       // never an option, no whitespace or control character.
       if (!isModelName(value)) throw invalidValue(key, 'a model name');
       return value;
+    case 'size_range': {
+      const r = spec.range!;
+      const ok = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= r.min && (n as number) <= r.max;
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidValue(key, `an object {min, max}, each an integer from ${r.min} to ${r.max}`);
+      const o = value as Record<string, unknown>;
+      if (Object.keys(o).some((k) => k !== 'min' && k !== 'max') || !ok(o.min) || !ok(o.max)) throw invalidValue(key, `an object {min, max}, each an integer from ${r.min} to ${r.max}`);
+      if (o.min > o.max) throw invalidValue(key, 'an object whose min is not above its max');
+      return { min: o.min, max: o.max };
+    }
     case 'absolute_paths': {
       const ok = (p: unknown): p is string => typeof p === 'string' && p.length > 0 && !p.includes('\0') && isAbsolute(p) && normalize(p) === p;
       if (!Array.isArray(value) || !value.every(ok)) throw invalidValue(key, 'an array of absolute, normalized paths');

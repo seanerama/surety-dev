@@ -23,13 +23,14 @@ import { describe, test } from 'node:test';
 import { findingsOf, review } from './harness/gates.mjs';
 import { answer } from './harness/decisions.mjs';
 import { eventsOfType } from './harness/journal.mjs';
-import { ROUTED_KINDS, evaluationsOfKind, phaseCompleted, planOfPhase, runsOfProject, signoffsOfProject, workOf } from './harness/journey/drive.mjs';
+import { ROUTED_KINDS, evaluationsOfKind, phaseCompleted, planOfPhase, runsOfProject, serviceCorrectionScript, signoffsOfProject, workOf } from './harness/journey/drive.mjs';
 import { journey35, nextReplanOutcome, openPlanApprovals, replan35 } from './harness/journey/plan35.mjs';
 import { REQUIREMENTS, REQUIREMENTS_V2, specText } from './harness/journey/reference.mjs';
 import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
+import { withStore } from './harness/store.mjs';
 import { packageOf } from './harness/sessions.mjs';
 
 const DUMP = { probe: { action: 'context_dump' } };
@@ -74,13 +75,20 @@ describe('M429 phase verification work and its sign-off', () => {
 
   test('(d) a sign-off bound to a plan generation replaced while the Verifier ran: refused, no signoffs row, signoff.refused naming the binding and the cause; the work completes', async (t) => {
     const { fx, p, ctx, plan } = await journey35(t);
-    // A change touching R4 alone (phase 2), approved during phase 1: a replan of the
-    // active plan, routed to the owner (declared uncertain) and left pending.
-    const R4_ONLY = specText({ version: 2, requirements: REQUIREMENTS.map((r) => (r.key === 'R4' ? REQUIREMENTS_V2.find((x) => x.key === 'R4') : r)) });
-    fx.scripted.kindScript('spec_change', roleThat([step.write('.surety/spec/spec.md', R4_ONLY)], { changes: [{ key: 'R4', kind: 'text_changed', reason: 'only successful sums are counted' }] }));
-    fx.scripted.kindScript('replan', [replan35({ phase: 1, spec_version: 2, conformance: 'uncertain' }), replan35({ spec_version: 2 })]);
+    // A change touching R2.1 (phase 1, the current phase), approved during phase 1:
+    // an early replacement of the active plan, routed to the owner (declared
+    // uncertain) and left pending. A change touching only a later phase replaces
+    // nothing (the slice-36 review's M1; objection 098). The change's correction
+    // rewrites accept-r2's test.
+    const R2_ONLY = specText({ version: 2, requirements: REQUIREMENTS.map((r) => (r.key === 'R2' ? REQUIREMENTS_V2.find((x) => x.key === 'R2') : r)) });
+    fx.scripted.kindScript('spec_change', roleThat([step.write('.surety/spec/spec.md', R2_ONLY)], { changes: [{ key: 'R2', kind: 'criteria_changed', reason: 'R2.1 names the content type' }] }));
+    fx.scripted.kindScript('check_correction', serviceCorrectionScript());
+    // Every launch of the replan is the same replacement of phase 1: a pending
+    // replacement made stale by a stage that moves is asked again (slice 35's
+    // review, S1), and each generation is routed the same way.
+    fx.scripted.kindScript('replan', replan35({ phase: 1, spec_version: 2, conformance: 'uncertain' }));
     fx.scripted.kindScript('phase_verification', { steps: [step.hold('gate', { heartbeat_ms: 250 }), ...roleThat([], { signoffs: [{ scope: 'phase' }] }).steps] });
-    await postChange(fx, ctx, 'R4: count successful sums only.');
+    await postChange(fx, ctx, 'R2.1: the answer names its content type.');
     const answerKinds = ROUTED_KINDS.filter((k) => k !== 'plan_approval');
     const outcome = await nextReplanOutcome(fx, ctx, 1, { runs: new Set(), approvals: new Set(), published: new Set([plan.id]) }, { max: 400, answerKinds });
     assert.ok(outcome.approval, `the replacement routed to the owner and pending (${JSON.stringify(outcome.failed ? [outcome.failed.reason_class, outcome.failed.reason_text] : Object.keys(outcome))})`);
@@ -88,7 +96,16 @@ describe('M429 phase verification work and its sign-off', () => {
       const launch = fx.scripted.launches({ work_kind: 'phase_verification' }).at(-1);
       const holding = launch && fx.scripted.eventsOf(launch.pid, 'holding').length > 0;
       return holding && openPlanApprovals(fx.home, p.id).length > 0 ? true : undefined;
-    }, { what: 'the Verifier holding with the replacement pending', max: 600, answerKinds });
+    }, { what: 'the Verifier holding with the replacement pending', max: 600, answerKinds }).catch((err) => {
+      const state = {
+        work: workOf(fx.home, p.id).filter((w) => !['complete', 'cancelled'].includes(w.status)).map((w) => [w.kind, w.status, w.held ?? null]),
+        decisions: openPlanApprovals(fx.home, p.id).map((d) => d.id),
+        plans: planOfPhase(fx.home, p.id, 1).map((x) => [x.generation, x.active, x.completed_at]),
+        obligations: withStore(fx.home, (db) => db.prepare('SELECT "key", "resolved_at" FROM "check_obligations" WHERE "project" = ?').all(p.id)),
+        open: withStore(fx.home, (db) => db.prepare(`SELECT "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`).all(p.id)).map((d) => d.kind),
+      };
+      throw new Error(`${err.message}; state ${JSON.stringify(state)}`);
+    });
     const [pending] = openPlanApprovals(fx.home, p.id);
     const res = await answer(fx.engine, p.id, pending, 'approve');
     assert.equal(res.status, 200, `the owner approves the replacement during the hold (→ ${res.status} ${res.text})`);

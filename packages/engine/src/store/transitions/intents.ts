@@ -26,7 +26,7 @@ export function intentRow(db: Db, args: { intent: string }) {
 // What the tick's effects step takes on: intents pending or executing, and
 // proposals a Reviewer approved that no application has begun for.
 export function effectsDue(db: Db, args: { project: string }): { intents: string[]; proposals: string[] } {
-  const intents = (db.prepare(`SELECT "id" FROM "effect_intents" WHERE "project" = ? AND "status" IN ('pending', 'executing') ORDER BY "created_at"`).all(args.project) as { id: string }[]).map((r) => r.id);
+  const intents = (db.prepare(`SELECT "id" FROM "effect_intents" WHERE "project" = ? AND "status" IN ('pending', 'executing') ORDER BY rowid`).all(args.project) as { id: string }[]).map((r) => r.id);
   const proposals = (
     db
       .prepare(
