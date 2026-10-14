@@ -48,6 +48,7 @@ import {
   CONFIRM_PHRASE_M444,
   M444_STEPS,
   checkHome,
+  markRunKind,
   homeOf,
   m5Activation,
   m5Attempts,
@@ -60,6 +61,7 @@ import {
   m5rRecords,
   m5rReplan,
   m5rSpec,
+  m5rTeardown,
   showCost,
 } from './harness/real/m5-lane.mjs';
 import { sumsContent } from './harness/real/rehearsal-content.mjs';
@@ -68,6 +70,7 @@ import { withStore } from './harness/store.mjs';
 const preflight = () => {
   const ctx = realPreflight({ confirm: CONFIRM_PHRASE_M444, order: M444_STEPS });
   checkHome(ctx);
+  markRunKind(ctx);
   showCost(ctx, 'M444');
   return ctx;
 };
@@ -84,6 +87,8 @@ async function upTo(ctx, last) {
     ['m5r_conformance', () => m5rConformance(ctx)],
     ['m5r_qualify', () => m5rQualify(ctx)],
     ['m5r_deploy', () => m5rDeploy(ctx)],
+    // Its own recorded step, rerun alone by SURETY_REAL_RERUN=m5r_teardown without losing m5r_deploy's records (README §4).
+    ['m5r_teardown', () => m5rTeardown(ctx)],
     ['m5r_replan', () => m5rReplan(ctx)],
     ['m5r_phase2', () => m5rPhase2(ctx)],
   ];

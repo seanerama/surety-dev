@@ -131,32 +131,6 @@ var SURETY_PACKAGE_FAKES = (function () {
     return value;
   }
 
-  // The workspace's HEAD, read from its git files (no process).
-  function headOf(workspace) {
-    try {
-      let gitDir = path.join(workspace, '.git');
-      if (fs.statSync(gitDir).isFile()) {
-        const m = /^gitdir:\s*(.*)$/m.exec(fs.readFileSync(gitDir, 'utf8'));
-        gitDir = path.resolve(workspace, m[1].trim());
-      }
-      const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
-      if (/^[0-9a-f]{40}$/.test(head)) return head;
-      const ref = /^ref:\s*(.*)$/.exec(head)[1];
-      const common = fs.existsSync(path.join(gitDir, 'commondir')) ? path.resolve(gitDir, fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim()) : gitDir;
-      for (const d of [gitDir, common]) {
-        try {
-          return fs.readFileSync(path.join(d, ref), 'utf8').trim();
-        } catch {}
-        try {
-          const packed = fs.readFileSync(path.join(d, 'packed-refs'), 'utf8');
-          const line = packed.split('\n').find((l) => l.endsWith(` ${ref}`));
-          if (line) return line.split(' ')[0];
-        } catch {}
-      }
-    } catch {}
-    return null;
-  }
-
   function writer(workspace) {
     const written = {};
     return {
@@ -211,11 +185,16 @@ var SURETY_PACKAGE_FAKES = (function () {
     const secs = sectionsOf(text);
     const index = tableOf(secs[5]).map((r) => ({ key: r.Key, title: r.Title, phase: Number(r.Phase) || null, areas: (r['Sensitive areas'] || '').split(',').map((s) => s.trim()).filter((s) => s && s !== 'none'), criteria: (r.Criteria || '').split(',').map((s) => s.trim()).filter(Boolean) }));
     const criteriaText = {};
+    const descriptive = [];
+    let under = null;
     for (const line of secs[4] ?? []) {
       const m = /^- (R\d+\.\d+)\s+(.*)$/.exec(line);
       if (m) criteriaText[m[1]] = m[2];
+      const h = /^### (R\d+)\b/.exec(line);
+      if (h) under = h[1];
+      else if (under && /^\*\*Descriptive\.\*\*/.test(line.trim())) descriptive.push(under);
     }
-    return { version: Number(field('Spec version')) || null, tier: ((field('Tier') || '').match(/T[123]/) || [null])[0], index, criteriaText, modules: tableOf(secs[6]).map((r) => ({ name: r.Module, areas: (r['Sensitive areas'] || '').split(',').map((s) => s.trim()).filter((s) => s && s !== 'none') })) };
+    return { descriptive, version: Number(field('Spec version')) || null, tier: ((field('Tier') || '').match(/T[123]/) || [null])[0], index, criteriaText, modules: tableOf(secs[6]).map((r) => ({ name: r.Module, areas: (r['Sensitive areas'] || '').split(',').map((s) => s.trim()).filter((s) => s && s !== 'none') })) };
   }
   function approvedSpec(pkg) {
     for (const [name, text] of Object.entries(pkg.files)) {
@@ -275,9 +254,14 @@ var SURETY_PACKAGE_FAKES = (function () {
     const idx = R['spec_writer.index_columns'];
     if (idx && Array.isArray(idx.columns)) {
       L.push(idx.section, '', `| ${idx.columns.join(' | ')} |`, `|${idx.columns.map(() => '---').join('|')}|`);
+      // Each cell's syntax from `spec_writer.index_cells` alone (the review's M5): its list
+      // separator; told nothing of it, the fake joins a list in words.
+      const cells = R['spec_writer.index_cells'];
+      const sep = cells && typeof cells.list_separator === 'string' ? cells.list_separator : ' and ';
+      const areaCell = (xs) => (Array.isArray(xs) && xs.length > 0 ? xs.map(areaOf).join(sep) : areas(xs));
       for (const r of o.requirements ?? []) {
         const cell = (c) =>
-          ({ Key: r.key, Title: r.title, Phase: String(r.phase ?? ''), 'Sensitive areas': areas(r.areas), Criteria: (r.criteria ?? []).map((c) => c.id).join(', '), Origin: r.origin ?? idx.default_origin ?? '' })[c] ?? '';
+          ({ Key: r.key, Title: r.title, Phase: String(r.phase ?? ''), 'Sensitive areas': areaCell(r.areas), Criteria: (r.criteria ?? []).map((c) => c.id).join(sep), Origin: r.origin ?? idx.default_origin ?? '' })[c] ?? '';
         L.push(`| ${idx.columns.map(cell).join(' | ')} |`);
       }
       L.push('');
@@ -357,12 +341,25 @@ var SURETY_PACKAGE_FAKES = (function () {
     });
   }
 
-  function writeArchitectFiles(pkg, ws, { arch, spec, phase, versions, revision, roadmapToo, stages, conformance }) {
+  // What a plan's prepared_against and roadmap.json's versions name, from
+  // `architect.prepared_against` alone (the slice-38 review's S2): never a
+  // version of the fake's own, never the workspace's HEAD read by itself.
+  function preparedOf(pkg, roadmapChanged) {
+    const pa = pkg.reads['architect.prepared_against'];
+    const f = pa && pa.facts ? pa.facts : null;
+    if (!f) return null;
+    const roadmap = roadmapChanged && pa.roadmap_version_if_changed !== undefined ? pa.roadmap_version_if_changed : f.roadmap_version;
+    return { spec_version: f.spec_version, architecture_version: f.architecture_version, roadmap_version: roadmap, revision: f.revision };
+  }
+  const constOf = (schema, key) => (schema && schema.properties && schema.properties[key] && 'const' in schema.properties[key] ? schema.properties[key].const : undefined);
+
+  function writeArchitectFiles(pkg, ws, { arch, spec, phase, roadmapToo, stages, conformance }) {
+    const prepared = preparedOf(pkg, roadmapToo);
     const R = pkg.reads;
     const S = (id) => (R[id] && R[id].schema ? R[id] : null);
     if (roadmapToo) {
       ws.write('.surety/architecture/architecture.md', `# Architecture\n\n${arch.architecture ?? ''}\n`);
-      if (S('architect.schema.modules')) ws.write(R['architect.schema.modules'].file, `${JSON.stringify(prune(R['architect.schema.modules'].schema, { version: 1, modules: arch.modules, mapping_from_spec: arch.mapping ?? [] }), null, 2)}\n`);
+      if (S('architect.schema.modules')) ws.write(R['architect.schema.modules'].file, `${JSON.stringify(prune(R['architect.schema.modules'].schema, { version: constOf(R['architect.schema.modules'].schema, 'version'), modules: arch.modules, mapping_from_spec: arch.mapping ?? [] }), null, 2)}\n`);
       const adr = R['architect.schema.adr'];
       if (adr && adr.front_matter) {
         const props = adr.front_matter.properties ?? {};
@@ -374,7 +371,7 @@ var SURETY_PACKAGE_FAKES = (function () {
       }
       if (S('architect.schema.roadmap')) {
         ws.write('.surety/roadmap/roadmap.md', `# Roadmap\n\n${(arch.phases ?? []).map((p) => `${p.number}. ${p.goal}`).join('\n')}\n`);
-        ws.write(R['architect.schema.roadmap'].file, `${JSON.stringify(prune(R['architect.schema.roadmap'].schema, { version: 1, architecture_version: 1, phases: (arch.phases ?? []).map((p) => ({ number: p.number, goal: p.goal, modules: p.modules, requirement_ids: p.requirements, depends_on: p.depends_on ?? [] })) }), null, 2)}\n`);
+        ws.write(R['architect.schema.roadmap'].file, `${JSON.stringify(prune(R['architect.schema.roadmap'].schema, { version: prepared ? prepared.roadmap_version : undefined, architecture_version: prepared ? prepared.architecture_version : undefined, phases: (arch.phases ?? []).map((p) => ({ number: p.number, goal: p.goal, modules: p.modules, requirement_ids: p.requirements, depends_on: p.depends_on ?? [] })) }), null, 2)}\n`);
       }
     }
     if (S('architect.schema.phase_plan')) {
@@ -382,7 +379,7 @@ var SURETY_PACKAGE_FAKES = (function () {
       // approved artifact is within its baseline. Told nothing of routing, a
       // careful Architect declares its plan uncertain.
       const declared = R['architect.routing'] ? 'within_baseline' : 'uncertain';
-      const plan = { phase, prepared_against: { spec_version: versions.spec, architecture_version: versions.architecture, roadmap_version: versions.roadmap, revision }, stages, conformance: declared, notes: conformance ? 'the conformance phase' : undefined };
+      const plan = { phase, prepared_against: prepared ?? undefined, stages, conformance: declared, notes: conformance ? 'the conformance phase' : undefined };
       ws.write(String(R['architect.schema.phase_plan'].file).replace('<n>', String(phase)), `${JSON.stringify(prune(R['architect.schema.phase_plan'].schema, plan), null, 2)}\n`);
       ws.write(`.surety/phases/phase-${phase}.md`, `# Phase ${phase}\n\n${stages.map((s) => `- Stage ${s.number}: ${s.goal}`).join('\n')}\n`);
       return declared;
@@ -396,30 +393,42 @@ var SURETY_PACKAGE_FAKES = (function () {
     if (!arch || !spec) return shapeResult(pkg, { summary: 'asked the owner', reply: 'I need the approved specification and your architecture.', artifact_changed: false });
     const phase1 = (arch.phases ?? []).find((p) => p.number === 1);
     const stages = stagesFor(pkg, { phase: 1, requirements: phase1 ? phase1.requirements : [], modules: arch.modules ?? [], spec, adrs: (arch.adrs ?? []).map((a) => a.key), obligations: arch.obligations, base: 0, conformance: arch.conformance_phase === 1 });
-    writeArchitectFiles(pkg, ws, { arch, spec, phase: 1, versions: { spec: spec.version ?? 1, architecture: 1, roadmap: 1 }, revision: headOf(ws.root), roadmapToo: true, stages, conformance: arch.conformance_phase === 1 });
+    writeArchitectFiles(pkg, ws, { arch, spec, phase: 1, roadmapToo: true, stages, conformance: arch.conformance_phase === 1 });
     return shapeResult(pkg, { summary: 'wrote the architecture and the first plan', reply: 'The architecture, module map, ADRs, roadmap and phase 1.', artifact_changed: true, done: true });
   }
 
-  function replanRun(pkg, ws) {
+  function replanRun(pkg, ws, content) {
     const f = pkg.files;
     const gen = parse(f['generation.json'], {}) ?? {};
     const spec = readSpec(f['spec.md']);
     const roadmap = parse(f['roadmap.json'], null);
     const map = parse(f['module_map.json'], null);
     const done = parse(f['plan.json'], null);
-    if (!spec || !roadmap || !map || !done) return shapeResult(pkg, { summary: 'the approved baseline could not be read from the package; nothing planned' });
+    // A package without its facts fails loudly (M7 of the slice-38 review), never a quiet result.
+    if (!spec || !roadmap || !map || !done) throw new Error(`rehearsal fake: the replan package lacks its facts (spec.md ${Boolean(spec)}, roadmap.json ${Boolean(roadmap)}, module_map.json ${Boolean(map)}, plan.json ${Boolean(done)})`);
     const phases = Array.isArray(roadmap.phases) ? roadmap.phases : Array.isArray(roadmap) ? roadmap : [];
     const next = (done.phase_number ?? 0) + 1;
     const ph = phases.find((p) => Number(p.number) === next);
-    if (!ph) return shapeResult(pkg, { summary: `no phase ${next} in the roadmap` });
+    if (!ph) throw new Error(`rehearsal fake: no phase ${next} in the package's roadmap`);
     const modules = Array.isArray(map.modules) ? map.modules : Array.isArray(map) ? map : [];
     const base = Math.max(0, ...(done.stages ?? []).map((s) => Number(s.number) || 0));
     const adrs = Object.keys(f).filter((n) => /^adrs\/.+\.md$/.test(n)).map((n) => path.basename(n, '.md'));
     const obligations = {};
     for (const s of done.stages ?? []) for (const m of s.modules ?? []) if (Array.isArray(s.integration_obligations) && s.integration_obligations.length > 0) obligations[m] = s.integration_obligations;
     const stages = stagesFor(pkg, { phase: next, requirements: ph.requirement_ids ?? ph.requirements ?? [], modules, spec, adrs, obligations, base, conformance: false });
-    const declared = writeArchitectFiles(pkg, ws, { arch: {}, spec, phase: next, versions: { spec: gen.spec_revision?.version ?? spec.version, architecture: gen.architecture_revision?.version ?? 1, roadmap: gen.roadmap_revision?.version ?? 1 }, revision: headOf(ws.root), roadmapToo: false, stages });
-    return shapeResult(pkg, { summary: `phase ${next} planned`, plan: `phase-${next}`, conformance: declared ?? 'uncertain' });
+    void gen;
+    const declared = writeArchitectFiles(pkg, ws, { arch: {}, spec, phase: next, roadmapToo: false, stages });
+    // In an adopted project's replan, a change request for each descriptive
+    // requirement the phase holds, in the form the package states
+    // (architect.spec_change_requests); its text the owner's (CONTENT).
+    const scr = pkg.reads['architect.spec_change_requests'];
+    const wanted = (ph.requirement_ids ?? ph.requirements ?? []).filter((k) => (spec.descriptive ?? []).includes(k));
+    const requests = scr ? wanted.map((k) => {
+      const text = ((content && content.descriptive_criteria) || {})[k];
+      if (typeof text !== 'string') throw new Error(`rehearsal fake: no criteria text for the descriptive requirement ${k} in the rehearsal's content`);
+      return { keys: [k], text };
+    }) : [];
+    return shapeResult(pkg, { summary: `phase ${next} planned`, plan: `phase-${next}`, conformance: declared ?? 'uncertain', ...(scr && requests.length > 0 ? { [scr.field]: requests } : {}) });
   }
 
   // ---- the Spec Writer's change (B.7) ------------------------------------------------------
@@ -428,7 +437,7 @@ var SURETY_PACKAGE_FAKES = (function () {
     const req = parse(pkg.files['change_request.json'], {}) ?? {};
     const change = taggedBlock(req.text ?? req.request_text ?? '', 'rehearsal-change') ?? taggedBlock(pkg.prompt, 'rehearsal-change');
     let text = ws.read('.surety/spec/spec.md');
-    if (!change || text === null) return shapeResult(pkg, { summary: 'the change could not be read', changes: [] });
+    if (!change || text === null) throw new Error(`rehearsal fake: the change could not be read (the request's rehearsal-change block ${Boolean(change)}, the specification ${text !== null})`);
     const changes = [];
     for (const [id, t] of Object.entries(change.criteria ?? {})) {
       text = text.replace(new RegExp(`^(- ${id.replace('.', '\\.')}) .*$`, 'm'), `$1 ${t}`);
@@ -511,14 +520,24 @@ var SURETY_PACKAGE_FAKES = (function () {
       const allowed = sc && Array.isArray(sc.environments) ? [...new Set(sc.environments.filter((e) => e && e.name === env && Array.isArray(e.check_secrets)).flatMap((e) => e.check_secrets))] : [];
       if (sc && allowed.length > 0) d[sc.member] = allowed;
     }
-    d.inputs = Object.keys(body.files);
-    return { d, files: body.files };
+    // The target's variable and its value's form from `verifier.target_variables` alone
+    // (the review's S1); told nothing of them, a marker the judgement names.
+    let files = body.files;
+    if (postDeploy) {
+      const tv = R['verifier.target_variables'];
+      const t = tv && Array.isArray(tv.environments) ? tv.environments.filter((e) => e && e.name === env && Array.isArray(e.targets)).flatMap((e) => e.targets)[0] : null;
+      const name = t && typeof t.variable === 'string' ? t.variable : 'MISSING-TARGET-VARIABLE';
+      const url = t ? (String(tv.value_form).startsWith('http') ? `process.env.${name}` : `'http://' + process.env.${name}`) : 'MISSING-TARGET-VARIABLE';
+      files = Object.fromEntries(Object.entries(files).map(([p, text]) => [p, String(text).replace(/\{\{target:url\}\}/g, url).replace(/\{\{target:name\}\}/g, name)]));
+    }
+    d.inputs = Object.keys(files);
+    return { d, files };
   }
 
   function authoringRun(pkg, ws, content) {
     const R = pkg.reads;
     const a = parse(pkg.files['authoring.json'], null);
-    if (!a) return shapeResult(pkg, { summary: 'no authoring facts in the package; nothing written' });
+    if (!a) throw new Error('rehearsal fake: the authoring package lacks authoring.json');
     const kinds = R['verifier.kinds'];
     const criteriaKinds = kinds && Array.isArray(kinds.criteria_kinds) ? kinds.criteria_kinds : [];
     const accept = criteriaKinds.includes('acceptance') ? 'acceptance' : null;
@@ -534,11 +553,17 @@ var SURETY_PACKAGE_FAKES = (function () {
     const adoptRule = R['verifier.adoption_rule'];
     const adopted = [];
     const adoptedCriteria = new Set();
+    // Adoption in the form the adoption rule states (D6 §8.3): its field, its
+    // protected root and its dispositions; what is copied is the CONTENT's.
     if (adoptRule && Array.isArray(content.adopt)) {
+      const allowed = Array.isArray(adoptRule.dispositions) ? adoptRule.dispositions : [];
       for (const t of content.adopt) {
+        if (!String(t.to).startsWith(adoptRule.protected_root ?? '\u0000')) continue;
+        const boundary = (t.dependency_boundary ?? []).filter((b) => allowed.includes(b.disposition));
+        if (boundary.length !== (t.dependency_boundary ?? []).length) continue;
         for (const [p, text] of Object.entries(t.files)) ws.write(p, text);
         out.push(checkDefinition(pkg, { ...content, checks: { [t.key]: { files: t.files, run: t.run } } }, { program, key: t.key, kind: accept, criteria: t.criteria, gates }));
-        adopted.push({ from: t.from, to: t.to, criteria: t.criteria, dependency_boundary: t.dependency_boundary });
+        adopted.push({ from: t.from, to: t.to, criteria: t.criteria, dependency_boundary: boundary });
         for (const c of t.criteria) adoptedCriteria.add(c);
       }
     }
@@ -572,7 +597,7 @@ var SURETY_PACKAGE_FAKES = (function () {
       proposal: { rationale: 'the phase\'s checks, from the plan\'s validation and the package\'s rules', requested_change_kind: first ? 'unclassifiable' : 'tightening' },
       governed_changes: governedChanges,
       deferred_criteria: [],
-      adopted_tests: adopted.length > 0 ? adopted : undefined,
+      ...(adoptRule && adopted.length > 0 ? { [adoptRule.field]: adopted } : {}),
     });
   }
 
@@ -581,8 +606,10 @@ var SURETY_PACKAGE_FAKES = (function () {
     const open = Array.isArray(req.open_obligations) ? req.open_obligations : [];
     const named = new Set(open.flatMap((o) => [o.check_key, o.key, o.check].filter((x) => typeof x === 'string')));
     const corrections = content.corrections ?? {};
-    const keys = Object.keys(corrections).filter((k) => named.size === 0 || named.has(k) || [...named].some((n) => n.endsWith(k)));
-    for (const k of keys.length > 0 ? keys : Object.keys(corrections)) for (const [p, text] of Object.entries(corrections[k])) ws.write(p, text);
+    const keys = Object.keys(corrections).filter((k) => named.has(k) || [...named].some((n) => n.endsWith(k)));
+    // A correction that matches no open obligation fails loudly (M7 of the review): it never writes every correction.
+    if (keys.length === 0) throw new Error(`rehearsal fake: no correction in the rehearsal's content matches the open obligations ${JSON.stringify([...named])}`);
+    for (const k of keys) for (const [p, text] of Object.entries(corrections[k])) ws.write(p, text);
     return shapeResult(pkg, { summary: 'the checks the change obliges, corrected', proposal: { rationale: 'the specification changed; the checks it names now read the new text', requested_change_kind: 'tightening' } });
   }
 
@@ -607,6 +634,12 @@ var SURETY_PACKAGE_FAKES = (function () {
         if (!i || !i.path) return `MISSING-DEPENDENCY-${name}`;
         const rel = path.posix.relative(path.posix.dirname(p), i.path);
         return rel.startsWith('.') ? rel : `./${rel}`;
+      });
+      // An integration obligation the code must keep (builder.integration_obligations):
+      // "<file> listens on <host>:$<VAR>" becomes the listen call; without the obligation, a marker.
+      body = body.replace(/\{\{obligation:listen\}\}/g, () => {
+        const o = (obligations && Array.isArray(obligations.integration_obligations) ? obligations.integration_obligations : []).map((x) => /listens on ([\d.]+):\$(\w+)/.exec(String(x))).find(Boolean);
+        return o ? `listen(Number(process.env.${o[2]}), '${o[1]}')` : 'MISSING-OBLIGATION-listen()';
       });
       ws.write(p, body);
       wrote.push(p);
@@ -635,7 +668,7 @@ var SURETY_PACKAGE_FAKES = (function () {
     if (kind === 'session' && role === 'spec_writer') result = specWriterTurn(pkg, ws);
     else if (kind === 'session' && role === 'architect') result = architectTurn(pkg, ws);
     else if (kind === 'session') result = shapeResult(pkg, { summary: 'rehearsal', reply: 'Noted.', artifact_changed: false });
-    else if (kind === 'replan') result = replanRun(pkg, ws);
+    else if (kind === 'replan') result = replanRun(pkg, ws, content);
     else if (kind === 'spec_change') result = specChangeRun(pkg, ws);
     else if (kind === 'check_authoring') result = authoringRun(pkg, ws, content);
     else if (kind === 'check_correction') result = correctionRun(pkg, ws, content);

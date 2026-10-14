@@ -158,6 +158,28 @@ export function judgeSpec(text, W, brief) {
   if ((blockers?.blockers ?? []).some((b) => b.code === 'QUESTION_NO_PHASE_HINT')) for (const x of brief.questions ?? []) if (!s10.some((l) => l.startsWith(`- ${x.id} `) && /\(phase \d+\)\s*$/.test(l))) fail(out, 'spec_writer.approval_blockers', `${x.id} has no phase hint, which blocks approve (QUESTION_NO_PHASE_HINT)`);
   const idx = W['spec_writer.index_columns'];
   if (idx && !has(`| ${idx.columns.join(' | ')} |`)) fail(out, 'spec_writer.index_columns', 'no index table in its columns');
+  const ic = W['spec_writer.index_cells'];
+  if (idx && ic && has(`| ${idx.columns.join(' | ')} |`)) {
+    // Each row's Criteria cell, split as the engine splits it, names exactly the requirement's criteria.
+    const lines = t.split('\n');
+    const at = lines.indexOf(`| ${idx.columns.join(' | ')} |`);
+    const col = idx.columns.indexOf('Criteria');
+    const sep = String(ic.list_separator ?? ',').trim();
+    const crit = new RegExp(ic.criterion_pattern ?? '^R[1-9][0-9]*\\.[1-9][0-9]*$');
+    const rows = new Map();
+    for (const l of lines.slice(at + 2)) {
+      if (!l.trim().startsWith('|')) break;
+      const c = l.trim().slice(1, -1).split('|').map((x) => x.trim());
+      rows.set(c[0], c[col] ?? '');
+    }
+    for (const r of brief.requirements) {
+      const cell = rows.get(r.key);
+      if (cell === undefined) continue;
+      const got = cell.split(sep).map((x) => x.trim()).filter(Boolean);
+      const want = r.criteria.map((c) => c.id);
+      if (!got.every((x) => crit.test(x)) || got.join() !== want.join()) fail(out, 'spec_writer.index_cells', `${r.key}'s Criteria cell "${cell}" does not parse as ${want.join(ic.list_separator ?? ', ') || 'empty'}`);
+    }
+  }
   const mt = W['spec_writer.module_table'];
   if (mt && !has(`| ${mt.columns.join(' | ')} |`)) fail(out, 'spec_writer.module_table', 'no module table in its columns');
   const ef = W['spec_writer.environment_fields'];
@@ -205,6 +227,15 @@ export function judgeArchitect(written, W, { tier = 'T2', adrs = [], routing = n
   if (adr && routing !== 'replan') for (const k of adrs) if (!(String(adr.file).replace('ADR-<nnn>', k) in written)) fail(out, 'architect.schema.adr', `${k} not written`);
   const reasons = W['architect.plan_reasons'];
   if (plan && reasons) for (const s of plan.stages ?? []) for (const k of reasons.kinds_by_tier?.[tier] ?? []) if (!(s.validation?.kinds ?? []).includes(k)) fail(out, 'architect.plan_reasons', `stage ${s.number} does not validate the kind ${k} its tier needs (PLAN_KIND_MISSING)`);
+  const pa = W['architect.prepared_against'];
+  if (plan && pa && pa.facts) {
+    const f = pa.facts;
+    const p = plan.prepared_against ?? {};
+    const want = { spec_version: f.spec_version, architecture_version: f.architecture_version, revision: f.revision };
+    for (const [k, v] of Object.entries(want)) if (p[k] !== v) fail(out, 'architect.prepared_against', `the plan's prepared_against.${k} is ${JSON.stringify(p[k])}, not ${JSON.stringify(v)} (PLAN_STALE_BASELINE)`);
+    const roadmaps = [f.roadmap_version, ...('roadmap_version_if_changed' in pa ? [pa.roadmap_version_if_changed] : [])];
+    if (!roadmaps.includes(p.roadmap_version)) fail(out, 'architect.prepared_against', `the plan's prepared_against.roadmap_version is ${JSON.stringify(p.roadmap_version)}, not ${roadmaps.join(' or ')} (PLAN_STALE_BASELINE)`);
+  }
   if (plan && W['architect.routing'] && plan.conformance !== 'within_baseline') fail(out, 'architect.routing', `the plan declares ${plan.conformance}: routing is computed from the artifacts, and a plan that changes none is within its baseline`);
   return out;
 }
@@ -236,6 +267,12 @@ export function judgeAuthoring(written, result, W, { first = true, environments 
   const sc = W['verifier.secrets'];
   const allowed = [...new Set((sc?.environments ?? []).filter((e) => Array.isArray(e?.check_secrets)).flatMap((e) => e.check_secrets))];
   for (const d of post) if (sc && allowed.length > 0 && !allowed.every((r) => (d[sc.member] ?? []).includes(r))) fail(out, 'verifier.secrets', `${d.key} names none of the secrets its environment allows its checks (${allowed.join(', ')})`);
+  const tv = W['verifier.target_variables'];
+  const tvars = (tv?.environments ?? []).filter((e) => Array.isArray(e?.targets)).flatMap((e) => e.targets.map((x) => x.variable));
+  for (const [p, text] of Object.entries(written)) {
+    if (!/\/post-deploy\//.test(p) || /\.json$/.test(p)) continue;
+    if (/MISSING-TARGET-VARIABLE/.test(text) || (tvars.length > 0 && !tvars.some((v) => text.includes(v)))) fail(out, 'verifier.target_variables', `${p} asks the service through no variable the package names (${tvars.join(', ') || 'none'})`);
+  }
   const tc = W['verifier.toolchain'];
   if (tc && first) {
     const g = parsed(written[tc.file]);
@@ -246,7 +283,8 @@ export function judgeAuthoring(written, result, W, { first = true, environments 
   const ar = W['verifier.authoring_result'];
   if (ar && first && !(result?.governed_changes?.check_commands === true)) fail(out, 'verifier.authoring_result', 'the first phase\'s result declares no governed_changes.check_commands');
   const ad = W['verifier.adoption_rule'];
-  if (ad && retrofit && !(Array.isArray(result?.adopted_tests) && result.adopted_tests.length > 0 && result.adopted_tests.every((x) => Array.isArray(x.dependency_boundary)))) fail(out, 'verifier.adoption_rule', 'no adopted_tests with their dependency boundary in the result');
+  const listed = ad ? result?.[ad.field] : null;
+  if (ad && retrofit && !(Array.isArray(listed) && listed.length > 0 && listed.every((x) => Array.isArray(x.dependency_boundary) && x.dependency_boundary.every((b) => (ad.dispositions ?? []).includes(b.disposition)) && String(x.to).startsWith(ad.protected_root)))) fail(out, 'verifier.adoption_rule', `no ${ad.field} in the form the rule states (copies under ${ad.protected_root}, each boundary entry ${(ad.dispositions ?? []).join(' | ')})`);
   return out;
 }
 
@@ -259,8 +297,18 @@ export function judgeBuilder(written, result, W) {
   const impl = W['builder.implements'];
   if (impl && (impl.implements ?? []).length > 0 && Object.keys(written).length === 0) fail(out, 'builder.implements', `nothing written for ${impl.implements.join(', ')}`);
   for (const [p, text] of Object.entries(written)) if (/MISSING-DEPENDENCY-/.test(text)) fail(out, 'builder.dependency_interfaces', `${p} imports a dependency whose interface it was not given`);
+  // The code keeps each obligation it can be read against (not the result's
+  // words): "<file> listens on <host>:$<VAR>" is a listen call on that host
+  // and variable in that file; any other obligation names a file the stage wrote.
   const ob = W['builder.integration_obligations'];
-  for (const o of ob?.integration_obligations ?? []) if (!String(result?.summary ?? '').includes(o)) fail(out, 'builder.integration_obligations', `the result does not account for the obligation "${o}"`);
+  for (const o of ob?.integration_obligations ?? []) {
+    const listen = /^`?([\w./-]+)`? listens on ([\d.]+):\$(\w+)/.exec(String(o));
+    if (listen) {
+      const text = written[listen[1]];
+      if (text !== undefined && !new RegExp(`listen\\(Number\\(process\\.env\\.${listen[3]}\\), '${listen[2].replace(/\./g, '\\.')}'\\)`).test(text)) fail(out, 'builder.integration_obligations', `${listen[1]} does not listen on ${listen[2]}:$${listen[3]} ("${o}")`);
+    }
+  }
+  for (const [p, text] of Object.entries(written)) if (/MISSING-OBLIGATION-/.test(text)) fail(out, 'builder.integration_obligations', `${p} leaves an obligation unkept`);
   return out;
 }
 
@@ -281,4 +329,45 @@ export function judgePhaseVerification(result, W) {
   const ps = W['verifier.phase_signoff'];
   if (ps && !(result?.[ps.field] ?? []).some((x) => x?.scope === ps.scope)) fail(out, 'verifier.phase_signoff', `the result signs no phase off (${ps.field} with scope ${ps.scope})`);
   return out;
+}
+
+// An adopted project's replan result against `architect.spec_change_requests`:
+// a request for each descriptive requirement of the phase (`descriptive`, the keys).
+export function judgeReplanRetrofit(result, W, descriptive = []) {
+  const out = [];
+  const scr = W['architect.spec_change_requests'];
+  const got = scr ? result?.[scr.field] : null;
+  if (scr && descriptive.length > 0 && !descriptive.every((k) => Array.isArray(got) && got.some((r) => Array.isArray(r.keys) && r.keys.includes(k) && typeof r.text === 'string'))) fail(out, 'architect.spec_change_requests', `no ${scr.field} for ${descriptive.join(', ')}`);
+  return out;
+}
+
+// ---- the retrofit journey on the fakes (M442 (b)'s retrofit elements) -------------------------
+
+// The retrofit fixture repository adopted (full mode), the policy's phase
+// size; returns {p, ctx}.
+export async function adoptedFull(fx) {
+  const { adoptProject, chooseMode } = await import('../retrofit/drive.mjs');
+  const { ADOPTED_PHASE_SIZE, ownerPolicy } = await import('../journey/drive.mjs');
+  const p = await adoptProject(fx);
+  await chooseMode(fx, p.id, 'full');
+  await ownerPolicy(fx, p.id, { phase_size: ADOPTED_PHASE_SIZE });
+  return { p: { id: p.id, repo: p.repo }, ctx: contextOf(fx, { id: p.id, repo: p.repo }, 'T1') };
+}
+
+// The retrofit Spec Writer's turn on the fake, saved; with `close`, closed,
+// each requirement answered as SUMS_ANSWERS and the approval given.
+export async function retrofitSpecTurn(fx, p, { brief, close = false } = {}) {
+  const { confirmAndApprove } = await import('../retrofit/drive.mjs');
+  const run = await fakeSession(fx, p.id, 'spec_writer');
+  await sayAndSettle(fx, p.id, run.id, SPEC_WORDS(brief));
+  const saved = await saveSession(fx, p.id, run.id);
+  const play = lastPlay(fx, { run: run.id });
+  // Without `close` the owner ends the session raising nothing, so that another can open.
+  if (!close) await fx.engine.post(`/v1/projects/${p.id}/sessions/${run.id}/close`, { refuse: true });
+  if (close) {
+    const res = await fx.engine.post(`/v1/projects/${p.id}/sessions/${run.id}/close`, {});
+    assert.equal(res.status, 200, `the retrofit Spec Writer's session closes (→ ${res.status} ${res.text})`);
+    await confirmAndApprove(fx, p.id, { R1: 'confirm', R2: 'confirm', R3: 'confirm', R4: 'defect' });
+  }
+  return { run, saved, play };
 }

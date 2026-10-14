@@ -175,19 +175,20 @@ describe('M442 (a) the role packages say what the engine reads: the journey from
 
   test("(a3) the Architect's session package: B.3 to B.6 as closed schemas, the plan reasons with the tiers' kinds, the computed routing", () => {
     assert.ok(J.architect, 'the Architect\'s turn dumped its package');
-    assertNoGaps(packageProblems(J.architect, ARCHITECT_ELEMENTS), "the Architect's session package");
+    assertNoGaps(packageProblems(J.architect, ARCHITECT_ELEMENTS, { facts: { prepared: { spec_version: 1 } } }), "the Architect's session package");
   });
 
   test("(a4) the Architect's replan one-shot package: the same schemas, reasons and routing", () => {
     const replans = dumpsOfKind(J.fx, 'replan');
     assert.ok(replans.length > 0, 'the replan dumped its package');
-    assertNoGaps(packageProblems(replans[0].files, ARCHITECT_ELEMENTS), "the replan's package");
+    assertNoGaps(packageProblems(replans[0].files, ARCHITECT_ELEMENTS, { facts: { prepared: { spec_version: 1, architecture_version: 1, roadmap_version: 1 } } }), "the replan's package");
   });
 
   test("(a5) the phase-authoring Verifier's package: kinds, the floor at T2, requires, covers, secrets, the post-deploy kinds, the authoring result with its permissions in result-schema.json", () => {
     const authoring = dumpsOfKind(J.fx, 'check_authoring');
     assert.ok(authoring.length > 0, 'phase 1\'s authoring dumped its package');
-    const problems = packageProblems(authoring[0].files, AUTHORING_ELEMENTS, { absent: ['verifier.adoption_rule'], facts: { tier: 'T2' } });
+    const roots = JSON.parse(withStore(J.fx.home, (db) => db.prepare('SELECT "roots" FROM "protected_versions" WHERE "project" = ? ORDER BY "seq" LIMIT 1').get(J.p.id))?.roots ?? 'null');
+    const problems = packageProblems(authoring[0].files, AUTHORING_ELEMENTS, { absent: ['verifier.adoption_rule'], facts: { tier: 'T2', engineNode: process.execPath, roots } });
     const schema = packageReads(authoring[0].files).resultSchema;
     const props = schema?.properties ?? {};
     if (!props.governed_changes?.properties?.check_commands) problems.push('result-schema.json: governed_changes with check_commands');

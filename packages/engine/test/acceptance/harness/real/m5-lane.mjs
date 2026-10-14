@@ -52,7 +52,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -93,8 +93,8 @@ export const ROLE_MODELS = Object.freeze({
 });
 // Each file's own confirmation (SEAM.md §456): consent to one is never read
 // as consent to the other or to M2's, M3's or M4's.
-export const CONFIRM_PHRASE_M443 = 'I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated';
-export const CONFIRM_PHRASE_M444 = 'I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated';
+export const CONFIRM_PHRASE_M443 = 'I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated, capped at 2000000 tokens a run and 30 USD a day';
+export const CONFIRM_PHRASE_M444 = 'I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated, capped at 2000000 tokens a run and 20 USD a day';
 
 // The steps in the order they run (BS5 §12, with two placements SEAM.md §456
 // explains: the qualification before phase 2 so that `on_phase_complete`
@@ -161,6 +161,31 @@ export function checkHome(ctx) {
   return home;
 }
 
+// A run directory is a rehearsal's or a real run's, for good (M4 of the
+// review): marked at its creation in state.json (`rehearsal`) and in
+// `<run dir>/run-kind.json` beside the home (the engine home itself holds
+// only the engine's own entries). A real run refuses a rehearsal's
+// directory, and a rehearsal a real run's, before anything starts; a
+// directory that has steps and no mark is refused too.
+export function markRunKind(ctx) {
+  const statePath = join(ctx.runDir, 'state.json');
+  const kindPath = join(ctx.runDir, 'run-kind.json');
+  const want = Boolean(ctx.rehearsal);
+  const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null;
+  const kind = existsSync(kindPath) ? JSON.parse(readFileSync(kindPath, 'utf8')) : null;
+  const marks = [state?.rehearsal, kind?.rehearsal].filter((x) => typeof x === 'boolean');
+  if (marks.some((m) => m !== want)) throw new Error(`${ctx.runDir} is a ${marks[0] ? "rehearsal's" : "real run's"} run directory, and this is ${want ? 'a rehearsal' : 'a real run'}: use a run directory of its own. Nothing was started.`);
+  if (marks.length === 0 && state && Object.keys(state.steps ?? {}).length > 0) throw new Error(`${ctx.runDir} has steps and no mark saying whether it is a rehearsal's: use a new run directory. Nothing was started.`);
+  const next = state ?? { version: 1, created_at: new Date().toISOString(), steps: {}, halted: null };
+  if (next.rehearsal !== want) {
+    next.rehearsal = want;
+    writeFileSync(`${statePath}.tmp`, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    renameSync(`${statePath}.tmp`, statePath);
+  }
+  if (!kind) writeFileSync(kindPath, `${JSON.stringify({ rehearsal: want, created_at: new Date().toISOString() })}\n`, { mode: 0o600 });
+  return want;
+}
+
 export function unitsOfRunHome(ctx, path) {
   const units = listUnits();
   if (units === null) throw new Error(`${path} refused: the user units could not be listed, so what is loaded is unknown. Nothing was started.`);
@@ -197,34 +222,42 @@ export async function m5Engine(ctx, { production = false } = {}) {
   return { engine, home, port, root: ctx.runDir };
 }
 
-// The step running now (set by `step`), so that a refusal can tell the
-// in-order path from a resumed one.
+// The step running now (set by `step`), and whether it resumes (M3 of the
+// slice-38 review): the rerun step Sean named (SURETY_REAL_RERUN), or a step
+// whose earlier start was interrupted (state.json holds it `started`). Only
+// such a step is refused for earlier work; every later step of the in-order
+// path is not.
 let currentStep = null;
-export const step = (ctx, name, fn) =>
-  realStep(ctx, name, async () => {
+let currentResuming = false;
+export const rerunNames = () => (process.env.SURETY_REAL_RERUN ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const resumesStep = (ctx, name) => rerunNames().includes(name) || loadState(ctx).steps?.[name]?.status === 'started';
+export const step = (ctx, name, fn) => {
+  const resumes = resumesStep(ctx, name);
+  return realStep(ctx, name, async () => {
+    const [was, wasResuming] = [currentStep, currentResuming];
     currentStep = name;
+    currentResuming = resumes;
     try {
       return await fn();
     } finally {
-      currentStep = null;
+      currentStep = was;
+      currentResuming = wasResuming;
     }
   });
+};
+export const resuming = () => currentResuming;
 
-// Whether this start resumes after a step that did not complete (BS5 §12,
-// the driver's ruling of 2026-10-14): a rerun was named
-// (SURETY_REAL_RERUN), or state.json holds a step other than the one running
-// now that was started or failed and never completed. On the in-order path
-// (each earlier step done) the paused project's own next work is not
-// "earlier work", and nothing is refused for it.
-export function resuming(ctx) {
-  if ((process.env.SURETY_REAL_RERUN ?? '').trim() !== '') return true;
-  let steps = {};
-  try {
-    steps = JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps ?? {};
-  } catch {
-    steps = {};
-  }
-  return Object.entries(steps).some(([name, s]) => name !== currentStep && s?.status !== 'done');
+// Before anything starts, engine or resume or held work (S3 of the review;
+// BS5 §12: refuse before starting an engine or resuming a project): a step
+// that failed earlier, or a halted run directory, refuses here, with
+// nothing started; a step already done answers 'done'.
+export function refuseIfStopped(ctx, name) {
+  const st = loadState(ctx);
+  const s = st.steps?.[name];
+  if (s?.status === 'done') return 'done';
+  if (s?.status === 'failed') throw new Error(`step ${name} failed earlier and is not run again (${s.reason}); it is rerun only if Sean names it in SURETY_REAL_RERUN. Nothing was started.`);
+  if (st.halted) throw new Error(`the run directory is halted by step ${st.halted.step} (${st.halted.reason}); nothing was started. Sean clears it by naming that step in SURETY_REAL_RERUN.`);
+  return null;
 }
 
 // A step's end (the driver's ruling, 2026-10-14, after rehearsal 4): the
@@ -232,9 +265,11 @@ export function resuming(ctx) {
 // DRAIN_MINUTES, ticking), so that no engine stops with a run in flight on
 // the in-order path; an idle open session is not in flight. Returns what it
 // waited for and what, if anything, was still live when the bound ran out.
-export async function drain(ctx, fx, projects) {
-  const ids = projects.filter(Boolean);
-  for (const p of ids) await fx.engine.post(`/v1/projects/${p}/pause`, {}).catch(() => null);
+export async function drain(ctx, fx, projects, { waitOnly = [] } = {}) {
+  const paused = projects.filter(Boolean);
+  for (const p of paused) await fx.engine.post(`/v1/projects/${p}/pause`, {}).catch(() => null);
+  // The attempts' fixture project is waited for, never paused (the engine's own).
+  const ids = [...paused, ...waitOnly.filter(Boolean)];
   const live = () => [
     ...ids.flatMap((p) => rows(fx.home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, p)).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle')),
     // A check execution in flight is waited for too (rehearsal 5: one was interrupted by an engine's stop).
@@ -246,7 +281,7 @@ export async function drain(ctx, fx, projects) {
     for (const p of ids) await fx.engine.post(`/v1/projects/${p}/tick`, {}).catch(() => null);
     await sleep(ctx.rehearsal ? 2_000 : 10_000);
   }
-  return { paused: ids, waited_for: first.map((r) => ({ id: r.id, kind: r.kind, role: r.role })), waited_ms: Math.round(performance.now() - started), still_live: live().map((r) => ({ id: r.id, kind: r.kind, role: r.role, state: r.state })) };
+  return { paused, waited_only: waitOnly.filter(Boolean), waited_for: first.map((r) => ({ id: r.id, kind: r.kind, role: r.role })), waited_ms: Math.round(performance.now() - started), still_live: live().map((r) => ({ id: r.id, kind: r.kind, role: r.role, state: r.state })) };
 }
 
 // Work a recovery left `held` (D1 §15.3: a run in flight when an engine
@@ -254,13 +289,15 @@ export async function drain(ctx, fx, projects) {
 // resumed through the owner's route (POST …/work/:w/resume) as the runner's
 // setup, printed and recorded.
 export async function resumeHeld(ctx, row, fx, project) {
-  const held = rows(fx.home, `SELECT "id", "kind" FROM "work_items" WHERE "project" = ? AND "status" = 'held'`, project);
+  // Only an item whose last run ended `recovered` (S4 of the review): an item
+  // the owner stopped, or held for any other reason, stays as he left it.
+  const held = rows(fx.home, `SELECT "id", "kind" FROM "work_items" WHERE "project" = ? AND "status" = 'held'`, project).filter((w) => one(fx.home, `SELECT "outcome" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1`, w.id)?.outcome === 'recovered');
   const out = [];
   for (const w of held) {
     const res = await fx.engine.post(`/v1/projects/${project}/work/${w.id}/resume`, {});
     out.push({ work_item: w.id, kind: w.kind, status: res.status });
   }
-  return out.length > 0 ? setupNote(ctx, row, `resume_${Date.now()}`, `the work a recovery left held, resumed (POST …/work/<w>/resume): ${out.map((w) => `${w.kind} ${w.work_item} → ${w.status}`).join(', ')}`, out) : null;
+  return out.length > 0 ? setupNote(ctx, row, `resume_${Date.now()}`, `the work a recovery left held (its last run ended recovered), resumed (POST …/work/<w>/resume): ${out.map((w) => `${w.kind} ${w.work_item} → ${w.status}`).join(', ')}`, out) : null;
 }
 
 // A step on the run home's engine: the refusals before anything starts, the
@@ -270,9 +307,9 @@ export async function resumeHeld(ctx, row, fx, project) {
 // resumes after a step that did not complete (`resuming`), work of the
 // journey's projects that could be dispatched or a run not ended (M3's
 // leftovers, as they are).
-export async function onEngine(ctx, path, { projects = [], resume = null, teardown = false, production = false } = {}, fn) {
+export async function onEngine(ctx, path, { projects = [], waitOnly = [], resume = null, teardown = false, production = false } = {}, fn) {
   if (!teardown) refuseLoadedUnits(ctx, path);
-  if (resuming(ctx)) refuseLeftovers(path, leftovers(homeOf(ctx), projects.filter(Boolean)), { evenIfPaused: resume !== null });
+  if (resuming()) refuseLeftovers(path, leftovers(homeOf(ctx), projects.filter(Boolean)), { evenIfPaused: resume !== null });
   const fx = await m5Engine(ctx, { production });
   let drained = null;
   try {
@@ -284,11 +321,12 @@ export async function onEngine(ctx, path, { projects = [], resume = null, teardo
       if (![200, 204, 409].includes(res.status)) notEstablished(path, 'the project could not be resumed', { status: res.status, text: res.text });
     }
     const value = await fn(fx);
-    drained = await drain(ctx, fx, projects);
+    // `projects` and `waitOnly` are read now: a step that creates its project adds it.
+    drained = await drain(ctx, fx, projects, { waitOnly });
     if (value && typeof value === 'object' && !Array.isArray(value)) value.drained = drained;
     return value;
   } finally {
-    if (drained === null) drained = await drain(ctx, fx, projects).catch((err) => ({ error: String(err?.message ?? err) }));
+    if (drained === null) drained = await drain(ctx, fx, projects, { waitOnly }).catch((err) => ({ error: String(err?.message ?? err) }));
     observe(ctx, path.split(' ')[0], `drained_${path.split(' ').slice(1).join('_') || 'step'}`, drained);
     await fx.engine.stop();
   }
@@ -440,13 +478,17 @@ const entryFor = (home, ctx, q) => trustEntries(home).find((e) => e.backend === 
 const FINAL = ['succeeded', 'failed', 'invalidated'];
 
 export async function m5Attempt(ctx, row, q) {
+  const waitOnly = [];
   return step(ctx, q.step, () =>
-    onEngine(ctx, `${row} ${q.step}`, { production: true }, async (fx) => {
+    onEngine(ctx, `${row} ${q.step}`, { production: true, waitOnly }, async (fx) => {
       const have = entryFor(fx.home, ctx, q);
       if (have) return { path: 'already_active', entry: have.id };
       const info = await fx.engine.engineInfo();
       const fixtureProject = info.qualification_fixture_project;
-      await fx.engine.post(`/v1/projects/${fixtureProject}/policy`, realPolicy(REAL.dayVerifiedUsd.qualification)).catch(() => null);
+      waitOnly.push(fixtureProject);
+      // The fixture project's limits, as M2's attempt sets them; a refusal stops here, before anything is spent.
+      const limits = await fx.engine.post(`/v1/projects/${fixtureProject}/policy`, realPolicy(REAL.dayVerifiedUsd.qualification));
+      if (limits.status !== 200) notEstablished(q.step, "the qualification fixture project's limits were refused", { status: limits.status, text: limits.text });
       const body = { backend: REAL.backend, mode: q.mode, model: q.model, candidate_egress: [...ctx.candidateEgress], canary_deadlines: q.session ? { ...REAL.canaryDeadlines, continuation: 600 } : { ...REAL.canaryDeadlines }, auth_mode: ctx.authMode };
       const res = await fx.engine.post('/v1/trust/qualify', body);
       if (res.status !== 201) notEstablished(q.step, 'the qualification was not proposed', { status: res.status, text: res.text });
@@ -702,8 +744,9 @@ const registered = (fx, project) => pollUntil(() => one(fx.home, `SELECT "id" FR
 const tallyName = 'm5-real-tally';
 
 export async function m5aCreate(ctx) {
+  const projects = [];
   return step(ctx, 'm5a_create', () =>
-    onEngine(ctx, 'M443 m5a_create', {}, async (fx) => {
+    onEngine(ctx, 'M443 m5a_create', { projects }, async (fx) => {
       const repo = join(ctx.runDir, 'repos', 'tally');
       if (!existsSync(join(repo, '.git'))) {
         mkdirSync(repo, { recursive: true });
@@ -719,9 +762,9 @@ export async function m5aCreate(ctx) {
       const res = await fx.engine.post('/v1/projects', { name: tallyName, tier: 'T2', dev_repo_path: repo, integration_branch: 'main', idea });
       if (res.status !== 201) notEstablished('m5a_create', 'the project was not created', { status: res.status, text: res.text });
       const project = res.body.project?.id ?? res.body.id;
+      projects.push(project);
       await registered(fx, project);
       const policy = await projectPolicy(ctx, 'M443', fx, project, { dayUsd: JOURNEY_BUDGET.M443_day_usd, phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
-      await fx.engine.post(`/v1/projects/${project}/pause`, {});
       const out = { project, repo, idea_from: ideaFile ? `Sean's ${ideaFile}` : 'the reference brief (harness/journey/reference.mjs IDEA_BRIEF)', policy } ;
       observe(ctx, 'M443', 'create', out);
       return out;
@@ -739,7 +782,7 @@ async function sessionStep(ctx, fx, project, role, { words, what, expect, answer
     const file = join(ctx.runDir, 'rehearsal', `${role}-${run}.md`);
     mkdirSync(join(ctx.runDir, 'rehearsal'), { recursive: true });
     writeFileSync(file, words);
-    seanTypes(ctx, fx.home, ['session', 'say', run, '--project', project, '--file', file, '--wait-minutes', '30'], `say to the ${role}`);
+    seanTypes(ctx, fx.home, ['session', 'say', run, '--project', project, '--file', file, '--wait-minutes', String(ctx.waitMinutes)], `say to the ${role}`);
     seanTypes(ctx, fx.home, ['session', 'save', run, '--project', project], `save the ${role}'s work`);
     seanTypes(ctx, fx.home, ['session', 'close', run, '--project', project], `close the ${role} session`);
   } else {
@@ -756,7 +799,8 @@ async function sessionStep(ctx, fx, project, role, { words, what, expect, answer
       ].join('\n'),
     );
   }
-  const driven = await drive(ctx, fx, project, done, { expect, answer, what });
+  // The owner's sessions are waited for SURETY_REAL_WAIT_MINUTES (README §3).
+  const driven = await drive(ctx, fx, project, done, { expect, answer, what, timeoutMs: ctx.waitMinutes * 60_000 });
   const runs = sessionRuns(fx.home, project, role).filter((r) => !before.has(r.id));
   return { ...driven, runs: runs.map((r) => ({ id: r.id, outcome: r.outcome, reason_class: r.reason_class, model_requested: r.model_requested })) };
 }
@@ -859,10 +903,10 @@ export const m5aQualify = (ctx) => qualifyStep(ctx, 'M443', 'm5a_qualify', stepV
 // home's store names in an attempt intent.
 export async function m5aPhase2(ctx) {
   const { project } = stepValue(ctx, 'm5a_create');
-  const phaseDone = (() => { try { return JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps?.m5a_phase2?.status === 'done'; } catch { return false; } })();
-  if (phaseDone) return m5aAlpha(ctx);
+  // Refused before anything starts (S3 of the review): a failed step or a halted directory.
+  if (refuseIfStopped(ctx, 'm5a_phase2') === 'done') return m5aAlpha(ctx);
   refuseLoadedUnits(ctx, 'M443 m5a_phase2');
-  if (resuming(ctx)) refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
+  if (resumesStep(ctx, 'm5a_phase2')) refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
   const fx = await m5Engine(ctx);
   try {
     await resumeHeld(ctx, 'M443', fx, project);
@@ -906,7 +950,9 @@ export async function m5aAlpha(ctx, given = null) {
   if (given) return run(given);
   const steps = (() => { try { return JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps ?? {}; } catch { return {}; } })();
   if (steps.m5a_alpha?.status === 'done' && steps.m5a_teardown?.status === 'done') return steps.m5a_alpha.value;
+  if (refuseIfStopped(ctx, 'm5a_alpha') === 'done') return m5aTeardown(ctx);
   ownUnitsOnly(ctx, 'M443 m5a_alpha');
+  if (resumesStep(ctx, 'm5a_alpha')) refuseLeftovers('M443 m5a_alpha', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
   const fx = await m5Engine(ctx);
   try {
     await resumeHeld(ctx, 'M443', fx, project);
@@ -975,12 +1021,14 @@ function adoptedSource(ctx) {
 }
 
 export async function m5rAdopt(ctx) {
+  const projects = [];
   return step(ctx, 'm5r_adopt', () =>
-    onEngine(ctx, 'M444 m5r_adopt', {}, async (fx) => {
+    onEngine(ctx, 'M444 m5r_adopt', { projects }, async (fx) => {
       const source = adoptedSource(ctx);
       const before = new Set(rows(fx.home, 'SELECT "id" FROM "projects"').map((r) => r.id));
       const cli = seanTypes(ctx, fx.home, ['project', 'adopt', sumsName, '--repo', source.repo, '--branch', 'main', '--tier', 'T1'], 'the adoption of the repository');
       const project = (await pollUntil(() => rows(fx.home, 'SELECT "id" FROM "projects" WHERE "name" = ?', sumsName).find((r) => !before.has(r.id)), { timeoutMs: ctx.waitMinutes * 60_000, what: 'the adopted project' })).id;
+      projects.push(project);
       await registered(fx, project);
       // The mode first: a policy commit re-raises an open adoption_mode (objection 086).
       const d = await drive(ctx, fx, project, () => rows(fx.home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = 'adoption_mode' AND "status" = 'consumed'`, project)[0], { expect: ['adoption_mode'], answer: () => 'full', what: 'the adoption mode (full, D6 §8.5)' });
@@ -1051,6 +1099,7 @@ export async function m5rDeploy(ctx) {
   return step(ctx, 'm5r_deploy', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     refuseLoadedUnits(ctx, 'M444 m5r_deploy');
+    if (resuming()) refuseLeftovers('M444 m5r_deploy', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
     const fx = await m5Engine(ctx);
     try {
       await resumeHeld(ctx, 'M444', fx, project);

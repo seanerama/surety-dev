@@ -33,6 +33,13 @@ import {
 } from '../journey/reference.mjs';
 
 const WRAPPER = '.surety/checks/wrapper.mjs';
+// A post-deploy program with its target's variable left to the fake: the
+// URL expression and the variable's name as placeholders it fills from the package.
+export function targetFree(text) {
+  const out = text.replaceAll('process.env.SURETY_TARGET_APP', '{{target:url}}').replaceAll('SURETY_TARGET_APP', '{{target:name}}');
+  if (/SURETY_TARGET_/.test(out) || !out.includes('{{target:url}}')) throw new Error('rehearsal content: the post-deploy program\'s target was not found');
+  return out;
+}
 const T = (name) => `.surety/checks/tests/${name}.test.mjs`;
 const viaWrapper = (name) => ({ files: { [WRAPPER]: CHECK_PROGRAMS[WRAPPER], [T(name)]: CHECK_PROGRAMS[T(name)] }, run: [WRAPPER, T(name)] });
 
@@ -137,7 +144,11 @@ export const ownerSays = (words, tag, value) => `${words}\n\n${block(tag, value)
 // The code each stage writes, by the path its task names and the
 // requirement it implements; `{{dep:<interface>}}` is resolved by the fake
 // from the package's dependency interfaces.
-const SERVER = (text) => text.replace("'./src/sum.mjs'", "'{{dep:sum}}'").replace("'./src/tally.mjs'", "'{{dep:tally}}'");
+const SERVER = (text) => {
+  const out = text.replace("'./src/sum.mjs'", "'{{dep:sum}}'").replace("'./src/tally.mjs'", "'{{dep:tally}}'").replace(".listen(Number(process.env.PORT), '127.0.0.1')", '.{{obligation:listen}}');
+  if (!out.includes('{{obligation:listen}}')) throw new Error('rehearsal content: the service\'s listen call was not found');
+  return out;
+};
 
 export function tallyContent() {
   return {
@@ -157,7 +168,8 @@ export function tallyContent() {
       'integration-s4': viaWrapper('integration-stats'),
       smoke: { files: {}, run: ['--check', 'src/sum.mjs'] },
       lint: { files: { '.surety/checks/lint.mjs': CHECK_PROGRAMS['.surety/checks/lint.mjs'] }, run: ['.surety/checks/lint.mjs'] },
-      operation: { files: { '.surety/checks/post-deploy/operation.mjs': CHECK_PROGRAMS['.surety/checks/post-deploy/operation.mjs'] }, run: ['.surety/checks/post-deploy/operation.mjs'] },
+      // The target's variable and its URL use are the package's (verifier.target_variables), never this text's.
+      operation: { files: { '.surety/checks/post-deploy/operation.mjs': targetFree(CHECK_PROGRAMS['.surety/checks/post-deploy/operation.mjs']) }, run: ['.surety/checks/post-deploy/operation.mjs'] },
     },
     corrections: {
       'accept-r2': { [T('service')]: CORRECTED_SERVICE_TEST },
@@ -254,8 +266,10 @@ export function sumsContent() {
       'accept-r3': sumsTest('health', 'R3.1: GET /health answers 200 {"ok": true}', [{ path: '/health', status: 200, body: { ok: true } }]),
       'accept-r4': { files: { [SW]: SUMS_WRAPPER, [r4[0]]: r4[1] }, run: [SW, r4[0]] },
       smoke: { files: {}, run: ['--check', 'server.mjs'] },
-      operation: { files: { '.surety/checks/post-deploy/operation.mjs': SUMS_POST_DEPLOY }, run: ['.surety/checks/post-deploy/operation.mjs'] },
+      operation: { files: { '.surety/checks/post-deploy/operation.mjs': targetFree(SUMS_POST_DEPLOY) }, run: ['.surety/checks/post-deploy/operation.mjs'] },
     },
+    // The owner's criteria for a descriptive requirement a scoped replan touches (M414's R1).
+    descriptive_criteria: { R1: 'Give R1 its criterion R1.1: sum(2, 3) returns 5.' },
     adopt: [
       {
         key: 'accept-r1',

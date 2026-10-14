@@ -47,6 +47,7 @@ import {
   M443_STEPS,
   MODELS,
   checkHome,
+  markRunKind,
   homeOf,
   m5Activation,
   m5Attempts,
@@ -59,6 +60,7 @@ import {
   m5aQualify,
   m5aRecords,
   m5aSpec,
+  m5aTeardown,
   m5aVision,
   showCost,
 } from './harness/real/m5-lane.mjs';
@@ -69,6 +71,7 @@ import { trustEntries } from './harness/trust.mjs';
 const preflight = () => {
   const ctx = realPreflight({ confirm: CONFIRM_PHRASE_M443, order: M443_STEPS });
   checkHome(ctx);
+  markRunKind(ctx);
   showCost(ctx, 'M443');
   return ctx;
 };
@@ -95,6 +98,8 @@ async function upTo(ctx, last) {
     ['m5a_qualify', () => m5aQualify(ctx)],
     ['m5a_phase2', () => m5aPhase2(ctx)],
     ['m5a_alpha', () => m5aAlpha(ctx)],
+    // Its own recorded step, rerun alone by SURETY_REAL_RERUN=m5a_teardown (README §4).
+    ['m5a_teardown', () => m5aTeardown(ctx)],
   ];
   for (const [name, run] of steps) {
     await run();

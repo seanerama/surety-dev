@@ -71,9 +71,9 @@ describe('M442 (c) the rehearsal with the packages whole: the journey on the pac
     const failures = [];
     const by = (kind) => J.plays.filter((e) => (e.launch?.work_kind ?? null) === kind || (kind === 'session' && e.kind === 'session'));
     const brief = tallyBrief();
-    for (const e of by('session').filter((x) => x.role === 'spec_writer' && x.written?.['.surety/spec/spec.md'])) failures.push(...judgeSpec(e.written['.surety/spec/spec.md'], J.W, brief).map((f) => ({ ...f, at: 'spec session' })));
-    for (const e of by('session').filter((x) => x.role === 'architect' && Object.keys(x.written ?? {}).length > 0)) failures.push(...judgeArchitect(e.written, J.W, { adrs: ['ADR-001'] }).map((f) => ({ ...f, at: 'architect session' })));
-    for (const e of by('replan')) failures.push(...judgeArchitect(e.written ?? {}, J.W, { routing: 'replan' }).map((f) => ({ ...f, at: 'replan' })));
+    for (const e of by('session').filter((x) => x.role === 'spec_writer' && x.written?.['.surety/spec/spec.md'])) failures.push(...judgeSpec(e.written['.surety/spec/spec.md'], { ...J.W, ...(e.blocks ?? {}) }, brief).map((f) => ({ ...f, at: 'spec session' })));
+    for (const e of by('session').filter((x) => x.role === 'architect' && Object.keys(x.written ?? {}).length > 0)) failures.push(...judgeArchitect(e.written, { ...J.W, ...(e.blocks ?? {}) }, { adrs: ['ADR-001'] }).map((f) => ({ ...f, at: 'architect session' })));
+    for (const e of by('replan')) failures.push(...judgeArchitect(e.written ?? {}, { ...J.W, ...(e.blocks ?? {}) }, { routing: 'replan' }).map((f) => ({ ...f, at: 'replan' })));
     by('check_authoring').forEach((e, i) => failures.push(...judgeAuthoring(e.written ?? {}, e.result, e.blocks ?? {}, { first: i === 0 }).map((f) => ({ ...f, at: `check_authoring ${i + 1}` }))));
     for (const e of by('spec_change')) failures.push(...judgeSpecChange(e.result, e.blocks ?? {}).map((f) => ({ ...f, at: 'spec_change' })));
     for (const e of by('phase_verification')) failures.push(...judgePhaseVerification(e.result, e.blocks ?? {}).map((f) => ({ ...f, at: 'phase_verification' })));
