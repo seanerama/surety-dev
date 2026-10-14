@@ -30,7 +30,9 @@ import { eventsAbout } from './harness/invariants.mjs';
 import { addProject, addWork, advanceClock, answerDecision, decisionsAbout, driveTo, requestTick, resumeWork, runsOf, scriptedEngine, tick, tickOnce, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
-import { waitFor, releaseBarrier } from './harness/engine.mjs';
+import { armFault, waitFor, releaseBarrier, within } from './harness/engine.mjs';
+import { heldGitWrites } from './harness/held-writes.mjs';
+import { commitOnRef } from './harness/repos.mjs';
 import { executionsOf } from './harness/checks/fixtures.mjs';
 import { discoveredProject, nominateStage, recordExit } from './harness/checks/selection.mjs';
 import { barrierWaiting } from './harness/session-lane.mjs';
@@ -225,5 +227,126 @@ describe('M440 (d) D1 §8.1 steps 1 to 4 are never skipped', () => {
     }
     const requested = requestsAfter(fx.home, seq0).filter((e) => e.payload?.cause === 'run_ended');
     assert.ok(requested.length >= 1 && ticks.some((e) => e.seq > requested[0].seq), 'a tick requested by the run\'s end is among them');
+  });
+});
+
+// The slice-37 review (SEAM.md §449): D1 §8.1's order read from what each
+// step records, not from the engine's own list. Three projects, each owing
+// one prerequisite step, their conditions made while the scheduler is held
+// at `scheduler.tick_running` (§441), so that one tick meets all three:
+//   - recover (step 1): a run whose end failed once (the `before_event` fault
+//     on `run.ended`) is ended by the recovery's retry: its `run.ended`;
+//   - journal (step 2): a commit write held past `git_deadline`, killed and
+//     ambiguous, is probed: its operation's `git.journal_*` and `operation.*`
+//     events;
+//   - integrity (step 3): an integration branch moved by hand is observed:
+//     its `repo.out_of_band`.
+// In that tick their events come in that order, before its `engine.tick`.
+// Step 4, the budgets, records no event of its own: its place is not read here.
+describe('M440 (d) D1 §8.1\'s order, read from what the steps record', () => {
+  test('(d) in one tick: the recovery\'s run end, then the journal\'s probe, then the integrity observation, each from its own project, before the tick ends', async (t) => {
+    const writes = heldGitWrites(t);
+    const fx = await scriptedEngine(t, { env: writes.env, config: { git_deadline: 2 } });
+    fx.scripted.defaultScript(script.complete());
+    // A: a role holding, whose end will fail once.
+    const a = (await addProject(fx)).id;
+    const held = await addWork(fx.engine, a, 'verification');
+    fx.scripted.script(held, [script.holdThenComplete('gate')]);
+    await tick(fx.engine, a);
+    await fx.scripted.waitForHolding({ work_item: held });
+    // B: a fix whose commit write is held.
+    const b = await addGitProject(fx);
+    const fix = await addItem(fx, b.id, 'fix');
+    fx.scripted.script(fix, [roleThatHolds([permittedEdit()])]);
+    writes.holdCommit();
+    await tick(fx.engine, b.id);
+    await fx.scripted.waitForHolding({ work_item: fix });
+    // C: a project whose branch will move by hand.
+    const c = await addGitProject(fx);
+
+    // The scheduler held; the three conditions made.
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
+    await requestTick(fx.engine, a);
+    await waitFor(() => barrierWaiting(fx, 'scheduler.tick_running'), { what: 'a tick held at scheduler.tick_running' });
+    fx.scripted.release(fix, 'gate');
+    const ambiguous = await waitFor(() => operationsOf(fx.home, { project: b.id }).find((op) => op.status === 'ambiguous'), { timeoutMs: 30_000, what: 'B\'s commit write killed at its deadline and ambiguous' });
+    await armFault(fx.engine, { point: 'before_event', event_type: 'run.ended' });
+    fx.scripted.release(held, 'gate');
+    const [aRun] = runsOf(fx.home, held);
+    await waitFor(() => withStore(fx.home, (db) => db.prepare(`SELECT 1 FROM "runs" WHERE "id" = ? AND "state" = 'finalizing'`).get(aRun.id)) ?? undefined, { what: 'A\'s run end decided and its ending failed once' });
+    commitOnRef(c.repo.path, c.repo.ref, { 'stray.txt': 'moved by hand\n' });
+    const heldTicks = ticksAfter(fx.home, 0).length;
+    const from = maxSeq(fx.home);
+    await releaseBarrier(fx.engine, 'scheduler.tick_running');
+
+    // The first tick to begin after the release: the one whose steps meet all three.
+    const after = await waitFor(() => (ticksAfter(fx.home, from).length >= 2 ? ticksAfter(fx.home, from) : undefined), { timeoutMs: 30_000, what: 'the held tick and the next to end' });
+    const [heldEnd, next] = after;
+    const ev = (type, pred) => withStore(fx.home, (db) => db.prepare('SELECT "seq", "subject", "payload" FROM "events" WHERE "type" = ? AND "seq" > ? ORDER BY "seq"').all(type, heldEnd.seq)).map((e) => ({ ...e, subject: JSON.parse(e.subject ?? '{}') })).find(pred);
+    const recovered = ev('run.ended', (e) => e.subject.run === aRun.id);
+    const probed = withStore(fx.home, (db) => db.prepare(`SELECT "seq", "type" FROM "events" WHERE ("type" LIKE 'git.journal_%' OR "type" LIKE 'operation.%') AND json_extract("subject", '$.operation') = ? AND "seq" > ? ORDER BY "seq"`).all(ambiguous.id, heldEnd.seq))[0];
+    const observed = ev('repo.out_of_band', (e) => e.subject.project === c.id);
+    const found = { recovered: recovered?.seq ?? null, probed: probed?.seq ?? null, observed: observed?.seq ?? null, tick_end: next.seq, held_tick_end: heldEnd.seq, ticks_before: heldTicks };
+    assert.ok(recovered && probed && observed, `the fixture is live: each step left its record after the held tick (${JSON.stringify(found)})`);
+    assert.ok(found.recovered < next.seq && found.probed < next.seq && found.observed < next.seq, `all three in the one tick after the hold, before its engine.tick (${JSON.stringify(found)})`);
+    assert.ok(found.recovered < found.probed && found.probed < found.observed, `in D1 §8.1's order: recover, journal, integrity (${JSON.stringify(found)})`);
+  });
+});
+
+// The slice-37 review's S2 (the driver's ruling, 2026-10-14; SEAM.md §449): a
+// restart with eligible work. No tick, requested or interval, runs before the
+// scheduler starts, after the lift to full mode; nothing is dispatched before
+// `engine.started`; requests made during the start (the recovery's run end,
+// work eligible) coalesce into the first tick.
+describe('M440 (S2) a restart with eligible work', () => {
+  test('(S2) no tick and no dispatch before engine.started; the start\'s requests coalesce into the first tick after it', async (t) => {
+    const killAt = journalBarrier('ref_update', 'probe_confirmed');
+    const fx = await scriptedEngine(t);
+    fx.scripted.defaultScript(script.complete());
+    const project = await addGitProject(fx);
+    const p = project.id;
+    // A fix whose integration the engine is killed in, after its branch update
+    // is confirmed and before it is finalized: the restart's own recovery
+    // finalizes it, a transition that requests a tick (K1) during the start.
+    const first = await addItem(fx, p, 'fix');
+    fx.scripted.script(first, [roleThatHolds([permittedEdit()])]);
+    await tick(fx.engine, p);
+    await fx.scripted.waitForHolding({ work_item: first });
+    // Eligible work never dispatched before the kill: made while a tick is held.
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
+    await requestTick(fx.engine, p);
+    await waitFor(() => barrierWaiting(fx, 'scheduler.tick_running'), { what: 'a tick held at scheduler.tick_running' });
+    const second = await addWork(fx.engine, p, 'review');
+    assert.equal(runsOf(fx.home, second).length, 0, 'the fixture is live: the second item is eligible and not dispatched');
+    await armBarrier(fx.engine, killAt, 'kill');
+    const dead = fx.engine;
+    fx.scripted.release(first, 'gate');
+    assert.deepEqual(await within(dead.exited, 30_000), { code: null, signal: 'SIGKILL' }, `the engine kills itself at ${killAt}`);
+    const from = maxSeq(fx.home);
+
+    // Restarted, with ticks also requested through the route all through the
+    // start (from the moment it listens until engine.started is recorded).
+    const engine = await fx.start({ until: 'listening' });
+    const startedYet = () => withStore(fx.home, (db) => db.prepare(`SELECT 1 FROM "events" WHERE "type" = 'engine.started' AND "seq" > ?`).get(from)) !== undefined;
+    while (!startedYet()) {
+      await engine.post(`/v1/projects/${p}/tick`, {}).catch(() => null);
+      await sleep(20);
+    }
+    await waitForWork(fx.home, second, 'complete', { timeoutMs: 60_000 });
+    const after = (type) => withStore(fx.home, (db) => db.prepare('SELECT "seq", "subject", "payload" FROM "events" WHERE "type" = ? AND "seq" > ? ORDER BY "seq"').all(type, from)).map((e) => ({ ...e, subject: JSON.parse(e.subject ?? '{}'), payload: JSON.parse(e.payload ?? 'null') }));
+    const [started] = after('engine.started');
+    assert.ok(started, 'the restart recorded engine.started');
+    const requestedBefore = after('scheduler.tick_requested').filter((e) => e.seq < started.seq);
+    assert.ok(requestedBefore.length >= 1, `the fixture is live: the start's recovery requested a tick before engine.started (${JSON.stringify(after('scheduler.tick_requested').map((e) => [e.seq, e.payload?.cause]))}, started ${started.seq})`);
+    const ticksBefore = after('engine.tick').filter((e) => e.seq < started.seq);
+    assert.deepEqual(ticksBefore.map((e) => e.seq), [], `no tick before the scheduler starts (engine.started at ${started.seq})`);
+    const createdBefore = after('run.created').filter((e) => e.seq < started.seq);
+    assert.deepEqual(createdBefore.map((e) => e.subject.run), [], 'nothing dispatched before engine.started');
+    const [firstTick] = after('engine.tick').filter((e) => e.seq > started.seq);
+    assert.ok(firstTick, 'a tick after the start');
+    assert.ok(Number.isInteger(firstTick.payload?.requests) && firstTick.payload.requests >= requestedBefore.length, `the start's requests (${requestedBefore.length}) coalesce into the first tick (its requests ${JSON.stringify(firstTick.payload)})`);
+    const [secondRun] = runsOf(fx.home, second);
+    const created = after('run.created').find((e) => e.subject.run === secondRun.id);
+    assert.ok(created.seq > started.seq, 'the eligible work is dispatched after engine.started');
   });
 });

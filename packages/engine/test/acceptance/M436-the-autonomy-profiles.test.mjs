@@ -33,6 +33,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { answer, confirmRequired, consume } from './harness/decisions.mjs';
+import { check, installChecks, nominated, passAll } from './harness/gates.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { addGitProject, addStagedProject, permittedEdit, roleThat, roleThatHolds, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { changePolicy, getPolicy, workItemsOf } from './harness/journal.mjs';
@@ -53,6 +54,7 @@ import { MODULES_JSON_SERVICE_SECRETS, REQUIREMENTS, SPEC_SERVICE_SECRETS, STAGE
 import { postChange } from './harness/journey/review31b.mjs';
 import { answerDecision, pauseProject, resumeProject, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
+import { withStore } from './harness/store.mjs';
 import {
   boundaryDecisions,
   candidatesOf,
@@ -200,6 +202,66 @@ describe('M436 (c) phase and max_chained_roles', () => {
     const v1now = workRow(fx.home, v1.id);
     assert.equal(v1now.chain, 0, 'continue begins a new chain');
     assert.deepEqual(chainOriginOf(fx.home, v1.id), originOf(v1now.trigger_source, v1now.trigger_id, v1now.trigger_generation), 'whose origin is the continued item');
+  });
+
+  // The slice-37 review (SEAM.md §449): the cap above 1, depth inherited
+  // run by run, and the cap counted again from a continued item. Cap 2 under
+  // `phase` on a T2 candidate with a required check: the Builder (chain 0),
+  // the candidate's Verifier (1), the Reviewer the gate queues (2) waits at
+  // the cap; continued, the Reviewer's item begins chain 0 and its `fix`
+  // disposition makes fix work (1) whose candidate's Verifier (2) waits at the
+  // cap again, its origin the continued item's trigger.
+  test('(c) max_chained_roles 2: depth inherited (Builder 0, Verifier 1, Reviewer 2 at the cap); after continue the cap is counted again from the continued item', async (t) => {
+    const fx = await scriptedEngine(t);
+    fx.scripted.defaultScript(script.complete());
+    // The first Verifier reports a Low finding; later ones complete.
+    fx.scripted.kindScript('verification', [roleThat([], { findings: [{ category: 'defect', severity: 'low', message: 'src/app.js: the answer is not documented.' }] }), script.complete()]);
+    fx.scripted.kindScript('fix', roleThat([step.write('src/app.js', 'export const answer = 42; // the answer\n')]));
+    const ctx = await nominated(fx, { tier: 'T2', policy: { max_chained_roles: 2 } });
+    const project = ctx.project;
+    const [build] = ctx.items;
+    const k = (await installChecks(fx.engine, project.id, [check('login', { requirements: ['R1'] })])).id;
+    await passAll(fx.engine, project.id, ctx.candidate.id, [k.login]);
+
+    const first = await waitFor(
+      async () => {
+        await tick(fx.engine, project.id, { rounds: 1 });
+        const review = workItemsOf(fx.home, project.id).find((w) => w.kind === 'review');
+        return review && boundaryDecisions(fx.home, project.id).some((d) => d.subject_id === review.id) ? review : undefined;
+      },
+      { timeoutMs: 60_000, what: 'the Reviewer\'s work at the cap of 2' },
+    );
+    const verification = workItemsOf(fx.home, project.id).find((w) => w.kind === 'verification' && w.subject?.candidate === ctx.candidate.id);
+    assert.deepEqual([workRow(fx.home, build).chain, workRow(fx.home, verification.id).chain, workRow(fx.home, first.id).chain], [0, 1, 2], 'depth inherited run by run: Builder 0, Verifier 1, Reviewer 2');
+    assert.ok(runsOf(fx.home, verification.id).length >= 1, 'the Verifier (depth 1) ran under the cap of 2');
+    assert.equal(runsOf(fx.home, first.id).length, 0, 'the Reviewer (depth 2) waits at the cap');
+    assert.equal(workRow(fx.home, first.id).blocker?.reason, 'max_chained_roles', 'on the chain cap');
+    assert.deepEqual(chainOriginOf(fx.home, first.id), originOf('plan', ctx.stage), 'its origin is the stage\'s plan trigger');
+
+    // Continued: the Reviewer's item begins chain 0 and dispositions the finding `fix`.
+    const [finding] = withStore(fx.home, (db) => db.prepare('SELECT * FROM "findings" WHERE "project" = ? ORDER BY "seq"').all(project.id));
+    assert.ok(finding, 'the fixture is live: the Verifier\'s finding is recorded');
+    fx.scripted.script(first.id, [roleThat([], { dispositions: [{ finding: finding.id, disposition: 'fix' }] })]);
+    const [boundary] = boundaryDecisions(fx.home, project.id).filter((d) => d.subject_id === first.id);
+    await answerDecision(fx.engine, project.id, boundary.id, 'continue');
+    const continued = workRow(fx.home, first.id);
+    assert.equal(continued.chain, 0, 'continue begins chain 0 at the continued item');
+    const continuedOrigin = originOf(continued.trigger_source, continued.trigger_id, continued.trigger_generation);
+    const second = await waitFor(
+      async () => {
+        await tick(fx.engine, project.id, { rounds: 1 });
+        const later = workItemsOf(fx.home, project.id).filter((w) => w.kind === 'verification' && w.id !== verification.id);
+        return later.find((w) => boundaryDecisions(fx.home, project.id).some((d) => d.subject_id === w.id));
+      },
+      { timeoutMs: 60_000, what: 'the fix candidate\'s Verifier at the cap again' },
+    );
+    const fix = workItemsOf(fx.home, project.id).find((w) => w.kind === 'fix');
+    assert.ok(fix, 'the disposition made fix work');
+    assert.deepEqual([workRow(fx.home, fix.id).chain, workRow(fx.home, second.id).chain], [1, 2], 'counted again from the continued item: the fix 1, its candidate\'s Verifier 2');
+    assert.ok(runsOf(fx.home, fix.id).length > 0, 'the fix (depth 1) ran');
+    assert.equal(runsOf(fx.home, second.id).length, 0, 'the Verifier (depth 2) waits at the cap again');
+    assert.equal(workRow(fx.home, second.id).blocker?.reason, 'max_chained_roles', 'on the chain cap');
+    assert.deepEqual(chainOriginOf(fx.home, second.id), continuedOrigin, 'its origin is the continued item\'s trigger, not the stage\'s');
   });
 
   test('(c) the repair budget binds separately: a failing Builder parks on repair_attempts_max, never as the chain cap', async (t) => {
