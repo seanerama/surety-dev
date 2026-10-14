@@ -693,8 +693,8 @@ function terminalAndCharge(tx: Tx, run: SessionRow, turn: TurnRow, invocation: s
     const terminal = seen.includes('launched') ? (outcome === null ? 'ended' : 'unknown') : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "invocation_status_observations" WHERE "invocation" = ?').get(invocation) as { n: number };
     tx.db
-      .prepare('INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(tx.newId('iso_'), tx.at, run.project, invocation, n, terminal, tx.at, terminal === 'refused' ? null : (exit?.exit_class ?? null), terminal === 'refused' ? null : (exit?.exit_evidence ?? null));
+      .prepare('INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence", "incarnation") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(tx.newId('iso_'), tx.at, run.project, invocation, n, terminal, tx.at, terminal === 'refused' ? null : (exit?.exit_class ?? null), terminal === 'refused' ? null : (exit?.exit_evidence ?? null), engineSettings().incarnation ?? null);
     tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status: terminal, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) });
   }
   const now = (tx.db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(invocation) as { status: string }[]).map((r) => r.status);

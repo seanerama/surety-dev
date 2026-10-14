@@ -108,13 +108,11 @@ export function paceView(db: Database, args: { project: string }) {
   const events = db
     .prepare(
       `SELECT "seq", "type", "at", "subject", "payload" FROM "events"
-       WHERE "type" IN ('work.dependency_met', 'work.integrated', 'work.created', 'work.complete', 'invocation.status', 'engine.started')
-         AND ("type" = 'engine.started' OR json_extract("subject", '$.project') = ?) ORDER BY "seq"`,
+       WHERE "type" IN ('work.dependency_met', 'work.integrated', 'work.created', 'work.complete') AND json_extract("subject", '$.project') = ? ORDER BY "seq"`,
     )
     .all(p) as { seq: number; type: string; at: string; subject: string; payload: string | null }[];
   const ev = events.map((e) => ({ ...e, subject: json<Record<string, unknown>>(e.subject, {}), payload: json<Record<string, unknown>>(e.payload, {}) }));
   const firstOf = (type: string, item: string | null) => (item === null ? undefined : ev.find((e) => e.type === type && e.subject.work_item === item));
-  const starts = ev.filter((e) => e.type === 'engine.started').map((e) => e.seq);
 
   // ---- the host observations (D6 §7.6, A.3) ----------------------------------------------
   const hostRows = db.prepare('SELECT * FROM "host_observations" WHERE "project" = ? ORDER BY rowid').all(p) as {
@@ -187,16 +185,13 @@ export function paceView(db: Database, args: { project: string }) {
       | { owner_incarnation: string; acquired_at: string }
       | undefined;
     const receipts = (db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? ORDER BY rowid').all(id) as { id: string }[]).map((x) => x.id);
-    const obs = receipts.length === 0 ? [] : (db.prepare(`SELECT "status", "at", "invocation", "seq" FROM "invocation_status_observations" WHERE "invocation" IN (${receipts.map(() => '?').join(', ')}) ORDER BY rowid`).all(...receipts) as { status: string; at: string; invocation: string; seq: number }[]);
+    const obs = receipts.length === 0 ? [] : (db.prepare(`SELECT "status", "at", "invocation", "seq", "incarnation" FROM "invocation_status_observations" WHERE "invocation" IN (${receipts.map(() => '?').join(', ')}) ORDER BY rowid`).all(...receipts) as { status: string; at: string; invocation: string; seq: number; incarnation: string | null }[]);
     const launched = obs.find((o) => o.status === 'launched') ?? null;
     const terminal = launched ? (obs.find((o) => o.invocation === launched.invocation && o.seq > launched.seq && (o.status === 'ended' || o.status === 'unknown')) ?? null) : null;
-    // A terminal observation another incarnation recorded (a restart
-    // between `launched` and it): unknown, bounded by the observations that
+    // A terminal observation another incarnation recorded than the launch's
+    // (a restart between them): unknown, bounded by the observations that
     // exist, never a measured value (the driver's ruling 5, slice 37).
-    const evOf = (o: { invocation: string; seq: number } | null) => (o === null ? undefined : ev.find((e) => e.type === 'invocation.status' && e.subject.invocation === o.invocation && e.payload.seq === o.seq));
-    const le = evOf(launched);
-    const te = evOf(terminal);
-    const interrupted = le !== undefined && te !== undefined && starts.some((s) => s > le.seq && s < te.seq);
+    const interrupted = launched !== null && terminal !== null && launched.incarnation !== null && terminal.incarnation !== null && launched.incarnation !== terminal.incarnation;
     let invocationElapsed: Figure<number> | { unknown: string; bounded_by: unknown };
     if (launched === null) invocationElapsed = unknown('the run has no launched observation');
     else if (terminal === null) invocationElapsed = unknown('the run has no terminal observation after its launch');
@@ -379,7 +374,7 @@ export function paceView(db: Database, args: { project: string }) {
     const checkSecs = checks.map((x) => between(x.started_at, x.finished_at, ['the check started', 'it finished']));
     const findings: Record<string, number> = {};
     if (candidates.length > 0) {
-      for (const f of db.prepare(`SELECT "severity" FROM "findings" WHERE "candidate" IN (${candidates.map(() => '?').join(', ')})`).all(...candidates) as { severity: string }[]) findings[f.severity] = (findings[f.severity] ?? 0) + 1;
+      for (const f of db.prepare(`SELECT "effective_severity" AS "severity" FROM "findings" WHERE "candidate" IN (${candidates.map(() => '?').join(', ')})`).all(...candidates) as { severity: string }[]) findings[f.severity] = (findings[f.severity] ?? 0) + 1;
     }
     // The human wait (D6 §7.6; D6-M02): the union of the open intervals of
     // the decisions that blocked the stage's items, within the stage's

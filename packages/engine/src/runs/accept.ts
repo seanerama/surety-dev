@@ -372,12 +372,13 @@ export class Acceptor {
         return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict' });
       }
       if (state !== 'finalized') return { wait: integration.id };
+      // 7. A nomination that is due, still under the lease: each
+      // integration's own cadence point is nominated before the next
+      // integration of the project can move the branch (D1 §7.7; K2).
+      await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
       return GO_ON;
     });
     if (serial !== GO_ON) return serial;
-
-    // 7. A nomination that is due.
-    await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
     return { outcome: 'completed', reason: 'none' };
   }
 

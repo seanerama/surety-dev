@@ -71,6 +71,13 @@ ALTER TABLE protected_proposals ADD COLUMN deferred_criteria TEXT;
 -- first unexpected error of its preparation.
 ALTER TABLE deployment_requests ADD COLUMN preparation_attempts INTEGER CHECK (preparation_attempts IS NULL OR preparation_attempts > 0);
 
+-- ---- invocation_status_observations.incarnation (D6 §7.6; N01; the driver's ruling 5) ------
+-- The engine incarnation that recorded the observation: a terminal
+-- observation another incarnation recorded than the launch's (a restart
+-- between them) bounds the invocation's elapsed time, never measures it.
+-- NULL for an observation recorded before.
+ALTER TABLE invocation_status_observations ADD COLUMN incarnation TEXT;
+
 -- ---- host_observations (D6 §7.6, A.3; N01; SEAM.md §431) ------------------------------------
 -- Recorded at a project's first tick (`project_start`) or at a later engine
 -- start (`engine_start`); NULL trigger for a row written before.
