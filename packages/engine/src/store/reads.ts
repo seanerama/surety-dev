@@ -144,8 +144,10 @@ export function contextFacts(db: Database, args: { run: string }) {
       .map((key) => db.prepare(`SELECT "id", "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' AND "key" = ?`).get(item.project, key) as { id: string; key: string; text: string } | undefined)
       .filter((a): a is { id: string; key: string; text: string } => a !== undefined);
     const names = parse<string[]>(stage.modules, []);
+    // A published plan's stage names its modules by id (plan/bundle.ts
+    // moduleIds); a fixture's by name.
     modules = names
-      .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { id: string; name: string; paths: string } | undefined)
+      .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(item.project, name, name) as { id: string; name: string; paths: string } | undefined)
       .filter((m): m is { id: string; name: string; paths: string } => m !== undefined)
       .map((m) => ({ id: m.id, name: m.name, paths: parse<unknown>(m.paths, []) }));
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
@@ -166,9 +168,12 @@ export function contextFacts(db: Database, args: { run: string }) {
       .map((d) => (typeof d === 'number' ? d : typeof d === 'string' ? ((db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined)?.number ?? null) : null))
       .filter((n): n is number => typeof n === 'number');
     const siblings = activeStages<{ number: number; modules: string }>(db, activePlanOf(db, String(stage.phase_plan)));
+    // A stage row names its modules by id (plan/bundle.ts) or, in a
+    // fixture, by name: each resolved to its name in the module map.
+    const moduleName = (m: string): string => (db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(item.project, m, m) as { name: string } | undefined)?.name ?? m;
     const depModules = dependsOn.flatMap((n) => {
       const sib = siblings.find((x) => x.number === n);
-      return sib ? parse<string[]>(sib.modules, []).map((m) => ({ stage: n, module: m })) : [];
+      return sib ? parse<string[]>(sib.modules, []).map((m) => ({ stage: n, module: moduleName(m) })) : [];
     });
     builderStage = {
       number: Number(stage.number),
@@ -527,9 +532,19 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
       return null;
     }
   };
-  const rows = db
-    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name"`)
+  const all = db
+    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name", e.rowid`)
     .all(project) as { name: string; content: string | null }[];
+  // An environment is one thing by name (the driver's ruling, slice 38):
+  // stated once, from the owner's configuration where a row of the name has
+  // one; a store that holds two rows of a name (written before the ruling)
+  // is merged here, never listed twice.
+  const rows: { name: string; content: string | null }[] = [];
+  for (const r of all) {
+    const seen = rows.find((x) => x.name === r.name);
+    if (!seen) rows.push({ ...r });
+    else if (seen.content === null && r.content !== null) seen.content = r.content;
+  }
   return rows.map((r) => {
     const c = r.content === null ? null : parse(r.content);
     const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]).slice() : null);

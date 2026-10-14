@@ -252,3 +252,68 @@ test('the seam lists every element with its packages, and an omission removes th
   assert.equal(a.schema.properties.deferred_criteria, undefined);
   assert.ok(!a.manifest.reads.includes('verifier.authoring_result'));
 });
+
+// The driver's slice-38 findings on M442 (a): a published plan's stage
+// names its modules by id, and an environment is one thing per project.
+const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
+const { writeConfigVersion } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+
+function plainStore(t) {
+  const db = new Database(join(scratch(t), 'store.db'));
+  t.after(() => db.close());
+  migrate(db, join(root, 'migrations'));
+  db.pragma('foreign_keys = OFF');
+  db.prepare(`INSERT INTO projects (id, created_at, name, tier, dev_repo_path, integration_branch, baseline_state, registration_state, management) VALUES ('prj_1', ?, 'p', 'T1', '/nowhere', 'main', 'spec_ready', 'registered', '{}')`).run(AT);
+  return db;
+}
+
+test("a stage that names its modules by id (a published plan): its dependencies' interfaces are found by the modules' names in the map", (t) => {
+  const db = plainStore(t);
+  const run = (sql, ...a) => db.prepare(sql).run(...a);
+  const iface = (name) => ({ name, kind: 'module', path: `src/${name}.mjs`, description: name });
+  const artifacts = { modules: { version: 1, modules: [{ name: 'lib', paths: ['src/'], sensitive_areas: [], interfaces: [iface('sum'), iface('tally')] }, { name: 'service', paths: ['server.mjs'], sensitive_areas: [], interfaces: [] }], mapping_from_spec: [] } };
+  run(`INSERT INTO plan_bundles (id, created_at, project, head, blobs, artifacts, versions, status) VALUES ('pb_1', ?, 'prj_1', ?, '{}', ?, '{}', 'published')`, AT, 'c'.repeat(40), JSON.stringify(artifacts));
+  run(`INSERT INTO phase_plans (id, created_at, project, phase_number, prepared_against_revision, git_path, generation, active, bundle) VALUES ('pp_1', ?, 'prj_1', 1, ?, 'x', 1, 1, 'pb_1')`, AT, 'c'.repeat(40));
+  run(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_lib', ?, 'prj_1', 'lib', '["src/"]')`, AT);
+  run(`INSERT INTO modules (id, created_at, project, name, paths) VALUES ('mod_svc', ?, 'prj_1', 'service', '["server.mjs"]')`, AT);
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status) VALUES ('stg_1', ?, 'prj_1', 'pp_1', 1, 'lib', '["mod_lib"]', '[]', '[]', 'integrated')`, AT);
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, work_item, depends_on) VALUES ('stg_2', ?, 'prj_1', 'pp_1', 2, 'svc', '["mod_svc"]', '[]', '[]', 'building', 'wrk_2', '["stg_1"]')`, AT);
+  run(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wrk_2', ?, 'prj_1', 2, 'stage_build', '{"stage":"stg_2"}', 'executing', 'plan', 'pp_1', 1, 0, 0, 0, 0)`, AT);
+  run(`INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined) VALUES ('run_b', ?, 'prj_1', 1, 'wrk_2', 'builder', 'one_shot', 'executing', 'scripted', '1', 's', ?, ?, 0)`, AT, 'c'.repeat(40), AT);
+  const facts = contextFacts(db, { run: 'run_b' });
+  assert.deepEqual(facts.builder_stage.depends_on, [1]);
+  assert.deepEqual(facts.builder_stage.dependency_interfaces.map((i) => `${i.stage}:${i.module}:${i.name}`), ['1:lib:sum', '1:lib:tally']);
+  assert.deepEqual(facts.modules.map((m) => m.name), ['service'], "the stage's own module, found by its id");
+});
+
+test("an environment is one thing per project: the owner's first configuration of a name the specification gave attaches to that environment, and the Verifier's package states it once", (t) => {
+  const db = plainStore(t);
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec) VALUES ('env_spec', ?, 'prj_1', 'alpha', 'none', 'spec', '{}')`).run(AT);
+  const content = { adapter: 'local_service', targets: ['app'], check_secrets: ['deploy/k'] };
+  const out = transact(db, ENGINE_ACTOR, (tx) => writeConfigVersion(tx, { project: 'prj_1', name: 'alpha', content, identity: 'ci', secretDigests: [], homeHash: 'a'.repeat(12) }));
+  assert.equal(out.body.environment.id, 'env_spec', "the specification's environment, under its own id");
+  assert.equal(out.body.environment.prefix, `surety-${'a'.repeat(12)}-env_spec-`);
+  const rows = db.prepare(`SELECT "id", "adapter", "adapter_config_ref", "prefix" IS NOT NULL AS configured FROM "environments" WHERE "project" = 'prj_1' AND "name" = 'alpha'`).all();
+  assert.deepEqual(rows, [{ id: 'env_spec', adapter: 'local_service', adapter_config_ref: 'environment_configs', configured: 1 }], 'one row of the name');
+  // A second version of the configuration writes to the same environment.
+  const again = transact(db, ENGINE_ACTOR, (tx) => writeConfigVersion(tx, { project: 'prj_1', name: 'alpha', content: { ...content, targets: ['app', 'web'] }, identity: 'ci2', secretDigests: [], homeHash: 'a'.repeat(12) }));
+  assert.equal(again.body.environment.id, 'env_spec');
+  // An adoption signal's environment of another name is never configured this way.
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, origin) VALUES ('env_sig', ?, 'prj_1', 'beta', 'none', 'adoption_signal', '{}', 'adoption_signal')`).run(AT);
+  const beta = transact(db, ENGINE_ACTOR, (tx) => writeConfigVersion(tx, { project: 'prj_1', name: 'beta', content, identity: 'ci3', secretDigests: [], homeHash: 'a'.repeat(12) }));
+  assert.notEqual(beta.body.environment.id, 'env_sig');
+});
+
+test('a store holding two rows of one environment name (before the ruling) is stated once, merged: the configured row supplies targets and secrets, nothing stated is null', (t) => {
+  const db = plainStore(t);
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec) VALUES ('env_spec', ?, 'prj_1', 'alpha', 'none', 'spec', '{}')`).run(AT);
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, prefix, current_config) VALUES ('env_cfg', ?, 'prj_1', 'alpha', 'local_service', 'environment_configs', '{}', 'surety-x-', 'envc_1')`).run(AT);
+  db.prepare(`INSERT INTO environment_configs (id, created_at, project, environment, version, content, config_identity, secret_digests, status, written_by, written_at) VALUES ('envc_1', ?, 'prj_1', 'env_cfg', 1, ?, 'ci', '[]', 'current', 'sean', ?)`).run(AT, JSON.stringify({ targets: ['app'] }), AT);
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec) VALUES ('env_b', ?, 'prj_1', 'beta', 'none', 'spec', '{}')`).run(AT);
+  db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wrk_c', ?, 'prj_1', 1, 'check_correction', '{}', 'executing', 'x', 'x', 1, 0, 0, 0, 0)`).run(AT);
+  db.prepare(`INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined) VALUES ('run_c', ?, 'prj_1', 1, 'wrk_c', 'verifier', 'one_shot', 'executing', 'scripted', '1', 's', ?, ?, 0)`).run(AT, 'c'.repeat(40), AT);
+  assert.deepEqual(contextFacts(db, { run: 'run_c' }).check_writing.environments, [
+    { name: 'alpha', targets: ['app'], check_secrets: [] },
+    { name: 'beta', targets: null, check_secrets: null },
+  ]);
+});

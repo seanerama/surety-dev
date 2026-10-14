@@ -471,7 +471,9 @@ export function envelopeHoldsDispatch(db: Tx['db'], args: { project: string; wor
   const item = db.prepare('SELECT "kind", "project" FROM "work_items" WHERE "id" = ?').get(args.workItem) as { kind: string; project: string } | undefined;
   if (!item || item.project !== args.project) return false;
   const role = ROLE_OF[item.kind];
-  if (role && resolveBackend(db, { project: item.project, role, scripted: 'harness' }).kind === 'refused') return false;
+  // The scripted backend is taken as present here (any non-null version):
+  // whether this engine has it is the claim's to decide again.
+  if (role && resolveBackend(db, { project: item.project, role, scripted: 'pre-check' }).kind === 'refused') return false;
   return envelopeHold(db, { kind: 'role', project: item.project }) !== null;
 }
 

@@ -218,15 +218,28 @@ export function writeConfigVersion(
     const current = currentConfig(tx.db, env);
     if (current && current.status === 'current' && current.config_identity === args.identity && current.content === canonical(args.content)) return answer(200, env, current);
   } else {
-    const id = tx.newId('env_');
     if (!/^[0-9a-f]{12}$/.test(args.homeHash)) throw new Error('the home hash is not 12 hex characters');
+    // An environment is one thing per project, by name (the driver's ruling,
+    // slice 38): the environment the approved specification named (TPL §7,
+    // spec/approval.ts) takes the owner's first configuration under its own
+    // id, so nothing that refers to it is orphaned and no second row of the
+    // name is made. An adoption signal's environment (an existing
+    // deployment, unknown, E6) is never configured this way.
+    const named = tx.db.prepare(`SELECT "id" FROM "environments" WHERE "project" = ? AND "name" = ? AND "prefix" IS NULL AND "adapter_config_ref" = 'spec' ORDER BY rowid LIMIT 1`).get(args.project, args.name) as { id: string } | undefined;
+    const id = named?.id ?? tx.newId('env_');
     const prefix = `surety-${args.homeHash}-${id}-`;
-    tx.db
-      .prepare(
-        `INSERT INTO "environments" ("id", "created_at", "project", "name", "adapter", "adapter_config_ref", "verify_spec", "deployment_generation", "prefix")
-         VALUES (?, ?, ?, ?, ?, 'environment_configs', ?, 0, ?)`,
-      )
-      .run(id, tx.at, args.project, args.name, args.content.adapter, verifySpec, prefix);
+    if (named) {
+      tx.db
+        .prepare(`UPDATE "environments" SET "adapter" = ?, "adapter_config_ref" = 'environment_configs', "verify_spec" = ?, "deployment_generation" = 0, "prefix" = ? WHERE "id" = ?`)
+        .run(args.content.adapter, verifySpec, prefix, id);
+    } else {
+      tx.db
+        .prepare(
+          `INSERT INTO "environments" ("id", "created_at", "project", "name", "adapter", "adapter_config_ref", "verify_spec", "deployment_generation", "prefix")
+           VALUES (?, ?, ?, ?, ?, 'environment_configs', ?, 0, ?)`,
+        )
+        .run(id, tx.at, args.project, args.name, args.content.adapter, verifySpec, prefix);
+    }
     env = getEnv(tx.db, id)!;
     // Its observation job, first due one cadence from now (D4 §6.2; SEAM.md §291).
     ensureObservationJob(tx, { environment: id, project: args.project });
