@@ -165,3 +165,21 @@ test("a project's specification change and its protected writers cannot interlea
   db.prepare(`UPDATE spec_change_requests SET status = 'approved' WHERE id = 'scr_1'`).run();
   assert.equal(dispatchBlocker(db, get('wi_auth2'), { check: false }), null, 'applied: the writer goes on');
 });
+
+test("a tightening classified for the Reviewer holds a specification change; one whose question is the owner's does not", (t) => {
+  const { db } = store(t);
+  db.pragma('foreign_keys = OFF');
+  db.prepare(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, work_item) VALUES ('scr_1', ?, 'prj_1', 1, 'change', 'owner', 'requested', 'wi_sc')`).run(AT);
+  db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_sc', ?, 'prj_1', 1, 'spec_change', '{"request":"scr_1"}', 'eligible', 'test', 'wi_sc', 1, 0, 0, 0, 0)`,
+  ).run(AT);
+  db.prepare(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_t', ?, 'prj_1', 1, 'verifier_run', 'b', 't', 'd', 'tightening', 'classified')`).run(AT);
+  const get = () => db.prepare(`SELECT * FROM work_items WHERE id = 'wi_sc'`).get();
+  assert.equal(dispatchBlocker(db, get(), { check: false }), null, 'classified with no Reviewer: the owner orders it');
+  db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_rev', ?, 'prj_1', 2, 'review', '{"proposal":"prop_t"}', 'eligible', 'protected_proposal', 'prop_t', 1, 0, 0, 0, 0)`,
+  ).run(AT);
+  assert.equal(dispatchBlocker(db, get(), { check: false }), 'depends on a protected proposal not yet applied or rejected', "its Reviewer's work open: held");
+});

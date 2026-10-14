@@ -332,3 +332,52 @@ test("an unresolved spec_changed obligation holds a scope: on a required check b
 test('a manifest invalidation records what moved, by path', () => {
   assert.deepEqual(manifestChanges(JSON.stringify({ a: { x: 1, y: [1, 2] }, b: 2 }), { a: { x: 1, y: [1, 3] }, b: 2, c: 1 }), ['.a.y.1', '.c']);
 });
+
+// ---- a specification change and the protected versions around it -----------------------------
+
+const { changeManifest, lateObligations } = await import(join(dist, 'spec', 'change.js'));
+
+const version = (h, id, seq) =>
+  h.run(
+    `INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots, authorized_revision) VALUES (?, ?, 'prj_1', ?, 'f', 'initial', 'h', 'human', ?, 1, ?, '[]', 'r')`,
+    id,
+    AT,
+    seq,
+    AT,
+    AT,
+  );
+
+test("a protected version applied while a specification change is proposed stales its decision: the manifest's protected version moves", (t) => {
+  const h = store(t);
+  version(h, 'pv_1', 1);
+  h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'proposed')`, AT);
+  const before = changeManifest(h.db, 'scr_1');
+  assert.equal(before.protected_version, 'pv_1');
+  h.run(`UPDATE protected_versions SET superseded_by = 'pv_2', effective_from = NULL WHERE id = 'pv_1'`);
+  version(h, 'pv_2', 2);
+  const after = changeManifest(h.db, 'scr_1');
+  assert.equal(after.protected_version, 'pv_2', 'the new version is what the answer is bound to now, so the open decision is stale');
+});
+
+test('a check applied after a change was approved, from a proposal captured before it, covering a criterion the change touched, owes a spec_changed obligation; one captured after does not', (t) => {
+  const h = store(t);
+  h.item('wi_auth', 'check_authoring', { phase_plan: 'plan_2' }, 'complete');
+  h.runOf('run_auth', 'wi_auth');
+  h.run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_early', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'applied')`, AT);
+  h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, impact_value) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'approved', ?)`, AT, JSON.stringify({ affected_criteria: ['R4.1'], added_criteria: [] }));
+  // The proposal is captured, then the change approved.
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('protected.proposed', { project: 'prj_1', proposal: 'prop_early', run: 'run_auth' }, {}));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('spec.change_approved', { project: 'prj_1', spec_change_request: 'scr_1' }, {}));
+  version(h, 'pv_2', 2);
+  h.run(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_r4', ?, 'prj_1', 'pv_2', 'accept-r4', 'acceptance', '["R4.1"]', 1, '["stage"]', 'x', 'h', 'direct'), ('chk_r1', ?, 'prj_1', 'pv_2', 'accept-r1', 'acceptance', '["R1.1"]', 1, '["stage"]', 'y', 'h', 'direct')`, AT, AT);
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_early', version: 'pv_2' })), 1);
+  const owed = h.db.prepare(`SELECT key, criteria, request FROM check_obligations WHERE reason = 'spec_changed'`).all();
+  assert.deepEqual(owed.map((o) => [o.key, o.criteria, o.request]), [['accept-r4', '["R4.1"]', 'scr_1']]);
+  assert.ok(h.db.prepare(`SELECT 1 FROM work_items WHERE kind = 'check_correction' AND trigger_source = 'spec_obligation' AND trigger_id = 'scr_1'`).get(), 'its correction is asked for');
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_early', version: 'pv_2' })), 0, 'not twice');
+  // A proposal captured after the approval was authored against the new specification.
+  h.run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_late', ?, 'prj_1', 2, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'applied')`, AT);
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('protected.proposed', { project: 'prj_1', proposal: 'prop_late', run: 'run_auth' }, {}));
+  h.run(`UPDATE check_obligations SET resolved_at = ? WHERE key = 'accept-r4'`, AT);
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_late', version: 'pv_2' })), 0);
+});

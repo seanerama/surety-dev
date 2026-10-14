@@ -643,7 +643,7 @@ const REFUSAL_TEXT: Record<string, string> = {
 
 export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'];
 
-function changeManifest(db: Db, id: string): Record<string, unknown> {
+export function changeManifest(db: Db, id: string): Record<string, unknown> {
   const r = getRequest(db, id);
   const project = r?.project ?? null;
   const spec = project === null ? undefined : currentSpec(db, project);
@@ -1176,4 +1176,58 @@ export function correctionOpenKeys(db: Db, workItem: string): string[] {
   const request = correctionRequestOf(db, workItem);
   if (request === null) return [];
   return uniq((db.prepare(`SELECT "key" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY "key"`).all(request) as { key: string }[]).map((o) => o.key));
+}
+
+// A check applied after a specification change's approval that covers a
+// criterion the change touched, from a proposal captured before that
+// approval (authored against the earlier specification), owes a
+// `spec_changed` obligation at its application (the driver's ruling 2 on the
+// M401 journey, slice 37): no check covering a changed criterion escapes the
+// obligation by timing. The request's own correction is not such a check,
+// and one already owed is not recorded twice. Its correction is asked for by
+// the request's next correction generation. Returns how many were recorded.
+export function lateObligations(tx: Tx, args: { project: string; proposal: string; version: string }): number {
+  const captured = tx.db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'protected.proposed' AND json_extract("subject", '$.proposal') = ?`).get(args.proposal) as { s: number | null };
+  if (captured.s === null) return 0;
+  const own = tx.db
+    .prepare(`SELECT json_extract(w."subject", '$.request') AS request FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item" WHERE p."id" = ? AND w."kind" = 'check_correction'`)
+    .get(args.proposal) as { request: string | null } | undefined;
+  const generation = (tx.db.prepare('SELECT "spec_evidence_generation" AS g FROM "projects" WHERE "id" = ?').get(args.project) as { g: number }).g;
+  const checks = tx.db.prepare('SELECT "id", "key", "criteria" FROM "checks" WHERE "protected_version" = ?').all(args.version) as { id: string; key: string; criteria: string | null }[];
+  const requests = tx.db
+    .prepare(
+      `SELECT r."id", r."impact_value", (SELECT MIN(e."seq") FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id") AS approved_seq
+       FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'approved' ORDER BY r."seq"`,
+    )
+    .all(args.project) as { id: string; impact_value: string | null; approved_seq: number | null }[];
+  let n = 0;
+  for (const r of requests) {
+    if (r.approved_seq === null || r.approved_seq < captured.s || own?.request === r.id) continue;
+    const impact = parseJson<{ affected_criteria?: string[]; added_criteria?: string[] }>(r.impact_value) ?? {};
+    const touched = new Set([...(impact.affected_criteria ?? []), ...(impact.added_criteria ?? [])]);
+    if (touched.size === 0) continue;
+    const owed: string[] = [];
+    for (const c of checks) {
+      const covered = (parseJson<string[]>(c.criteria) ?? []).filter((x) => touched.has(x));
+      if (covered.length === 0) continue;
+      const open = tx.db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).get(args.project, c.key);
+      if (open) continue;
+      const id = tx.newId('obl_');
+      tx.db
+        .prepare(`INSERT INTO "check_obligations" ("id", "created_at", "project", "check", "key", "criteria", "generation", "reason", "request") VALUES (?, ?, ?, ?, ?, ?, ?, 'spec_changed', ?)`)
+        .run(id, tx.at, args.project, c.id, c.key, JSON.stringify(covered), generation, r.id);
+      tx.emit('check.obligation_recorded', { project: args.project, check_obligation: id }, { reason: 'spec_changed', criteria: covered, request: r.id, proposal: args.proposal, late: true });
+      owed.push(c.key);
+      n++;
+    }
+    if (owed.length > 0) {
+      const g = (tx.db.prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) AS g FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ?`).get(args.project, r.id) as { g: number }).g;
+      observeTrigger(
+        tx,
+        { project: args.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: g + 1, subject: { request: r.id }, trigger_evidence: { criteria: { affected: [...touched].sort(), uncovered: [], removed: [] }, checks: owed.sort(), generation }, chain: 0 },
+        { spec_change_request: r.id, checks: owed },
+      );
+    }
+  }
+  return n;
 }
