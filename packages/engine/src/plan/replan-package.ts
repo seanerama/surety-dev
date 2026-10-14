@@ -105,6 +105,12 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
   return { id: p.id, phase_number: p.phase_number, generation: p.generation, status: p.status, published_at: p.published_at, completed_at: p.completed_at, completion_binding: json(p.completion_binding), stages };
 }
 
+// A finding raised after the plan's publication and not after its
+// completion, by event seq (parameters: the plan twice).
+export const FINDING_RAISED_BETWEEN = `EXISTS (SELECT 1 FROM "events" r WHERE r."type" = 'finding.raised' AND json_extract(r."subject", '$.finding') = f."id"
+  AND r."seq" >= COALESCE((SELECT MIN(p."seq") FROM "events" p WHERE p."type" = 'plan.published' AND json_extract(p."subject", '$.phase_plan') = ?), 0)
+  AND r."seq" <= COALESCE((SELECT MIN(c."seq") FROM "events" c WHERE c."type" = 'baseline.phase_complete' AND json_extract(c."subject", '$.phase_plan') = ?), 9223372036854775807))`;
+
 const FINDING_COLUMNS = '"id", "seq", "created_at", "scope", "candidate", "category", "effective_severity" AS "severity", "message", "check", "criterion", "sensitive_area", "status", "disposition", "disposition_at", "defer_target", "linked_issue", "source_role", "remediation"';
 
 export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null }): ReplanFacts {
@@ -135,22 +141,23 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
   const triggered = item.trigger_source === 'phase_complete' ? item.trigger_id : null;
   const latestDone = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL ORDER BY "phase_number" DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
   const completed = planOf(db, project, triggered ?? latestDone);
-  const openId = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
+  const openId = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
   const open = planOf(db, project, openId);
   const binding = completed?.completion_binding as { candidate?: string } | null | undefined;
   const ev = binding?.candidate
-    ? (db.prepare(`SELECT "id", "candidate", "outcome", "reasons", "check_states", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "candidate" = ? ORDER BY "computed_at" DESC, "id" DESC LIMIT 1`).get(project, binding.candidate) as
+    ? (db.prepare(`SELECT "id", "candidate", "outcome", "reasons", "check_states", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "candidate" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(project, binding.candidate) as
         | { id: string; candidate: string; outcome: string; reasons: string; check_states: string; computed_at: string; stale: number }
         | undefined)
     : undefined;
-  // The phase's findings: raised while it was open, or still open.
-  const from = completed?.published_at ?? '';
-  const to = completed?.completed_at ?? '9999';
-  const findings = db
-    .prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND (("created_at" >= ? AND "created_at" <= ?) OR "status" IN ('open', 'dispositioned')) ORDER BY "seq"`)
-    .all(project, from, to) as Record<string, unknown>[];
+  // The phase's findings: raised while it was open, or still open. "While"
+  // is the event log's order, between the plan's publication and its
+  // completion, never wall time (the slice-36 review's N2): a clock step
+  // drops no finding.
+  const findings = completed
+    ? (db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" f WHERE f."project" = ? AND (${FINDING_RAISED_BETWEEN} OR f."status" IN ('open', 'dispositioned')) ORDER BY f."seq"`).all(project, completed.id, completed.id) as Record<string, unknown>[])
+    : (db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? ORDER BY "seq"`).all(project) as Record<string, unknown>[]);
   const deferred = db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND "disposition" = 'defer' AND "status" <> 'resolved' ORDER BY "seq"`).all(project) as Record<string, unknown>[];
-  const obligations = (db.prepare('SELECT "id", "key", "criteria", "generation", "reason", "request", "created_at" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY "created_at", "id"').all(project) as Record<string, unknown>[]).map((o) => ({
+  const obligations = (db.prepare('SELECT "id", "key", "criteria", "generation", "reason", "request", "created_at" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"').all(project) as Record<string, unknown>[]).map((o) => ({
     ...o,
     criteria: json(o.criteria),
   }));
@@ -162,7 +169,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     | { id: string; reason_class: string | null; reason_text: string | null }
     | undefined;
   const check = last
-    ? (db.prepare(`SELECT "id", "phase_number", "reasons" FROM "plan_checks" WHERE "project" = ? AND json_extract("evidence", '$.run') = ? AND "outcome" = 'refused' ORDER BY "created_at" DESC LIMIT 1`).get(project, last.id) as
+    ? (db.prepare(`SELECT "id", "phase_number", "reasons" FROM "plan_checks" WHERE "project" = ? AND json_extract("evidence", '$.run') = ? AND "outcome" = 'refused' ORDER BY rowid DESC LIMIT 1`).get(project, last.id) as
         | { id: string; phase_number: number | null; reasons: string }
         | undefined)
     : undefined;
@@ -283,7 +290,7 @@ export function replanPromptText(r: ReplanFacts): string[] {
 export const REPLAN_RESULT_FIELDS: Record<string, Record<string, unknown>> = {
   plan: { type: 'string', pattern: '^phase-[1-9][0-9]*$', description: 'The plan you wrote: "phase-<n>".' },
   conformance: { enum: ['within_baseline', 'uncertain'], description: 'within_baseline if you changed nothing of the architecture, module map, ADRs or roadmap; uncertain otherwise. A declaration only adds uncertainty: the engine computes what changed.' },
-  roadmap_revision: { type: 'string', description: 'Why you changed the roadmap, if you did.' },
+  roadmap_revision: { type: ['boolean', 'string'], description: 'Whether your replan revises the roadmap (B.7: a boolean); a string giving why is accepted too. Routing is computed from the artifacts, never from this.' },
   adrs_changed: { type: 'array', items: { type: 'string' }, description: 'The keys of the ADRs you added or changed.' },
   notes: { type: 'string' },
 };

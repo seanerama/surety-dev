@@ -48,7 +48,7 @@ export interface ConformanceStageRow {
 }
 
 export const conformanceStagesOf = (db: Db, project: string): ConformanceStageRow[] =>
-  db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL ORDER BY "created_at"').all(project) as ConformanceStageRow[];
+  db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL ORDER BY rowid').all(project) as ConformanceStageRow[];
 
 export const isConformanceStage = (db: Db, stage: string | null): boolean => stage !== null && db.prepare('SELECT 1 FROM "stages" WHERE "id" = ? AND "conformance" = 1').get(stage) !== undefined;
 
@@ -66,12 +66,32 @@ export function bindConformanceStage(tx: Tx, args: { project: string; stage: str
 // The candidates a conformance stage is held by: every candidate nominated
 // after its publication (its source binding precedes them all; its own
 // state, not a work item, says whether it is done).
+// Whether a candidate of the project was nominated since the first event
+// about the stage, by the event log's order (the slice-36 review's M3).
+export function nominatedSince(db: Db, project: string, stage: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM "events" n WHERE n."type" = 'candidate.nominated' AND json_extract(n."subject", '$.project') = ?
+           AND n."seq" >= COALESCE((SELECT MIN(e."seq") FROM "events" e WHERE json_extract(e."subject", '$.stage') = ?), 0) LIMIT 1`,
+      )
+      .get(project, stage) !== undefined
+  );
+}
+
+// Which came first is read from the event log's order, never from wall time
+// (D1's monotonic rule; BS5 §4.1 rule 17): the candidate's nomination and
+// the first event about the stage. Where either is not found, the stage is
+// taken to hold the candidate (unknown fails closed).
 export function conformanceHeldBy(db: Db, candidate: CandidateRow): string[] {
-  const nominated = (db.prepare('SELECT "nominated_at" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { nominated_at: string } | undefined)?.nominated_at;
-  if (nominated === undefined) return [];
+  if (!db.prepare('SELECT 1 FROM "candidates" WHERE "id" = ?').get(candidate.id)) return [];
+  const nominated = (db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'candidate.nominated' AND json_extract("subject", '$.candidate') = ?`).get(candidate.id) as { s: number | null }).s;
   return conformanceStagesOf(db, candidate.project)
-    .filter((s) => s.created_at <= nominated)
-    .map((s) => s.id);
+    .filter((st) => {
+      const first = (db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE json_extract("subject", '$.stage') = ?`).get(st.id) as { s: number | null }).s;
+      return nominated === null || first === null || first <= nominated;
+    })
+    .map((st) => st.id);
 }
 
 // The nomination owed: once the phase's authoring is ready, the head is
@@ -85,7 +105,9 @@ export function conformanceNominationDue(tx: Tx, args: { project: string }): voi
     if (s.conformance_state !== 'source_bound') continue;
     const plan = tx.db.prepare('SELECT "authoring_ready_at", "status", "active" FROM "phase_plans" WHERE "id" = ?').get(s.phase_plan) as { authoring_ready_at: string | null; status: string; active: number } | undefined;
     if (!plan || plan.authoring_ready_at === null || plan.status !== 'published' || plan.active !== 1) continue;
-    const held = tx.db.prepare('SELECT 1 FROM "candidates" WHERE "project" = ? AND "nominated_at" >= ? LIMIT 1').get(args.project, s.created_at);
+    // A candidate nominated after the stage, by the event log's order, not
+    // by wall time (the slice-36 review's M3; as conformanceHeldBy).
+    const held = nominatedSince(tx.db, args.project, s.id);
     if (held) continue;
     const due = (tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null }).nomination_due;
     if (due !== null) continue;
@@ -176,7 +198,7 @@ export function dueConformanceGates(db: Db, candidate: CandidateRow): string[] {
     const s = db.prepare('SELECT "conformance_state" FROM "stages" WHERE "id" = ?').get(id) as { conformance_state: string | null };
     if (s.conformance_state === 'conformed') continue;
     const latest = db
-      .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+      .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
       .get(candidate.id, id) as { stale: number } | undefined;
     if (!latest || latest.stale === 1) out.push(id);
   }
@@ -198,7 +220,7 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
   for (const c of candidates) {
     if (c.source_digest === null || c.source_digest !== a.source_digest) continue;
     if (c.progress !== 'alpha_deployed') continue;
-    const last = db.prepare(`SELECT "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(c.id) as { outcome: string; stale: number } | undefined;
+    const last = db.prepare(`SELECT "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(c.id) as { outcome: string; stale: number } | undefined;
     if (last && last.outcome === 'satisfied' && last.stale === 0) return { adopted: true, open: true, reason: null, candidate: c.id };
   }
   return {
@@ -213,13 +235,13 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
 // barrier open, the replan created once from its trigger (idempotent).
 export function conformancePhaseComplete(db: Db, project: string): { plan: string; phase: number } | null {
   if (!adoptionOf(db, project)) return null;
-  const p = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 1 AND "completed_at" IS NOT NULL ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; phase_number: number } | undefined;
+  const p = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 1 AND "completed_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string; phase_number: number } | undefined;
   return p ? { plan: p.id, phase: p.phase_number } : null;
 }
 
 export const conformanceStateOf = (db: Db, project: string): { stage: string; state: string | null; source_revision: string | null; reasons: unknown }[] =>
   conformanceStagesOf(db, project).map((s) => {
-    const last = db.prepare(`SELECT "reasons" FROM "gate_evaluations" WHERE "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(s.id) as { reasons: string } | undefined;
+    const last = db.prepare(`SELECT "reasons" FROM "gate_evaluations" WHERE "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(s.id) as { reasons: string } | undefined;
     return { stage: s.id, state: s.conformance_state, source_revision: s.source_revision, reasons: parseJson<unknown>(last?.reasons ?? null) };
   });
 

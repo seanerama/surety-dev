@@ -54,7 +54,7 @@ const NONE: PhaseStepResult = { evaluate: null, completed: null };
 
 function openPlan(db: Db, project: string): PlanRow | undefined {
   return db
-    .prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "authoring_ready_at" IS NOT NULL AND "completed_at" IS NULL ORDER BY "created_at" DESC LIMIT 1`)
+    .prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "authoring_ready_at" IS NOT NULL AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`)
     .get(project) as PlanRow | undefined;
 }
 
@@ -347,12 +347,9 @@ export function phaseVerificationFacts(db: Db, item: { kind: string; project: st
   const ev = db
     .prepare(`SELECT "id", "outcome", "reasons", "check_states", "computed_at", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' AND "phase_plan" = ? AND "plan_generation" = ? ORDER BY rowid DESC LIMIT 1`)
     .get(s.candidate, plan.id, plan.generation) as { id: string; outcome: string; reasons: string; check_states: string; computed_at: string; stale: number } | undefined;
-  const findings = db
-    .prepare(
-      `SELECT "id", "seq", "created_at", "scope", "candidate", "category", "effective_severity" AS "severity", "message", "check", "criterion", "sensitive_area", "status", "disposition"
-       FROM "findings" WHERE "project" = ? AND ("created_at" >= ? OR "status" IN ('open', 'dispositioned')) ORDER BY "seq"`,
-    )
-    .all(item.project, plan.published_at ?? '') as Record<string, unknown>[];
+  // Raised since the plan's publication, by the event log's order, never by
+  // wall time (the slice-36 review's N2), or still open.
+  const findings = findingsSincePublication(db, item.project, plan.id);
   return {
     phase_plan: { id: plan.id, phase_number: plan.phase_number, generation: plan.generation, status: plan.status },
     candidate: s.candidate,
@@ -407,4 +404,17 @@ export function registerPhaseAtApplication(tx: Tx, args: { project: string; prop
 // the phase's too; a cancelled one is not.
 function onceOn(db: Db, candidate: string, checks: CheckRow[]): CheckRow[] {
   return checks.filter((c) => db.prepare(`SELECT 1 FROM "check_executions" WHERE "candidate" = ? AND "check" = ? AND "status" <> 'cancelled' LIMIT 1`).get(candidate, c.id) === undefined);
+}
+
+// The findings raised since a plan's publication, by the event log's order,
+// never by wall time (the slice-36 review's N2), or still open.
+export function findingsSincePublication(db: Db, project: string, plan: string): Record<string, unknown>[] {
+  return db
+    .prepare(
+      `SELECT f."id", f."seq", f."created_at", f."scope", f."candidate", f."category", f."effective_severity" AS "severity", f."message", f."check", f."criterion", f."sensitive_area", f."status", f."disposition"
+       FROM "findings" f WHERE f."project" = ? AND (EXISTS (SELECT 1 FROM "events" r WHERE r."type" = 'finding.raised' AND json_extract(r."subject", '$.finding') = f."id"
+         AND r."seq" >= COALESCE((SELECT MIN(p."seq") FROM "events" p WHERE p."type" = 'plan.published' AND json_extract(p."subject", '$.phase_plan') = ?), 0))
+         OR f."status" IN ('open', 'dispositioned')) ORDER BY f."seq"`,
+    )
+    .all(project, plan) as Record<string, unknown>[];
 }

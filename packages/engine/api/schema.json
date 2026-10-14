@@ -31,6 +31,9 @@
       "sealed",
       "failed"
     ],
+    "AssessmentsProvenance": [
+      "claimed"
+    ],
     "BaselineTextsKind": [
       "adr",
       "constraint"
@@ -496,7 +499,8 @@
       "nomination",
       "recovery",
       "oob",
-      "keep"
+      "keep",
+      "spec_change"
     ],
     "ReleaseStateFact": [
       "external_unverified"
@@ -848,6 +852,9 @@
       "spec.change_proposed",
       "spec.change_approved",
       "spec.change_failed",
+      "spec.change_rejected",
+      "check.obligation_resolved",
+      "spec.assessment_recorded",
       "deploy.requested_by_policy",
       "project.adopted",
       "requirement.confirmed",
@@ -1290,6 +1297,53 @@
         },
         "failed_at": {
           "required": false
+        }
+      }
+    },
+    "assessments": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "work_item": {
+          "required": true,
+          "references": "work_items"
+        },
+        "request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "check_key": {
+          "required": true
+        },
+        "check": {
+          "required": false,
+          "references": "checks"
+        },
+        "criteria": {
+          "required": true
+        },
+        "rationale": {
+          "required": true,
+          "references": "records"
+        },
+        "provenance": {
+          "required": true,
+          "enum": "AssessmentsProvenance"
+        },
+        "obligations": {
+          "required": true
         }
       }
     },
@@ -2525,6 +2579,9 @@
           "required": false
         },
         "memory_max": {
+          "required": false
+        },
+        "supervision_lost_seq": {
           "required": false
         }
       }
@@ -4692,6 +4749,10 @@
         },
         "keys": {
           "required": false
+        },
+        "finding": {
+          "required": false,
+          "references": "findings"
         }
       }
     },
@@ -5829,6 +5890,7 @@
         "protected_version",
         "impact",
         "dependency_manifest",
+        "side_ref",
         "policy_revision"
       ],
       "target_seconds": 259200
@@ -6620,6 +6682,15 @@
       "owner": "spec/change.ts"
     },
     "spec.change_failed": {
+      "owner": "spec/change.ts"
+    },
+    "spec.change_rejected": {
+      "owner": "spec/change.ts"
+    },
+    "check.obligation_resolved": {
+      "owner": "spec/change.ts"
+    },
+    "spec.assessment_recorded": {
       "owner": "spec/change.ts"
     },
     "deploy.requested_by_policy": {

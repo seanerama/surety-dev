@@ -36,7 +36,7 @@ export interface Report {
   objections?: { check: string; criterion?: string; category: string; message: string }[];
   // An Architect's replan (D6 §5.6): the plan it wrote, its declaration.
   plan?: string;
-  roadmap_revision?: string;
+  roadmap_revision?: string | boolean;
   adrs_changed?: string[];
   conformance?: 'within_baseline' | 'uncertain';
   notes?: string;
@@ -46,6 +46,8 @@ export interface Report {
   adopted_tests?: import('../../adopt/boundary.js').AdoptedTest[];
   // D6 §8.3 (B.7): an Architect's retrofit replan's requests for criteria.
   spec_change_requests?: { keys: string[]; text: string }[];
+  // D6 §4.5 (Q6): a Verifier's applicability assessment on a correction.
+  spec_applicability?: { check: string; criteria: string[]; rationale: string }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;
@@ -174,7 +176,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined;
       const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation };
       if (refusal !== null) {
-        const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
+        const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
         tx.emit('signoff.refused', { project, candidate: candidate.id, run: run.id, phase_plan: plan.id }, {
           scope: 'phase',
           binding,

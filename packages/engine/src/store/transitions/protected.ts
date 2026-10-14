@@ -6,7 +6,7 @@
 // commits) is done on the main thread and handed in.
 
 import { registerPhaseAtApplication } from '../../plan/phase.js';
-import { resolveByCorrection } from '../../spec/change.js';
+import { correctionProposalDecided, resolveByCorrection } from '../../spec/change.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
@@ -347,6 +347,8 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // A spec change's correction applied resolves its obligations (D6 §4.5).
   resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // Its item, waiting for the proposal, completes (the driver's ruling Q13).
+  correctionProposalDecided(tx, { proposal: inputs.proposal, applied: true });
   return { version: v.id };
 }
 

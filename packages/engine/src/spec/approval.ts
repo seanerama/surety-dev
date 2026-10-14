@@ -43,7 +43,7 @@ export interface SemanticsRow {
 // The saved representation of a session's last save (the row the save
 // wrote), or none.
 export function latestSemantics(db: Db, run: string): SemanticsRow | undefined {
-  return db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run) as SemanticsRow | undefined;
+  return db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run) as SemanticsRow | undefined;
 }
 
 // Record a save's representation (sessions/driver.ts calls it with what the
@@ -157,7 +157,7 @@ export function previousRepresentation(db: Db, project: string): SpecRepresentat
   // A session's save only: a specification change's proposal is no save
   // (the review's N5).
   const row = db
-    .prepare(`SELECT s."representation" FROM "spec_semantics" s JOIN "runs" r ON r."id" = s."run" WHERE s."project" = ? AND s."readable" = 1 AND s."representation" IS NOT NULL AND r."kind" = 'session' ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .prepare(`SELECT s."representation" FROM "spec_semantics" s JOIN "runs" r ON r."id" = s."run" WHERE s."project" = ? AND s."readable" = 1 AND s."representation" IS NOT NULL AND r."kind" = 'session' ORDER BY s.rowid DESC, s."id" DESC LIMIT 1`)
     .get(project) as { representation: string } | undefined;
   if (!row) return null;
   try {
@@ -244,6 +244,13 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
   // altered (the slice-32 review's S3; B10, D6-R03, E6): the owner's
   // withdraw, defect and unanswered answers stand on every other key.
   const altered = (args.via ?? 'session') === 'change' && isAdopted(tx.db, args.project) ? alteredKeys(tx.db, prev?.id ?? null, r) : null;
+  // A requirement's phase is the roadmap's (D6 §4.5, §5.1): the index's hint
+  // is written only by a session's approval before any roadmap exists; a
+  // change keeps the phase of a key the roadmap names and leaves an added
+  // key with none, whatever its hint (Q8), until a roadmap revision places it.
+  const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
+  const hints = (args.via ?? 'session') === 'session' && !roadmap;
+  const before = new Set((tx.db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "spec_revision" IS NOT NULL').all(args.project) as { key: string }[]).map((q) => q.key));
   for (const q of r.requirements) {
     if (altered !== null && !altered.has(q.key)) {
       tx.db.prepare('UPDATE "requirements" SET "spec_revision" = ? WHERE "project" = ? AND "key" = ?').run(id, args.project, q.key);
@@ -254,7 +261,10 @@ export function approveSpec(tx: Tx, args: { project: string; run: string; decisi
         `UPDATE "requirements" SET "text" = ?, "criteria" = ?, "criteria_text" = ?, "sensitive_areas" = ?, "assigned_phase" = COALESCE(?, "assigned_phase"), "human_test" = ?, "descriptive" = ?, "origin" = ?,
            "spec_revision" = ?, "withdrawn_at" = NULL, "status" = CASE WHEN "status" = 'withdrawn' THEN 'approved' ELSE "status" END WHERE "project" = ? AND "key" = ?`,
       )
-      .run(q.statement, JSON.stringify(q.criteria.map((c) => c.id)), JSON.stringify(q.criteria), JSON.stringify(q.sensitive_areas), q.phase_hint, q.human_test ? 1 : 0, q.descriptive ? 1 : 0, q.origin, id, args.project, q.key);
+      .run(q.statement, JSON.stringify(q.criteria.map((c) => c.id)), JSON.stringify(q.criteria), JSON.stringify(q.sensitive_areas), hints ? q.phase_hint : null, q.human_test ? 1 : 0, q.descriptive ? 1 : 0, q.origin, id, args.project, q.key);
+    // A key a change adds is pending: no gate has verified it (D6 §4.1; the
+    // driver's ruling Q-C).
+    if ((args.via ?? 'session') === 'change' && !before.has(q.key)) tx.db.prepare(`UPDATE "requirements" SET "status" = 'pending' WHERE "project" = ? AND "key" = ? AND "status" = 'approved'`).run(args.project, q.key);
   }
   // A key that disappears is withdrawn, never deleted (D6 §4.1).
   const existing = tx.db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL').all(args.project) as { key: string }[];

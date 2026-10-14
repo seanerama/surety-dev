@@ -277,6 +277,17 @@ const VERIFIER_FIELDS: Record<string, Record<string, unknown>> = {
     required: ['rationale', 'requested_change_kind'],
     properties: { rationale: { type: 'string' }, requested_change_kind: { enum: ['tightening', 'loosening', 'unclassifiable'] } },
   },
+  spec_applicability: {
+    type: 'array',
+    description:
+      'Only on the correction of a specification change: your assessment that a check applies unchanged to the changed meaning of the criteria it covers, with your rationale. It resolves that check\'s open obligation as your claim; fresh evidence under the new generation still decides. Each entry must name a check with an open obligation and cover its criteria, or the run is refused. With no change to the checks and no assessment, the correction is refused while its obligations are open.',
+    items: {
+      type: 'object',
+      required: ['check', 'criteria', 'rationale'],
+      additionalProperties: false,
+      properties: { check: { type: 'string', description: 'The check key.' }, criteria: { type: 'array', items: { type: 'string' } }, rationale: { type: 'string' } },
+    },
+  },
 };
 const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
   signoffs: {

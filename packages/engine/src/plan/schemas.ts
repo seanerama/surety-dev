@@ -153,7 +153,8 @@ export interface Roadmap {
   version: number;
   architecture_version: number;
   phases: RoadmapPhase[];
-  moved_requirements?: { key: string; from: number; to: number }[];
+  // `from` null: a requirement with no phase yet (D6 §4.5; reading 6; Q10).
+  moved_requirements?: { key: string; from: number | null; to: number }[];
 }
 
 export const ROADMAP_FILE = '.surety/roadmap/roadmap.json';
@@ -194,7 +195,7 @@ export function parseRoadmap(text: string, file = ROADMAP_FILE): Parsed<Roadmap>
       const cm = closed(file, at, m, ['key', 'from', 'to'], ['key', 'from', 'to']);
       if (cm) return { ok: false, finding: cm };
       if (typeof m.key !== 'string' || !KEY.test(m.key)) return refuse(file, `${at}.key`, 'must be a requirement key');
-      if (!posInt(m.from) || !posInt(m.to)) return refuse(file, `${at}.from`, 'from and to must be phase numbers');
+      if ((m.from !== null && !posInt(m.from)) || !posInt(m.to)) return refuse(file, `${at}.from`, 'from must be a phase number or null, and to a phase number');
       moved.push({ key: m.key, from: m.from, to: m.to });
     }
   }

@@ -52,6 +52,9 @@ if (command === 'deploy') {
 if (command === 'project') {
   await projectCommand(args);
 }
+if (command === 'spec') {
+  await specCommand(args);
+}
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
 }
@@ -483,6 +486,54 @@ async function projectCommand(argv: string[]): Promise<never> {
       shown = JSON.stringify(JSON.parse(text));
     } catch {
       shown = text.trim().replace(/\n/g, ' ');
+    }
+    if (status >= 200 && status < 300) {
+      process.stdout.write(`${shown}\n`);
+      process.exit(0);
+    }
+    process.stderr.write(`${status} ${shown}\n`);
+    process.exit(1);
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+    );
+    process.exit(1);
+  }
+}
+
+// `surety spec change-request --project <p> --file <path>` (D6 §4.2, A.8;
+// SEAM.md §417): the owner's change request, one POST of
+// /v1/projects/:p/spec/change-requests to the engine of $SURETY_HOME with the
+// file's text as the owner's own, never interpolated into a command. A 2xx
+// answer is printed as one line of JSON, exit 0; any other answer as
+// `<status> <body>` on standard error, exit 1; a usage problem exits 2.
+async function specCommand(argv: string[]): Promise<never> {
+  const [sub, ...rest] = argv;
+  if (sub !== 'change-request') usage('spec takes change-request: surety spec change-request --project <p> --file <path>');
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i]!;
+    const value = rest[i + 1];
+    if (!['--project', '--file'].includes(flag) || value === undefined) usage(`unknown or incomplete argument ${flag} for spec change-request`);
+    if (flag in flags) usage(`${flag} is given twice`);
+    flags[flag] = value!;
+  }
+  for (const f of ['--project', '--file']) if (!(f in flags)) usage(`spec change-request needs ${f}`);
+  let text = '';
+  try {
+    text = readFileSync(flags['--file']!, 'utf8');
+  } catch (err) {
+    usage(`--file ${flags['--file']} could not be read: ${(err as Error).message}`);
+  }
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { status, text: answer } = await sendEnv(home, { method: 'POST', path: `/v1/projects/${encodeURIComponent(flags['--project']!)}/spec/change-requests`, body: { text } });
+    let shown: string;
+    try {
+      shown = JSON.stringify(JSON.parse(answer));
+    } catch {
+      shown = answer.trim().replace(/\n/g, ' ');
     }
     if (status >= 200 && status < 300) {
       process.stdout.write(`${shown}\n`);

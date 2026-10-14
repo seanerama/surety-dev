@@ -425,6 +425,18 @@
       "M430-replacements-pending-while-stages-move.test.mjs",
       "M429-a-replacement-at-phase-verification.test.mjs",
       "M430-blockers-and-reopened-dispositions.test.mjs"
+    ],
+    "36": [
+      "M431-the-change-request-and-the-side-ref.test.mjs",
+      "M431-one-proposal-at-a-time-and-a-finding.test.mjs",
+      "M432-the-impact-exact-and-bound.test.mjs",
+      "M432-an-impact-that-cannot-be-computed.test.mjs",
+      "M433-the-decision-stales-on-each-dependency.test.mjs",
+      "M433-old-generation-runs-and-what-resolves-an-obligation.test.mjs",
+      "M434-an-unassigned-requirement.test.mjs",
+      "M422-the-latest-save-by-insertion-not-wall-time.test.mjs",
+      "M433-a-failed-correction-and-a-partial-one.test.mjs",
+      "M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change.test.mjs"
     ]
   },
   "sandbox": [

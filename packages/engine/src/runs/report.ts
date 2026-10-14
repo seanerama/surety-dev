@@ -73,7 +73,10 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §5.6: an Architect's replan names the plan it wrote and declares its
   // conformance (a declaration adds uncertainty only, §5.4).
   plan: (v) => isString(v) && /^phase-[1-9][0-9]*$/.test(v),
-  roadmap_revision: (v) => isString(v),
+  // B.7: `roadmap_revision?: bool` (the Architect's declaration that its
+  // replan revises the roadmap; routing is computed, never taken from it).
+  // A string, as earlier packages wrote it, is accepted too.
+  roadmap_revision: (v) => typeof v === 'boolean' || isString(v),
   adrs_changed: (v) => Array.isArray(v) && v.every(isString),
   conformance: (v) => v === 'within_baseline' || v === 'uncertain',
   notes: (v) => isString(v),
@@ -83,6 +86,22 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §8.3, B.7 (B13): a Verifier's adopted tests with their dependency
   // boundary, recorded on its authoring proposal.
   adopted_tests: (v) => adoptedTestsValid(v),
+  // D6 §4.5 (the driver's ruling Q6): a Verifier's assessment, on a
+  // specification change's correction, that a check applies unchanged to
+  // the changed meaning of the criteria it names, with its rationale.
+  spec_applicability: (v) =>
+    listOf(
+      v,
+      (a) =>
+        isString(a.check) &&
+        a.check.length > 0 &&
+        Array.isArray(a.criteria) &&
+        a.criteria.length > 0 &&
+        a.criteria.every((c) => isString(c) && c.length > 0) &&
+        isString(a.rationale) &&
+        a.rationale.trim().length > 0 &&
+        Object.keys(a).every((k) => ['check', 'criteria', 'rationale'].includes(k)),
+    ),
   // D6 §8.3 (B.7): an Architect's replan in retrofit asks for criteria of
   // descriptive requirements its phase touches; each an ordinary request.
   spec_change_requests: (v) => listOf(v, (r) => Array.isArray(r.keys) && r.keys.every(isString) && isString(r.text) && Object.keys(r).every((k) => k === 'keys' || k === 'text')),
@@ -103,6 +122,7 @@ const ROLE_ONLY: Record<string, string> = {
   notes: 'architect',
   changes: 'spec_writer',
   adopted_tests: 'verifier',
+  spec_applicability: 'verifier',
   spec_change_requests: 'architect',
 };
 

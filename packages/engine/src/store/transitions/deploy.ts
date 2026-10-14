@@ -173,7 +173,7 @@ const prefixOf = (db: Db, env: string): string => getEnv(db, env)?.prefix ?? '';
 // configured environment is preferred to a fixture's of the same name.
 export function environmentByName(db: Db, project: string, name: string): EnvRow | undefined {
   return db
-    .prepare('SELECT * FROM "environments" WHERE "project" = ? AND ("name" = ? OR "id" = ?) ORDER BY "prefix" IS NULL, "created_at" LIMIT 1')
+    .prepare('SELECT * FROM "environments" WHERE "project" = ? AND ("name" = ? OR "id" = ?) ORDER BY "prefix" IS NULL, rowid LIMIT 1')
     .get(project, name, name) as EnvRow | undefined;
 }
 
@@ -629,7 +629,7 @@ interface RequestRow {
 // environment's configuration version. Canonical text, unique per project.
 function requestKey(db: Db, args: { project: string; candidate: string; config: string }): string {
   const plans = db
-    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "completed_at" DESC, rowid DESC`)
+    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "phase_number" DESC, rowid DESC`)
     .all(args.project) as { completion_binding: string }[];
   const binding = plans.map((p) => parseJson<Record<string, unknown>>(p.completion_binding)).find((b) => b?.candidate === args.candidate) ?? null;
   return canonical({ project: args.project, completion_binding: binding, candidate: args.candidate, environment_configuration: args.config });
@@ -694,11 +694,11 @@ function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_
 export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
   if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
   const plan = db
-    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "completed_at" DESC, rowid DESC LIMIT 1`)
+    .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "phase_number" DESC, rowid DESC LIMIT 1`)
     .get(args.project) as { completion_binding: string } | undefined;
   const candidate = parseJson<{ candidate?: string }>(plan?.completion_binding ?? null)?.candidate;
   if (!candidate || !getCandidate(db, candidate)) return null;
-  const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", "created_at"`).all(args.project) as EnvRow[];
+  const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", rowid`).all(args.project) as EnvRow[];
   for (const env of envs) {
     const config = currentConfig(db, env);
     if (!config || config.status === 'secrets_changed') continue;
@@ -777,7 +777,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   const config = currentConfig(tx.db, env);
   if (!config) throw notFound('environment configuration', args.environment);
-  const all = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ? ORDER BY "generation", "created_at"').all(candidate.id, env.id) as AuthRow[];
+  const all = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ? ORDER BY "generation", rowid').all(candidate.id, env.id) as AuthRow[];
   const workOf = (auth: string) =>
     tx.db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'deployment_request' AND "trigger_id" = ? AND "trigger_generation" = 1`).get(args.project, auth) as
       | { id: string; status: string }
@@ -1317,7 +1317,7 @@ export function deployWork(db: Db, args: { project: string }): { intend: { work_
       .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'deploy' AND "status" = 'eligible' AND "trigger_source" = 'deployment_request' ORDER BY "seq"`)
       .all(args.project) as { id: string }[]
   ).map((w) => ({ work_item: w.id }));
-  const teardowns = (db.prepare('SELECT "id" FROM "environments" WHERE "project" = ? AND "teardown_requested_at" IS NOT NULL ORDER BY "teardown_requested_at"').all(args.project) as { id: string }[]).map(
+  const teardowns = (db.prepare('SELECT "id" FROM "environments" WHERE "project" = ? AND "teardown_requested_at" IS NOT NULL ORDER BY rowid').all(args.project) as { id: string }[]).map(
     (r) => r.id,
   );
   const drive = (
@@ -1613,7 +1613,7 @@ export function deployDetail(db: Db, args: { operation: string }): DeployDetail 
     recorded_units: recordedUnits(db, frozen.environment),
     recorded_cgroups: recordedCgroups(db, frozen.environment),
     retry: retryApproved(db, op.id, attemptsOf(db, op.id).at(-1)),
-    rounds: db.prepare('SELECT "id", "round", "status", "step", "lease" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op.id) as DeployDetail['rounds'],
+    rounds: db.prepare('SELECT "id", "round", "status", "step", "lease" FROM "verification_rounds" WHERE "operation" = ? ORDER BY rowid, "round"').all(op.id) as DeployDetail['rounds'],
     blocker: openBlocker(db, op.id)?.id ?? null,
   };
 }
@@ -1627,7 +1627,7 @@ export function environmentResources(db: Db, args: { environment: string }) {
     .prepare(
       `SELECT d."id" AS "domain", d."unit", d."cgroup_path", d."cgroup_inode", d."invocation_id", d."runtime_dir", d."status", a."id" AS "attempt", a."deployment_generation" AS "generation"
        FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
-       WHERE d."profile" = 'service' AND json_extract(o."target", '$.environment') = ? ORDER BY d."created_at", d."id"`,
+       WHERE d."profile" = 'service' AND json_extract(o."target", '$.environment') = ? ORDER BY d.rowid, d."id"`,
     )
     .all(args.environment) as { domain: string; unit: string | null; cgroup_path: string | null; cgroup_inode: number | null; invocation_id: string | null; runtime_dir: string | null; status: string; attempt: string; generation: number }[];
 }
@@ -1639,7 +1639,7 @@ export function recordedCgroups(db: Db, env: string): Record<string, string | nu
   const rows = db
     .prepare(
       `SELECT d."unit", d."cgroup_path" FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
-       WHERE d."profile" = 'service' AND d."unit" IS NOT NULL AND json_extract(o."target", '$.environment') = ? ORDER BY d."created_at", d."id"`,
+       WHERE d."profile" = 'service' AND d."unit" IS NOT NULL AND json_extract(o."target", '$.environment') = ? ORDER BY d.rowid, d."id"`,
     )
     .all(env) as { unit: string; cgroup_path: string | null }[];
   const out: Record<string, string | null> = {};
@@ -1671,7 +1671,7 @@ export function recordedUnits(db: Db, env: string): string[] {
   const rows = db
     .prepare(
       `SELECT i."create_units" FROM "attempt_intents" i JOIN "operations" o ON o."id" = i."operation"
-       WHERE json_extract(o."target", '$.environment') = ? ORDER BY i."created_at"`,
+       WHERE json_extract(o."target", '$.environment') = ? ORDER BY i.rowid`,
     )
     .all(env) as { create_units: string }[];
   return [...new Set(rows.flatMap((r) => JSON.parse(r.create_units) as string[]))];
@@ -2251,7 +2251,7 @@ export function openServiceDomains(db: Db, args: { project?: string }) {
       `SELECT d."id", d."attempt", d."status", d."launch_state", d."cgroup_path", d."cgroup_inode", d."unit", d."runtime_dir", d."launched_by_incarnation", d."observed_at",
               json_extract(o."target", '$.environment') AS "environment"
        FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
-       WHERE d."profile" = 'service' AND d."status" <> 'terminated' ${args.project ? 'AND d."project" = ?' : ''} ORDER BY d."created_at", d."id"`,
+       WHERE d."profile" = 'service' AND d."status" <> 'terminated' ${args.project ? 'AND d."project" = ?' : ''} ORDER BY d.rowid, d."id"`,
     )
     .all(...(args.project ? [args.project] : [])) as { id: string; attempt: string; status: string; launch_state: string; cgroup_path: string | null; cgroup_inode: number | null; unit: string | null; runtime_dir: string | null; launched_by_incarnation: string | null; observed_at: string | null; environment: string }[];
   return rows;
@@ -2807,7 +2807,7 @@ export function roundStep(
 export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: RequiredOf }): { round: string | null; replay: boolean } {
   const op = getOp(tx.db, args.operation)!;
   const j = journalOf(tx.db, op.id)!;
-  const existing = tx.db.prepare('SELECT "id" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round" LIMIT 1').get(op.id) as { id: string } | undefined;
+  const existing = tx.db.prepare('SELECT "id" FROM "verification_rounds" WHERE "operation" = ? ORDER BY rowid, "round" LIMIT 1').get(op.id) as { id: string } | undefined;
   if (j.state === 'finalized') return { round: existing?.id ?? null, replay: true };
   if (j.state !== 'confirmed') throw illegal(`finalizing a ${j.state} deploy operation`, { operation: op.id });
   journalAppend(tx, op, 'finalized');
@@ -2935,6 +2935,16 @@ export function attemptSupervision(db: Db, a: AttemptRow): 'attached' | 'unknown
   return supervisionOf(a, (serviceDomainOf(db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null);
 }
 
+// Whether a result was recorded after the service's supervision was lost
+// (the slice-36 review's M2): by the store's event order, its check.result
+// after the highest seq at the loss; none recorded is after (unknown fails
+// closed). A loss with no recorded order falls back to the times.
+export function resultAfterLoss(db: Db, args: { result: string; finishedAt: string | null; lostAt: string; lostSeq: number | null }): boolean {
+  if (args.lostSeq === null) return args.finishedAt === null || Date.parse(args.finishedAt) >= Date.parse(args.lostAt);
+  const ev = db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'check.result' AND json_extract("subject", '$.check_result') = ?`).get(args.result) as { s: number | null };
+  return ev.s === null || ev.s > args.lostSeq;
+}
+
 // The service's control channel closed while this incarnation supervised it
 // (D4 §9.2; E110): its supervision is `unknown` from now on, durably.
 export function supervisionLost(tx: Tx, args: { attempt: string; why: string }): void {
@@ -2945,7 +2955,8 @@ export function supervisionLost(tx: Tx, args: { attempt: string; why: string }):
   // observed, has nothing left to supervise.
   if (d.app_exit !== null || d.status === 'terminated') return;
   // The record is the column; D4 A.5 names no event for it.
-  tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, d.id);
+  const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) AS seq FROM "events"').get() as { seq: number };
+  tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ?, "supervision_lost_seq" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, seq, d.id);
 }
 
 // The reads a bracket recorded, one per target: what the adapter answered,
@@ -3112,7 +3123,15 @@ export function finalizeRound(
   // A result that finished after the service's control channel was lost is
   // no evidence (the driver's ruling m3 on D4 §5.3 item 6): missing, naming
   // supervision; one that finished before the loss still counts.
-  const lostAt = (serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null;
+  const lostDomain = serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null; supervision_lost_seq?: number | null } | undefined;
+  const lostAt = lostDomain?.supervision_lost_at ?? null;
+  const lostSeq = lostDomain?.supervision_lost_seq ?? null;
+  // Whether a result came after the loss is read in the store's order (the
+  // slice-36 review's M2): its check.result event after the highest seq at
+  // the loss; a result with no such event is taken to be after (unknown
+  // fails closed). A loss recorded before this order was kept falls back
+  // to the times.
+  const recordedAfterLoss = (res: ResultRow): boolean => resultAfterLoss(tx.db, { result: res.id, finishedAt: res.finished_at, lostAt: lostAt!, lostSeq });
   // The deciding results of the round's required checks (item 6).
   const required = (JSON.parse(r.required_checks) as string[]).map((id) => tx.db.prepare('SELECT "id", "key", "kind" FROM "checks" WHERE "id" = ?').get(id) as { id: string; key: string; kind: string });
   const results: { check: string; key: string; kind: string; execution: string | null; result: string | null; state: string }[] = [];
@@ -3122,7 +3141,7 @@ export function finalizeRound(
     const res = reg?.result ? (tx.db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(reg.result) as ResultRow | undefined) : undefined;
     // Only a result bound to this round, of its candidate and protected
     // version, is ever selected for it (D4-V01; E114).
-    const afterLoss = res !== undefined && lostAt !== null && (res.finished_at === null || Date.parse(res.finished_at) >= Date.parse(lostAt));
+    const afterLoss = res !== undefined && lostAt !== null && recordedAfterLoss(res);
     const state = res && res.invalidated_at === null && resultBoundTo(res, r) && !afterLoss ? resultState(res) : 'missing';
     if (state === 'failed') failedCheck = true;
     // A required check never registered is named by its id (SEAM.md §279).
@@ -3159,7 +3178,7 @@ export function finalizeRound(
   // The guards (§4.5; J9): the environment's current generation, and the
   // newest registered round of the operation's current attempt.
   const env = getEnv(tx.db, frozen.environment)!;
-  const newest = tx.db.prepare('SELECT "id" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at" DESC, "round" DESC LIMIT 1').get(op.id) as { id: string };
+  const newest = tx.db.prepare('SELECT "id" FROM "verification_rounds" WHERE "operation" = ? ORDER BY rowid DESC, "round" DESC LIMIT 1').get(op.id) as { id: string };
   const latestAttempt = attemptsOf(tx.db, op.id).at(-1)!;
   const current = env.current_generation === r.deployment_generation;
   const decides = newest.id === r.id && latestAttempt.id === r.attempt;
@@ -3458,7 +3477,7 @@ export function deployParts(db: Db, op: string) {
   const j = o ? journalOf(db, op) : undefined;
   if (!o || !j) return null;
   const intended = db.prepare(`SELECT "payload" FROM "deploy_journal_events" WHERE "operation" = ? AND "event_kind" = 'intended' ORDER BY "seq" LIMIT 1`).get(op) as { payload: string } | undefined;
-  const intents = db.prepare('SELECT * FROM "attempt_intents" WHERE "operation" = ? ORDER BY "created_at"').all(op) as Record<string, unknown>[];
+  const intents = db.prepare('SELECT * FROM "attempt_intents" WHERE "operation" = ? ORDER BY rowid').all(op) as Record<string, unknown>[];
   return {
     journal_kind: j.journal_kind,
     state: j.state,
@@ -3475,7 +3494,7 @@ export function deployParts(db: Db, op: string) {
       resources: JSON.parse(i.resources as string) as unknown,
       preconditions: i.preconditions,
     })),
-    rounds: db.prepare('SELECT "id", "round", "attempt", "status", "deployment_generation", "registered_at" FROM "verification_rounds" WHERE "operation" = ? ORDER BY "created_at", "round"').all(op),
+    rounds: db.prepare('SELECT "id", "round", "attempt", "status", "deployment_generation", "registered_at" FROM "verification_rounds" WHERE "operation" = ? ORDER BY rowid, "round"').all(op),
   };
 }
 

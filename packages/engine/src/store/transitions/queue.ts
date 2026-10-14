@@ -48,7 +48,7 @@ import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
-import { specChangeKind } from '../../spec/change.js';
+import { correctionOpenKeys, correctionProposalDecided, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
@@ -183,6 +183,14 @@ function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
   return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
 }
 
+// A specification change's correction parked with its obligations open
+// (the driver's ruling Q13): the question names their checks.
+function obligationText(db: Db, item: { id: string; kind: string }): string {
+  if (item.kind !== 'check_correction') return '';
+  const keys = correctionOpenKeys(db, item.id);
+  return keys.length === 0 ? '' : ` Nothing was applied and nothing assessed: the specification change's obligations on ${keys.join(', ')} stay open, and every gate names them until a correction or the Verifier's assessment resolves them.`;
+}
+
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
@@ -227,7 +235,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         question:
           item.kind === 'replan'
             ? `Work item ${item.id} (replan) is parked: ${what}${replanRefusal(tx, item.id)}. Retry it, or cancel it; or plan the phase yourself in an Architect session (POST /v1/projects/${item.project}/sessions with role architect; surety session open architect), whose published plan supersedes this item.`
-            : `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
+            : `Work item ${item.id} (${item.kind}) is parked: ${what}.${obligationText(tx.db, item)} Retry it, or cancel it.`,
         blockedWorkItems: [item.id],
       };
     }
@@ -334,7 +342,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
 // question names them (D6 §5.6; M424 (d)).
 function replanRefusal(tx: Tx, item: string): string {
   const c = tx.db
-    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c."created_at" DESC LIMIT 1`)
+    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c.rowid DESC LIMIT 1`)
     .get(item) as { reasons: string } | undefined;
   const reasons = parseJson<{ code: string; subjects: string[] }[]>(c?.reasons ?? null) ?? [];
   if (reasons.length > 0) return ` (the plan check refused it: ${reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')})`;
@@ -395,9 +403,8 @@ const BLOCKER: KindSpec = {
       if (option === 'change_spec') {
         // As D3 X2's answer: spec_change work per conflict, recorded and
         // waiting for the owner's request; this replan ends.
-        for (const f of replanConflicts(tx.db, item)) {
-          observeTrigger(tx, { project: item.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: f, trigger_generation: 1, subject: { finding: f }, chain: 0, engineRaised: true }, { finding: f, decision: d.id });
-        }
+        // A request per conflict, from its finding (D6 §4.2; M431 (c)).
+        requestsFromFindings(tx, { project: item.project, findings: replanConflicts(tx.db, item), decision: d.id });
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'change_spec' });
         return consumed(d);
       }
@@ -454,7 +461,7 @@ const ROLLOUT_PARTIAL: KindSpec = {
 export function controlManifest(tx: Tx, runId: string, kind: 'stop_confirm' | 'abandon_confirm'): Record<string, unknown> {
   const run = getRun(tx, runId);
   const domains = (tx.db.prepare('SELECT "id" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(runId) as { id: string }[]).map((r) => r.id);
-  const lease = tx.db.prepare(`SELECT "generation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? ORDER BY "acquired_at" DESC LIMIT 1`).get(runId) as
+  const lease = tx.db.prepare(`SELECT "generation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? ORDER BY rowid DESC LIMIT 1`).get(runId) as
     | { generation: number }
     | undefined;
   const ws = tx.db.prepare('SELECT "id", "snapshot_tree" FROM "workspaces" WHERE "run" = ?').get(runId) as { id: string; snapshot_tree: string | null } | undefined;
@@ -1213,7 +1220,7 @@ export function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): R
   const rationale = p.rationale
     ? (tx.db.prepare('SELECT "post_scan", "missing_at" FROM "records" WHERE "id" = ?').get(p.rationale) as { post_scan: string; missing_at: string | null } | undefined)
     : undefined;
-  const scopeApproval = tx.db.prepare('SELECT "id" FROM "scope_approvals" WHERE "proposal" = ? ORDER BY "created_at" LIMIT 1').get(p.id) as { id: string } | undefined;
+  const scopeApproval = tx.db.prepare('SELECT "id" FROM "scope_approvals" WHERE "proposal" = ? ORDER BY rowid LIMIT 1').get(p.id) as { id: string } | undefined;
   return {
     proposal_status: p.status,
     tree: p.tree_id,
@@ -1271,6 +1278,9 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
       if (option !== 'approve') {
         tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
         tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: d.id });
+        // A specification change's correction item waiting for it takes its
+        // repair, then parks (the driver's ruling Q13).
+        correctionProposalDecided(tx, { proposal: p.id, applied: false });
         return consumed(d);
       }
       approveProposal(tx, p, tx.actor.actor_kind, 'human');
@@ -1430,7 +1440,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   spec_approval: SPEC_APPROVAL_KEYS,
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
-  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
+  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'],
   get adoption_mode() {
     return ADOPTION_MODE_KEYS;
   },

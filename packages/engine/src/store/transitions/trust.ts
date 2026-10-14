@@ -791,10 +791,10 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
   }
   const running = hostIdentity();
   const active = db
-    .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY "created_at" DESC, "id" DESC`)
+    .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY rowid DESC, "id" DESC`)
     .all(backend, mode, running ?? '') as EntryRow[];
   if (active.length === 0) {
-    const known = db.prepare(`SELECT "status" FROM "trust_entries" WHERE "backend" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(backend) as { status: string } | undefined;
+    const known = db.prepare(`SELECT "status" FROM "trust_entries" WHERE "backend" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(backend) as { status: string } | undefined;
     return backendRefused(known ? `${backend} has no active trust entry on this host (its latest is ${known.status}).` : `${backend} has no trust entry.`, { trust_entry_status: known?.status ?? null });
   }
   const model = args.model ?? roleModel(db, args.project, args.role);
@@ -884,8 +884,8 @@ const entryView = (e: EntryRow) => ({
 export function trustView(db: Db, args: { scripted: boolean }) {
   const host = hostReport(db);
   const running = hostIdentity();
-  const entries = db.prepare('SELECT * FROM "trust_entries" ORDER BY "created_at", "id"').all() as EntryRow[];
-  const attempts = db.prepare('SELECT * FROM "qualification_attempts" ORDER BY "created_at", "id"').all() as AttemptRow[];
+  const entries = db.prepare('SELECT * FROM "trust_entries" ORDER BY rowid, "id"').all() as EntryRow[];
+  const attempts = db.prepare('SELECT * FROM "qualification_attempts" ORDER BY rowid, "id"').all() as AttemptRow[];
   const active = host.eligible ? [...new Set(entries.filter((e) => e.status === 'active' && e.host_id === running).map((e) => e.backend))].sort() : [];
   return {
     backends: [...(args.scripted ? ['scripted'] : []), ...active],

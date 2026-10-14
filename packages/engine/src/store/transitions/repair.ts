@@ -28,6 +28,7 @@
 //   as a finding);
 // - re-arming a hold after a spec change: see `heldByChangeSpec`.
 
+import { requestsFromFindings } from '../../spec/change.js';
 import { requirementKeyOf } from '../../checks/schema.js';
 import { canonical, parseJson, sha256 } from './common.js';
 import type { Effect } from './control.js';
@@ -397,11 +398,10 @@ export function answerConflict(tx: Tx, item: WorkRow, option: string, decision: 
     return [];
   }
   if (option === 'change_spec') {
-    // Not built: any process for spec_change work. The item is recorded and
-    // waits; the scheduler never dispatches it (no role performs the kind).
-    for (const f of findings) {
-      observeTrigger(tx, { project: item.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: f, trigger_generation: 1, subject: { finding: f }, chain: 0, engineRaised: true }, { finding: f, decision });
-    }
+    // A request per conflict, from its finding (D6 §4.2; M431 (c)); where
+    // the project has no approved specification, the item is recorded and
+    // waits, never dispatched (the driver's ruling Q14).
+    requestsFromFindings(tx, { project: item.project, findings, decision });
   }
   // Back to the status it left, `verifying`; a retry then takes its one
   // repair in this transaction (the answered conflicts no longer stop it).

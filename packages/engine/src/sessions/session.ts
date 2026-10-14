@@ -428,7 +428,7 @@ export function pendingTurns(db: Tx['db'], project: string | null): { run: strin
        WHERE r."kind" = 'session' AND r."session_state" = 'turn_running' AND r."state" IN ('claimed', 'executing') AND (? IS NULL OR r."project" = ?)
          AND r."qualification_attempt" IS NULL
          AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = d."invocation")
-       ORDER BY r."created_at"`,
+       ORDER BY r.rowid`,
     )
     .all(project, project) as { run: string; project: string; invocation: string; repo: string; branch: string }[];
 }
@@ -564,7 +564,7 @@ function attemptEntry(a: AttemptRow): NonNullable<TurnClaim['entry']> {
 
 // The session's workspace, if a turn has made one (the launcher reuses it).
 export function sessionWorkspace(db: Tx['db'], run: string): { id: string; path: string; current_base: string } | null {
-  return (db.prepare('SELECT "id", "path", "current_base" FROM "workspaces" WHERE "run" = ? ORDER BY "created_at" DESC LIMIT 1').get(run) as { id: string; path: string; current_base: string } | undefined) ?? null;
+  return (db.prepare('SELECT "id", "path", "current_base" FROM "workspaces" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(run) as { id: string; path: string; current_base: string } | undefined) ?? null;
 }
 
 // ---- a turn's settlement (D6 §2.1; B01; D6-S10) -------------------------------------------
@@ -806,7 +806,7 @@ export function saveFacts(tx: Tx, run: SessionRow, roots: string[]): SaveFacts {
   const p = projectRepoRow(tx, run.project);
   const head = registryRow(tx, run.project, integrationRef(p.integration_branch));
   const policy = projectPolicy(tx.db, run.project);
-  const ws = tx.db.prepare('SELECT "id", "path", "current_base", "metadata_baseline" FROM "workspaces" WHERE "run" = ? ORDER BY "created_at" DESC LIMIT 1').get(run.id) as
+  const ws = tx.db.prepare('SELECT "id", "path", "current_base", "metadata_baseline" FROM "workspaces" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(run.id) as
     | { id: string; path: string; current_base: string; metadata_baseline: string | null }
     | undefined;
   return {
@@ -956,7 +956,7 @@ export function resumeFacts(db: Tx['db'], project: string, run: string): { repo:
     | undefined;
   if (!r) throw notFound('session', run);
   const p = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(project) as { dev_repo_path: string };
-  const ws = db.prepare('SELECT "id", "path", "current_base", "metadata_baseline", "disposition" FROM "workspaces" WHERE "run" = ? ORDER BY "created_at" DESC LIMIT 1').get(run) as
+  const ws = db.prepare('SELECT "id", "path", "current_base", "metadata_baseline", "disposition" FROM "workspaces" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(run) as
     | { id: string; path: string; current_base: string; metadata_baseline: string | null; disposition: string }
     | undefined;
   return {
@@ -1033,7 +1033,7 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ? AND "project" = ? AND "kind" = ?').get(runId, project, 'session') as Record<string, unknown> | undefined;
   if (!run) throw notFound('session', runId);
   const turns = db.prepare('SELECT "id", "number", "invocation", "started_at", "finished_at", "settled_at", "usage_status", "outcome", "reply" FROM "turns" WHERE "run" = ? ORDER BY "number"').all(runId) as Record<string, unknown>[];
-  const ledger = db.prepare('SELECT "id", "invocation", "billable_in", "cached_in", "out", "cost_status", "cost_usd", "usage_complete", "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY "created_at"').all(runId) as Record<string, unknown>[];
+  const ledger = db.prepare('SELECT "id", "invocation", "billable_in", "cached_in", "out", "cost_status", "cost_usd", "usage_complete", "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid').all(runId) as Record<string, unknown>[];
   const byInvocation = new Map(ledger.map((l) => [l.invocation as string, l]));
   let notes: { findings?: SaveFinding[] } | null = null;
   try {
@@ -1108,7 +1108,7 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
 export function dueCloses(db: Tx['db'], at: string): { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] {
   const idle = db
     .prepare(
-      `SELECT "id", "project", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') AND "qualification_attempt" IS NULL ORDER BY "created_at"`,
+      `SELECT "id", "project", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') AND "qualification_attempt" IS NULL ORDER BY rowid`,
     )
     .all() as { id: string; project: string; deadline_at: string }[];
   const out: { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] = [];

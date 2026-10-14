@@ -189,7 +189,7 @@ export function paceView(db: Database, args: { project: string }) {
     memory_peak: unknown('memory.peak is not recorded at termination in this engine (slice 37)'),
   }));
 
-  const host = db.prepare('SELECT * FROM "host_observations" WHERE "project" = ? ORDER BY "created_at" DESC, rowid DESC LIMIT 1').get(p) as
+  const host = db.prepare('SELECT * FROM "host_observations" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(p) as
     | { created_at: string; incarnation: string; engine_version: string; autonomy: string | null; settings: string; mem_available: number | null }
     | undefined;
   const settings = host ? json<Record<string, number>>(host.settings, {}) : {};

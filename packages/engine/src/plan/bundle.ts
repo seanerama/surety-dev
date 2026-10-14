@@ -166,7 +166,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   // gates that reread"): its completion stays history, and the dependency
   // clause reads it as incomplete.
   const held = phasesNotHeld(db, args.project);
-  const open = (db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as { id: string; phase_number: number; generation: number } | undefined) ?? null;
+  const open = (db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' ORDER BY rowid DESC LIMIT 1`).get(args.project) as { id: string; phase_number: number; generation: number } | undefined) ?? null;
   const phase = (completed.at(-1) ?? 0) + 1;
   const roadmapChanged = !road || (args.roadmapBlob !== undefined && args.roadmapBlob !== null && args.roadmapBlob !== road.git_blob);
   const versions: BundleVersions = { architecture: (arch?.version ?? 0) + 1, roadmap: roadmapChanged ? (road?.version ?? 0) + 1 : road!.version, phase_plan: args.withPlan ? 1 : null };
@@ -437,7 +437,7 @@ function authorized(db: Db, b: BundleRow): boolean {
 // The bundles whose authority is complete and which are not yet published
 // (the main thread's read before `plan.before_publication`).
 export function authorizedBundles(db: Db, args: { project: string }): string[] {
-  return (db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY "created_at"`).all(args.project) as BundleRow[]).filter((b) => authorized(db, b)).map((b) => b.id);
+  return (db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY rowid`).all(args.project) as BundleRow[]).filter((b) => authorized(db, b)).map((b) => b.id);
 }
 
 // The authorized finalizer (D6 §5.5; B02): the bundle published once, its
@@ -559,10 +559,18 @@ function publishRoadmap(tx: Tx, b: BundleRow, roadmap: Roadmap, blobs: Record<st
   tx.db
     .prepare('INSERT INTO "roadmap_revisions" ("id", "created_at", "project", "version", "architecture_revision", "git_path", "git_blob", "phases", "moved_requirements", "approved_by", "approved_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(roadId, tx.at, b.project, version, archId, '.surety/roadmap/roadmap.json', blobs['.surety/roadmap/roadmap.json'] ?? '', JSON.stringify(roadmap.phases), roadmap.moved_requirements ? JSON.stringify(roadmap.moved_requirements) : null, by, tx.at);
+  // The moves as the engine sees them (D6 §4.7; the driver's ruling Q-B):
+  // each requirement whose phase this revision changes, from the phase it
+  // had (null: none yet) to the one given. The declared list stays on the row.
+  const moved: { key: string; from: number | null; to: number }[] = [];
   for (const ph of roadmap.phases) {
-    for (const key of ph.requirement_ids) tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(ph.number, b.project, key);
+    for (const key of ph.requirement_ids) {
+      const had = tx.db.prepare('SELECT "assigned_phase" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(b.project, key) as { assigned_phase: number | null } | undefined;
+      if (had && had.assigned_phase !== ph.number) moved.push({ key, from: had.assigned_phase, to: ph.number });
+      tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(ph.number, b.project, key);
+    }
   }
-  tx.emit('baseline.roadmap_revised', { project: b.project, roadmap_revision: roadId }, { version, phases: roadmap.phases.map((p2) => p2.number), bundle: b.id });
+  tx.emit('baseline.roadmap_revised', { project: b.project, roadmap_revision: roadId }, { version, phases: roadmap.phases.map((p2) => p2.number), bundle: b.id, moved_requirements: moved.sort((x, y) => x.key.localeCompare(y.key)) });
   return roadId;
 }
 
@@ -979,7 +987,7 @@ function afterPublication(tx: Tx, project: string, phase: number | null, plan: s
     }
     if (target === null) {
       const c = tx.db
-        .prepare(`SELECT c."phase_number" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? ORDER BY c."created_at" DESC LIMIT 1`)
+        .prepare(`SELECT c."phase_number" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? ORDER BY c.rowid DESC LIMIT 1`)
         .get(w.id) as { phase_number: number | null } | undefined;
       target = c?.phase_number ?? null;
     }
@@ -1018,7 +1026,7 @@ export function rebindDue(db: Db, args: { project: string }): RebindDue[] {
   const head = (db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(args.project, integrationRef(p.integration_branch)) as { expected_oid: string } | undefined)?.expected_oid ?? null;
   if (head === null) return [];
   const out: RebindDue[] = [];
-  for (const b of db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY "created_at"`).all(args.project) as BundleRow[]) {
+  for (const b of db.prepare(`SELECT * FROM "plan_bundles" WHERE "project" = ? AND "status" = 'proposed' ORDER BY rowid`).all(args.project) as BundleRow[]) {
     const pending = pendingKinds(db, b);
     // An authorized bundle whose head moved before its publication is
     // re-based too (carried item (i)); one with nothing pending and an
