@@ -245,7 +245,7 @@ test("N4: a qualification attempt's profile is under the ceiling", (t) => {
 
 // ---- the generation class --------------------------------------------------------------------
 
-test("the generation class: a dispatch hold leaves the manifest's generation unchanged; an owner's hold changes it", (t) => {
+test("the generation class: a dispatch hold leaves the manifest's generation unchanged; parked changes it", (t) => {
   const h = store(t);
   h.item('wi_1', 'stage_build', {}, 'eligible');
   const manifest = () => dependencyManifest(h.db, { project: 'prj_1', phases: [], stages: [], keys: [], checks: [], findings: [], results: [], work: ['wi_1'] }).work;
@@ -255,8 +255,10 @@ test("the generation class: a dispatch hold leaves the manifest's generation unc
   h.run(`UPDATE work_items SET held = 'resource_envelope' WHERE id = 'wi_1'`);
   assert.deepEqual(manifest(), before);
   h.run(`UPDATE work_items SET status = 'awaiting_decision' WHERE id = 'wi_1'`);
-  assert.notDeepEqual(manifest(), before, 'awaiting a decision is owner-held');
-  assert.deepEqual(['active', 'held', 'held', 'held', 'terminal'], ['executing', 'parked', 'awaiting_decision', 'held', 'complete'].map(workClass));
+  assert.deepEqual(manifest(), before, 'awaiting a decision is active (the slice-36 classes, kept)');
+  h.run(`UPDATE work_items SET status = 'parked' WHERE id = 'wi_1'`);
+  assert.notDeepEqual(manifest(), before, 'parked is held');
+  assert.deepEqual(['active', 'held', 'active', 'held', 'terminal'], ['executing', 'parked', 'awaiting_decision', 'held', 'complete'].map(workClass));
 });
 
 // ---- an approved proposal that conflicts with the head ---------------------------------------

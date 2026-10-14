@@ -117,3 +117,45 @@ test("a specification change's replan is held while its request's check correcti
   db.prepare(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_1'`).run();
   assert.equal(dispatchBlocker(db, replan(), { check: false }), null, 'the correction complete and its checks recorded: the replan is dispatched');
 });
+
+test("a project's specification change and its protected writers cannot interleave: each is held while the other is under way", (t) => {
+  const { db } = store(t);
+  db.pragma('foreign_keys = OFF');
+  const row = (id, kind, subject, status = 'eligible') =>
+    db.prepare(
+      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+       VALUES (?, ?, 'prj_1', (SELECT COALESCE(MAX(seq), 0) + 1 FROM work_items), ?, ?, ?, 'test', ?, 1, 0, 0, 0, 0)`,
+    ).run(id, AT, kind, JSON.stringify(subject), status, id);
+  const get = (id) => db.prepare('SELECT * FROM work_items WHERE id = ?').get(id);
+  db.prepare(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, work_item) VALUES ('scr_1', ?, 'prj_1', 1, 'change', 'owner', 'requested', 'wi_sc')`).run(AT);
+  row('wi_sc', 'spec_change', { request: 'scr_1' });
+  row('wi_auth', 'check_authoring', { phase_plan: 'plan_2' });
+
+  // A check authoring runs: the change is held, not proposed beside it.
+  db.prepare(`UPDATE work_items SET status = 'executing' WHERE id = 'wi_auth'`).run();
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined)
+     VALUES ('run_auth', ?, 'prj_1', 50, 'wi_auth', 'verifier', 'one_shot', 'executing', 'scripted', '1', 'm', ?, ?, 0)`,
+  ).run(AT, 'a'.repeat(40), AT);
+  assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), 'depends on a protected-path writer running');
+  // Its run ended, its proposal captured and not decided: still held.
+  db.prepare(`UPDATE runs SET state = 'ended', outcome = 'completed' WHERE id = 'run_auth'`).run();
+  db.prepare(`UPDATE work_items SET status = 'awaiting_decision', continuation = 'executing' WHERE id = 'wi_auth'`).run();
+  db.prepare(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_1', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'awaiting_human')`).run(AT);
+  assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), 'depends on a protected proposal not yet applied or rejected');
+  assert.equal(holdReasonOf(dispatchBlocker(db, get('wi_sc'), { check: false })), 'depends_on');
+  // Applied: the change goes on.
+  db.prepare(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'prop_1'`).run();
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_auth'`).run();
+  assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), null);
+
+  // The other way: while the change is proposed (and until applied), no
+  // protected writer of the project is dispatched; its own correction is.
+  db.prepare(`UPDATE spec_change_requests SET status = 'proposed' WHERE id = 'scr_1'`).run();
+  row('wi_auth2', 'check_authoring', { phase_plan: 'plan_3' });
+  row('wi_own', 'check_correction', { request: 'scr_1' });
+  assert.equal(dispatchBlocker(db, get('wi_auth2'), { check: false }), 'depends on specification change 1, being proposed or not yet applied');
+  assert.equal(dispatchBlocker(db, get('wi_own'), { check: false }), null, "the request's own correction is not held by it");
+  db.prepare(`UPDATE spec_change_requests SET status = 'approved' WHERE id = 'scr_1'`).run();
+  assert.equal(dispatchBlocker(db, get('wi_auth2'), { check: false }), null, 'applied: the writer goes on');
+});

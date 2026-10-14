@@ -481,8 +481,8 @@ export function dependencyManifest(
     }[]
   ).map((r) => ({ id: r.id, generation: r.g }));
   // A work item's generation is its class (the driver's ruling on the
-  // slice-36 report, refined in slice 37): active, owner-held (parked,
-  // awaiting a decision, or held by a Stop) or terminal. A parked item
+  // slice-36 report, kept in slice 37): active (awaiting a decision among
+  // them), held (parked, or held by a Stop) or terminal. A parked item
   // retried changes it (M433 (a)); a build's routine progress does not, nor
   // does a dispatch hold (depends_on, the envelope, one replan at a time, a
   // correction's hold, a quarantine, a barrier): those are the `held`
@@ -494,7 +494,7 @@ export function dependencyManifest(
 }
 
 export function workClass(status: string): 'active' | 'held' | 'terminal' {
-  if (status === 'parked' || status === 'held' || status === 'awaiting_decision') return 'held';
+  if (status === 'parked' || status === 'held') return 'held';
   if (status === 'complete' || status === 'cancelled') return 'terminal';
   return 'active';
 }

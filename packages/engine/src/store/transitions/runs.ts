@@ -274,6 +274,15 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
       )
       .get(item.project, request) as { seq: number } | undefined;
     if (pending) return `spec_change_pending: specification change ${pending.seq} is dispatched or awaits its decision`;
+    // A project's specification change and its protected writers exclude
+    // each other (the driver's ruling on Q2, slice 37; ruling 1's family): no
+    // proposal of a change is made, so no owner's question raised, while a
+    // protected writer runs or a protected proposal is captured and not yet
+    // applied or rejected. Held, not failed.
+    const writing = (db.prepare(`SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" IN ('check_correction', 'check_authoring')`).get(item.project) as { n: number }).n;
+    if (writing > 0) return 'depends on a protected-path writer running';
+    const unapplied = (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" IN ('captured', 'classified', 'awaiting_human', 'approved')`).get(item.project) as { n: number }).n;
+    if (unapplied > 0) return 'depends on a protected proposal not yet applied or rejected';
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
@@ -351,6 +360,25 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
       item.project,
     );
     if (review > 0) return 'depends on the review of a protected proposal';
+    // And, the other way (the driver's ruling on Q2): no protected writer
+    // while a specification change of the project is being proposed, or
+    // proposed and not yet applied (its status `proposed` until its
+    // application's finalizer approves it). The request's own correction,
+    // which follows its application, is not held by it.
+    let own: unknown;
+    try {
+      own = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      own = undefined;
+    }
+    const changing = db
+      .prepare(
+        `SELECT r."seq" FROM "spec_change_requests" r LEFT JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE r."project" = ? AND r."id" IS NOT ? AND (r."status" = 'proposed' OR (r."status" = 'requested' AND w."status" IN ('claimed', 'executing', 'awaiting_decision')))
+         ORDER BY r."seq" LIMIT 1`,
+      )
+      .get(item.project, typeof own === 'string' ? own : null) as { seq: number } | undefined;
+    if (changing) return `depends on specification change ${changing.seq}, being proposed or not yet applied`;
   }
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
