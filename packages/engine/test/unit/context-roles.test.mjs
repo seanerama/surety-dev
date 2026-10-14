@@ -185,7 +185,8 @@ test("each role's result schema names the fields the engine reads from that role
   // M3 slice 21 (D3 §5 X2, A.3): a Builder may object to a check.
   assert.deepEqual(props('builder'), ['checkpoint', 'nominate', 'objections', 'status', 'summary']);
   assert.deepEqual(props('architect'), ['checkpoint', 'status', 'summary']);
-  assert.deepEqual(props('verifier'), ['applicability', 'findings', 'proposal', 'severity_changes', 'status', 'summary']);
+  // M5 slice 36 (D6 §4.5; Q6): a Verifier's assessment on a specification change's correction.
+  assert.deepEqual(props('verifier'), ['applicability', 'findings', 'proposal', 'severity_changes', 'spec_applicability', 'status', 'summary']);
   assert.deepEqual(props('reviewer'), ['alpha_exception_proposals', 'assessments', 'dispositions', 'findings', 'proposal_approval', 'severity_changes', 'signoffs', 'status', 'summary']);
   for (const role of ['builder', 'architect', 'verifier', 'reviewer']) {
     const s = resultSchema(role);
