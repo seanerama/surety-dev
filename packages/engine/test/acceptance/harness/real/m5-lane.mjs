@@ -475,33 +475,47 @@ export async function m5Activation(ctx, row, content) {
 
 // ---- the project's setup (the runner's, through the owner's routes) ---------------------------
 
-// The roles on the real backend with Q6's models, the day limit and the
-// journey's keys, through the owner's route (POST …/policy); a loosening of
-// `alpha_deploy` (manual to on_phase_complete) is a widening the owner
-// confirms (E143 item 1): the route answers 409 `confirm_required` with a
-// `policy_widening` decision, which Sean answers (printed) and the rehearsal
-// answers itself. `role_memory_max` is left at its default (the entries'
-// profile).
-export async function projectPolicy(ctx, fx, project, { widen = {}, dayUsd = REAL.dayVerifiedUsd.pathOne, ...extra } = {}) {
-  const change = { ...realPolicy(dayUsd), budget_run_billable_tokens: JOURNEY_BUDGET.budget_run_billable_tokens, ...ROLE_MODELS, backend_builder: 'claude', backend_verifier: 'claude', backend_reviewer: 'claude', backend_architect: 'claude', backend_spec_writer: 'claude', backend_vision: 'claude', ...extra };
-  const revision = async () => (await fx.engine.get(`/v1/projects/${project}/policy`)).body?.revision ?? 0;
-  const before = await revision();
-  const res = await fx.engine.post(`/v1/projects/${project}/policy`, change);
-  if (res.status !== 200) notEstablished('the project\'s policy', 'the owner\'s policy change was refused', { status: res.status, text: res.text });
-  await pollUntil(async () => ((await revision()) > before ? true : undefined), { timeoutMs: 120_000, everyMs: 1_000, what: 'the policy revision to be effective' });
-  const out = { change, status: res.status, widened: null };
-  if (Object.keys(widen).length > 0) {
-    const w = await fx.engine.post(`/v1/projects/${project}/policy`, widen);
-    if (w.status !== 200 && !(w.status === 409 && w.body?.code === 'confirm_required')) notEstablished('the project\'s policy', 'the widening was refused', { status: w.status, text: w.text });
-    if (w.status === 409) {
-      await drive(ctx, fx, project, async () => {
-        const r = await fx.engine.get(`/v1/projects/${project}/policy`);
-        return Object.entries(widen).every(([k, v]) => r.body?.effective?.[k] === v) ? true : undefined;
-      }, { expect: ['policy_widening'], what: `the widening of ${Object.keys(widen).join(', ')} (E143 item 1)`, timeoutMs: ctx.waitMinutes * 60_000 });
+// The runner's setup of a project, printed as such (the driver's ruling,
+// 2026-10-14): each is an act through the owner's route, recorded in
+// `observed/` and in its step's value in state.json, never a silent act.
+export function setupNote(ctx, row, key, what, detail) {
+  tellSean(ctx, `SURETY REAL LANE: setup (the runner's, through the owner's route): ${what}`);
+  observe(ctx, row, `setup_${key}`, detail);
+  return { setup: key, what, detail };
+}
+
+// The project's policy (POST …/policy): the roles on the real backend with
+// Q6's models, the day limit and the journey's keys, as one ordinary
+// change; then the widenings (E143 item 1) as one change, the run bound
+// raised to Sean's cap and, for M443, `alpha_deploy` loosened to
+// `on_phase_complete`: the route answers 409 `confirm_required` with a
+// `policy_widening` decision, printed for Sean with its preview hash and
+// waited for (the rehearsal answers it itself). `role_memory_max` is left
+// at its default (the entries' profile).
+export async function projectPolicy(ctx, row, fx, project, { widen = {}, dayUsd = REAL.dayVerifiedUsd.pathOne, ...extra } = {}) {
+  const change = { ...realPolicy(dayUsd), ...ROLE_MODELS, backend_builder: 'claude', backend_verifier: 'claude', backend_reviewer: 'claude', backend_architect: 'claude', backend_spec_writer: 'claude', backend_vision: 'claude', ...extra };
+  delete change.budget_run_billable_tokens;
+  const wide = { budget_run_billable_tokens: JOURNEY_BUDGET.budget_run_billable_tokens, ...widen };
+  const policyOf = async () => (await fx.engine.get(`/v1/projects/${project}/policy`)).body ?? {};
+  const apply = async (body, what) => {
+    const before = (await policyOf()).revision ?? 0;
+    const res = await fx.engine.post(`/v1/projects/${project}/policy`, body);
+    if (res.status === 200) {
+      await pollUntil(async () => (((await policyOf()).revision ?? 0) > before ? true : undefined), { timeoutMs: 120_000, everyMs: 1_000, what: 'the policy revision to be effective' });
+      return { status: 200, confirmed: false };
     }
-    out.widened = widen;
-  }
-  return out;
+    if (res.status === 409 && res.body?.code === 'confirm_required') {
+      await drive(ctx, fx, project, async () => {
+        const eff = (await policyOf()).effective ?? {};
+        return Object.entries(body).every(([k, v]) => JSON.stringify(eff[k]) === JSON.stringify(v)) ? true : undefined;
+      }, { expect: ['policy_widening'], what: `${what}: a widening the owner confirms (E143 item 1)`, timeoutMs: ctx.waitMinutes * 60_000 });
+      return { status: 409, confirmed: true };
+    }
+    notEstablished('the project\'s policy', `${what} was refused`, { status: res.status, text: res.text });
+  };
+  const ordinary = await apply(change, 'the policy');
+  const widened = await apply(wide, `the widening of ${Object.keys(wide).join(', ')}`);
+  return setupNote(ctx, row, 'policy', `the project's policy (${Object.keys(change).join(', ')}); then, confirmed by the owner, ${Object.entries(wide).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`, { change, widen: wide, ordinary, widened });
 }
 
 // The owner's configuration of `alpha` (PUT …/environments/alpha/config):
@@ -514,20 +528,22 @@ export async function configureAlpha(fx, project) {
   return { environment: res.body.environment, config: res.body.config, content };
 }
 
-// Alpha's configuration once (the owner's route): before the first
-// authoring, so that its Verifier is told the environment's targets and
-// writes the post-deploy check; the qualification step keeps it.
-export async function alphaOnce(fx, project) {
+// Alpha's configuration once (the owner's route), part of the run's setup:
+// before the Architect's session, so that the first authoring's Verifier is
+// told the environment's targets and writes the post-deploy check; the
+// qualification step keeps it.
+export async function alphaOnce(ctx, row, fx, project) {
   const env = one(fx.home, `SELECT e."id" FROM "environments" e JOIN "environment_configs" c ON c."environment" = e."id" WHERE e."project" = ? AND e."name" = 'alpha' LIMIT 1`, project);
-  if (env) return { environment: { id: env.id }, already: true };
-  return configureAlpha(fx, project);
+  if (env) return { setup: 'alpha', already: true, environment: env.id };
+  const c = await configureAlpha(fx, project);
+  return setupNote(ctx, row, 'alpha', `alpha's configuration (PUT /v1/projects/${project}/environments/alpha/config): local_service, target app, \`node server.mjs\` on port ${c.content.port}, the disposable secret ${SECRET_REF} (also allowed its checks)`, { environment: c.environment?.id ?? null, config: c.config?.id ?? null, config_identity: c.config?.config_identity ?? null, port: c.content.port });
 }
 
 // Sean's `surety qualify-adapter local_service` (no model; costs nothing).
 export async function qualifyStep(ctx, row, name, project) {
   return step(ctx, name, () =>
     onEngine(ctx, `${row} ${name}`, { projects: [project] }, async (fx) => {
-      const configured = await alphaOnce(fx, project);
+      const configured = await alphaOnce(ctx, row, fx, project);
       const before = new Set(adapterQualifications(fx.home).map((r) => r.id));
       const runsBefore = new Set(qualificationRuns(fx.home).map((r) => r.id));
       const cli = seanTypes(ctx, fx.home, ['qualify-adapter', 'local_service'], "the adapter's qualification (D4 §2.6): no model, nothing paid");
@@ -634,7 +650,7 @@ export async function m5aCreate(ctx) {
       if (res.status !== 201) notEstablished('m5a_create', 'the project was not created', { status: res.status, text: res.text });
       const project = res.body.project?.id ?? res.body.id;
       await registered(fx, project);
-      const policy = await projectPolicy(ctx, fx, project, { dayUsd: JOURNEY_BUDGET.M443_day_usd, phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
+      const policy = await projectPolicy(ctx, 'M443', fx, project, { dayUsd: JOURNEY_BUDGET.M443_day_usd, phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
       await fx.engine.post(`/v1/projects/${project}/pause`, {});
       const out = { project, repo, idea_from: ideaFile ? `Sean's ${ideaFile}` : 'the reference brief (harness/journey/reference.mjs IDEA_BRIEF)', policy } ;
       observe(ctx, 'M443', 'create', out);
@@ -710,9 +726,9 @@ export async function m5aArchitecture(ctx) {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_architecture', { projects: [project], resume: project }, async (fx) => {
       // Alpha configured before the plan can publish (its authoring may be dispatched at once).
-      await alphaOnce(fx, project);
+      const alpha = await alphaOnce(ctx, 'M443', fx, project);
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture and the first plan', words: ownerSays('Design it from the approved specification and plan phase 1.', 'rehearsal-architecture', TALLY_ARCHITECTURE), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
-      const out = { ...s, plan: { id: s.value.id, generation: s.value.generation } };
+      const out = { ...s, setup: alpha, plan: { id: s.value.id, generation: s.value.generation } };
       observe(ctx, 'M443', 'architecture', out);
       return out;
     });
@@ -725,10 +741,10 @@ export async function m5aPhase1(ctx) {
   return step(ctx, 'm5a_phase1', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_phase1', { projects: [project] }, async (fx) => {
-      const alpha = await alphaOnce(fx, project);
+      const alpha = await alphaOnce(ctx, 'M443', fx, project);
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const one_ = activePlanOf(fx.home, project, 1); const two = activePlanOf(fx.home, project, 2); return one_?.completed_at && two?.published_at ? { phase1: one_.id, phase2: two.id } : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 1 built, verified and complete, and phase 2 planned by the replan' });
-      const out = { ...d, alpha_configured: alpha.environment?.id ?? null, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })), runs: runsOfProject(fx.home, project) };
+      const out = { ...d, setup: alpha, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })), runs: runsOfProject(fx.home, project) };
       observe(ctx, 'M443', 'phase1', out);
       return out;
     });
@@ -895,9 +911,9 @@ export async function m5rAdopt(ctx) {
       await registered(fx, project);
       // The mode first: a policy commit re-raises an open adoption_mode (objection 086).
       const d = await drive(ctx, fx, project, () => rows(fx.home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = 'adoption_mode' AND "status" = 'consumed'`, project)[0], { expect: ['adoption_mode'], answer: () => 'full', what: 'the adoption mode (full, D6 §8.5)' });
-      await projectPolicy(ctx, fx, project, { dayUsd: JOURNEY_BUDGET.M444_day_usd, phase_size: { min: 1, max: 5 } });
+      const policy = await projectPolicy(ctx, 'M444', fx, project, { dayUsd: JOURNEY_BUDGET.M444_day_usd, phase_size: { min: 1, max: 5 } });
       const p = one(fx.home, 'SELECT "adoption" FROM "projects" WHERE "id" = ?', project);
-      const out = { project, source, cli, adoption: json(p?.adoption), mode: json(d.value.answer)?.option ?? null, shown: d.shown };
+      const out = { project, source, cli, adoption: json(p?.adoption), mode: json(d.value.answer)?.option ?? null, shown: d.shown, setup: policy };
       observe(ctx, 'M444', 'adopt', out);
       return out;
     }),
@@ -928,9 +944,9 @@ export async function m5rArchitecture(ctx) {
   return step(ctx, 'm5r_architecture', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_architecture', { projects: [project], resume: project }, async (fx) => {
-      await alphaOnce(fx, project);
+      const alpha = await alphaOnce(ctx, 'M444', fx, project);
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture as it is and the conformance plan', words: ownerSays('Reconstruct the architecture from the code and plan the conformance phase.', 'rehearsal-architecture', sumsArchitecture()), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
-      const out = { ...s, conformance_stages: stagesOf(fx.home, project).filter((x) => x.conformance === 1).map((x) => ({ id: x.id, number: x.number, implements: json(x.implements), conformance_state: x.conformance_state ?? null, source_revision: x.source_revision ?? null })) };
+      const out = { ...s, setup: alpha, conformance_stages: stagesOf(fx.home, project).filter((x) => x.conformance === 1).map((x) => ({ id: x.id, number: x.number, implements: json(x.implements), conformance_state: x.conformance_state ?? null, source_revision: x.source_revision ?? null })) };
       observe(ctx, 'M444', 'architecture', out);
       return out;
     });
@@ -941,11 +957,11 @@ export async function m5rConformance(ctx) {
   return step(ctx, 'm5r_conformance', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_conformance', { projects: [project] }, async (fx) => {
-      await alphaOnce(fx, project);
+      const alpha = await alphaOnce(ctx, 'M444', fx, project);
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const p = activePlanOf(fx.home, project, 1); const st = stagesOf(fx.home, project).find((x) => x.conformance === 1); return p?.completed_at || ['conformed', 'blocked'].includes(st?.conformance_state) ? { plan: p?.id, state: st?.conformance_state ?? null } : undefined; }, { expect: [...CORRECTIONS], what: 'the conformance phase: the authoring with adoption, the conformance stage against A, phase verification' });
       const proposals = rows(fx.home, 'SELECT "id", "status", "classified_change_kind" FROM "protected_proposals" WHERE "project" = ? ORDER BY "seq"', project);
-      const out = { ...d, proposals, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status, conformance: s.conformance, conformance_state: s.conformance_state ?? null, source_revision: s.source_revision ?? null })), builds: workOfProject(fx.home, project, 'stage_build').length, candidates: candidatesOf(fx.home, project).map((c) => ({ id: c.id, seq: c.seq, revision: c.revision, progress: c.progress })) };
+      const out = { ...d, setup: alpha, proposals, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status, conformance: s.conformance, conformance_state: s.conformance_state ?? null, source_revision: s.source_revision ?? null })), builds: workOfProject(fx.home, project, 'stage_build').length, candidates: candidatesOf(fx.home, project).map((c) => ({ id: c.id, seq: c.seq, revision: c.revision, progress: c.progress })) };
       observe(ctx, 'M444', 'conformance', out);
       return out;
     });

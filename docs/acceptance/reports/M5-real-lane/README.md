@@ -77,20 +77,20 @@ Optional: `SURETY_REAL_IDEA_FILE=<your brief>` (M443's idea; without it the refe
 | `m5_attempt_opus` | the Opus attempt in `session_headless` mode, the continuation canary among its canaries, after your `qualification_approval` | yes |
 | `m5_attempt_sonnet` | the Sonnet attempt in `one_shot_headless` mode, after your `qualification_approval` | yes |
 | `m5_activation` | your `trust_activation` of each entry; launches nothing | no |
-| `m5a_create` | the project created with its idea; its policy (Q6's models, the day limit, `phase_size`); `alpha_deploy: on_phase_complete`, a widening you confirm (`policy_widening`, E143 item 1) | no |
+| `m5a_create` | the project created with its idea; its policy (Q6's models, the day limit, `phase_size`), the runner's setup, printed; then the run bound raised to your cap and `alpha_deploy: on_phase_complete`, one widening **you confirm** (`policy_widening`, E143 item 1) | no |
 | `m5a_vision` | optional; skipped and recorded by default | Opus |
 | `m5a_spec` | **your** Spec Writer session, then your `spec_approval` | Opus |
-| `m5a_architecture` | **your** Architect session, then your `architecture_approval` and `plan_approval` | Opus |
+| `m5a_architecture` | alpha's configuration (the runner's setup, printed: `PUT …/environments/alpha/config`); **your** Architect session, then your `architecture_approval` and `plan_approval` | Opus |
 | `m5a_phase1` | the authoring (your answer to the toolchain's proposal), two stages, phase verification, the replan | Sonnet |
 | `m5a_change` | **your** `surety spec change-request`, your `spec_change` answer, the correction (your answer to its proposal) | Sonnet |
-| `m5a_qualify` | alpha configured (the runner, through the owner's route); **your** `surety qualify-adapter local_service` | no |
+| `m5a_qualify` | **your** `surety qualify-adapter local_service` (alpha's configuration kept) | no |
 | `m5a_phase2` | phase 2 to completion | Sonnet |
 | `m5a_alpha` | the engine's request under policy at phase 2's completion, the deployment, the verification; the teardown (`m5a_teardown`) in its `finally` | no |
-| `m5r_adopt` | the M4 repository copied, its head checked, the Surety records removed by one recorded commit; **your** `surety project adopt`; your `adoption_mode` (`full`) | no |
+| `m5r_adopt` | the M4 repository copied, its head checked, the Surety records removed by one recorded commit; **your** `surety project adopt`; your `adoption_mode` (`full`); the policy (the runner's setup, printed), then the run bound raised to your cap, a widening **you confirm** (`policy_widening`) | no |
 | `m5r_spec` | **your** retrofit Spec Writer session; your `requirement_confirm` for each requirement and your `spec_approval` | Opus |
-| `m5r_architecture` | **your** Architect session; your approvals of the conformance plan | Opus |
+| `m5r_architecture` | alpha's configuration (the runner's setup, printed); **your** Architect session; your approvals of the conformance plan | Opus |
 | `m5r_conformance` | the authoring with adoption (your answer to the toolchain), the conformance stage with no Builder against A, phase verification | Sonnet |
-| `m5r_qualify` | alpha configured; **your** `surety qualify-adapter local_service` | no |
+| `m5r_qualify` | **your** `surety qualify-adapter local_service` (alpha's configuration kept) | no |
 | `m5r_deploy` | **your** `surety deploy` of c-1, which opens the Alpha barrier; the teardown (`m5r_teardown`) in its `finally` | no |
 | `m5r_replan` | the change-phase replan, after `alpha_complete` | Sonnet |
 | `m5r_phase2` | one stage by a real Builder | Sonnet |
