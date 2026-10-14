@@ -140,7 +140,7 @@ Every one of D6 Appendix C's 67 statements, its principal row (plan §4.1) and i
 
 ## 17. The pace reads of the real runs
 
-[[PENDING real pace: not yet run; from pace-M443.json, pace-M444.json: model times, tokens, cost and its status, memory.peak per domain, unknown where a figure has no row; never a throughput claim (N01)]]
+[[PENDING real pace: not yet run; from pace-M443.json, pace-M444.json: model times, tokens, cost and its status, memory.peak per domain, unknown where a figure has no row; never a throughput claim (N01)]] [[PENDING unknown usage: not yet run; from the ledger rows of each session turn: any turn whose usage Claude Code did not report, which reserves the run's whole allowance and closes the session (D1 §13.3, kept by Sean's decision of 2026-10-14), stated plainly; the caps in force, Sean's choice of 2026-10-14 (2 000 000 billable tokens per run; 30 and 20 USD a day)]]
 
 ## 18. The memory.peak figures
 

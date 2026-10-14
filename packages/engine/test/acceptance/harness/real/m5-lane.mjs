@@ -104,12 +104,13 @@ export const M443_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet',
 export const M444_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet', 'm5_activation', 'm5r_adopt', 'm5r_spec', 'm5r_architecture', 'm5r_conformance', 'm5r_qualify', 'm5r_deploy', 'm5r_teardown', 'm5r_replan', 'm5r_phase2']);
 
 export const HOME_MAX_BYTES = 56;
-// The journeys' budgets (the Verifier's choice, Sean's to change): a run
-// bound of 1 000 000 billable tokens, since a session is one run whose turns
-// re-send the transcript and add up (D6 §2.6's cumulative budget; M4's 300 000
-// was sized for one one-shot), and a day limit above each journey's estimate
-// (about 5 and 3 USD), so that the limit stops a runaway and not the journey.
-export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 1_000_000, M443_day_usd: 15, M444_day_usd: 10 });
+// The journeys' caps, Sean's choice of 2026-10-14: a run bound of 2 000 000
+// billable tokens (a session is one run whose turns re-send the transcript
+// and add up, D6 §2.6) and day limits of 30 and 20 USD; the estimates stay
+// about 5 and 3 USD. A session turn with unknown usage keeps D1 §13.3's
+// fail-closed behaviour (it reserves the run allowance and the session
+// closes; Sean, 2026-10-14): the report says so plainly if it ever happens.
+export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 2_000_000, M443_day_usd: 30, M444_day_usd: 20 });
 export const SECRET_REF = 'deploy/ref_secret';
 export const SECRET_VAR = 'REF_SECRET';
 export const STEP_HOURS = 4;
@@ -134,7 +135,7 @@ export function costStatement(row) {
       ? '  Three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet (two check authorings, four Builders, four Verifiers, four Reviewers, two phase verifications, one replan, one Spec Writer change run, plus repairs).'
       : '  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks\' roles).',
     `  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).`,
-    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier. The only hard maximum is your subscription's own usage limits.`,
+    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier (caps of Sean's choice, 2026-10-14; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.`,
     'An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.',
   ].join('\n');
 }
@@ -190,12 +191,46 @@ export async function m5Engine(ctx, { production = false } = {}) {
   return { engine, home, port, root: ctx.runDir };
 }
 
+// The step running now (set by `step`), so that a refusal can tell the
+// in-order path from a resumed one.
+let currentStep = null;
+export const step = (ctx, name, fn) =>
+  realStep(ctx, name, async () => {
+    currentStep = name;
+    try {
+      return await fn();
+    } finally {
+      currentStep = null;
+    }
+  });
+
+// Whether this start resumes after a step that did not complete (BS5 §12,
+// the driver's ruling of 2026-10-14): a rerun was named
+// (SURETY_REAL_RERUN), or state.json holds a step other than the one running
+// now that was started or failed and never completed. On the in-order path
+// (each earlier step done) the paused project's own next work is not
+// "earlier work", and nothing is refused for it.
+export function resuming(ctx) {
+  if ((process.env.SURETY_REAL_RERUN ?? '').trim() !== '') return true;
+  let steps = {};
+  try {
+    steps = JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps ?? {};
+  } catch {
+    steps = {};
+  }
+  return Object.entries(steps).some(([name, s]) => name !== currentStep && s?.status !== 'done');
+}
+
 // A step on the run home's engine: the refusals before anything starts, the
 // project resumed if asked, and in `finally` the project paused before the
-// engine stops (BS5 §12).
+// engine stops (BS5 §12). Refused, with nothing started: a loaded unit of
+// the run home's prefix (but for a teardown); and, only when this start
+// resumes after a step that did not complete (`resuming`), work of the
+// journey's projects that could be dispatched or a run not ended (M3's
+// leftovers, as they are).
 export async function onEngine(ctx, path, { projects = [], resume = null, teardown = false, production = false } = {}, fn) {
   if (!teardown) refuseLoadedUnits(ctx, path);
-  refuseLeftovers(path, leftovers(homeOf(ctx), projects.filter(Boolean)), { evenIfPaused: resume !== null });
+  if (resuming(ctx)) refuseLeftovers(path, leftovers(homeOf(ctx), projects.filter(Boolean)), { evenIfPaused: resume !== null });
   const fx = await m5Engine(ctx, { production });
   try {
     if (resume) {
@@ -264,16 +299,28 @@ export async function drive(ctx, fx, project, done, { expect = [], answer = () =
   for (;;) {
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return { value, shown };
-    for (const d of openDecisions(fx.home, project)) {
+    const open = openDecisions(fx.home, project);
+    // The decisions whose chosen option carries no blocker first (a spec
+    // approval waits for each requirement_confirm, D6 §8.1 step 2).
+    const blockedOf = (d) => ((d.options ?? []).find((o) => o.key === answer(d))?.blockers ?? []).length > 0;
+    open.sort((a, b) => Number(blockedOf(a)) - Number(blockedOf(b)));
+    for (const d of open) {
       if (seen.has(d.id)) continue;
-      seen.add(d.id);
       const option = answer(d);
       const options = (d.options ?? []).map((o) => `${o.key}${(o.blockers ?? []).length > 0 ? ` (blocked: ${(o.blockers ?? []).join(', ')})` : ''}`);
+      // Under the rehearsal a blocked option waits while another decision is open to answer.
+      if (ctx.rehearsal && blockedOf(d) && open.some((x) => x.id !== d.id && !seen.has(x.id))) continue;
+      seen.add(d.id);
       shown.push({ kind: d.kind, id: d.id, options, at: new Date().toISOString() });
       if (ctx.rehearsal) {
         if (!expect.includes(d.kind)) notEstablished(what, `an unexpected decision ${d.kind} ${d.id} (${options.join(', ')})`);
         tellSean(ctx, `SURETY REAL LANE REHEARSAL: the harness answers ${d.kind} ${d.id} itself with "${option}" (SURETY_REAL_REHEARSAL=1).`);
         const res = await fx.engine.post(answerPath(project, d), { option, preview_hash: d.preview_hash });
+        if (res.status === 409 && open.some((x) => x.id !== d.id)) {
+          // Refused while others are open (an option blocked until they are answered): asked again next round.
+          seen.delete(d.id);
+          continue;
+        }
         if (res.status !== 200) notEstablished(what, `answering ${d.kind} ${d.id} with ${option} was refused`, { status: res.status, text: res.text });
       } else {
         tellSean(
@@ -343,7 +390,7 @@ const entryFor = (home, ctx, q) => trustEntries(home).find((e) => e.backend === 
 const FINAL = ['succeeded', 'failed', 'invalidated'];
 
 export async function m5Attempt(ctx, row, q) {
-  return realStep(ctx, q.step, () =>
+  return step(ctx, q.step, () =>
     onEngine(ctx, `${row} ${q.step}`, { production: true }, async (fx) => {
       const have = entryFor(fx.home, ctx, q);
       if (have) return { path: 'already_active', entry: have.id };
@@ -395,7 +442,7 @@ export function rehearsalScript(ctx, content) {
 }
 
 export async function m5Activation(ctx, row, content) {
-  return realStep(ctx, 'm5_activation', () =>
+  return step(ctx, 'm5_activation', () =>
     onEngine(ctx, `${row} m5_activation`, {}, async (fx) => {
       const out = {};
       for (const q of QUALIFY) {
@@ -469,7 +516,7 @@ export async function configureAlpha(fx, project) {
 
 // Sean's `surety qualify-adapter local_service` (no model; costs nothing).
 export async function qualifyStep(ctx, row, name, project) {
-  return realStep(ctx, name, () =>
+  return step(ctx, name, () =>
     onEngine(ctx, `${row} ${name}`, { projects: [project] }, async (fx) => {
       const configured = await configureAlpha(fx, project);
       const before = new Set(adapterQualifications(fx.home).map((r) => r.id));
@@ -486,7 +533,7 @@ export async function qualifyStep(ctx, row, name, project) {
 // ---- the teardown (BS5 §12; M4's form) --------------------------------------------------------
 
 export async function teardownStep(ctx, row, name, project, given = null) {
-  return realStep(ctx, name, async () => {
+  return step(ctx, name, async () => {
     const home = homeOf(ctx);
     const body = async (fx) => {
       const envRow = one(fx.home, 'SELECT "id", "name" FROM "environments" WHERE "project" = ? AND "name" = ?', project, 'alpha') ?? null;
@@ -560,7 +607,7 @@ const registered = (fx, project) => pollUntil(() => one(fx.home, `SELECT "id" FR
 const tallyName = 'm5-real-tally';
 
 export async function m5aCreate(ctx) {
-  return realStep(ctx, 'm5a_create', () =>
+  return step(ctx, 'm5a_create', () =>
     onEngine(ctx, 'M443 m5a_create', {}, async (fx) => {
       const repo = join(ctx.runDir, 'repos', 'tally');
       if (!existsSync(join(repo, '.git'))) {
@@ -620,7 +667,7 @@ async function sessionStep(ctx, fx, project, role, { words, what, expect, answer
 }
 
 export async function m5aVision(ctx) {
-  return realStep(ctx, 'm5a_vision', async () => {
+  return step(ctx, 'm5a_vision', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     const choice = process.env.SURETY_REAL_VISION ?? 'skip';
     if (choice === 'skip' || ctx.rehearsal) {
@@ -638,7 +685,7 @@ export async function m5aVision(ctx) {
 }
 
 export async function m5aSpec(ctx) {
-  return realStep(ctx, 'm5a_spec', async () => {
+  return step(ctx, 'm5a_spec', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_spec', { projects: [project], resume: project }, async (fx) => {
       const s = await sessionStep(ctx, fx, project, 'spec_writer', { what: 'the specification', words: ownerSays('Write the specification from the accepted idea, at the standard tier, two phases.', 'rehearsal-owner', tallyBrief()), expect: ['spec_approval'], done: () => specVersions(fx.home, project)[0] });
@@ -650,7 +697,7 @@ export async function m5aSpec(ctx) {
 }
 
 export async function m5aArchitecture(ctx) {
-  return realStep(ctx, 'm5a_architecture', async () => {
+  return step(ctx, 'm5a_architecture', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_architecture', { projects: [project], resume: project }, async (fx) => {
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture and the first plan', words: ownerSays('Design it from the approved specification and plan phase 1.', 'rehearsal-architecture', TALLY_ARCHITECTURE), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
@@ -664,7 +711,7 @@ export async function m5aArchitecture(ctx) {
 const CORRECTIONS = ['check_correction_unclassifiable', 'check_correction_tightening', 'check_correction_loosening'];
 
 export async function m5aPhase1(ctx) {
-  return realStep(ctx, 'm5a_phase1', async () => {
+  return step(ctx, 'm5a_phase1', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_phase1', { projects: [project], resume: project }, async (fx) => {
       const d = await drive(ctx, fx, project, () => { const one_ = activePlanOf(fx.home, project, 1); const two = activePlanOf(fx.home, project, 2); return one_?.completed_at && two?.published_at ? { phase1: one_.id, phase2: two.id } : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 1 built, verified and complete, and phase 2 planned by the replan' });
@@ -676,7 +723,7 @@ export async function m5aPhase1(ctx) {
 }
 
 export async function m5aChange(ctx) {
-  return realStep(ctx, 'm5a_change', async () => {
+  return step(ctx, 'm5a_change', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_change', { projects: [project], resume: project }, async (fx) => {
       const file = join(ctx.runDir, 'change-request.md');
@@ -715,11 +762,11 @@ export async function m5aPhase2(ctx) {
   const phaseDone = (() => { try { return JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps?.m5a_phase2?.status === 'done'; } catch { return false; } })();
   if (phaseDone) return m5aAlpha(ctx);
   refuseLoadedUnits(ctx, 'M443 m5a_phase2');
-  refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
+  if (resuming(ctx)) refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
   const fx = await m5Engine(ctx);
   try {
     await fx.engine.post(`/v1/projects/${project}/resume`, {});
-    await realStep(ctx, 'm5a_phase2', async () => {
+    await step(ctx, 'm5a_phase2', async () => {
       const d = await drive(ctx, fx, project, () => activePlanOf(fx.home, project, 2)?.completed_at ?? undefined, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 2 built, verified and complete' });
       const out = { ...d, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })) };
       observe(ctx, 'M443', 'phase2', out);
@@ -745,7 +792,7 @@ export async function m5aAlpha(ctx, given = null) {
   const { project } = stepValue(ctx, 'm5a_create');
   const run = async (fx) => {
     try {
-      return await realStep(ctx, 'm5a_alpha', async () => {
+      return await step(ctx, 'm5a_alpha', async () => {
         const d = await drive(ctx, fx, project, () => candidatesOf(fx.home, project).find((c) => c.progress === 'alpha_deployed'), { expect: [], what: 'Alpha requested under policy, deployed and verified (alpha_deployed)', timeoutMs: 2 * HOURS });
         const out = { candidate: { id: d.value.id, progress: d.value.progress }, requests: deploymentRequestsOf(fx.home, project).map((r) => ({ id: r.id, requested_by: r.requested_by, status: r.status, request_key: json(r.request_key) })), alpha_authorize: evaluationsOf(fx.home, project, 'alpha_authorize').at(-1) ?? null, alpha_complete: evaluationsOf(fx.home, project, 'alpha_complete').at(-1) ?? null, host: hostWhileRunning(ctx), shown: d.shown };
         observe(ctx, 'M443', 'alpha', out);
@@ -826,7 +873,7 @@ function adoptedSource(ctx) {
 }
 
 export async function m5rAdopt(ctx) {
-  return realStep(ctx, 'm5r_adopt', () =>
+  return step(ctx, 'm5r_adopt', () =>
     onEngine(ctx, 'M444 m5r_adopt', {}, async (fx) => {
       const source = adoptedSource(ctx);
       const before = new Set(rows(fx.home, 'SELECT "id" FROM "projects"').map((r) => r.id));
@@ -845,7 +892,7 @@ export async function m5rAdopt(ctx) {
 }
 
 export async function m5rSpec(ctx) {
-  return realStep(ctx, 'm5r_spec', async () => {
+  return step(ctx, 'm5r_spec', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_spec', { projects: [project], resume: project }, async (fx) => {
       const s = await sessionStep(ctx, fx, project, 'spec_writer', {
@@ -865,7 +912,7 @@ export async function m5rSpec(ctx) {
 }
 
 export async function m5rArchitecture(ctx) {
-  return realStep(ctx, 'm5r_architecture', async () => {
+  return step(ctx, 'm5r_architecture', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_architecture', { projects: [project], resume: project }, async (fx) => {
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture as it is and the conformance plan', words: ownerSays('Reconstruct the architecture from the code and plan the conformance phase.', 'rehearsal-architecture', sumsArchitecture()), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
@@ -877,7 +924,7 @@ export async function m5rArchitecture(ctx) {
 }
 
 export async function m5rConformance(ctx) {
-  return realStep(ctx, 'm5r_conformance', async () => {
+  return step(ctx, 'm5r_conformance', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_conformance', { projects: [project], resume: project }, async (fx) => {
       const d = await drive(ctx, fx, project, () => { const p = activePlanOf(fx.home, project, 1); const st = stagesOf(fx.home, project).find((x) => x.conformance === 1); return p?.completed_at || ['conformed', 'blocked'].includes(st?.conformance_state) ? { plan: p?.id, state: st?.conformance_state ?? null } : undefined; }, { expect: [...CORRECTIONS], what: 'the conformance phase: the authoring with adoption, the conformance stage against A, phase verification' });
@@ -895,7 +942,7 @@ export const m5rQualify = (ctx) => qualifyStep(ctx, 'M444', 'm5r_qualify', stepV
 // the verification, `alpha_deployed`, the barrier open; the host read; the
 // teardown in `finally`.
 export async function m5rDeploy(ctx) {
-  return realStep(ctx, 'm5r_deploy', async () => {
+  return step(ctx, 'm5r_deploy', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     refuseLoadedUnits(ctx, 'M444 m5r_deploy');
     const fx = await m5Engine(ctx);
@@ -922,7 +969,7 @@ export async function m5rDeploy(ctx) {
 export const m5rTeardown = (ctx) => teardownStep(ctx, 'M444', 'm5r_teardown', stepValue(ctx, 'm5r_adopt').project);
 
 export async function m5rReplan(ctx) {
-  return realStep(ctx, 'm5r_replan', async () => {
+  return step(ctx, 'm5r_replan', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_replan', { projects: [project], resume: project }, async (fx) => {
       const d = await drive(ctx, fx, project, () => { const p = activePlanOf(fx.home, project, 2); return p?.published_at ? p : undefined; }, { expect: ['plan_approval'], what: 'the change-phase replan after alpha_complete, phase 2 published' });
@@ -934,7 +981,7 @@ export async function m5rReplan(ctx) {
 }
 
 export async function m5rPhase2(ctx) {
-  return realStep(ctx, 'm5r_phase2', async () => {
+  return step(ctx, 'm5r_phase2', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_phase2', { projects: [project], resume: project }, async (fx) => {
       const plan = activePlanOf(fx.home, project, 2);
