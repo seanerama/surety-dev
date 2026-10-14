@@ -512,11 +512,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const discoveryPaths = [...new Set(discoveryErrorsOf(db, scope.effective.id).map((e) => e.path))];
   // A check with an unresolved spec-change obligation (D6 §4.5, B05) is
   // named until the correction lands: the scope is not complete.
-  const owed = new Set(
-    (db.prepare(`SELECT DISTINCT "key" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(args.project) as { key: string }[]).map((o) => o.key),
-  );
-  const obligated = scope.required.filter((c) => owed.has(c.key)).map((c) => c.id);
-  const missingNamed = [...missingSubjects(scope.missing), ...obligated];
+  const missingNamed = [...missingSubjects(scope.missing), ...obligationsHolding(db, args.project, scope)];
   const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
   if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
   // The `phase` gate's own (D6 §5.8; A.4; K5, B07): an assigned requirement
@@ -916,6 +912,29 @@ function completeStageWork(tx: Tx, candidate: CandidateRow, stage: string, evalu
   // The stage is verified with its satisfied gate (D6 §5.8: a phase waits for
   // every stage `verified` at T2 and T3).
   tx.db.prepare(`UPDATE "stages" SET "status" = 'verified' WHERE "id" = ? AND "status" = 'integrated'`).run(stage);
+}
+
+// The unresolved `spec_changed` obligations that hold a scope (D6 §4.5;
+// B05; the driver's ruling on M401's T1 run, slice 37): one on a check the
+// scope requires, named by the check's id; and one on a check this gate
+// kind does not require (a stage check, at the phase gate or
+// alpha_authorize or alpha_complete) whose criteria are of a requirement the
+// candidate delivers, named `obligation:<key>`.
+export function obligationsHolding(db: Db, project: string, scope: { required: { id: string; key: string }[]; delivered: string[] }): string[] {
+  const owed = db.prepare(`SELECT DISTINCT "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(project) as { key: string; criteria: string }[];
+  if (owed.length === 0) return [];
+  const owedKeys = new Set(owed.map((o) => o.key));
+  const obligated = scope.required.filter((c) => owedKeys.has(c.key)).map((c) => c.id);
+  const requiredKeys = new Set(scope.required.map((c) => c.key));
+  const delivered = new Set(scope.delivered);
+  const owner = new Map<string, string[]>();
+  for (const r of db.prepare('SELECT "id", "key", "criteria" FROM "requirements" WHERE "project" = ?').all(project) as { id: string; key: string; criteria: string | null }[]) {
+    for (const c of parseJson<string[]>(r.criteria) ?? []) owner.set(c, [r.id, r.key]);
+  }
+  const elsewhere = owed
+    .filter((o) => !requiredKeys.has(o.key) && (parseJson<string[]>(o.criteria) ?? []).some((c) => (owner.get(c) ?? []).some((x) => delivered.has(x))))
+    .map((o) => `obligation:${o.key}`);
+  return [...obligated, ...new Set(elsewhere)];
 }
 
 // The candidate's verification work: the item its nomination registered.

@@ -176,6 +176,12 @@ export class Scheduler {
     // state at every tick, so a failure recorded while its item was not yet
     // verifying is repaired by the next tick at the latest.
     await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
+    // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
+    const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
+      log('awaiting sweep', err, { project });
+      return null;
+    });
+    if (swept && swept.unexplained.length > 0) log('awaiting sweep', new Error(`work items awaiting a decision with nothing to ask: ${swept.unexplained.join(', ')}`), { project });
     // The candidates' module presence (D3 §4.1), before Gates and Checks: a
     // registration owed for want of it is made once it is read (L2).
     await ensurePresence(this.rt, project).catch((err) => log('module presence', err, { project }));

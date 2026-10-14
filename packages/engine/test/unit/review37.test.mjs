@@ -275,3 +275,60 @@ test('an approved proposal whose changes conflict with the head is rejected nami
   const item = h.db.prepare(`SELECT status FROM work_items WHERE id = 'wi_a'`).get();
   assert.notEqual(item.status, 'awaiting_decision', `the item is not left waiting on nothing (${item.status})`);
 });
+
+// ---- no item awaits nothing (the T1 runs' wedge) ---------------------------------------------
+
+const { registerAwaiting, settleAwaiting } = await import(join(dist, 'store', 'transitions', 'awaiting.js'));
+const { registerAfterTransition } = await import(join(dist, 'store', 'transitions', 'tx.js'));
+const { raiseQuestion } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { CORRECTION_KIND } = await import(join(dist, 'store', 'transitions', 'protected.js'));
+const { correctionProposalDecided } = await import(join(dist, 'spec', 'change.js'));
+const { transitionWork, getWorkItem } = await import(join(dist, 'store', 'transitions', 'work.js'));
+registerAwaiting({ raiseQuestion: (tx, a) => raiseQuestion(tx, a), correctionKind: (k) => (k === null ? undefined : CORRECTION_KIND[k]), proposalDecided: (tx, a) => correctionProposalDecided(tx, a) });
+registerAfterTransition(settleAwaiting);
+
+test('no item enters awaiting_decision without what it waits on: a classified proposal with no open question has it raised; a decided one ends the wait', (t) => {
+  const h = store(t);
+  h.plan('plan_1', 1);
+  h.item('wi_a', 'check_authoring', { phase_plan: 'plan_1' }, 'executing');
+  h.runOf('run_a', 'wi_a');
+  h.run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status, classified_change_kind) VALUES ('prop_a', ?, 'prj_1', 1, 'verifier_run', 'run_a', 'b', 't', 'd', 'tightening', 'awaiting_human', 'unclassifiable')`, AT);
+  // The item enters awaiting_decision on a proposal whose question was never raised.
+  transact(h.db, ENGINE_ACTOR, (tx) =>
+    transitionWork(tx, getWorkItem(tx, 'wi_a'), 'awaiting_decision', { blocker: JSON.stringify({ reason: 'correction_proposed', raised_at: AT, proposal: 'prop_a' }) }, {}),
+  );
+  const q = h.db.prepare(`SELECT kind, status FROM decisions WHERE subject_id = 'prop_a'`).all();
+  assert.deepEqual(q.map((d) => [d.kind, d.status]), [['check_correction_unclassifiable', 'open']], 'its question is raised in the same transaction');
+});
+
+test('an item that would be left awaiting with nothing to ask is refused where the transition is made', (t) => {
+  const h = store(t);
+  h.item('wi_x', 'verification', {}, 'executing');
+  assert.throws(
+    () => transact(h.db, ENGINE_ACTOR, (tx) => transitionWork(tx, getWorkItem(tx, 'wi_x'), 'awaiting_decision', { blocker: JSON.stringify({ reason: 'made_up', raised_at: AT }) }, {})),
+    /awaiting_decision with no decision it waits on|illegal/,
+  );
+  assert.equal(h.db.prepare(`SELECT status FROM work_items WHERE id = 'wi_x'`).get().status, 'executing', 'nothing was written');
+});
+
+// ---- obligations hold the scope ---------------------------------------------------------------
+
+const { obligationsHolding } = await import(join(dist, 'store', 'transitions', 'gates.js'));
+const { manifestChanges } = await import(join(dist, 'store', 'transitions', 'decisions.js'));
+
+test("an unresolved spec_changed obligation holds a scope: on a required check by its id; on a check this gate does not require, when its criteria are of a delivered requirement", (t) => {
+  const h = store(t);
+  h.run(`INSERT INTO requirements (id, created_at, project, key, text_ref, criteria, status) VALUES ('req_2', ?, 'prj_1', 'R2', 't', '["R2.1","R2.2"]', 'active'), ('req_4', ?, 'prj_1', 'R4', 't', '["R4.1"]', 'active')`, AT, AT);
+  const owe = (id, key, criterion, resolved = null) =>
+    h.run(`INSERT INTO check_obligations (id, created_at, project, "check", key, criteria, generation, reason, resolved_at) VALUES (?, ?, 'prj_1', 'chk', ?, ?, 2, 'spec_changed', ?)`, id, AT, key, JSON.stringify([criterion]), resolved);
+  owe('o1', 'accept-r2', 'R2.1');
+  owe('o2', 'accept-r4', 'R4.1');
+  owe('o3', 'done', 'R2.2', AT);
+  const scope = { required: [{ id: 'chk_r2', key: 'accept-r2' }, { id: 'chk_smoke', key: 'smoke' }], delivered: ['req_2', 'req_4'] };
+  assert.deepEqual(obligationsHolding(h.db, 'prj_1', scope).sort(), ['chk_r2', 'obligation:accept-r4']);
+  assert.deepEqual(obligationsHolding(h.db, 'prj_1', { required: [{ id: 'chk_smoke', key: 'smoke' }], delivered: ['req_1'] }), [], 'an obligation of a requirement the candidate does not deliver holds nothing');
+});
+
+test('a manifest invalidation records what moved, by path', () => {
+  assert.deepEqual(manifestChanges(JSON.stringify({ a: { x: 1, y: [1, 2] }, b: 2 }), { a: { x: 1, y: [1, 3] }, b: 2, c: 1 }), ['.a.y.1', '.c']);
+});

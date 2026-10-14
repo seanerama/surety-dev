@@ -884,6 +884,24 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // The refused request keeps its evaluation on the proposed row (A.3:
     // the outcome and its reasons retained, SEAM.md §354).
     tx.db.prepare(`UPDATE "deployment_authorizations" SET "evaluation" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(evaluation.id, auth.id);
+    // The policy's request refused only for what is still settling (a git
+    // operation of the project's journal in flight, a pending read): no
+    // outcome is recorded under its key, so the next tick requests again
+    // (under D6 K2 another run's integration is often in flight; a
+    // not_issued here would end the policy's deployment for good).
+    const reasons = (evaluation.reasons as { code: string }[] | undefined) ?? [];
+    const settling = reasons.length > 0 && reasons.every((r) => typeof r.code === 'string' && r.code.endsWith('_PENDING'));
+    if (requestedBy === 'policy' && settling) {
+      return {
+        status: 409,
+        body: {
+          code: 'authorization_not_issued',
+          reason: `The ${env.name} deployment of candidate ${candidate.id} is not authorized yet: ${reasons.map((r) => r.code).join(', ')}; the policy requests it again at the next tick.`,
+          what_to_do: 'Nothing: the policy requests it again once the pending work settles.',
+          subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
+        },
+      };
+    }
     record(auth.id, 'not_issued');
     return {
       status: 409,
