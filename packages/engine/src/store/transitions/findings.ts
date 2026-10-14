@@ -36,7 +36,7 @@ export interface Report {
   objections?: { check: string; criterion?: string; category: string; message: string }[];
   // An Architect's replan (D6 §5.6): the plan it wrote, its declaration.
   plan?: string;
-  roadmap_revision?: string;
+  roadmap_revision?: string | boolean;
   adrs_changed?: string[];
   conformance?: 'within_baseline' | 'uncertain';
   notes?: string;

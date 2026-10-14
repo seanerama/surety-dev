@@ -283,7 +283,7 @@ export function replanPromptText(r: ReplanFacts): string[] {
 export const REPLAN_RESULT_FIELDS: Record<string, Record<string, unknown>> = {
   plan: { type: 'string', pattern: '^phase-[1-9][0-9]*$', description: 'The plan you wrote: "phase-<n>".' },
   conformance: { enum: ['within_baseline', 'uncertain'], description: 'within_baseline if you changed nothing of the architecture, module map, ADRs or roadmap; uncertain otherwise. A declaration only adds uncertainty: the engine computes what changed.' },
-  roadmap_revision: { type: 'string', description: 'Why you changed the roadmap, if you did.' },
+  roadmap_revision: { type: ['boolean', 'string'], description: 'Whether your replan revises the roadmap (B.7: a boolean); a string giving why is accepted too. Routing is computed from the artifacts, never from this.' },
   adrs_changed: { type: 'array', items: { type: 'string' }, description: 'The keys of the ADRs you added or changed.' },
   notes: { type: 'string' },
 };

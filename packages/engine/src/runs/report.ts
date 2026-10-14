@@ -73,7 +73,10 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §5.6: an Architect's replan names the plan it wrote and declares its
   // conformance (a declaration adds uncertainty only, §5.4).
   plan: (v) => isString(v) && /^phase-[1-9][0-9]*$/.test(v),
-  roadmap_revision: (v) => isString(v),
+  // B.7: `roadmap_revision?: bool` (the Architect's declaration that its
+  // replan revises the roadmap; routing is computed, never taken from it).
+  // A string, as earlier packages wrote it, is accepted too.
+  roadmap_revision: (v) => typeof v === 'boolean' || isString(v),
   adrs_changed: (v) => Array.isArray(v) && v.every(isString),
   conformance: (v) => v === 'within_baseline' || v === 'uncertain',
   notes: (v) => isString(v),
