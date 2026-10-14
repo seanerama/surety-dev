@@ -827,6 +827,9 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
     if (reg.kind === 'integration') invalidateLineageEvidence(tx, row.project);
     else markStale(tx, { project: row.project });
     tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'adopt', ref: reg.ref, adopted: row.found });
+    // A question bound to the head the move left is asked again against
+    // the adopted one in this transaction (M53 case 8).
+    if (reg.kind === 'integration') refreshDecisions(tx, row.project);
     return consumed(d, [{ kind: 'tick' }]);
   }
   const deadline = engineSettings().git_deadline;
@@ -1946,7 +1949,19 @@ export function effectFailed(tx: Tx, op: { id: string; inputs: Record<string, un
 // `project` null: the engine-scoped decisions (SEAM.md §117), which no project
 // escalates or notifies about.
 export function reviewDecisions(tx: Tx, args: { project: string | null; channel: string }): { escalated: number } {
-  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" IS ? AND "status" = 'open' ORDER BY "seq"`).all(args.project) as DecisionRow[];
+  refreshDecisions(tx, args.project);
+  let escalated = 0;
+  if (args.project === null) return { escalated };
+  return { escalated: escalateDecisions(tx, { project: args.project, channel: args.channel }) };
+}
+
+// The review's first half: every open decision of the project computed
+// again, invalidated or raised in its next generation when what it rests on
+// changed. Also run in a transaction that moves what decisions rest on,
+// so a question is asked again against it at once (an adopted move of the
+// integration branch: the driver's ruling on M53 case 8, slice 37).
+export function refreshDecisions(tx: Tx, project: string | null): void {
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" IS ? AND "status" = 'open' ORDER BY "seq"`).all(project) as DecisionRow[];
   for (const d of open) {
     const spec = KINDS[d.kind as DecisionKind];
     if (!spec || d.kind === 'out_of_band_change') continue;
@@ -1962,8 +1977,10 @@ export function reviewDecisions(tx: Tx, args: { project: string | null; channel:
     }
     raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
   }
+}
+
+function escalateDecisions(tx: Tx, args: { project: string; channel: string }): number {
   let escalated = 0;
-  if (args.project === null) return { escalated };
   const now = Date.parse(tx.at);
   const aging = tx.db
     .prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' AND "escalated_at" IS NULL AND "target_seconds" IS NOT NULL ORDER BY "seq"`)
@@ -1979,7 +1996,7 @@ export function reviewDecisions(tx: Tx, args: { project: string | null; channel:
     tx.emit('notification.queued', { project: d.project, notification: id, decision: d.id }, { channel: args.channel });
     escalated++;
   }
-  return { escalated };
+  return escalated;
 }
 
 // The open decision of a kind about a subject, if any.

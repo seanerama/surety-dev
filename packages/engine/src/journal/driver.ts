@@ -328,6 +328,14 @@ export class Journal {
             await pausePoint(`journal.${op.kind}.reconciled`);
             return { op: await this.detail(op.id), end: 'failed', receipts: {} };
           }
+          // Moved somewhere else (by hand): nothing of the update was ever
+          // attempted, so its outcome is not unknown. It is attempted now and
+          // git's compare-and-swap decides: refused because the old value does
+          // not match, it is a definite failure without effect, never an
+          // ambiguity (the driver's ruling on M53 case 8, slice 37; D1 §7.10's
+          // probe and its ambiguous outcome are for an outcome not known). The
+          // move itself is integrity's to observe, out of band.
+          if (found !== 'unknown') return this.execute(op);
         }
         return this.block(op, outcome);
     }
