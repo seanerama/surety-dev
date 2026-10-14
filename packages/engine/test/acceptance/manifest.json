@@ -458,7 +458,8 @@
       "M438-the-profile-maxima-on-the-real-boundary.test.mjs",
       "M439-memory-peak-recorded.test.mjs",
       "M451-the-qualified-profile-on-a-real-domain.test.mjs",
-      "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs"
+      "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
+      "M437-a-run-validated-after-another-runs-integration.test.mjs"
     ]
   },
   "sandbox": [

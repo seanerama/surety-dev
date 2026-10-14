@@ -6868,6 +6868,12 @@ Accepted cases that relied on nothing ticking between the case's own ticks, or o
 - **M441 (f)**, the peak of a domain across a restart, on the real boundary (`M441-the-peak-across-a-restart-on-the-real-boundary`, sandbox): an ended domain keeps the peak recorded for it, and its run its own host observation, after a restart with a changed setting; a domain removed by the restart's recovery shows its peak as recorded (read before its cgroup's removal, with its `domain.peak_recorded`) or `unknown`, never zero. The kernel file keeps the kernel lane's `unknown`.
 - **Objection 104** (the driver's ruling 3): the T1 variant's `alphaReady` queues one scripted deploy answer per deployment the journey makes (two under `on_phase_complete`), and **`alphaDeployed(…, {newest: true})`** † expects the project's newest candidate (by `seq`) to reach `alpha_deployed`.
 
+## 450. A run validated after another run of its project integrated (the slice-37 review's S1; M437; the driver's ruling, 2026-10-14)
+
+- **The ruling:** a ref moved by an engine-journaled operation is never a `ref_violation`. Under K2 two runs of one project can be under way, one integrating (moving `refs/heads/main` through the journal) while the other is between the read of its facts and its outside validation; the second completes.
+- **Barrier `snapshot.before_validate_outside`** † (harness mode only; `pause` or `kill`, armed as §33 says, at start or while the engine runs): fires once, the first time a run's snapshot validation reaches the point after the run's facts (its baseline, the registered refs it expects, the other managed checkouts) are read and before `validateOutside` checks the registered refs and the other managed checkouts against them. While it waits the API answers and the run's end waits there; other runs go on (their integration included). The barrier's list entry names it with `state` `waiting` (§18).
+- **The case** (`M437-a-run-validated-after-another-runs-integration`, kernel, manifest slice 37): two independent stages of one project; B's Builder finishes first and is held at the barrier; A's Builder finishes and A integrates through the journal; B released: `completed`/`none`, integrated by rebase onto A's integration (by ancestry), one run, not parked.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35", "M5 slice 36" and "M5 slice 37".
