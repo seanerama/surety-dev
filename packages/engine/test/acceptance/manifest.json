@@ -435,6 +435,27 @@
       "M433-old-generation-runs-and-what-resolves-an-obligation.test.mjs",
       "M434-an-unassigned-requirement.test.mjs",
       "M422-the-latest-save-by-insertion-not-wall-time.test.mjs"
+    ],
+    "37": [
+      "M435-check-authoring-and-readiness.test.mjs",
+      "M435-the-proposal-class-and-the-coverage.test.mjs",
+      "M436-the-autonomy-profiles.test.mjs",
+      "M436-the-floor-under-phase.test.mjs",
+      "M437-order-and-dependencies.test.mjs",
+      "M437-pipelining-and-parallel-builds.test.mjs",
+      "M438-the-envelope-as-built.test.mjs",
+      "M440-the-requested-tick.test.mjs",
+      "M440-a-storm-of-completions.test.mjs",
+      "M441-the-pace-read-after-the-journey.test.mjs",
+      "M441-the-pace-read-from-recorded-observations.test.mjs",
+      "M450-deferred-authoring-and-the-exception.test.mjs",
+      "M451-the-profile-is-part-of-the-qualification.test.mjs",
+      "M429-a-phase-sign-off-on-a-superseded-candidate.test.mjs",
+      "M407-an-unexpected-preparation-error.test.mjs",
+      "M436-the-phase-profile-on-the-project-lane.test.mjs",
+      "M438-the-profile-maxima-on-the-real-boundary.test.mjs",
+      "M439-memory-peak-recorded.test.mjs",
+      "M451-the-qualified-profile-on-a-real-domain.test.mjs"
     ]
   },
   "sandbox": [
@@ -534,13 +555,18 @@
     "M415-a-session-is-a-run-of-settled-turns.test.mjs",
     "M416-the-next-turns-package-in-the-domain.test.mjs",
     "M420-the-continuation-canary.test.mjs",
-    "M447-turn-settlement-in-a-real-domain.test.mjs"
+    "M447-turn-settlement-in-a-real-domain.test.mjs",
+    "M436-the-phase-profile-on-the-project-lane.test.mjs",
+    "M438-the-profile-maxima-on-the-real-boundary.test.mjs",
+    "M439-memory-peak-recorded.test.mjs",
+    "M451-the-qualified-profile-on-a-real-domain.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
     "M130-exit-classes-limits.test.mjs",
     "M205-an-oom-kill-on-the-exhaustion-host.test.mjs",
-    "M341-a-service-at-its-limits.test.mjs"
+    "M341-a-service-at-its-limits.test.mjs",
+    "M438-a-role-domain-past-its-maximum.test.mjs"
   ],
   "real": [
     "M139-unauthenticated-canary.test.mjs",

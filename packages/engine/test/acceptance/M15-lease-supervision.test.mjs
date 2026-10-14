@@ -17,13 +17,17 @@
 // next restart, whatever its role goes on doing.
 // The clock is the controlled clock; nothing here waits out a real lease.
 
+// M5 slice 37 (D6 K2, C.2; SEAM.md §426): the project run count is removed,
+// so a project's `next` item may now run beside the case's item; the
+// one-run-per-project assertions are narrowed to one run per work item.
+
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
-import { assertOneRunAtATime, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
+import { assertOneRunPerItem, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
   addProject,
   addWork,
@@ -171,7 +175,7 @@ describe('M15 a failed store transaction in the run-end path does not strand the
       withStore(fx.home, (db) => {
         assertWorkHistory(db, item);
         assertWorkHistory(db, next);
-        assertOneRunAtATime(db, project);
+        assertOneRunPerItem(db, project);
         assert.equal(eventsAbout(db, 'run', first.id, 'run.ended').length, 1);
       });
     });
@@ -263,7 +267,7 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     assert.equal(fx.scripted.launches({ work_item: item }).length, 0);
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 
@@ -311,7 +315,7 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     await assertHeldUntilResume(fx, project, item, first.id);
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 
@@ -473,7 +477,7 @@ describe('M15 once the engine has decided to end a run, nothing renews its lease
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
       assertWorkHistory(db, next);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
       assert.equal(eventsAbout(db, 'run', first.id, 'run.ended').length, 1);
     });
   });

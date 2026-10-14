@@ -27,7 +27,10 @@
 //       the application's output; the domain's cgroup is the unit's own and
 //       holds every process of the domain;
 //   (f) admission: the service domain's reservation is `service_memory_max`
-//       and one check domain's memory;
+//       and one check domain's memory: M5 slice 37 (D6 K2, E126; B09; SEAM.md
+//       §426) sizes the shared check capacity to the largest effective
+//       `check_memory_max` of the projects it serves, min(the project's value
+//       or its 2 GiB default, `domain_memory_max`), no longer the ceiling;
 //   (g) the writable bounds: the service's writes to /tmp refused at the
 //       bound, in bytes and in inodes, and nothing of them on the host.
 //
@@ -112,7 +115,8 @@ describe('M310 the service profile, read from the host', () => {
       artifact,
       show,
       unitCg,
-      domainMemory: config.domain_memory_max?.value,
+      // The project's effective check maximum (K2; the driver's ruling Q1).
+      domainMemory: Math.min((await fx.engine.get(`/v1/projects/${project}/policy`)).body?.effective?.check_memory_max, config.domain_memory_max?.value),
       serviceMemory: 512 * MiB,
       mounts: mountsOfPid(pid),
       appDev: statSync(`${rootOf(pid)}/surety/app`),
@@ -251,7 +255,7 @@ describe('M310 the service profile, read from the host', () => {
   });
 
   test('(f) admission: the reservation is service_memory_max and one check domain\'s memory', () => {
-    assert.ok(Number.isInteger(S.domainMemory) && S.domainMemory > 0, 'a check domain\'s memory is read from the engine\'s configuration');
+    assert.ok(Number.isInteger(S.domainMemory) && S.domainMemory > 0, 'a check domain\'s memory is the project\'s effective check_memory_max, under the ceiling (K2)');
     assert.deepEqual(S.domainRow?.reservation, { memory: S.serviceMemory, check_capacity: S.domainMemory }, `the reservation (${JSON.stringify(S.domainRow?.reservation)})`);
   });
 

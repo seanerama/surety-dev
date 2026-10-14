@@ -39,6 +39,11 @@
 // boundary's process scan while a run is ending; COVERAGE.md) is covered by
 // the second case: health is sampled while two runs are being terminated.
 
+// M5 slice 37 (D6 K2; SEAM.md §426): the engine key `max_concurrent_runs`
+// (8 here before) is refused at start; the bound that stays, the domain
+// slots (applied on the kernel lane, the driver's ruling Q2), is set to 8 so
+// the declared concurrency is unchanged.
+
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,7 +73,7 @@ const SCAN_SQL = [
   '',
 ].join('\n');
 
-const CONFIG = { max_concurrent_runs: 8, tick_step_budget: 1, git_deadline: 30 };
+const CONFIG = { max_concurrent_domains: 8, tick_step_budget: 1, git_deadline: 30 };
 
 // How long the backup of the second case may take from its start. It is the
 // wait this case has always given the backup: the copy of the gibibyte takes
