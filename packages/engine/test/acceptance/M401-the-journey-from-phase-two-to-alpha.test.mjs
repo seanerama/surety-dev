@@ -55,6 +55,7 @@ import {
   runsOfProject,
   signoffsOfProject,
   specRevisions,
+  stageCandidateRuns,
   stagesOfPlan,
   workOf,
   humanActsOf,
@@ -239,7 +240,18 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(signoff, 'the phase sign-off on the bound candidate');
     assert.deepEqual([signoff.binding?.protected_version, signoff.binding?.spec_revision, signoff.binding?.plan_generation], [phase2.completion_binding.protected_version, phase2.completion_binding.spec_revision, phase2.completion_binding.generation]);
     const runs = runsOfProject(fx.home, p.id).filter((r) => r.kind !== 'session' && r.started_at && after_(r.started_at, switched.at));
-    assert.ok(runs.filter((r) => r.role === 'verifier').length >= 2 && runs.filter((r) => r.role === 'reviewer').length >= 2, `Verifier and Reviewer runs per stage (${JSON.stringify(runs.map((r) => r.role))})`);
+    // Objection 109: one verification and one review per candidate, so stages
+    // integrated together under K2 share them; every stage's candidate is
+    // verified by a Verifier and reviewed, through engine-run checks in check domains.
+    const phase2Candidates0 = new Set(candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, switched.at)).map((c) => c.id));
+    for (const s of phase2Stages) {
+      const on = stageCandidateRuns(fx.home, p.id, s.id);
+      assert.ok(on.candidate && phase2Candidates0.has(on.candidate), `stage ${s.number} verified on a candidate nominated on the project lane (${JSON.stringify(on)})`);
+      assert.ok(on.verifier >= 1 && on.reviewer >= 1, `stage ${s.number}'s candidate verified by a Verifier and reviewed (${JSON.stringify(on)}; runs ${JSON.stringify(runs.map((r) => r.role))})`);
+      const recorded = executionsOf(fx.home, on.candidate).filter((x) => x.status === 'recorded');
+      assert.ok(recorded.length > 0, `stage ${s.number}'s candidate has engine-run checks`);
+      for (const x of recorded) assert.equal(domainRow(fx.home, x.domain)?.check_execution, x.id, `${x.key} ran in a check domain of its own`);
+    }
     const phase2Candidates = candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, switched.at));
     assert.ok(phase2Candidates.some((c) => c.id === phase2.completion_binding.candidate), 'the bound candidate was nominated on the project lane');
     // Objection 107 (the driver's ruling): under K2 phase 2's stages integrate
