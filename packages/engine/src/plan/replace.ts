@@ -41,8 +41,8 @@ export interface Replaces extends ReplacementTarget {
   evidence: unknown;
   stale: unknown;
   // What the check counted of the generation's active stages, by id (the
-  // review's S1): compared again at publication.
-  counted?: Record<string, StageClass>;
+  // review's S1; countStages): compared again at publication.
+  counted?: Record<string, string>;
 }
 
 // The project's open plan: published, active, not complete.
@@ -156,30 +156,43 @@ export function classifyStages(db: Db, plan: string, digests: Map<number, string
   return out;
 }
 
-// The difference between what a check counted and what the swap would do
+// What a check counts of a generation's active stages, by id (the review's
+// S1): what the swap would do with each, and the stage's state then
+// (`<class>|<status>|<work status>`).
+export function countStages(db: Db, plan: string, digests: Map<number, string | null>, subjectWork: string | null): Record<string, string> {
+  const classes = classifyStages(db, plan, digests, subjectWork);
+  const out: Record<string, string> = {};
+  for (const s of stagesOf(db, plan)) out[s.id] = `${classes.get(s.id) ?? 'superseded'}|${s.status}|${workStatus(db, s.work_item) ?? 'none'}`;
+  return out;
+}
+
+// The difference between what a check counted and what publication would do
 // now that changes what the replacement holds, named; null when none (the
-// review's S1). A stage counted carried (kept or retained) and no longer
-// carried, or carried now though counted dropped, differs; except a stage
-// carried now that the replacement lists under its number with the same
-// inputs, which the replacement holds either way. A dropped stage counted
-// cancelled and now superseded (or the reverse) is dropped either way.
-export function classesDiffer(counted: Record<string, StageClass> | null | undefined, now: Map<string, StageClass>, listed: Map<string, boolean> = new Map()): string | null {
+// review's S1). It differs when a stage counted carried (kept or retained)
+// is no longer carried, or the reverse, unless it is carried now and the
+// replacement lists it unchanged; and when a stage the replacement lists
+// under its number, not carried now, has moved since the check (its status
+// or its work's), since the swap would drop it for a fresh one.
+export function classesDiffer(counted: Record<string, string> | null | undefined, now: Record<string, string>, listed: Map<string, 'same' | 'changed' | 'absent'> = new Map()): string | null {
   if (!counted) return null;
-  const carried = (c: StageClass | undefined) => c === 'kept' || c === 'retained';
+  const carried = (c: string | undefined) => c === 'kept' || c === 'retained';
   const diffs: string[] = [];
-  for (const [id, cls] of now) {
-    if (carried(counted[id]) === carried(cls)) continue;
-    if (carried(cls) && listed.get(id) === true) continue;
-    diffs.push(`${id} counted ${counted[id] ?? 'absent'}, now ${cls}`);
+  for (const [id, state] of Object.entries(now)) {
+    const was = counted[id];
+    const [cls] = state.split('|');
+    const [wasCls] = (was ?? '').split('|');
+    const list = listed.get(id) ?? 'absent';
+    if (carried(cls) && list === 'same') continue;
+    if (carried(cls) !== carried(wasCls) || (list !== 'absent' && was !== state)) diffs.push(`${id} counted ${was ?? 'absent'}, now ${state}`);
   }
-  for (const id of Object.keys(counted)) if (!now.has(id) && carried(counted[id])) diffs.push(`${id} counted ${counted[id]}, now not active`);
+  for (const id of Object.keys(counted)) if (!(id in now) && carried(counted[id]!.split('|')[0])) diffs.push(`${id} counted ${counted[id]}, now not active`);
   return diffs.length === 0 ? null : diffs.join('; ');
 }
 
-// Which active stages the replacement lists under their number with the
-// same execution inputs.
-export function listedSame(db: Db, plan: string, digests: Map<number, string | null>): Map<string, boolean> {
-  return new Map(stagesOf(db, plan).map((s) => [s.id, digests.get(s.number) !== undefined && digests.get(s.number) === s.execution_inputs_digest]));
+// How the replacement lists each active stage: under its number with the
+// same execution inputs, with others, or not at all.
+export function listedSame(db: Db, plan: string, digests: Map<number, string | null>): Map<string, 'same' | 'changed' | 'absent'> {
+  return new Map(stagesOf(db, plan).map((s) => [s.id, !digests.has(s.number) ? 'absent' : digests.get(s.number) === s.execution_inputs_digest ? 'same' : 'changed']));
 }
 
 export interface SwapResult {

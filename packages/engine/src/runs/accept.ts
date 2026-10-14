@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { artifactDiff, checkPlan, computeChanges, executionInputsDigest } from '../plan/check.js';
+import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -500,7 +500,10 @@ export class Acceptor {
       // Recorded as a refused check, with the requests the result carried
       // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.
       await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests, declared });
-      return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}` };
+      // An unknown requirement is offered through the spec-change workflow,
+      // named in the refusal itself (D6 §5.4; the driver's ruling 5).
+      const offer = check.needs_spec_change ? `; propose it through ${specChangeRoute(facts.project.id)}` : '';
+      return { refused: `the plan check refused phase ${plan.phase}: ${check.reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')}${offer}` };
     }
     const content: BundleContent = { modules: parsedArch.parsed.modules, roadmap, roadmap_changed: plan.roadmap_revision !== undefined || check.roadmap_revision, plan, adrs, architecture_text: architectureText };
     const bundle = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'plan_check', content: Buffer.from(`${canonical({ run: facts.run.id, sha, phase: plan.phase, blobs, content, check })}\n`) });
