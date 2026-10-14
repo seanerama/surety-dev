@@ -358,8 +358,15 @@ export function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
     if (plan.authoring_ready_at === null) return 'authoring not ready';
     return null;
   }
-  const d = db.prepare('SELECT "status", "parked_at", "cancelled_at" FROM "stages" WHERE "id" = ?').get(m.stage) as { status: string; parked_at: string | null; cancelled_at: string | null } | undefined;
-  if (!d || (d.status !== 'integrated' && d.status !== 'verified') || d.parked_at !== null || d.cancelled_at !== null) return `depends on stage ${m.stage}`;
+  const d = db
+    .prepare('SELECT s."status", s."parked_at", s."cancelled_at", w."status" AS "work_status" FROM "stages" s LEFT JOIN "work_items" w ON w."id" = s."work_item" WHERE s."id" = ?')
+    .get(m.stage) as { status: string; parked_at: string | null; cancelled_at: string | null; work_status: string | null } | undefined;
+  // A stage whose work is parked (a blocker: its repair limits, an
+  // objection) is parked: its historical integration releases nothing for
+  // later dispatch (D6 §6.6; B08).
+  if (!d || (d.status !== 'integrated' && d.status !== 'verified') || d.parked_at !== null || d.cancelled_at !== null || d.work_status === 'parked' || d.work_status === 'cancelled') {
+    return `depends on stage ${m.stage}`;
+  }
   return null;
 }
 
