@@ -145,6 +145,25 @@ export function requestFromFinding(tx: Tx, args: { project: string; finding: str
   return id;
 }
 
+// The `change_spec` answer about a set of conflicts: one request per
+// distinct conflict (the same criterion and message reported again, by a
+// repair of the same work, is one conflict), naming its earliest finding.
+export function requestsFromFindings(tx: Tx, args: { project: string; findings: string[]; decision: string }): (string | null)[] {
+  const rows = args.findings
+    .map((id) => tx.db.prepare('SELECT "id", "seq", "criterion", "message" FROM "findings" WHERE "id" = ? AND "project" = ?').get(id, args.project) as { id: string; seq: number; criterion: string | null; message: string } | undefined)
+    .filter((f): f is { id: string; seq: number; criterion: string | null; message: string } => f !== undefined)
+    .sort((a, b) => a.seq - b.seq);
+  const seen = new Set<string>();
+  const out: (string | null)[] = [];
+  for (const f of rows) {
+    const k = canonical([f.criterion, f.message]);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(requestFromFinding(tx, { project: args.project, finding: f.id, decision: args.decision }));
+  }
+  return out;
+}
+
 // A retrofit replan's requests (D6 §8.3; B.7): each an ordinary request,
 // source `replan`, its spec_change work registered as the owner's is; the
 // owner approves its proposal like any. A request the same replan work

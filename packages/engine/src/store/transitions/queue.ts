@@ -48,7 +48,7 @@ import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
-import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, specChangeKind } from '../../spec/change.js';
+import { correctionOpenKeys, correctionProposalDecided, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
@@ -404,7 +404,7 @@ const BLOCKER: KindSpec = {
         // As D3 X2's answer: spec_change work per conflict, recorded and
         // waiting for the owner's request; this replan ends.
         // A request per conflict, from its finding (D6 §4.2; M431 (c)).
-        for (const f of replanConflicts(tx.db, item)) requestFromFinding(tx, { project: item.project, finding: f, decision: d.id });
+        requestsFromFindings(tx, { project: item.project, findings: replanConflicts(tx.db, item), decision: d.id });
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'change_spec' });
         return consumed(d);
       }

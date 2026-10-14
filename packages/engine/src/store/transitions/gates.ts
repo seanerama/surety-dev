@@ -773,12 +773,17 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     artifact: scope.artifact,
   };
   const policy = db.prepare('SELECT "policy_revision" FROM "projects" WHERE "id" = ?').get(args.project) as { policy_revision: string | null };
+  // The approved specification the scope is built under, as it is now (D6
+  // §4.6; D1 §9.1): a candidate nominated before a change keeps its own
+  // `spec_revision` as history; its evaluations after it are under the new
+  // version (M433 (e)). Null before any approved specification.
+  const specNow = (db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string } | undefined)?.id ?? null;
   tx.db
     .prepare(
       `INSERT INTO "acceptance_scopes" ("id", "created_at", "project", "candidate", "gate_kind", "stage", "policy_revision", "effective_protected_version", "source_revision",
          "delivered_requirement_ids", "partial_requirement_ids", "sensitivity_categories", "required_check_ids", "runner_classes", "required_signoffs",
-         "environment", "artifact_digest", "evidence_reuse", "validated", "scope_hash", "acceptance_content_hash")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "environment", "artifact_digest", "evidence_reuse", "validated", "scope_hash", "acceptance_content_hash", "spec_revision")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       scopeId,
@@ -802,6 +807,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       scopeComplete ? 1 : 0,
       sha256(canonical(scopeBody)),
       scope.contentHash,
+      specNow,
     );
   tx.emit('gate.scope_built', { project: args.project, candidate: candidate.id, scope: scopeId }, { gate_kind: kind, stage: scope.stage, required, delivered: scope.delivered });
 
