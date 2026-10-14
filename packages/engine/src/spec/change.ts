@@ -34,9 +34,10 @@ import { intendOperation, type IntentResult } from '../store/transitions/journal
 import { completeIntent, effectiveVersion, invalidateResults } from '../store/transitions/protected.js';
 import { type KindSpec, consumed, invalidateIntent, raiseQuestion, recordApproval, recordIntent, revalidateIntent } from '../store/transitions/queue.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
-import { policyRevision } from '../store/transitions/settings.js';
+import { parkWork } from '../store/transitions/runs.js';
+import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
+import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
@@ -832,7 +833,15 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // The Verifier's correction, naming the affected and uncovered criteria
   // (D3 §2.11's route).
   if (impact.checks.obligations.length > 0 || impact.checks.uncovered.length > 0 || impact.checks.criterion_unknown.length > 0) {
-    observeTrigger(tx, { project: op.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, chain: 0 }, { spec_change_request: r.id });
+    // It names what it is to correct (D6 §4.5; M433 (d)): the affected
+    // criteria, the uncovered ones, the removed ones, and the checks owed.
+    const criteria = { affected: impact.affected_criteria, uncovered: impact.checks.uncovered, removed: impact.removed_criteria };
+    const owed = uniq([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key)).sort();
+    observeTrigger(
+      tx,
+      { project: op.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: 1, subject: { request: r.id }, trigger_evidence: { criteria, checks: owed, generation }, chain: 0 },
+      { spec_change_request: r.id, criteria, checks: owed },
+    );
   }
   // The Architect's replan when the current or a later phase is touched
   // (F §3.10.7), the impact its triggering evidence.
@@ -904,7 +913,9 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
   const request = row ? parseJson<{ request?: string }>(row.subject)?.request : undefined;
   if (!row || !request) return;
   const named = new Set((parseJson<{ check: string }[]>(row.affected_checks) ?? []).map((a) => a.check));
-  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "request" = ? AND "resolved_at" IS NULL`).all(args.project, request) as {
+  // Whichever request recorded an obligation (the 31b review's M2, A): an
+  // obligation a later change's correction meets is resolved by it.
+  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as {
     id: string;
     key: string;
     criteria: string;
@@ -921,7 +932,124 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
     const owed = parseJson<string[]>(o.criteria) ?? [];
     // A check the correction removed names nothing it owed.
     if (check && !owed.every((c) => (known.has(c) ? covers.includes(c) : !covers.includes(c)))) continue;
-    changed += tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL`).run(args.proposal, tx.at, o.id).changes;
+    // Resolved by the applied protected version (A.3; Q7).
+    if (resolveObligation(tx, { project: args.project, obligation: o.id, by: args.version, how: 'correction' })) changed++;
   }
   if (changed > 0) markStale(tx, { project: args.project });
+}
+
+// ---- the correction of a specification change (D6 §4.5; Q6, Q13) -------------------------
+
+// The Verifier's applicability assessment as its result carries it.
+export interface ApplicabilityEntry {
+  check: string;
+  criteria: string[];
+  rationale: string;
+}
+
+// The request a `check_correction` item corrects for, when it is a
+// specification change's (registered by finalizeApplied), else null.
+export function correctionRequestOf(db: Db, workItem: string): string | null {
+  const w = db.prepare(`SELECT "subject", "trigger_source" FROM "work_items" WHERE "id" = ? AND "kind" = 'check_correction'`).get(workItem) as { subject: string; trigger_source: string } | undefined;
+  if (!w || w.trigger_source !== 'spec_obligation') return null;
+  const request = parseJson<{ request?: unknown }>(w.subject)?.request;
+  return typeof request === 'string' ? request : null;
+}
+
+interface OpenObligation {
+  id: string;
+  key: string;
+  criteria: string[];
+  request: string | null;
+}
+
+const openObligations = (db: Db, project: string): OpenObligation[] =>
+  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY "created_at", "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
+    (o) => ({ id: o.id, key: o.key, criteria: parseJson<string[]>(o.criteria) ?? [], request: o.request }),
+  );
+
+// What a correction run's acceptance needs (runs/accept.ts): whether its
+// item is a specification change's, the open obligations of that request,
+// and, per assessment entry, the open obligations it would resolve.
+export function correctionFacts(db: Db, args: { run: string; entries: ApplicabilityEntry[] }): { request: string | null; open: string[]; resolves: string[][] } {
+  const run = db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string | null } | undefined;
+  if (!run || run.work_item === null) return { request: null, open: [], resolves: args.entries.map(() => []) };
+  const request = correctionRequestOf(db, run.work_item);
+  const all = openObligations(db, run.project);
+  return {
+    request,
+    open: request === null ? [] : uniq(all.filter((o) => o.request === request).map((o) => o.key)).sort(),
+    resolves: args.entries.map((e) => all.filter((o) => o.key === e.check && o.criteria.every((c) => e.criteria.includes(c))).map((o) => o.id)),
+  };
+}
+
+// The Verifier's assessments recorded with their provenance, each resolving
+// the open obligations of its check it covers (D6 §4.5; A.3; Q6): a role's
+// claim (`claimed`), on which fresh evidence under the current generation is
+// still required. Returns the assessments' ids.
+export function recordAssessments(tx: Tx, args: { run: string; entries: ApplicabilityEntry[]; rationales: string[] }): string[] {
+  const run = tx.db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string } | undefined;
+  if (!run) throw notFound('run', args.run);
+  const done = tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ? ORDER BY "created_at", "id"').all(args.run) as { id: string }[];
+  if (done.length > 0) return done.map((a) => a.id);
+  const request = correctionRequestOf(tx.db, run.work_item);
+  const effective = effectiveVersion(tx.db, run.project);
+  const out: string[] = [];
+  args.entries.forEach((e, i) => {
+    const id = tx.newId('asmt_');
+    const check = effective ? (tx.db.prepare('SELECT "id" FROM "checks" WHERE "protected_version" = ? AND "key" = ?').get(effective.id, e.check) as { id: string } | undefined) : undefined;
+    const resolves = openObligations(tx.db, run.project).filter((o) => o.key === e.check && o.criteria.every((c) => e.criteria.includes(c)));
+    tx.db
+      .prepare(
+        `INSERT INTO "assessments" ("id", "created_at", "project", "run", "work_item", "request", "check_key", "check", "criteria", "rationale", "provenance", "obligations")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'claimed', ?)`,
+      )
+      .run(id, tx.at, run.project, args.run, run.work_item, request, e.check, check?.id ?? null, JSON.stringify(e.criteria), args.rationales[i], JSON.stringify(resolves.map((o) => o.id)));
+    tx.emit('spec.assessment_recorded', { project: run.project, assessment: id, run: args.run }, { check: e.check, criteria: e.criteria, provenance: 'claimed', obligations: resolves.map((o) => o.id) });
+    for (const o of resolves) resolveObligation(tx, { project: run.project, obligation: o.id, by: id, how: 'assessment' });
+    out.push(id);
+  });
+  if (out.length > 0) markStale(tx, { project: run.project });
+  return out;
+}
+
+function resolveObligation(tx: Tx, args: { project: string; obligation: string; by: string; how: 'correction' | 'assessment' }): boolean {
+  const changed = tx.db.prepare(`UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL`).run(args.by, tx.at, args.obligation).changes;
+  if (changed > 0) tx.emit('check.obligation_resolved', { project: args.project, check_obligation: args.obligation }, { resolved_by: args.by, how: args.how });
+  return changed > 0;
+}
+
+// A specification change's correction item whose run captured a proposal
+// waits for it (the driver's ruling Q13; the `block` template): applied, the
+// item completes; rejected, it takes its repair, then parks with a blocker
+// naming the open obligations. Called when the proposal is decided.
+export function correctionProposalDecided(tx: Tx, args: { proposal: string; applied: boolean }): void {
+  const row = tx.db.prepare('SELECT r."work_item" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE p."id" = ?').get(args.proposal) as { work_item: string | null } | undefined;
+  if (!row?.work_item || correctionRequestOf(tx.db, row.work_item) === null) return;
+  const item = getWorkItem(tx, row.work_item);
+  if (!item || item.status !== 'awaiting_decision') return;
+  const blocker = parseJson<{ reason?: string; proposal?: string }>(item.blocker);
+  if (blocker?.reason !== 'correction_proposed' || blocker.proposal !== args.proposal) return;
+  const resumed = transitionWork(tx, item, 'executing', { blocker: null }, { proposal: args.proposal, cause: args.applied ? 'proposal_applied' : 'proposal_rejected' });
+  if (args.applied) {
+    transitionWork(tx, resumed, 'complete', {}, { proposal: args.proposal, cause: 'proposal_applied' });
+    return;
+  }
+  correctionFailed(tx, resumed, { proposal: args.proposal, cause: 'proposal_rejected' });
+}
+
+// A correction attempt that ended with nothing applied (Q13): its repair,
+// then, at the limit, a park whose blocker names the open obligations.
+export function correctionFailed(tx: Tx, item: WorkRow, cause: Record<string, unknown>): void {
+  const policy = projectPolicy(tx.db, item.project);
+  if (item.repair_attempts >= policy.repair_attempts_max!) parkWork(tx, item, 'repair_attempts_max', cause);
+  else transitionWork(tx, item, 'eligible', { repair_due: 1 }, cause);
+}
+
+// The open obligations a specification change's correction item leaves, by
+// check key: what its parked blocker names (Q13).
+export function correctionOpenKeys(db: Db, workItem: string): string[] {
+  const request = correctionRequestOf(db, workItem);
+  if (request === null) return [];
+  return uniq((db.prepare(`SELECT "key" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY "key"`).all(request) as { key: string }[]).map((o) => o.key));
 }

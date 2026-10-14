@@ -4,7 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
-import { requestFailed } from '../../spec/change.js';
+import { correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
@@ -1046,6 +1046,20 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   }
   switch (run.outcome) {
     case 'completed':
+      // A specification change's correction whose run captured a proposal
+      // waits for it (the driver's ruling Q13): applied, it completes;
+      // rejected, it takes its repair, then parks (spec/change.ts).
+      if (item.status === 'executing' && correctionRequestOf(tx.db, item.id) !== null) {
+        const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
+        if (p && p.status === 'rejected') {
+          correctionFailed(tx, item, { ...cause, proposal: p.id, cause: 'proposal_rejected' });
+          return;
+        }
+        if (p && p.status !== 'applied') {
+          transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'correction_proposed', raised_at: tx.at, proposal: p.id }) }, { ...cause, proposal: p.id });
+          return;
+        }
+      }
       // A Verifier's or a Reviewer's work is complete with its accepted run.
       // A candidate's verification no longer completes the work it holds: a
       // stage's work completes with its stage gate, a fix's with its finding's

@@ -551,6 +551,13 @@ export class Acceptor {
     const ws = facts.workspace!;
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
     if (outside) return failed(outside.klass, outside.text);
+    // A specification change's correction (D6 §4.5; the driver's rulings Q6,
+    // Q13, Q-D): the Verifier's applicability assessments are validated
+    // against the open obligations and recorded before anything else of the
+    // run; a correction that changes no check and assesses nothing while
+    // its obligations are open is refused.
+    const assessed = await this.correctionAssessments(facts, diff.changes.length);
+    if (assessed !== null) return assessed;
     if (diff.changes.length === 0) {
       await this.recordReport(facts);
       return { outcome: 'completed', reason: 'none' };
@@ -594,6 +601,27 @@ export class Acceptor {
       evidence,
     });
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  private async correctionAssessments(facts: AcceptFacts, changes: number): Promise<RunEnd | null> {
+    const entries = facts.result?.report?.spec_applicability ?? [];
+    if (facts.work.kind !== 'check_correction') {
+      return entries.length > 0 ? failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only') : null;
+    }
+    const c = await this.rt.read<{ request: string | null; open: string[]; resolves: string[][] }>('spec.correction_facts', { run: facts.run.id, entries });
+    if (entries.length > 0 && c.request === null) return failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only; this correction is not one');
+    const unmatched = entries.filter((_, i) => (c.resolves[i] ?? []).length === 0);
+    if (unmatched.length > 0) {
+      return failed('invalid_result', `spec_applicability names no open obligation it covers: ${unmatched.map((e) => `${e.check} (${e.criteria.join(', ')})`).join('; ')}`);
+    }
+    if (c.request !== null && c.open.length > 0 && changes === 0 && entries.length === 0) {
+      return failed('invalid_result', `the correction changed no check and assessed none: the specification change's obligations on ${c.open.join(', ')} stay open`);
+    }
+    if (entries.length === 0) return null;
+    const rationales: string[] = [];
+    for (const e of entries) rationales.push(await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'assessment_evidence', content: Buffer.from(e.rationale) }));
+    await this.rt.engine('spec.record_assessments', { run: facts.run.id, entries, rationales });
+    return null;
   }
 
   // The records an applicability proposal's evidence is published as.

@@ -46,6 +46,8 @@ export interface Report {
   adopted_tests?: import('../../adopt/boundary.js').AdoptedTest[];
   // D6 §8.3 (B.7): an Architect's retrofit replan's requests for criteria.
   spec_change_requests?: { keys: string[]; text: string }[];
+  // D6 §4.5 (Q6): a Verifier's applicability assessment on a correction.
+  spec_applicability?: { check: string; criteria: string[]; rationale: string }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;

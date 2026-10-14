@@ -48,7 +48,7 @@ import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
-import { requestFromFinding, specChangeKind } from '../../spec/change.js';
+import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
@@ -183,6 +183,14 @@ function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
   return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
 }
 
+// A specification change's correction parked with its obligations open
+// (the driver's ruling Q13): the question names their checks.
+function obligationText(db: Db, item: { id: string; kind: string }): string {
+  if (item.kind !== 'check_correction') return '';
+  const keys = correctionOpenKeys(db, item.id);
+  return keys.length === 0 ? '' : ` Nothing was applied and nothing assessed: the specification change's obligations on ${keys.join(', ')} stay open, and every gate names them until a correction or the Verifier's assessment resolves them.`;
+}
+
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
@@ -227,7 +235,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         question:
           item.kind === 'replan'
             ? `Work item ${item.id} (replan) is parked: ${what}${replanRefusal(tx, item.id)}. Retry it, or cancel it; or plan the phase yourself in an Architect session (POST /v1/projects/${item.project}/sessions with role architect; surety session open architect), whose published plan supersedes this item.`
-            : `Work item ${item.id} (${item.kind}) is parked: ${what}. Retry it, or cancel it.`,
+            : `Work item ${item.id} (${item.kind}) is parked: ${what}.${obligationText(tx.db, item)} Retry it, or cancel it.`,
         blockedWorkItems: [item.id],
       };
     }
@@ -1270,6 +1278,9 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
       if (option !== 'approve') {
         tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
         tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: d.id });
+        // A specification change's correction item waiting for it takes its
+        // repair, then parks (the driver's ruling Q13).
+        correctionProposalDecided(tx, { proposal: p.id, applied: false });
         return consumed(d);
       }
       approveProposal(tx, p, tx.actor.actor_kind, 'human');
