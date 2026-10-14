@@ -64,7 +64,7 @@ import { eventsOfType } from '../journal.mjs';
 import { withStore } from '../store.mjs';
 import { sandboxEnv } from '../sandbox/lane.mjs';
 import { RUNTIME, attemptsOf, configContent, homeHash, operationsOf } from '../deploy/kernel.mjs';
-import { REAL_ADAPTER, cgroupsNamed, holdsAny, intendedUnits, journalOf, listUnits, unitShow } from '../deploy/host.mjs';
+import { REAL_ADAPTER, cgroupsNamed, holdsAny, intendedUnits, journalOf, listUnits, unitShow, unitShowAll } from '../deploy/host.mjs';
 import { LOCAL_SERVICE_VERSION, adapterQualifications, qualificationRuns } from '../deploy/qualify.mjs';
 import { IDEA_BRIEF } from '../journey/reference.mjs';
 import { makeAdoptedRepo } from '../retrofit/repo.mjs';
@@ -73,7 +73,7 @@ import { trustEntries } from '../trust.mjs';
 import { attemptOf } from '../sandbox/qualify.mjs';
 import { collectAttempt, realPolicy } from './attempt.mjs';
 import { SELF_TEST, leftovers, refuseLeftovers } from './checks-journey.mjs';
-import { REAL, observe, realStep, secretArgs, secretHits, stepValue, tellSean } from './lane.mjs';
+import { REAL, loadState, observe, realStep, secretArgs, secretHits, stepValue, tellSean } from './lane.mjs';
 import { TALLY_ARCHITECTURE, TALLY_CHANGE_TEXT, block, ownerSays, tallyBrief, tallyContent, sumsArchitecture, sumsBrief, sumsContent, SUMS_ANSWERS } from './rehearsal-content.mjs';
 
 // ---- what Sean decided, and the run's shape ------------------------------------------------
@@ -235,7 +235,11 @@ export function resuming(ctx) {
 export async function drain(ctx, fx, projects) {
   const ids = projects.filter(Boolean);
   for (const p of ids) await fx.engine.post(`/v1/projects/${p}/pause`, {}).catch(() => null);
-  const live = () => ids.flatMap((p) => rows(fx.home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, p)).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle'));
+  const live = () => [
+    ...ids.flatMap((p) => rows(fx.home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, p)).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle')),
+    // A check execution in flight is waited for too (rehearsal 5: one was interrupted by an engine's stop).
+    ...ids.flatMap((p) => rows(fx.home, `SELECT "id", 'check_execution' AS "kind", "key" AS "role", "status" AS "state" FROM "check_executions" WHERE "project" = ? AND "status" IN ('materializing', 'running', 'collecting')`, p)),
+  ];
   const started = performance.now();
   const first = live();
   while (live().length > 0 && performance.now() - started < DRAIN_MINUTES * 60_000) {
@@ -605,9 +609,8 @@ export async function qualifyStep(ctx, row, name, project) {
 // ---- the teardown (BS5 §12; M4's form) --------------------------------------------------------
 
 export async function teardownStep(ctx, row, name, project, given = null) {
-  return step(ctx, name, async () => {
-    const home = homeOf(ctx);
-    const body = async (fx) => {
+  const home = homeOf(ctx);
+  const body = async (fx) => {
       const envRow = one(fx.home, 'SELECT "id", "name" FROM "environments" WHERE "project" = ? AND "name" = ?', project, 'alpha') ?? null;
       const ofEnv = (kind) => (envRow ? operationsOf(fx.home, project, kind).filter((o) => o.target?.environment === envRow.id) : []);
       const deploys = ofEnv('deploy');
@@ -648,9 +651,29 @@ export async function teardownStep(ctx, row, name, project, given = null) {
       }
       return out;
     };
-    if (given) return body(given);
-    return onEngine(ctx, `${row} ${name}`, { projects: [project], resume: project, teardown: true }, body);
-  });
+  // In a deployment's `finally` (`given`) the teardown runs whatever came
+  // before, even on a halted run directory (rehearsal 5: a failure in the
+  // step before it halted the directory, and the teardown never ran), and is
+  // recorded as its step where the directory allows it, else in observed/.
+  if (given) {
+    let out = null;
+    let failure = null;
+    try {
+      out = await body(given);
+    } catch (err) {
+      failure = err;
+    }
+    if (!loadState(ctx).halted) await step(ctx, name, async () => {
+      if (failure) throw failure;
+      return out;
+    });
+    else {
+      observe(ctx, row, `${name}_while_halted`, failure ? { error: String(failure?.message ?? failure) } : out);
+      if (failure) throw failure;
+    }
+    return out;
+  }
+  return step(ctx, name, () => onEngine(ctx, `${row} ${name}`, { projects: [project], resume: project, teardown: true }, body));
 }
 
 // The service on the host while it runs (read only): each unit of the run
@@ -659,8 +682,8 @@ export function hostWhileRunning(ctx) {
   const units = unitsOfRunHome(ctx, 'the host read');
   return units.map((unit) => {
     const props = unitShow(unit, ['LoadState', 'ActiveState', 'MainPID', 'ControlGroup', 'Delegate']);
-    const all = unitShow(unit, null);
-    return { unit, props, token_hits: holdsAny(JSON.stringify(all ?? ''), { token: ctx.keyValue }).length };
+    const all = unitShowAll(unit);
+    return { unit, props, token_hits: holdsAny(all, { token: ctx.keyValue }).length };
   });
 }
 
@@ -1034,7 +1057,24 @@ export async function m5rDeploy(ctx) {
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const c1 = candidatesOf(fx.home, project)[0];
       if (!c1) notEstablished('m5r_deploy', 'no candidate c-1');
-      const cli = seanTypes(ctx, fx.home, ['deploy', c1.id, '--env', 'alpha', '--project', project], `the deployment of c-1 (${c1.id}), whose application source is A, to alpha`);
+      // The candidate's checks settle first (rehearsal 5: the request found the
+      // alpha_authorize scope's executions queued and was refused, missing).
+      const pending = () => rows(fx.home, `SELECT "id" FROM "check_executions" WHERE "candidate" = ? AND "status" IN ('queued', 'materializing', 'running', 'collecting')`, c1.id);
+      const settled = await drive(ctx, fx, project, () => (pending().length === 0 ? true : undefined), { expect: [], what: `c-1's checks to settle before the deployment`, timeoutMs: 60 * 60_000 });
+      const what = `the deployment of c-1 (${c1.id}), whose application source is A, to alpha (refused authorization_not_issued while a check of the alpha_authorize scope has not yet run: ask again once it has)`;
+      let cli = null;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          cli = seanTypes(ctx, fx.home, ['deploy', c1.id, '--env', 'alpha', '--project', project], what);
+          break;
+        } catch (err) {
+          // Under the rehearsal: refused while the engine runs the scope's checks, asked again after they settle (at most 5).
+          if (!ctx.rehearsal || attempt >= 5 || !/authorization_not_issued/.test(String(err?.message))) throw err;
+          await drive(ctx, fx, project, () => (pending().length === 0 ? true : undefined), { expect: [], what: `c-1's alpha_authorize checks to settle (try ${attempt})`, timeoutMs: 30 * 60_000, everyMs: 5_000 }).catch(() => null);
+          await sleep(5_000);
+        }
+      }
+      void settled;
       const d = await drive(ctx, fx, project, () => candidatesOf(fx.home, project).find((c) => c.id === c1.id && c.progress === 'alpha_deployed'), { expect: [], what: 'c-1 alpha_deployed', timeoutMs: 2 * HOURS });
       const out = { cli, candidate: c1.id, progress: d.value.progress, alpha_complete: evaluationsOf(fx.home, project, 'alpha_complete').at(-1) ?? null, replans_before_complete: workOfProject(fx.home, project, 'replan').map((w) => ({ id: w.id, created_at: w.created_at })), host: hostWhileRunning(ctx) };
       observe(ctx, 'M444', 'deploy', out);
