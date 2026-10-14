@@ -34,7 +34,7 @@ import { describe, test } from 'node:test';
 
 import { answer, confirmRequired, consume } from './harness/decisions.mjs';
 import { waitFor } from './harness/engine.mjs';
-import { addStagedProject, permittedEdit, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
+import { addGitProject, addStagedProject, permittedEdit, roleThat, roleThatHolds, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { changePolicy, getPolicy, workItemsOf } from './harness/journal.mjs';
 import {
   ROUTED_KINDS,
@@ -51,7 +51,7 @@ import {
 import { journey35, replan35, stagesWith } from './harness/journey/plan35.mjs';
 import { MODULES_JSON_SERVICE_SECRETS, REQUIREMENTS, SPEC_SERVICE_SECRETS, STAGES, T2_KINDS, specText } from './harness/journey/reference.mjs';
 import { postChange } from './harness/journey/review31b.mjs';
-import { answerDecision, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
+import { answerDecision, pauseProject, resumeProject, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import {
   boundaryDecisions,
@@ -160,14 +160,24 @@ describe('M436 (c) phase and max_chained_roles', () => {
   test('(c) the cap on chain depth alone, with the budgets high: the origin named; a fresh plan-stage trigger a chain of its own; continue begins a new chain', async (t) => {
     const fx = await scriptedEngine(t);
     fx.scripted.defaultScript(script.complete());
-    const { project, items, plan } = await addStagedProject(fx, { tier: 'T2', stages: 2 });
+    // Objection 094: K1 makes the plan's new eligible work request a tick and
+    // K2 lets both stages build at once, so the project is paused until its
+    // stages are scripted and its policy set, and stage 2's Builder holds
+    // until stage 1's candidate has been read.
+    const project = await addGitProject(fx, { tier: 'T2' });
+    await pauseProject(fx.engine, project.id);
+    const planned = await fx.engine.post('/v1/harness/fixtures/plan', { project: project.id, stages: [1, 2].map((n) => ({ number: n, goal: `stage ${n} of the fixture plan` })) });
+    assert.equal(planned.status, 201, `plan fixture (body: ${planned.text})`);
+    const plan = planned.body;
+    const items = plan.stages.map((stage) => stage.work_item);
+    fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
+    fx.scripted.script(items[1], [roleThatHolds([], [step.write('src/two.js', 'export const two = 2;\n')])]);
     await changePolicy(fx.engine, project.id, { max_chained_roles: 1 });
     // Every budget high: a widening, confirmed by the owner (M49).
     const wide = { repair_attempts_max: 10, no_progress_max: 5 };
     await consume(fx, project.id, await confirmRequired(fx, `/v1/projects/${project.id}/policy`, wide), 'approve');
     await waitFor(async () => (await getPolicy(fx.engine, project.id)).effective.repair_attempts_max === 10 || undefined, { what: 'the budgets raised' });
-    fx.scripted.script(items[0], [roleThat([permittedEdit()])]);
-    fx.scripted.script(items[1], [roleThat([step.write('src/two.js', 'export const two = 2;\n')])]);
+    await resumeProject(fx.engine, project.id);
     await runToEnd(fx, project.id, items[0]);
     const [c1] = await waitForCandidates(fx, project.id);
     const v1 = workItemsOf(fx.home, project.id).find((w) => w.kind === 'verification' && w.subject?.candidate === c1.id);
@@ -182,6 +192,7 @@ describe('M436 (c) phase and max_chained_roles', () => {
     const w2 = workRow(fx.home, items[1]);
     assert.equal(w2.chain, 0, 'stage 2\'s work begins a chain');
     assert.deepEqual(chainOriginOf(fx.home, items[1]), originOf('plan', plan.stages[1].id), 'whose origin is its own plan trigger');
+    fx.scripted.release(items[1], 'gate');
     await tick(fx.engine, project.id, { rounds: 2 });
     await waitForRun(fx.home, items[1], { state: 'ended' });
     // Continued: a new chain, its origin the continued item's trigger.
@@ -193,9 +204,16 @@ describe('M436 (c) phase and max_chained_roles', () => {
 
   test('(c) the repair budget binds separately: a failing Builder parks on repair_attempts_max, never as the chain cap', async (t) => {
     const fx = await scriptedEngine(t);
-    const { project, items } = await addStagedProject(fx, { tier: 'T2' });
-    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
+    // Objection 094: the stage's work is scripted before anything can tick
+    // (K1: new eligible work requests a tick), the project paused meanwhile.
+    const project = await addGitProject(fx, { tier: 'T2' });
+    await pauseProject(fx.engine, project.id);
+    const planned = await fx.engine.post('/v1/harness/fixtures/plan', { project: project.id, stages: [{ number: 1, goal: 'stage 1 of the fixture plan' }] });
+    assert.equal(planned.status, 201, `plan fixture (body: ${planned.text})`);
+    const items = planned.body.stages.map((stage) => stage.work_item);
     fx.scripted.script(items[0], [script.crash(3)]);
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 0 });
+    await resumeProject(fx.engine, project.id);
     await runToEnd(fx, project.id, items[0]);
     await tick(fx.engine, project.id, { rounds: 2 });
     const row = workRow(fx.home, items[0]);

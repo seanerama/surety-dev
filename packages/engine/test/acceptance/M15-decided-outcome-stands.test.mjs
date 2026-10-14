@@ -81,7 +81,6 @@ describe('M15 a Stop confirmed while a deadline end is being retried does not re
     await tick(fx.engine, project);
     const launch = await fx.scripted.waitForHolding({ work_item: item });
     const first = await waitForRun(fx.home, item, { state: 'executing' });
-    const next = await addWork(fx.engine, project, 'verification');
 
     // The confirmation is raised while the run is under way, before its deadline.
     const stopPath = `/v1/projects/${project}/runs/${first.id}/stop`;
@@ -154,6 +153,11 @@ describe('M15 a Stop confirmed while a deadline end is being retried does not re
     });
     assert.notEqual(getRow(fx.home, 'decisions', decision).status, 'consumed', 'and the confirmation was never consumed');
 
+    // The project's next item, made once the run's end is recorded (objection
+    // 095: made while the run was under way, K1 and K2 would dispatch and end
+    // it beside the run, and its own `run.finalizing` would use up the
+    // unscoped faults armed for the run's).
+    const next = await addWork(fx.engine, project, 'verification');
     await tickUntil(fx.engine, project, () => workItem(fx.home, next).status === 'complete', { max: 6, what: 'the next item of the project to be dispatched and to complete' });
     assert.equal(runsOf(fx.home, item).length, 1);
     withStore(fx.home, (db) => assertOneRunPerItem(db, project));

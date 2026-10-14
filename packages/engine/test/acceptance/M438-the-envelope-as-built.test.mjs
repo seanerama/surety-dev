@@ -44,9 +44,23 @@ import { CONTRACT } from './harness/fixtures.mjs';
 import { changePolicy, getPolicy } from './harness/journal.mjs';
 import { completeRound, deployToRound, deployable } from './harness/deploy/kernel.mjs';
 import { addProject, addWork, runsOf, scriptedEngine, SLICE2_CONFIG, tick } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
 import { GIB, MIB, clearEnvelope, domainOfItem, heldItems, holdOf, holding, liveRuns, setEnvelope, settle, ticksUntil } from './harness/exec37/envelope.mjs';
 
 const R = 2 * GIB; // host_reserve_memory's default
+
+// A project whose policy can change: its repository's primary worktree is
+// detached (objection 090; the engine refuses to move an integration branch a
+// worktree it does not own has checked out, RN R5). Its
+// `budget_run_billable_tokens` is at its minimum (a tightening), so the day
+// budget's reservation of each run under way (D1 §13.3; D6 §6.5, a separate
+// bound) admits every run the envelope and the slots admit, and the case meets
+// the envelope, not the budget (objection 091, the driver's ruling).
+async function admittingProject(fx) {
+  const id = (await addGitProject(fx)).id;
+  await changePolicy(fx.engine, id, { budget_run_billable_tokens: CONTRACT.project.budget_run_billable_tokens.min });
+  return id;
+}
 const ROLE = 4 * GIB; // role_memory_max's default
 const held = (fx, project, n) => heldItems(fx, project, n, { addWork });
 const admittedOf = (fx, items) => items.filter((i) => runsOf(fx.home, i).length > 0);
@@ -60,7 +74,7 @@ describe('M438 the envelope as built (kernel lane, MemAvailable scripted)', () =
   test('(a) 12 GiB available, role_memory_max 4 GiB, reserve 2 GiB: three eligible, two admitted, the third held resource_envelope; at 8 GiB per domain, one', async (t) => {
     const fx = await scriptedEngine(t);
     await setEnvelope(fx, { mem_available: 12 * GIB, default_current: 0 });
-    const p = (await addProject(fx)).id;
+    const p = await admittingProject(fx);
     const items = await held(fx, p, 3);
     const runs = await admitted(fx, p, items, 2, 'two of three admitted');
     assert.equal(runs.length, 2, `two admitted (2 + 4 + 4 = 10 <= 12; a third would need 14) (${runs.length})`);
@@ -73,7 +87,7 @@ describe('M438 the envelope as built (kernel lane, MemAvailable scripted)', () =
     // At 8 GiB per domain (the ceiling as the project's value): one.
     const fx2 = await scriptedEngine(t);
     await setEnvelope(fx2, { mem_available: 12 * GIB, default_current: 0 });
-    const q = (await addProject(fx2)).id;
+    const q = await admittingProject(fx2);
     await changePolicy(fx2.engine, q, { role_memory_max: 8 * GIB });
     const items2 = await held(fx2, q, 3);
     const runs2 = await admitted(fx2, q, items2, 1, 'one admitted at 8 GiB');
@@ -130,7 +144,7 @@ describe('M438 the envelope as built (kernel lane, MemAvailable scripted)', () =
 
   test('(d) max_concurrent_domains 4 caps on the kernel lane with no envelope scripted', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = (await addProject(fx)).id;
+    const p = await admittingProject(fx);
     const items = await held(fx, p, 5);
     const runs = await admitted(fx, p, items, 4, 'four admitted');
     assert.equal(runs.length, 4, `four admitted, max_concurrent_domains ${CONTRACT.engine.max_concurrent_domains.default} by default (${runs.length})`);
@@ -180,7 +194,7 @@ describe('M438 the envelope as built (kernel lane, MemAvailable scripted)', () =
     const { config } = await fx.engine.engineInfo();
     assert.deepEqual(config.max_concurrent_domains, { value: 4, source: 'default' }, 'max_concurrent_domains 4 by default (E140 N2)');
     assert.ok(!('max_concurrent_runs' in config), 'no engine max_concurrent_runs');
-    const p = (await addProject(fx)).id;
+    const p = (await addGitProject(fx)).id;
     const policy = await getPolicy(fx.engine, p);
     assert.deepEqual([policy.effective.role_memory_max, policy.effective.check_memory_max], [CONTRACT.project.role_memory_max.default, CONTRACT.project.check_memory_max.default], 'role 4 GiB, check 2 GiB by default (E140 N1)');
     assert.ok(!('max_concurrent_runs' in policy.effective), 'no project max_concurrent_runs');
@@ -211,7 +225,7 @@ describe('M438 the envelope as built (kernel lane, MemAvailable scripted)', () =
 
   test('(f) role_memory_max changed while a domain is admitted: its memory_max unchanged, the next domain takes the new value', async (t) => {
     const fx = await scriptedEngine(t);
-    const p = (await addProject(fx)).id;
+    const p = await admittingProject(fx);
     const [a] = await held(fx, p, 1);
     await admitted(fx, p, [a], 1, 'A admitted at 4 GiB');
     assert.equal(domainOfItem(fx.home, a)?.memory_max, ROLE, 'A at role_memory_max 4 GiB');

@@ -64,6 +64,10 @@ export function workPath(db, workItem) {
   assert.equal(events[0].type, 'work.created', `the first work event of ${workItem}`);
   const path = [events[0].payload.to];
   for (const e of events.slice(1)) {
+    // M5 slice 37 (objection 095; SEAM.md §§427, 431): `work.hold_began`,
+    // `work.hold_ended` and `work.dependency_met` are work.* events with no
+    // `to`: observations about the item, not steps of its path.
+    if (e.payload?.to === undefined) continue;
     assert.equal(e.payload.from, path.at(-1), `${e.type} (seq ${e.seq}) of ${workItem} starts where the previous event ended; path so far ${path.join(' → ')}`);
     if (e.type === 'work.resumed' && e.payload.to === e.payload.from) continue;
     path.push(e.payload.to);
@@ -371,4 +375,33 @@ export function assertOneRunPerItem(db, project) {
       assert.ok(now <= 1, `work item ${item} had more than one run that had not ended at the same time: ${JSON.stringify(list)}`);
     }
   }
+}
+
+// The most role domains that held a slot at one time (D6 K2: the slots of
+// `max_concurrent_domains` bound concurrency, not a run count; SEAM.md §§426,
+// 435). A run's domain holds its slot from the run's creation (the dispatch
+// transaction allocates it) to its `domain.terminated`, which comes before the
+// run's `run.ended`: the next run may be admitted while the last is still
+// recording its end, so run intervals may overlap where domains do not.
+export function maxConcurrentDomains(db, { project } = {}) {
+  const points = [];
+  const terminated = new Map();
+  for (const e of all(db, `SELECT "seq", "subject" FROM "events" WHERE "type" = 'domain.terminated' ORDER BY "seq"`)) {
+    const subject = json(e.subject);
+    if (subject.run && !terminated.has(subject.run)) terminated.set(subject.run, e.seq);
+  }
+  for (const i of runIntervals(db)) {
+    if (project !== undefined && i.project !== project) continue;
+    points.push([i.created, 1]);
+    const end = terminated.get(i.run) ?? i.ended;
+    if (end !== null && end !== undefined) points.push([end, -1]);
+  }
+  points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let now = 0;
+  let max = 0;
+  for (const [, delta] of points) {
+    now += delta;
+    max = Math.max(max, now);
+  }
+  return max;
 }

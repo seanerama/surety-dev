@@ -93,7 +93,11 @@ const incompleteNames = (reasons) => reasons.filter((r) => r.code === 'AUTHORING
 describe('M450 deferred authoring and the exception', () => {
   test('(a) each deferred entry an obligation with reason, prerequisite and follow-up; (b) the follow-up eligible once, through a fix and a restart; (c) AUTHORING_INCOMPLETE on phase and alpha_authorize until the deferred checks pass', async (t) => {
     const { fx, p, ctx, plan } = await pausedDeveloping(t);
-    fx.scripted.kindScript('check_authoring', [deferringAuthoring(), followUpR1, followUpR2]);
+    // R2.2's follow-up holds before it writes, so Alpha can be requested on
+    // stage 2's candidate (which holds `server.mjs`, the environment's start)
+    // while R2.2's checks are still deferred (objection 093).
+    const heldFollowUpR2 = { steps: [step.hold('r2f', { heartbeat_ms: 250 }), ...followUpR2.steps] };
+    fx.scripted.kindScript('check_authoring', [deferringAuthoring(), followUpR1, heldFollowUpR2]);
     // Stage 2's Builder holds, so the state before its integration can be read.
     fx.scripted.kindScript('stage_build', [roleThat(writes(BUILDER_FILES[1])), { steps: [step.hold('s2', { heartbeat_ms: 250 }), ...roleThat(writes(BUILDER_FILES[2])).steps] }]);
     await go(fx, p);
@@ -124,24 +128,34 @@ describe('M450 deferred authoring and the exception', () => {
     assert.equal(followOf(r1).length, 1, `stage 1 integrated: R1.1's follow-up check_authoring exists once (${JSON.stringify(followUps(fx.home, p.id).map((w) => [w.trigger_id, w.status]))})`);
     assert.equal(followOf(r2).length, 0, 'R2.2\'s waits for stage 2');
 
-    // (c) while R2.2's checks do not exist: phase and alpha_authorize.
+    // (c) while R2.2's checks do not exist: the phase gate.
     const c1 = candidatesOfProject(fx.home, p.id).at(-1);
     const phaseRes = await fx.engine.post(`/v1/projects/${p.id}/candidates/${c1.id}/gates/phase`, { phase_plan: plan.id });
     assert.equal(phaseRes.status, 200, phaseRes.text);
     assert.ok(incompleteNames(reasonsOf(phaseRes)).some((s) => s.includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on the phase gate (${JSON.stringify(reasonsOf(phaseRes))})`);
-    await alphaReady(fx, ctx);
-    const refused = await requestDeployment(fx.engine, p.id, c1.id, 'alpha');
-    assertRefused(refused, 409, 'authorization_not_issued', 'a deploy request while R2.2\'s checks are deferred');
-    assert.ok(incompleteNames(reasonsOf(refused)).some((s) => s.includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on alpha_authorize (${JSON.stringify(reasonsOf(refused))})`);
 
     // (b) stage 2 integrated, then integrated again by a fix, then a restart.
     fx.scripted.release('all', 's2');
     const stage2 = stages.find((s) => s.number === 2);
     await until(fx, ctx, () => followOf(r2).length > 0 || undefined, { what: 'R2.2\'s follow-up after stage 2 integrated', answerKinds: ROUTED_KINDS });
     assert.equal(followOf(r2).length, 1, 'R2.2\'s follow-up once');
+
+    // (c) on stage 2's candidate, which holds `server.mjs`, while R2.2's
+    // follow-up holds before writing its checks: alpha_authorize (carried
+    // item (v); objection 093: stage 1's candidate holds no `server.mjs`, so
+    // a request on it is refused at the seal, before any authorization).
+    await until(fx, ctx, () => fx.scripted.launches({ work_kind: 'check_authoring' }).length >= 3 || undefined, { what: 'R2.2\'s follow-up holding before it writes', answerKinds: ROUTED_KINDS });
+    const withService = await until(fx, ctx, () => candidatesOfProject(fx.home, p.id).find((c) => c.seq > c1.seq), { what: 'stage 2\'s integration nominated', answerKinds: ROUTED_KINDS });
+    await alphaReady(fx, ctx);
+    const refused = await requestDeployment(fx.engine, p.id, withService.id, 'alpha');
+    assertRefused(refused, 409, 'authorization_not_issued', 'a deploy request while R2.2\'s checks are deferred');
+    assert.ok(incompleteNames(reasonsOf(refused)).some((s) => s.includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on alpha_authorize (${JSON.stringify(reasonsOf(refused))})`);
+    fx.scripted.release('all', 'r2f');
     await waitForIdle(fx.home, p.id, { timeoutMs: 60_000 }).catch(() => null);
     const c2 = candidatesOfProject(fx.home, p.id).at(-1);
-    const [found] = await raiseFindings(fx, p.id, c2.id, [{ category: 'defect', severity: 'low', message: 'server.mjs: a trailing newline is missing.', criterion: 'R2.2' }], { kind: 'verification' });
+    // The finding names R2.2 and the acceptance check covering it, so the fix
+    // candidate's passing accept-r2 resolves it (SEAM.md §§74, 191, 221).
+    const [found] = await raiseFindings(fx, p.id, c2.id, [{ category: 'defect', severity: 'low', message: 'server.mjs: a trailing newline is missing.', criterion: 'R2.2', check: 'accept-r2' }], { kind: 'verification' });
     fx.scripted.kindScript('fix', roleThat(writes({ 'server.mjs': `${SERVER_MJS}\n` })));
     await review(fx, p.id, found.candidate, { dispositions: [{ finding: found.id, disposition: 'fix' }] });
     const fixItem = await until(fx, ctx, () => workOf(fx.home, p.id, 'fix').find((w) => integrationsOf(fx.home, p.id, w.id).length > 0), { what: 'the fix integrated (stage 2\'s lineage, a second integration)', answerKinds: ROUTED_KINDS });
