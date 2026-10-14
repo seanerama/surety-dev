@@ -57,7 +57,17 @@ describe('M436 (e) the phase profile on the project lane: the idea to phase 2 pu
     // The decisions raised after the publication (phase 1's plan row is written by the consolidated approval).
     const published = withStore(fx.home, (db) => db.prepare('SELECT MAX("seq") AS n FROM "decisions" WHERE "project" = ? AND "kind" IN (\'architecture_approval\', \'plan_approval\')').get(p.id).n);
     const raised = decisionsSince(fx.home, p.id, published);
-    assert.deepEqual(raised.map((d) => d.kind), ['check_correction_unclassifiable'], `only the toolchain's correction raised (${JSON.stringify(raised.map((d) => [d.kind, d.subject_type, d.dependency_manifest?.cause ?? null]))})`);
+    // Objection 105 (SEAM.md §451): under `authoritative` phase 2's authoring
+    // tightening raises its question beside the Reviewer's review; the
+    // Reviewer applies it, and no person answers it. So the questions raised
+    // are the toolchain's correction and, at most, that tightening's.
+    const show = JSON.stringify(raised.map((d) => [d.kind, d.subject_type, d.status, d.dependency_manifest?.cause ?? null]));
+    assert.equal(raised.filter((d) => d.kind === 'check_correction_unclassifiable').length, 1, `the toolchain's correction raised once (${show})`);
+    assert.ok(raised.every((d) => ['check_correction_unclassifiable', 'check_correction_tightening'].includes(d.kind)), `no other question raised (${show})`);
+    for (const d of raised.filter((x) => x.kind === 'check_correction_tightening')) {
+      const answer = d.answer ? (typeof d.answer === 'string' ? JSON.parse(d.answer) : d.answer) : null;
+      assert.notEqual(answer?.actor, 'human', `the tightening's question is answered by no person (${JSON.stringify({ status: d.status, answer })})`);
+    }
     assert.deepEqual(buildActs(ctx).map((a) => a.kind), ['check_correction_unclassifiable'], 'the one human act within the build (Q9)');
     assert.deepEqual(boundaryDecisions(fx.home, p.id), [], 'no chain boundary');
     assert.ok(plan, 'the fixture is live: phase 1 published');

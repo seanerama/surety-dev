@@ -44,6 +44,7 @@ import {
   visionSession,
   waitPublished,
   workOf,
+  ROUTED_KINDS,
 } from './drive.mjs';
 
 // The project's policy (the row; §356): `phase`, `on_phase_complete`, no
@@ -96,6 +97,10 @@ export async function toPhaseTwoPublished(fx, { lane }) {
   // 1. The project, created with the idea.
   const p = await createWithIdea(fx, { tier: 'T2', policy: PROJECT_POLICY });
   const ctx = journeyContext(fx, p, { lane, tier: 'T2' });
+  // The journey's classifier is authoritative: phase 2's tightening is the
+  // Reviewer's (SEAM.md §351); the owner answers the other routed kinds
+  // (objection 105; SEAM.md §451).
+  ctx.answerKinds = ROUTED_KINDS.filter((k) => k !== 'check_correction_tightening');
   Object.assign(J, { p, ctx });
   J.created = { row: projectRow(fx.home, p.id), events: eventsAbout(fx.home, 'project.created', p.id) };
   // 2. Vision. 3. The Spec Writer, a defective save then the whole.

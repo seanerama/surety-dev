@@ -191,12 +191,17 @@ describe('M441 (a), (c), (e) the pace read after the journey on the kernel lane'
     assert.ok(isFigure(pace.project.sessions.tokens) || typeof pace.project.sessions.tokens === 'object', 'sessions.tokens †');
     const idle = pace.project.idle;
     assert.ok(idle && typeof idle === 'object', `project.idle † by hold reason (${show(idle)})`);
-    for (const reason of HOLD_REASONS) assert.ok(typeof idle[reason] === 'number' && idle[reason] >= 0, `idle.${reason} a number (${show(idle[reason])})`);
     const items = rowsOf(fx.home, 'SELECT "id", "held_intervals" FROM "work_items" WHERE "project" = ? ORDER BY "seq"', p.id);
     const expected = {};
-    for (const w of items) for (const h of json(w.held_intervals) ?? []) expected[h.reason] = (expected[h.reason] ?? 0) + (seconds(h.from, h.to) ?? 0);
+    for (const w of items) for (const h of json(w.held_intervals) ?? []) if (h.to) expected[h.reason] = (expected[h.reason] ?? 0) + (seconds(h.from, h.to) ?? 0);
     assert.ok((expected.authoring_readiness ?? 0) > 0, `the fixture is live: stage work waited on authoring readiness (${show(expected)})`);
-    for (const reason of HOLD_REASONS) assert.ok(near(idle[reason], expected[reason] ?? 0, 0.01), `idle.${reason}: ${expected[reason] ?? 0} s from the recorded intervals, read ${show(idle[reason])}`);
+    // The review's N6 (objection 105; SEAM.md §451): a reason with a closed
+    // interval recorded reads the elapsed time of its closed intervals; a
+    // reason with none reads `unknown`, never a measured 0.
+    for (const reason of HOLD_REASONS) {
+      if (reason in expected) assert.ok(typeof idle[reason] === 'number' && near(idle[reason], expected[reason], 0.01), `idle.${reason}: ${expected[reason]} s from the recorded intervals, read ${show(idle[reason])}`);
+      else assert.ok(isUnknown(idle[reason]), `idle.${reason}: no closed interval was recorded, so unknown, never 0 (read ${show(idle[reason])})`);
+    }
   });
 
   test('(c) the host block from host_observations recorded at the project\'s start; with an active entry, the entry\'s id, binary hash and model', async () => {
