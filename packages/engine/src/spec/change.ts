@@ -461,10 +461,19 @@ export function dependencyManifest(
       g: number | null;
     }[]
   ).map((r) => ({ id: r.id, generation: r.g }));
+  // A work item's generation is its class (the driver's ruling on the
+  // slice-36 report): active, held (parked or held) or terminal. A parked
+  // item retried changes it (M433 (a)); a build's routine progress does not.
   const work = (
-    db.prepare(`SELECT "id", "status", "repair_attempts" FROM "work_items" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.work)) as { id: string }[]
-  ).map((w) => ({ id: w.id, generation: digestOf(w) }));
+    db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.work)) as { id: string; status: string }[]
+  ).map((w) => ({ id: w.id, generation: workClass(w.status) }));
   return { plans: plans.map((p) => ({ id: p.id, generation: p.generation })), requirements, checks, findings, results, work };
+}
+
+export function workClass(status: string): 'active' | 'held' | 'terminal' {
+  if (status === 'parked' || status === 'held') return 'held';
+  if (status === 'complete' || status === 'cancelled') return 'terminal';
+  return 'active';
 }
 
 // The main thread's read before the side ref's intent (runs/accept.ts): the
