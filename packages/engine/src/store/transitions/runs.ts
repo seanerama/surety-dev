@@ -303,6 +303,37 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
       item.project,
     );
     if (replanning > 0) return 'depends on a replan running';
+    // A specification change's replan (the driver's ruling (a) on M434,
+    // slice 37): held, not failed, while the same request's check
+    // correction is unfinished, and until the phase checks its new protected
+    // version re-queued have results. Run beside them (D6 K2), its plan check
+    // would read the completed phase's evidence as unknown on the newest
+    // candidate and refuse the plan; unknown still never counts as held.
+    let request: unknown;
+    try {
+      request = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      request = undefined;
+    }
+    if (typeof request === 'string') {
+      const correcting = live(
+        `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND json_extract("subject", '$.request') = ? AND "status" NOT IN ('complete', 'cancelled')`,
+        item.project,
+        request,
+      );
+      if (correcting > 0) return `depends on the check correction of specification change request ${request}`;
+      const requeued = live(
+        `SELECT COUNT(*) AS n FROM "check_executions" x
+           JOIN "protected_proposals" p ON p."id" = json_extract(x."trigger", '$.id')
+           JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE x."project" = ? AND json_extract(x."trigger", '$.source') = 'protected_application'
+           AND w."kind" = 'check_correction' AND json_extract(w."subject", '$.request') = ?
+           AND x."status" IN ('queued', 'materializing', 'running', 'quarantined', 'collecting')`,
+        item.project,
+        request,
+      );
+      if (requeued > 0) return `depends on the checks the correction of specification change request ${request} re-queued`;
+    }
   }
   if (PROTECTED_WRITERS.includes(item.kind)) {
     const writer = live(

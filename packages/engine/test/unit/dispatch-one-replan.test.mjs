@@ -2,7 +2,10 @@
 // driver's ruling, extending ruling 1 on the protected-path writers): two
 // replans of one project write the same phase plan's files, so under D6 K2
 // the second waits, eligible, while the first runs, and is dispatchable once
-// it has ended. Another project's replan is not held. Against a scratch store.
+// it has ended. Another project's replan is not held. A specification
+// change's replan is also held while that request's check correction is
+// unfinished and until the checks its new protected version re-queued have
+// results (the driver's ruling (a) on M434). Against a scratch store.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -72,4 +75,41 @@ test("a project's second replan waits while its first runs; dispatchable once it
   db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_r1'`).run();
   assert.equal(first().status, 'complete');
   assert.equal(dispatchBlocker(db, second(), { check: false }), null, 'once the first has ended, the second is dispatched');
+});
+
+test("a specification change's replan is held while its request's check correction is unfinished, then while the checks it re-queued have no result", (t) => {
+  const { db } = store(t);
+  db.pragma('foreign_keys = OFF');
+  const R = 'scr_1';
+  const row = (id, kind, subject, status) =>
+    db.prepare(
+      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+       VALUES (?, ?, 'prj_1', (SELECT COALESCE(MAX(seq), 0) + 1 FROM work_items), ?, ?, ?, 'test', ?, 1, 0, 0, 0, 0)`,
+    ).run(id, AT, kind, JSON.stringify(subject), status, id);
+  row('wi_rp', 'replan', { phase_plan: 'plan_1', request: R }, 'eligible');
+  row('wi_cc', 'check_correction', { request: R }, 'executing');
+  const replan = () => db.prepare(`SELECT * FROM work_items WHERE id = 'wi_rp'`).get();
+
+  const held = dispatchBlocker(db, replan(), { check: false });
+  assert.equal(held, `depends on the check correction of specification change request ${R}`);
+  assert.equal(holdReasonOf(held), 'depends_on');
+
+  // The correction applied: its proposal's new version re-queued a phase check.
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_cc'`).run();
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined)
+     VALUES ('run_cc', ?, 'prj_1', 99, 'wi_cc', 'verifier', 'one_shot', 'ended', 'scripted', '1', 'm', ?, ?, 0)`,
+  ).run(AT, 'a'.repeat(40), AT);
+  db.prepare(
+    `INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status)
+     VALUES ('prop_cc', ?, 'prj_1', 1, 'verifier_run', 'run_cc', ?, ?, 'd', 'unclassifiable', 'applied')`,
+  ).run(AT, 'a'.repeat(40), 't'.repeat(40));
+  db.prepare(
+    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+     VALUES ('cx_1', ?, 'prj_1', 'chk_1', 'smoke', 'cand_1', ?, 'pv_2', 'direct', 1, ?, 'k', 'queued', ?)`,
+  ).run(AT, 'a'.repeat(40), JSON.stringify({ source: 'protected_application', id: 'prop_cc', generation: 1 }), AT);
+  assert.equal(dispatchBlocker(db, replan(), { check: false }), `depends on the checks the correction of specification change request ${R} re-queued`);
+
+  db.prepare(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_1'`).run();
+  assert.equal(dispatchBlocker(db, replan(), { check: false }), null, 'the correction complete and its checks recorded: the replan is dispatched');
 });
