@@ -400,3 +400,52 @@ test('a check the new version carries over unchanged owes no late obligation; on
   assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_early', version: 'pv_2' })), 1);
   assert.deepEqual(h.db.prepare(`SELECT key FROM check_obligations`).all().map((o) => o.key), ['accept-r4'], 'accept-r2, carried over unchanged, owes nothing');
 });
+
+const { authoredAgainst, impactSettling, raiseSettledChanges } = await import(join(dist, 'spec', 'change.js'));
+
+test("(A) an owner who approves an earlier-authored proposal after the change's approval does so knowingly: its question names what it was authored against, and no late obligation is raised", (t) => {
+  const h = store(t);
+  h.item('wi_auth', 'check_authoring', { phase_plan: 'plan_2' }, 'complete');
+  h.runOf('run_auth', 'wi_auth');
+  h.run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_a', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'unclassifiable', 'applied')`, AT);
+  h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, impact_value) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'approved', ?)`, AT, JSON.stringify({ affected_criteria: ['R4.1'], added_criteria: [] }));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('baseline.spec_approved', { project: 'prj_1', spec_revision: 'spec_1' }, { version: 1 }));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('protected.proposed', { project: 'prj_1', proposal: 'prop_a', run: 'run_auth' }, {}));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('spec.change_approved', { project: 'prj_1', spec_change_request: 'scr_1' }, {}));
+  assert.deepEqual(authoredAgainst(h.db, 'prop_a'), { version: 1, touched: ['R4.1'] }, 'what its question names');
+  // The owner approves it after the change's approval.
+  h.run(
+    `INSERT INTO decisions (id, created_at, project, seq, kind, subject_type, subject_id, semantic_generation, scope, question, options, dependency_manifest, transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status, answer, consumed_at) VALUES ('dec_a', ?, 'prj_1', 1, 'check_correction_unclassifiable', 'protected_proposal', 'prop_a', 1, 'subject', 'q', '[]', '{}', 1, 'h', '[]', '{}', ?, 'consumed', ?, ?)`,
+    AT,
+    AT,
+    JSON.stringify({ option: 'approve', actor: 'human', at: AT }),
+    AT,
+  );
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('decision.consumed', { project: 'prj_1', decision: 'dec_a', subject_type: 'protected_proposal', subject_id: 'prop_a' }, { option: 'approve' }));
+  version(h, 'pv_2', 2);
+  h.run(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_r4', ?, 'prj_1', 'pv_2', 'accept-r4', 'acceptance', '["R4.1"]', 1, '["stage"]', 'x', 'h', 'direct')`, AT);
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_a', version: 'pv_2' })), 0, "the owner's knowing approval stands");
+});
+
+test("(B) a proposed change's question waits while executions of its impact's checks are queued, materializing or running", (t) => {
+  const h = store(t);
+  const impact = { checks: { obligations: [{ check: 'chk_r2', key: 'accept-r2', criteria: ['R2.1'] }], criterion_unknown: [], uncovered: [] }, evidence: { results: [], evaluations: [] } };
+  h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, impact_value) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'proposed', ?)`, AT, JSON.stringify(impact));
+  const exec = (id, key, status) =>
+    h.run(
+      `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at) VALUES (?, ?, 'prj_1', 'chk', ?, 'cand_1', 'r', 'pv', 'direct', (SELECT COALESCE(MAX(execution_seq), 0) + 1 FROM check_executions), '{}', ?, ?, ?)`,
+      id,
+      AT,
+      key,
+      id,
+      status,
+      AT,
+    );
+  exec('cx_other', 'smoke', 'running');
+  assert.equal(impactSettling(h.db, 'scr_1'), 0, "a check outside the impact doesn't hold it");
+  exec('cx_r2', 'accept-r2', 'queued');
+  assert.equal(impactSettling(h.db, 'scr_1'), 1);
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => raiseSettledChanges(tx, { project: 'prj_1' })), 0, 'no question while it settles');
+  h.run(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_r2'`);
+  assert.equal(impactSettling(h.db, 'scr_1'), 0, 'settled: the tick raises it');
+});

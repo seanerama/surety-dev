@@ -576,8 +576,18 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .prepare(`UPDATE "spec_change_requests" SET "status" = 'proposed', "proposal_revision" = ?, "proposal_blob" = ?, "side_ref" = ?, "impact" = ?, "impact_value" = ? WHERE "id" = ?`)
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
-  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  // The question waits while the evidence its impact lists is still being
+  // made (the driver's ruling (B), slice 37): executions of the impact's
+  // checks queued, materializing or running. A hold, not a failure; the
+  // tick raises it once they settle (raiseSettledChanges).
+  if (impactSettling(tx.db, r.id) > 0) {
+    if (item && item.status === 'executing') {
+      transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: null, settling: true }) }, { spec_change_request: r.id, settling: true });
+    }
+    return { request: r.id, decision: null, settling: true };
+  }
+  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   if (d && item && item.status === 'executing') {
     transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
   }
@@ -1210,9 +1220,21 @@ export function lateObligations(tx: Tx, args: { project: string; proposal: strin
        FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'approved' ORDER BY r."seq"`,
     )
     .all(args.project) as { id: string; impact_value: string | null; approved_seq: number | null }[];
+  // The owner's approval of this proposal, made after a change's approval,
+  // is the owner's knowing act (the driver's ruling (A), slice 37): its
+  // question named what the change touched (authoredAgainst), and no
+  // obligation is raised for that change.
+  const ownerApproved = (tx.db
+    .prepare(
+      `SELECT MAX(e."seq") AS s FROM "events" e JOIN "decisions" d ON d."id" = json_extract(e."subject", '$.decision')
+       WHERE e."type" = 'decision.consumed' AND d."subject_type" = 'protected_proposal' AND d."subject_id" = ?
+         AND json_extract(d."answer", '$.option') = 'approve' AND json_extract(d."answer", '$.actor') = 'human'`,
+    )
+    .get(args.proposal) as { s: number | null }).s;
   let n = 0;
   for (const r of requests) {
     if (r.approved_seq === null || r.approved_seq < captured.s || own?.request === r.id) continue;
+    if (ownerApproved !== null && ownerApproved > r.approved_seq) continue;
     const impact = parseJson<{ affected_criteria?: string[]; added_criteria?: string[] }>(r.impact_value) ?? {};
     const touched = new Set([...(impact.affected_criteria ?? []), ...(impact.added_criteria ?? [])]);
     if (touched.size === 0) continue;
@@ -1237,6 +1259,77 @@ export function lateObligations(tx: Tx, args: { project: string; proposal: strin
         { project: args.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: g + 1, subject: { request: r.id }, trigger_evidence: { criteria: { affected: [...touched].sort(), uncovered: [], removed: [] }, checks: owed.sort(), generation }, chain: 0 },
         { spec_change_request: r.id, checks: owed },
       );
+    }
+  }
+  return n;
+}
+
+// What a protected proposal captured before a specification change's
+// approval was authored against (the driver's ruling (A), slice 37): the
+// specification version current at its capture, and the criteria the
+// changes approved since touched; null when no approved change came after
+// it. Its question names this, so an owner who approves it does so knowingly.
+export function authoredAgainst(db: Db, proposal: string): { version: number | null; touched: string[] } | null {
+  const captured = db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'protected.proposed' AND json_extract("subject", '$.proposal') = ?`).get(proposal) as { s: number | null };
+  if (captured.s === null) return null;
+  const project = (db.prepare('SELECT "project" FROM "protected_proposals" WHERE "id" = ?').get(proposal) as { project: string } | undefined)?.project;
+  if (!project) return null;
+  const later = db
+    .prepare(
+      `SELECT r."impact_value" FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'approved'
+         AND (SELECT MIN(e."seq") FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id") > ?`,
+    )
+    .all(project, captured.s) as { impact_value: string | null }[];
+  if (later.length === 0) return null;
+  const touched = new Set<string>();
+  for (const r of later) {
+    const i = parseJson<{ affected_criteria?: string[]; added_criteria?: string[] }>(r.impact_value) ?? {};
+    for (const c of [...(i.affected_criteria ?? []), ...(i.added_criteria ?? [])]) touched.add(c);
+  }
+  if (touched.size === 0) return null;
+  const at = db
+    .prepare(`SELECT json_extract("payload", '$.version') AS v FROM "events" WHERE "type" = 'baseline.spec_approved' AND json_extract("subject", '$.project') = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1`)
+    .get(project, captured.s) as { v: number | null } | undefined;
+  return { version: at?.v ?? null, touched: [...touched].sort() };
+}
+
+// Executions of the checks a proposed change's impact lists (its owed and
+// criterion-unknown checks, and the checks of its listed results) that are
+// queued, materializing or running: the evidence still settling.
+export function impactSettling(db: Db, request: string): number {
+  const r = getRequest(db, request);
+  if (!r) return 0;
+  const impact = parseJson<Impact>(r.impact_value);
+  if (!impact) return 0;
+  const keys = new Set([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key));
+  for (const k of db.prepare(`SELECT DISTINCT k."key" FROM "check_results" x JOIN "checks" k ON k."id" = x."check" WHERE x."id" IN (SELECT value FROM json_each(?))`).all(JSON.stringify(impact.evidence.results)) as { key: string }[]) keys.add(k.key);
+  if (keys.size === 0) return 0;
+  return (db
+    .prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "key" IN (SELECT value FROM json_each(?)) AND "status" IN ('queued', 'materializing', 'running')`)
+    .get(r.project, JSON.stringify([...keys])) as { n: number }).n;
+}
+
+// The tick's step: a proposed change whose question waited for its
+// evidence has it raised once that settles, and its work waits on it.
+export function raiseSettledChanges(tx: Tx, args: { project: string }): number {
+  const rows = tx.db
+    .prepare(
+      `SELECT r."id", r."work_item" FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'proposed'
+         AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'spec_change' AND d."subject_id" = r."id" AND d."status" IN ('open', 'answered', 'consumed'))
+       ORDER BY r."seq"`,
+    )
+    .all(args.project) as { id: string; work_item: string | null }[];
+  let n = 0;
+  for (const r of rows) {
+    if (impactSettling(tx.db, r.id) > 0) continue;
+    const d = raiseQuestion(tx, { project: args.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
+    if (!d) continue;
+    n++;
+    const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+    if (item && item.status === 'awaiting_decision') {
+      tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }), item.id);
+    } else if (item && item.status === 'executing') {
+      transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
     }
   }
   return n;

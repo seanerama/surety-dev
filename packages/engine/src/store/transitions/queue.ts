@@ -10,6 +10,7 @@
 // decision past its target.
 
 import { recordAuthoringPending } from '../../plan/deferral.js';
+import { authoredAgainst } from '../../spec/change.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { inConformancePhase } from '../../adopt/conformance.js';
 import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
@@ -1374,6 +1375,8 @@ export function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): R
     classifier_version: runningClassifierVersion(),
     classifier_authority: configuredAuthority(),
     discovery: discoveryHash(facts && 'discovery' in facts ? facts.discovery : proposalDiscovery(tx.db, p.id)),
+    // What it was authored against, when an approved change came after it.
+    authored_against: authoredAgainst(tx.db, p.id),
   };
 }
 
@@ -1399,7 +1402,15 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal is rejected and nothing is applied.', effect: { proposal: p.id } },
         ],
-        question: `A protected proposal (${p.id}), classified ${changeKind}, awaits approval.`,
+        question:
+          `A protected proposal (${p.id}), classified ${changeKind}, awaits approval.` +
+          (() => {
+            // Named plainly when an approved specification change came after
+            // it (the driver's ruling (A), slice 37): approving it is the
+            // owner's knowing act, and no obligation is raised for it.
+            const a = authoredAgainst(tx.db, p.id);
+            return a ? ` It was authored against specification version ${a.version ?? 'unknown'}; the approved change since touched ${a.touched.join(', ')}.` : '';
+          })(),
       };
     },
     manifest: (tx, d, facts) => correctionManifest(tx, d.subject_id, facts),

@@ -176,6 +176,8 @@ export class Scheduler {
     // state at every tick, so a failure recorded while its item was not yet
     // verifying is repaired by the next tick at the latest.
     await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
+    // A proposed change's question, held while its evidence settled, raised.
+    await this.rt.engine('spec.raise_settled', { project }).catch((err) => log('spec change question', err, { project }));
     // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
     const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
       log('awaiting sweep', err, { project });
