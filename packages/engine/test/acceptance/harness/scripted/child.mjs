@@ -38,6 +38,17 @@
 //           {"git": ["<argument>", ...]}                    git, run in the workspace
 //           {"sleep_ms": <n>}
 //           {"hold": "<name>", "heartbeat_ms": <n, default 1000; 0 = silent>}
+//           {"hold_bytes": {"bytes": <n>, "memory_max": <m>}}   M5 slice 37 (SEAM.md §432): allocate n bytes
+//                                                           (every page touched) and keep them until the
+//                                                           program exits. NOT EXHAUSTING, sandbox lane only:
+//                                                           n is at most 32 MiB; m is the domain's memory.max
+//                                                           the test configured and read from the host before
+//                                                           releasing the role into this step, and must be at
+//                                                           least 8 x n; a memory.max the role can read from
+//                                                           inside (/sys/fs/cgroup/memory.max, normally absent)
+//                                                           must also be a number of at least 8 x n. Anything
+//                                                           else is a refusal: logged, nothing allocated, and
+//                                                           the program exits 96.
 //           {"result": <any JSON value>}                    M2 slice 13 (SEAM.md §143): in a sandbox (where
 //                                                           /surety/out is a directory) the value is first
 //                                                           written to /surety/out/result.json, then the
@@ -658,6 +669,32 @@ const WRITE_CEILING_FACTOR = 2; // at most twice the storage bound written
 const INODE_CEILING = 128; // at most 128 files created
 const FLOOD_CEILING = 4 * 1024 * 1024; // at most 4 MiB written to stdout
 const EXHAUSTING = new Set(['fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
+
+// THE `hold_bytes` STEP (M5 slice 37; SEAM.md §432; row M439 (d)). Not
+// an exhaustion instrument and not guarded: it allocates a fixed, small
+// amount far below the domain's limit and never loops toward a limit. Its
+// own bounds (do not raise them): at most HOLD_BYTES_MAX, and only where the
+// domain's memory.max, as the test configured and read it from the host, is
+// at least HOLD_BYTES_FACTOR times the amount.
+const HOLD_BYTES_MAX = 32 * 1024 * 1024;
+const HOLD_BYTES_FACTOR = 8;
+const HELD_BYTES = [];
+function holdBytesRefusal(spec) {
+  const reasons = [];
+  const bytes = spec?.bytes;
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) return [`the step's bytes is not a positive integer (${JSON.stringify(bytes)})`];
+  if (bytes > HOLD_BYTES_MAX) reasons.push(`the step's bytes ${bytes} is above ${HOLD_BYTES_MAX}`);
+  const need = HOLD_BYTES_FACTOR * bytes;
+  if (!Number.isSafeInteger(spec.memory_max) || spec.memory_max < need) reasons.push(`the step's memory_max ${JSON.stringify(spec.memory_max)} is not at least ${need}`);
+  let inside = null;
+  try {
+    inside = readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim();
+  } catch {
+    inside = null; // normally absent inside a domain (no cgroupfs): the test's host-side read is the bound
+  }
+  if (inside !== null && (!/^\d+$/.test(inside) || Number(inside) < need)) reasons.push(`the memory.max readable from inside (${inside}) is not a number of at least ${need}`);
+  return reasons;
+}
 
 function capsRefusal(spec) {
   const reasons = [];
@@ -1952,7 +1989,17 @@ async function runSteps(steps, ctx) {
       const done = spawnSync('git', step.git, { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
       log('git', { args: step.git, status: done.status, stdout: (done.stdout ?? '').slice(0, 2000), stderr: (done.stderr ?? '').slice(0, 2000) });
     } else if (step.sleep_ms !== undefined) await sleep(step.sleep_ms);
-    else if (step.hold !== undefined) {
+    else if (step.hold_bytes !== undefined) {
+      // M5 slice 37 (SEAM.md §432; row M439 (d)): a bounded, non-exhausting
+      // allocation, so that two domains' memory.peak differ by a known amount.
+      const reasons = holdBytesRefusal(step.hold_bytes);
+      if (reasons.length > 0) {
+        log('hold_bytes', { outcome: 'refused', reasons, spec: step.hold_bytes });
+        await finish(96);
+      }
+      HELD_BYTES.push(Buffer.alloc(step.hold_bytes.bytes, 1));
+      log('hold_bytes', { outcome: 'holding', bytes: step.hold_bytes.bytes });
+    } else if (step.hold !== undefined) {
       log('holding', { hold: step.hold });
       const every = step.heartbeat_ms ?? 1000;
       // Timed on the monotonic clock: by the wall clock, a host whose clock

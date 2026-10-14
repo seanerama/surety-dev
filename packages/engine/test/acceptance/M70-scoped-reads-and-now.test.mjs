@@ -50,6 +50,11 @@
 // identifier, a project's git operations (pending and blocked ones included),
 // and its environments as a route of their own.
 
+// M5 slice 37 (D6 K2; SEAM.md §426): the engine key `max_concurrent_runs`
+// (8 here before) is refused at start; the bound that stays, the domain
+// slots (applied on the kernel lane, the driver's ruling Q2), is set to 8 so
+// the declared concurrency is unchanged.
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { closeSync, constants, ftruncateSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
@@ -85,7 +90,7 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
   const fixture = () =>
     (built ??= (async () => {
       await awayFromMidnight();
-      const fx = await scriptedEngine(shared.context, { config: { max_concurrent_runs: 8 } });
+      const fx = await scriptedEngine(shared.context, { config: { max_concurrent_domains: 8 } });
       const engine = fx.engine;
       ctx.fx = fx;
       fx.scripted.defaultScript(script.complete());

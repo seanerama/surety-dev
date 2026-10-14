@@ -318,7 +318,7 @@ export function runIntervals(db) {
   const intervals = new Map();
   for (const e of all(db, `SELECT "seq", "type", "subject" FROM "events" WHERE "type" IN ('run.created', 'run.ended') ORDER BY "seq"`)) {
     const subject = json(e.subject);
-    if (e.type === 'run.created') intervals.set(subject.run, { run: subject.run, project: subject.project, created: e.seq, ended: null });
+    if (e.type === 'run.created') intervals.set(subject.run, { run: subject.run, project: subject.project, work_item: subject.work_item ?? null, created: e.seq, ended: null });
     else if (intervals.has(subject.run)) intervals.get(subject.run).ended = e.seq;
   }
   return [...intervals.values()];
@@ -347,4 +347,28 @@ export function maxConcurrentRuns(db, { project } = {}) {
 // while another run of that project has not ended.
 export function assertOneRunAtATime(db, project) {
   assert.ok(maxConcurrentRuns(db, { project }) <= 1, `project ${project} had more than one run that had not ended at the same time: ${JSON.stringify(runIntervals(db).filter((i) => i.project === project))}`);
+}
+
+// One run per work item (D6 K2, which removes the project and engine run
+// counts and keeps this rule; SEAM.md §426): no run of a work item is created
+// while another run of the same item has not ended. A run whose created event
+// names no work item (`subject.work_item` absent) is read from the store.
+export function assertOneRunPerItem(db, project) {
+  const itemOf = (run) => all(db, 'SELECT "work_item" FROM "runs" WHERE "id" = ?', run)[0]?.work_item ?? null;
+  const byItem = new Map();
+  for (const i of runIntervals(db)) {
+    if (project !== undefined && i.project !== project) continue;
+    const item = i.work_item ?? itemOf(i.run);
+    if (item === null) continue;
+    if (!byItem.has(item)) byItem.set(item, []);
+    byItem.get(item).push(i);
+  }
+  for (const [item, list] of byItem) {
+    const points = list.flatMap((i) => (i.ended === null ? [[i.created, 1]] : [[i.created, 1], [i.ended, -1]])).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let now = 0;
+    for (const [, delta] of points) {
+      now += delta;
+      assert.ok(now <= 1, `work item ${item} had more than one run that had not ended at the same time: ${JSON.stringify(list)}`);
+    }
+  }
 }

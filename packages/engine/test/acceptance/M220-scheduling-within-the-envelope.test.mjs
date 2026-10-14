@@ -18,6 +18,15 @@
 //
 // SAFETY: the check program holds at a release file and exits 0. Nothing
 // consumes host memory or disk: the reserves are configuration.
+//
+// M5 slice 37 (D6 K2, C.2; B09; SEAM.md §426): a role domain is admitted at
+// its project's effective `role_memory_max` and a check domain at its
+// project's `check_memory_max`, each min(the project's value or default, the
+// `domain_memory_max` ceiling). The `host_reserve_memory` round keeps its
+// arithmetic (the ceiling case) by setting the holding role's project's
+// `role_memory_max` and the checked project's `check_memory_max` to the
+// round's ceiling; in the disk round the ceiling is lowered again and caps
+// them (the driver's ruling Q1).
 
 import assert from 'node:assert/strict';
 import { readFileSync, statfsSync } from 'node:fs';
@@ -26,6 +35,7 @@ import { describe, test } from 'node:test';
 import { writeEngineConfig, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
 import { addGitProject, addItem, pinStep } from './harness/gitruns.mjs';
+import { changePolicy } from './harness/journal.mjs';
 import { run as runRow, stopRun, tick, waitForRunState } from './harness/runs.mjs';
 import { SANDBOX_CONFIG, roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import {
@@ -131,6 +141,11 @@ describe('M220 scheduling within the envelope', () => {
       writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, ...config });
       await fx.start();
       await qualifyRunnerByFixture(fx.engine);
+      // The ceiling case (K2): the role and the check counted at the round's ceiling.
+      if (limit === 'host_reserve_memory') {
+        await changePolicy(fx.engine, other.id, { role_memory_max: memoryLimit });
+        await changePolicy(fx.engine, project.id, { check_memory_max: memoryLimit });
+      }
       await heldWhileARoleRuns(fx, project, candidate, other, limit);
     }
   });
