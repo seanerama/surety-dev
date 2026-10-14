@@ -2,7 +2,7 @@
 
 **Draft by the Verifier of M5 slice 38, 2026-10-14.** Run only by Sean's command, or by the driver under his delegation (E144 item 2), on his subscription token (BS5 §12). Nothing here has been run with a real `claude`. The dress rehearsal of each file must pass on the revision you run, before you run it (section 1, step 4). The files are `packages/engine/test/acceptance/M443-the-real-journey-from-an-idea-to-alpha.test.mjs` and `M444-the-real-retrofit-journey.test.mjs` (manifest `real`); what they do is their headers and `harness/real/m5-lane.mjs`; the seam is SEAM §456.
 
-**What it costs.** M443, the journey from an idea to Alpha: **about 5 USD** in Claude Code's own estimates (E139 item 7): three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet. M444, the retrofit: **about 3 USD** (E140 N3): two sessions on Opus, three or four one-shots on Sonnet; about forty minutes of your time in the sessions. Before either, once per run directory: two qualification attempts, one per model (Opus in `session_headless` mode with the continuation canary; Sonnet in `one_shot_headless` mode), under 0.50 USD together. Drawn from your subscription's usage limits, which your own Claude use shares. The caps, your choice of 2026-10-14: each run (a session is one run, its turns added up) bounded by 2 000 000 billable tokens, and each project by a day limit in estimates of 30 USD (M443) and 20 USD (M444), with its day bound on unknown usage at 4 000 000 tokens, twice the run cap (the driver's ruling under your caps: a run whose usage is incomplete reserves the rest of its cap as unknown, and rehearsal 4 showed a day bound below the cap refusing every other item); the estimates stay about 5 and 3 USD. The run bound and the unknown-usage bound are raised in one change, a widening you confirm. A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3, kept by your decision); the report says so if it happens. An estimate, not a cap or an authorization. The tests print this before they start anything.
+**What it costs.** M443, the journey from an idea to Alpha: **about 5 USD** in Claude Code's own estimates (E139 item 7): three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet. M444, the retrofit: **about 3 USD** (E140 N3): two sessions on Opus, three or four one-shots on Sonnet; about forty minutes of your time in the sessions. Before either, once per run directory: two qualification attempts, one per model (Opus in `session_headless` mode with the continuation canary; Sonnet in `one_shot_headless` mode), under 0.50 USD together. Drawn from your subscription's usage limits, which your own Claude use shares. The caps, your choice of 2026-10-14: each run (a session is one run, its turns added up) bounded by 2 000 000 billable tokens, and each project by a day limit in estimates of 30 USD (M443) and 20 USD (M444), with its day bound on unknown usage at 4 000 000 tokens, twice the run cap (the driver's ruling under your caps: a run whose usage is incomplete reserves the rest of its cap as unknown, and rehearsal 4 showed a day bound below the cap refusing every other item); the estimates stay about 5 and 3 USD. The run bound and the unknown-usage bound are raised in one change, a widening you confirm. **The day limits are per UTC day** (the engine's day is UTC): start each run early in the UTC day, so that a long journey does not straddle midnight UTC with its spending split across two days' limits. A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3, kept by your decision); the report says so if it happens. An estimate, not a cap or an authorization. The tests print this before they start anything.
 
 ## 1. Before you run them
 
@@ -33,7 +33,7 @@
    SURETY_REAL_CREDENTIAL_REF=$HOME/surety-m5-rehearsal.key \
    SURETY_REAL_AUTH_MODE=api_key \
    SURETY_REAL_CLAUDE_BINARY=$HOME/surety-m5-rehearsal-claude \
-   SURETY_REAL_CONFIRM_SPEND='I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated' \
+   SURETY_REAL_CONFIRM_SPEND='I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated, capped at 2000000 tokens a run and 30 USD a day' \
    node --test --test-reporter=spec packages/engine/test/acceptance/M443-the-real-journey-from-an-idea-to-alpha.test.mjs \
      2>&1 | tee -a "$SURETY_REAL_RUN_DIR/runner.log"
    ```
@@ -58,13 +58,15 @@ M443 first:
 SURETY_REAL_CREDENTIAL_REF=$HOME/.config/surety/claude-subscription.token \
 SURETY_REAL_AUTH_MODE=subscription_token \
 SURETY_REAL_CLAUDE_BINARY=$HOME/.local/share/claude/versions/<version> \
-SURETY_REAL_CONFIRM_SPEND='I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated' \
+SURETY_REAL_CONFIRM_SPEND='I accept the M5 real journey from an idea to Alpha (M443) on my Claude subscription, about 5 USD as estimated, capped at 2000000 tokens a run and 30 USD a day' \
 SURETY_REAL_WAIT_MINUTES=120 \
 node --test --test-reporter=spec packages/engine/test/acceptance/M443-the-real-journey-from-an-idea-to-alpha.test.mjs \
   2>&1 | tee -a "$SURETY_REAL_RUN_DIR/runner.log"
 ```
 
-Then M444, the same with its own confirmation, `'I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated'`, and its file.
+Each run directory is marked a rehearsal's or a real run's when it is made (`state.json`'s `rehearsal`, `run-kind.json`): a real run refuses a rehearsal's directory, and a rehearsal a real run's.
+
+Then M444, the same with its own confirmation, `'I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated, capped at 2000000 tokens a run and 20 USD a day'`, and its file.
 
 Optional: `SURETY_REAL_IDEA_FILE=<your brief>` (M443's idea; without it the reference brief of `harness/journey/reference.mjs`, labelled); `SURETY_REAL_VISION=run` (a Vision session; skipped and recorded by default); `SURETY_REAL_CHANGE_FILE=<your change request>` (without it the reference CR-1).
 
@@ -105,7 +107,18 @@ Every command you type and every decision you answer is printed on your terminal
 
 ## 4. If a teardown leaves anything
 
-As M4's: the run directory halts and prints each unit, cgroup or file of the prefix by its exact name. Rerun the teardown step, or stop a unit yourself by its exact name (`systemctl --user stop -- <name>`). Never by pattern, never anything that restarts or reloads the user manager.
+The run directory halts and prints each unit, cgroup or file of the run home's prefix by its exact name. The teardown is its own recorded step (`m5a_teardown`, `m5r_teardown`); run it again, alone, with this command, which starts the run home's engine, reads the prefix and asks the engine to tear `alpha` down (the engine stops a unit only by its exact name), and does nothing else: no model, no session, no other step, the earlier steps' records kept.
+
+```
+SURETY_REAL_RERUN=m5r_teardown \
+SURETY_REAL_CREDENTIAL_REF=$HOME/.config/surety/claude-subscription.token \
+SURETY_REAL_AUTH_MODE=subscription_token \
+SURETY_REAL_CLAUDE_BINARY=$HOME/.local/share/claude/versions/<version> \
+SURETY_REAL_CONFIRM_SPEND='I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated, capped at 2000000 tokens a run and 20 USD a day' \
+node docs/acceptance/reports/M5-real-lane/teardown.mjs M444
+```
+
+(For M443: `SURETY_REAL_RERUN=m5a_teardown`, M443's confirmation, and `teardown.mjs M443`.) Or stop a unit yourself by its exact name: `systemctl --user stop -- <name>`. Never by pattern, never anything that restarts or reloads the user manager.
 
 ## 5. What it keeps
 

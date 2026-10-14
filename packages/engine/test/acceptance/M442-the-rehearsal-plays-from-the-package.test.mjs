@@ -24,11 +24,12 @@
 // (and the whole journey is M442 (c)'s file). No product here is the
 // fixture's: each is derived from the package and the owner's words.
 //
-// Not here: the retrofit packages' own elements (`spec_writer.claims_table`,
-// `verifier.adoption_rule`), which the retrofit rehearsal of M444 reads
-// (SEAM.md §456), and `architect.spec_change_requests`, which only a scoped
-// adoption's replan touching a descriptive module can need (none in M444's
-// full mode); the parts of a product only an execution reads (a check's
+// The retrofit packages' own elements (`spec_writer.claims_table`,
+// `verifier.adoption_rule`, `architect.spec_change_requests`) on the
+// retrofit fixture repository: the claims table and the adoption on a full
+// adoption played by the fakes; the change requests on M414 (d)'s scoped
+// adoption, its descriptive R1 held by phase 2, with the replan the fake's.
+// Not here: the parts of a product only an execution reads (a check's
 // program, the Builder's code), which the kernel lane does not run: the
 // real-lane rehearsals run them in real domains.
 
@@ -41,13 +42,21 @@ import { planChecks, pump } from './harness/journey/drive.mjs';
 import { blockersOf } from './harness/journey/spec34.mjs';
 import { saveSession, sayAndSettle } from './harness/sessions.mjs';
 import { ARCHITECT_ELEMENTS, AUTHORING_ELEMENTS, BUILDER_ELEMENTS, SPEC_WRITER_ELEMENTS } from './harness/real/packages.mjs';
+import { sumsArchitecture, sumsBrief, sumsContent } from './harness/real/rehearsal-content.mjs';
+import { advance, completeConformance, passAlphaBarrier, retrofitEngine, toConformancePublished } from './harness/retrofit/drive.mjs';
+import { REQUIREMENTS as SUMS_REQS, conformanceStage, retrofitSpecText, roadmapJson } from './harness/retrofit/products.mjs';
 import {
   SPEC_WORDS,
+  adoptedFull,
+  architectTurn as architectTurnOf,
+  judgeReplanRetrofit,
+  retrofitSpecTurn,
   alphaConfigured,
   architectTurn,
   contextOf,
   fakeEngine,
   fakeSession,
+  FAKE,
   judgeArchitect,
   judgeAuthoring,
   judgeBuilder,
@@ -65,6 +74,9 @@ import {
 import { TALLY_CHANGE_TEXT, tallyBrief } from './harness/real/rehearsal-content.mjs';
 import { createWithIdea, JOURNEY_POLICY, ROUTED_KINDS } from './harness/journey/drive.mjs';
 import { pauseProject } from './harness/runs.mjs';
+import { withStore } from './harness/store.mjs';
+import { recordJson } from './harness/real/lane.mjs';
+const rows = (home, sql, ...p) => withStore(home, (db) => db.prepare(sql).all(...p));
 
 const show = (v) => JSON.stringify(v)?.slice(0, 1500);
 const blocking = (findings) => (findings ?? []).map((f) => f.code);
@@ -74,9 +86,10 @@ const playsOf = (fx, project, kind) => fx.scripted.fakePlays().filter((e) => e.l
 // kernel lane's parse at save), where it draws one.
 const SPEC_ENGINE = Object.freeze({
   'spec_writer.header_fields': /header/,
-  'spec_writer.requirement_form': /./,
+  'spec_writer.requirement_form': /^spec_row_unmatched$/,
   'spec_writer.marks': /uncertain|mark/,
   'spec_writer.index_columns': /index/,
+  'spec_writer.index_cells': /index/,
   'spec_writer.sensitive_areas': /area/,
   'spec_writer.tier_table': /tier|header/,
 });
@@ -168,15 +181,18 @@ describe('M442 (b) the Architect under its package with one element omitted', ()
       const c = A.cases[id];
       assert.ok(c?.play, `the fake played the turn (${show(c)})`);
       assert.ok(!(id in (c.play.blocks ?? {})), `no ${id} block in the package (${Object.keys(c.play.blocks ?? {}).join(', ')})`);
-      assert.ok(named(judgeArchitect(c.play.written ?? {}, A.W, { adrs: ['ADR-001'] })).includes(id), `the judgement names ${id} (${show(judgeArchitect(c.play.written ?? {}, A.W, { adrs: ['ADR-001'] }))})`);
+      // Judged against the whole package with this turn's own facts (its prepared_against).
+      const W = { ...A.W, ...(c.play.blocks ?? {}) };
+      assert.ok(named(judgeArchitect(c.play.written ?? {}, W, { adrs: ['ADR-001'] })).includes(id), `the judgement names ${id} (${show(judgeArchitect(c.play.written ?? {}, W, { adrs: ['ADR-001'] }))})`);
       if (id === 'architect.routing') {
         assert.equal(c.close.status, 200, `the close raises the pair (→ ${c.close.status} ${c.close.text})`);
         assert.equal(c.check?.conformance, 'uncertain', `the plan check records the declared uncertainty (${show(c.check)})`);
       } else if (id === 'architect.schema.phase_plan') {
-        // With no plan written the close may raise the architecture's approval alone: the
-        // engine reacts by proposing no phase-1 plan (no plan_approval), or refuses the close.
-        const kinds = (c.close.body?.decisions ?? []).map((d) => d.kind);
-        assert.ok([409, 422].includes(c.close.status) || (c.close.status === 200 && !kinds.includes('plan_approval')), `the close is refused or proposes no plan (→ ${c.close.status} ${show(kinds)})`);
+        // A first Architect close without the first phase's plan is refused 422
+        // plan_refused naming the plan's file (reading 2; the Builder's 7b481d4).
+        assert.equal(c.close.status, 422, `the first close without phase 1's plan is refused (→ ${c.close.status} ${c.close.text})`);
+        assert.equal(c.close.body?.code, 'plan_refused', `plan_refused (${c.close.text})`);
+        assert.match(c.close.text, /\.surety\/phases\/phase-1\.json/, 'naming .surety/phases/phase-1.json');
       } else {
         assert.ok([409, 422].includes(c.close.status), `the engine refuses the close (→ ${c.close.status} ${c.close.text})`);
       }
@@ -288,9 +304,13 @@ describe("M442 (b) the phase Verifier and the Spec Writer's change, each under i
     await resume(fx, p);
     const ctx = { ...contextOf(fx, p), answerKinds: ROUTED_KINDS };
     await pump(fx, ctx, () => (playsOf(fx, p.id, 'phase_verification').length > 0 ? true : undefined), { what: 'the phase Verifier to play', max: 120 });
+    // The engine's reaction to the play: the phase completes, or the phase verification parks for its missing sign-off.
+    const work = () => rows(fx.home, `SELECT "status", "blocker" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' ORDER BY rowid`, p.id).at(-1);
+    const plan1 = () => rows(fx.home, 'SELECT "completed_at" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 1 AND "active" = 1', p.id)[0];
+    await pump(fx, ctx, () => (plan1()?.completed_at || /phase_signoff_missing/.test(work()?.blocker ?? '') ? true : undefined), { what: 'the phase to complete or its verification to park', max: 40 }).catch(() => null);
     await omit(fx, []);
     await pauseProject(fx.engine, p.id);
-    return playsOf(fx, p.id, 'phase_verification')[0];
+    return { ...playsOf(fx, p.id, 'phase_verification')[0], reaction: { work: work() ?? null, completed: plan1()?.completed_at ?? null } };
   };
   // A project with its first plan ready, then the owner's change request.
   const change = async (fx, ids) => {
@@ -303,9 +323,14 @@ describe("M442 (b) the phase Verifier and the Spec Writer's change, each under i
     const res = await fx.engine.post(`/v1/projects/${p.id}/spec/change-requests`, { text: TALLY_CHANGE_TEXT });
     assert.equal(res.status, 201, `the owner's change request (→ ${res.status} ${res.text})`);
     await pump(fx, ctx, () => (playsOf(fx, p.id, 'spec_change').length > 0 ? true : undefined), { what: 'the Spec Writer\'s change to play', max: 60 });
+    // The engine's reaction: the impact it records keeps the role's claimed changes beside its own.
+    const request = () => rows(fx.home, 'SELECT * FROM "spec_change_requests" WHERE "project" = ? ORDER BY "seq"', p.id).at(-1);
+    await pump(fx, ctx, () => (request()?.impact || request()?.impact_value ? true : undefined), { what: 'the change\'s impact to be recorded', max: 30 }).catch(() => null);
+    const r = request();
+    const impact = r?.impact_value ? JSON.parse(r.impact_value) : r?.impact ? recordJson(fx.home, r.impact) : null;
     await omit(fx, []);
     await pauseProject(fx.engine, p.id);
-    return playsOf(fx, p.id, 'spec_change')[0];
+    return { ...playsOf(fx, p.id, 'spec_change')[0], reaction: { impact } };
   };
   before(async () => {
     const fx = await fakeEngine(shared.context);
@@ -319,7 +344,9 @@ describe("M442 (b) the phase Verifier and the Spec Writer's change, each under i
   test('(b) control: with the packages whole, the phase Verifier signs the phase off and the change lists its changes', () => {
     assert.ok(C.phaseControl && C.changeControl, 'both played');
     assert.deepEqual(judgePhaseVerification(C.phaseControl.result, C.phaseControl.blocks ?? {}), []);
+    assert.ok(C.phaseControl.reaction.completed, `the engine completes the phase on the sign-off (${show(C.phaseControl.reaction)})`);
     assert.deepEqual(judgeSpecChange(C.changeControl.result, C.changeControl.blocks ?? {}), []);
+    assert.ok(Array.isArray(C.changeControl.reaction.impact?.claimed) && C.changeControl.reaction.impact.claimed.length > 0, `the engine records the claimed changes beside its impact (${show(C.changeControl.reaction.impact?.claimed)})`);
   });
 
   test('(b) verifier.phase_signoff omitted: the package lacks it, the result signs nothing off, the rehearsal fails naming it', () => {
@@ -328,6 +355,7 @@ describe("M442 (b) the phase Verifier and the Spec Writer's change, each under i
     assert.ok(!('verifier.phase_signoff' in (c.blocks ?? {})), 'no verifier.phase_signoff block in the package');
     const f = judgePhaseVerification(c.result, C.phaseControl.blocks ?? {});
     assert.ok(named(f).includes('verifier.phase_signoff'), `the judgement names it (${show(f)})`);
+    assert.ok(!c.reaction.completed && /phase_signoff_missing/.test(c.reaction.work?.blocker ?? ''), `the engine parks the phase verification phase_signoff_missing and completes nothing (${show(c.reaction)})`);
   });
 
   test('(b) spec_writer.change_result omitted: the package lacks it, the result lists no change, the rehearsal fails naming it', () => {
@@ -336,5 +364,97 @@ describe("M442 (b) the phase Verifier and the Spec Writer's change, each under i
     assert.ok(!('spec_writer.change_result' in (c.blocks ?? {})), 'no spec_writer.change_result block in the package');
     const f = judgeSpecChange(c.result, C.changeControl.blocks ?? {});
     assert.ok(named(f).includes('spec_writer.change_result'), `the judgement names it (${show(f)})`);
+    assert.ok(c.reaction.impact && !(Array.isArray(c.reaction.impact.claimed) && c.reaction.impact.claimed.length > 0), `the engine records no claimed change beside its impact (${show(c.reaction.impact?.claimed)})`);
+  });
+});
+
+describe("M442 (b) the retrofit packages' own elements, each omitted", () => {
+  const shared = sharedFixture();
+  const R = {};
+  const brief = sumsBrief();
+  // A full adoption on the fakes to its conformance authoring's play, `ids` omitted for the authoring.
+  const toAuthoring = async (fx, ids) => {
+    const { p } = await adoptedFull(fx);
+    await retrofitSpecTurn(fx, p, { brief, close: true });
+    const a = await architectTurnOf(fx, p, { arch: sumsArchitecture() });
+    assert.equal(a.close.status, 200, `the retrofit Architect's close (→ ${a.close.status} ${a.close.text})`);
+    await pauseProject(fx.engine, p.id);
+    for (const d of a.close.body.decisions ?? []) await fx.engine.post(`/v1/projects/${p.id}/decisions/${d.id}/answer`, { option: 'approve', preview_hash: decision(fx.home, d.id).preview_hash });
+    await alphaConfigured(fx, p);
+    await omit(fx, ids);
+    await resume(fx, p);
+    const ctx = { ...contextOf(fx, p, 'T1'), answerKinds: [] };
+    await pump(fx, ctx, () => (playsOf(fx, p.id, 'check_authoring').length > 0 ? true : undefined), { what: 'the conformance authoring to play', max: 30 });
+    await omit(fx, []);
+    await pauseProject(fx.engine, p.id);
+    return playsOf(fx, p.id, 'check_authoring')[0];
+  };
+  before(async () => {
+    const fx = await fakeEngine(shared.context, { content: sumsContent() });
+    // The claims table: two spec turns on one adopted project, the second with it omitted.
+    const { p } = await adoptedFull(fx);
+    R.claimsControl = (await retrofitSpecTurn(fx, p, { brief })).play;
+    await omit(fx, ['spec_writer.claims_table']);
+    R.claimsOmitted = (await retrofitSpecTurn(fx, p, { brief })).play;
+    await omit(fx, []);
+    R.W = { ...(R.claimsControl?.blocks ?? {}) };
+    // The adoption rule.
+    R.adoptControl = await toAuthoring(fx, []);
+    R.adoptOmitted = await toAuthoring(fx, ['verifier.adoption_rule']);
+  });
+  after(shared.cleanup);
+
+  test('(b) control: the retrofit specification carries the claims table; the conformance authoring adopts in the rule\'s form', () => {
+    assert.deepEqual(judgeSpec(R.claimsControl?.written?.['.surety/spec/spec.md'], R.W, brief).filter((f) => f.element === 'spec_writer.claims_table'), []);
+    assert.deepEqual(judgeAuthoring(R.adoptControl?.written ?? {}, R.adoptControl?.result, R.adoptControl?.blocks ?? {}, { retrofit: true }).filter((f) => f.element === 'verifier.adoption_rule'), []);
+  });
+
+  test('(b) spec_writer.claims_table omitted: the package lacks it, the specification has no claims table, the rehearsal fails naming it', () => {
+    const c = R.claimsOmitted;
+    assert.ok(c && !('spec_writer.claims_table' in (c.blocks ?? {})), 'no spec_writer.claims_table block in the package');
+    assert.ok(named(judgeSpec(c.written?.['.surety/spec/spec.md'], R.W, brief)).includes('spec_writer.claims_table'), 'the judgement names it');
+  });
+
+  test('(b) verifier.adoption_rule omitted: the package lacks it, nothing is adopted, the rehearsal fails naming it', () => {
+    const c = R.adoptOmitted;
+    assert.ok(c && !('verifier.adoption_rule' in (c.blocks ?? {})), 'no verifier.adoption_rule block in the package');
+    const f = judgeAuthoring(c.written ?? {}, c.result, R.adoptControl?.blocks ?? {}, { retrofit: true });
+    assert.ok(named(f).includes('verifier.adoption_rule'), `the judgement names it (${show(f)})`);
+  });
+});
+
+describe('M442 (b) architect.spec_change_requests: a scoped adoption\'s replan, its descriptive requirement in phase 2', () => {
+  // M414 (d)'s adoption (R1 descriptive in phase 2, R4 a defect), every role
+  // the fixture's but the replan, which is the package-driven fake.
+  const replan = async (t, ids) => {
+    const fx = await retrofitEngine(t, { withoutR1: true });
+    fx.scripted.packageFakes(sumsContent());
+    fx.scripted.kindScript('replan', FAKE);
+    const phase2Both = (roadmap) => ({ ...roadmap, phases: roadmap.phases.map((ph) => (ph.number === 2 ? { ...ph, modules: ['lib', 'service'] } : ph)) });
+    const J = await toConformancePublished(fx, {
+      mode: 'scoped',
+      policy: { alpha_deploy: 'manual' },
+      spec: retrofitSpecText({ requirements: SUMS_REQS.map((r) => (r.key === 'R1' ? { ...r, descriptive: true, phase: 2 } : r)) }),
+      answers: { R2: 'confirm', R3: 'confirm', R4: 'defect' },
+      architect: { roadmap: phase2Both(roadmapJson({ phase1: ['R2', 'R3'], phase2: ['R1', 'R4'] })), stages: [conformanceStage({ implements: ['R2', 'R3'], modules: ['service'] })] },
+    });
+    await omit(fx, ids);
+    const done = await completeConformance(fx, J);
+    await passAlphaBarrier(fx, done, { max: 20 }).catch(() => null);
+    await advance(fx, J.ctx, () => (playsOf(fx, J.p.id, 'replan').length > 0 ? true : undefined), { what: 'the replan to play', max: 20 }).catch(() => null);
+    await omit(fx, []);
+    return { play: playsOf(fx, J.p.id, 'replan')[0] ?? null, requests: rows(fx.home, 'SELECT "id", "source" FROM "spec_change_requests" WHERE "project" = ?', J.p.id) };
+  };
+
+  test('(b) control and omission: the fake requests R1\'s criteria in the block\'s form and the engine records the request; without the block, no request, and the rehearsal fails naming it', async (t) => {
+    const control = await replan(t, []);
+    assert.ok(control.play, 'the replan played');
+    assert.ok('architect.spec_change_requests' in (control.play.blocks ?? {}), 'the replan_retrofit package carries architect.spec_change_requests');
+    assert.deepEqual(judgeReplanRetrofit(control.play.result, control.play.blocks, ['R1']), [], 'the control requests R1\'s criteria');
+    assert.ok(control.requests.length >= 1, `the engine records the replan's request (${show(control.requests)})`);
+    const omitted = await replan(t, ['architect.spec_change_requests']);
+    assert.ok(omitted.play && !('architect.spec_change_requests' in (omitted.play.blocks ?? {})), 'no block in the package');
+    assert.ok(named(judgeReplanRetrofit(omitted.play.result, control.play.blocks, ['R1'])).includes('architect.spec_change_requests'), 'the judgement names it');
+    assert.equal(omitted.requests.length, 0, `the engine records no request (${show(omitted.requests)})`);
   });
 });

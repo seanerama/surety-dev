@@ -202,7 +202,8 @@ function playM5() {
   } catch {
     return false;
   }
-  if (!Array.isArray(manifest?.reads) && manifest?.kind !== 'session' && !/^(check_authoring|replan|spec_change|phase_verification)$/.test(String(manifest?.kind))) return false;
+  // With the rehearsal's content embedded, every package is M5's: no fallback to M4's
+  // hard-coded roles (M7 of the slice-38 review); a package without its facts fails loudly.
   assistant(usageOf(U));
   const played = SURETY_PACKAGE_FAKES.play({ context: '/surety/context', workspace: '/surety/workspace', content: SURETY_REHEARSAL_CONTENT });
   finish(played.result);

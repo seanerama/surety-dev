@@ -28,11 +28,12 @@ export const SPEC_WRITER_ELEMENTS = Object.freeze([
   'spec_writer.environment_fields',
   'spec_writer.sensitive_areas',
   'spec_writer.tier_table',
+  'spec_writer.index_cells',
   'spec_writer.approval_blockers',
 ]);
 export const SPEC_WRITER_RETROFIT_ELEMENTS = Object.freeze([...SPEC_WRITER_ELEMENTS, 'spec_writer.claims_table']);
-export const ARCHITECT_ELEMENTS = Object.freeze(['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing']);
-export const VERIFIER_COMMON_ELEMENTS = Object.freeze(['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy']);
+export const ARCHITECT_ELEMENTS = Object.freeze(['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing', 'architect.prepared_against']);
+export const VERIFIER_COMMON_ELEMENTS = Object.freeze(['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables']);
 export const AUTHORING_ELEMENTS = Object.freeze([...VERIFIER_COMMON_ELEMENTS, 'verifier.toolchain', 'verifier.authoring_result']);
 export const AUTHORING_RETROFIT_ELEMENTS = Object.freeze([...AUTHORING_ELEMENTS, 'verifier.adoption_rule']);
 export const CORRECTION_ELEMENTS = VERIFIER_COMMON_ELEMENTS;
@@ -80,6 +81,15 @@ export const CRITERIA_KINDS = Object.freeze(['acceptance', 'integration', 'prope
 export const KIND_INVENTORY = Object.freeze({ T1: ['acceptance', 'smoke'], T2: ['acceptance', 'smoke', 'integration', 'security_lint'], T3: ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery'] });
 export const DISPOSITIONS = Object.freeze(['copied', 'replaced', 'application']);
 export const ENVIRONMENT_FIELDS = Object.freeze(['Purpose', 'Verified means', 'Target', 'Runtime and start command', 'Port', 'Excluded from the artifact', 'Required post-deploy behaviour check', 'Stable arguments']);
+
+import { realpathSync } from 'node:fs';
+const realpathOr = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
 
 // ---- reading a package -------------------------------------------------------------------
 
@@ -216,6 +226,27 @@ export function elementProblems(id, d, facts = {}) {
       want(same(d.columns, ['Source', 'Claim', 'Observed', 'Requirement']), 'columns Source, Claim, Observed, Requirement');
       want(d.not_checked === 'not checked' && d.none === 'none', 'not checked and none');
       break;
+    case 'spec_writer.index_cells':
+      want(d.key === 'R<n>' && typeof d.key_pattern === 'string' && typeof d.criterion_pattern === 'string', 'the key and criterion patterns');
+      want(d.list_separator === ', ', 'the list separator ", "');
+      want(typeof d.phase_pattern === 'string' && typeof d.separator_row?.cell_pattern === 'string', 'the phase cell and the separator row');
+      want(typeof d.phase_empty === 'string' && d.phase_empty.length > 0, 'an empty phase cell stated');
+      want(d.origin === 'intended | observed', 'origin intended | observed');
+      break;
+    case 'architect.prepared_against': {
+      want(typeof d.rule === 'string' && d.rule.length > 0, 'the rule');
+      want(!('roadmap_version_if_changed' in d) || Number.isInteger(d.roadmap_version_if_changed), 'roadmap_version_if_changed, when stated, an integer');
+      const f = d.facts;
+      want(f === null || (Number.isInteger(f?.spec_version) && Number.isInteger(f?.architecture_version) && Number.isInteger(f?.roadmap_version) && /^[0-9a-f]{40}$/.test(f?.revision ?? '')), 'facts: the versions and the revision (or null: unknown)');
+      if (facts.prepared) for (const [k, v] of Object.entries(facts.prepared)) want(f?.[k] === v, `facts.${k} ${JSON.stringify(v)}, as the engine records it`);
+      break;
+    }
+    case 'verifier.target_variables': {
+      want(d.variable === 'SURETY_TARGET_<NAME>' && typeof d.name_rule === 'string' && typeof d.value_form === 'string' && d.value_form.startsWith('http://127.0.0.1:'), 'the variable, its name rule and its value form http://127.0.0.1:<port>');
+      const envs = d.environments;
+      want(envs === null || (Array.isArray(envs) && envs.every((e) => e.targets === null || (Array.isArray(e.targets) && e.targets.every((t) => t.variable === `SURETY_TARGET_${String(t.name).toUpperCase().replace(/[^A-Z0-9]/g, '_')}`)))), "each target's variable by the name rule");
+      break;
+    }
     case 'spec_writer.change_result':
       want(d.field === 'changes' && d.item?.key === 'R<n>' && typeof d.item?.reason === 'string', 'changes [{key, kind, reason}]');
       want(setEq(d.item?.kind, IMPACT_KINDS), 'kind one of D6 A.2\'s ImpactKind');
@@ -298,6 +329,8 @@ export function elementProblems(id, d, facts = {}) {
       want(d.member === 'secrets' && d.reference === 'deploy/<name>' && d.variable === 'SURETY_SECRET_<NAME>', 'secrets: deploy/<name> as SURETY_SECRET_<NAME>');
       want(d.environments === null || Array.isArray(d.environments), 'the environments (or null: unknown)');
       want(!Array.isArray(d.environments) || new Set(d.environments.map((e) => e?.name)).size === d.environments.length, 'each environment once, by its name');
+      want(typeof d.name_rule === 'string' && d.name_rule.length > 0, "the variable's name rule");
+      want(!Array.isArray(d.environments) || d.environments.every((e) => e?.variables === null || (Array.isArray(e?.variables) && e.variables.every((v) => typeof v?.ref === 'string' && v.variable === `SURETY_SECRET_${v.ref.slice(v.ref.indexOf('/') + 1).toUpperCase()}`))), "each environment's secrets with their variables by the name rule (or null: unread)");
       break;
     case 'verifier.post_deploy':
       want(setEq(d.kinds, ['post_deploy_behavior', 'post_deploy_identity']) && d.gate_kind === 'alpha_complete' && d.required === 'post_deploy_behavior', 'post-deploy kinds, alpha_complete, a required post_deploy_behavior check');
@@ -312,6 +345,9 @@ export function elementProblems(id, d, facts = {}) {
       want(d.runner_config && typeof d.runner_config === 'object', "runner_config's forms (read_paths, path)");
       want('current' in d && (d.current === null || typeof d.current === 'object'), 'the effective governed values, or null');
       want(Array.isArray(d.runtimes) && d.runtimes.some((r) => r?.name === 'node' && typeof r.path === 'string' && r.path.startsWith('/')), 'the runtimes, node among them by absolute path');
+      // Against the engine's own (N of the review): its node first, and the effective version's roots.
+      if (facts.engineNode) want(Array.isArray(d.runtimes) && d.runtimes[0]?.path && realpathOr(d.runtimes[0].path) === realpathOr(facts.engineNode), `the first runtime the engine's own node (${facts.engineNode})`);
+      if (facts.roots) want(JSON.stringify(d.current?.protected_paths ?? null) === JSON.stringify(facts.roots), `current.protected_paths the effective version's roots ${JSON.stringify(facts.roots)}`);
       break;
     case 'verifier.authoring_result':
       want(has(d.fields, ['governed_changes', 'deferred_criteria', ...(facts.retrofit ? ['adopted_tests'] : [])]), `the authoring result's fields${facts.retrofit ? ' with adopted_tests' : ''}`);
