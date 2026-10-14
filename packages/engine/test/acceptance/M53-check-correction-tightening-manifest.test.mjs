@@ -28,8 +28,8 @@ import { assertRefused } from './harness/fixtures.mjs';
 import { PROTECTED_FILES, askingForTicks, assertApplied, assertNotApplied, assertProposalRejected, capturedProposal, classify, correction, effectiveVersion, governedEdit, proposalsOf, protectedVersions, reviewerApproves, roleRun, waitApplied } from './harness/gates.mjs';
 import { addGitProject, addItem, permittedEdit, roleThat, roleThatHolds, runToEnd, runToHold, step } from './harness/gitruns.mjs';
 import { armBarrier, changePolicy, journalBarrier, operationsOf } from './harness/journal.mjs';
-import { parentsOf, refOid } from './harness/repos.mjs';
-import { runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
+import { commitOnRef, parentsOf, refOid } from './harness/repos.mjs';
+import { answerDecision, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { contentAndSpecChange } from './harness/stale-correction.mjs';
 
 const KIND = 'check_correction_tightening';
@@ -160,45 +160,37 @@ describe('M53 the check_correction_tightening manifest', () => {
   // first, so it moves the branch H → R before the application's branch
   // update, intended with old = H, is attempted. No tick is asked for while
   // a journal barrier is paused: the order of the two drives is the lock's.
-  test("the integration branch moves after the answer, between the application's commit and its branch update: the update fails without effect, the effect is invalidated, the approval and the intended version are withdrawn, nothing is left blocked, the project dispatches again, and the question is asked again against the new head", async (t) => {
+  test("the integration branch moves after the answer, by hand, between the application's commit and its branch update: the update fails without effect, the effect is invalidated, the approval and the intended version are withdrawn, nothing is left blocked, the project dispatches again, and the question is asked again against the new head", async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx, { tier: 'T1', files: PROTECTED_FILES });
     const previous = effectiveVersion(fx.home, project.id);
     const H = head(project);
 
-    const fix = await addItem(fx, project.id, 'fix');
-    fx.scripted.script(fix, [roleThatHolds([permittedEdit()])]);
-    await runToHold(fx, project.id, fix);
-
     const proposal = await governedEdit(fx, project, { protected_paths: ['.surety/checks/', 'docs/policy/'] });
     await classify(fx.engine, proposal.id, 'tightening');
     const previewed = await askingForTicks(fx, project.id, () => decisionsOn(fx.home, KIND, proposal.id).find((row) => row.status === 'open'), 'the tightening to be offered for approval');
-    assert.equal(previewed.manifest.integration_revision, H, 'the fixture is live: the preview is against the head the Builder started from');
+    assert.equal(previewed.manifest.integration_revision, H, 'the fixture is live: the preview is against the head H');
     const ctx = { project, previous, proposal };
 
-    // 1. The Builder's integration is intended, old = H, and waits before its swap.
-    const swap = journalBarrier('ref_update', 'intent_committed');
-    await armBarrier(fx.engine, swap, 'pause');
-    fx.scripted.release(fix);
-    await fx.engine.waitUntil(`barrier:${swap}`);
-
-    // 2. The human approves while the branch is still at H: consumed, one intent.
+    // The driver's ruling (objection 111; SEAM §458): under the review's M3
+    // the protected application holds the project's journal and integration
+    // lease from its read of the head to its drive, so no engine integration
+    // lands inside it; the branch is moved by hand, out of band, between the
+    // application's commit and its branch update.
+    // 1. The human approves while the branch is at H: consumed, one intent; the application's commit is intended against H, and waits.
     const commit = journalBarrier('commit_tree', 'intent_committed');
     await armBarrier(fx.engine, commit, 'pause');
     const pending = answer(fx.engine, project.id, previewed, 'approve').catch((err) => err);
     await waitFor(() => (intentsOf(fx.home, previewed.id).length === 1 ? true : undefined), { what: 'the approval to record its effect intent' });
-
-    // 3. The integration goes on; the application's commit is intended with the branch at H.
-    await releaseBarrier(fx.engine, swap);
     await fx.engine.waitUntil(`barrier:${commit}`);
-    assert.equal(head(project), H, "the fixture is live: the application's commit is intended against H, which the integration is about to move");
+    assert.equal(head(project), H, "the fixture is live: the application's commit is intended against H");
 
-    // 4. Both go on. The integration, queued first, moves the branch H → R.
+    // 2. The branch is moved by hand, H → R, and the application goes on.
+    commitOnRef(project.repo.path, project.repo.ref, { 'src/by-hand.js': 'export const byHand = 1;\n' });
+    const R = head(project);
+    assert.deepEqual(parentsOf(project.repo.path, R), [H], 'the fixture is live: the branch moved by hand onto H');
     await releaseBarrier(fx.engine, commit);
     await pending;
-    await waitForRun(fx.home, fix, { state: 'ended' });
-    const R = head(project);
-    assert.deepEqual([parentsOf(project.repo.path, R), workItem(fx.home, fix).status], [[H], 'integrated'], "the fixture is live: the Builder's commit is integrated on H");
 
     // The branch update's compare-and-swap found R, not H: the effect's conditional execution failed, and that is a changed precondition.
     const intent = await settle(fx, project.id, () => intentsOf(fx.home, previewed.id)[0], (row) => ['invalidated', 'done'].includes(row.status));
@@ -213,6 +205,11 @@ describe('M53 the check_correction_tightening manifest', () => {
     assert.deepEqual(decisionsOfKind(fx.home, project.id, 'blocker').filter((row) => row.status === 'open').map((row) => [row.subject_type, row.question]), [], 'no blocker is open: a failed compare-and-swap is not an ambiguity');
     assert.deepEqual(operationsOf(fx.home, { project: project.id }).filter((op) => !['finalized', 'failed'].includes(op.state)).map((op) => [op.journal_kind, op.state]), [], 'every operation of the project is finalized or failed: none is left ambiguous or in flight');
 
+    // The hand move is an out-of-band change, observed and asked about as D1
+    // §7.6 says (its adopt or discard question is no blocker); the owner adopts it.
+    const moved = await askingForTicks(fx, project.id, () => decisionsOfKind(fx.home, project.id, 'out_of_band_change').find((row) => row.status === 'open'), 'the hand move to be asked about as an out-of-band change');
+    await answerDecision(fx.engine, project.id, moved.id, 'adopt');
+
     // The question is asked again, against R, with no approval; and the project goes on.
     const next = await openDecision(fx, project.id, KIND, proposal.id);
     assert.deepEqual([next.id !== previewed.id, next.manifest.integration_revision, approvalsOf(fx.home, next.id).length], [true, R, 0], 'the next generation is bound to the new head and starts with no approval');
@@ -221,7 +218,7 @@ describe('M53 the check_correction_tightening manifest', () => {
     await tick(fx.engine, project.id);
     assert.equal(runsOf(fx.home, second).length, 1, 'the next work item is dispatched on the next tick');
     await runToEnd(fx, project.id, second);
-    assert.deepEqual([parentsOf(project.repo.path, head(project)), workItem(fx.home, second).status], [[R], 'integrated'], "the integrated work stayed on the branch: the second item's commit is on R");
+    assert.deepEqual([parentsOf(project.repo.path, head(project)), workItem(fx.home, second).status], [[R], 'integrated'], "the adopted move stayed on the branch: the second item's commit is on R");
     assert.ok(protectedVersions(fx.home, project.id).filter((version) => version.proposal === proposal.id).every(unauthorized), 'and the withdrawn version never became authorized');
   });
 });

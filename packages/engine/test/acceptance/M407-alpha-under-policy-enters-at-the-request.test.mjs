@@ -58,7 +58,10 @@ import {
   stagesOfPlan,
   visionSession,
   workOf,
+  ROUTED_KINDS,
+  replanScript,
 } from './harness/journey/drive.mjs';
+import { replan35 } from './harness/journey/plan35.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, ROADMAP_MD, specText } from './harness/journey/reference.mjs';
 import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { setEngineConfig, runningClassifier } from './harness/checks/classifier.mjs';
@@ -70,13 +73,18 @@ import { setEngineConfig, runningClassifier } from './harness/checks/classifier.
 // completes, the realistic order (objection 065): the first tick after the
 // completion makes the policy's request, before phase 2 can supersede the
 // candidate or change the acceptance content.
-async function phaseOneComplete(t, { alpha_deploy = 'manual', omit, onePhase = false, alphaFirst = false } = {}) {
+// `phaseTwoAwaitsOwner` (objection 112; SEAM §459): the replan's phase-2
+// plan declares itself `uncertain`, so it awaits the owner's approval, and
+// the pump leaves `plan_approval` unanswered until a case restores
+// `ctx.answerKinds`: under K2 no phase-2 work runs beside phase 1's Alpha.
+async function phaseOneComplete(t, { alpha_deploy = 'manual', omit, onePhase = false, alphaFirst = false, phaseTwoAwaitsOwner = false } = {}) {
   const fx = await scriptedEngine(t);
   const version = await runningClassifier(fx.engine);
   setEngineConfig(fx, { classifier_authority: { mode: 'authoritative', version } });
   await fx.engine.kill();
   await fx.start();
   journeyScripts(fx, omit === undefined ? {} : { omit });
+  if (phaseTwoAwaitsOwner) fx.scripted.kindScript('replan', [replan35({ conformance: 'uncertain' }), replanScript({ spec_version: 2 }), replanScript({ spec_version: 2 })]);
   // `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases, so the replan keeps computed routing.
   const p = await createWithIdea(fx, { tier: 'T2', policy: { autonomy: 'phase', alpha_deploy, deploy_auto_retries_max: 0, phase_size: { min: 2, max: 5 } } });
   await visionSession(fx, p.id);
@@ -84,6 +92,7 @@ async function phaseOneComplete(t, { alpha_deploy = 'manual', omit, onePhase = f
   const over = onePhase ? { '.surety/roadmap/roadmap.json': { ...ROADMAP_JSON, phases: [ROADMAP_JSON.phases[0]] }, '.surety/roadmap/roadmap.md': ROADMAP_MD } : {};
   const arch = await architectSession(fx, p.id, p.repo, { over });
   const ctx = journeyContext(fx, p);
+  if (phaseTwoAwaitsOwner) ctx.answerKinds = ROUTED_KINDS.filter((k) => k !== 'plan_approval');
   const env = alphaFirst ? (await alphaReady(fx, ctx)).env : null;
   const done = await phaseCompleted(fx, ctx, 1);
   return { fx, p, ctx, plan: arch.published, done, env };
@@ -131,7 +140,7 @@ describe('M407 Alpha under policy enters at the request (on_phase_complete, the 
   const shared = sharedFixture();
   let J;
   before(async () => {
-    J = await phaseOneComplete(shared.context, { alpha_deploy: 'on_phase_complete', alphaFirst: true });
+    J = await phaseOneComplete(shared.context, { alpha_deploy: 'on_phase_complete', alphaFirst: true, phaseTwoAwaitsOwner: true });
   });
   after(shared.cleanup);
 
@@ -180,6 +189,8 @@ describe('M407 Alpha under policy enters at the request (on_phase_complete, the 
 
   test('(e) after the last phase: alpha_authorize scopes every delivered requirement across both phases; (g) the new key revalidated, a failed attempt retained and not retried; (i) the delivered set is the active plan\'s', async () => {
     const { fx, ctx } = J;
+    // Phase 1's Alpha is complete: the owner approves phase 2's plan from here on.
+    delete ctx.answerKinds;
     await nextPhasePublished(fx, ctx, 2);
     // The scripted adapter refuses the next deploy (D4 A.2 AdapterEffectResult `refused`).
     await scriptCall(fx.engine, J.env.id, 'deploy', [{ result: 'refused', apply: false }]);
