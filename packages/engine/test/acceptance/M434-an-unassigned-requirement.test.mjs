@@ -72,7 +72,12 @@ describe('M434 an unassigned requirement', () => {
     ]);
     await approvedChange(fx, ctx, WITH_R5, [{ key: 'R5', kind: 'added', reason: 'R5 counts refusals' }], 2);
     assert.equal(r5Of(fx.home, p.id)?.assigned_phase, null, 'R5 added has no phase after the approval, whatever its index hint (D6 §4.5; Q8)');
-    await pumpHolding(fx, ctx, () => launchHolding(fx, 'replan'), { what: 'the replan held', max: 20 });
+    // The change's replan is held from dispatch while its own check_correction
+    // is unfinished and until the checks that correction re-queued have
+    // results (the driver's ruling (a), slice 37; objection 102; SEAM.md
+    // §448); the correction's question is the owner's, answered here as the
+    // other journey pumps answer it.
+    await pumpHolding(fx, ctx, () => launchHolding(fx, 'replan'), { what: 'the replan held', max: 20, answerKinds: ['check_correction_unclassifiable'] });
     // (a)
     const gate = async () => {
       const res = await fx.engine.post(`/v1/projects/${p.id}/candidates/${candidate3.id}/gates/phase`, { phase_plan: plan2.id });

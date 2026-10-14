@@ -228,7 +228,7 @@ export { ADR_KEY };
 // §1 routes to the owner (the toolchain proposal, the spec change), each
 // answer recorded as the harness's.
 
-import { recordExit } from '../checks/selection.mjs';
+import { recordExit, recordExitUnlessSuperseded } from '../checks/selection.mjs';
 import { executionRow, executionsOf } from '../checks/fixtures.mjs';
 import { configContent, configure, qualifyByFixture, scriptCall } from '../deploy/kernel.mjs';
 import { roleThat } from '../gitruns.mjs';
@@ -368,7 +368,9 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
           (ctx.skipped ??= []).push({ execution: x.id, key: x.key, status: now?.status ?? null });
           continue;
         }
-        await recordExit(fx.engine, x.id, exits(x));
+        // A cancellation for a superseded candidate between the read above
+        // and the move is skipped too (objection 101; SEAM.md §448).
+        if ((await recordExitUnlessSuperseded(fx, x.id, exits(x))) === null) (ctx.skipped ??= []).push({ execution: x.id, key: x.key, status: 'cancelled' });
       }
     }
     for (const d of openDecisions(fx.home, project)) {

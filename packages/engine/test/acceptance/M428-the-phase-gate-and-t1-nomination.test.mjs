@@ -104,9 +104,18 @@ describe('M428 the phase gate and T1 nomination', () => {
     assert.ok(vRuns.length > 0, 'a Verifier dispatched');
     const vDispatched = Math.min(...vRuns.map((id) => withStore(fx.home, (db) => db.prepare('SELECT MIN("seq") AS s FROM "events" WHERE "subject" LIKE ? OR "payload" LIKE ?').get(`%${id}%`, `%${id}%`).s ?? Infinity)));
     assert.ok(vDispatched > registered.last, `the Verifier dispatched after the registrations (${JSON.stringify({ vDispatched, registered })})`);
-    const evaluations = [...evaluationsOf(fx.home, c.id, 'stage'), ...evaluationsOf(fx.home, c.id, 'phase')].map((e) => e.id);
-    const evaluated = seqs(fx.home, 'gate.evaluated', evaluations);
-    assert.ok(evaluated.first > results.last, `the stage and phase evaluations after the last result (${JSON.stringify({ evaluated, results })})`);
+    // (b), read on the evaluations the stage and the phase completed on
+    // (M5 slice 37, D6 K1; objection 103; SEAM.md §448): the Verifier's end
+    // requests a tick that may evaluate a due gate while results are still
+    // being recorded, and the gate is evaluated again as they arrive. What (b)
+    // pins: every satisfied evaluation comes after the last result, and no
+    // evaluation made before the last result is satisfied.
+    const all = [...evaluationsOf(fx.home, c.id, 'stage'), ...evaluationsOf(fx.home, c.id, 'phase')];
+    const evaluatedAt = (e) => seqs(fx.home, 'gate.evaluated', [e.id]).first;
+    const satisfied = all.filter((e) => e.outcome === 'satisfied');
+    assert.ok(satisfied.some((e) => e.gate_kind === 'stage') && satisfied.some((e) => e.gate_kind === 'phase'), `the stage and phase gates satisfied on that candidate (${JSON.stringify(all.map((e) => [e.gate_kind, e.outcome]))})`);
+    for (const e of satisfied) assert.ok(evaluatedAt(e) > results.last, `the ${e.gate_kind} evaluation completed on comes after the last result (${JSON.stringify({ evaluated: evaluatedAt(e), results })})`);
+    for (const e of all) if (evaluatedAt(e) < results.last) assert.notEqual(e.outcome, 'satisfied', `no ${e.gate_kind} evaluation before the last result is satisfied (${JSON.stringify({ evaluated: evaluatedAt(e), results })})`);
     assert.ok(evaluationsOf(fx.home, c.id, 'phase').some((e) => e.outcome === 'satisfied'), 'the phase gate satisfied on that candidate');
     assert.deepEqual(workOf(fx.home, p.id, 'phase_verification'), [], 'no phase_verification at T1 (the driver\'s ruling)');
     assert.ok(done.completed_at);

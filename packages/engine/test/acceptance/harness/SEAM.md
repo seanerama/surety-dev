@@ -6852,6 +6852,12 @@ Accepted cases that relied on nothing ticking between the case's own ticks, or o
 - **M428** (a), (b), (f) T1: the ordinary integration read from the store: before the later stage's `work.integrated`, no `candidate.nominated` and no `check.registered`.
 - **Replans one at a time per project** (the driver's approval): no slice-37 case expects two replans of one project to run at once.
 
+## 448. Objections 101 to 103, upheld (the Builder of slice 37; the driver's rulings, 2026-10-14)
+
+- **101** (a check execution the engine cancelled while the scripted boundary moved it): under D6 K1 and K2 the next candidate can be nominated while the previous one's executions are queued, and D3 §2.5 cancels them. **`recordExitUnlessSuperseded`** † (`harness/checks/selection.mjs`), used by the journey's `pump` (`harness/journey/drive.mjs`): when the boundary's move is refused, the execution is read again, and it is skipped (kept in `ctx.skipped`) only if it is `cancelled` and its `check.cancelled` names the superseding candidate ("superseded by cand_…"); any other state, or a cancellation for any other reason, fails as before (the driver's ruling). M401-the-t1-variant runs through it.
+- **102** (M434's replan held behind its own correction): under the driver's ruling (a) a specification change's replan is held from dispatch (`depends_on`) while that request's `check_correction` is unfinished and until the checks its new version re-queued have results; a parked correction does not hold it. The case's pump for "the replan held" answers `check_correction_unclassifiable`, the correction's owner question, as the other journey pumps do; nothing else changes.
+- **103** (M428 (a), (b)): the Verifier's end requests a tick that may evaluate a due stage gate while results are still being recorded, and the gate is evaluated again as they arrive. (b) is read on the evaluations the stage and the phase completed on: every satisfied evaluation comes after the last result, and no evaluation made before it is satisfied.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35", "M5 slice 36" and "M5 slice 37".
