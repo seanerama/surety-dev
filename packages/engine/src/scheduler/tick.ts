@@ -321,6 +321,11 @@ export class Scheduler {
       // projects are taken in turn, one item each round, so no project's
       // queue starves another's under tick_budget (N02).
       const queues = candidates.filter((c) => !ineligible.has(c.project) && c.items.length > 0).map((c) => ({ c, items: [...c.items] }));
+      // Each item claimed in turn, in priority order; what the claimed runs
+      // need before their spawns made side by side, and waited for before
+      // the tick ends (D1 §8.1 step 9: the tick waits for what a dispatch
+      // writes before its spawn, never for the spawn or the run).
+      const preparing: Promise<void>[] = [];
       while (queues.some((q) => q.items.length > 0) && remaining() > 0) {
         for (const q of queues) {
           const item = q.items.shift();
@@ -338,12 +343,17 @@ export class Scheduler {
             // whose backend the store already refuses goes on, so a refusal
             // never waits behind a domain (D2 §3.7).
             if (await this.rt.read<boolean>('scheduler.envelope_holds', { project: q.c.project, workItem: item.id })) continue;
-            if (await this.launcher.dispatch(q.c, item)) dispatched++;
+            const claimed = await this.launcher.claimThenPrepare(q.c, item);
+            if (claimed) {
+              dispatched++;
+              preparing.push(claimed.prepared.catch((err) => log('dispatch', err)));
+            }
           } catch (err) {
             log('dispatch', err);
           }
         }
       }
+      await Promise.all(preparing);
       // Why each item still eligible waits, recorded as intervals by reason
       // (N01; the driver's ruling Q3): one interval per hold, never one per tick.
       await this.rt.engine('work.mark_holds', {}).catch((err) => log('work holds', err));

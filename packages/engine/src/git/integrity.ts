@@ -42,35 +42,40 @@ export async function observeIntegrity(rt: Runtime, project: string): Promise<vo
     report.refs.push({ registry: row.id, expected: row.expected_oid, found });
   }
   const owned = canonicalPath(join(rt.home, 'workspaces')) ?? join(rt.home, 'workspaces');
-  for (const c of facts.checkouts) {
-    if (c.active) continue;
+  // Each managed checkout's baseline, read side by side (a bounded number of
+  // git processes at once): with several runs of a project at once (D6 K2)
+  // a project has many retained workspaces, and the step is a prerequisite
+  // of every tick (D1 §8.1 step 3). The report keeps the checkouts' order.
+  const results = await mapBounded(facts.checkouts, INTEGRITY_PARALLEL, async (c) => {
+    if (c.active) return null;
     let context;
     if (c.kind === 'integration_worktree') {
       const entry = list.find((w) => same(w.path, c.path));
-      if (!entry || entry.branch !== facts.ref) {
-        report.released.push(c.id);
-        continue;
-      }
+      if (!entry || entry.branch !== facts.ref) return { released: c.id };
       if (same(c.path, facts.repo)) context = repoContext(facts.repo);
       else {
         const admin = worktreeMetadata(facts.repo, c.path);
-        if (admin === null || admin === 'unknown') continue;
+        if (admin === null || admin === 'unknown') return null;
         context = worktreeContext(facts.repo, admin, c.path);
       }
     } else {
-      if (c.adminDir === null) continue;
+      if (c.adminDir === null) return null;
       context = worktreeContext(facts.repo, c.adminDir, c.path);
     }
     const now = await checkoutBaseline(context, rt.scratch);
-    if (now === null) continue;
+    if (now === null) return null;
     const baseline = JSON.parse(c.baseline) as { head: string; index_hash: string; tracked_tree_hash: string };
     const same3 = (b: { head: string; index_hash: string; tracked_tree_hash: string }) => now.head === b.head && now.index_hash === b.index_hash && now.tracked_tree_hash === b.tracked_tree_hash;
     // An adoption of this checkout's edits in flight: the branch it has
     // checked out is being moved by the engine onto exactly what it holds.
-    if (c.pending !== null && now.tracked_tree_hash === c.pending.tree && c.pending.heads.includes(now.head) && c.pending.indexes.includes(now.index_hash)) continue;
-    if (!same3(baseline)) {
-      report.checkouts.push({ id: c.id, expected: c.baseline, found: now });
-    }
+    if (c.pending !== null && now.tracked_tree_hash === c.pending.tree && c.pending.heads.includes(now.head) && c.pending.indexes.includes(now.index_hash)) return null;
+    if (!same3(baseline)) return { changed: { id: c.id, expected: c.baseline, found: now } };
+    return null;
+  });
+  for (const r of results) {
+    if (r === null) continue;
+    if ('released' in r) report.released.push(r.released);
+    else report.checkouts.push(r.changed);
   }
   for (const w of list) {
     if (w.branch !== facts.ref) continue;
@@ -86,6 +91,23 @@ export async function observeIntegrity(rt: Runtime, project: string): Promise<vo
     if (baseline !== null) report.added.push({ path: w.path, baseline });
   }
   await rt.engine('integrity.record', report);
+}
+
+const INTEGRITY_PARALLEL = 8;
+
+// `fn` over `items`, at most `limit` at once; the results in the items' order.
+async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return out;
 }
 
 // The developer's checkouts of the integration branch, with what each holds:

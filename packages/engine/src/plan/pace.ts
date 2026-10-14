@@ -268,7 +268,12 @@ export function paceView(db: Database, args: { project: string }) {
       return {
         count: rows.length,
         turns,
-        seconds: secs.some((x) => typeof x !== 'number') ? unknown('a session has not ended, or its times were not recorded') : sum(secs as number[]),
+        // The sessions' time as measured: a session whose interval is not
+        // (still open, an endpoint unrecorded, or recorded backwards by a
+        // clock that stepped back) is left out of the sum and counted apart,
+        // never taken as zero.
+        seconds: sum(secs.filter((x): x is number => typeof x === 'number')),
+        seconds_unmeasured: secs.filter((x) => typeof x !== 'number').length,
         tokens: { billable: tok('billable'), cached: tok('cached'), output: tok('output') },
       };
     })(),

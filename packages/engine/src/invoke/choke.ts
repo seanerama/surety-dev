@@ -286,6 +286,18 @@ export class Launcher {
   // `attempt`: a qualification attempt's own dispatch of one of its canaries
   // (D2 §7.2, K10; trust/attempts.ts), the only way such an item is run.
   async dispatch(target: DispatchTarget, item: { id: string }, attempt: string | null = null): Promise<boolean> {
+    const claimed = await this.claimThenPrepare(target, item, attempt);
+    if (!claimed) return false;
+    await claimed.prepared;
+    return true;
+  }
+
+  // The claim, made now; then what the run needs before its spawn, as a
+  // promise the caller awaits (the tick, once it has claimed every item it
+  // selects: D6 K2 dispatches several items of a project at a tick, their
+  // claims in priority order and their preparations side by side). null:
+  // nothing claimed.
+  async claimThenPrepare(target: DispatchTarget, item: { id: string }, attempt: string | null = null): Promise<{ prepared: Promise<void> } | null> {
     // The scripted backend, which only harness mode has. Every other backend
     // is chosen by the claim from the project's policy and the trust table
     // (D2 §4.1).
@@ -310,7 +322,11 @@ export class Launcher {
       attempt,
       preflight,
     });
-    if (!claim) return false;
+    if (!claim) return null;
+    return { prepared: this.prepareClaimed(target, claim, preflight, backend) };
+  }
+
+  private async prepareClaimed(target: DispatchTarget, claim: Claim, preflight: { entry: string; found_sha256: string | null; found_help: string | null } | null, backend: BackendSpec | null): Promise<void> {
     const handle = newHandle(claim);
     // The help was checked just now, for this very entry: not again.
     if (preflight !== null && claim.trust_entry === preflight.entry && preflight.found_help !== null) handle.helpChecked = preflight.found_help;
@@ -340,10 +356,9 @@ export class Launcher {
     } catch (err) {
       log('dispatch', err, { run: claim.run });
       this.never(handle, 'failed', 'infra_error');
-      return true;
+      return;
     }
     if (ready && runs) void this.launch(handle, runs, target.repo);
-    return true;
   }
 
   // One turn of a session (D6 §2.1, §2.2; SEAM.md §344): admitted by the
