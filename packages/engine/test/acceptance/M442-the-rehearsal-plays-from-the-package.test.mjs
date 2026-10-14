@@ -168,6 +168,11 @@ describe('M442 (b) the Architect under its package with one element omitted', ()
       if (id === 'architect.routing') {
         assert.equal(c.close.status, 200, `the close raises the pair (→ ${c.close.status} ${c.close.text})`);
         assert.equal(c.check?.conformance, 'uncertain', `the plan check records the declared uncertainty (${show(c.check)})`);
+      } else if (id === 'architect.schema.phase_plan') {
+        // With no plan written the close may raise the architecture's approval alone: the
+        // engine reacts by proposing no phase-1 plan (no plan_approval), or refuses the close.
+        const kinds = (c.close.body?.decisions ?? []).map((d) => d.kind);
+        assert.ok([409, 422].includes(c.close.status) || (c.close.status === 200 && !kinds.includes('plan_approval')), `the close is refused or proposes no plan (→ ${c.close.status} ${show(kinds)})`);
       } else {
         assert.ok([409, 422].includes(c.close.status), `the engine refuses the close (→ ${c.close.status} ${c.close.text})`);
       }
