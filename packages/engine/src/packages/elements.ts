@@ -34,8 +34,8 @@ export const PACKAGE_ELEMENTS = Object.freeze({
   // The Verifier: the correction package (D3's), the phase-authoring
   // package (N04) and its retrofit variant (B13).
   verifier_correction: [...VERIFIER] as const,
-  verifier_authoring: [...VERIFIER, 'verifier.authoring_result'] as const,
-  verifier_authoring_retrofit: [...VERIFIER, 'verifier.authoring_result', 'verifier.adoption_rule'] as const,
+  verifier_authoring: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain'] as const,
+  verifier_authoring_retrofit: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain', 'verifier.adoption_rule'] as const,
   // The Builder of a stage.
   builder: ['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces'] as const,
 } satisfies Record<string, readonly string[]>);
@@ -68,6 +68,7 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'verifier.secrets': "A check's secrets",
   'verifier.post_deploy': 'Checks against a deployed environment',
   'verifier.authoring_result': 'Your result: governed changes and deferrals',
+  'verifier.toolchain': "The governed file and the toolchain your checks run under",
   'verifier.adoption_rule': 'Adopting an existing test',
   'builder.tasks': "The stage's tasks",
   'builder.implements': 'The requirements this stage implements',

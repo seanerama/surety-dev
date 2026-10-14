@@ -313,7 +313,33 @@ test('a store holding two rows of one environment name (before the ruling) is st
   db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wrk_c', ?, 'prj_1', 1, 'check_correction', '{}', 'executing', 'x', 'x', 1, 0, 0, 0, 0)`).run(AT);
   db.prepare(`INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined) VALUES ('run_c', ?, 'prj_1', 1, 'wrk_c', 'verifier', 'one_shot', 'executing', 'scripted', '1', 's', ?, ?, 0)`).run(AT, 'c'.repeat(40), AT);
   assert.deepEqual(contextFacts(db, { run: 'run_c' }).check_writing.environments, [
-    { name: 'alpha', targets: ['app'], check_secrets: [] },
-    { name: 'beta', targets: null, check_secrets: null },
+    { name: 'alpha', targets: ['app'], check_secrets: [], runtime: null },
+    { name: 'beta', targets: null, check_secrets: null, runtime: null },
   ]);
+});
+
+// The real-run review (slice 38): phase 1's authoring names the toolchain,
+// which the package must state (E135's kind); the correction package does not.
+const { parseGoverned } = await import(join(dist, 'checks', 'schema.js'));
+
+test("the authoring package states the governed file's form and the runtimes; a governed file written from the block alone parses; the correction package carries none of it", (t) => {
+  const facts = { ...writing, governed: defaultGoverned(), environments: [{ name: 'alpha', targets: ['app'], check_secrets: [], runtime: { path: '/opt/rt/bin/node', sha256: 'a'.repeat(64) } }] };
+  const a = oneShot(t, 'verifier', 'check_authoring', { check_writing: facts, authoring });
+  const tc = a.reads['verifier.toolchain'];
+  assert.ok(a.manifest.reads.includes('verifier.toolchain'));
+  assert.equal(tc.file, '.surety/checks/protected-policy.json');
+  assert.deepEqual(tc.members, ['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks']);
+  assert.deepEqual(tc.current.check_commands, {}, 'the effective values: no program yet');
+  assert.equal(tc.runtimes[0].path, process.execPath, "the engine's own node");
+  assert.deepEqual(tc.runtimes[1], { name: 'node', path: '/opt/rt/bin/node', sha256: 'a'.repeat(64), read_paths: ['/opt/rt'], path_dirs: ['/opt/rt/bin'], source: "the runtime environment alpha's configuration pins" });
+  for (const rt of tc.runtimes) {
+    const governed = { check_commands: { [rt.name]: { path: rt.path, ...(rt.sha256 ? { sha256: rt.sha256 } : {}) } }, runner_config: { direct: { read_paths: rt.read_paths, path: [...rt.path_dirs, '/usr/bin', '/bin'] } } };
+    assert.deepEqual(parseGoverned(JSON.stringify(governed)).errors, [], `a governed file naming ${rt.path} from the block parses`);
+  }
+  assert.ok(!a.prompt.includes('do not change it'), 'the authoring Verifier may name the toolchain');
+  assert.ok(!a.prompt.includes('Write no definition'));
+  const c = oneShot(t, 'verifier', 'check_correction', { check_writing: facts });
+  assert.equal(c.reads['verifier.toolchain'], undefined);
+  assert.ok(c.prompt.includes('do not change it'), 'the correction Verifier changes no governed value');
+  assert.ok(!c.prompt.includes('/opt/rt/bin/node'), "no runtime's path in the correction package");
 });

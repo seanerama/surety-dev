@@ -39,7 +39,7 @@ export interface CheckWritingFacts {
   // checks may receive. `targets` or `check_secrets` null: not readable, so
   // unknown. The whole list null or absent: not read, so unknown, never
   // "none".
-  environments?: { name: string; targets: string[] | null; check_secrets: string[] | null }[] | null;
+  environments?: { name: string; targets: string[] | null; check_secrets: string[] | null; runtime?: { path: string; sha256: string | null } | null }[] | null;
 }
 
 // The gate kinds the engine evaluates (store/transitions/gates.ts,
@@ -206,7 +206,10 @@ const higher = (t: string | null, than: string): boolean => (TIER_RANK[t ?? ''] 
 
 // The section of the prompt, as lines. `checkList`: the lines naming the
 // checks in force (the same list every reporting role is given, E87).
-export function checkWritingText(f: CheckWritingFacts, checkList: readonly string[]): string[] {
+// `authoring`: a phase's check authoring (D6 §6.2), whose first phase names
+// the toolchain in the governed file (the element `verifier.toolchain`);
+// the correction Verifier changes no governed value (D3).
+export function checkWritingText(f: CheckWritingFacts, checkList: readonly string[], opts: { authoring?: boolean } = {}): string[] {
   const g = f.governed;
   const out: string[] = ['', "## Writing the project's checks", ''];
   out.push(
@@ -225,13 +228,17 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     '### Where',
     '',
     `- The protected roots: ${list(roots)}. Change files only under them: a run that changes anything else, the project's source included, is rejected whole.`,
-    `- The governed file ${code(GOVERNED_FILE)}: do not change it. Its programs, toolchain, network and output bounds are the owner's; a change to it is classified \`unclassifiable\` and waits for the owner.`,
+    opts.authoring
+      ? `- The governed file ${code(GOVERNED_FILE)}: change only the toolchain this authoring names; every change to it is classified \`unclassifiable\` and waits for the owner.`
+      : `- The governed file ${code(GOVERNED_FILE)}: do not change it. Its programs, toolchain, network and output bounds are the owner's; a change to it is classified \`unclassifiable\` and waits for the owner.`,
     `- The definitions directory ${code(g.check_discovery.definitions)}: one JSON file per check, named \`<key>.json\`, and nothing else.`,
     `- Everything else under a root is the checks' own code, expectations and fixtures, in a layout you choose (for example ${code(`${roots[0]}run/`)}).`,
   );
   const programs = Object.keys(g.check_commands).sort();
   out.push('', '### Programs', '');
-  if (programs.length === 0) {
+  if (programs.length === 0 && opts.authoring) {
+    out.push("- The governed file names no program yet: the definitions you write run the programs of the toolchain this authoring names, by their names.");
+  } else if (programs.length === 0) {
     out.push(
       "- The governed file names no program, so no definition can be valid and no check can run until the owner approves one. Write no definition; say so in your summary.",
     );

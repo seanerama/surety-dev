@@ -22,7 +22,9 @@
 import { ADOPTED_TEST_FIELDS, BOUNDARY_DISPOSITIONS } from '../adopt/boundary.js';
 import { AUTHORING_RESULT_FIELDS, type CheckWritingFacts, DEPLOYMENT_GATE } from '../checks/guide.js';
 import { INDEX_COLUMNS, INDEX_ORIGIN_COLUMN, ORIGINS } from '../checks/requirement-index.js';
-import { CHECK_KINDS, COVERING_KINDS, POST_DEPLOY, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, defaultGoverned } from '../checks/schema.js';
+import { dirname } from 'node:path';
+
+import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, DIRECT_RUNNER_MEMBERS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
 import { KIND_INVENTORY, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS } from '../plan/check.js';
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE } from '../plan/schemas.js';
@@ -335,6 +337,7 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     },
   };
   if (opts.authoring) {
+    out['verifier.toolchain'] = toolchainElement(f);
     out['verifier.authoring_result'] = {
       id: 'verifier.authoring_result',
       gloss: 'Your result carries these fields beside summary and proposal (result-schema.json).',
@@ -375,6 +378,50 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     }
   }
   return out;
+}
+
+// The governed file and the toolchain (D6 §6.2, Q9; D3 §1.4, Appendix A.4):
+// the first phase's authoring names the programs its checks run under in
+// `check_commands`, which only the owner approves. The file's form is the
+// parser's (parseGoverned); the runtimes are the engine's own node (BS5 §3:
+// the reference projects' runtime is the engine's) and every runtime an
+// environment's configuration pins. `current` is the effective version's
+// values, null when they cannot be read.
+const underSystem = (p: string): boolean => SYSTEM_DIRS.some((d) => p === d || p.startsWith(`${d}/`));
+export function engineRuntime(execPath: string = process.execPath): { name: string; path: string; sha256: string | null; read_paths: string[]; path_dirs: string[]; source: string } {
+  const prefix = dirname(dirname(execPath));
+  return { name: 'node', path: execPath, sha256: null, read_paths: underSystem(prefix) ? [] : [prefix], path_dirs: [dirname(execPath)], source: "the engine's own runtime" };
+}
+function toolchainElement(f: CheckWritingFacts | null): ReadsElement {
+  const g = f?.governed ?? null;
+  const pinned = (f?.environments ?? []).flatMap((e) => (e.runtime ? [{ name: 'node', path: e.runtime.path, sha256: e.runtime.sha256, read_paths: underSystem(dirname(dirname(e.runtime.path))) ? [] : [dirname(dirname(e.runtime.path))], path_dirs: [dirname(e.runtime.path)], source: `the runtime environment ${e.name}'s configuration pins` }] : []));
+  const runtimes = [engineRuntime(), ...pinned].filter((r, i, all) => all.findIndex((x) => x.path === r.path) === i);
+  return {
+    id: 'verifier.toolchain',
+    gloss:
+      "The first phase's authoring names the toolchain in the governed file's check_commands (with the read paths its program needs); such a change goes to the owner. A definition's command names a program from check_commands by its name, never a path.",
+    data: {
+      file: GOVERNED_FILE,
+      members: [...GOVERNED_MEMBERS],
+      check_commands: {
+        form: { '<name>': { path: '<absolute path>', sha256: '<64 lower-case hex, optional>' } },
+        name: COMMAND_NAME.source,
+        path_rule: `an absolute path under ${SYSTEM_DIRS.join(', ')} or under an entry of runner_config.direct.read_paths`,
+      },
+      runner_config: {
+        direct: {
+          members: [...DIRECT_RUNNER_MEMBERS],
+          read_paths: 'absolute directories the check may read beyond the system directories (a runtime installed elsewhere is one)',
+          path: "absolute directories of the check's PATH",
+        },
+      },
+      current:
+        g === null
+          ? null
+          : { check_commands: g.check_commands, runner_config: { direct: { read_paths: g.runner_config.direct.read_paths, path: g.runner_config.direct.path } }, protected_paths: g.protected_paths, check_discovery: g.check_discovery },
+      runtimes,
+    },
+  };
 }
 
 // ---- The Builder (B.5; D6 §6.4) -----------------------------------------------------------

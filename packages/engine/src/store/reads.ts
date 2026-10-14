@@ -548,9 +548,13 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
   return rows.map((r) => {
     const c = r.content === null ? null : parse(r.content);
     const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]).slice() : null);
-    if (c === null || typeof c !== 'object' || Array.isArray(c)) return { name: r.name, targets: null, check_secrets: null };
+    if (c === null || typeof c !== 'object' || Array.isArray(c)) return { name: r.name, targets: null, check_secrets: null, runtime: null };
     const content = c as Record<string, unknown>;
-    return { name: r.name, targets: strings(content.targets), check_secrets: content.check_secrets === undefined ? [] : strings(content.check_secrets) };
+    // The runtime the owner's configuration pins (D4 §3.2): a toolchain the
+    // phase's authoring may name (src/packages/reads.ts, verifier.toolchain).
+    const rt = content.runtime as { path?: unknown; sha256?: unknown } | undefined;
+    const runtime = rt && typeof rt.path === 'string' ? { path: rt.path, sha256: typeof rt.sha256 === 'string' ? rt.sha256 : null } : null;
+    return { name: r.name, targets: strings(content.targets), check_secrets: content.check_secrets === undefined ? [] : strings(content.check_secrets), runtime };
   });
 }
 

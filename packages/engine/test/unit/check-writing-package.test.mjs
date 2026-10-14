@@ -410,7 +410,7 @@ test("a check_correction Verifier in a project with an environment: the kinds, t
   const db = store(t);
   environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, secrets: { REF_SECRET: 'deploy/ref_secret' }, check_secrets: ['deploy/probe_key'] } });
   const { prompt, facts, told } = packageOf(t, db, 'run_cc');
-  assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'] }]);
+  assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'], runtime: null }]);
   const blocks = readsBlocks(prompt);
   assert.deepEqual(blocks['verifier.post_deploy'], { kinds: ['post_deploy_behavior', 'post_deploy_identity'], gate_kind: 'alpha_complete', required: 'post_deploy_behavior', variable: 'SURETY_TARGET_<NAME>', environments: [{ name: 'alpha', targets: ['app'] }] });
   assert.deepEqual(blocks['verifier.requires'], { member: 'requires', values: ['environment', 'artifact_digest'], kinds: ['post_deploy_behavior', 'post_deploy_identity'] });
@@ -447,9 +447,9 @@ test('no environment, an environment with no configuration, an unreadable one, u
   environment(db, { id: 'env_s', name: 'odd', content: { targets: ['app'], check_secrets: 'deploy/x' } });
   const some = packageOf(t, db, 'run_cc');
   assert.deepEqual(some.facts.check_writing.environments, [
-    { name: 'broken', targets: null, check_secrets: null },
-    { name: 'odd', targets: ['app'], check_secrets: null },
-    { name: 'unconfigured', targets: null, check_secrets: null },
+    { name: 'broken', targets: null, check_secrets: null, runtime: null },
+    { name: 'odd', targets: ['app'], check_secrets: null, runtime: null },
+    { name: 'unconfigured', targets: null, check_secrets: null, runtime: null },
   ]);
   assert.match(some.prompt, /- Environment `broken`: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it/);
   assert.match(some.prompt, /- Environment `unconfigured`: it has no configuration/);

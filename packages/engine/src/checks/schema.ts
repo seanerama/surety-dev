@@ -71,7 +71,11 @@ export const SYSTEM_DIRS = ['/usr', '/bin', '/lib', '/lib64'];
 export const ENGINE_VARIABLES = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'CI', 'HTTPS_PROXY'];
 
 export const KEY_FORM = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+export const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+// The governed file's members and runner_config.direct's, as parseGoverned
+// takes them (the phase-authoring package states them: src/packages/reads.ts).
+export const GOVERNED_MEMBERS = ['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks'] as const;
+export const DIRECT_RUNNER_MEMBERS = ['read_paths', 'path', 'env', 'egress_allow', 'timeout_max_s'] as const;
 const VARIABLE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -273,7 +277,7 @@ export function parseGoverned(text: string | null): GovernedResult {
   const v = scanned.value;
   const limits = checkLimits();
   for (const key of Object.keys(v)) {
-    if (!['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks'].includes(key)) e.at(`/${escapePointer(key)}`, 'unknown_field');
+    if (!(GOVERNED_MEMBERS as readonly string[]).includes(key)) e.at(`/${escapePointer(key)}`, 'unknown_field');
   }
   // protected_paths
   if (v.protected_paths !== undefined) {
@@ -316,7 +320,7 @@ export function parseGoverned(text: string | null): GovernedResult {
         if (!isObject(d)) e.at('/runner_config/direct', 'invalid_value');
         else {
           const out = g.runner_config.direct;
-          for (const k of Object.keys(d)) if (!['read_paths', 'path', 'env', 'egress_allow', 'timeout_max_s'].includes(k)) e.at(`/runner_config/direct/${escapePointer(k)}`, 'unknown_field');
+          for (const k of Object.keys(d)) if (!(DIRECT_RUNNER_MEMBERS as readonly string[]).includes(k)) e.at(`/runner_config/direct/${escapePointer(k)}`, 'unknown_field');
           const paths = (member: 'read_paths' | 'path') => {
             const x = d[member];
             if (x === undefined) return;

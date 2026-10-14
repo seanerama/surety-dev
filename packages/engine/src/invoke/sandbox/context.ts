@@ -562,7 +562,7 @@ export function writeContextPackage(
   // The facts for check_correction work, or null when the store could not
   // give them: then the task says so, and points to no section.
   const writing = correcting ? (facts?.check_writing ?? null) : null;
-  const writingText = writing ? checkWritingText(writing, checkList) : [];
+  const writingText = writing ? checkWritingText(writing, checkList, { authoring: claim.work_kind === 'check_authoring' }) : [];
   // A repair run (D3 §2.10): the checks that failed on the item's current
   // candidate, each with its output in /surety/context/check-outputs/.
   const failedChecks = claim.check_outputs ?? [];
