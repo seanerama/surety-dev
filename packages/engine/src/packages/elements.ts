@@ -26,16 +26,20 @@ export const PACKAGE_ELEMENTS = Object.freeze({
   spec_writer_retrofit: [...SPEC_FORMS, 'spec_writer.approval_blockers', 'spec_writer.claims_table'] as const,
   // The Spec Writer's one-shot run on a specification change: the same file
   // in the same forms.
-  spec_change: [...SPEC_FORMS] as const,
+  spec_change: [...SPEC_FORMS, 'spec_writer.change_result'] as const,
   // The Architect's session (and its retrofit variant) and the replan one-shot.
   architect: [...ARCHITECT] as const,
   architect_retrofit: [...ARCHITECT] as const,
   replan: [...ARCHITECT] as const,
+  // A retrofit replan may ask for the criteria of descriptive requirements (D6 §8.3, B.7).
+  replan_retrofit: [...ARCHITECT, 'architect.spec_change_requests'] as const,
   // The Verifier: the correction package (D3's), the phase-authoring
   // package (N04) and its retrofit variant (B13).
   verifier_correction: [...VERIFIER] as const,
   verifier_authoring: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain'] as const,
   verifier_authoring_retrofit: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain', 'verifier.adoption_rule'] as const,
+  // The phase's verification (D6 §5.8): its sign-off.
+  phase_verification: ['verifier.phase_signoff'] as const,
   // The Builder of a stage.
   builder: ['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces'] as const,
 } satisfies Record<string, readonly string[]>);
@@ -55,12 +59,14 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'spec_writer.tier_table': 'The tiers',
   'spec_writer.approval_blockers': "What blocks the owner's approval",
   'spec_writer.claims_table': 'Claims and reality (section 12)',
+  'spec_writer.change_result': 'Your result: the changes you propose',
   'architect.schema.modules': 'The module map (B.3)',
   'architect.schema.roadmap': 'The roadmap (B.4)',
   'architect.schema.phase_plan': 'The phase plan (B.5)',
   'architect.schema.adr': 'An ADR (B.6)',
   'architect.plan_reasons': 'The mechanical plan check',
   'architect.routing': 'How a plan is routed',
+  'architect.spec_change_requests': 'Asking for the criteria of descriptive requirements',
   'verifier.kinds': "A check's kind",
   'verifier.gate_kinds_floor': "A check's gate kinds and the tier's kind floor",
   'verifier.requires': "A check's requires",
@@ -70,6 +76,7 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'verifier.authoring_result': 'Your result: governed changes and deferrals',
   'verifier.toolchain': "The governed file and the toolchain your checks run under",
   'verifier.adoption_rule': 'Adopting an existing test',
+  'verifier.phase_signoff': "Signing the phase off",
   'builder.tasks': "The stage's tasks",
   'builder.implements': 'The requirements this stage implements',
   'builder.integration_obligations': 'Integration obligations',

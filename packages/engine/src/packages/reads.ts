@@ -29,7 +29,7 @@ import { KIND_INVENTORY, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS } from '../plan/check.js';
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE } from '../plan/schemas.js';
 import { QUESTION_BLOCKER_CODES } from '../spec/keys.js';
-import { CLAIMS_COLUMNS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
+import { CLAIMS_COLUMNS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
 import { seamPackageOmitted } from '../testing/seam.js';
 import { ELEMENT_TITLES, type ElementId, PACKAGE_ELEMENTS, type PackageName } from './elements.js';
 
@@ -153,6 +153,18 @@ export function specElements(opts: { retrofit: boolean }): Built {
         ],
       },
     },
+    'spec_writer.change_result': {
+      id: 'spec_writer.change_result',
+      gloss: 'On a specification change, your result lists each requirement your proposal changes, with its kind and your reason; the engine computes the impact itself and records yours as your claim.',
+      data: { field: 'changes', item: { key: 'R<n>', kind: [...IMPACT_KINDS], reason: '<text>' } },
+      result_fields: {
+        changes: {
+          type: 'array',
+          description: 'Each requirement your proposed specification changes: its key, the kind of change and why.',
+          items: { type: 'object', required: ['key', 'kind', 'reason'], additionalProperties: false, properties: { key: { type: 'string', pattern: KEY_PATTERN }, kind: { enum: [...IMPACT_KINDS] }, reason: { type: 'string' } } },
+        },
+      },
+    },
     'spec_writer.claims_table': opts.retrofit
       ? {
           id: 'spec_writer.claims_table',
@@ -269,6 +281,20 @@ export function architectElements(opts: { retrofit: boolean }): Built {
         kinds_by_tier: Object.fromEntries((Object.keys(KIND_INVENTORY) as Tier[]).map((t) => [t, [...KIND_INVENTORY[t]]])),
       },
     },
+    'architect.spec_change_requests': opts.retrofit
+      ? {
+          id: 'architect.spec_change_requests',
+          gloss: "In an adopted project's scoped mode, a stage may not touch a module holding a descriptive requirement until its criteria are approved: ask for them in your result, each request an ordinary change the owner approves.",
+          data: { field: 'spec_change_requests', item: { keys: ['R<n>'], text: '<what the criteria should state>' } },
+          result_fields: {
+            spec_change_requests: {
+              type: 'array',
+              description: 'Requests for the criteria of descriptive requirements this phase touches: the keys and what you ask for.',
+              items: { type: 'object', required: ['keys', 'text'], additionalProperties: false, properties: { keys: { type: 'array', items: { type: 'string', pattern: KEY_PATTERN } }, text: { type: 'string' } } },
+            },
+          },
+        }
+      : null,
     'architect.routing': {
       id: 'architect.routing',
       gloss: "A plan that passes the check is registered by the engine when nothing it compares changed; otherwise the owner decides.",
@@ -420,6 +446,26 @@ function toolchainElement(f: CheckWritingFacts | null): ReadsElement {
           ? null
           : { check_commands: g.check_commands, runner_config: { direct: { read_paths: g.runner_config.direct.read_paths, path: g.runner_config.direct.path } }, protected_paths: g.protected_paths, check_discovery: g.check_discovery },
       runtimes,
+    },
+  };
+}
+
+// The phase's verification (D6 §5.8; A.2 SignOffScope `phase`): the
+// Verifier's sign-off of the phase, bound by the engine.
+export const PHASE_SIGNOFF_BINDING = ['acceptance_hash', 'protected_version', 'spec_revision', 'plan_generation'] as const;
+export function phaseElements(): Built {
+  return {
+    'verifier.phase_signoff': {
+      id: 'verifier.phase_signoff',
+      gloss: "If you find the phase complete, sign it off in your result's signoffs with scope phase; the engine binds the sign-off to this candidate's acceptance content, the protected version, the specification and this plan generation.",
+      data: { field: 'signoffs', item: { scope: 'phase' }, scope: 'phase', binding: [...PHASE_SIGNOFF_BINDING] },
+      result_fields: {
+        signoffs: {
+          type: 'array',
+          description: "Your sign-off of the phase, if you find it complete: one entry, scope phase.",
+          items: { type: 'object', required: ['scope'], additionalProperties: false, properties: { scope: { enum: ['phase'] } } },
+        },
+      },
     },
   };
 }

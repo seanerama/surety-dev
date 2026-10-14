@@ -343,3 +343,34 @@ test("the authoring package states the governed file's form and the runtimes; a 
   assert.ok(c.prompt.includes('do not change it'), 'the correction Verifier changes no governed value');
   assert.ok(!c.prompt.includes('/opt/rt/bin/node'), "no runtime's path in the correction package");
 });
+
+// M442 (c)'s finding (slice 38): a package's prose may ask only for what its
+// result schema allows; each result field a package asks for is an element.
+test("the phase Verifier's package states its sign-off and its schema takes it; the spec change's and the retrofit replan's results likewise; an omission takes the field away", (t) => {
+  const phase = { phase_plan: { id: 'pp_1', phase_number: 1, generation: 1 }, candidate: 'cand_1', evaluation: { id: 'gev_1', outcome: 'satisfied' }, findings: [] };
+  const p = oneShot(t, 'verifier', 'phase_verification', { phase, criteria: [] });
+  assert.equal(p.manifest.package, 'phase_verification');
+  assert.deepEqual(p.reads['verifier.phase_signoff'], { field: 'signoffs', item: { scope: 'phase' }, scope: 'phase', binding: ['acceptance_hash', 'protected_version', 'spec_revision', 'plan_generation'] });
+  assert.deepEqual(p.schema.properties.signoffs.items.properties.scope.enum, ['phase']);
+  assert.ok(!/sign the phase off in `signoffs`/.test(p.prompt), 'stated once, in its element');
+  const s = oneShot(t, 'spec_writer', 'spec_change', { change_request: { id: 'scr_1', text: 'change R2' } });
+  assert.equal(s.manifest.package, 'spec_change');
+  assert.ok(s.reads['spec_writer.change_result'].item.kind.includes('criteria_changed'));
+  assert.deepEqual(s.schema.properties.changes.items.required, ['key', 'kind', 'reason']);
+  assert.match(s.prompt, /Write the specification change the owner's request asks for/);
+  const replan = { completed_plan: null, open_plan: null, generation: { spec_revision: null, architecture_revision: null, roadmap_revision: null, plan: null, spec_evidence_generation: null }, trigger: {}, trigger_subject: {}, refusal: null };
+  const rr = oneShot(t, 'architect', 'replan', { replan, adopted: true });
+  assert.equal(rr.manifest.package, 'replan_retrofit');
+  assert.ok(rr.schema.properties.spec_change_requests);
+  const r = oneShot(t, 'architect', 'replan', { replan });
+  assert.equal(r.schema.properties.spec_change_requests, undefined, 'a new project\'s replan asks for none');
+  configureHarness(true, []);
+  t.after(() => {
+    setPackageOmit([]);
+    configureHarness(false, []);
+  });
+  setPackageOmit(['verifier.phase_signoff']);
+  const o = oneShot(t, 'verifier', 'phase_verification', { phase, criteria: [] });
+  assert.equal(o.schema.properties.signoffs, undefined, 'omitted: no sign-off field');
+  assert.equal(o.reads['verifier.phase_signoff'], undefined);
+});

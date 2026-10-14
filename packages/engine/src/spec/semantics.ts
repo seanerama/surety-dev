@@ -160,6 +160,9 @@ export const SPEC_AREAS_LABEL = '**Sensitive areas:**';
 export const SPEC_SECTIONS = { requirements: 4, index: 5, modules: 6, environments: 7, questions: 10, change_log: 11, claims: 12 } as const;
 export const MODULE_TABLE_COLUMNS = ['Module', 'Paths', 'Sensitive areas'] as const;
 export const CLAIMS_COLUMNS = ['Source', 'Claim', 'Observed', 'Requirement'] as const;
+// D6 A.2 ImpactKind: what a specification change does to a requirement, as
+// spec/change.ts computes it and the Spec Writer's change result claims it.
+export const IMPACT_KINDS = ['added', 'withdrawn', 'text_changed', 'criteria_added', 'criteria_removed', 'criteria_changed', 'areas_changed'] as const;
 const H2 = /^##\s+(\d+)\.\s+(.*)$/;
 const REQ_HEADING = /^###\s+(R[1-9][0-9]*)(?:\.\s*(.*))?\s*$/;
 const ENV_HEADING = /^###\s+(.+?)\s*$/;

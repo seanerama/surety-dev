@@ -25,7 +25,7 @@ import { type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, pha
 import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
-import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
+import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -117,7 +117,8 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
     return pick(retrofit ? 'verifier_authoring_retrofit' : 'verifier_authoring', verifierElements(facts.check_writing ?? null, { authoring: true, retrofit }));
   }
   if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', verifierElements(facts.check_writing, { authoring: false, retrofit }));
-  if (claim.role === 'architect' && facts.replan) return pick('replan', architectElements({ retrofit }));
+  if (claim.role === 'architect' && facts.replan) return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit }));
+  if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
   if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', specElements({ retrofit }));
   if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));
   return { pkg: null, elements: [] };
@@ -228,6 +229,8 @@ const ROLE_TASK: Record<string, string> = {
   verifier: 'Verify the work below against its requirements, and report findings.',
   reviewer: 'Review the candidate named below at the acceptance content hash it names, and report findings.',
   architect: 'Plan or replan the work below.',
+  // D6 §4.3: the Spec Writer's one-shot on a specification change.
+  spec_writer: "Write the specification change the owner's request asks for (/surety/context/change_request.json) into .surety/spec/spec.md, keeping every key the approved specification gives. You may not approve it.",
 };
 
 // The result's schema, per role (D2 §1.3; SEAM.md §68): every field the
@@ -608,7 +611,7 @@ export function writeContextPackage(
           '## The phase',
           '',
           `Phase ${facts.phase.phase_plan.phase_number} (plan ${facts.phase.phase_plan.id}, generation ${facts.phase.phase_plan.generation}) on candidate ${facts.phase.candidate}: its \`phase\` gate evaluation is ${facts.phase.evaluation ? `${facts.phase.evaluation.outcome} (${facts.phase.evaluation.id})` : 'not recorded'}. /surety/context/phase.json holds the evaluation with every check's state and the phase's findings.`,
-          'Read them, raise any finding, and sign the phase off in `signoffs` with scope `phase` if you find it complete. A sign-off binds this candidate\'s acceptance content, the protected version, the specification and this plan generation.',
+          'Read them and raise any finding.',
         ]
       : []),
     ...readsText(reads.elements),
@@ -640,8 +643,14 @@ export function writeContextPackage(
   // A phase authoring's result (B.7; N04): the fields its package's stated
   // elements add (governed changes, deferrals and, in retrofit, adopted
   // tests), so an element the test seam omits leaves its fields out too.
-  const authored = authoring ? { ...base, title: "The Verifier's phase authoring result, written to /surety/out/result.json", properties: { ...(base.properties as Record<string, unknown>), ...readsResultFields(reads.elements) } } : base;
-  const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings } } : base;
+  // The fields the package's stated elements add (a phase authoring's
+  // governed changes, deferrals and adopted tests; a phase sign-off; a spec
+  // change's claimed changes; a retrofit replan's requests): an element the
+  // test seam omits leaves its fields out too (row M442).
+  const added = readsResultFields(reads.elements);
+  const withAdded = { ...base, properties: { ...(base.properties as Record<string, unknown>), ...added } };
+  const authored = authoring ? { ...withAdded, title: "The Verifier's phase authoring result, written to /surety/out/result.json" } : withAdded;
+  const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings, ...added } } : base;
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : authored, null, 2)}\n`);
   if (authoring) put('authoring.json', 'instructions', authoring.phase_plan?.id ?? null, `${JSON.stringify(authoring, null, 2)}\n`);
   if (review) {
