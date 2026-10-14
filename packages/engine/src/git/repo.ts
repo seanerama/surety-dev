@@ -3,7 +3,7 @@
 // be made: `unknown` is a value, never taken for "absent" or "clean".
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
 
 import { readRegular } from '../invoke/sandbox/volatile.js';
 
@@ -265,6 +265,57 @@ export async function checkoutBaseline(ctx: GitContext, scratch: string): Promis
   } finally {
     rmSync(index, { force: true });
   }
+}
+
+// checkoutBaseline, remembered per checkout while nothing it rests on has
+// changed (the slice-37 gate's M440 storm: a run's snapshot validation
+// compares every ended run's retained workspace, and computing each again
+// rehashes all its tracked files). What it rests on, read before the
+// baseline is computed, so a write during the computation is a change next
+// time: the HEAD file's content, the index file's and every tracked path's
+// lstat (inode, size, mode, mtime and ctime in nanoseconds; a write moves
+// ctime whatever mtime is set to). Anything that cannot be read computes
+// the baseline again; nothing is trusted on an unread fact.
+const baselineMemo = new Map<string, { sig: string; paths: string[]; baseline: Baseline }>();
+
+function baselineSignature(path: string, gitDir: string, paths: string[]): string | null {
+  const stat = (p: string): string => {
+    try {
+      const s = lstatSync(p, { bigint: true });
+      return `${s.ino}:${s.size}:${s.mode}:${s.mtimeNs}:${s.ctimeNs}`;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'absent';
+      throw err;
+    }
+  };
+  try {
+    const parts = [readFileSync(join(gitDir, 'HEAD'), 'utf8'), stat(join(gitDir, 'index'))];
+    for (const p of paths) parts.push(`${p}=${stat(join(path, p))}`);
+    return createHash('sha256').update(parts.join('\n')).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+// `at.gitDir`: the checkout's git directory (a linked worktree's metadata
+// directory, or the repository's .git).
+export async function checkoutBaselineRemembered(ctx: GitContext, scratch: string, at: { path: string; gitDir: string }): Promise<Baseline | null> {
+  const prior = baselineMemo.get(at.path);
+  if (prior) {
+    const sig = baselineSignature(at.path, at.gitDir, prior.paths);
+    if (sig !== null && sig === prior.sig) return prior.baseline;
+  }
+  const listed = await gitOk(ctx, ['ls-files', '-z']);
+  if (listed === null) return checkoutBaseline(ctx, scratch);
+  const paths = listed.split('\0').filter((p) => p !== '');
+  const sig = baselineSignature(at.path, at.gitDir, paths);
+  const baseline = await checkoutBaseline(ctx, scratch);
+  if (baseline === null || sig === null) {
+    baselineMemo.delete(at.path);
+    return baseline;
+  }
+  baselineMemo.set(at.path, { sig, paths, baseline });
+  return baseline;
 }
 
 // The index hash (as checkoutBaseline computes it) an index read from `tree`

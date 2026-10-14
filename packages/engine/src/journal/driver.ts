@@ -75,6 +75,9 @@ export class Journal {
   // nothing to write (the tick's nomination step, M303 (a)); a nested call
   // that writes takes the durable lease then, inside the queue.
   private readonly holding = new AsyncLocalStorage<Set<string>>();
+  // Operations this incarnation's own finalizers intended (a commit's
+  // follow-on branch update), until driven.
+  private readonly ownFollows = new Set<string>();
   private readonly leased = new AsyncLocalStorage<Set<string>>();
   async withProject<T>(project: string, fn: () => Promise<T>, holder = 'journal', opts: { lease?: boolean } = {}): Promise<T> {
     const wantLease = opts.lease !== false;
@@ -249,6 +252,10 @@ export class Journal {
     const named = purpose === 'nomination' ? 'nomination' : purpose === 'protected' ? 'protected_application' : null;
     if (named !== null) await pausePoint(`${named}.before_finalizer`);
     const receipts = await this.rt.engine<Record<string, unknown>>('journal.finalize', { operation: op.id });
+    // The operation a finalizer intended next (a commit's branch update),
+    // known to this incarnation as its own course (reconcile's `block`).
+    const follow = (receipts as { follow?: unknown } | null)?.follow;
+    if (typeof follow === 'string') this.ownFollows.add(follow);
     await pausePoint(`journal.${op.kind}.finalizer_committed`);
     if (named !== null) await pausePoint(`${named}.finalized`);
     // SEAM.md §428: a phase's authoring version made effective, readiness
@@ -328,14 +335,17 @@ export class Journal {
             await pausePoint(`journal.${op.kind}.reconciled`);
             return { op: await this.detail(op.id), end: 'failed', receipts: {} };
           }
-          // Moved somewhere else (by hand): nothing of the update was ever
-          // attempted, so its outcome is not unknown. It is attempted now and
-          // git's compare-and-swap decides: refused because the old value does
-          // not match, it is a definite failure without effect, never an
-          // ambiguity (the driver's ruling on M53 case 8, slice 37; D1 §7.10's
-          // probe and its ambiguous outcome are for an outcome not known). The
-          // move itself is integrity's to observe, out of band.
-          if (found !== 'unknown') return this.execute(op);
+          // Moved somewhere else (by hand) while this engine itself is
+          // carrying the update: one its own finalizer intended in this
+          // incarnation and nothing attempted since. Its outcome is not
+          // unknown: it is attempted now, and git's compare-and-swap decides;
+          // refused because the old value does not match, it is a definite
+          // failure without effect, never an ambiguity (the driver's ruling on
+          // M53 case 8, slice 37). Found so by recovery after a restart, the
+          // operation's course is not this engine's to know, and it blocks as
+          // D1 §7.10 says (M29, M70). The move itself is integrity's to
+          // observe, out of band.
+          if (found !== 'unknown' && this.ownFollows.delete(op.id)) return this.execute(op);
         }
         return this.block(op, outcome);
     }
