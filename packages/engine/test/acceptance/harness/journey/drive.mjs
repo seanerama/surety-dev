@@ -380,9 +380,23 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
       // §351), and a journey that says so leaves its question unanswered
       // (objection 105; SEAM.md §451).
       if (!(ctx.answerKinds ?? ROUTED_KINDS).includes(d.kind)) continue;
-      const option = d.options.some((o) => o.key === answer) ? answer : d.options[0].key;
-      const res = await fx.engine.post(`/v1/projects/${project}/decisions/${d.id}/answer`, { option, preview_hash: d.preview_hash });
-      ctx.humanActs.push({ kind: d.kind, id: d.id, option, status: res.status, at: new Date().toISOString() });
+      const post = async (x) => {
+        const option = x.options.some((o) => o.key === answer) ? answer : x.options[0].key;
+        const res = await fx.engine.post(`/v1/projects/${project}/decisions/${x.id}/answer`, { option, preview_hash: x.preview_hash });
+        ctx.humanActs.push({ kind: x.kind, id: x.id, option, status: res.status, at: new Date().toISOString() });
+        return res;
+      };
+      let res = await post(d);
+      // A new result that moves a proposed change's impact asks again (D6
+      // §4.4; the driver's ruling, slice 37): an answer refused 409 stale or
+      // invalidated is given again to the open spec_change about the same
+      // request, as an owner reading the current question would.
+      for (let again = 0, current = d; d.kind === 'spec_change' && res.status === 409 && /decision_(stale|invalidated)/.test(res.body?.code ?? '') && again < 5; again++) {
+        const next = openDecisions(fx.home, project).find((x) => x.kind === 'spec_change' && x.subject_id === current.subject_id && x.id !== current.id);
+        if (!next) break;
+        current = next;
+        res = await post(next);
+      }
     }
     // One tick, then every run it started ended (the journey's scripts all
     // finish by themselves); the project lane's real domains take longer.

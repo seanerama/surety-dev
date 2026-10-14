@@ -134,10 +134,14 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     assert.ok(corrections.every((h) => h.option === 'approve'), 'each answered approve by the owner');
     const changes = changeRequests(fx.home, ctx.project);
     assert.equal(changes.length, 1, 'one change request, CR-1');
-    for (const h of acts.filter((x) => x.kind === 'spec_change')) {
-      const row = getRow(fx.home, 'decisions', h.id);
-      assert.equal(row?.subject_id, changes[0].id, `each spec_change answer is about CR-1 (${JSON.stringify(row && { subject_id: row.subject_id, kind: row.kind })})`);
-    }
+    // Every spec_change the owner answered is about CR-1: several are allowed
+    // (a new result that moves the impact asks again, D6 §4.4; the driver's
+    // ruling, slice 37), and exactly one is consumed.
+    const answered = ctx.humanActs.filter((h) => h.kind === 'spec_change' && h.status === 200).map((h) => getRow(fx.home, 'decisions', h.id));
+    assert.ok(answered.length >= 1, `CR-1's change answered by the owner (${show})`);
+    for (const row of answered) assert.equal(row?.subject_id, changes[0].id, `each spec_change answer is about CR-1 (${JSON.stringify(row && { subject_id: row.subject_id, kind: row.kind, status: row.status })})`);
+    assert.equal(acts.filter((x) => x.kind === 'spec_change').length, 1, `exactly one spec_change consumed (${show})`);
+    for (const h of acts.filter((x) => x.kind === 'spec_change')) assert.equal(getRow(fx.home, 'decisions', h.id)?.subject_id, changes[0].id, 'the consumed spec_change is about CR-1');
     assert.ok(planOfPhase(fx.home, ctx.project, 2).some((p) => p.completed_at));
   });
 });
