@@ -26,6 +26,7 @@ import { describe, test } from 'node:test';
 
 import { answer } from './harness/decisions.mjs';
 import { evaluate } from './harness/gates.mjs';
+import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { ROUTED_KINDS, eventsAbout, requirementsOf, roadmapRevisions, specRevisions, workOf } from './harness/journey/drive.mjs';
 import { nextReplanOutcome, outcomes, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
@@ -62,7 +63,10 @@ describe('M434 an unassigned requirement', () => {
   test('(a) REQUIREMENT_UNASSIGNED on the later phase gate; (b) shown pending; (c) a row update refused, an incomplete revision refused, the approved complete revision clears it; M433 (d) a change touching only a completed phase registers no replan', async (t) => {
     const { fx, p, ctx, plan2, candidate3 } = await phaseTwoAtRest(t, { policy: { repair_attempts_max: 1 } });
     // The replan the change registers: held, then the incomplete roadmap, then (its repair) the complete one.
+    // A kind array is indexed by every launch of the kind (SEAM §350; objection 089): padded by phase 1's.
+    const earlier = fx.scripted.launches({ work_kind: 'replan' }).length;
     fx.scripted.kindScript('replan', [
+      ...Array.from({ length: earlier }, () => script.complete()),
       { steps: [{ hold: 'gate', heartbeat_ms: 250 }, ...replan35({ spec_version: 2, roadmap_version: 2, files: { [ROADMAP]: roadmapWith({ phases: [phaseOf(1), { ...phaseOf(2), requirement_ids: ['R3'] }, PHASE_3] }) }, result: { roadmap_revision: true } }).steps] },
       replan35({ spec_version: 2, roadmap_version: 2, files: { [ROADMAP]: { ...roadmapWith({ phases: [phaseOf(1), phaseOf(2), PHASE_3] }), moved_requirements: [{ key: 'R5', from: null, to: 3 }] } }, result: { roadmap_revision: true } }),
     ]);

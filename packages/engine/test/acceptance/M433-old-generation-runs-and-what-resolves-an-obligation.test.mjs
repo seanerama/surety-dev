@@ -36,14 +36,16 @@ import { drive, entryOf, operatorRequest, recordExit } from './harness/checks/se
 import { executionRow } from './harness/checks/fixtures.mjs';
 import { effectiveVersion, evaluate } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
+import { addWork } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
-import { ROUTED_KINDS, authoringReady, candidatesOfProject, checkRows, obligationsOf, ownerPolicy, planOfPhase, projectRow, queuedExecutions, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
+import { ROUTED_KINDS, authoringReady, candidatesOfProject, checkRows, obligationsOf, planOfPhase, projectRow, queuedExecutions, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
 import { journey35 } from './harness/journey/plan35.mjs';
-import { CORRECTED_SERVICE_TEST, REQUIREMENTS, specText } from './harness/journey/reference.mjs';
-import { SPEC_CHANGES, changeScript, holding, launchHolding, pumpHolding, untilProposedOrFailed } from './harness/journey/change36.mjs';
+import { CORRECTED_SERVICE_TEST, REQUIREMENTS, authoringFiles, specText } from './harness/journey/reference.mjs';
+import { SPEC_CHANGES, changeScript, pumpHolding, untilProposedOrFailed } from './harness/journey/change36.mjs';
 
 const LISTED = ['accept-r2', 'integration'];
+const SUM_TEST = '.surety/checks/tests/sum.test.mjs';
 // The routed decisions the owner answers in these cases; spec_change is answered by the case itself.
 const OWNER_KINDS = ROUTED_KINDS.filter((k) => k !== 'spec_change');
 const active = (x) => x.active === 1 || x.active === true;
@@ -54,20 +56,23 @@ const resultOfExecution = (home, id) => one(home, 'SELECT * FROM "check_results"
 const generationOf = (home, result) => result.generation ?? executionRow(home, result.execution)?.spec_generation ?? null;
 const keyIds = (home, project, key) => checkRows(home, project).filter((c) => c.key === key).map((c) => c.id);
 const reasonSubjects = (evaluation, code) => evaluation.reasons.filter((r) => r.code === code).flatMap((r) => r.subjects ?? []);
-const names = (subjects, ids, key) => subjects.some((s) => ids.includes(s) || String(s).includes(key));
+// A subject names a check when it is the check's id, its key, or `check:<key>`;
+// never by substring (`kind:integration` names a kind, objection 088).
+const names = (subjects, ids, key) => subjects.some((s) => ids.includes(s) || s === key || s === `check:${key}`);
 const R2_1_ONLY = specText({
   version: 2,
   requirements: REQUIREMENTS.map((r) => (r.key === 'R2' ? { ...r, criteria: [{ id: 'R2.1', text: 'Given the service is running, when a client requests GET /sum?a=2&b=3, then it answers 200 with content type application/json and the JSON body {"sum": 5}.' }, r.criteria[1]] } : r)),
   changeLog: [{ version: 2, date: '2026-10-13', change: 'R2.1 names the content type', by: 'Sean' }],
 });
 
-async function proposeAndApprove(fx, ctx, spec, changes, version) {
+async function proposeAndApprove(fx, ctx, spec, changes, version, { beforeAnswer } = {}) {
   fx.scripted.kindScript('spec_change', changeScript(spec, changes));
   const res = await fx.engine.post(`/v1/projects/${ctx.project}/spec/change-requests`, { text: 'The owner\'s change.' });
   assert.equal(res.status, 201, `POST …/spec/change-requests (→ ${res.status} ${res.text})`);
   const out = await untilProposedOrFailed(fx, ctx, res.body.request.id, ctx.holdOpts);
   assert.ok(out.decision, `the change is proposed (${out.request.status} ${out.request.failure ?? ''})`);
-  assert.equal((await answer(fx.engine, ctx.project, out.decision, 'approve')).status, 200, 'the owner approves it');
+  if (beforeAnswer) await beforeAnswer();
+  assert.equal((await answer(fx.engine, ctx.project, decision(fx.home, out.decision.id), 'approve')).status, 200, 'the owner approves it');
   await pumpHolding(fx, ctx, () => specRevisions(fx.home, ctx.project).find((r) => r.version === version), { what: `version ${version}`, max: 20, ...ctx.holdOpts });
   return out.request;
 }
@@ -83,17 +88,12 @@ async function stage2Candidate(fx, ctx) {
 
 describe('M433 (f), (g): old-generation runs, and what resolves an obligation; the 31b review\'s M2', () => {
   test('(f) queued, running and late runs finish passed under the old generation and decide nothing; (g) rediscovery and evidence alone clear nothing; the correction and the assessment resolve; fresh evidence decides', async (t) => {
-    const { fx, p, ctx } = await journey35(t);
+    // `repair_attempts_max` 0: the request's correction fails once and parks, so
+    // it is captured only after the rediscovery, when the owner retries it.
+    const { fx, p, ctx } = await journey35(t, { policy: { repair_attempts_max: 0 } });
     ctx.holdOpts = { hold: (x) => LISTED.includes(x.key), answerKinds: OWNER_KINDS };
-    fx.scripted.kindScript('check_correction', [
-      holding(
-        { '.surety/checks/tests/service.test.mjs': CORRECTED_SERVICE_TEST },
-        {
-          proposal: { rationale: 'R2.1 and R2.2 now name the content type; accept-r2 reads it.', requested_change_kind: 'tightening' },
-          spec_applicability: [{ check: 'integration', criteria: ['R2.2'], rationale: 'integration asserts the refusal\'s status alone, which the reworded R2.2 leaves unchanged.' }],
-        },
-      ),
-    ]);
+    // A check_correction launch with no script of its own fails (the request's, launched early, parks).
+    fx.scripted.kindScript('check_correction', script.crash());
     const { candidate, ex } = await stage2Candidate(fx, ctx);
     const plan1 = planOfPhase(fx.home, p.id, 1).find(active);
     const stage2 = stagesOfPlan(fx.home, plan1.id).find((s) => s.number === 2);
@@ -101,9 +101,41 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
     await drive(fx.engine, ex.integration, ['materializing', 'running']);
     await drive(fx.engine, late, ['materializing', 'running', 'collecting']);
     const old = projectRow(fx.home, p.id).spec_evidence_generation;
-    await proposeAndApprove(fx, ctx, SPEC_CHANGES.r2Both, [{ key: 'R2', kind: 'criteria_changed', reason: 'content type' }], 2);
+    // The rediscovery to come (objection 087): a Verifier's correction of
+    // another check's test (accept-r1's), held from before the approval so it
+    // lands after it, while the request's own correction waits behind it.
+    let rediscovery = null;
+    const request = await proposeAndApprove(fx, ctx, SPEC_CHANGES.r2Both, [{ key: 'R2', kind: 'criteria_changed', reason: 'content type' }], 2, {
+      beforeAnswer: async () => {
+        rediscovery = await addWork(fx.engine, p.id, 'check_correction', { subject: {} });
+        fx.scripted.script(rediscovery, [
+          {
+            steps: [
+              step.write(SUM_TEST, `${authoringFiles(1)[SUM_TEST]}// accept-r1 reads R1.1 as before.\n`),
+              step.hold('gate', { heartbeat_ms: 250 }),
+              step.result({ status: 'completed', summary: 'accept-r1\'s test restated', proposal: { rationale: 'accept-r1\'s test is restated; R1.1 is unchanged.', requested_change_kind: 'tightening' } }),
+            ],
+          },
+        ]);
+        await pumpHolding(fx, ctx, () => {
+          const launch = fx.scripted.launches({ work_item: rediscovery }).at(-1);
+          return launch && fx.scripted.eventsOf(launch.pid, 'holding').length > 0;
+        }, { what: 'the other correction holding', max: 20, ...ctx.holdOpts });
+      },
+    });
     const gen = projectRow(fx.home, p.id).spec_evidence_generation;
     assert.equal(gen, old + 1, 'the fixture is live: the generation advanced');
+    // The request's correction: its first launch fails (it parks); retried, it
+    // corrects accept-r2 and assesses integration.
+    const correction = workOf(fx.home, p.id, 'check_correction').find((w) => JSON.stringify(w.subject ?? {}).includes(request.id));
+    assert.ok(correction, 'the fixture is live: the request\'s check_correction registered');
+    fx.scripted.script(correction.id, [
+      script.crash(),
+      roleThat([step.write('.surety/checks/tests/service.test.mjs', CORRECTED_SERVICE_TEST)], {
+        proposal: { rationale: 'R2.1 and R2.2 now name the content type; accept-r2 reads it.', requested_change_kind: 'tightening' },
+        spec_applicability: [{ check: 'integration', criteria: ['R2.2'], rationale: 'integration asserts the refusal\'s status alone, which the reworded R2.2 leaves unchanged.' }],
+      }),
+    ]);
     // (f) each finishes passed after the approval.
     await recordExit(fx.engine, ex['accept-r2'], 0).catch((err) => assert.fail(`the execution queued at approval runs and records its result (D6 §4.5): ${err.message}`));
     await drive(fx.engine, ex.integration, ['collecting', 'recorded'], { exit_status: 0 });
@@ -133,27 +165,31 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
     evaluation = await gate();
     assert.notEqual(evaluation.outcome, 'satisfied', 'the green does not return after further ticks');
 
-    // (g) a rediscovery clears nothing.
-    await ownerPolicy(fx, p.id, { deadline_reviewer: 900 });
-    await pumpHolding(fx, ctx, () => effectiveVersion(fx.home, p.id).id !== effective.id && effectiveVersion(fx.home, p.id), { what: 'the new protected version', max: 10, ...ctx.holdOpts });
+    // (g) a rediscovery clears nothing: the other correction released, approved and applied.
+    fx.scripted.release(rediscovery, 'gate');
+    await pumpHolding(fx, ctx, () => effectiveVersion(fx.home, p.id).id !== effective.id && effectiveVersion(fx.home, p.id), { what: 'the new protected version from the other correction', max: 40, ...ctx.holdOpts });
     assert.deepEqual(open(), LISTED, 'a rediscovery of the unchanged criterion IDs clears nothing');
     // A pass under the new generation, without a resolution: still incomplete.
     const [fresh] = Object.values(await operatorRequest(fx.engine, p.id, candidate.id, ['accept-r2']));
     await recordExit(fx.engine, fresh, 0);
     assert.equal(generationOf(fx.home, resultOfExecution(fx.home, fresh)), gen, 'the fixture is live: a pass of the new generation');
     evaluation = await gate();
-    assert.ok(names(reasonSubjects(evaluation, 'ACCEPTANCE_SCOPE_INCOMPLETE'), ids['accept-r2'], 'accept-r2'), `evidence under the new generation alone leaves ACCEPTANCE_SCOPE_INCOMPLETE naming accept-r2 (${JSON.stringify(evaluation.reasons)})`);
-    // The correction and the assessment.
-    const correction = workOf(fx.home, p.id, 'check_correction').at(-1);
-    assert.ok(correction, 'the fixture is live: check_correction registered');
-    await pumpHolding(fx, ctx, () => launchHolding(fx, 'check_correction'), { what: 'the Verifier\'s correction holding', max: 20, ...ctx.holdOpts });
-    fx.scripted.release('all', 'gate');
-    const run = await pumpHolding(fx, ctx, () => withStore(fx.home, (db) => db.prepare(`SELECT * FROM "runs" WHERE "work_item" = ? AND "state" = 'ended' ORDER BY "seq" DESC`).get(correction.id)), { what: 'the correction\'s run to end', max: 20, ...ctx.holdOpts });
+    // The rediscovery's version has its own check rows: the ids read again.
+    assert.ok(names(reasonSubjects(evaluation, 'ACCEPTANCE_SCOPE_INCOMPLETE'), keyIds(fx.home, p.id, 'accept-r2'), 'accept-r2'), `evidence under the new generation alone leaves ACCEPTANCE_SCOPE_INCOMPLETE naming accept-r2 (${JSON.stringify(evaluation.reasons)})`);
+    // The correction and the assessment: the parked correction retried by the owner.
+    const parked = await pumpHolding(fx, ctx, () => {
+      const w = workOf(fx.home, p.id, 'check_correction').find((x) => x.id === correction.id);
+      return w?.status === 'parked' ? decisionsOn(fx.home, 'blocker', w.id).find((d) => d.status === 'open') : undefined;
+    }, { what: 'the request\'s correction parked after its failed launch', max: 20, ...ctx.holdOpts });
+    assert.equal((await answer(fx.engine, p.id, decision(fx.home, parked.id), 'retry')).status, 200, 'the owner retries it');
+    await pumpHolding(fx, ctx, () => withStore(fx.home, (db) => db.prepare(`SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "state" = 'ended'`).get(correction.id)).n >= 2, { what: 'the retried correction to end', max: 20, ...ctx.holdOpts });
+    const run = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "runs" WHERE "work_item" = ? AND "state" = 'ended' ORDER BY "seq" DESC`).get(correction.id));
     assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the correction with its spec_applicability assessment is accepted (Q6) (${run.reason_text})`);
     await pumpHolding(fx, ctx, () => open().length === 0, { what: 'both obligations resolved', max: 40, answerKinds: ROUTED_KINDS, ...ctx.holdOpts }).catch(() => null);
     const byKey = Object.fromEntries(obligationsOf(fx.home, p.id).filter((o) => o.reason === 'spec_changed').map((o) => [o.key, o]));
     const applied = effectiveVersion(fx.home, p.id);
-    assert.ok(byKey['accept-r2'].resolved_at, 'accept-r2\'s obligation resolved by the correction naming its criteria');
+    const proposals = withStore(fx.home, (db) => db.prepare('SELECT p."id", p."status" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."work_item" = ?').all(correction.id));
+    assert.ok(byKey['accept-r2'].resolved_at, `accept-r2's obligation resolved by the correction naming its criteria (its proposals ${JSON.stringify(proposals)})`);
     assert.equal(byKey['accept-r2'].resolved_by, applied.id, `resolved_by the applied protected version (A.3; Q7), not ${byKey['accept-r2'].resolved_by}`);
     assert.ok(byKey.integration.resolved_at, 'integration\'s resolved by the Verifier\'s recorded assessment');
     assert.ok(byKey.integration.resolved_by && byKey.integration.resolved_by !== applied.id, `resolved_by the assessment (${byKey.integration.resolved_by})`);
