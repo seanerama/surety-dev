@@ -514,11 +514,20 @@ export async function configureAlpha(fx, project) {
   return { environment: res.body.environment, config: res.body.config, content };
 }
 
+// Alpha's configuration once (the owner's route): before the first
+// authoring, so that its Verifier is told the environment's targets and
+// writes the post-deploy check; the qualification step keeps it.
+export async function alphaOnce(fx, project) {
+  const env = one(fx.home, `SELECT e."id" FROM "environments" e JOIN "environment_configs" c ON c."environment" = e."id" WHERE e."project" = ? AND e."name" = 'alpha' LIMIT 1`, project);
+  if (env) return { environment: { id: env.id }, already: true };
+  return configureAlpha(fx, project);
+}
+
 // Sean's `surety qualify-adapter local_service` (no model; costs nothing).
 export async function qualifyStep(ctx, row, name, project) {
   return step(ctx, name, () =>
     onEngine(ctx, `${row} ${name}`, { projects: [project] }, async (fx) => {
-      const configured = await configureAlpha(fx, project);
+      const configured = await alphaOnce(fx, project);
       const before = new Set(adapterQualifications(fx.home).map((r) => r.id));
       const runsBefore = new Set(qualificationRuns(fx.home).map((r) => r.id));
       const cli = seanTypes(ctx, fx.home, ['qualify-adapter', 'local_service'], "the adapter's qualification (D4 §2.6): no model, nothing paid");
@@ -700,6 +709,8 @@ export async function m5aArchitecture(ctx) {
   return step(ctx, 'm5a_architecture', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_architecture', { projects: [project], resume: project }, async (fx) => {
+      // Alpha configured before the plan can publish (its authoring may be dispatched at once).
+      await alphaOnce(fx, project);
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture and the first plan', words: ownerSays('Design it from the approved specification and plan phase 1.', 'rehearsal-architecture', TALLY_ARCHITECTURE), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
       const out = { ...s, plan: { id: s.value.id, generation: s.value.generation } };
       observe(ctx, 'M443', 'architecture', out);
@@ -713,9 +724,11 @@ const CORRECTIONS = ['check_correction_unclassifiable', 'check_correction_tighte
 export async function m5aPhase1(ctx) {
   return step(ctx, 'm5a_phase1', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
-    return onEngine(ctx, 'M443 m5a_phase1', { projects: [project], resume: project }, async (fx) => {
+    return onEngine(ctx, 'M443 m5a_phase1', { projects: [project] }, async (fx) => {
+      const alpha = await alphaOnce(fx, project);
+      await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const one_ = activePlanOf(fx.home, project, 1); const two = activePlanOf(fx.home, project, 2); return one_?.completed_at && two?.published_at ? { phase1: one_.id, phase2: two.id } : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 1 built, verified and complete, and phase 2 planned by the replan' });
-      const out = { ...d, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })), runs: runsOfProject(fx.home, project) };
+      const out = { ...d, alpha_configured: alpha.environment?.id ?? null, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })), runs: runsOfProject(fx.home, project) };
       observe(ctx, 'M443', 'phase1', out);
       return out;
     });
@@ -915,6 +928,7 @@ export async function m5rArchitecture(ctx) {
   return step(ctx, 'm5r_architecture', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_architecture', { projects: [project], resume: project }, async (fx) => {
+      await alphaOnce(fx, project);
       const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture as it is and the conformance plan', words: ownerSays('Reconstruct the architecture from the code and plan the conformance phase.', 'rehearsal-architecture', sumsArchitecture()), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
       const out = { ...s, conformance_stages: stagesOf(fx.home, project).filter((x) => x.conformance === 1).map((x) => ({ id: x.id, number: x.number, implements: json(x.implements), conformance_state: x.conformance_state ?? null, source_revision: x.source_revision ?? null })) };
       observe(ctx, 'M444', 'architecture', out);
@@ -926,7 +940,9 @@ export async function m5rArchitecture(ctx) {
 export async function m5rConformance(ctx) {
   return step(ctx, 'm5r_conformance', async () => {
     const { project } = stepValue(ctx, 'm5r_adopt');
-    return onEngine(ctx, 'M444 m5r_conformance', { projects: [project], resume: project }, async (fx) => {
+    return onEngine(ctx, 'M444 m5r_conformance', { projects: [project] }, async (fx) => {
+      await alphaOnce(fx, project);
+      await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const p = activePlanOf(fx.home, project, 1); const st = stagesOf(fx.home, project).find((x) => x.conformance === 1); return p?.completed_at || ['conformed', 'blocked'].includes(st?.conformance_state) ? { plan: p?.id, state: st?.conformance_state ?? null } : undefined; }, { expect: [...CORRECTIONS], what: 'the conformance phase: the authoring with adoption, the conformance stage against A, phase verification' });
       const proposals = rows(fx.home, 'SELECT "id", "status", "classified_change_kind" FROM "protected_proposals" WHERE "project" = ? ORDER BY "seq"', project);
       const out = { ...d, proposals, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status, conformance: s.conformance, conformance_state: s.conformance_state ?? null, source_revision: s.source_revision ?? null })), builds: workOfProject(fx.home, project, 'stage_build').length, candidates: candidatesOf(fx.home, project).map((c) => ({ id: c.id, seq: c.seq, revision: c.revision, progress: c.progress })) };
