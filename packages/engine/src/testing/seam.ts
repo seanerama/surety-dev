@@ -293,6 +293,10 @@ const mainFaults: MainFault[] = [];
 // fails, as a git read that fails, `times` times.
 type PresenceFault = { point: 'module_presence_read'; project: string; times: number; remaining: number; hit: number };
 const presenceFaults: PresenceFault[] = [];
+// SEAM.md §419: the next `times` reads of a specification change's proposed
+// blob for the project fail as an unreadable object.
+type SpecBlobFault = { point: 'spec_blob_read'; project: string; times: number; remaining: number; hit: number };
+const specBlobFaults: SpecBlobFault[] = [];
 // SEAM.md §377: the next adoption cannot read the named signal.
 type SignalFault = { point: 'adoption_signal'; signal: string; times: number; remaining: number; hit: number };
 const signalFaults: SignalFault[] = [];
@@ -840,6 +844,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
         tickFaults.length = 0;
         mainFaults.length = 0;
         presenceFaults.length = 0;
+        specBlobFaults.length = 0;
         signalFaults.length = 0;
         collectSlowMs = 0;
         streamSlow = null;
@@ -876,6 +881,7 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           faults: [
             ...mainFaults.map((f) => ({ point: f.point, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...presenceFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
+            ...specBlobFaults.map((f) => ({ point: f.point, project: f.project, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...signalFaults.map((f) => ({ point: f.point, signal: f.signal, times: f.times, remaining: f.remaining, hit: f.hit })),
             ...tickFaults.map((f) => ({ ...f })),
             ...((await storeOp(OP.listFaults, {}).catch(() => [])) as unknown[]),
@@ -1184,6 +1190,8 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
           ? armTickFault(body)
           : isObject(body) && body.point === 'module_presence_read'
           ? armPresenceFault(body)
+          : isObject(body) && body.point === 'spec_blob_read'
+          ? armSpecBlobFault(body)
           : isObject(body) && body.point === 'adoption_signal'
           ? armSignalFault(body)
           : isObject(body) && (MAIN_FAULTS as readonly unknown[]).includes(body.point)
@@ -1551,6 +1559,26 @@ function armPresenceFault(body: Record<string, unknown>): { point: 'module_prese
   }
   presenceFaults.push({ point: 'module_presence_read', project: body.project, times, remaining: times, hit: 0 });
   return { point: 'module_presence_read', project: body.project, times };
+}
+
+function armSpecBlobFault(body: Record<string, unknown>): { point: 'spec_blob_read'; project: string; times: number } {
+  const times = body.times === undefined ? 1 : body.times;
+  if (Object.keys(body).some((k) => !['point', 'project', 'times'].includes(k)) || typeof body.project !== 'string' || body.project.length === 0 || typeof times !== 'number' || !Number.isInteger(times) || times < 1) {
+    throw new Refusal(400, 'invalid_value', 'Unknown spec_blob_read fault.', 'Send {"point":"spec_blob_read","project":"proj_…","times"?: <n>}.', { field: 'point' });
+  }
+  specBlobFaults.push({ point: 'spec_blob_read', project: body.project, times, remaining: times, hit: 0 });
+  return { point: 'spec_blob_read', project: body.project, times };
+}
+
+// SEAM.md §419: true where a read of the project's proposed specification
+// blob is to fail. Always false outside harness mode.
+export function seamSpecBlobFault(project: string): boolean {
+  if (!init.harness) return false;
+  const f = specBlobFaults.find((m) => m.project === project && m.remaining > 0);
+  if (!f) return false;
+  f.remaining -= 1;
+  f.hit += 1;
+  return true;
 }
 
 function armSignalFault(body: Record<string, unknown>): { point: 'adoption_signal'; signal: string; times: number } {

@@ -180,6 +180,11 @@ export const EVENT_OWNERS = {
   'spec.change_proposed': 'spec/change.ts',
   'spec.change_approved': 'spec/change.ts',
   'spec.change_failed': 'spec/change.ts',
+  // D6 §4.5 (M5 slice 36): the rejection keeping its side ref; an
+  // obligation resolved; the Verifier's applicability assessment.
+  'spec.change_rejected': 'spec/change.ts',
+  'check.obligation_resolved': 'spec/change.ts',
+  'spec.assessment_recorded': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
   // D6 §8 (M5 slice 32): the adoption, the confirmations, the conformance
   // stage's binding and its integration at publication.

@@ -37,7 +37,9 @@ import { integrationRef, projectRepoRow, registryRow } from '../store/transition
 import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
-import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers } from './approval.js';
+import { ADR_FILE } from '../plan/schemas.js';
+import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
+import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 
 type Db = Tx['db'];
@@ -157,19 +159,61 @@ export interface Impact {
   touches_current: boolean;
   evidence: { results: string[]; evaluations: string[] };
   work: string[];
+  // D6 §4.4 (B05): the findings naming a removed, changed or affected
+  // criterion; the ADRs whose text cites an affected key (a textual
+  // dependency, not semantic analysis); the modules whose sensitive areas
+  // the change alters (structural); the requirements whose independence is
+  // not established (a statement changed, the key cited by no ADR), whose
+  // scope is therefore the conservative one.
+  findings: string[];
+  adrs: { key: string; class: 'textual'; cites: string[] }[];
+  modules: { name: string; class: 'structural' }[];
+  uncertain_scope: { key: string; reason: string }[];
   claimed: unknown;
-  dependency_manifest: Record<string, unknown>;
+  dependency_manifest: DependencyManifest;
+}
+
+// The dependency generations the impact is bound to (B05; A.3): each
+// subject it lists, by class, with what it is now. Preview and effect
+// recompute it; a material change to a listed subject makes the answer stale.
+export type ManifestEntry = { id: string; generation: number | string | null };
+export interface DependencyManifest {
+  plans: ManifestEntry[];
+  requirements: ManifestEntry[];
+  checks: ManifestEntry[];
+  findings: ManifestEntry[];
+  results: ManifestEntry[];
+  work: ManifestEntry[];
 }
 
 const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
+// A short digest of a subject's material fields: its generation where the
+// row keeps no counter of its own.
+const digestOf = (v: unknown): string => sha256(canonical(v)).slice(0, 16);
 
-// What every material dependency of the impact is now (B05; A.3): the
-// generations of the active plans, the requirements' registration and the
-// effective protected version.
-export function dependencyManifest(db: Db, project: string): Record<string, unknown> {
-  const plans = db.prepare(`SELECT "id", "generation", "status" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 ORDER BY "phase_number"`).all(project);
-  const reqs = db.prepare('SELECT "key", "spec_revision", "status" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(project);
-  return { plans, requirements: sha256(canonical(reqs)), protected_version: effectiveVersion(db, project)?.id ?? null };
+// A proposal the engine refuses before any impact (D6 §4.4): a key or a
+// criterion renumbered, a withdrawn key used again, an approved
+// representation it cannot read. The run fails `invalid_result` naming it.
+export class ImpactRefused extends Error {
+  constructor(readonly code: string, readonly detail: string) {
+    super(`${code}: ${detail}`);
+  }
+}
+
+// The ADRs of the approved architecture with their approved texts (as
+// plan/bundle.ts's approvedAdrs), read from the store.
+function approvedAdrTexts(db: Db, project: string): { key: string; text: string }[] {
+  const arch = db.prepare('SELECT "blobs" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { blobs: string } | undefined;
+  if (!arch) return [];
+  const keys = new Set(Object.keys(parseJson<Record<string, string>>(arch.blobs) ?? {}).flatMap((p) => ADR_FILE.exec(p)?.[1] ?? []));
+  return (db.prepare(`SELECT "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' ORDER BY "key"`).all(project) as { key: string; text: string }[]).filter((a) => keys.has(a.key));
+}
+
+// The requirement keys an ADR's body cites (`R<n>`, or a criterion `R<n>.<m>`
+// of it), its front matter apart.
+function citedKeys(text: string): string[] {
+  const body = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  return uniq([...body.matchAll(/\bR([1-9][0-9]*)(?:\.[0-9]+)?\b/g)].map((m) => `R${m[1]}`));
 }
 
 export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown }): Impact {
@@ -178,7 +222,14 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
   const approved = liveRepresentation(parseJson<SpecRepresentation>(row?.representation ?? null));
   // An impact the engine cannot compute refuses the proposal (D6 §4.4):
   // never an empty impact.
-  if (!approved) throw illegal('computing a spec change impact with no readable approved representation', { project: args.project });
+  if (!approved) throw new ImpactRefused('spec_semantics_unreadable', 'the approved specification\'s representation cannot be read, so the impact cannot be computed');
+  // A key renumbered is a refusal of the diff, not an impact (D6 §4.4); a
+  // withdrawn key is never used again (TPL §4).
+  const keys = compareKeys(approved, liveRepresentation(args.proposed));
+  if (keys.renumbered.length > 0) throw new ImpactRefused('spec_keys_renumbered', keys.renumbered.map((r) => `${r.from} -> ${r.key}`).join(', '));
+  const vanished = vanishedKeys(db, args.project, approved);
+  const reused = liveRepresentation(args.proposed).requirements.map((q) => q.key).filter((k) => vanished.includes(k));
+  if (reused.length > 0) throw new ImpactRefused('spec_key_reused', reused.join(', '));
   const before = new Map(approved.requirements.map((r) => [r.key, r]));
   const after = new Map(args.proposed.requirements.map((r) => [r.key, r]));
   const requirements: Impact['requirements'] = [];
@@ -260,6 +311,39 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     : (db
         .prepare(`SELECT w."id" FROM "work_items" w WHERE w."project" = ? AND w."status" NOT IN ('complete', 'cancelled') AND json_extract(w."subject", '$.stage') IN (SELECT value FROM json_each(?)) ORDER BY w."seq"`)
         .all(args.project, JSON.stringify(stages.map((s) => s.stage))) as { id: string }[]).map((w) => w.id);
+  // Findings naming a removed, changed or affected criterion.
+  const named = uniq([...affectedCriteria, ...removed]);
+  const findings = named.length === 0
+    ? []
+    : (db.prepare(`SELECT "id" FROM "findings" WHERE "project" = ? AND "criterion" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(args.project, JSON.stringify(named)) as { id: string }[]).map((f) => f.id);
+  // The textual class: approved ADRs citing an affected key.
+  const adrs = approvedAdrTexts(db, args.project)
+    .map((a) => ({ key: a.key, class: 'textual' as const, cites: citedKeys(a.text).filter((k) => affectedKeys.includes(k)).sort() }))
+    .filter((a) => a.cites.length > 0);
+  const cited = new Set(adrs.flatMap((a) => a.cites));
+  // The structural class: §6 modules whose areas differ, and the modules of
+  // the stages implementing a requirement whose areas changed.
+  const areas = (m: { sensitive_areas: string[] } | undefined) => canonical([...(m?.sensitive_areas ?? [])].sort());
+  const beforeModules = new Map(approved.modules.map((m) => [m.name, m]));
+  const afterModules = new Map(args.proposed.modules.map((m) => [m.name, m]));
+  const moduleNames = uniq([...beforeModules.keys(), ...afterModules.keys()]).filter((n) => areas(beforeModules.get(n)) !== areas(afterModules.get(n)));
+  const areaKeys = requirements.filter((q) => q.changes.includes('areas_changed')).map((q) => q.key);
+  const areaIds = areaKeys.map((k) => reqIds.get(k)?.id).filter((x): x is string => typeof x === 'string');
+  const stageModuleIds = stageRows.filter((s) => (parseJson<string[]>(s.implements) ?? []).some((x) => areaIds.includes(x) || areaKeys.includes(x))).flatMap((s) => {
+    const m = db.prepare('SELECT "modules" FROM "stages" WHERE "id" = ?').get(s.id) as { modules: string } | undefined;
+    return parseJson<string[]>(m?.modules ?? null) ?? [];
+  });
+  for (const id of uniq(stageModuleIds)) {
+    const m = db.prepare('SELECT "name" FROM "modules" WHERE "id" = ? OR ("project" = ? AND "name" = ?)').get(id, args.project, id) as { name: string } | undefined;
+    if (m) moduleNames.push(m.name);
+  }
+  const modules = uniq(moduleNames).sort().map((name) => ({ name, class: 'structural' as const }));
+  // Where independence is not established (D6 §4.4): a statement changed
+  // and no ADR cites the key; its scope is every check of its criteria.
+  const uncertain = requirements
+    .filter((q) => q.changes.includes('text_changed') && !cited.has(q.key))
+    .map((q) => ({ key: q.key, reason: `the statement of ${q.key} changed and no ADR cites it: every check of its criteria is in scope` }));
+  const listedChecks = [...obligations, ...unknown].map((c) => c.check);
   return {
     approved_digest: spec?.semantic_digest ?? null,
     proposed_digest: args.proposedDigest,
@@ -273,14 +357,68 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     touches_current: touchesCurrent,
     evidence: { results, evaluations },
     work,
+    findings,
+    adrs,
+    modules,
+    uncertain_scope: uncertain,
     claimed: args.claimed,
-    dependency_manifest: dependencyManifest(db, args.project),
+    dependency_manifest: dependencyManifest(db, { project: args.project, phases, stages: stages.map((s) => s.stage), keys: affectedKeys, checks: listedChecks, findings, results, work }),
   };
 }
 
-// The main thread's read before the side ref's intent (runs/accept.ts).
-export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown }): Impact {
-  return computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed });
+// What each subject the impact lists is now (B05; A.3; SEAM.md §418): the
+// active plans of the phases it names or holding its stages, at their
+// generation; its requirements, findings and open work by a digest of what
+// is material about them; its checks at their protected version; every
+// result of its checks not invalidated, at the spec-evidence generation it
+// was registered under (null where that is not recorded).
+export function dependencyManifest(
+  db: Db,
+  args: { project: string; phases: number[]; stages: string[]; keys: string[]; checks: string[]; findings: string[]; results: string[]; work: string[] },
+): DependencyManifest {
+  const list = (xs: string[]) => JSON.stringify(xs);
+  const plans = db
+    .prepare(
+      `SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1
+         AND ("phase_number" IN (SELECT value FROM json_each(?)) OR "id" IN (SELECT "phase_plan" FROM "stages" WHERE "id" IN (SELECT value FROM json_each(?))))
+       ORDER BY "phase_number", "id"`,
+    )
+    .all(args.project, JSON.stringify(args.phases), list(args.stages)) as { id: string; generation: number }[];
+  const requirements = (
+    db.prepare('SELECT "id", "spec_revision", "status", "assigned_phase", "withdrawn_at" FROM "requirements" WHERE "project" = ? AND "key" IN (SELECT value FROM json_each(?)) ORDER BY "key"').all(args.project, list(args.keys)) as {
+      id: string;
+    }[]
+  ).map((r) => ({ id: r.id, generation: digestOf(r) }));
+  const checks = (
+    db.prepare(`SELECT c."id", v."seq" FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version" WHERE c."id" IN (SELECT value FROM json_each(?)) ORDER BY c."id"`).all(list(args.checks)) as {
+      id: string;
+      seq: number;
+    }[]
+  ).map((c) => ({ id: c.id, generation: c.seq }));
+  const findings = (
+    db.prepare(`SELECT "id", "status", "disposition", "effective_severity" FROM "findings" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.findings)) as { id: string }[]
+  ).map((f) => ({ id: f.id, generation: digestOf(f) }));
+  const results = (
+    db.prepare(`SELECT r."id", x."spec_generation" AS g FROM "check_results" r LEFT JOIN "check_executions" x ON x."id" = r."execution" WHERE r."id" IN (SELECT value FROM json_each(?)) ORDER BY r."execution_seq", r."id"`).all(list(args.results)) as {
+      id: string;
+      g: number | null;
+    }[]
+  ).map((r) => ({ id: r.id, generation: r.g }));
+  const work = (
+    db.prepare(`SELECT "id", "status", "repair_attempts" FROM "work_items" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.work)) as { id: string }[]
+  ).map((w) => ({ id: w.id, generation: digestOf(w) }));
+  return { plans: plans.map((p) => ({ id: p.id, generation: p.generation })), requirements, checks, findings, results, work };
+}
+
+// The main thread's read before the side ref's intent (runs/accept.ts): the
+// impact, or the reason the proposal is refused (D6 §4.4).
+export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown }): { impact: Impact } | { refused: string } {
+  try {
+    return { impact: computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed }) };
+  } catch (err) {
+    if (err instanceof ImpactRefused) return { refused: err.message };
+    throw err;
+  }
 }
 
 // ---- the proposal on its side ref (D6 §4.3) ------------------------------------------------
@@ -288,7 +426,7 @@ export function impactRead(db: Db, args: { project: string; representation: Spec
 export interface ProposalInputs {
   purpose: 'spec_change';
   ref: string;
-  ref_kind: 'keep';
+  ref_kind: 'spec_change';
   new_oid: string;
   request: string;
   run: string;
@@ -308,14 +446,13 @@ export function intendProposal(
   const r = requestOfRun(tx.db, args.run);
   if (!r) throw illegal('a spec_change run whose work names no request', { run: args.run });
   const ref = sideRef(r.seq);
-  // The side ref is a registered ref of the engine's (D6 §4.3). D6 A.2's
-  // `spec_change` RefKind is not in this engine's registry kinds yet; the
-  // ref is registered as a keep ref, which makes the revision reachable and
-  // is never moved.
+  // The side ref is a registered ref of the engine's (D6 §4.3), of RefKind
+  // `spec_change` (A.2): it makes the revision reachable and is never moved
+  // by the engine; on `reject` it is kept as history.
   const inputs: ProposalInputs = {
     purpose: 'spec_change',
     ref,
-    ref_kind: 'keep',
+    ref_kind: 'spec_change',
     new_oid: args.commit,
     request: r.id,
     run: args.run,
@@ -396,7 +533,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   impact: 'its impact could not be computed',
 };
 
-export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'];
+export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'];
 
 function changeManifest(db: Db, id: string): Record<string, unknown> {
   const r = getRequest(db, id);
@@ -415,9 +552,30 @@ function changeManifest(db: Db, id: string): Record<string, unknown> {
       impact === null
         ? null
         : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current })),
-    dependency_manifest: project === null ? null : dependencyManifest(db, project),
+    // The dependency generations of what the impact lists, recomputed (D6
+    // §4.4): a new result, finding, work status or plan generation touching
+    // a listed subject makes the answer stale; one touching nothing listed
+    // does not.
+    dependency_manifest: impact === null ? null : impact.dependency_manifest,
+    // The side ref as the engine observes it (D6 §4.3; M431 (f)): moved out
+    // of band, the answer is stale. The proposal's identity is the revision
+    // the request recorded, whatever the ref holds.
+    side_ref: r ? sideRefObservation(db, r) : null,
     policy_revision: project === null ? null : policyRevision(db, project),
   };
+}
+
+// An open out-of-band observation of the request's side ref: what was found
+// there, or null when the ref is where the engine put it.
+function sideRefObservation(db: Db, r: RequestRow): { ref: string; found: string | null } | null {
+  if (r.side_ref === null) return null;
+  const o = db
+    .prepare(
+      `SELECT o."found" FROM "out_of_band_changes" o JOIN "ref_registry" g ON g."id" = o."ref"
+       WHERE o."project" = ? AND g."ref" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at" DESC, o."id" DESC LIMIT 1`,
+    )
+    .get(r.project, r.side_ref) as { found: string | null } | undefined;
+  return o ? { ref: r.side_ref, found: o.found } : null;
 }
 
 export function specChangeKind(): KindSpec {
@@ -458,6 +616,8 @@ export function specChangeKind(): KindSpec {
       if (!r) throw notFound('spec_change_request', d.subject_id);
       if (option !== 'approve') {
         tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'rejected' WHERE "id" = ?`).run(r.id);
+        // The side ref stays where it is, registered, as history (D6 §4.5).
+        tx.emit('spec.change_rejected', { project: r.project, spec_change_request: r.id }, { decision: d.id, side_ref: r.side_ref, revision: r.proposal_revision });
         settleWork(tx, r, 'rejected');
         return consumed(d);
       }

@@ -1430,7 +1430,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   spec_approval: SPEC_APPROVAL_KEYS,
   architecture_approval: BUNDLE_KEYS,
   plan_approval: PLAN_KEYS,
-  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'policy_revision'],
+  spec_change: ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'],
   get adoption_mode() {
     return ADOPTION_MODE_KEYS;
   },

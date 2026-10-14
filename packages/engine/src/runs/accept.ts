@@ -51,6 +51,7 @@ import { redactText } from '../records/redact.js';
 import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
+import { seamSpecBlobFault } from '../testing/seam.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
@@ -360,8 +361,11 @@ export class Acceptor {
     if (entries === null) return failed('infra_error', "the spec change's tree could not be read");
     const entry = [...entries.values()].find((e) => e.path === path && e.type === 'blob');
     if (!entry) return failed('invalid_result', `the spec change left no ${path}`);
-    const text = await catBlob(ctx, sha, path);
-    if (text === null) return failed('infra_error', `${path} at ${sha} could not be read`);
+    // A blob the engine cannot read leaves the impact uncomputable: the
+    // proposal is refused naming why, never given an empty impact (D6 §4.4;
+    // SEAM.md §419's `spec_blob_read` fault).
+    const text = seamSpecBlobFault(project) ? null : await catBlob(ctx, sha, path);
+    if (text === null) return failed('invalid_result', `spec_blob_unreadable: ${path} at ${sha} could not be read, so the impact of the proposed specification cannot be computed`);
     const parsed = parseSpecification(text);
     if (!parsed.readable || parsed.representation === null) return failed('invalid_result', `the proposed specification is not readable: ${parsed.findings.map((f) => f.why).join('; ')}`);
     // A specification that could not be approved is never proposed (D6 §3.4;
@@ -372,7 +376,11 @@ export class Acceptor {
     const claimed = (facts.result?.report as { changes?: unknown } | undefined)?.changes ?? null;
     let impact: unknown;
     try {
-      impact = await this.rt.read('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed });
+      const read = await this.rt.read<{ impact: unknown } | { refused: string }>('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed });
+      // A renumbered key, a withdrawn key used again or an unreadable
+      // approved version refuses the proposal at the run (D6 §4.4; Q1).
+      if ('refused' in read) return failed('invalid_result', `the proposed specification is refused: ${read.refused}`);
+      impact = read.impact;
     } catch (err) {
       return failed('invalid_result', `the impact of the proposed specification could not be computed: ${(err as Error).message}`);
     }

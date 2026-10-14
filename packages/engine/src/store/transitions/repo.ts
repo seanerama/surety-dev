@@ -9,7 +9,7 @@ import { oobOptions } from './queue.js';
 import { markStale } from './evidence.js';
 import type { Tx } from './tx.js';
 
-export type RefKind = 'integration' | 'lineage' | 'nomination' | 'recovery' | 'oob' | 'keep';
+export type RefKind = 'integration' | 'lineage' | 'nomination' | 'recovery' | 'oob' | 'keep' | 'spec_change';
 
 export interface RegistryRow {
   id: string;
