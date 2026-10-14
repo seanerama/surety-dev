@@ -1,6 +1,6 @@
-# 114: Gate 2's K1 straddles (M08 cases 3 and 4, M23, M413 (d) ×2, M70 case 1), and M216 (a)'s flaky fixture
+# 114: Gate 2's K1/K2 straddles (M08 cases 3 and 4, M08-api case 6, M23, M413 (d) ×2, M70 case 1, M232 case 1, M27's kill case), and M216 (a)'s flaky fixture
 
-Rows: M08, M23, M413, M70, M216
+Rows: M08, M23, M27, M232, M413, M70, M216
 Filed by: Builder, slice 37, 2026-10-14 (gate 2 at 2af0adb on mini-hp01; reruns alone on the workstation)
 
 ## How these were told apart
@@ -38,9 +38,13 @@ Each case below assumes no tick runs between two of its steps. Under D6 K1 a run
    - In the kept store the execution's domain reads `terminated` with its observation `terminated`, not `unknown`. The case's own comment names this mechanism (objection 029): recovery's kill can empty the killed engine's scope, and the user manager then removes the scope with the domain's directory, so the restart observes termination and nothing quarantines.
    - Proposed: make the case's unknown independent of the scope's removal. For example, keep the domain's directory present-and-unreadable through the restart, or accept the terminated branch as the alternative outcome it is.
 
+6. **M08-api-capability-refusals, case 6** ("harness routes outside harness mode: store rows unchanged"). A `host_observations` row (`trigger: project_start`) appears in the window. This is the same mechanism as case 4: the project's first requested tick records the host observation. It failed alone here at 7325fd6.
+7. **M232, case 1** (a T3 module's paths redefined): `not_satisfied` with GIT_JOURNAL_PENDING on an operation in flight. A requested tick's nomination, or the journal, is mid-operation when the gate is evaluated. This is the same mechanism as M229 (c) under objection 111: evaluate once the project's journal is idle. It failed alone here at 7325fd6.
+8. **M27, "killed after the nomination ref was written and confirmed, before the finalizer"**, second restart: an extra `work.hold_began` (reason `open_decision`) on the verification item. Whichever tick first sees the item eligible with its decision open records the hold. When that tick falls after the case's "before" snapshot rather than before it, the snapshot differs, though nothing was written again. It is intermittent: it failed alone here at 7325fd6, and passed alone earlier at ff3118b. It is not the integration lease: the restart writes the candidate.
+
 ## Also seen at gate 2, passing alone here
 
-M66 case 5, M27 case 1, and M15-ambiguous-git-call-reconciled case 2 (after objection 113) pass alone on the workstation at ff3118b.
+M66 case 5 and M15-ambiguous-git-call-reconciled case 2 (after objection 113) pass alone on the workstation at 7325fd6.
 
 ## Sources
 
