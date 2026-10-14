@@ -240,6 +240,7 @@ export class Acceptor {
     if (facts.commits.length === 0) {
       const diff = await validateDiff(repo, base, tree, role, facts.caps, facts.roots);
       if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
+      await pausePoint('snapshot.before_validate_outside');
       const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
       if (outside) return failed(outside.klass, outside.text);
     }
@@ -571,6 +572,7 @@ export class Acceptor {
     const diff = await validateDiff(repo, base, tree, facts.run.role, facts.caps, facts.roots);
     if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
     const ws = facts.workspace!;
+    await pausePoint('snapshot.before_validate_outside');
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
     if (outside) return failed(outside.klass, outside.text);
     // A specification change's correction (D6 §4.5; the driver's rulings Q6,
