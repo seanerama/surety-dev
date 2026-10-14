@@ -559,10 +559,18 @@ function publishRoadmap(tx: Tx, b: BundleRow, roadmap: Roadmap, blobs: Record<st
   tx.db
     .prepare('INSERT INTO "roadmap_revisions" ("id", "created_at", "project", "version", "architecture_revision", "git_path", "git_blob", "phases", "moved_requirements", "approved_by", "approved_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(roadId, tx.at, b.project, version, archId, '.surety/roadmap/roadmap.json', blobs['.surety/roadmap/roadmap.json'] ?? '', JSON.stringify(roadmap.phases), roadmap.moved_requirements ? JSON.stringify(roadmap.moved_requirements) : null, by, tx.at);
+  // The moves as the engine sees them (D6 §4.7; the driver's ruling Q-B):
+  // each requirement whose phase this revision changes, from the phase it
+  // had (null: none yet) to the one given. The declared list stays on the row.
+  const moved: { key: string; from: number | null; to: number }[] = [];
   for (const ph of roadmap.phases) {
-    for (const key of ph.requirement_ids) tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(ph.number, b.project, key);
+    for (const key of ph.requirement_ids) {
+      const had = tx.db.prepare('SELECT "assigned_phase" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(b.project, key) as { assigned_phase: number | null } | undefined;
+      if (had && had.assigned_phase !== ph.number) moved.push({ key, from: had.assigned_phase, to: ph.number });
+      tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(ph.number, b.project, key);
+    }
   }
-  tx.emit('baseline.roadmap_revised', { project: b.project, roadmap_revision: roadId }, { version, phases: roadmap.phases.map((p2) => p2.number), bundle: b.id });
+  tx.emit('baseline.roadmap_revised', { project: b.project, roadmap_revision: roadId }, { version, phases: roadmap.phases.map((p2) => p2.number), bundle: b.id, moved_requirements: moved.sort((x, y) => x.key.localeCompare(y.key)) });
   return roadId;
 }
 

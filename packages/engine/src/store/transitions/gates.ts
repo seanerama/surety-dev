@@ -526,6 +526,14 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     if (unplanned.length > 0) add('PLAN_REQUIREMENT_UNPLANNED', unplanned);
     const shortfall = authoringShortfall(db, target.phasePlan, scope.effective.id);
     if (shortfall.length > 0) add('AUTHORING_INCOMPLETE', shortfall);
+    // D6 §4.5, reading 6 (A.4): a requirement a change added that no
+    // approved roadmap revision has placed blocks every phase gate, shown by
+    // key, until one does; never dropped.
+    const roadmap = db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
+    if (roadmap) {
+      const unassigned = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NULL AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project) as { key: string }[]).map((r) => r.key);
+      if (unassigned.length > 0) add('REQUIREMENT_UNASSIGNED', unassigned);
+    }
   }
 
   // (2) The protected path is authorized and effective. A protected set
@@ -609,6 +617,24 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     }
   }
   const entries = checkEntries(scope, selected, dueEntry);
+  // D6 §4.5 (B05; A.4; the driver's ruling Q12): a check with a
+  // `spec_changed` obligation whose latest result on this candidate was
+  // registered under an earlier spec-evidence generation is decided by no
+  // current evidence; it is named.
+  const generationStale = scope.required
+    .filter((c) => {
+      const g = (db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed'`).get(args.project, c.key) as { g: number | null }).g;
+      if (g === null) return false;
+      const latest = db
+        .prepare(
+          `SELECT x."spec_generation" AS sg FROM "check_results" r JOIN "checks" k ON k."id" = r."check" LEFT JOIN "check_executions" x ON x."id" = r."execution"
+           WHERE r."project" = ? AND r."candidate" = ? AND k."key" = ? ORDER BY r."execution_seq" DESC, r."created_at" DESC LIMIT 1`,
+        )
+        .get(args.project, candidate.id, c.key) as { sg: number | null } | undefined;
+      return latest !== undefined && (latest.sg ?? 0) < g;
+    })
+    .map((c) => c.id);
+  if (generationStale.length > 0) add('EVIDENCE_GENERATION_STALE', generationStale);
   const notPassed = scope.required.filter((c) => states[c.id] !== 'passed').map((c) => c.id);
   if (notPassed.length > 0) {
     add('CHECK_NOT_PASSED', notPassed);
