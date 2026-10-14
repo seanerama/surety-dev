@@ -6707,6 +6707,20 @@ Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13,
 - **Across a restart**, with the seams the engine already has: an engine started with `--harness-clock-offset 60` (§274) and restarted with none takes timestamps 60 s earlier. An open Spec Writer session survives the restart idle and is continued by its next turn and save (`resume` is refused `session_not_idle` while it is open).
 - **What the cases read:** the project's `spec_semantics` rows in `rowid` order, the second save's row last with a `created_at` not after the first's; `spec_approval`'s `approve` with no blocker; the answer giving `spec_revisions` version 1 whose `semantic_digest` is the second save's.
 
+## 426. The slice-36 review's S2 and M1 (M432; the driver's rulings, 2026-10-14)
+
+File `M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change`, manifest slice `36`.
+- **S2, a pending proposal the current version voids** (D6 §4.4): while a change touching R2 awaits the owner, a Spec Writer session's `spec_approval` makes version 2 without R2. The pending proposal's impact cannot be computed against the current version, so the engine refuses it with the reason: the request is terminal (neither `requested`, `proposed` nor `approved`; which terminal value is the Builder's), its `failure` or `last_refusal` names why, no `spec_change` about it stays open, and its work ends (`complete` or `cancelled`). A second request then proceeds to its proposal, not held `eligible` behind the first.
+- **M1, a change to a later phase only** (D6 §4.4, §4.5, §5.7): with phase 1 open (stage 1 parked, stage 2 planned), a change touching only R3 (phase 2) has an impact whose `phases` is `[2]` and `touches_current` false. Approved, phase 1 keeps its active plan and generation, none of its stages is cancelled, and no `replan` the change registers names phase 1's plan as the one it replaces. (A replan for the later phase may still be registered, D6 §4.5.)
+
+## 427. The slice-36 review's S1 and S3 (M433; the driver's rulings, 2026-10-14)
+
+File `M433-a-failed-correction-and-a-partial-one`, manifest slice `36`.
+- **S1, a correction run whose acceptance fails:** §61's `before_event` fault on `protected.proposed` (one-shot, armed before the owner's approval) fails the correction run's acceptance. The assessment that run carried (`spec_applicability`, §422) resolves nothing: both obligations stay open after it. The repair (`repair_attempts_max` 1), held before its result and then released, captures the correction and the assessment; integration is resolved by the assessment and accept-r2 by the applied version.
+- **S3, a correction that resolves part of what it was given:** the change lists accept-r2 and integration; the correction fixes accept-r2's test and assesses neither. accept-r2 is resolved; the correction item does not complete; the remaining obligation returns to `check_correction` work that names integration (the open item, its subject or its open blocker), so no obligation is left with no open work.
+- **Straddle:** the 31b review's S2 (`M401-a-correction-resolves-only-the-checks-it-names`) waited for the correction item to be `complete`; it now waits for accept-r2's resolution alone, every assertion kept.
+- **`semanticsOf`** (`harness/journey/spec34.mjs`) reads a run's `spec_semantics` rows by `rowid` only, under §425's insertion-order ruling.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35" and "M5 slice 36".
