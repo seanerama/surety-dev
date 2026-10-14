@@ -34,10 +34,10 @@ import {
   raiseDecision,
   stale,
 } from './decisions.js';
-import { contentHash, getCandidate, markStale, predecessors } from './evidence.js';
+import { contentHash, getCandidate, markStale, predecessors, requiredSet } from './evidence.js';
 import { type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
-import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, rolloutPartialPreview } from './deploy.js';
+import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCompletionFacts, requestVerification, rolloutPartialPreview } from './deploy.js';
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
@@ -261,6 +261,39 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         blockedWorkItems: [item.id],
       };
     }
+    // A deploy whose completion was refused (D4 §4.7; the driver's ruling 2
+    // on M401, slice 37): re-verification when it can succeed, the
+    // preempting teardown, or abandonment of the completion.
+    const refused = refusedCompletionFacts(tx.db, item);
+    if (refused !== null) {
+      return {
+        manifest: {
+          work_item: item.id,
+          operation: refused.operation,
+          subject_status: item.status,
+          cause: refused.cause,
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: { reverify: refused.reverify },
+        },
+        options: [
+          ...(refused.reverify
+            ? [{ key: 'reverify', label: 'Verify again', consequence: `A new verification round of operation ${refused.operation} is registered; its completion is evaluated again on its results.`, effect: { operation: refused.operation, round: 'next' } }]
+            : []),
+          {
+            key: 'teardown',
+            label: 'Tear down',
+            consequence: 'A teardown of the environment stops only what the engine positively owns of it; this deploy work is cancelled.',
+            effect: { environment: refused.environment, teardown: { linked: refused.operation }, work_item: item.id, to: 'cancelled' },
+          },
+          { key: 'abandon', label: 'Abandon completion', consequence: 'The deploy work is cancelled; the deployment stays as it is, not verified. Nothing is stopped or rolled back.', effect: { work_item: item.id, to: 'cancelled' } },
+        ],
+        question:
+          `Deploy work ${item.id} (operation ${refused.operation} on ${refused.environment_name}) could not complete: ${refused.cause.replace(/^deploy_completion_refused:?/, '') || 'its completion was refused'}. ` +
+          (refused.reverify ? 'Verify it again, tear the environment down, or abandon the completion.' : 'Tear the environment down, or abandon the completion.'),
+        blockedWorkItems: [item.id],
+      };
+    }
     if (item.status === 'eligible' && blocker.reason === 'max_chained_roles') {
       return {
         manifest: {
@@ -439,6 +472,23 @@ const BLOCKER: KindSpec = {
       // The exception (D6 §6.2; F §5.1): validated before anything is
       // consumed, so a refused answer changes nothing.
       const exception = option === 'build_first' ? buildFirstOf(tx, item, extra ?? {}) : null;
+      // A refused deploy completion's answers (D4 §4.7).
+      const refused = refusedCompletionFacts(tx.db, item);
+      if (refused !== null) {
+        consumeDecision(tx, d, option, note);
+        if (option === 'reverify') {
+          requestVerification(tx, { project: item.project, operation: refused.operation, incarnation: engineSettings().incarnation! }, (db, project, candidate, version) =>
+            requiredSet(db, { project, candidate, kind: 'alpha_complete', stage: null, version }).required,
+          );
+          return consumed(d, [{ kind: 'tick' }]);
+        }
+        transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: option === 'teardown' ? 'teardown' : 'abandon_completion', operation: refused.operation });
+        if (option === 'teardown') {
+          const done = preemptTeardown(tx, { environment: refused.environment, cause: `blocker ${d.id}` });
+          return consumed(d, [{ kind: 'tick' }, { kind: 'preempt' as const, environment: refused.environment, executions: done.executions }]);
+        }
+        return consumed(d);
+      }
       consumeDecision(tx, d, option, note);
       if (exception !== null) {
         applyBuildFirst(tx, d, item, exception);

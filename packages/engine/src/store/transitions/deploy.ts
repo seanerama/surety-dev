@@ -1324,8 +1324,46 @@ function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'block
   } else if (work === 'cancelled') {
     transitionWork(tx, item, 'cancelled', { blocker: null }, { operation: op.id, cause });
   } else if (item.status === 'executing') {
-    transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id }) }, { operation: op.id, cause });
+    const waiting = transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id }) }, { operation: op.id, cause });
+    // D4 §4.7: the work item waits on a blocker that names the cause and
+    // offers what applies (re-verification, abandonment of completion, the
+    // preempting teardown): a decision, never a blocker with none (the
+    // driver's ruling 2 on M401, slice 37). With nothing to decide, the work
+    // ends with its reason.
+    if (raiseQuestion(tx, { project: op.project, kind: 'blocker', subjectType: 'work_item', subjectId: waiting.id }) === null) {
+      transitionWork(tx, getWorkItem(tx, waiting.id)!, 'cancelled', { blocker: null }, { operation: op.id, cause });
+    }
   }
+}
+
+// What a deploy work item waiting on a refused completion is offered (D4
+// §4.7; the driver's ruling 2 on M401, slice 37), or null when it is not
+// such an item: its operation and environment, and whether re-verification
+// can succeed: the operation a finalized deploy whose latest attempt
+// succeeded on the environment's current generation (as POST …/verify
+// requires), and its candidate not superseded (D4 §5.5 refuses
+// alpha_complete for a superseded candidate).
+export function refusedCompletionFacts(db: Db, item: { kind: string; status: string; blocker: string | null }): { operation: string; environment: string; environment_name: string; candidate: string | null; reverify: boolean; cause: string } | null {
+  if (item.kind !== 'deploy' || item.status !== 'awaiting_decision' || item.blocker === null) return null;
+  const blocker = JSON.parse(item.blocker) as { reason?: string; operation?: string };
+  if (typeof blocker.reason !== 'string' || !blocker.reason.startsWith('deploy_completion_refused') || typeof blocker.operation !== 'string') return null;
+  const op = getOp(db, blocker.operation);
+  if (!op) return null;
+  const frozen = frozenOf(op);
+  const j = journalOf(db, op.id);
+  const latest = attemptsOf(db, op.id).at(-1);
+  const env = getEnv(db, frozen.environment);
+  const candidate = frozen.candidate ? (db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ?').get(frozen.candidate) as { superseded_by: string | null } | undefined) : undefined;
+  const reverify =
+    op.kind === 'deploy' &&
+    j?.state === 'finalized' &&
+    latest !== undefined &&
+    (latest.status === 'succeeded' || latest.status === 'reconciled_succeeded') &&
+    env !== undefined &&
+    env.current_generation === latest.deployment_generation &&
+    candidate !== undefined &&
+    candidate.superseded_by === null;
+  return { operation: op.id, environment: frozen.environment, environment_name: frozen.environment_name, candidate: frozen.candidate, reverify, cause: blocker.reason };
 }
 
 // An operation that ends `failed` with nothing applied: the journal failed,
