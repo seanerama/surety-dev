@@ -280,11 +280,13 @@ export function elementProblems(id, d, facts = {}) {
     case 'verifier.secrets':
       want(d.member === 'secrets' && d.reference === 'deploy/<name>' && d.variable === 'SURETY_SECRET_<NAME>', 'secrets: deploy/<name> as SURETY_SECRET_<NAME>');
       want(d.environments === null || Array.isArray(d.environments), 'the environments (or null: unknown)');
+      want(!Array.isArray(d.environments) || new Set(d.environments.map((e) => e?.name)).size === d.environments.length, 'each environment once, by its name');
       break;
     case 'verifier.post_deploy':
       want(setEq(d.kinds, ['post_deploy_behavior', 'post_deploy_identity']) && d.gate_kind === 'alpha_complete' && d.required === 'post_deploy_behavior', 'post-deploy kinds, alpha_complete, a required post_deploy_behavior check');
       want(d.variable === 'SURETY_TARGET_<NAME>', 'the target variable SURETY_TARGET_<NAME>');
       want(d.environments === null || Array.isArray(d.environments), 'the environments (or null: unknown)');
+      want(!Array.isArray(d.environments) || new Set(d.environments.map((e) => e?.name)).size === d.environments.length, 'each environment once, by its name');
       break;
     case 'verifier.authoring_result':
       want(has(d.fields, ['governed_changes', 'deferred_criteria', ...(facts.retrofit ? ['adopted_tests'] : [])]), `the authoring result's fields${facts.retrofit ? ' with adopted_tests' : ''}`);
