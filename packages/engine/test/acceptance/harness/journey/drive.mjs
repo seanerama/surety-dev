@@ -399,6 +399,20 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
 export const candidatesOfProject = (home, project) => rows(home, 'SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"', project);
 export const evaluationsOfKind = (home, project, kind) => rows(home, 'SELECT * FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = ? ORDER BY rowid', project, kind).map((e) => ({ ...e, reasons: json2(e.reasons) }));
 export const signoffsOfProject = (home, project) => rows(home, 'SELECT s.* FROM "signoffs" s JOIN "candidates" k ON k."id" = s."candidate" WHERE k."project" = ? ORDER BY s.rowid', project).map((s) => ({ ...s, binding: json2(s.binding) }));
+// Objection 109 (the driver's ruling): one verification and one review per
+// candidate (E36 item 3; SEAM.md §70), so under K2 stages integrated together
+// share them. A stage's candidate is the one its last satisfied stage gate was
+// evaluated on; on it, the completed Verifier runs of its nomination's
+// verification and the completed Reviewer runs of its review, and its
+// recorded executions.
+export function stageCandidateRuns(home, project, stage) {
+  const candidate = rows(home, `SELECT "candidate" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? AND "outcome" = 'satisfied' ORDER BY rowid DESC LIMIT 1`, project, stage)[0]?.candidate ?? null;
+  const completed = (kind, role, source) =>
+    candidate === null
+      ? 0
+      : rows(home, `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE w."project" = ? AND w."kind" = ? AND w."trigger_id" = ? AND (? IS NULL OR w."trigger_source" = ?) AND r."role" = ? AND r."outcome" = 'completed'`, project, kind, candidate, source, source, role)[0].n;
+  return { candidate, verifier: completed('verification', 'verifier', 'nomination'), reviewer: completed('review', 'reviewer', null) };
+}
 export const resultsOf = (home, project) => rows(home, 'SELECT * FROM "check_results" WHERE "project" = ? ORDER BY "execution_seq"', project);
 export const checkRows = (home, project) => rows(home, 'SELECT * FROM "checks" WHERE "project" = ? ORDER BY rowid', project);
 export const protectedVersionsOf = (home, project) => rows(home, 'SELECT * FROM "protected_versions" WHERE "project" = ? ORDER BY "seq"', project);
