@@ -727,6 +727,9 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
   // project is proposed, its approval included until it is applied. An
   // owner's own request is his explicit act, never held.
   if (db.prepare(`SELECT 1 FROM "spec_change_requests" WHERE "project" = ? AND "status" = 'proposed' LIMIT 1`).get(args.project) !== undefined) return null;
+  // Nor while an applied change's spec_changed obligations are unresolved
+  // (the driver's ruling on M401's T1 stall, slice 37).
+  if (db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL LIMIT 1`).get(args.project) !== undefined) return null;
   const plan = db
     .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "phase_number" DESC, rowid DESC LIMIT 1`)
     .get(args.project) as { completion_binding: string } | undefined;
@@ -745,6 +748,26 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     return { candidate, environment: env.name, key };
   }
   return null;
+}
+
+// A policy refusal reason a specification change leaves while its
+// evidence is made again (the driver's ruling on M401's T1 stall, slice
+// 37): EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks with no
+// current result for the candidate because the change invalidated it
+// (`spec_changed`). Asked again at the next tick, like *_PENDING.
+export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }): boolean {
+  if (r.code === 'EVIDENCE_GENERATION_STALE') return true;
+  if (r.code !== 'CHECK_NOT_PASSED') return false;
+  const subjects = r.subjects ?? [];
+  if (subjects.length === 0) return false;
+  return subjects.every((check) => {
+    const key = (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(check) as { key: string } | undefined)?.key;
+    if (key === undefined) return false;
+    const rows = db
+      .prepare(`SELECT x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
+      .all(candidate, key) as { invalidated_at: string | null; invalidated_reason: string | null }[];
+    return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed');
+  });
 }
 
 // What the request needs the main thread to read first.
@@ -894,8 +917,8 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // outcome is recorded under its key, so the next tick requests again
     // (under D6 K2 another run's integration is often in flight; a
     // not_issued here would end the policy's deployment for good).
-    const reasons = (evaluation.reasons as { code: string }[] | undefined) ?? [];
-    const settling = reasons.length > 0 && reasons.every((r) => typeof r.code === 'string' && r.code.endsWith('_PENDING'));
+    const reasons = (evaluation.reasons as { code: string; subjects?: string[] }[] | undefined) ?? [];
+    const settling = reasons.length > 0 && reasons.every((r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(tx.db, candidate.id, r)));
     if (requestedBy === 'policy' && settling) {
       return {
         status: 409,

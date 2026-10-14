@@ -149,3 +149,47 @@ test('1: the alpha_deploy policy requests nothing while a specification change o
   assert.equal(policyRequestDue(spy, { project: 'prj_1' }), null);
   assert.ok(!reads.some((s) => s.includes('"phase_plans"')), 'held before anything of the phase is read');
 });
+
+// ---- the driver's ruling on M401's T1 stall (slice 37) ------------------------------------------
+
+const { settlingAfterChange } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+
+test('the alpha_deploy policy requests nothing while a spec_changed obligation of the project is unresolved', (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective) VALUES ('pol_1', ?, 'prj_1', 1, 'p', 'b', 'h', ?, '', 0, 1, ?)`).run(
+    AT,
+    AT,
+    JSON.stringify({ alpha_deploy: 'on_phase_complete' }),
+  );
+  db.prepare(`UPDATE projects SET policy_revision = 'pol_1'`).run();
+  const reads = [];
+  const spy = { prepare: (sql) => (reads.push(sql), db.prepare(sql)) };
+  owe(db, 'o1', 'accept-r2');
+  assert.equal(policyRequestDue(spy, { project: 'prj_1' }), null);
+  assert.ok(!reads.some((s) => s.includes('"phase_plans"')), 'held while the obligation is open');
+  db.prepare(`UPDATE check_obligations SET resolved_at = ? WHERE id = 'o1'`).run(AT);
+  reads.length = 0;
+  policyRequestDue(spy, { project: 'prj_1' });
+  assert.ok(reads.some((s) => s.includes('"phase_plans"')), 'resolved, the completed phase is read again');
+});
+
+test("a policy refusal left by a change's invalidated evidence settles: EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks whose results the change invalidated; a check that failed does not", (t) => {
+  const db = store(t);
+  const check = (id, key) => db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES (?, ?, 'prj_1', 'pv_1', ?, 'acceptance', '[]', 1, '["stage"]', 'x', 'h', 'direct')`).run(id, AT, key);
+  const result = (id, chk, invalidated) =>
+    db
+      .prepare(
+        `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq, execution_established, signaled, deadline_hit, exit_status, invalidated_at, invalidated_reason)
+         VALUES (?, ?, 'prj_1', ?, 'cand_1', 'r', 'pv_1', 'direct', 'x', ?, 1, 0, 0, 1, ?, ?)`,
+      )
+      .run(id, AT, chk, ++seqN, invalidated ? AT : null, invalidated);
+  let seqN = 0;
+  check('chk_a', 'accept-r2');
+  check('chk_b', 'lint');
+  result('cr_a', 'chk_a', 'spec_changed');
+  result('cr_b', 'chk_b', null);
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'EVIDENCE_GENERATION_STALE', subjects: [] }), true);
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a'] }), true, 'its only result the change invalidated');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a', 'chk_b'] }), false, 'a current failing result is a failure');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'ACCEPTANCE_SCOPE_INCOMPLETE', subjects: ['R9.1'] }), false);
+});
