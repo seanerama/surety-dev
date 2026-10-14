@@ -6592,6 +6592,29 @@ Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13,
 
 **Deferred:** M429 (d)'s superseded candidate (slice 37); M430 (f)'s floor, since the reference project has no sensitive area (COVERAGE).
 
+## 415. The slice-35 review's cases, and objections 082 to 086 (the driver, 2026-10-13)
+
+**The objections, upheld as test-side:**
+- **082 (M425 (e)).** A completed plan stays its phase's active generation, so phase 2's plan is read by its phase: `planOfPhase(…, 2).find(active)`.
+- **083 (M428 (d)).** Stage 3's candidate is the first candidate whose `seq` is above phase 1's completion candidate.
+- **084 (M427).** A rejected replan's commit stays on the integration branch as a draft. So each launch writes the whole tree it proposes: the approved ADR-001, module map, architecture text and roadmap, ADR-002 removed, its own change over them (`whole`).
+- **085 (M401 (i)).** CR-1's replan replaces phase 2 early, and kept stages keep their rows on generation 1. Phase 2's stages are therefore read across its generations, with the cancelled ones excluded.
+- **086 (M408 (a); `retrofit/drive.mjs`).** The `phase_size` policy commit lands after `adoption_mode` is answered, because a policy commit re-raises an open `adoption_mode`.
+
+**The review's cases** (`harness/journey/review35.mjs`: `replacementPending`, a replacement of phase 1 routed `uncertain` and pending before readiness; `advanceHolding`, a pump whose `exits(x)` may leave an execution queued):
+- **S1 (a)** and **S1 (b)** (`M430-replacements-pending-while-stages-move`). On approval, "stale" means either:
+  - 409 `plan_generation_stale`; or
+  - the bundle listed `stale` with the replan's next generation of the same trigger.
+
+  Either way, nothing is published that silently drops a changed stage. "No endless error" means at most three replan generations, and at most three new runs in ten further rounds.
+- **S2.** The kept stage 1 reaches `verified` after one failed `accept-r1` on a later candidate, with its work run at least twice.
+- **M4.** The spec-change replacement (within the baseline, so registered by `engine:plan_check`) keeps stage 1's row, its parked work and its open blocker (the same decision id). The blocker answered `replan` publishes generation 3, and generation 2 becomes `replaced` †.
+- **M2** (`M429-a-replacement-at-phase-verification`). After the swap, a second `phase_verification` work item runs. Phase 1 completes with `completion_binding.generation` 2. The only `phase` sign-off is bound to generation 2.
+- **M3** (`M430-blockers-and-reopened-dispositions`):
+  - (i) the X2 blocker of a `fix` item offers exactly `correct_check`, `change_spec`, `retry` and `cancel` (`harness/checks/repair.mjs` `X2_FIX_OPTIONS`; `x2Blocker` chooses the set by the item's kind);
+  - (ii) the refused replan parks, and a new open blocker about the stage's work is raised;
+  - (iii) the losing replacement's answer is 409, and the finding's `disposition` is no longer `fix` †, the finding itself kept.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34" and "M5 slice 35".
