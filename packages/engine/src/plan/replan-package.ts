@@ -259,7 +259,7 @@ export function replanPromptText(r: ReplanFacts): string[] {
     '- /surety/context/adrs/: every approved ADR; /surety/context/roadmap.json and /surety/context/module_map.json: the approved roadmap and module map.',
     '- /surety/context/plan.json: the completed phase with each stage and its integrated revision; /surety/context/evaluation.json: its phase gate evaluation with each check\'s state.',
     '- /surety/context/findings.json, deferrals.json, objections.json: the phase\'s findings with their dispositions, what is deferred and the open objections.',
-    'Write the plan to .surety/phases/phase-<n>.json in Appendix B.5\'s form (and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner).',
+    'Write the next phase\'s plan in the form the engine reads (below), and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner.',
     'Your result names the plan (`plan`: "phase-<n>") and declares `conformance` (within_baseline or uncertain).',
     ...(r.refusal
       ? [

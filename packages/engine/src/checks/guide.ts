@@ -17,9 +17,9 @@
 // (`read_paths`, `path`) or the governed `env` values. Programs are named by
 // the name a definition uses.
 
-import { DEFINITION_REFERENCE, GATE_KINDS, GOVERNED_FILE, type Governed, KEY_FORM, POST_DEPLOY, type TreeEntry, parseDefinition } from './schema.js';
+import { DEFINITION_REFERENCE, GOVERNED_FILE, type Governed, KEY_FORM, type TreeEntry, parseDefinition } from './schema.js';
 import { KIND_INVENTORY, SCOPE_KINDS, TIER_RANK, type Tier } from './scope.js';
-import { checkSecretVariable, targetVariable } from './variables.js';
+import { seamPackageOmitted } from '../testing/seam.js';
 
 export interface CheckWritingFacts {
   // The effective version's governed values as discovery read them; null
@@ -53,34 +53,15 @@ const ROUTE_SCOPES: readonly string[] = SCOPE_KINDS.filter((k) => k !== 'phase')
 export const EVALUATED_GATE_KINDS: readonly string[] = Object.freeze([...ROUTE_SCOPES, DEPLOYMENT_GATE]);
 
 const code = (s: string): string => `\`${s}\``;
-const list = (xs: readonly string[]): string => xs.map(code).join(', ');
-const andList = (xs: readonly string[]): string => (xs.length <= 1 ? list(xs) : `${list(xs.slice(0, -1))} and ${code(xs[xs.length - 1]!)}`);
-const jsonList = (xs: readonly string[]): string => `[${xs.map((x) => `"${x}"`).join(', ')}]`;
 
-// The tier's kind floor at the `alpha_authorize` gate (D3 §4.3;
-// src/checks/scope.ts, computeScope): KIND_INVENTORY[tier] is applied at
-// each of SCOPE_KINDS separately, over the required checks listing that gate
-// kind, so a deployment request's gate needs a required acceptance-origin
-// check of each floor kind listing `alpha_authorize` in its `gate_kinds`.
-// Sean's real run of M342 (E135): the Verifier's smoke check listed `stage`
-// only, and the deployment was refused `ACCEPTANCE_SCOPE_INCOMPLETE`
-// (`kind:smoke`); the package had never said so. The project's tier names
-// its floor when known; otherwise every tier's.
-export const AUTHORIZE_GATE = ROUTE_SCOPES.find((k) => k !== 'stage')!;
-export function authorizeFloorText(tier: string | undefined): string {
-  const known = tier !== undefined && Object.hasOwn(KIND_INVENTORY, tier) ? (tier as Tier) : null;
-  const floor =
-    known === null
-      ? `at least one required acceptance-origin check of each kind the project's tier requires (${(Object.keys(KIND_INVENTORY) as Tier[]).map((t) => `${t}: ${list(KIND_INVENTORY[t])}`).join('; ')})`
-      : `at ${known}, at least one required acceptance-origin check of each of the kinds ${list(KIND_INVENTORY[known])}`;
-  const exampleKind = (known === null ? KIND_INVENTORY.T1 : KIND_INVENTORY[known]).find((k) => k === 'smoke') ?? KIND_INVENTORY.T1[0]!;
-  return (
-    `The tier's kind floor is applied at each of ${andList(ROUTE_SCOPES)} separately, over the checks listing that gate kind in their \`gate_kinds\`. ` +
-    `${code(AUTHORIZE_GATE)}, the gate a deployment request evaluates, therefore needs ${floor}, each listing ${code(AUTHORIZE_GATE)} in its \`gate_kinds\`; ` +
-    `a check of a floor kind listing only ${code('stage')} supplies its kind to no deployment, and the request is refused with \`ACCEPTANCE_SCOPE_INCOMPLETE\` naming the kind missing (\`kind:${exampleKind}\`). ` +
-    `So a ${code(exampleKind)} check lists \`"gate_kinds": ${jsonList(ROUTE_SCOPES)}\`, and so does every other check of a floor kind.`
-  );
-}
+// The definition members the package's elements state (src/packages/reads.ts:
+// verifier.kinds, verifier.covers, verifier.gate_kinds_floor,
+// verifier.requires, verifier.secrets), and so not restated here.
+const ELEMENT_MEMBERS: readonly string[] = ['kind', 'covers', 'gate_kinds', 'requires', 'secrets'];
+const EXAMPLE_ELEMENTS = ['verifier.kinds', 'verifier.covers', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.post_deploy'];
+const examplesShown = (): boolean => EXAMPLE_ELEMENTS.every((id) => !seamPackageOmitted(id));
+const list = (xs: readonly string[]): string => xs.map(code).join(', ');
+
 const reqNumber = (key: string): number => Number(key.slice(1)) || 0;
 const critOrder = (a: string, b: string): number => {
   const [ra, ma] = a.slice(1).split('.').map(Number);
@@ -161,45 +142,24 @@ export function examplePostDeployDefinition(f: CheckWritingFacts): { file: strin
 // written, where it runs, how it reaches its target and its secrets, and the
 // project's environments with their targets' variables.
 export function deploymentChecksText(f: Pick<CheckWritingFacts, 'environments'> & Partial<Pick<CheckWritingFacts, 'tier'>>): string[] {
-  const [identity, behavior] = [POST_DEPLOY.find((k) => k.endsWith('identity'))!, POST_DEPLOY.find((k) => k.endsWith('behavior'))!];
+  // The kinds, the gate, `requires`, `secrets`, the target's variable and
+  // each environment's targets and secret references are the package's
+  // elements (`verifier.post_deploy`, `verifier.requires`,
+  // `verifier.secrets`; src/packages/reads.ts): stated there only.
   const out: string[] = [
     '',
     '### Checks against a deployed environment',
     '',
-    `- When the owner deploys a candidate to one of the project's environments, the engine verifies the running service with the environment-bound checks: kind ${code(behavior)} (what the service does for its user) and kind ${code(identity)}.`,
-    `- The ${code(DEPLOYMENT_GATE)} gate needs at least one required ${code(behavior)} check, and ${code('alpha_authorize')} is not satisfied without one either, so without it nothing is deployed and no candidate becomes \`alpha_deployed\`.`,
-    `- A deployment request is refused unless ${code(AUTHORIZE_GATE)} is satisfied, and that gate also applies the tier's kind floor to the checks listing it. ${authorizeFloorText(f.tier)}`,
-    "- The `post_deploy_behavior` check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them, which only the owner can add (say so in your summary); when it lists none, every check discovered is required.",
-    `- Write such a check with \`"gate_kinds": ["${DEPLOYMENT_GATE}"]\` and no other gate kind, and with \`"requires": ["environment", "artifact_digest"]\`. Listed under \`stage\` or \`alpha_authorize\`, it would be required at a gate where it can never run, and that gate would never be satisfied. Give it no \`covers\`: on these kinds discovery refuses it (\`covers_not_allowed\`), and a discovery error leaves every gate of the version unsatisfied.`,
-    "- It runs only in a deployment's verification, between two reads the engine makes of the running service itself; from any other trigger it is recorded not run (`environment_unbound`). Write it to pass against the service the requirements describe.",
-    '- Its sandbox holds its protected inputs and none of the candidate\'s source: it judges the service from outside, through the target\'s address. Name no `egress` on it, so that it reaches its environment\'s targets and nothing else.',
-    `- How it reaches its target: the engine gives it, for each target of the environment, the variable \`SURETY_TARGET_<NAME>\` set to \`http://127.0.0.1:<port>\`, where \`<NAME>\` is the target's name in upper case with any character but a letter or a digit as \`_\`. The service's answers are untrusted input to the check.`,
-    "- Exercise a user operation the requirements specify (a request and the answer it must give), not only that the service answers: a check that only probes that the service is up passes for a service that does the wrong thing.",
-    `- Secrets: a definition's \`"secrets"\` names deployment secret references (\`deploy/<name>\`) that the environment allows its checks (its \`check_secrets\`); each is given to the check as \`SURETY_SECRET_<NAME>\`. Never write a secret's value into a check.`,
+    "- When the owner deploys a candidate to one of the project's environments, the engine verifies the running service with its environment-bound checks; without the required one nothing is deployed and no candidate becomes `alpha_deployed`.",
+    "- That check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them, which only the owner can add (say so in your summary); when it lists none, every check discovered is required.",
+    '- It runs only in a deployment\'s verification, between two reads the engine makes of the running service itself; from any other trigger it is recorded not run (`environment_unbound`). Write it to pass against the service the requirements describe.',
+    "- Its sandbox holds its protected inputs and none of the candidate's source: it judges the service from outside, through the target's address. Name no `egress` on it, so that it reaches its environment's targets and nothing else. The service's answers are untrusted input to the check.",
+    "- Exercise a user operation the requirements specify (a request and the answer it must give), not only that the service answers: a check that only probes that the service is up passes for a service that does the wrong thing. Never write a secret's value into a check.",
   ];
   const envs = f.environments;
-  if (envs === undefined || envs === null) {
-    out.push("- Which environments the project has could not be read here, so their target names are unknown: write no environment-bound check, and say so in your summary.");
-    return out;
-  }
-  if (envs.length === 0) {
-    out.push("- No environment is configured for this project yet, so the target's name is unknown: write no environment-bound check, and say so in your summary.");
-    return out;
-  }
-  for (const e of envs) {
-    if (e.targets === null) {
-      out.push(`- Environment ${code(e.name)}: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it, and say so in your summary.`);
-      continue;
-    }
-    const targets = e.targets.length > 0 ? e.targets.map((t) => `target ${code(t)}, reached as ${code(targetVariable(t))}`).join('; ') : 'no target';
-    const secrets =
-      e.check_secrets === null
-        ? 'which secrets its checks may receive could not be read, so name none'
-        : e.check_secrets.length > 0
-          ? `its checks may receive ${e.check_secrets.map((r) => `${code(r)} (as ${code(checkSecretVariable(r))})`).join(', ')}`
-          : 'its checks may receive no secret';
-    out.push(`- Environment ${code(e.name)}: ${targets}; ${secrets}.`);
-  }
+  if (envs === undefined || envs === null) out.push("- Which environments the project has could not be read here, so their target names are unknown: write no environment-bound check, and say so in your summary.");
+  else if (envs.length === 0) out.push("- No environment is configured for this project yet, so the target's name is unknown: write no environment-bound check, and say so in your summary.");
+  else for (const e of envs) if (e.targets === null) out.push(`- Environment ${code(e.name)}: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it, and say so in your summary.`);
   return out;
 }
 
@@ -307,15 +267,9 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     const text = r.text ?? `(the text is not in the store; it is referenced as ${r.text_ref})`;
     out.push(...text.split('\n').map((line) => `  > ${line}`));
   }
-  out.push(
-    '',
-    '- Every criterion needs at least one required check of origin `acceptance` naming it in `"covers": {"criteria": [...]}`, of a kind that covers criteria (`acceptance`, `integration`, `property`, `failure_recovery`). Name each criterion exactly as listed.',
-  );
-  // The kinds the scope's tier requires (D3 §4.3).
-  const tier = (Object.hasOwn(KIND_INVENTORY, f.tier) ? f.tier : 'T1') as Tier;
-  out.push(
-    `- The project's tier is ${f.tier}: every scope requires at least one required acceptance-origin check of each of these kinds: ${list(KIND_INVENTORY[tier])}.`,
-  );
+  // Which kinds cover criteria, the tier's kinds and the gate kinds are the
+  // package's elements (src/packages/reads.ts), stated there only.
+  out.push('', '- Name each criterion exactly as listed.');
   for (const m of [...f.modules].sort((a, b) => a.name.localeCompare(b.name))) {
     if (higher(m.tier_override, f.tier)) {
       const t = m.tier_override as Tier;
@@ -336,8 +290,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     );
   }
   out.push(
-    `- Gate kinds: the engine evaluates ${andList(EVALUATED_GATE_KINDS)}. A check joins the required set of each gate kind its \`gate_kinds\` lists; list both ${andList(ROUTE_SCOPES)} for a check of the workspace that should decide both. ${code(DEPLOYMENT_GATE)} reads only the environment-bound checks (below). A check listing ${code('phase')} alone is a phase-only check: it is registered and run when the phase completes, on the phase's candidate, never at a stage's nomination; every required check listing ${code('stage')} also runs then, as the phase's regression set. The others (${list(GATE_KINDS.filter((k) => !EVALUATED_GATE_KINDS.includes(k) && k !== 'phase'))}) are accepted but not evaluated.`,
-    `- ${authorizeFloorText(f.tier)}`,
+    `- A check listing ${code('phase')} alone in its gate kinds is a phase-only check: it is registered and run when the phase completes, on the phase's candidate, never at a stage's nomination; every required check of a stage's gate also runs then, as the phase's regression set.`,
     g.required_checks === null
       ? '- Every check discovered is required: the governed file lists no `required_checks`.'
       : `- Only the checks the governed file's \`required_checks\` lists are required: ${g.required_checks.length > 0 ? list(g.required_checks) : 'none'}. A check you add is not required unless the owner lists it.`,
@@ -353,9 +306,12 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
     '- The protected inputs are read-only; anything the check writes is discarded when it ends; nothing but its exit status and its output is kept.',
   );
   out.push(...deploymentChecksText(f));
-  out.push('', "### A definition's members (D3 Appendix B)", '', 'A definition is one JSON object with only these members:');
-  for (const [name, m] of Object.entries(DEFINITION_REFERENCE)) out.push(`- \`"${name}"\` (${m.required}): ${m.form}`);
-  const example = exampleDefinition(f);
+  out.push('', "### A definition's members (D3 Appendix B)", '', `A definition is one JSON object with only these members, and ${ELEMENT_MEMBERS.map((m) => code(`"${m}"`)).join(', ')} as the sections on what the engine reads state them:`);
+  for (const [name, m] of Object.entries(DEFINITION_REFERENCE)) if (!ELEMENT_MEMBERS.includes(name)) out.push(`- \`"${name}"\` (${m.required}): ${m.form}`);
+  // The examples combine members those sections state: shown only while
+  // every one of them is stated, so that an omission leaves no example
+  // standing in for the element (row M442 (b)).
+  const example = examplesShown() ? exampleDefinition(f) : null;
   if (example) {
     out.push(
       '',
@@ -366,7 +322,7 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
       '```',
     );
   }
-  const postDeploy = examplePostDeployDefinition(f);
+  const postDeploy = examplesShown() ? examplePostDeployDefinition(f) : null;
   if (postDeploy) {
     out.push(
       '',
@@ -443,8 +399,6 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
         ? `You author the checks a deferral left owed in ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'}: obligation ${f.obligation}, for ${f.criteria.join(', ')}. It was deferred because ${f.reason ?? 'of a reason not recorded'}; its prerequisite (${JSON.stringify(f.prerequisite)}) has integrated, so the interface it exercises now exists in the code. Builders of this phase have run: the stages as they stand now are below. Write the checks for these criteria against the code as it is; the other checks of the phase are already applied.`
         : `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'}, owed by obligation ${f.obligation}: ${f.reason ?? 'the authoring was not done before the build'}. Its Builders have run and their stages have integrated: the stages as they stand now are below. Write a definition and a program for every criterion the stages validate, the kinds of each stage's tier and the areas of the sensitivity floor, against the code as it is; until they are applied and pass, the phase and deployment gates carry AUTHORING_INCOMPLETE.`,
       '',
-      'A proposal grants no execution authority: what you leave under the protected roots is captured as a protected proposal, classified by the engine as the classifier computes it (never as you request it), and decided on through the protected update route.',
-      '',
       '### The stages now',
       '',
       '```json',
@@ -457,11 +411,7 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
   out.push(
     `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'} before any of its stages is built: a definition and a program for every criterion its stages validate, the kinds of each stage's tier, the areas of the sensitivity floor, and, in the first phase, the post-deploy checks of the environments below. No Builder of the phase runs until your checks are applied (authoring readiness), so write them against the interfaces the stages will create, named below.`,
     '',
-    'A proposal grants no execution authority: what you leave under the protected roots is captured as a protected proposal, classified by the engine as the classifier computes it (never as you request it), and decided on through the protected update route; only once it is applied are your checks run, and the phase is ready for its Builders.',
-    '',
-    "The governed file's `check_commands` names the toolchain your programs run under. The first phase's authoring names it (declare it in your result's `governed_changes`); such a change is `unclassifiable` and goes to the owner under every authority, one decision per project. A later phase adds checks under new declared inputs; a check whose inputs cover the whole protected tree changes with any addition, and the classifier says so.",
-    '',
-    "If a criterion's check cannot be written yet because its interface does not exist, do not write a check that cannot pass: list it in your result's `deferred_criteria` with your reason and its prerequisite (a stage of this plan by number, or an interface below by name). The engine asks you for it again, once, when the prerequisite integrates; nothing of its coverage is waived meanwhile.",
+    'A later phase adds checks under new declared inputs; a check whose inputs cover the whole protected tree changes with any addition, and the classifier says so.',
   );
   out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation` (the criteria, kinds and areas its checks must cover):', '', '```json', JSON.stringify(a.stages, null, 2), '```');
   out.push('', "### The module map's interfaces", '');
@@ -478,7 +428,7 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
     '',
     '### Your result',
     '',
-    "Your result follows /surety/context/result-schema.json: beside `summary` and `proposal`, `governed_changes` (what of the governed file you change) and `deferred_criteria` (what you cannot write yet). /surety/context/authoring.json holds this section's facts.",
+    'Your result follows /surety/context/result-schema.json. /surety/context/authoring.json holds this section\'s facts.',
   );
   return out;
 }

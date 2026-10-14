@@ -300,7 +300,7 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     'verifier.kinds': {
       id: 'verifier.kinds',
       gloss: "A definition's `kind` is one of these; a criterion is shown met only by a check of a criteria kind.",
-      data: { kinds: [...CHECK_KINDS], criteria_kinds: [...COVERING_KINDS], by_tier: Object.fromEntries((Object.keys(KIND_INVENTORY) as Tier[]).map((t) => [t, [...KIND_INVENTORY[t]]])) },
+      data: { member: 'kind', kinds: [...CHECK_KINDS], criteria_kinds: [...COVERING_KINDS], by_tier: Object.fromEntries((Object.keys(KIND_INVENTORY) as Tier[]).map((t) => [t, [...KIND_INVENTORY[t]]])) },
     },
     'verifier.gate_kinds_floor': {
       id: 'verifier.gate_kinds_floor',
@@ -338,7 +338,12 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     out['verifier.authoring_result'] = {
       id: 'verifier.authoring_result',
       gloss: 'Your result carries these fields beside summary and proposal (result-schema.json).',
-      data: { fields: ['governed_changes', 'deferred_criteria', ...(opts.retrofit ? ['adopted_tests'] : [])], no_execution_authority: NO_EXECUTION_AUTHORITY },
+      data: {
+        fields: ['governed_changes', 'deferred_criteria', ...(opts.retrofit ? ['adopted_tests'] : [])],
+        no_execution_authority: NO_EXECUTION_AUTHORITY,
+        check_commands: "The governed file's check_commands names the toolchain your programs run under. The first phase's authoring names it, declared in governed_changes; such a change is unclassifiable and goes to the owner under every authority, one decision per project.",
+        deferred_criteria: "A criterion whose check cannot be written yet, because the interface it exercises does not exist, is listed in deferred_criteria with your reason and its prerequisite (a stage of this plan by number, or an interface of the module map by name), never written as a check that cannot pass. The engine asks for it again, once, when the prerequisite integrates; nothing of its coverage is waived meanwhile.",
+      },
       result_fields: { governed_changes: AUTHORING_RESULT_FIELDS.governed_changes!, deferred_criteria: AUTHORING_RESULT_FIELDS.deferred_criteria! },
     };
     if (opts.retrofit) {
