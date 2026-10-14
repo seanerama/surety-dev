@@ -104,9 +104,10 @@ describe('M408 the retrofit journey on the project lane', () => {
     await waitFor(() => projectRow(fx.home, id)?.registration_state === 'registered', { what: 'the adopted project to be registered' });
     J.p = { id, repo, A: J.A };
     J.created = { row: projectRow(fx.home, id), adoption: adoptionOf(fx.home, id) };
-    // `phase_size` (slice 35; SEAM.md §406): the adopted fixture's phases have one stage each.
-    await ownerPolicy(fx, id, { phase_size: ADOPTED_PHASE_SIZE });
     J.mode = await chooseMode(fx, id, 'full');
+    // `phase_size` (slice 35; SEAM.md §406): the adopted fixture's phases have one stage each. Committed
+    // once the mode is answered: a policy commit re-raises an open `adoption_mode` (objection 086).
+    await ownerPolicy(fx, id, { phase_size: ADOPTED_PHASE_SIZE });
     // (b) the retrofit Spec Writer session; approve refused while a row is open.
     J.spec = await retrofitSpecSession(fx, id);
     J.approveEarly = await answer(fx.engine, id, J.spec.approval, 'approve');

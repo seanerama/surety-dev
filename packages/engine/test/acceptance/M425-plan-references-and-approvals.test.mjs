@@ -25,7 +25,7 @@ import { describe, test } from 'node:test';
 
 import { governedEdit, humanApplies } from './harness/gates.mjs';
 import { consume, decision } from './harness/decisions.mjs';
-import { NOTHING, activePlan, nothingPublished, planOfPhase, waitPublished } from './harness/journey/drive.mjs';
+import { NOTHING, nothingPublished, planOfPhase, waitPublished } from './harness/journey/drive.mjs';
 import {
   approvedChange,
   codesOf,
@@ -161,6 +161,7 @@ describe('M425 plan references and approvals', () => {
     assert.equal(res.body?.code, 'plan_generation_stale');
     assert.match(JSON.stringify(res.body), /PLAN_UNKNOWN_ADR[^"]*ADR-002/, `the cause names PLAN_UNKNOWN_ADR ADR-002 (the driver's ruling) (${res.text})`);
     assert.equal(planOfPhase(fx.home, p.id, 2).filter((x) => x.published_at).length, 1, 'one phase-2 plan published, B\'s');
-    assert.equal(activePlan(fx.home, p.id).id, publishedB.id);
+    // Objection 082: a completed plan stays its phase's active generation, so phase 2's is read by its phase.
+    assert.equal(planOfPhase(fx.home, p.id, 2).find((x) => x.active === 1 || x.active === true)?.id, publishedB.id, 'B\'s plan is phase 2\'s active generation');
   });
 });
