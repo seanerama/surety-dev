@@ -5,7 +5,15 @@ Filed by: Builder, slice 37, 2026-10-14 (gate 2 at 2af0adb on mini-hp01; reruns 
 
 ## How these were told apart
 
-M08 and M23 pass at f767609 and 4144687. They fail at 01470fb and every head since, including ff3118b. Bisected in scratch worktrees, the engine change that exposed them is the tick's nomination step no longer writing an integration lease row on every tick (M303 (a), the driver's ruling). Every other change in 01470fb was reverted one at a time without effect: the finalizing-domain hold, the recovery's wait, and the validator's scope. The lease row slowed each tick enough to hide the cases' K1 assumption. Each case below assumes no tick runs between two of its steps. Under D6 K1 a run's end, a decision's answer and the route itself each request one (M440 (a)), and SEAM §437 migrated none of these.
+M08 passes at f767609 and 4144687. It fails at 01470fb and every head since, including ff3118b. Bisected in a scratch worktree, the engine change that exposed it is the tick's nomination step no longer writing an integration lease row on every tick (M303 (a), the driver's ruling): 01470fb with 4144687's nomination step passes 4/4. The lease row slowed each tick enough to hide the case's K1 assumption.
+
+M23 is timing-dependent. Runs alone in scratch worktrees:
+- f767609 passed once;
+- 4144687 passed once, then failed once;
+- 01470fb with 4144687's whole engine source failed.
+No engine change since 4144687 is its cause.
+
+Each case below assumes no tick runs between two of its steps. Under D6 K1 a run's end, a decision's answer and the route itself each request one (M440 (a)), and SEAM §437 migrated none of these.
 
 ## The cases and their mechanisms
 
