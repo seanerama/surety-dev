@@ -39,6 +39,9 @@ export function boundaryFalls(db: Database, item: WorkRow): boolean {
   // `stage`: the first stage's Builder starts; every later stage start
   // waits for the owner once a stage's chain has run in this project.
   if (!STAGE_START.includes(item.kind)) return false;
+  // A stage's own repair Builder (its item has run before) is inside the
+  // stage's chain, which runs unattended (the slice-37 review's N1).
+  if (db.prepare('SELECT 1 FROM "runs" WHERE "work_item" = ? LIMIT 1').get(item.id) !== undefined) return false;
   // A stage that depends on another is that stage's next stage: its
   // dependency's chain has begun (its Builder ran, for its stage code to be
   // integrated), whether or not that run has recorded its end. Under D6 K1

@@ -328,6 +328,14 @@ export function authoringShortfall(db: Db, planId: string, version: string): str
     )
     .all(row.project, planId) as { criteria: string }[];
   for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).map((c) => `deferred:${c}`));
+  // The owner's build_first binding, shown with what it left owed (the
+  // slice-37 review's N9): its decision, by the plan's readiness.
+  if (out.length > 0) {
+    const bound = db
+      .prepare(`SELECT d."id" FROM "phase_plans" p JOIN "decisions" d ON d."id" = p."authoring_ready_by" WHERE p."id" = ? AND json_extract(d."answer", '$.option') = 'build_first'`)
+      .get(planId) as { id: string } | undefined;
+    if (bound) out.push(`build_first:${bound.id}`);
+  }
   return [...new Set(out)];
 }
 

@@ -96,6 +96,14 @@ export function paceView(db: Database, args: { project: string }) {
   const p = project.id;
   const decisions = db.prepare('SELECT "id", "kind", "raised_at", "consumed_at", "status", "answer", "blocked_while_open" FROM "decisions" WHERE "project" = ? ORDER BY "seq"').all(p) as DecisionRow[];
   const answeredAt = (d: DecisionRow): string | null => json<{ at?: string } | null>(d.answer, null)?.at ?? d.consumed_at;
+  // When a decision stopped holding anything: its answer, or, invalidated,
+  // the event that recorded it (the slice-37 review's N5: an invalidated
+  // blocker's wait ends there, it is not unknown for good).
+  const closedAt = (d: DecisionRow): string | null => {
+    if (d.status !== 'invalidated') return answeredAt(d);
+    const e = db.prepare(`SELECT "created_at" FROM "events" WHERE "type" = 'decision.invalidated' AND json_extract("subject", '$.decision') = ? ORDER BY "seq" LIMIT 1`).get(d.id) as { created_at: string } | undefined;
+    return e?.created_at ?? null;
+  };
   // The decisions a person answered (the routed ones), with their open time.
   const routed = decisions
     .filter((d) => json<{ actor?: string } | null>(d.answer, null)?.actor === 'human')
@@ -238,6 +246,12 @@ export function paceView(db: Database, args: { project: string }) {
       reason_class: r.reason_class ?? unknown('the run has not ended'),
       repair_ordinal: n,
       host_observation: (lease ? hostByIncarnation.get(lease.owner_incarnation) : undefined) ?? unknown("no host observation was recorded for the run's incarnation"),
+      // The backend entry the run ran on, as its first receipt recorded it
+      // (the slice-37 review's M10), never the host observation's latest.
+      backend_entry: (() => {
+        const e = receipts.length === 0 ? undefined : (db.prepare('SELECT t."id", t."binary_sha256", t."model" FROM "invocation_receipts" i JOIN "trust_entries" t ON t."id" = i."trust_entry" WHERE i."id" = ?').get(receipts[0]) as { id: string; binary_sha256: string; model: string } | undefined);
+        return e ?? unknown('no trust entry served the run (the scripted backend, or none)');
+      })(),
       domain: dom
         ? {
             id: dom.id,
@@ -245,6 +259,13 @@ export function paceView(db: Database, args: { project: string }) {
             memory_max: dom.memory_max ?? unknown('the maximum was not recorded at admission'),
           }
         : unknown('the run had no domain'),
+      // Every domain of the run, a session's one per turn (the slice-37
+      // review's N8), in the order they were made.
+      domains: (db.prepare('SELECT "id", "memory_peak", "memory_max", "peak_recorded_at" FROM "execution_domains" WHERE "run" = ? ORDER BY rowid').all(id) as { id: string; memory_peak: number | null; memory_max: number | null; peak_recorded_at: string | null }[]).map((d) => ({
+        id: d.id,
+        memory_peak: d.memory_peak ?? unknown(d.peak_recorded_at === null ? 'the peak has not been read' : 'memory.peak could not be read before the domain was removed'),
+        memory_max: d.memory_max ?? unknown('the maximum was not recorded at admission'),
+      })),
     };
   });
 
@@ -280,16 +301,26 @@ export function paceView(db: Database, args: { project: string }) {
     // Idle time by hold reason (N01): the elapsed time of the closed hold
     // intervals, never a count of ticks; an interval still open is not
     // counted (its end was not observed) and is shown apart.
+    // A reason with no closed interval recorded is unknown, never 0, and
+    // so is one with an interval whose time cannot be measured (the
+    // slice-37 review's N6).
     idle: (() => {
-      const out: Record<string, number> = Object.fromEntries(HOLD_REASONS.map((r) => [r, 0]));
+      const sums: Record<string, number> = {};
+      const unmeasured = new Set<string>();
       for (const w of db.prepare('SELECT "held_intervals" FROM "work_items" WHERE "project" = ? AND "held_intervals" IS NOT NULL').all(p) as { held_intervals: string }[]) {
         for (const h of json<{ from: string; to?: string; reason: string }[]>(w.held_intervals, [])) {
-          if (h.to === undefined || !(h.reason in out)) continue;
+          if (h.to === undefined || !(HOLD_REASONS as readonly string[]).includes(h.reason)) continue;
           const x = between(h.from, h.to, ['the hold began', 'it ended']);
-          if (typeof x === 'number') out[h.reason]! += x;
+          if (typeof x === 'number') sums[h.reason] = (sums[h.reason] ?? 0) + x;
+          else unmeasured.add(h.reason);
         }
       }
-      return out;
+      return Object.fromEntries(
+        HOLD_REASONS.map((r) => [
+          r,
+          unmeasured.has(r) ? unknown(`a ${r} hold interval has no measurable time`) : r in sums ? sums[r]! : unknown(`no closed ${r} hold interval was recorded`),
+        ]),
+      );
     })(),
     idle_open: (() => {
       const out: Record<string, number> = Object.fromEntries(HOLD_REASONS.map((r) => [r, 0]));
@@ -416,9 +447,9 @@ export function paceView(db: Database, args: { project: string }) {
     for (const d of blocking) {
       if (d.status === 'open') continue;
       const a = ms(d.raised_at);
-      const b = ms(answeredAt(d));
+      const b = ms(closedAt(d));
       if (a === null || b === null || b < a) {
-        why = "a blocking decision's raising or answer was not recorded";
+        why = "a blocking decision's raising or its answer (or invalidation) was not recorded";
         continue;
       }
       hours += (b - a) / 3_600_000;
@@ -489,17 +520,24 @@ export function observeHost(tx: Tx, args: { project: string; incarnation: string
   const entry = resolved.kind === 'entry' ? { id: resolved.entry.id, binary_sha256: resolved.entry.binary_sha256, model: resolved.entry.model } : null;
   const exists = tx.db.prepare('SELECT "id", "backend_entry" FROM "host_observations" WHERE "project" = ? AND "incarnation" = ?').get(args.project, args.incarnation) as { id: string; backend_entry: string | null } | undefined;
   if (exists) {
-    // The backend entry this incarnation serves the project with: an entry
-    // activated, or a backend named, after the observation is this
-    // incarnation's too (its settings stay as observed at its start).
-    if (entry !== null && exists.backend_entry !== JSON.stringify(entry)) tx.db.prepare('UPDATE "host_observations" SET "backend_entry" = ? WHERE "id" = ?').run(JSON.stringify(entry), exists.id);
+    // The observation is what the host was at the start: a backend entry
+    // activated later is not written over it; each run reports the entry it
+    // ran on from its own receipt (the slice-37 review's M10). An
+    // observation made with no entry takes the first one this incarnation
+    // serves the project with.
+    if (entry !== null && exists.backend_entry === null) tx.db.prepare('UPDATE "host_observations" SET "backend_entry" = ? WHERE "id" = ?').run(JSON.stringify(entry), exists.id);
     return false;
   }
   const earlier = tx.db.prepare('SELECT 1 FROM "host_observations" WHERE "project" = ? LIMIT 1').get(args.project);
   const settings: Record<string, number> = Object.fromEntries(Object.entries(args.settings ?? {}).filter(([, v]) => typeof v === 'number'));
   settings.role_memory_max = effectiveProfileMax(tx.db, args.project, 'role');
   settings.check_memory_max = effectiveProfileMax(tx.db, args.project, 'check');
-  const live = (tx.db.prepare(`SELECT COUNT(*) AS n FROM "execution_domains" WHERE "status" <> 'terminated' AND "profile" <> 'service'`).get() as { n: number }).n;
+  const liveNow = (tx.db.prepare(`SELECT COUNT(*) AS n FROM "execution_domains" WHERE "status" <> 'terminated' AND "profile" <> 'service'`).get() as { n: number }).n;
+  // The peak is the engine's, over the incarnation: a project observed
+  // later in it starts from the peak the incarnation's earlier
+  // observations hold (the slice-37 review's N7).
+  const earlierPeak = (tx.db.prepare('SELECT MAX("peak_domains") AS m FROM "host_observations" WHERE "incarnation" = ?').get(args.incarnation) as { m: number | null }).m;
+  const live = Math.max(liveNow, earlierPeak ?? 0);
   const id = tx.newId('hobs_');
   tx.db
     .prepare(

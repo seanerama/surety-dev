@@ -297,9 +297,22 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     transitionWork(tx, now, 'complete', {}, { run: inputs.run, operation: op.id });
   }
   if (inputs.nominate) {
-    tx.db
-      .prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?')
-      .run(JSON.stringify({ revision: inputs.new_oid, by: inputs.nominate.by, chain: inputs.chain ?? 1, origin: inputs.chain_origin ?? null }), op.project);
+    // A nomination still due when another integration finalizes (one
+    // finalized by recovery, outside the lease) is not lost (the slice-37
+    // review's N3): the integration branch moves by compare-and-swap, so the
+    // later revision holds the earlier one, and the due nomination is made
+    // at it, a Builder's request kept, the deeper chain and both origins
+    // carried.
+    const before = tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(op.project) as { nomination_due: string | null };
+    const prior = before.nomination_due ? (JSON.parse(before.nomination_due) as { revision: string; by: string; chain: number; origin: unknown; subsumes?: string[] }) : null;
+    const due = {
+      revision: inputs.new_oid,
+      by: prior?.by === 'builder_request' ? 'builder_request' : inputs.nominate.by,
+      chain: Math.max(inputs.chain ?? 1, prior?.chain ?? 0),
+      origin: inputs.chain_origin ?? prior?.origin ?? null,
+      ...(prior ? { subsumes: [...(prior.subsumes ?? []), prior.revision] } : {}),
+    };
+    tx.db.prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?').run(JSON.stringify(due), op.project);
   }
   return { plans };
 }

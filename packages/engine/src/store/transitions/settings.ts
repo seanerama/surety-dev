@@ -74,7 +74,9 @@ export function attemptProfileMax(db: Database, attempt: string): number {
   const row = db.prepare('SELECT "profile" FROM "qualification_attempts" WHERE "id" = ?').get(attempt) as { profile: string | null } | undefined;
   try {
     const p = row?.profile ? (JSON.parse(row.profile) as { memory_max?: unknown }) : null;
-    if (p && Number.isSafeInteger(p.memory_max) && (p.memory_max as number) > 0) return p.memory_max as number;
+    // Under the ceiling, as every profile is (the slice-37 review's N4).
+    const ceiling = settings?.domain_memory_max;
+    if (p && Number.isSafeInteger(p.memory_max) && (p.memory_max as number) > 0) return ceiling === undefined ? (p.memory_max as number) : Math.min(p.memory_max as number, ceiling);
   } catch {
     // an unreadable profile is the default's
   }
