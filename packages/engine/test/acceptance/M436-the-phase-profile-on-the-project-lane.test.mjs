@@ -67,8 +67,12 @@ describe('M436 (e) the phase profile on the project lane: the idea to phase 2 pu
   test('(e) every launched one-shot metered; every check result an engine execution by a self-tested runner', () => {
     const { fx, p } = J;
     const ledger = ledgerByRun(fx.home, p.id);
-    const unmetered = runsOfProject(fx.home, p.id).filter((r) => r.started_at && r.kind !== 'session' && !ledger.has(r.id));
-    assert.deepEqual(unmetered.map((r) => [r.id, workRow(fx.home, r.work_item)?.kind]), [], 'a ledger row for every launched one-shot (E10)');
+    // A run is charged at its terminal observation (D1 §13.1), so a run still
+    // in flight is read once it has ended: under K1 the publication of phase 2
+    // dispatches its check_authoring at once (objection 096).
+    const unmetered = runsOfProject(fx.home, p.id).filter((r) => r.started_at && r.kind !== 'session' && r.state === 'ended' && !ledger.has(r.id));
+    assert.deepEqual(unmetered.map((r) => [r.id, workRow(fx.home, r.work_item)?.kind]), [], 'a ledger row for every launched one-shot that has ended (E10)');
+    assert.ok(runsOfProject(fx.home, p.id).filter((r) => r.started_at && r.kind !== 'session' && r.state === 'ended').length >= 5, 'the fixture is live: the phase\'s one-shots have ended');
     const results = resultsOf(fx.home, p.id);
     assert.ok(results.length > 0, 'the fixture is live: checks ran');
     assert.deepEqual(results.filter((r) => !r.runner_id || r.runner_id === 'test_fixture').map((r) => r.id), [], 'no result recorded by a fixture');

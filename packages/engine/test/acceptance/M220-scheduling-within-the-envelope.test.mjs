@@ -140,12 +140,15 @@ describe('M220 scheduling within the envelope', () => {
       await fx.engine.stop();
       writeEngineConfig(fx.home, { api_port: fx.port, ...SANDBOX_CONFIG, ...config });
       await fx.start();
-      await qualifyRunnerByFixture(fx.engine);
-      // The ceiling case (K2): the role and the check counted at the round's ceiling.
+      // The ceiling case (K2): the role and the check counted at the round's
+      // ceiling, set before the runner's qualification so that it covers the
+      // project's check profile (objection 096; the driver's ruling 3: a check
+      // profile changed after the qualification is held runner_unqualified).
       if (limit === 'host_reserve_memory') {
         await changePolicy(fx.engine, other.id, { role_memory_max: memoryLimit });
         await changePolicy(fx.engine, project.id, { check_memory_max: memoryLimit });
       }
+      await qualifyRunnerByFixture(fx.engine);
       await heldWhileARoleRuns(fx, project, candidate, other, limit);
     }
   });

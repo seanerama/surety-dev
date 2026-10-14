@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { describe, test } from 'node:test';
 
 import { governedEdit, humanApplies } from './harness/gates.mjs';
+import { CONTRACT } from './harness/fixtures.mjs';
 import { ROUTED_KINDS, builderScript, candidatesOfProject, signoffsOfProject } from './harness/journey/drive.mjs';
 import { pumpHolding } from './harness/journey/change36.mjs';
 import { revisionsOf } from './harness/journal.mjs';
@@ -36,7 +37,7 @@ import { refOid } from './harness/repos.mjs';
 import { addWork, runsOf } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
-import { GIB, heldBuilder, holding, holdOf, liveRuns, stageRow, threeStages, twoStages, workRow } from './harness/exec37/envelope.mjs';
+import { GIB, findingFix, heldBuilder, holding, holdOf, liveRuns, stageRow, threeStages, twoStages, workRow } from './harness/exec37/envelope.mjs';
 
 const NO_PLAN = ROUTED_KINDS.filter((k) => k !== 'plan_approval');
 const TWO = Object.freeze({ mem_available: 10 * GIB, default_current: 0 });
@@ -104,9 +105,10 @@ describe('M437 pipelining and parallel builds', () => {
     const c1 = candidatesOfProject(fx.home, p.id).at(-1);
     const signedC1 = signoffsOfProject(fx.home, p.id).filter((s) => s.candidate === c1.id);
     assert.ok(signedC1.length > 0, 'the fixture is live: stage 1\'s candidate has its Reviewer\'s sign-off');
-    // A late fix of stage 1, building beside stage 2's Builder.
-    const fix = await addWork(fx.engine, p.id, 'fix');
-    fx.scripted.script(fix, [heldFix({ 'src/sum.mjs': 'export const sum = (a, b) => Number(a) + Number(b);\n' })]);
+    // A late fix of stage 1, building beside stage 2's Builder: a finding on
+    // stage 1's candidate dispositioned `fix`, so its integration nominates
+    // (E104; objection 092).
+    const { item: fix } = await findingFix(fx, p.id, c1.id, heldFix({ 'src/sum.mjs': 'export const sum = (a, b) => Number(a) + Number(b);\n' }));
     await advance(J, () => holding(fx, fix), { what: 'the fix building beside stage 2', exits: () => null });
     // Stage 2 integrates first; its candidate's checks left queued.
     fx.scripted.release(items[2], 'gate');
@@ -117,8 +119,12 @@ describe('M437 pipelining and parallel builds', () => {
     const c3 = await advance(J, () => candidatesOfProject(fx.home, p.id).find((c) => c.seq > c2.seq), { what: 'the fix integrated and its candidate nominated', exits: () => null });
     const [fixRun] = runsOf(fx.home, fix);
     assert.deepEqual([fixRun.outcome, fixRun.reason_class], ['completed', 'none'], `the fix integrates (${fixRun.reason_text})`);
-    const rebased = revisionsOf(fx.home, { run: fixRun.id }).find((r) => r.kind === 'engine_commit');
-    assert.ok(rebased, `the fix is integrated as a rebased engine commit (${JSON.stringify(revisionsOf(fx.home, { run: fixRun.id }).map((r) => [r.kind, r.parent_sha]))})`);
+    // The fix's commit on the branch: its engine commit that the fix candidate
+    // holds (the snapshot before the rebase is not on the branch). Revisions
+    // are read by ancestry, never by id or time order.
+    const fixRevisions = revisionsOf(fx.home, { run: fixRun.id });
+    const rebased = fixRevisions.find((r) => r.kind === 'engine_commit' && isAncestor(p.repo.path, r.sha, c3.revision));
+    assert.ok(rebased, `the fix is integrated as an engine commit the fix candidate holds (${JSON.stringify(fixRevisions.map((r) => [r.kind, r.sha, r.parent_sha]))})`);
     assert.ok(isAncestor(p.repo.path, s2.integrated_revision, rebased.sha), 'the rebased fix sits on stage 2\'s integration');
     assert.ok(isAncestor(p.repo.path, s2.integrated_revision, c3.revision) && isAncestor(p.repo.path, rebased.sha, c3.revision), 'the fix\'s candidate holds both by ancestry');
     assert.equal(withStore(fx.home, (db) => db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ?').get(c2.id)).superseded_by, c3.id, 'the fix candidate supersedes stage 2\'s');
@@ -152,7 +158,11 @@ describe('M437 pipelining and parallel builds', () => {
   });
 
   test('(e) integrations released together serialize; three runs of one project at once; one run per work item; no project run count', async (t) => {
-    const J = await threeStages(t, { envelope: THREE, scripts: { 1: heldBuilder(1), 3: heldBuilder(3) } });
+    // `budget_run_billable_tokens` at its minimum (a tightening), so the day
+    // budget's reservation of each run under way (D1 §13.3; D6 §6.5, a
+    // separate bound) admits a third run of the project (objection 091, the
+    // driver's ruling).
+    const J = await threeStages(t, { envelope: THREE, policy: { budget_run_billable_tokens: CONTRACT.project.budget_run_billable_tokens.min }, scripts: { 1: heldBuilder(1), 3: heldBuilder(3) } });
     const { fx, p, plan, items } = J;
     await advance(J, () => (holding(fx, items[1]) && holding(fx, items[3]) ? true : undefined), { what: 'stages 1 and 3 building at once' });
     const fix = await addWork(fx.engine, p.id, 'fix');

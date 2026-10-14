@@ -19,7 +19,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { assertOneRunAtATime, assertOneRunPerItem, assertWorkHistory, eventsAbout, maxConcurrentRuns } from './harness/invariants.mjs';
+import { assertOneRunAtATime, assertOneRunPerItem, assertWorkHistory, eventsAbout, maxConcurrentDomains, maxConcurrentRuns } from './harness/invariants.mjs';
 import {
   abandonRun,
   addProject,
@@ -75,13 +75,19 @@ describe('M12 scheduling boundaries', () => {
 
   test('pausing lets the run under way finish and holds back what would follow it', async (t) => {
     const { fx, a, both } = await twoProjects(t);
+    // Objection 095 (D6 K1, K2): new eligible work requests a tick, and a
+    // project's second item no longer waits for its first; so `first` is
+    // scripted while the project is paused, and `next` is made once the pause
+    // is in force, so that only the pause holds it back.
+    await pauseProject(fx.engine, a);
     const first = await addWork(fx.engine, a, 'verification');
-    const next = await addWork(fx.engine, a, 'review');
     fx.scripted.script(first, [script.holdThenComplete('gate')]);
+    await resumeProject(fx.engine, a);
     await tick(fx.engine, both);
     await fx.scripted.waitForHolding({ work_item: first });
 
     await pauseProject(fx.engine, a);
+    const next = await addWork(fx.engine, a, 'review');
     await tick(fx.engine, both);
     const run = runsOf(fx.home, first)[0];
     assert.equal(run.state, 'executing', 'a pause does not stop the run under way');
@@ -210,7 +216,9 @@ describe('M12 scheduling boundaries', () => {
     fx.scripted.release(waiting);
     await waitForWork(fx.home, waiting, 'complete');
     await waitForIdle(fx.home, both);
-    assert.equal(withStore(fx.home, (db) => maxConcurrentRuns(db)), 1, 'never more than one run at a time');
+    // The slot is the domain's: it is freed when the domain terminates, before
+    // the run records its end, so the bound is read on domains (objection 095).
+    assert.equal(withStore(fx.home, (db) => maxConcurrentDomains(db)), 1, 'never more than one domain holding a slot at a time');
   });
 
   test('simultaneous tick requests run one scheduler and dispatch each item once', async (t) => {

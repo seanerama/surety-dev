@@ -73,7 +73,8 @@ import { arrange, killedAt } from './harness/probes.mjs';
 import { boundedGet, listDecisions, listEnvironments, listOperations, listProjects, listWork, readDecision, readGate, readProject, readRun } from './harness/reads.mjs';
 import { readRecord, recordFile, recordRow } from './harness/records.mjs';
 import { commitOnRef, makeUnreadable, refOid } from './harness/repos.mjs';
-import { addProject, addWork, advanceClock, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForQuarantine, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
+import { addProject, addWork, advanceClock, pauseProject, requestTick, resumeProject, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForQuarantine, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
+import { reached } from './harness/session-lane.mjs';
 import { BOUNDARY, script } from './harness/scripted.mjs';
 import { dumpStore, withStore } from './harness/store.mjs';
 
@@ -130,8 +131,15 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
       assertRefused(await engine.post(`/v1/projects/${p.waiting}/runs/${run.waiting.id}/stop`, {}), 409, 'confirm_required', 'the unconfirmed Stop');
 
       // "untouched": nothing was ever dispatched. "ready": eligible work that no tick has seen yet.
+      // Objection 095 (D6 K1): new eligible work requests a tick at once, so
+      // the scheduler is held first, in a tick at `scheduler.tick_running`
+      // (after the prerequisite steps, before select; SEAM.md §430), and kept
+      // there for this describe's reads: no tick can select "ready"'s item.
       p.untouched = (await addProject(fx)).id;
       p.ready = (await addProject(fx)).id;
+      await armBarrier(engine, 'scheduler.tick_running', 'pause');
+      await requestTick(engine, p.ready);
+      await reached(fx, 'scheduler.tick_running');
       item.ready = await addWork(engine, p.ready, 'verification');
 
       Object.assign(ctx, { engine, p, item, run });
@@ -329,7 +337,10 @@ describe('M70 the work read', () => {
     const parked = await openDecision(fx, mine, 'blocker', fix);
 
     // Another project with an item of its own: eligible, nothing blocks it.
+    // Objection 095 (D6 K1): the project is paused before its item is made, or
+    // the item's own requested tick would dispatch it.
     const other = (await addProject(fx)).id;
+    await pauseProject(engine, other);
     const theirs = await addWork(engine, other, 'verification');
 
     const rows = Object.fromEntries(workItemsOf(fx.home, mine).map((work) => [work.id, work]));
@@ -400,6 +411,10 @@ describe('M70 the gate read', () => {
     const engine = fx.engine;
     const ctx = await nominated(fx);
     const project = ctx.project.id;
+    // Objection 095 (D6 K1): the result recorded below requests a tick, which
+    // would dispatch the project's waiting work between the reads; the project
+    // is paused, so the reads are all that happens.
+    await pauseProject(engine, project);
     const candidate = ctx.candidate.id;
     const k = (await installChecks(engine, project, [check('login', { requirements: ['R1'] })])).id;
     const other = (await addProject(fx)).id;
@@ -656,9 +671,13 @@ describe('M70 NOW: the other causes of refused, and unknown', () => {
   test('an unresolved out-of-band change of the integration branch: NOW is refused, although the observation is a decision waiting for a person, and names the change; once it is reconciled, NOW is not refused', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
+    // Objection 095 (D6 K1): the item's own requested tick would dispatch it
+    // before the branch moves; the project is paused until the move is made.
+    await pauseProject(fx.engine, project.id);
     const item = await addItem(fx, project.id, 'fix');
     fx.scripted.script(item, [roleThat([permittedEdit()])]);
     const stray = commitOnRef(project.repo.path, project.repo.ref, { 'stray.txt': 'moved by hand\n' });
+    await resumeProject(fx.engine, project.id);
     await tick(fx.engine, project.id);
     const [observed] = outOfBand(fx.home, project.id);
     assert.deepEqual([observed?.subject_kind, observed?.found, observed?.decision.status, runsOf(fx.home, item).length], ['ref', stray, 'open', 0], 'the fixture is live: the moved branch is observed, its decision is open, and nothing is dispatched (row M24)');

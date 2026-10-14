@@ -6,7 +6,7 @@
 // `M429-phase-verification-and-its-sign-off` (d).
 //
 // At T2 under `phase`, phase 1's `phase_verification` Verifier holds before
-// its result; a `fix` integrates meanwhile (K2: one run per work item, not
+// its result; a `fix` naming a finding (objection 092) integrates meanwhile (K2: one run per work item, not
 // per project), and its integration nominates a successor candidate (E104).
 // Released, the Verifier's `phase` sign-off is bound to the superseded
 // candidate: refused (`signoff.refused`, `payload.cause`
@@ -21,7 +21,8 @@ import { roleThat } from './harness/gitruns.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { ROUTED_KINDS, evaluationsOfKind, phaseCompleted, planOfPhase, runsOfProject, signoffsOfProject, workOf } from './harness/journey/drive.mjs';
 import { journey35 } from './harness/journey/plan35.mjs';
-import { addWork, runsOf } from './harness/runs.mjs';
+import { runsOf } from './harness/runs.mjs';
+import { findingFix } from './harness/exec37/envelope.mjs';
 import { step } from './harness/scripted.mjs';
 import { candidatesOf, holding, launchesOfKind, pumpSome } from './harness/exec37/autonomy.mjs';
 
@@ -32,12 +33,13 @@ describe('M429 (d) a phase sign-off bound to a superseded candidate', () => {
   test('(d) a fix integrates while the phase Verifier holds: its sign-off on the superseded candidate refused candidate_superseded, no row; the phase completes on a fresh sign-off bound to the successor', async (t) => {
     const { fx, p, ctx } = await journey35(t);
     fx.scripted.kindScript('phase_verification', [{ steps: [step.hold('gate', { heartbeat_ms: 250 }), ...SIGN.steps] }, SIGN, SIGN]);
-    fx.scripted.kindScript('fix', roleThat([step.write('NOTES.md', 'A note the fix adds.\n')]));
     const held = await pumpSome(fx, ctx, () => launchesOfKind(fx, 'phase_verification').find((l) => holding(fx, l)), { what: 'the phase Verifier holding', max: 300, answerKinds: NOT_PLAN });
     const evaluation = evaluationsOfKind(fx.home, p.id, 'phase').at(-1);
     assert.ok(evaluation, 'the fixture is live: the phase evaluated');
     const superseded = candidatesOf(fx.home, p.id).find((c) => c.id === evaluation.candidate);
-    const fix = await addWork(fx.engine, p.id, 'fix');
+    // A fix naming a finding on the evaluated candidate (dispositioned `fix`),
+    // so its integration nominates a successor (E104; objection 092).
+    const { item: fix } = await findingFix(fx, p.id, superseded.id, roleThat([step.write('NOTES.md', 'A note the fix adds.\n')]));
     const successor = await pumpSome(fx, ctx, () => candidatesOf(fx.home, p.id).find((c) => c.seq > superseded.seq), {
       what: 'the fix integrated and its successor nominated while the phase Verifier holds (K2)',
       max: 40,

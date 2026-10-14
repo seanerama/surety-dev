@@ -19,12 +19,13 @@ import assert from 'node:assert/strict';
 
 import { waitFor } from '../engine.mjs';
 import { listWork } from '../reads.mjs';
-import { runsOf, runsOfProject, tick } from '../runs.mjs';
-import { step } from '../scripted.mjs';
+import { addWork, pauseProject, resumeProject, runsOf, runsOfProject, tick } from '../runs.mjs';
+import { VALID_RESULT, step } from '../scripted.mjs';
 import { withStore } from '../store.mjs';
 import { builderScript, stagesOfPlan, workOf } from '../journey/drive.mjs';
 import { journey35 } from '../journey/plan35.mjs';
 import { ROADMAP3, S1, S2, S3, authoring3 } from '../journey/review35.mjs';
+import { findingsOf } from '../gates.mjs';
 
 export const MIB = 1024 * 1024;
 export const GIB = 1024 * MIB;
@@ -140,3 +141,38 @@ export const dependencyMet = (home, item) => eventsNamed(home, 'work.dependency_
 export const heldBuilder = (n) => ({ steps: [step.hold('gate', { heartbeat_ms: 250 }), ...builderScript(n).steps] });
 
 export { waitFor };
+
+// A fix that names a finding (objection 092): a Verifier's finding on
+// `candidate` (a Low defect naming `criterion`), dispositioned `fix` by a
+// Reviewer's run, so the fix's integration is a cadence point and nominates
+// the fixed code at every tier (E43; E104; SEAM.md §§42, 224); a fix naming
+// no finding nominates nothing. `script` is the fix's role script, set by
+// kind before the disposition so its first launch follows it. The two role
+// runs are fixtures' work items (SEAM.md §15), each scripted while the
+// project is paused (K1: new eligible work requests a tick), and each waited
+// for by ticks that do not wait for the project's other runs, which a case
+// may hold. Returns {finding, item}: the finding row and the fix work item.
+async function fixtureRun(fx, project, kind, subject, result) {
+  await pauseProject(fx.engine, project);
+  const item = await addWork(fx.engine, project, kind, { subject });
+  fx.scripted.script(item, [{ steps: [step.result({ ...VALID_RESULT, ...result })] }]);
+  await resumeProject(fx.engine, project);
+  const run = await ticksUntil(fx, project, () => runsOf(fx.home, item).find((r) => r.state === 'ended'), { what: `the fixture's ${kind} run to end` });
+  assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none'], `the ${kind} run was accepted (${run.reason_text})`);
+  return run;
+}
+// The finding names its criterion and the acceptance check covering it
+// (`accept-r1` covers R1.1 in the reference project): a `fix` finding is
+// resolved only by that check passing on a candidate it applies to (SEAM.md
+// §§74, 191, 221), so a finding with no check would block its phase forever.
+export async function findingFix(fx, project, candidate, script, { criterion = 'R1.1', check = 'accept-r1', message = 'src/sum.mjs: a string operand is concatenated, not added.' } = {}) {
+  fx.scripted.kindScript('fix', [script]);
+  const beforeFix = new Set(workOf(fx.home, project, 'fix').map((w) => w.id));
+  const beforeFindings = findingsOf(fx.home, project).length;
+  await fixtureRun(fx, project, 'verification', { candidate }, { findings: [{ category: 'defect', severity: 'low', message, criterion, check }] });
+  const [finding] = findingsOf(fx.home, project).slice(beforeFindings);
+  assert.ok(finding, 'the fixture is live: the Verifier\'s finding is recorded');
+  await fixtureRun(fx, project, 'review', { candidate: finding.candidate }, { dispositions: [{ finding: finding.id, disposition: 'fix' }] });
+  const item = await waitFor(() => workOf(fx.home, project, 'fix').find((w) => !beforeFix.has(w.id))?.id, { what: 'the fix work the disposition made' });
+  return { finding, item };
+}

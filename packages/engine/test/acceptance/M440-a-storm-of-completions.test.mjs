@@ -36,6 +36,8 @@ import { armFault, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { addProject, addWork, advanceClock, requestTick, run as runRow, runsOf, runsOfProject, scriptedEngine, stopRun, waitForRun, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
+import { changePolicy } from './harness/journal.mjs';
 import { maxSeq, nowMs, show, sleep, ticksAfter } from './harness/exec37/pace.mjs';
 
 const LEASE_TTL = CONTRACT.engine.lease_ttl.min;
@@ -81,10 +83,17 @@ async function assertSustained(fx, s) {
   return added;
 }
 
+// The storm's project on a repository whose primary worktree is detached, so
+// its policy can change (objection 090), with `budget_run_billable_tokens` at
+// its minimum (a tightening): the day budget's reservation of each run under
+// way (D1 §13.3; D6 §6.5, a separate bound) then admits every domain slot to
+// the storm's one project (objection 091, the driver's ruling: the kernel
+// lane tests the real accounting, so the case sets the budget it needs).
 async function stormEngine(t, opts = {}) {
   const fx = await scriptedEngine(t, { config: CONFIG, ...opts });
   fx.scripted.defaultScript(script.complete());
-  const s = (await addProject(fx)).id;
+  const s = (await addGitProject(fx)).id;
+  await changePolicy(fx.engine, s, { budget_run_billable_tokens: CONTRACT.project.budget_run_billable_tokens.min });
   return { fx, s };
 }
 

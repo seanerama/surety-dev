@@ -21,7 +21,9 @@
 // project's value or its 4 GiB default, `domain_memory_max`), recorded on the
 // domain at admission. The ceiling case is kept by setting both projects'
 // `role_memory_max` to M, the ceiling (a project value equal to the ceiling is
-// valid); the case the per-profile maxima add: the same ceiling M, the
+// valid; the projects' repositories have their primary worktree detached so
+// the engine can move their integration branch for the policy change,
+// objection 090); the case the per-profile maxima add: the same ceiling M, the
 // projects' `role_memory_max` well below it, and the second domain admitted,
 // because each is counted at its own maximum, not at the ceiling.
 
@@ -31,7 +33,8 @@ import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
 import { listWork } from './harness/reads.mjs';
-import { addProject, addWork, requestTick, runsOf, stopRun, waitForRunState } from './harness/runs.mjs';
+import { addWork, requestTick, runsOf, stopRun, waitForRunState } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { script } from './harness/scripted.mjs';
@@ -64,8 +67,8 @@ describe('M133 memory admission reserves every admitted domain\'s configured lim
     const { max, reserve } = sizes(before);
     const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2, domain_memory_max: max, host_reserve_memory: reserve, domain_writable_bytes: 64 * MIB } });
     fx.scripted.defaultScript(script.complete());
-    const a = (await addProject(fx)).id;
-    const b = (await addProject(fx)).id;
+    const a = (await addGitProject(fx)).id;
+    const b = (await addGitProject(fx)).id;
     // The ceiling case (K2): each project's role maximum is the ceiling M.
     for (const p of [a, b]) await changePolicy(fx.engine, p, { role_memory_max: max });
 
@@ -105,8 +108,8 @@ describe('M133 memory admission reserves every admitted domain\'s configured lim
     const role = Math.max(512 * MIB, Math.floor((0.3 * (before - reserve)) / MIB) * MIB);
     const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2, domain_memory_max: max, host_reserve_memory: reserve, domain_writable_bytes: 64 * MIB } });
     fx.scripted.defaultScript(script.complete());
-    const a = (await addProject(fx)).id;
-    const b = (await addProject(fx)).id;
+    const a = (await addGitProject(fx)).id;
+    const b = (await addGitProject(fx)).id;
     for (const p of [a, b]) await changePolicy(fx.engine, p, { role_memory_max: role });
 
     const first = await roleHolding(fx, a, await addWork(fx.engine, a, 'verification'), { on_term: 'exit' });
