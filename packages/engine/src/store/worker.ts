@@ -165,7 +165,7 @@ import { logsDue, observationLapsed, observationPlan, observationsDue, recordLog
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
-import { applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
+import { applicationConflicts, applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
@@ -648,6 +648,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
       revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null, inputsVersion: a.inputsVersion }),
     ),
   'protected.application_diverged': (tx, a) => applicationDiverged(tx, a),
+  'protected.application_conflict': (tx, a) => applicationConflicts(tx, a),
   'protected.record_classification': (tx, a) => recordClassification(tx, a),
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),

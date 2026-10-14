@@ -221,3 +221,25 @@ test('the pre-dispatch recheck: a registered ref at its expected commit is not m
   fx.db.prepare(`INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES ('ref_gone', ?, 'prj_1', 'refs/surety/gone', 'nomination', ?, 1)`).run(AT, fx.head);
   assert.equal(await registeredRefsMoved(rt, 'prj_1'), true);
 });
+
+test("S1: a run's validation reads the registered refs between two reads of what the engine expects; another run's journaled move is no violation, an out-of-band one is", async (t) => {
+  const fx = fixture(t);
+  const a = await runWithWorkspace(fx, 'run_a');
+  // Another run's integration moves main after A's facts were read: the
+  // store expects the old head before the ref read and the new one after.
+  writeFileSync(join(fx.repo, 'b.txt'), 'b\n');
+  fx.g('-C', fx.repo, 'add', 'b.txt');
+  fx.g('-C', fx.repo, 'commit', '-q', '-m', 'another run');
+  const moved = fx.g('-C', fx.repo, 'rev-parse', 'HEAD');
+  const stale = [{ ref: 'refs/heads/main', expected_oid: fx.head }];
+  let reads = 0;
+  const journaled = async () => (reads++ === 0 ? { registry: stale, moving: {} } : { registry: [{ ref: 'refs/heads/main', expected_oid: moved }], moving: {} });
+  assert.equal(await validateOutside({ repo: fx.repo, path: a.path, metadata: a.metadata, registry: stale, moving: {}, others: [], scratch: fx.scratch, refFacts: journaled }), null);
+  // In flight: the journal's move names the new head.
+  const inFlight = async () => ({ registry: stale, moving: { 'refs/heads/main': [moved] } });
+  assert.equal(await validateOutside({ repo: fx.repo, path: a.path, metadata: a.metadata, registry: stale, moving: {}, others: [], scratch: fx.scratch, refFacts: inFlight }), null);
+  // Moved by hand: neither read expects it.
+  const outOfBand = async () => ({ registry: stale, moving: {} });
+  const v = await validateOutside({ repo: fx.repo, path: a.path, metadata: a.metadata, registry: stale, moving: {}, others: [], scratch: fx.scratch, refFacts: outOfBand });
+  assert.equal(v?.klass, 'ref_violation');
+});

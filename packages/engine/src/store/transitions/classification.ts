@@ -23,6 +23,7 @@ import { refuseOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal } from './protected.js';
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
 import { engineSettings } from './settings.js';
+import { correctionProposalDecided } from '../../spec/change.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -370,5 +371,29 @@ export function applicationDiverged(tx: Tx, args: { proposal: string; intent: st
   }
   if (p.approver_authority !== 'reviewer') return false;
   withdrawReviewerApproval(tx, p.id);
+  return true;
+}
+
+// An approved proposal that cannot be applied onto the head as it now is:
+// its changes conflict with what moved the branch (under D6 K2, another
+// run's integration or another application). It is never left approved
+// with nothing to decide (the driver's ruling on M401's T1 run, slice 37):
+// the proposal is rejected naming the conflict, an intent pending for it is
+// invalidated and every open question of it withdrawn, and a correction or
+// authoring item waiting for it takes its repair (a new run from the
+// current head), then parks with its blocker.
+export function applicationConflicts(tx: Tx, args: { proposal: string; intent: string | null; head: string; reason: string }): boolean {
+  const p = getProposal(tx, args.proposal);
+  if (!p || p.status !== 'approved') return false;
+  if (args.intent !== null) {
+    const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
+    if (row?.status === 'pending') invalidateIntent(tx, args.intent);
+  }
+  for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open'`).all(p.id) as DecisionRow[]) {
+    invalidateDecision(tx, d, `the proposal cannot be applied onto ${args.head}: ${args.reason}`);
+  }
+  tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
+  tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: null, cause: 'application_conflict', head: args.head, reason: args.reason });
+  correctionProposalDecided(tx, { proposal: p.id, applied: false });
   return true;
 }
