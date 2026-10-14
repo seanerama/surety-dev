@@ -12,6 +12,10 @@
 //   (an intent pending or executing, or a Reviewer's approval the ticks
 //   apply). A proposal decided while the item waited ends the wait here; a
 //   proposal classified with no open question has it raised;
+// - an item put there by the bare `block` template (no blocker recorded) is
+//   given the D1 blocker route in the same transaction: a blocker
+//   `{reason: 'block'}` and its question (resume to the continuation, or
+//   cancel); the driver's ruling on M09/M234, slice 37;
 // - anything else has its `blocker` question raised. With nothing to ask,
 //   the item cannot be left waiting on nothing: the transaction is refused
 //   (illegal_transition), so a new path that would wedge an item fails where
@@ -28,6 +32,8 @@ export interface AwaitingDeps {
   raiseQuestion: (tx: Tx, args: { project: string; kind: DecisionKind; subjectType: string; subjectId: string }) => { id: string } | null;
   correctionKind: (changeKind: string | null) => DecisionKind | undefined;
   proposalDecided: (tx: Tx, args: { proposal: string; applied: boolean }) => void;
+  // Invalidates the open blocker question about the item, if one stands.
+  dropBlocker: (tx: Tx, item: string) => void;
 }
 
 let deps: AwaitingDeps | null = null;
@@ -55,6 +61,10 @@ export function settleAwaitingItem(tx: Tx, id: string): boolean {
     blocker = item.blocker ? (JSON.parse(item.blocker) as { reason?: string; proposal?: string }) : null;
   } catch {
     blocker = null;
+  }
+  if (blocker === null) {
+    blocker = { reason: 'block' };
+    tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'block', raised_at: tx.at, decision: null }), item.id);
   }
   if (blocker?.reason === 'correction_proposed' && typeof blocker.proposal === 'string') {
     const p = tx.db.prepare('SELECT "id", "project", "status", "classified_change_kind", "approver_authority" FROM "protected_proposals" WHERE "id" = ?').get(blocker.proposal) as
@@ -97,10 +107,27 @@ export function settleAwaitingItem(tx: Tx, id: string): boolean {
 export function settleAwaiting(tx: Tx): void {
   if (deps === null) return;
   const moved = new Set<string>();
+  const left = new Set<string>();
   for (const ref of tx.events) {
     if (!ref.type.startsWith('work.')) continue;
-    const row = tx.db.prepare('SELECT json_extract("subject", \'$.work_item\') AS w, json_extract("payload", \'$.to\') AS t FROM "events" WHERE "id" = ?').get(ref.id) as { w: string | null; t: string | null } | undefined;
+    const row = tx.db.prepare('SELECT json_extract("subject", \'$.work_item\') AS w, json_extract("payload", \'$.to\') AS t, json_extract("payload", \'$.from\') AS f FROM "events" WHERE "id" = ?').get(ref.id) as { w: string | null; t: string | null; f: string | null } | undefined;
     if (row?.w && row.t === 'awaiting_decision') moved.add(row.w);
+    if (row?.w && row.f === 'awaiting_decision' && row.t !== 'awaiting_decision') left.add(row.w);
+  }
+  // An item the bare `block` put there that left by another route: its
+  // blocker and its question no longer stand.
+  for (const id of left) {
+    const item = getWorkItem(tx, id);
+    if (!item || item.status === 'awaiting_decision' || item.blocker === null) continue;
+    let reason: string | undefined;
+    try {
+      reason = (JSON.parse(item.blocker) as { reason?: string }).reason;
+    } catch {
+      reason = undefined;
+    }
+    if (reason !== 'block') continue;
+    tx.db.prepare('UPDATE "work_items" SET "blocker" = NULL WHERE "id" = ?').run(id);
+    deps.dropBlocker(tx, id);
   }
   for (const id of moved) {
     if (!settleAwaitingItem(tx, id)) throw illegal(`work item ${id} left awaiting_decision with no decision it waits on`, { work_item: id });

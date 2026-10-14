@@ -280,7 +280,7 @@ import { recordRefusedReplan } from '../plan/bundle.js';
 import { registerAwaiting, settleAwaiting, sweepAwaiting } from './transitions/awaiting.js';
 import { registerAfterTransition } from './transitions/tx.js';
 import { CORRECTION_KIND as AWAIT_CORRECTION_KIND } from './transitions/protected.js';
-import { raiseQuestion as awaitRaiseQuestion } from './transitions/queue.js';
+import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion } from './transitions/queue.js';
 import { correctionProposalDecided as awaitProposalDecided, raiseSettledChanges } from '../spec/change.js';
 
 // No work item awaits a decision without one it waits on (slice 37).
@@ -288,6 +288,7 @@ registerAwaiting({
   raiseQuestion: (tx, a) => awaitRaiseQuestion(tx, a as never) as { id: string } | null,
   correctionKind: (k) => (k === null ? undefined : (AWAIT_CORRECTION_KIND[k] as never)),
   proposalDecided: (tx, a) => awaitProposalDecided(tx, a),
+  dropBlocker: (tx, item) => awaitDropBlocker(tx, item),
 });
 registerAfterTransition(settleAwaiting);
 

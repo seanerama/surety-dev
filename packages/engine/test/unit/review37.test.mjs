@@ -280,11 +280,11 @@ test('an approved proposal whose changes conflict with the head is rejected nami
 
 const { registerAwaiting, settleAwaiting } = await import(join(dist, 'store', 'transitions', 'awaiting.js'));
 const { registerAfterTransition } = await import(join(dist, 'store', 'transitions', 'tx.js'));
-const { raiseQuestion } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { raiseQuestion, dropBlockQuestion, answerQueued } = await import(join(dist, 'store', 'transitions', 'queue.js'));
 const { CORRECTION_KIND } = await import(join(dist, 'store', 'transitions', 'protected.js'));
 const { correctionProposalDecided } = await import(join(dist, 'spec', 'change.js'));
 const { transitionWork, getWorkItem } = await import(join(dist, 'store', 'transitions', 'work.js'));
-registerAwaiting({ raiseQuestion: (tx, a) => raiseQuestion(tx, a), correctionKind: (k) => (k === null ? undefined : CORRECTION_KIND[k]), proposalDecided: (tx, a) => correctionProposalDecided(tx, a) });
+registerAwaiting({ raiseQuestion: (tx, a) => raiseQuestion(tx, a), correctionKind: (k) => (k === null ? undefined : CORRECTION_KIND[k]), proposalDecided: (tx, a) => correctionProposalDecided(tx, a), dropBlocker: (tx, i) => dropBlockQuestion(tx, i) });
 registerAfterTransition(settleAwaiting);
 
 test('no item enters awaiting_decision without what it waits on: a classified proposal with no open question has it raised; a decided one ends the wait', (t) => {
@@ -309,6 +309,22 @@ test('an item that would be left awaiting with nothing to ask is refused where t
     /awaiting_decision with no decision it waits on|illegal/,
   );
   assert.equal(h.db.prepare(`SELECT status FROM work_items WHERE id = 'wi_x'`).get().status, 'executing', 'nothing was written');
+});
+
+test('the bare block template is the D1 blocker route: its question is raised in the same transaction; answered resume, the item returns; left by another route, the question is dropped', (t) => {
+  const h = store(t);
+  h.item('wi_b', 'verification', {}, 'executing');
+  h.item('wi_c', 'verification', {}, 'executing');
+  transact(h.db, ENGINE_ACTOR, (tx) => transitionWork(tx, getWorkItem(tx, 'wi_b'), 'awaiting_decision', {}, {}));
+  const d = h.db.prepare(`SELECT id, status, options, preview_hash FROM decisions WHERE kind = 'blocker' AND subject_id = 'wi_b'`).get();
+  assert.equal(d?.status, 'open', 'a blocker question about the item');
+  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['resume', 'cancel']);
+  transact(h.db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'resume', preview_hash: d.preview_hash, note: null }));
+  assert.deepEqual(h.db.prepare(`SELECT status, blocker FROM work_items WHERE id = 'wi_b'`).get(), { status: 'executing', blocker: null }, 'back to the status it left');
+  transact(h.db, ENGINE_ACTOR, (tx) => transitionWork(tx, getWorkItem(tx, 'wi_c'), 'awaiting_decision', {}, {}));
+  transact(h.db, ENGINE_ACTOR, (tx) => transitionWork(tx, getWorkItem(tx, 'wi_c'), 'executing', {}, {}));
+  assert.deepEqual(h.db.prepare(`SELECT status FROM decisions WHERE kind = 'blocker' AND subject_id = 'wi_c'`).all().map((r) => r.status), ['invalidated']);
+  assert.equal(h.db.prepare(`SELECT blocker FROM work_items WHERE id = 'wi_c'`).get().blocker, null);
 });
 
 // ---- obligations hold the scope ---------------------------------------------------------------

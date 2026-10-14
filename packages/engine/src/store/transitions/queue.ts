@@ -296,6 +296,27 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         blockedWorkItems: [item.id],
       };
     }
+    // The bare `block` template (awaiting.ts; the driver's ruling on M09 and
+    // M234, slice 37): the item waits for a person to send it back to the
+    // status it left, or to cancel it.
+    if (item.status === 'awaiting_decision' && blocker.reason === 'block' && item.continuation !== null) {
+      return {
+        manifest: {
+          work_item: item.id,
+          subject_status: 'awaiting_decision',
+          cause: 'block',
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: { status: item.continuation, from: item.continue_from },
+        },
+        options: [
+          { key: 'resume', label: 'Resume', consequence: `The item returns to ${item.continuation}, the status it left.`, effect: { work_item: item.id, to: item.continuation } },
+          { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
+        ],
+        question: `Work item ${item.id} (${item.kind}) is blocked awaiting a decision; it left ${item.continuation}. Resume it there, or cancel it.`,
+        blockedWorkItems: [item.id],
+      };
+    }
     if (item.status === 'eligible' && blocker.reason === 'max_chained_roles') {
       return {
         manifest: {
@@ -541,7 +562,8 @@ const BLOCKER: KindSpec = {
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'change_spec' });
         return consumed(d);
       }
-      if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
+      if (option === 'resume' && item.status === 'awaiting_decision' && item.continuation !== null) transitionWork(tx, item, item.continuation, { blocker: null }, { decision: d.id, cause: 'resume' });
+      else if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
       else transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
       return consumed(d);
     }
@@ -1699,6 +1721,13 @@ export function raiseQuestion(
     if (blocker && blocker.decision !== row.id) tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ ...blocker, decision: row.id }), item.id);
   }
   return row;
+}
+
+// The open blocker question about a work item, when the item left
+// awaiting_decision by another route than its answer (awaiting.ts).
+export function dropBlockQuestion(tx: Tx, item: string): void {
+  const rows = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(item) as DecisionRow[];
+  for (const d of rows) invalidateDecision(tx, d, 'the question no longer stands');
 }
 
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
