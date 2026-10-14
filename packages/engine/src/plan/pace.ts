@@ -14,7 +14,7 @@ import { currentHostQualification, resolveBackend } from '../store/transitions/t
 import { memAvailable } from '../store/transitions/envelope.js';
 import type { Tx } from '../store/transitions/tx.js';
 
-type Unknown = { unknown: string };
+type Unknown = { unknown: string; detail?: string };
 type Figure<T> = T | Unknown;
 
 const unknown = (reason: string): Unknown => ({ unknown: reason });
@@ -29,9 +29,10 @@ function between(a: string | null | undefined, b: string | null | undefined, wha
   const y = ms(b);
   if (x === null) return unknown(`${what[0]} was not recorded`);
   if (y === null) return unknown(`${what[1]} was not recorded`);
-  // An interval that runs backwards (a clock stepped back) is not a measured
-  // zero (the 31b review's M6).
-  if (y < x) return unknown(`${what[1]} was recorded before ${what[0]}`);
+  // An interval that runs backwards is not a measured zero (the 31b review's
+  // M6): the host's clock stepped back between the two (E148). Named so,
+  // with what the two wall times were (the driver's ruling, slice 37).
+  if (y < x) return { unknown: 'clock_stepped_back', detail: `${what[1]} (${b}) has a wall time before ${what[0]} (${a})` };
   return (y - x) / 1000;
 }
 const json = <T>(text: unknown, fallback: T): T => {
