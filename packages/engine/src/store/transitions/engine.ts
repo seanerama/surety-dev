@@ -14,6 +14,10 @@ export function recordIncarnation(tx: Tx, lock: LockRecord, scope: string | null
     .prepare('INSERT INTO "engine_incarnations" ("id", "created_at", "pid", "started_at", "host_boot_id", "scope_cgroup") VALUES (?, ?, ?, ?, ?, ?)')
     .run(lock.incarnation_id, tx.at, lock.pid, lock.started_at, lock.host_boot_id, scope);
   lapseEarlierQualifications(tx, lock.incarnation_id);
+  // The integration leases an earlier incarnation held (D1 §7.5; K2): its
+  // holders are gone with it (the engine lock), and the journal's recovery
+  // takes their operations on; no execution authority survives a start.
+  tx.db.prepare(`UPDATE "leases" SET "released_at" = ? WHERE "resource_kind" = 'integration' AND "released_at" IS NULL`).run(tx.at);
 }
 
 export function liftToFull(tx: Tx, incarnation: string): void {
