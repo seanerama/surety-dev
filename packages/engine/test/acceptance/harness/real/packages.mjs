@@ -214,7 +214,7 @@ export function elementProblems(id, d, facts = {}) {
       const s = d.schema;
       want(d.file === '.surety/architecture/modules.json', 'file .surety/architecture/modules.json');
       want(setEq(propsAt(s, []), ['version', 'modules', 'mapping_from_spec']), 'B.3 top level: version, modules, mapping_from_spec');
-      want(setEq(propsAt(s, ['modules', '[]']), ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces']), 'B.3 module: name, paths, sensitive_areas, tier_override, interfaces');
+      want(setEq(propsAt(s, ['modules', '[]']), ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements']), 'B.3 module: name, paths, sensitive_areas, tier_override, interfaces, requirements (E145 item 1)');
       want(setEq(propsAt(s, ['modules', '[]', 'interfaces', '[]']), ['name', 'kind', 'path', 'description']), 'B.3 interface: name, kind, path, description');
       want(setEq(schemaAt(s, ['modules', '[]', 'interfaces', '[]', 'kind'])?.enum, ['http', 'cli', 'module', 'file', 'event']), 'interface kind http | cli | module | file | event');
       want(setEq(propsAt(s, ['mapping_from_spec', '[]']), ['spec_module', 'to']), 'B.3 mapping: spec_module, to');

@@ -6914,7 +6914,7 @@ The cases read only the members named here; the engine may add others. Every JSO
 | `spec_writer.tier_table` | Spec Writer session | `{"tiers": [{"tier": "T1", "name": "prototype", "kinds": [...]}, {"tier": "T2", "name": "standard", …}, {"tier": "T3", "name": "critical", …}]}`, `kinds` the engine's `KIND_INVENTORY` |
 | `spec_writer.approval_blockers` | Spec Writer session | `{"blockers": [{"code", "when"}]}` with at least `spec_semantics_invalid`, `QUESTION_NO_PHASE_HINT`, `REQUIREMENT_NO_PHASE_HINT`, `QUESTION_BLOCKS_PHASE_1` |
 | `spec_writer.claims_table` | Spec Writer session, retrofit only | `{"section": "## 12. Claims and reality", "columns": ["Source", "Claim", "Observed", "Requirement"], "not_checked": "not checked", "none": "none"}` |
-| `architect.schema.modules` | Architect session; `replan` | `{"file": ".surety/architecture/modules.json", "schema": <B.3>}` |
+| `architect.schema.modules` | Architect session; `replan` | `{"file": ".surety/architecture/modules.json", "schema": <B.3>}`, the module object's properties exactly `name`, `paths`, `sensitive_areas`, `tier_override`, `interfaces` and `requirements` (E145 item 1: read by `PLAN_DESCRIPTIVE_MODULE_TOUCHED` and `module_requirement_unmapped`; objection 108) |
 | `architect.schema.roadmap` | Architect session; `replan` | `{"file": ".surety/roadmap/roadmap.json", "schema": <B.4>}` |
 | `architect.schema.phase_plan` | Architect session; `replan` | `{"file": ".surety/phases/phase-<n>.json", "schema": <B.5>}` |
 | `architect.schema.adr` | Architect session; `replan` | `{"file": ".surety/adrs/ADR-<nnn>.md", "front_matter": <schema: key, status enum proposed/accepted/superseded, supersedes>, "headings": ["Context", "Decision", "Consequences"]}` |
@@ -6932,6 +6932,8 @@ The cases read only the members named here; the engine may add others. Every JSO
 | `builder.implements` | `stage_build` | `{"implements": [requirement keys]}` |
 | `builder.integration_obligations` | `stage_build` | `{"integration_obligations": [...]}` as registered |
 | `builder.dependency_interfaces` | `stage_build` | `{"depends_on": [stage numbers], "interfaces": [{"stage", "module", "name", "kind", "path", "description"}]}`: the module map's interfaces of the modules of the stages it depends on |
+
+**The spec_change one-shot** (the Spec Writer's change) carries the nine form elements (`spec_writer.header_fields` to `spec_writer.tier_table`) and neither `approval_blockers` nor `claims_table` (the Builder's note, 2026-10-14; not a case). **The replan package** of an adopted project names the retrofit reasons too. `manifest.json` also carries `"package": "<name>"`.
 
 **The correction package** (D3's restrictions kept, M442 (a)): carries `verifier.kinds` to `verifier.post_deploy` and neither `verifier.authoring_result` nor `verifier.adoption_rule`; its `result-schema.json` has neither `governed_changes` nor `adopted_tests`. **The cases** (`M442-the-role-packages-state-what-the-engine-reads`): (a1) the Spec Writer's, (a3) the Architect's session and (a4) its replan's, (a5) phase 1's authoring, (a6) CR-1's correction, (a7) stages 1 and 2's Builders (stage 2's dependency interfaces `lib:sum`, `lib:tally`), (a8) the registry, on M401's Tally journey with every role dumping its package first; (a2) the retrofit Spec Writer's, Architect's and conformance authoring's on M408's Sums journey.
 
