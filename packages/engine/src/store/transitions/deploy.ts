@@ -754,7 +754,8 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
 // evidence is made again (the driver's ruling on M401's T1 stall, slice
 // 37): EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks with no
 // current result for the candidate because the change invalidated it
-// (`spec_changed`). Asked again at the next tick, like *_PENDING.
+// (`spec_changed`) or its correction's version superseded it. Asked again
+// at the next tick, like *_PENDING.
 export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }): boolean {
   if (r.code === 'EVIDENCE_GENERATION_STALE') return true;
   if (r.code !== 'CHECK_NOT_PASSED') return false;
@@ -766,7 +767,10 @@ export function settlingAfterChange(db: Db, candidate: string, r: { code: string
     const rows = db
       .prepare(`SELECT x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
       .all(candidate, key) as { invalidated_at: string | null; invalidated_reason: string | null }[];
-    return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed');
+    // Invalidated by the change itself (`spec_changed`), or superseded by the
+    // protected version its correction applied (`protected_version_superseded`),
+    // the checks registered again under it (M401's T1 store, 17195cf..42c58ba).
+    return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed' || x.invalidated_reason === 'protected_version_superseded');
   });
 }
 

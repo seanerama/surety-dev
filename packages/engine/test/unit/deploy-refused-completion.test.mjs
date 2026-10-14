@@ -186,10 +186,13 @@ test("a policy refusal left by a change's invalidated evidence settles: EVIDENCE
   let seqN = 0;
   check('chk_a', 'accept-r2');
   check('chk_b', 'lint');
+  check('chk_c', 'smoke');
   result('cr_a', 'chk_a', 'spec_changed');
   result('cr_b', 'chk_b', null);
+  result('cr_c', 'chk_c', 'protected_version_superseded');
   assert.equal(settlingAfterChange(db, 'cand_1', { code: 'EVIDENCE_GENERATION_STALE', subjects: [] }), true);
   assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a'] }), true, 'its only result the change invalidated');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a', 'chk_c'] }), true, "or the correction's version superseded");
   assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a', 'chk_b'] }), false, 'a current failing result is a failure');
   assert.equal(settlingAfterChange(db, 'cand_1', { code: 'ACCEPTANCE_SCOPE_INCOMPLETE', subjects: ['R9.1'] }), false);
 });
