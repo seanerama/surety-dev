@@ -1,4 +1,4 @@
-# 094: M401 (h) S2 waits for a partial correction's item to complete, which the review's S3 ruling now forbids
+# 097: M401 (h) S2 waits for a partial correction's item to complete, which the review's S3 ruling now forbids
 
 Row: M401
 Test: packages/engine/test/acceptance/M401-a-correction-resolves-only-the-checks-it-names.test.mjs, case "obligations on accept-r2 and integration; a correction rewriting accept-r2 alone resolves accept-r2 alone; integration still blocks the gate"

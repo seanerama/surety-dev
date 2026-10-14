@@ -1,4 +1,4 @@
-# 096: M433's S1 case expects a faulted capture to fail the run, but with S1 fixed the acceptance retries the transaction and the run completes
+# 099: M433's S1 case expects a faulted capture to fail the run, but with S1 fixed the acceptance retries the transaction and the run completes
 
 Row: M433
 Test: packages/engine/test/acceptance/M433-a-failed-correction-and-a-partial-one.test.mjs, case "S1: the failed run's assessment resolves nothing; its repair captures the correction and the assessment and resolves both"

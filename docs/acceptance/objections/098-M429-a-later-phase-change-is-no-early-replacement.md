@@ -1,4 +1,4 @@
-# 095: M429 (d) relies on a change touching phase 2 alone replacing phase 1's plan early, which the review's M1 ruling now forbids
+# 098: M429 (d) relies on a change touching phase 2 alone replacing phase 1's plan early, which the review's M1 ruling now forbids
 
 Row: M429
 Test: packages/engine/test/acceptance/M429-phase-verification-and-its-sign-off.test.mjs, case "(d) a sign-off bound to a plan generation replaced while the Verifier ran: …"
