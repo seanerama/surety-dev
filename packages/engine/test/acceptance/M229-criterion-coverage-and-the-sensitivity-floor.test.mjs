@@ -234,6 +234,12 @@ describe('M229 (c) partial delivery does not suppress a floor', () => {
         const found = candidatesOfProject(fx.home, project.id);
         return found.length > 0 ? found : undefined;
       }, { max: 16, what: `${what}: the first stage's candidate` });
+      // Under K1/K2 the second stage's failing Builder is re-dispatched by the
+      // ticks its ends request, each with its journaled workspace, and a gate
+      // evaluated while one of the project's journal operations is in flight
+      // is GIT_JOURNAL_PENDING (objection 111; SEAM §458). The gate is
+      // evaluated once that Builder has parked at its repair limit.
+      await tickUntil(fx.engine, project.id, () => withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(s2.work_item)).status === 'parked', { max: 16, what: `${what}: the second stage's Builder parked` });
       await passAll(fx.engine, project.id, c.id, Object.values(ids));
       const evaluation = await evaluate(fx.engine, project.id, c.id, 'stage', { stage: s1.id });
       const scope = scopeRead(fx.home, evaluation);

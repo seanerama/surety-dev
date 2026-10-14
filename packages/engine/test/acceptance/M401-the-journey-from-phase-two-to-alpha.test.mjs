@@ -147,8 +147,26 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.deepEqual(touched.filter((r) => !INVALIDATING.includes(r.invalidated_reason)).map((r) => [r.id, r.invalidated_reason]), [], `accept-r2's results from before CR-1's approval all invalidated, spec_changed or protected_version_superseded (${JSON.stringify(touched.map((r) => [r.id, r.invalidated_reason]))})`);
     const obligations = obligationsOf(fx.home, p.id);
     assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R2.1')), `an obligation for the check covering R2.1 (${JSON.stringify(obligations)})`);
-    // R4's statement sharpened (`text_changed`): its criterion's checks are listed too (D6 §4.4, B05; objection 070).
-    assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
+    // R4's statement sharpened (`text_changed`): its criterion's checks are
+    // listed too (D6 §4.4, B05; objection 070), when they exist at CR-1's
+    // approval. Objection 112, the driver's ruling (A): phase 2's authoring
+    // proposal (the first to carry accept-r4) may be applied after CR-1's
+    // approval; then no obligation is owed for it, and its question names
+    // what it was authored against and the criteria the change touched, so
+    // the owner who approves it does so knowingly. Ordered by event seq.
+    const firstR4 = withStore(fx.home, (db) => db.prepare(`SELECT c."protected_version", v."proposal" FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version" WHERE c."project" = ? AND c."key" = 'accept-r4' ORDER BY c.rowid LIMIT 1`).get(p.id));
+    assert.ok(firstR4?.proposal, `the fixture is live: phase 2's authoring applied accept-r4 (${JSON.stringify(firstR4)})`);
+    const r4Applied = eventsAbout(fx.home, 'protected.applied', p.id).find((e) => e.subject?.proposal === firstR4.proposal);
+    assert.ok(r4Applied, 'its application recorded (protected.applied)');
+    if (r4Applied.seq < approved.seq) {
+      assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `phase 2's authoring applied before CR-1's approval: an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
+    } else {
+      const questions = withStore(fx.home, (db) => db.prepare('SELECT "id", "kind", "status", "question" FROM "decisions" WHERE "subject_id" = ? ORDER BY rowid').all(firstR4.proposal));
+      assert.ok(
+        questions.some((d) => /authored against specification version 1\b/.test(d.question ?? '') && /\bR4\.1\b/.test(d.question ?? '')),
+        `phase 2's authoring applied after CR-1's approval (ruling (A)): its question names the version it was authored against and the touched criterion R4.1 (${JSON.stringify(questions)})`,
+      );
+    }
     const correction = workOf(fx.home, p.id, 'check_correction');
     assert.ok(correction.some((w) => w.status === 'complete'), 'check_correction done');
     const replans = workOf(fx.home, p.id, 'replan').filter((w) => w.trigger_source === 'spec_change');
@@ -220,11 +238,16 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
     // Counted from the store (objection 074): decisions consumed by a human answer, and the owner's request, after the switch.
+    // Objection 112: phase 2's authoring proposal, when it is classified
+    // unclassifiable, is the owner's to approve too (at most once).
     const acts = humanActsOf(fx.home, J.ctx.project, { sinceSeq: J.switched.seq });
-    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)})`);
-    const owned = acts.find((h) => h.kind === 'check_correction_unclassifiable');
-    assert.equal(correctionOrigin(fx.home, owned.id), 'check_correction', 'the unclassifiable decision is CR-1\'s check correction');
-    assert.equal(owned.option, 'approve', 'answered approve by the owner');
+    const show = `${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)}`;
+    assert.deepEqual([...new Set(acts.map((h) => h.kind))].sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${show})`);
+    assert.deepEqual([acts.filter((h) => h.kind === 'spec_change_request').length, acts.filter((h) => h.kind === 'spec_change').length], [1, 1], `CR-1 submitted once and its change consumed once (${show})`);
+    const owned = acts.filter((h) => h.kind === 'check_correction_unclassifiable');
+    const origins = owned.map((h) => correctionOrigin(fx.home, h.id));
+    assert.ok(origins.includes('check_correction') && origins.every((o) => o === 'check_correction' || o === 'check_authoring') && origins.filter((o) => o === 'check_authoring').length <= 1, `the unclassifiable decisions: CR-1's check correction, and at most phase 2's authoring (${JSON.stringify(origins)})`);
+    assert.ok(owned.every((h) => h.option === 'approve'), 'answered approve by the owner');
   });
 
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {
