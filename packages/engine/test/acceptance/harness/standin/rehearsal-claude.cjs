@@ -189,8 +189,29 @@ if (canary?.kind === 'positive') {
   fail();
 }
 
+// M5 (SEAM.md §456): a package that states what the engine reads (its
+// manifest's `reads`, or a session turn's) is played by the package-driven
+// fakes, when this script carries them and the rehearsal's content
+// (rehearsal-claude-m5.cjs, made by harness/real/m5-lane.mjs): form from the
+// package alone, content from the owner's words and SURETY_REHEARSAL_CONTENT.
+function playM5() {
+  if (typeof SURETY_PACKAGE_FAKES === 'undefined' || typeof SURETY_REHEARSAL_CONTENT === 'undefined') return false;
+  let manifest = null;
+  try {
+    manifest = JSON.parse(readFileSync('/surety/context/manifest.json', 'utf8'));
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(manifest?.reads) && manifest?.kind !== 'session' && !/^(check_authoring|replan|spec_change|phase_verification)$/.test(String(manifest?.kind))) return false;
+  assistant(usageOf(U));
+  const played = SURETY_PACKAGE_FAKES.play({ context: '/surety/context', workspace: '/surety/workspace', content: SURETY_REHEARSAL_CONTENT });
+  finish(played.result);
+  return true;
+}
+
 // A journey role.
 function playRole() {
+if (playM5()) return;
 const prompt = readFileSync('/surety/context/prompt.md', 'utf8');
 // A stage marked "[rehearsal: provider unreachable]" (M2-hands-on.sh's
 // rehearsal-only step 10b; E84, E85): Claude Code when its provider cannot

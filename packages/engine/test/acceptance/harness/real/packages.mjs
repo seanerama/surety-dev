@@ -33,12 +33,12 @@ export const SPEC_WRITER_ELEMENTS = Object.freeze([
 export const SPEC_WRITER_RETROFIT_ELEMENTS = Object.freeze([...SPEC_WRITER_ELEMENTS, 'spec_writer.claims_table']);
 export const ARCHITECT_ELEMENTS = Object.freeze(['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing']);
 export const VERIFIER_COMMON_ELEMENTS = Object.freeze(['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy']);
-export const AUTHORING_ELEMENTS = Object.freeze([...VERIFIER_COMMON_ELEMENTS, 'verifier.authoring_result']);
+export const AUTHORING_ELEMENTS = Object.freeze([...VERIFIER_COMMON_ELEMENTS, 'verifier.toolchain', 'verifier.authoring_result']);
 export const AUTHORING_RETROFIT_ELEMENTS = Object.freeze([...AUTHORING_ELEMENTS, 'verifier.adoption_rule']);
 export const CORRECTION_ELEMENTS = VERIFIER_COMMON_ELEMENTS;
 // What the correction package must NOT carry (M442 (a): "the correction
 // package without the governed-change permissions").
-export const CORRECTION_ABSENT = Object.freeze(['verifier.authoring_result', 'verifier.adoption_rule']);
+export const CORRECTION_ABSENT = Object.freeze(['verifier.toolchain', 'verifier.authoring_result', 'verifier.adoption_rule']);
 export const BUILDER_ELEMENTS = Object.freeze(['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces']);
 export const ALL_ELEMENTS = Object.freeze([...new Set([...SPEC_WRITER_RETROFIT_ELEMENTS, ...ARCHITECT_ELEMENTS, ...AUTHORING_RETROFIT_ELEMENTS, ...BUILDER_ELEMENTS])]);
 
@@ -287,6 +287,14 @@ export function elementProblems(id, d, facts = {}) {
       want(d.variable === 'SURETY_TARGET_<NAME>', 'the target variable SURETY_TARGET_<NAME>');
       want(d.environments === null || Array.isArray(d.environments), 'the environments (or null: unknown)');
       want(!Array.isArray(d.environments) || new Set(d.environments.map((e) => e?.name)).size === d.environments.length, 'each environment once, by its name');
+      break;
+    case 'verifier.toolchain':
+      want(d.file === '.surety/checks/protected-policy.json', 'file .surety/checks/protected-policy.json');
+      want(Array.isArray(d.members) && has(d.members, ['protected_paths', 'check_commands', 'runner_config']), "the governed file's closed members");
+      want(d.check_commands && typeof d.check_commands.form === 'object' && d.check_commands.form !== null, "check_commands' form");
+      want(d.runner_config && typeof d.runner_config === 'object', "runner_config's forms (read_paths, path)");
+      want('current' in d && (d.current === null || typeof d.current === 'object'), 'the effective governed values, or null');
+      want(Array.isArray(d.runtimes) && d.runtimes.some((r) => r?.name === 'node' && typeof r.path === 'string' && r.path.startsWith('/')), 'the runtimes, node among them by absolute path');
       break;
     case 'verifier.authoring_result':
       want(has(d.fields, ['governed_changes', 'deferred_criteria', ...(facts.retrofit ? ['adopted_tests'] : [])]), `the authoring result's fields${facts.retrofit ? ' with adopted_tests' : ''}`);
