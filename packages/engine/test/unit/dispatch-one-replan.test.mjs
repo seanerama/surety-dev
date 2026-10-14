@@ -94,6 +94,10 @@ test("a specification change's replan is held while its request's check correcti
   assert.equal(held, `depends on the check correction of specification change request ${R}`);
   assert.equal(holdReasonOf(held), 'depends_on');
 
+  // Parked for the owner, the correction is not under way: the replan goes on.
+  db.prepare(`UPDATE work_items SET status = 'parked' WHERE id = 'wi_cc'`).run();
+  assert.equal(dispatchBlocker(db, replan(), { check: false }), null, 'a parked correction holds nothing');
+
   // The correction applied: its proposal's new version re-queued a phase check.
   db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_cc'`).run();
   db.prepare(

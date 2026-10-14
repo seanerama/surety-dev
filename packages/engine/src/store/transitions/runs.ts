@@ -308,7 +308,10 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     // correction is unfinished, and until the phase checks its new protected
     // version re-queued have results. Run beside them (D6 K2), its plan check
     // would read the completed phase's evidence as unknown on the newest
-    // candidate and refuse the plan; unknown still never counts as held.
+    // candidate and refuse the plan; unknown still never counts as held. A
+    // correction parked for the owner (M433 S3: it resolved part of what it
+    // was given) is not under way: the replan goes on, and its plan check
+    // reads the evidence as it is (M430's M4).
     let request: unknown;
     try {
       request = (JSON.parse(item.subject) as { request?: unknown }).request;
@@ -317,7 +320,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     }
     if (typeof request === 'string') {
       const correcting = live(
-        `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND json_extract("subject", '$.request') = ? AND "status" NOT IN ('complete', 'cancelled')`,
+        `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND json_extract("subject", '$.request') = ? AND "status" NOT IN ('complete', 'cancelled', 'parked')`,
         item.project,
         request,
       );
