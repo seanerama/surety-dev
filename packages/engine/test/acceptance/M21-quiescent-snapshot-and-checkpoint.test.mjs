@@ -26,7 +26,7 @@ import { assertWorkHistory } from './harness/invariants.mjs';
 import { addGitProject, addItem, roleThat, roleThatHolds, runToEnd, runToHold } from './harness/gitruns.mjs';
 import { acceptanceState, assertCommitted, operationsOf, revisionsOf } from './harness/journal.mjs';
 import { gitQuiet, isAncestor, refOid, refsOf } from './harness/repos.mjs';
-import { getRow, resolvedPath, run as runRow, runsOf, scriptedEngine, waitForRun, workItem } from './harness/runs.mjs';
+import { getRow, pauseProject, resolvedPath, resumeProject, run as runRow, runsOf, scriptedEngine, waitForRun, workItem } from './harness/runs.mjs';
 import { BOUNDARY, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -40,6 +40,10 @@ describe('M21 no snapshot of a workspace that may still have a writer', () => {
     const item = await addItem(fx, project.id, 'fix');
     fx.scripted.script(item, [roleThatHolds([step.write('src/part-one.js', 'export const one = 1;\n'), step.write('docs/progress.md', 'half way\n')], [], { checkpoint: true })]);
     const { run, launch, workspace } = await runToHold(fx, project.id, item);
+    // Under K1 the run's end requests the tick that dispatches the
+    // continuation (objection 111; SEAM §458): the project is paused while the
+    // run holds, so the work is read as the checkpoint leaves it.
+    await pauseProject(fx.engine, project.id);
     const domain = withStore(fx.home, (db) => db.prepare('SELECT "id" FROM "execution_domains" WHERE "run" = ?').get(run.id).id);
     const before = acceptanceState(fx, project.id);
 
@@ -87,12 +91,20 @@ describe('M21 work continues from a checkpoint in a new run', () => {
     const project = await addGitProject(fx);
     const item = await addItem(fx, project.id, 'fix');
     fx.scripted.script(item, [
-      roleThat([step.write('src/part-one.js', 'export const one = 1;\n')], { checkpoint: true }),
+      roleThatHolds([step.write('src/part-one.js', 'export const one = 1;\n')], [], { checkpoint: true }),
       roleThatHolds([step.write('src/part-two.js', 'export const two = 2;\n')]),
     ]);
-    const first = await runToEnd(fx, project.id, item);
+    // Under K1 the first run's end requests the tick that dispatches the
+    // continuation (objection 111; SEAM §458): the project is paused while the
+    // first run holds (released by its invocation, so the second's hold
+    // stands), and resumed once the work has been read.
+    const { launch: firstLaunch } = await runToHold(fx, project.id, item);
+    await pauseProject(fx.engine, project.id);
+    fx.scripted.release(firstLaunch.invocation, 'gate');
+    const first = await waitForRun(fx.home, item, { index: 0, state: 'ended' });
     const checkpoint = assertCommitted(fx, first.id, { kind: 'checkpoint', parent: project.base, integrated: false, branchAt: project.base, changes: { 'src/part-one.js': 'A' } });
     assert.equal(workItem(fx.home, item).status, 'eligible');
+    await resumeProject(fx.engine, project.id);
 
     // The continuation: a new run, from the checkpoint.
     const { run: second, workspace } = await runToHold(fx, project.id, item, { index: 1 });

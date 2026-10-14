@@ -113,7 +113,6 @@ describe('M115 every unknown quarantines', () => {
     const scope = await assertEngineInScope(fx);
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     const { run, domain } = await roleHolding(fx, project, item, ignoring);
     await stopRun(fx.engine, project, run.id);
     await waitForEvent(fx.home, 'domain', domain.id, 'domain.launch_closed');
@@ -126,6 +125,10 @@ describe('M115 every unknown quarantines', () => {
       }
     });
     await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
+    // Under K2 other work of the project runs beside a live run; it is the
+    // quarantine that holds the project (objection 111; SEAM §458), so the
+    // other work is made once the quarantine is recorded.
+    const waiting = await addWork(fx.engine, project, 'review');
     const before = assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
     await assertHoldsAcrossTicks(fx, project, run.id, before);
     assert.equal(runsOf(fx.home, waiting).length, 0, 'nothing else of the project is dispatched');
@@ -260,9 +263,7 @@ describe('M115 every unknown quarantines', () => {
     const scope = await assertEngineInScope(fx);
     const project = (await addProject(fx)).id;
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     fx.scripted.script(item, [script.complete()]);
-    fx.scripted.script(waiting, [script.complete()]);
     await requestTick(fx.engine, project);
     await fx.engine.waitUntil('barrier:launcher.before_placement');
     const run = await waitForRun(fx.home, item);
@@ -275,6 +276,11 @@ describe('M115 every unknown quarantines', () => {
     await armFault(fx.engine, { point: 'launcher_wait' });
     await stopRun(fx.engine, project, run.id);
     await waitForQuarantine(fx.home, run.id, { timeoutMs: 30_000 });
+    // Under K2 other work of the project runs beside a live run; it is the
+    // quarantine that holds the project (objection 111; SEAM §458), so the
+    // other work is made once the quarantine is recorded.
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(waiting, [script.complete()]);
     const before = assertUnknownQuarantine(fx, project, run.id, { outcome: 'stopped' });
 
     // The launcher is outstanding: alive, still in the supervisor leaf, not a

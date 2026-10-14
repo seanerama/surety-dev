@@ -380,9 +380,23 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
       // §351), and a journey that says so leaves its question unanswered
       // (objection 105; SEAM.md §451).
       if (!(ctx.answerKinds ?? ROUTED_KINDS).includes(d.kind)) continue;
-      const option = d.options.some((o) => o.key === answer) ? answer : d.options[0].key;
-      const res = await fx.engine.post(`/v1/projects/${project}/decisions/${d.id}/answer`, { option, preview_hash: d.preview_hash });
-      ctx.humanActs.push({ kind: d.kind, id: d.id, option, status: res.status, at: new Date().toISOString() });
+      const post = async (x) => {
+        const option = x.options.some((o) => o.key === answer) ? answer : x.options[0].key;
+        const res = await fx.engine.post(`/v1/projects/${project}/decisions/${x.id}/answer`, { option, preview_hash: x.preview_hash });
+        ctx.humanActs.push({ kind: x.kind, id: x.id, option, status: res.status, at: new Date().toISOString() });
+        return res;
+      };
+      let res = await post(d);
+      // A new result that moves a proposed change's impact asks again (D6
+      // §4.4; the driver's ruling, slice 37): an answer refused 409 stale or
+      // invalidated is given again to the open spec_change about the same
+      // request, as an owner reading the current question would.
+      for (let again = 0, current = d; d.kind === 'spec_change' && res.status === 409 && /decision_(stale|invalidated)/.test(res.body?.code ?? '') && again < 5; again++) {
+        const next = openDecisions(fx.home, project).find((x) => x.kind === 'spec_change' && x.subject_id === current.subject_id && x.id !== current.id);
+        if (!next) break;
+        current = next;
+        res = await post(next);
+      }
     }
     // One tick, then every run it started ended (the journey's scripts all
     // finish by themselves); the project lane's real domains take longer.
@@ -399,6 +413,20 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
 export const candidatesOfProject = (home, project) => rows(home, 'SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"', project);
 export const evaluationsOfKind = (home, project, kind) => rows(home, 'SELECT * FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = ? ORDER BY rowid', project, kind).map((e) => ({ ...e, reasons: json2(e.reasons) }));
 export const signoffsOfProject = (home, project) => rows(home, 'SELECT s.* FROM "signoffs" s JOIN "candidates" k ON k."id" = s."candidate" WHERE k."project" = ? ORDER BY s.rowid', project).map((s) => ({ ...s, binding: json2(s.binding) }));
+// Objection 109 (the driver's ruling): one verification and one review per
+// candidate (E36 item 3; SEAM.md §70), so under K2 stages integrated together
+// share them. A stage's candidate is the one its last satisfied stage gate was
+// evaluated on; on it, the completed Verifier runs of its nomination's
+// verification and the completed Reviewer runs of its review, and its
+// recorded executions.
+export function stageCandidateRuns(home, project, stage) {
+  const candidate = rows(home, `SELECT "candidate" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? AND "outcome" = 'satisfied' ORDER BY rowid DESC LIMIT 1`, project, stage)[0]?.candidate ?? null;
+  const completed = (kind, role, source) =>
+    candidate === null
+      ? 0
+      : rows(home, `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE w."project" = ? AND w."kind" = ? AND w."trigger_id" = ? AND (? IS NULL OR w."trigger_source" = ?) AND r."role" = ? AND r."outcome" = 'completed'`, project, kind, candidate, source, source, role)[0].n;
+  return { candidate, verifier: completed('verification', 'verifier', 'nomination'), reviewer: completed('review', 'reviewer', null) };
+}
 export const resultsOf = (home, project) => rows(home, 'SELECT * FROM "check_results" WHERE "project" = ? ORDER BY "execution_seq"', project);
 export const checkRows = (home, project) => rows(home, 'SELECT * FROM "checks" WHERE "project" = ? ORDER BY rowid', project);
 export const protectedVersionsOf = (home, project) => rows(home, 'SELECT * FROM "protected_versions" WHERE "project" = ? ORDER BY "seq"', project);

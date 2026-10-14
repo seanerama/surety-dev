@@ -55,6 +55,7 @@ import {
   runsOfProject,
   signoffsOfProject,
   specRevisions,
+  stageCandidateRuns,
   stagesOfPlan,
   workOf,
   humanActsOf,
@@ -128,12 +129,44 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     const [v1, v2] = specRevisions(fx.home, p.id);
     assert.ok(v2 && v2.supersedes === v1.id, 'version 2 supersedes 1');
     assert.equal(projectRow(fx.home, p.id).spec_evidence_generation, 2);
-    const invalidated = resultsOf(fx.home, p.id).filter((r) => r.invalidated_reason === 'spec_changed');
-    assert.ok(invalidated.length > 0, 'accept-r2\'s results invalidated spec_changed');
+    // Objection 107 (the driver's ruling): under Q2 a protected proposal in the
+    // engine's hands (phase 2's authoring, captured before CR-1) applies first,
+    // so accept-r2's earlier results may already be invalidated
+    // `protected_version_superseded` when CR-1 is approved. Either way every
+    // accept-r2 result recorded before the approval is invalidated, by one of
+    // the two, and none stays current evidence. Read in event order (seq).
+    const approved = eventsAbout(fx.home, 'spec.change_approved', p.id).find((e) => e.payload?.version === 2);
+    assert.ok(approved, 'CR-1 approved as version 2 (spec.change_approved)');
+    const keyOf = new Map(withStore(fx.home, (db) => db.prepare('SELECT "id", "key" FROM "checks" WHERE "project" = ?').all(p.id)).map((c) => [c.id, c.key]));
+    const recordedAt = new Map(eventsAbout(fx.home, 'check.result', p.id).map((e) => [e.subject.check_result, e.seq]));
+    const acceptR2 = resultsOf(fx.home, p.id).filter((r) => keyOf.get(r.check) === 'accept-r2');
+    assert.deepEqual(acceptR2.filter((r) => !recordedAt.has(r.id)).map((r) => r.id), [], 'every accept-r2 result has its check.result event');
+    const touched = acceptR2.filter((r) => recordedAt.get(r.id) < approved.seq);
+    assert.ok(touched.length > 0, 'the fixture is live: accept-r2 had results before CR-1\'s approval');
+    const INVALIDATING = ['spec_changed', 'protected_version_superseded'];
+    assert.deepEqual(touched.filter((r) => !INVALIDATING.includes(r.invalidated_reason)).map((r) => [r.id, r.invalidated_reason]), [], `accept-r2's results from before CR-1's approval all invalidated, spec_changed or protected_version_superseded (${JSON.stringify(touched.map((r) => [r.id, r.invalidated_reason]))})`);
     const obligations = obligationsOf(fx.home, p.id);
     assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R2.1')), `an obligation for the check covering R2.1 (${JSON.stringify(obligations)})`);
-    // R4's statement sharpened (`text_changed`): its criterion's checks are listed too (D6 §4.4, B05; objection 070).
-    assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
+    // R4's statement sharpened (`text_changed`): its criterion's checks are
+    // listed too (D6 §4.4, B05; objection 070), when they exist at CR-1's
+    // approval. Objection 112, the driver's ruling (A): phase 2's authoring
+    // proposal (the first to carry accept-r4) may be applied after CR-1's
+    // approval; then no obligation is owed for it, and its question names
+    // what it was authored against and the criteria the change touched, so
+    // the owner who approves it does so knowingly. Ordered by event seq.
+    const firstR4 = withStore(fx.home, (db) => db.prepare(`SELECT c."protected_version", v."proposal" FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version" WHERE c."project" = ? AND c."key" = 'accept-r4' ORDER BY c.rowid LIMIT 1`).get(p.id));
+    assert.ok(firstR4?.proposal, `the fixture is live: phase 2's authoring applied accept-r4 (${JSON.stringify(firstR4)})`);
+    const r4Applied = eventsAbout(fx.home, 'protected.applied', p.id).find((e) => e.subject?.proposal === firstR4.proposal);
+    assert.ok(r4Applied, 'its application recorded (protected.applied)');
+    if (r4Applied.seq < approved.seq) {
+      assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `phase 2's authoring applied before CR-1's approval: an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
+    } else {
+      const questions = withStore(fx.home, (db) => db.prepare('SELECT "id", "kind", "status", "question" FROM "decisions" WHERE "subject_id" = ? ORDER BY rowid').all(firstR4.proposal));
+      assert.ok(
+        questions.some((d) => /authored against specification version 1\b/.test(d.question ?? '') && /\bR4\.1\b/.test(d.question ?? '')),
+        `phase 2's authoring applied after CR-1's approval (ruling (A)): its question names the version it was authored against and the touched criterion R4.1 (${JSON.stringify(questions)})`,
+      );
+    }
     const correction = workOf(fx.home, p.id, 'check_correction');
     assert.ok(correction.some((w) => w.status === 'complete'), 'check_correction done');
     const replans = workOf(fx.home, p.id, 'replan').filter((w) => w.trigger_source === 'spec_change');
@@ -184,14 +217,37 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     const used = signoffsOfProject(fx.home, p.id).find((s) => s.scope === 'phase' && s.candidate === completion.candidate && s.binding?.spec_revision === completion.spec_revision && s.binding?.protected_version === completion.protected_version);
     assert.ok(used, `the phase sign-off the completion used is bound to v2's spec revision (${JSON.stringify(signoffsOfProject(fx.home, p.id).filter((s) => s.scope === 'phase').map((s) => [s.candidate, s.binding]))})`);
     assert.ok(obligations.filter((o) => o.reason === 'spec_changed').every((o) => o.resolved_at), 'every spec_changed obligation resolved before the end');
+    // Its obligations resolved before any gate passes on the check (objection
+    // 107): every satisfied evaluation after the approval that names an obliged
+    // check comes after that obligation's check.obligation_resolved (by seq).
+    const resolvedAt = new Map(eventsAbout(fx.home, 'check.obligation_resolved', p.id).map((e) => [e.subject.check_obligation, e.seq]));
+    const obliged = obligations.filter((o) => o.reason === 'spec_changed' && o.generation === 2);
+    assert.deepEqual(obliged.filter((o) => !resolvedAt.has(o.id)).map((o) => o.id), [], 'each obligation\'s resolution recorded (check.obligation_resolved)');
+    const early = [];
+    let passedOn = 0;
+    for (const e of eventsAbout(fx.home, 'gate.evaluated', p.id).filter((x) => x.seq > approved.seq && x.payload?.outcome === 'satisfied')) {
+      const row = withStore(fx.home, (db) => db.prepare('SELECT "checks" FROM "gate_evaluations" WHERE "id" = ?').get(e.subject.evaluation));
+      const keys = new Set(Object.values(JSON.parse(row?.checks ?? '{}')).map((x) => x?.key));
+      for (const o of obliged.filter((x) => keys.has(x.key))) {
+        passedOn++;
+        if (!(resolvedAt.get(o.id) < e.seq)) early.push([e.payload.gate_kind, e.subject.evaluation, o.key, e.seq, resolvedAt.get(o.id) ?? null]);
+      }
+    }
+    assert.ok(passedOn > 0, 'the fixture is live: a gate passed on an obliged check after the approval');
+    assert.deepEqual(early, [], 'no gate passed on an obliged check before its obligation was resolved ([gate, evaluation, check, gate seq, resolution seq])');
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
     // Counted from the store (objection 074): decisions consumed by a human answer, and the owner's request, after the switch.
+    // Objection 112: phase 2's authoring proposal, when it is classified
+    // unclassifiable, is the owner's to approve too (at most once).
     const acts = humanActsOf(fx.home, J.ctx.project, { sinceSeq: J.switched.seq });
-    assert.deepEqual(acts.map((h) => h.kind).sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)})`);
-    const owned = acts.find((h) => h.kind === 'check_correction_unclassifiable');
-    assert.equal(correctionOrigin(fx.home, owned.id), 'check_correction', 'the unclassifiable decision is CR-1\'s check correction');
-    assert.equal(owned.option, 'approve', 'answered approve by the owner');
+    const show = `${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)}`;
+    assert.deepEqual([...new Set(acts.map((h) => h.kind))].sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${show})`);
+    assert.deepEqual([acts.filter((h) => h.kind === 'spec_change_request').length, acts.filter((h) => h.kind === 'spec_change').length], [1, 1], `CR-1 submitted once and its change consumed once (${show})`);
+    const owned = acts.filter((h) => h.kind === 'check_correction_unclassifiable');
+    const origins = owned.map((h) => correctionOrigin(fx.home, h.id));
+    assert.ok(origins.includes('check_correction') && origins.every((o) => o === 'check_correction' || o === 'check_authoring') && origins.filter((o) => o === 'check_authoring').length <= 1, `the unclassifiable decisions: CR-1's check correction, and at most phase 2's authoring (${JSON.stringify(origins)})`);
+    assert.ok(owned.every((h) => h.option === 'approve'), 'answered approve by the owner');
   });
 
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {
@@ -207,13 +263,39 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     assert.ok(signoff, 'the phase sign-off on the bound candidate');
     assert.deepEqual([signoff.binding?.protected_version, signoff.binding?.spec_revision, signoff.binding?.plan_generation], [phase2.completion_binding.protected_version, phase2.completion_binding.spec_revision, phase2.completion_binding.generation]);
     const runs = runsOfProject(fx.home, p.id).filter((r) => r.kind !== 'session' && r.started_at && after_(r.started_at, switched.at));
-    assert.ok(runs.filter((r) => r.role === 'verifier').length >= 2 && runs.filter((r) => r.role === 'reviewer').length >= 2, `Verifier and Reviewer runs per stage (${JSON.stringify(runs.map((r) => r.role))})`);
+    // Objection 109: one verification and one review per candidate, so stages
+    // integrated together under K2 share them; every stage's candidate is
+    // verified by a Verifier and reviewed, through engine-run checks in check domains.
+    const phase2Candidates0 = new Set(candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, switched.at)).map((c) => c.id));
+    for (const s of phase2Stages) {
+      const on = stageCandidateRuns(fx.home, p.id, s.id);
+      assert.ok(on.candidate && phase2Candidates0.has(on.candidate), `stage ${s.number} verified on a candidate nominated on the project lane (${JSON.stringify(on)})`);
+      assert.ok(on.verifier >= 1 && on.reviewer >= 1, `stage ${s.number}'s candidate verified by a Verifier and reviewed (${JSON.stringify(on)}; runs ${JSON.stringify(runs.map((r) => r.role))})`);
+      const recorded = executionsOf(fx.home, on.candidate).filter((x) => x.status === 'recorded');
+      assert.ok(recorded.length > 0, `stage ${s.number}'s candidate has engine-run checks`);
+      for (const x of recorded) assert.equal(domainRow(fx.home, x.domain)?.check_execution, x.id, `${x.key} ran in a check domain of its own`);
+    }
     const phase2Candidates = candidatesOfProject(fx.home, p.id).filter((c) => after_(c.nominated_at, switched.at));
     assert.ok(phase2Candidates.some((c) => c.id === phase2.completion_binding.candidate), 'the bound candidate was nominated on the project lane');
-    for (const c of phase2Candidates) {
-      const xs = executionsOf(fx.home, c.id).filter((x) => x.status === 'recorded');
-      assert.ok(xs.length > 0, `candidate ${c.seq} has engine-run checks`);
-      for (const x of xs) assert.equal(domainRow(fx.home, x.domain)?.check_execution, x.id, `${x.key} ran in a check domain of its own`);
+    // Objection 107 (the driver's ruling): under K2 phase 2's stages integrate
+    // moments apart, and a candidate superseded before any of its executions
+    // starts has them cancelled (D3 §2.5). The checks are read on the candidate
+    // the phase completed on, which is the one deployed: they all ran, in check
+    // domains of their own, by the self-tested runner, and passed.
+    const bound = phase2.completion_binding.candidate;
+    assert.equal(J.deployed?.id, bound, 'the candidate the phase completed on is the one deployed');
+    const xs = executionsOf(fx.home, bound).filter((x) => x.status === 'recorded');
+    assert.ok(xs.length > 0, 'the bound candidate has engine-run checks');
+    for (const x of xs) assert.equal(domainRow(fx.home, x.domain)?.check_execution, x.id, `${x.key} ran in a check domain of its own`);
+    const phaseGate = evaluationsOfKind(fx.home, p.id, 'phase').filter((e) => e.candidate === bound && e.outcome === 'satisfied').at(-1);
+    const deciding = Object.values(JSON.parse(phaseGate?.checks ?? '{}')).map((x) => x?.deciding?.result).filter(Boolean);
+    assert.ok(deciding.length > 0, 'the phase gate on the bound candidate decided from results');
+    for (const id of deciding) {
+      const r = withStore(fx.home, (db) => db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(id));
+      const x = withStore(fx.home, (db) => db.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(r?.execution ?? null));
+      assert.equal(r?.exit_status, 0, `${x?.key ?? id}: passed`);
+      assert.ok(selfTested(fx.home, r), `${x?.key ?? id}: by the self-tested runner`);
+      assert.equal(domainRow(fx.home, x?.domain)?.check_execution, x?.id, `${x?.key ?? id}: ran in a check domain of its own`);
     }
   });
 

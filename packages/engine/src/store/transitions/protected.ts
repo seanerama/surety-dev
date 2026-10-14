@@ -8,7 +8,7 @@
 import { followUpsDue, recordDeferrals, resolveDeferrals } from '../../plan/deferral.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { registerPhaseAtApplication } from '../../plan/phase.js';
-import { correctionProposalDecided, resolveByCorrection } from '../../spec/change.js';
+import { correctionProposalDecided, lateObligations, resolveByCorrection } from '../../spec/change.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
@@ -359,6 +359,9 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   const authoringReady = authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // A spec change's correction applied resolves its obligations (D6 §4.5).
   resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // A check authored before a change's approval, covering a criterion it
+  // touched, owes its correction (the driver's ruling 2, slice 37).
+  lateObligations(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // Its item, waiting for the proposal, completes (the driver's ruling Q13).
   correctionProposalDecided(tx, { proposal: inputs.proposal, applied: true });
   return { version: v.id, ...(authoringReady ? { authoring_ready: true } : {}) };

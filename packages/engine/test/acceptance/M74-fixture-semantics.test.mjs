@@ -26,12 +26,12 @@ import { describe, test } from 'node:test';
 
 import { consume, openDecision } from './harness/decisions.mjs';
 import { PROTECTED_FILES, capturedProposal, check, effectiveVersion, evaluationsOf, installChecks, nominated, passAll, reasonCodes, reviewerApproves, stageGate, successor, waitApplied } from './harness/gates.mjs';
-import { addGitProject, addItem, permittedEdit, roleThat, runToEnd } from './harness/gitruns.mjs';
+import { addGitProject, addItem, permittedEdit, roleThat, roleThatHolds, runToEnd, runToHold } from './harness/gitruns.mjs';
 import { revisionsOf } from './harness/journal.mjs';
 import { awayFromMidnight, getLedger } from './harness/ledger.mjs';
 import { until } from './harness/mono.mjs';
 import { readCandidate, readProject, readRun } from './harness/reads.mjs';
-import { addProject, addWork, getRow, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
+import { addProject, addWork, getRow, pauseProject, resumeProject, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { VALID_RESULT, script, step } from './harness/scripted.mjs';
 import { parseJson } from './harness/store.mjs';
 
@@ -74,15 +74,23 @@ describe('M74 the states the accepted screens show are states the kernel produce
     const engine = fx.engine;
     const project = await addGitProject(fx);
     const item = await addItem(fx, project.id, 'fix');
-    fx.scripted.script(item, [roleThat([permittedEdit()], { checkpoint: true }), roleThat([step.write('src/second.js', 'export const second = 2;\n')])]);
+    fx.scripted.script(item, [roleThatHolds([permittedEdit()], [], { checkpoint: true }), roleThat([step.write('src/second.js', 'export const second = 2;\n')])]);
 
-    const first = await runToEnd(fx, project.id, item);
+    // Objection 110 (SEAM §457): under K1 the run's end requests the tick that
+    // dispatches the continuation, so the project is paused while the first
+    // run holds, and resumed once the ended run has been read.
+    await runToHold(fx, project.id, item);
+    await pauseProject(engine, project.id);
+    fx.scripted.release(item, 'gate');
+    const first = await waitForRun(fx.home, item, { index: 0, state: 'ended' });
     assert.equal(first.outcome, 'completed', first.reason_text ?? '');
     const [revision] = checkpointRevisions(fx.home, first.id);
     assert.ok(revision, 'the fixture is live: the first run made a checkpoint');
     const before = await readRun(engine, project.id, first.id);
     assert.deepEqual([before.state, before.checkpoint, before.successor_run], ['ended', { status: 'accepted', revision: revision.id }, null], 'the checkpoint belongs to an ended run, and no successor is claimed before one exists');
+    assert.equal(runsOf(fx.home, item).length, 1, 'the fixture is live: no successor run yet');
 
+    await resumeProject(engine, project.id);
     const second = await runToEnd(fx, project.id, item, { index: 1 });
     assert.equal(second.outcome, 'completed', second.reason_text ?? '');
     assert.equal((await readRun(engine, project.id, first.id)).successor_run, second.id, 'the checkpointing run names the run that continued its work');

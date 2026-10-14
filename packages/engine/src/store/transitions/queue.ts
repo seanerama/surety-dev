@@ -10,6 +10,7 @@
 // decision past its target.
 
 import { recordAuthoringPending } from '../../plan/deferral.js';
+import { authoredAgainst } from '../../spec/change.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { inConformancePhase } from '../../adopt/conformance.js';
 import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
@@ -81,6 +82,9 @@ export interface Preview {
   evidence?: DecisionSpec['evidence'];
   blockedWorkItems?: string[];
   blockedOperation?: string;
+  // Facts recorded with the question when it is raised, never bound by it
+  // (decision.raised's payload).
+  raised?: Record<string, unknown>;
 }
 
 type Subject = Pick<DecisionRow, 'project' | 'kind' | 'subject_type' | 'subject_id' | 'scope' | 'options'>;
@@ -292,6 +296,27 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
         question:
           `Deploy work ${item.id} (operation ${refused.operation} on ${refused.environment_name}) could not complete: ${refused.cause.replace(/^deploy_completion_refused:?/, '') || 'its completion was refused'}. ` +
           (refused.reverify ? 'Verify it again, tear the environment down, or abandon the completion.' : 'Tear the environment down, or abandon the completion.'),
+        blockedWorkItems: [item.id],
+      };
+    }
+    // The bare `block` template (awaiting.ts; the driver's ruling on M09 and
+    // M234, slice 37): the item waits for a person to send it back to the
+    // status it left, or to cancel it.
+    if (item.status === 'awaiting_decision' && blocker.reason === 'block' && item.continuation !== null) {
+      return {
+        manifest: {
+          work_item: item.id,
+          subject_status: 'awaiting_decision',
+          cause: 'block',
+          quarantined: false,
+          evidence: workEvidence(tx, item.id),
+          continuation: { status: item.continuation, from: item.continue_from },
+        },
+        options: [
+          { key: 'resume', label: 'Resume', consequence: `The item returns to ${item.continuation}, the status it left.`, effect: { work_item: item.id, to: item.continuation } },
+          { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
+        ],
+        question: `Work item ${item.id} (${item.kind}) is blocked awaiting a decision; it left ${item.continuation}. Resume it there, or cancel it.`,
         blockedWorkItems: [item.id],
       };
     }
@@ -540,7 +565,8 @@ const BLOCKER: KindSpec = {
         transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'change_spec' });
         return consumed(d);
       }
-      if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
+      if (option === 'resume' && item.status === 'awaiting_decision' && item.continuation !== null) transitionWork(tx, item, item.continuation, { blocker: null }, { decision: d.id, cause: 'resume' });
+      else if (option === 'retry') transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'retry' });
       else transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'cancel' });
       return consumed(d);
     }
@@ -801,6 +827,9 @@ function answerOutOfBand(tx: Tx, d: DecisionRow, option: string, note: string | 
     if (reg.kind === 'integration') invalidateLineageEvidence(tx, row.project);
     else markStale(tx, { project: row.project });
     tx.emit('repo.reconciled', { project: row.project, out_of_band_change: row.id }, { disposition: 'adopt', ref: reg.ref, adopted: row.found });
+    // A question bound to the head the move left is asked again against
+    // the adopted one in this transaction (M53 case 8).
+    if (reg.kind === 'integration') refreshDecisions(tx, row.project);
     return consumed(d, [{ kind: 'tick' }]);
   }
   const deadline = engineSettings().git_deadline;
@@ -1374,6 +1403,8 @@ export function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): R
     classifier_version: runningClassifierVersion(),
     classifier_authority: configuredAuthority(),
     discovery: discoveryHash(facts && 'discovery' in facts ? facts.discovery : proposalDiscovery(tx.db, p.id)),
+    // What it was authored against, when an approved change came after it.
+    authored_against: authoredAgainst(tx.db, p.id),
   };
 }
 
@@ -1399,7 +1430,15 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal is rejected and nothing is applied.', effect: { proposal: p.id } },
         ],
-        question: `A protected proposal (${p.id}), classified ${changeKind}, awaits approval.`,
+        question:
+          `A protected proposal (${p.id}), classified ${changeKind}, awaits approval.` +
+          (() => {
+            // Named plainly when an approved specification change came after
+            // it (the driver's ruling (A), slice 37): approving it is the
+            // owner's knowing act, and no obligation is raised for it.
+            const a = authoredAgainst(tx.db, p.id);
+            return a ? ` It was authored against specification version ${a.version ?? 'unknown'}; the approved change since touched ${a.touched.join(', ')}.` : '';
+          })(),
       };
     },
     manifest: (tx, d, facts) => correctionManifest(tx, d.subject_id, facts),
@@ -1680,6 +1719,7 @@ export function raiseQuestion(
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
     evidence: args.evidence ?? p.evidence,
+    raised: p.raised,
   });
   if (args.kind === 'blocker' && args.subjectType === 'work_item') {
     // The item's blocker names the decision that holds it.
@@ -1688,6 +1728,59 @@ export function raiseQuestion(
     if (blocker && blocker.decision !== row.id) tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ ...blocker, decision: row.id }), item.id);
   }
   return row;
+}
+
+// A refused deployment completion whose every reason was
+// ACCEPTANCE_SCOPE_INCOMPLETE on spec_changed obligations (a check with an
+// obligation, or `obligation:<key>`) is evaluated again once those
+// obligations resolve: a new verification round, as POST …/verify makes,
+// and its blocker question invalidated (the driver's ruling 2 on M401's T1
+// runs, slice 37; as the *_PENDING retry of a policy request). Any other
+// reason keeps the owner's blocker. Returns the operations re-verified.
+export function reverifyResolvedCompletions(tx: Tx, args: { project: string }): string[] {
+  const items = tx.db.prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'deploy' AND "status" = 'awaiting_decision' ORDER BY "seq"`).all(args.project) as { id: string }[];
+  const done: string[] = [];
+  for (const { id } of items) {
+    const item = getWorkItem(tx, id)!;
+    const refused = refusedCompletionFacts(tx.db, item);
+    if (refused === null || !refused.reverify || refused.cause !== 'deploy_completion_refused:ACCEPTANCE_SCOPE_INCOMPLETE') continue;
+    const evaluation = parseJson<{ evaluation?: string }>(item.blocker)?.evaluation;
+    if (typeof evaluation !== 'string') continue;
+    const row = tx.db.prepare('SELECT "reasons" FROM "gate_evaluations" WHERE "id" = ?').get(evaluation) as { reasons: string } | undefined;
+    const reasons = parseJson<{ code: string; subjects?: string[] }[]>(row?.reasons ?? null) ?? [];
+    if (reasons.length === 0 || reasons.some((r) => r.code !== 'ACCEPTANCE_SCOPE_INCOMPLETE')) continue;
+    const subjects = reasons.flatMap((r) => r.subjects ?? []);
+    if (subjects.length === 0) continue;
+    const keys: string[] = [];
+    let all = true;
+    for (const s of subjects) {
+      const key = s.startsWith('obligation:') ? s.slice('obligation:'.length) : (tx.db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(s) as { key: string } | undefined)?.key;
+      const owed = key !== undefined && tx.db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed' LIMIT 1`).get(args.project, key) !== undefined;
+      if (!owed) {
+        all = false;
+        break;
+      }
+      keys.push(key!);
+    }
+    if (!all) continue;
+    const open = tx.db
+      .prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL AND "key" IN (SELECT value FROM json_each(?)) LIMIT 1`)
+      .get(args.project, JSON.stringify(keys));
+    if (open !== undefined) continue;
+    requestVerification(tx, { project: item.project, operation: refused.operation, incarnation: engineSettings().incarnation! }, (db, project, candidate, version) =>
+      requiredSet(db, { project, candidate, kind: 'alpha_complete', stage: null, version }).required,
+    );
+    dropBlockQuestion(tx, item.id);
+    done.push(refused.operation);
+  }
+  return done;
+}
+
+// The open blocker question about a work item, when the item left
+// awaiting_decision by another route than its answer (awaiting.ts).
+export function dropBlockQuestion(tx: Tx, item: string): void {
+  const rows = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(item) as DecisionRow[];
+  for (const d of rows) invalidateDecision(tx, d, 'the question no longer stands');
 }
 
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
@@ -1856,7 +1949,19 @@ export function effectFailed(tx: Tx, op: { id: string; inputs: Record<string, un
 // `project` null: the engine-scoped decisions (SEAM.md §117), which no project
 // escalates or notifies about.
 export function reviewDecisions(tx: Tx, args: { project: string | null; channel: string }): { escalated: number } {
-  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" IS ? AND "status" = 'open' ORDER BY "seq"`).all(args.project) as DecisionRow[];
+  refreshDecisions(tx, args.project);
+  let escalated = 0;
+  if (args.project === null) return { escalated };
+  return { escalated: escalateDecisions(tx, { project: args.project, channel: args.channel }) };
+}
+
+// The review's first half: every open decision of the project computed
+// again, invalidated or raised in its next generation when what it rests on
+// changed. Also run in a transaction that moves what decisions rest on,
+// so a question is asked again against it at once (an adopted move of the
+// integration branch: the driver's ruling on M53 case 8, slice 37).
+export function refreshDecisions(tx: Tx, project: string | null): void {
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" IS ? AND "status" = 'open' ORDER BY "seq"`).all(project) as DecisionRow[];
   for (const d of open) {
     const spec = KINDS[d.kind as DecisionKind];
     if (!spec || d.kind === 'out_of_band_change') continue;
@@ -1872,8 +1977,10 @@ export function reviewDecisions(tx: Tx, args: { project: string | null; channel:
     }
     raiseQuestion(tx, { project: d.project, kind: d.kind as DecisionKind, subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope, options: d.options });
   }
+}
+
+function escalateDecisions(tx: Tx, args: { project: string; channel: string }): number {
   let escalated = 0;
-  if (args.project === null) return { escalated };
   const now = Date.parse(tx.at);
   const aging = tx.db
     .prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' AND "escalated_at" IS NULL AND "target_seconds" IS NOT NULL ORDER BY "seq"`)
@@ -1889,7 +1996,7 @@ export function reviewDecisions(tx: Tx, args: { project: string | null; channel:
     tx.emit('notification.queued', { project: d.project, notification: id, decision: d.id }, { channel: args.channel });
     escalated++;
   }
-  return { escalated };
+  return escalated;
 }
 
 // The open decision of a kind about a subject, if any.

@@ -42,6 +42,7 @@ import {
   runsOfProject,
   signoffsOfProject,
   specRevisions,
+  stageCandidateRuns,
   stagesOfPlan,
   workOf,
 } from './harness/journey/drive.mjs';
@@ -142,11 +143,15 @@ describe('M401 the journey from an idea to Alpha, part 1: the idea to phase 2 pu
     const stages = stagesOfPlan(fx.home, plan.id);
     assert.deepEqual(stages.map((s) => s.status), ['verified', 'verified']);
     const runs = runsOfProject(fx.home, p.id).filter((r) => r.kind !== 'session');
-    const kinds = (kind) => runs.filter((r) => r.work_kind === kind || r.role === kind);
-    assert.ok(kinds('verifier').length >= 2 && kinds('reviewer').length >= 2, `Verifier and Reviewer runs per stage (${JSON.stringify(runs.map((r) => r.role))})`);
-    for (const c of J.afterPhase1.candidates) {
-      const xs = executionsOf(fx.home, c.id).filter((x) => x.status === 'recorded');
-      assert.ok(xs.length > 0, `candidate ${c.seq} has engine-run checks`);
+    // Objection 109: one verification and one review per candidate, so stages
+    // integrated together under K2 share them; every stage's candidate is
+    // verified by a Verifier and reviewed, through engine-run checks.
+    for (const s of stages) {
+      const on = stageCandidateRuns(fx.home, p.id, s.id);
+      assert.ok(on.candidate, `stage ${s.number} verified on a candidate (a satisfied stage gate)`);
+      assert.ok(on.verifier >= 1 && on.reviewer >= 1, `stage ${s.number}'s candidate verified by a Verifier and reviewed (${JSON.stringify(on)}; runs ${JSON.stringify(runs.map((r) => r.role))})`);
+      const xs = executionsOf(fx.home, on.candidate).filter((x) => x.status === 'recorded');
+      assert.ok(xs.length > 0, `stage ${s.number}'s candidate has engine-run checks`);
       for (const x of xs) {
         const d = domainRow(fx.home, x.domain);
         assert.equal(d?.check_execution, x.id, `${x.key} ran in a check domain of its own`);

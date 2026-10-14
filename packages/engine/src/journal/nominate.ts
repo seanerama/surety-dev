@@ -11,14 +11,26 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import type { Journal } from './driver.js';
 
 export async function nominate(rt: Runtime, journal: Journal, project: string): Promise<void> {
-  await journal.withProject(project, async () => {
-    await ensureNominationAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
-    await ensureNominationPresence(rt, project).catch((err) => log('module presence', err, { project }));
-    const intent = await journal.intend('nomination.intend', { project, deadlineSeconds: rt.setting('git_deadline') }, 'ref_update');
-    if (!('operation' in (intent as IntentResult))) return;
-    const settled = await journal.drive((intent as { operation: string }).operation);
-    if (settled.end !== 'finalized') log('nomination', new Error(`the nomination of project ${project} is ${settled.end}`), { operation: settled.op.id });
-  });
+  // The project's journal queue is taken as before, so the step is ordered
+  // after the integration in flight; its durable integration lease only
+  // when a nomination is due (each tick runs this: a lease row per tick
+  // with nothing to write would be a write of nothing, M303 (a)).
+  await journal.withProject(
+    project,
+    async () => {
+      await ensureNominationAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
+      await ensureNominationPresence(rt, project).catch((err) => log('module presence', err, { project }));
+      if (!(await rt.read<boolean>('nomination.due_project', { project }))) return;
+      await journal.withProject(project, async () => {
+        const intent = await journal.intend('nomination.intend', { project, deadlineSeconds: rt.setting('git_deadline') }, 'ref_update');
+        if (!('operation' in (intent as IntentResult))) return;
+        const settled = await journal.drive((intent as { operation: string }).operation);
+        if (settled.end !== 'finalized') log('nomination', new Error(`the nomination of project ${project} is ${settled.end}`), { operation: settled.op.id });
+      });
+    },
+    'journal',
+    { lease: false },
+  );
   // What the new candidate's scopes need from git, recorded now.
   await ensureAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
   await ensurePresence(rt, project).catch((err) => log('module presence', err, { project }));

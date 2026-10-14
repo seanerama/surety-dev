@@ -29,7 +29,7 @@ setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incar
 
 const AT = '2026-10-14T00:00:00.000Z';
 
-function store(t, { superseded = false } = {}) {
+function store(t, { superseded = false, bound = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'surety-unit-'));
   const db = new Database(join(dir, 'store.db'));
   t.after(() => {
@@ -51,7 +51,7 @@ function store(t, { superseded = false } = {}) {
      VALUES ('wi_d', ?, 'prj_1', 1, 'deploy', '{"candidate":"cand_1","environment":"env_1"}', 'executing', 'test', 'wi_d', 1, 0, 0, 0, 0)`,
     AT,
   );
-  const frozen = { purpose: 'deploy', work_item: 'wi_d', authorization: 'dauth_1', candidate: 'cand_1', mapping: null, artifact_digest: 'sha256:x', artifact_path: null, manifest: null, config_version: null, config_number: null, config_identity: null, secret_digests: [], target_set: [], environment: 'env_1', environment_name: 'alpha', prefix: 'p', lease: { id: 'lease_1', generation: 1 } };
+  const frozen = { purpose: 'deploy', work_item: 'wi_d', authorization: 'dauth_1', candidate: 'cand_1', mapping: bound ? 'map_1' : null, artifact_digest: 'sha256:x', artifact_path: null, manifest: null, config_version: null, config_number: null, config_identity: bound ? 'cfg_1' : null, secret_digests: [], target_set: [], environment: 'env_1', environment_name: 'alpha', prefix: 'p', lease: { id: 'lease_1', generation: 1 } };
   run(
     `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, finalizer_inputs, orchestration_stage)
      VALUES ('op_1', ?, 'prj_1', 1, 'deploy', '{"environment":"env_1"}', '{"candidate":"cand_1"}', 'k', 1, 'succeeded', ?, ?, 'completion')`,
@@ -89,4 +89,110 @@ test('re-verification is not offered for a superseded candidate: its completion 
   const d = openBlocker(db);
   assert.ok(d, 'a blocker decision is raised');
   assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['teardown', 'abandon']);
+});
+
+// ---- the driver's rulings 1 and 2 on M401's T1 runs (slice 37) ------------------------------------
+
+const { reverifyResolvedCompletions } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { policyRequestDue } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+
+function refusedOn(db, subjects) {
+  db.prepare(
+    `INSERT INTO gate_evaluations (id, created_at, project, scope, candidate, gate_kind, computed_at, inputs_hash, inputs_snapshot, check_states, outcome, reasons, satisfiers, stale)
+     VALUES ('gate_1', ?, 'prj_1', 'scope_1', 'cand_1', 'alpha_complete', ?, 'h', '{}', '{}', 'not_satisfied', ?, '[]', 0)`,
+  ).run(AT, AT, JSON.stringify([{ code: 'ACCEPTANCE_SCOPE_INCOMPLETE', subjects }]));
+  transact(db, ENGINE_ACTOR, (tx) => afterCompletion(tx, { operation: 'op_1', candidate: 'cand_1', satisfied: false, evaluation: 'gate_1', reasons: ['ACCEPTANCE_SCOPE_INCOMPLETE'] }));
+}
+const owe = (db, id, key, resolved = null) =>
+  db.prepare(`INSERT INTO check_obligations (id, created_at, project, "check", key, criteria, generation, reason, resolved_at) VALUES (?, ?, 'prj_1', 'chk', ?, '["R2.1"]', 2, 'spec_changed', ?)`).run(id, AT, key, resolved);
+
+test('2: a completion refused only on spec_changed obligations is verified again once they resolve, its blocker invalidated', (t) => {
+  const db = store(t, { bound: true });
+  db.prepare(
+    `INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots, authorized_revision) VALUES ('pv_1', ?, 'prj_1', 1, 'f', 'initial', 'h', 'human', ?, 1, ?, '[]', 'r')`,
+  ).run(AT, AT, AT);
+  owe(db, 'o1', 'accept-r2');
+  refusedOn(db, ['obligation:accept-r2']);
+  const d = openBlocker(db);
+  assert.ok(d, "the owner's blocker while the obligation is open");
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => reverifyResolvedCompletions(tx, { project: 'prj_1' })), [], 'nothing while it is open');
+  db.prepare(`UPDATE check_obligations SET resolved_at = ? WHERE id = 'o1'`).run(AT);
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => reverifyResolvedCompletions(tx, { project: 'prj_1' })), ['op_1'], 'resolved: verified again');
+  assert.equal(item(db).status, 'executing', 'the work goes on with the new round');
+  assert.equal(db.prepare(`SELECT status FROM decisions WHERE id = ?`).get(d.id).status, 'invalidated', 'its blocker is invalidated');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM verification_rounds WHERE operation = 'op_1'`).get().n, 1, 'one new round');
+});
+
+test('2: a completion refused on anything else as well keeps the owner\'s blocker', (t) => {
+  const db = store(t);
+  owe(db, 'o1', 'accept-r2', AT);
+  refusedOn(db, ['obligation:accept-r2', 'R9.1']);
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => reverifyResolvedCompletions(tx, { project: 'prj_1' })), []);
+  assert.equal(item(db).status, 'awaiting_decision');
+  assert.ok(openBlocker(db), 'the blocker stands');
+});
+
+test('1: the alpha_deploy policy requests nothing while a specification change of the project is proposed', (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective) VALUES ('pol_1', ?, 'prj_1', 1, 'p', 'b', 'h', ?, '', 0, 1, ?)`).run(
+    AT,
+    AT,
+    JSON.stringify({ alpha_deploy: 'on_phase_complete' }),
+  );
+  db.prepare(`UPDATE projects SET policy_revision = 'pol_1'`).run();
+  const reads = [];
+  const spy = { prepare: (sql) => (reads.push(sql), db.prepare(sql)) };
+  policyRequestDue(spy, { project: 'prj_1' });
+  assert.ok(reads.some((s) => s.includes('"phase_plans"')), 'with no change proposed, the completed phase is read');
+  db.prepare(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'proposed')`).run(AT);
+  reads.length = 0;
+  assert.equal(policyRequestDue(spy, { project: 'prj_1' }), null);
+  assert.ok(!reads.some((s) => s.includes('"phase_plans"')), 'held before anything of the phase is read');
+});
+
+// ---- the driver's ruling on M401's T1 stall (slice 37) ------------------------------------------
+
+const { settlingAfterChange } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+
+test('the alpha_deploy policy requests nothing while a spec_changed obligation of the project is unresolved', (t) => {
+  const db = store(t);
+  db.prepare(`INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective) VALUES ('pol_1', ?, 'prj_1', 1, 'p', 'b', 'h', ?, '', 0, 1, ?)`).run(
+    AT,
+    AT,
+    JSON.stringify({ alpha_deploy: 'on_phase_complete' }),
+  );
+  db.prepare(`UPDATE projects SET policy_revision = 'pol_1'`).run();
+  const reads = [];
+  const spy = { prepare: (sql) => (reads.push(sql), db.prepare(sql)) };
+  owe(db, 'o1', 'accept-r2');
+  assert.equal(policyRequestDue(spy, { project: 'prj_1' }), null);
+  assert.ok(!reads.some((s) => s.includes('"phase_plans"')), 'held while the obligation is open');
+  db.prepare(`UPDATE check_obligations SET resolved_at = ? WHERE id = 'o1'`).run(AT);
+  reads.length = 0;
+  policyRequestDue(spy, { project: 'prj_1' });
+  assert.ok(reads.some((s) => s.includes('"phase_plans"')), 'resolved, the completed phase is read again');
+});
+
+test("a policy refusal left by a change's invalidated evidence settles: EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks whose results the change invalidated; a check that failed does not", (t) => {
+  const db = store(t);
+  const check = (id, key) => db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES (?, ?, 'prj_1', 'pv_1', ?, 'acceptance', '[]', 1, '["stage"]', 'x', 'h', 'direct')`).run(id, AT, key);
+  const result = (id, chk, invalidated) =>
+    db
+      .prepare(
+        `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq, execution_established, signaled, deadline_hit, exit_status, invalidated_at, invalidated_reason)
+         VALUES (?, ?, 'prj_1', ?, 'cand_1', 'r', 'pv_1', 'direct', 'x', ?, 1, 0, 0, 1, ?, ?)`,
+      )
+      .run(id, AT, chk, ++seqN, invalidated ? AT : null, invalidated);
+  let seqN = 0;
+  check('chk_a', 'accept-r2');
+  check('chk_b', 'lint');
+  check('chk_c', 'smoke');
+  result('cr_a', 'chk_a', 'spec_changed');
+  result('cr_b', 'chk_b', null);
+  result('cr_c', 'chk_c', 'protected_version_superseded');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'EVIDENCE_GENERATION_STALE', subjects: [] }), true);
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a'] }), true, 'its only result the change invalidated');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a', 'chk_c'] }), true, "or the correction's version superseded");
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'CHECK_NOT_PASSED', subjects: ['chk_a', 'chk_b'] }), false, 'a current failing result is a failure');
+  assert.equal(settlingAfterChange(db, 'cand_1', { code: 'ACCEPTANCE_SCOPE_INCOMPLETE', subjects: ['R9.1'] }), false);
 });

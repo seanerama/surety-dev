@@ -138,16 +138,21 @@ export class RunEnder {
   // Retry every failed run end that is due, or, from a tick (`project` given),
   // every one of that project at once. An attempt that succeeds leaves the
   // run ended or quarantined and is forgotten; one that fails is recorded
-  // again with a longer wait. Neither the watch nor the tick waits for it.
-  retryDue(project?: string): void {
+  // again with a longer wait. The watch does not wait for it; the tick's
+  // recovery step does (D1 §8.1 step 1 before step 2: M440 (d)), within its
+  // step budget. The promise settles when every attempt started has; it
+  // never rejects.
+  retryDue(project?: string): Promise<void> {
     const now = performance.now();
+    const attempts: Promise<void>[] = [];
     for (const [run, r] of this.retries) {
       if (r.running || this.ending.has(run)) continue;
       if (project === undefined ? now < r.dueAt : r.project !== null && r.project !== project) continue;
       r.running = true;
       const attempt = r.end ? this.endRun(run, r.end, r.opts) : this.complete(run, r.opts);
-      attempt.catch((err) => log('run end retry', err, { run, failures: r.failures }));
+      attempts.push(attempt.catch((err) => log('run end retry', err, { run, failures: r.failures })));
     }
+    return Promise.all(attempts).then(() => undefined);
   }
 
   private async doComplete(run: string, opts: EndOptions): Promise<void> {

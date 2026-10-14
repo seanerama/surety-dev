@@ -25,13 +25,13 @@ import {
   runsOf,
   scriptedEngine,
   tick,
-  tickOnce,
   tickUntil,
   waitForRun,
   waitForWork,
   workItem,
 } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
+import { runToHold } from './harness/gitruns.mjs';
 import { withStore } from './harness/store.mjs';
 
 const REPAIRS = CONTRACT.project.repair_attempts_max.default;
@@ -46,16 +46,22 @@ describe('M11 repair and refusal limits', () => {
     // the next.
     await tick(fx.engine, project);
     const item = await addWork(fx.engine, project, 'verification');
-    fx.scripted.script(item, Array.from({ length: REPAIRS + 3 }, () => script.crash(3, [step.usage({ input_tokens: 5 })])));
+    fx.scripted.script(item, Array.from({ length: REPAIRS + 3 }, () => script.crash(3, [step.usage({ input_tokens: 5 }), step.hold('gate')])));
 
     // After each failed run the item is eligible again and its count is the
-    // number of re-dispatches so far.
+    // number of re-dispatches so far. Under K1 a run's end requests the tick
+    // that dispatches the repair (objection 111; SEAM §458), so each run
+    // holds before it fails, the project is paused while it holds, and the
+    // item is read before the project is resumed.
     for (let launch = 1; launch <= 1 + REPAIRS; launch++) {
-      await tickOnce(fx.engine, project);
+      const { launch: held } = await runToHold(fx, project, item, { index: launch - 1 });
+      await pauseProject(fx.engine, project);
+      fx.scripted.release(held.invocation, 'gate');
       const run = await waitForRun(fx.home, item, { index: launch - 1, state: 'ended' });
       assertRunEnded(fx.home, run.id, { outcome: 'failed', reason_class: 'infra_error', workspace: 'retained', launched: true, recovery: false });
       const row = await waitForWork(fx.home, item, launch <= REPAIRS ? 'eligible' : 'parked');
       assert.equal(row.repair_attempts, launch - 1, `after launch ${launch}: ${launch - 1} re-dispatch(es) counted`);
+      await resumeProject(fx.engine, project);
     }
     assert.equal(fx.scripted.launches({ work_item: item }).length, 1 + REPAIRS);
     const row = workItem(fx.home, item);

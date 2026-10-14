@@ -71,10 +71,24 @@ export class Journal {
   // and, inside it, the project's durable `integration` lease (D1 §7.5;
   // A.3), so under D6 K2 they are ordered rather than conflicting. Nested
   // calls within the holder run at once (reentrant by async context).
+  // `lease: false`: the in-process queue only, for a holder that may find
+  // nothing to write (the tick's nomination step, M303 (a)); a nested call
+  // that writes takes the durable lease then, inside the queue.
   private readonly holding = new AsyncLocalStorage<Set<string>>();
-  async withProject<T>(project: string, fn: () => Promise<T>, holder = 'journal'): Promise<T> {
+  private readonly leased = new AsyncLocalStorage<Set<string>>();
+  async withProject<T>(project: string, fn: () => Promise<T>, holder = 'journal', opts: { lease?: boolean } = {}): Promise<T> {
+    const wantLease = opts.lease !== false;
     const held = this.holding.getStore();
-    if (held?.has(project)) return fn();
+    const leasedNow = this.leased.getStore();
+    if (held?.has(project)) {
+      if (!wantLease || leasedNow?.has(project)) return fn();
+      const lease = await this.acquireIntegration(project, holder);
+      try {
+        return await this.leased.run(new Set([...(leasedNow ?? []), project]), fn);
+      } finally {
+        await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project }));
+      }
+    }
     const before = this.projectLocks.get(project) ?? Promise.resolve();
     let release: () => void = () => {};
     const mine = new Promise<void>((resolve) => {
@@ -85,8 +99,9 @@ export class Journal {
     await before;
     let lease: string | null = null;
     try {
-      lease = await this.acquireIntegration(project, holder);
-      return await this.holding.run(new Set([...(held ?? []), project]), fn);
+      if (wantLease) lease = await this.acquireIntegration(project, holder);
+      const inner = () => this.holding.run(new Set([...(held ?? []), project]), fn);
+      return await (wantLease ? this.leased.run(new Set([...(leasedNow ?? []), project]), inner) : inner());
     } finally {
       if (lease !== null) await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project }));
       release();
@@ -313,6 +328,14 @@ export class Journal {
             await pausePoint(`journal.${op.kind}.reconciled`);
             return { op: await this.detail(op.id), end: 'failed', receipts: {} };
           }
+          // Moved somewhere else (by hand): nothing of the update was ever
+          // attempted, so its outcome is not unknown. It is attempted now and
+          // git's compare-and-swap decides: refused because the old value does
+          // not match, it is a definite failure without effect, never an
+          // ambiguity (the driver's ruling on M53 case 8, slice 37; D1 §7.10's
+          // probe and its ambiguous outcome are for an outcome not known). The
+          // move itself is integrity's to observe, out of band.
+          if (found !== 'unknown') return this.execute(op);
         }
         return this.block(op, outcome);
     }

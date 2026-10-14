@@ -71,9 +71,11 @@ export function movingRefs(db: Tx['db'], project: string): Record<string, string
 // retained workspaces of ended sessions. Not this run's own workspace, which
 // its own validation reads; not one owned by another active run, which that
 // run's validator evaluates (under D6 K2 a project's runs write their
-// workspaces side by side); and not the retained workspace of an ended
-// work-item run, evaluated at startup and before anything reads it (Sean's
-// ruling, 2026-10-14; integrity.ts ENDED_WORK_WORKSPACE). The baseline is
+// workspaces side by side). The retained workspaces of ended work-item runs
+// are compared too, at each run's validation (the driver's ruling on M19,
+// slice 37, revoking its addendum; M19 case 9); Sean's ruling keeps them out
+// of the per-tick integrity step only (integrity.ts ENDED_WORK_WORKSPACE).
+// The reads go side by side, bounded (git/snapshot.ts). The baseline is
 // the one recorded now, read when the validation runs: a run that ended
 // meanwhile has its own end's baseline. The registered refs are compared
 // apart (AcceptFacts.registry).
@@ -84,7 +86,7 @@ export function validatorCheckouts(db: Tx['db'], project: string, run: string): 
         `SELECT c.*, w."metadata_baseline" FROM "managed_checkouts" c
          LEFT JOIN "runs" r ON r."id" = c."owner_run" LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
          WHERE c."project" = ? AND c."released_at" IS NULL
-           AND (c."owner_run" IS NULL OR (c."owner_run" <> ? AND r."state" = 'ended' AND r."kind" = 'session'))
+           AND (c."owner_run" IS NULL OR (c."owner_run" <> ? AND r."state" = 'ended'))
          ORDER BY c."id"`,
       )
       .all(project, run) as { kind: string; path: string; baseline: string; metadata_baseline: string | null }[]

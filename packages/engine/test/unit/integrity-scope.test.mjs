@@ -6,9 +6,10 @@
 // startup only, and a tampered one is still observed there. The registered
 // refs are read again just before a project's dispatch, so a branch moved by
 // hand after the tick's integrity step is seen in that tick (M70). A run's
-// snapshot validation never classifies another active run's workspace, nor
-// an ended work-item run's. It does compare the integration worktree and an
-// ended session's workspace with their current recorded baselines. Real
+// snapshot validation never classifies another active run's workspace. It
+// does compare the integration worktree and every ended run's retained
+// workspace (a session's or a work item's; the driver's ruling on M19) with
+// their current recorded baselines. Real
 // git in a scratch repository; a scratch store; a stub runtime that hands
 // the engine's operations to the store functions.
 
@@ -181,18 +182,21 @@ test('snapshot validation: two concurrent runs of one project, one ending midway
   const validate = () =>
     validateOutside({ repo: fx.repo, path: a.path, metadata: a.metadata, registry, moving: {}, others: validatorCheckouts(fx.db, 'prj_1', a.id), scratch: fx.scratch });
 
-  assert.deepEqual(validatorCheckouts(fx.db, 'prj_1', a.id).map((c) => c.path).sort(), [fx.repo, session.path].sort(), "A's validator compares the integration worktree and the ended session's workspace, not B's");
+  assert.deepEqual(validatorCheckouts(fx.db, 'prj_1', a.id).map((c) => c.path).sort(), [fx.repo, session.path].sort(), "A's validator compares the integration worktree and the ended session's workspace, not B's while B runs");
 
   // B writes its own workspace while A runs: not A's to classify.
   writeFileSync(join(b.path, 'a.txt'), 'b at work\n');
   assert.equal(await validate(), null, "another active run's writes are not a violation of this run");
 
-  // B ends midway through A, with its end's baseline; it is then an ended
-  // work-item workspace, read at startup only.
+  // B ends midway through A, with its end's baseline; its retained
+  // workspace is then compared at A's validation (the driver's ruling on
+  // M19, slice 37: M19 case 9).
   await endRun(fx, b);
   assert.equal(await validate(), null, 'nor once that run has ended and its baseline is recorded');
   writeFileSync(join(b.path, 'a.txt'), 'after its end\n');
-  assert.equal(await validate(), null, "an ended work-item run's workspace is not this run's validator's either");
+  assert.deepEqual(await validate(), { klass: 'ref_violation', text: `the managed checkout ${b.path} differs from its baseline` }, "an ended work-item run's retained workspace changed after its end is a violation");
+  writeFileSync(join(b.path, 'a.txt'), 'b at work\n');
+  assert.equal(await validate(), null, 'restored to its end, it passes again');
 
   // A real change to the integration worktree still fails the run.
   writeFileSync(join(fx.repo, 'a.txt'), 'by hand\n');
@@ -213,13 +217,18 @@ test('the pre-dispatch recheck: a registered ref at its expected commit is not m
   writeFileSync(join(fx.repo, 'stray.txt'), 'moved by hand\n');
   fx.g('-C', fx.repo, 'add', 'stray.txt');
   fx.g('-C', fx.repo, 'commit', '-q', '-m', 'by hand');
-  assert.equal(await registeredRefsMoved(rt, 'prj_1'), true, 'a commit made by hand moves it');
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), 'moved', 'a commit made by hand moves it');
   // Once the engine expects the new commit, it is not moved.
   fx.db.prepare(`UPDATE ref_registry SET expected_oid = ? WHERE id = 'ref_main'`).run(fx.g('-C', fx.repo, 'rev-parse', 'HEAD'));
   assert.equal(await registeredRefsMoved(rt, 'prj_1'), false);
   // A registered ref that is gone is moved, never clean.
   fx.db.prepare(`INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES ('ref_gone', ?, 'prj_1', 'refs/surety/gone', 'nomination', ?, 1)`).run(AT, fx.head);
-  assert.equal(await registeredRefsMoved(rt, 'prj_1'), true);
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), 'moved');
+  // A repository that cannot be read is unknown (N02): it holds dispatch,
+  // and records nothing (the driver's ruling on M209 (b)).
+  fx.db.prepare(`DELETE FROM ref_registry WHERE id = 'ref_gone'`).run();
+  const unreadable = { read: async (op, a) => ({ ...registryFacts(fx.db, a), repo: join(fx.repo, 'not-a-repository') }) };
+  assert.equal(await registeredRefsMoved(unreadable, 'prj_1'), 'unknown');
 });
 
 test("S1: a run's validation reads the registered refs between two reads of what the engine expects; another run's journaled move is no violation, an out-of-band one is", async (t) => {
