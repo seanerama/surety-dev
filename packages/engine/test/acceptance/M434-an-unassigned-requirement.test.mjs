@@ -67,7 +67,7 @@ describe('M434 an unassigned requirement', () => {
       replan35({ spec_version: 2, roadmap_version: 2, files: { [ROADMAP]: { ...roadmapWith({ phases: [phaseOf(1), phaseOf(2), PHASE_3] }), moved_requirements: [{ key: 'R5', from: null, to: 3 }] } }, result: { roadmap_revision: true } }),
     ]);
     await approvedChange(fx, ctx, WITH_R5, [{ key: 'R5', kind: 'added', reason: 'R5 counts refusals' }], 2);
-    assert.equal(r5Of(fx.home, p.id)?.assigned_phase, null, 'the fixture is live: R5 has no phase');
+    assert.equal(r5Of(fx.home, p.id)?.assigned_phase, null, 'R5 added has no phase after the approval, whatever its index hint (D6 §4.5; Q8)');
     await pumpHolding(fx, ctx, () => launchHolding(fx, 'replan'), { what: 'the replan held', max: 20 });
     // (a)
     const gate = async () => {

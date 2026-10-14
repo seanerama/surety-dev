@@ -6671,7 +6671,7 @@ Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13,
 ## 420. The decision's staleness (M433 (a); D6 §4.4, §4.5; Q4, Q5)
 
 - Each of these, made between the preview and the answer and touching a subject the impact lists, makes the answer stale (§76), and the next generation is raised about the same request: a work item of a listed stage changing status; a new result of a listed check; a new finding naming a listed criterion; a new effective protected version; the active plan's generation changing (an early replacement); a new spec version.
-- **A new spec version** while a proposal is pending is made by a Spec Writer session in `developing`, closed and its `spec_approval` approved (Q4). If the engine refuses that session, the case is narrowed to the manifest's `spec_version` binding and COVERAGE says so.
+- **A new spec version** while a proposal is pending is made by a Spec Writer session in `developing`, closed and its `spec_approval` approved (Q4). The engine opens that session in `developing` (observed on `build/m5-s35` at `79f1b9d`), so the case is not narrowed to the manifest's `spec_version` binding.
 - **A change that touches no listed subject** (Q5): a result of a check the impact does not list leaves the answer valid; the case makes it with the project at rest (no run live, no work status changing for two rounds) and then answers.
 - **Between the answer and the effect**, a new result of a listed check invalidates the effect's intent (`EFFECT_PRECONDITION_CHANGED`, §76): nothing applied, the request not approved.
 
