@@ -566,6 +566,14 @@ export class SessionDriver {
     if (!parsed.modules) findings.push({ code: 'machine_file_invalid', path: MODULES_FILE, subject: { path: MODULES_FILE, field: null }, message: `${MODULES_FILE} is missing or does not parse` });
     if (!parsed.roadmap) findings.push({ code: 'machine_file_invalid', path: ROADMAP_FILE, subject: { path: ROADMAP_FILE, field: null }, message: `${ROADMAP_FILE} is missing or does not parse` });
     if (findings.length > 0) throw planRefused(facts.run, [], findings);
+    // The first architecture is approved with the first phase's plan, as one
+    // prospective bundle (D6 §3.4, reading 2; B02): with no architecture
+    // approved, a close without that plan would publish an architecture no
+    // plan follows, and nothing would ever plan phase 1 (row M442 (b)).
+    if (plans.length === 0 && probe.architecture_revision === null) {
+      const path = `.surety/phases/phase-${probe.phase}.json`;
+      throw planRefused(facts.run, [], [{ code: 'machine_file_invalid', path, subject: { path, field: null }, message: `${path} is missing: the first architecture is approved with the first phase's plan, in one bundle` }]);
+    }
     if (plans.length > 1) {
       throw new Refusal(409, 'phase_not_next', `Session ${facts.run} proposes plans for phases ${plans.join(', ')}; only the next phase's plan is proposed.`, 'Keep one phase plan, the next phase\'s, and close again.', { run: facts.run, phases: plans, next: probe.phase });
     }
