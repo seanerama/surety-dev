@@ -108,14 +108,15 @@ export function cgroupOfPid(pid) {
 //
 // A test changes cgroup files only inside a scope that is a test engine's
 // (`surety-<16 hex>-inc_<ULID>.scope`) or a sentinel's of the tests' own
-// (`surety-test-sentinel-<8 hex>.scope`), never anywhere else. The paths
+// (`surety-<12 hex>-sentinel-<n>.scope`, named from the test's home, SEAM
+// §462), never anywhere else. The paths
 // come from the store of the engine under test, and an engine that recorded
 // a wrong one (the user's `app.slice`, the manager's own cgroup) must not
 // turn a test's chmod, rmdir or kill into damage to the user's session:
 // the same rule as the guard of `signal_all` (SEAM.md §127, "The guard";
 // §128). Each function below refuses a path outside such a scope.
 const ENGINE_SCOPE = /^surety-[0-9a-f]{16}-inc_[0-9A-HJKMNP-TV-Z]{26}\.scope$/;
-const SENTINEL_SCOPE = /^surety-test-sentinel-[0-9a-f]{8}\.scope$/;
+const SENTINEL_SCOPE = /^surety-[0-9a-f]{12}-sentinel-[1-9][0-9]*\.scope$/;
 const isTestScope = (segment) => ENGINE_SCOPE.test(segment) || SENTINEL_SCOPE.test(segment);
 
 // Where `dir` stands relative to a test scope: 'inside' (strictly below

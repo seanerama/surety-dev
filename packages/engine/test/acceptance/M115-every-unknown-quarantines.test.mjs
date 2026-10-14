@@ -137,7 +137,7 @@ describe('M115 every unknown quarantines', () => {
     // a leaf of the test's own, since an emptied scope would be removed and
     // absence in the verified hierarchy would be termination (SEAM.md §128).
     const keep = makeLeaf(scope.path, 'test_keep');
-    await cgroupSentinel(t, keep);
+    await cgroupSentinel(t, keep, { home: fx.home });
     await fx.engine.kill();
     await fx.start();
     const after = await assertHoldsAcrossTicks(fx, project, run.id, before);
@@ -171,7 +171,7 @@ describe('M115 every unknown quarantines', () => {
     const item = await addWork(fx.engine, project, 'verification');
     const { run, domain, launch } = await roleHolding(fx, project, item, ignoring);
     await fx.engine.kill();
-    const other = await cgroupSentinel(t);
+    const other = await cgroupSentinel(t, null, { home: fx.home });
     const elsewhere = makeLeaf(cgroupOfPid(other.pid), 'dom_elsewhere');
     moveIntoCgroup(other.pid, elsewhere);
     updateDomain(fx.home, domain.id, { cgroup_path: elsewhere });
@@ -518,7 +518,7 @@ describe('M115 every unknown quarantines', () => {
     removeCgroup(two.domain.cgroup_path);
     assert.equal(cgroupExists(two.domain.cgroup_path), false);
     assert.equal(makeLeaf(scope.path, two.domain.id), two.domain.cgroup_path, 'the directory is recreated at the recorded path');
-    const sentinel = await cgroupSentinel(t, two.domain.cgroup_path);
+    const sentinel = await cgroupSentinel(t, two.domain.cgroup_path, { home: fx.home });
     assert.equal(populated(two.domain.cgroup_path), 1, 'the fixture is live: the recreated directory is populated by the sentinel');
     for (let i = 0; i < 3; i++) await tick(fx.engine, project);
     assertUnknownQuarantine(fx, project, two.run.id, { outcome: 'stopped' });
@@ -528,7 +528,7 @@ describe('M115 every unknown quarantines', () => {
     // (g3) the path now under another scope: still quarantined, the
     // process there untouched. The store is edited with the engine stopped.
     await fx.engine.kill();
-    const other = await cgroupSentinel(t);
+    const other = await cgroupSentinel(t, null, { home: fx.home });
     const elsewhere = makeLeaf(cgroupOfPid(other.pid), two.domain.id);
     moveIntoCgroup(other.pid, elsewhere);
     updateDomain(fx.home, two.domain.id, { cgroup_path: elsewhere });

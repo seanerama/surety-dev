@@ -45,8 +45,9 @@ import { reachBarrier } from './harness/decisions.mjs';
 import { askingForTicks, stageGate } from './harness/gates.mjs';
 import { armBarrier, changePolicy, eventsOfType } from './harness/journal.mjs';
 import { signalPid } from './harness/proc.mjs';
-import { makeUnreadable, restoreReadable } from './harness/sandbox/cgroup.mjs';
-import { sandboxEngine } from './harness/sandbox/lane.mjs';
+import { makeLeaf, makeUnreadable, restoreReadable } from './harness/sandbox/cgroup.mjs';
+import { assertEngineInScope, sandboxEngine } from './harness/sandbox/lane.mjs';
+import { cgroupSentinel } from './harness/sandbox/sentinel.mjs';
 import {
   GOVERNED_FILE,
   buildStage,
@@ -160,6 +161,15 @@ describe('M216 unknown and interrupted executions, and every point of a start', 
     const [x] = executionsOf(fx.home, candidate.id);
     assert.deepEqual([x.status, typeof x.domain], ['materializing', 'string'], `the fixture is live: a domain is allocated and placed while the execution is materializing (SEAM.md §205) (${x.status})`);
     const domain = domainOfExecution(fx.home, x);
+    // Recovery's kill empties the killed engine's scope, and the user manager
+    // would then remove it with the domain's directory, so the restart would
+    // observe termination and the unknown this case needs would never be
+    // there (objection 029; objection 114, the driver's ruling; SEAM §462).
+    // The scope is kept alive through the restart by a leaf of the test's
+    // own, as M115 (a) does: a sentinel whose unit is named from this home.
+    const scope = await assertEngineInScope(fx);
+    const keep = makeLeaf(scope.path, 'test_keep');
+    await cgroupSentinel(t, keep, { home: fx.home });
     await fx.engine.kill();
     makeUnreadable(domain.cgroup_path);
     fx.beforeCleanup.push(() => {
