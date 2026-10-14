@@ -117,9 +117,12 @@ function stageFacts(home, project, plan, number) {
 }
 
 // The module map's interfaces of the stages a stage depends on ("module:name").
-function dependencyInterfaces(home, plan, stage) {
+// A stage row lists its modules by id (D3 §4.1); each is resolved to its name.
+function dependencyInterfaces(home, project, plan, stage) {
   const stages = stagesOfPlan(home, plan);
-  const modules = new Set(stages.filter((s) => stage.depends_on.includes(s.number)).flatMap((s) => json(s.modules) ?? []));
+  const names = new Map(withStore(home, (db) => db.prepare('SELECT "id", "name" FROM "modules" WHERE "project" = ?').all(project)).map((m) => [m.id, m.name]));
+  const modules = new Set(stages.filter((s) => stage.depends_on.includes(s.number)).flatMap((s) => (json(s.modules) ?? []).map((m) => names.get(m) ?? m)));
+  assert.ok(modules.size > 0 || stage.depends_on.length === 0, `the modules of the stages stage ${stage.number} depends on are known (${JSON.stringify([...modules])})`);
   return MODULES_JSON.modules.filter((m) => modules.has(m.name)).flatMap((m) => (m.interfaces ?? []).map((i) => `${m.name}:${i.name}`));
 }
 
@@ -206,7 +209,7 @@ describe('M442 (a) the role packages say what the engine reads: the journey from
     for (const number of [1, 2]) {
       const stage = stageFacts(J.fx.home, J.p.id, J.plan1.id, number);
       assert.ok(stage, `stage ${number} is registered`);
-      const facts = { stage, dependencyInterfaces: dependencyInterfaces(J.fx.home, J.plan1.id, stage) };
+      const facts = { stage, dependencyInterfaces: dependencyInterfaces(J.fx.home, J.p.id, J.plan1.id, stage) };
       const own = builds.find((b) => packageReads(b.files).blocks['builder.tasks']?.stage === number) ?? builds[number - 1];
       problems.push(...packageProblems(own.files, BUILDER_ELEMENTS, { facts }).map((s) => `stage ${number}: ${s}`));
     }
