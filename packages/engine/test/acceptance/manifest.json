@@ -421,7 +421,10 @@
       "M429-phase-verification-and-its-sign-off.test.mjs",
       "M430-early-replanning-as-a-compare-and-swap.test.mjs",
       "M430-two-replacements-and-a-restart.test.mjs",
-      "M413-a-conformance-stage-in-phase-two.test.mjs"
+      "M413-a-conformance-stage-in-phase-two.test.mjs",
+      "M430-replacements-pending-while-stages-move.test.mjs",
+      "M429-a-replacement-at-phase-verification.test.mjs",
+      "M430-blockers-and-reopened-dispositions.test.mjs"
     ],
     "36": [
       "M431-the-change-request-and-the-side-ref.test.mjs",
