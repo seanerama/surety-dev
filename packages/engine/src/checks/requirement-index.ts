@@ -24,9 +24,13 @@ export type IndexResult = { ok: true; rows: IndexRow[] } | { ok: false; row: num
 
 const KEY = /^R[1-9][0-9]*$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
-const HEADER = ['key', 'title', 'phase', 'sensitive areas', 'criteria'];
-const ORIGIN_HEADER = 'origin';
-const ORIGINS = ['intended', 'observed'];
+// The columns as the template writes them (the Spec Writer's package states
+// these, src/packages/reads.ts); compared case-insensitively.
+export const INDEX_COLUMNS = ['Key', 'Title', 'Phase', 'Sensitive areas', 'Criteria'] as const;
+export const INDEX_ORIGIN_COLUMN = 'Origin';
+export const ORIGINS = ['intended', 'observed'] as const;
+const HEADER: string[] = INDEX_COLUMNS.map((c) => c.toLowerCase());
+const ORIGIN_HEADER = INDEX_ORIGIN_COLUMN.toLowerCase();
 
 const cells = (line: string): string[] | null => {
   const t = line.trim();
@@ -69,7 +73,7 @@ export function parseRequirementIndex(text: string): IndexResult {
     if (c === null || c.length !== width) return refuse(row, line, `the row does not have ${width === 6 ? 'six' : 'five'} cells`);
     const [key, title, phase, areasCell, criteriaCell] = c as [string, string, string, string, string];
     const originCell = width === 6 ? c[5]!.toLowerCase() : 'intended';
-    if (!ORIGINS.includes(originCell)) return refuse(row, line, `"${c[5]}" is not an origin (intended or observed)`);
+    if (!(ORIGINS as readonly string[]).includes(originCell)) return refuse(row, line, `"${c[5]}" is not an origin (intended or observed)`);
     if (!KEY.test(key)) return refuse(row, line, `"${key}" is not a requirement key R<n>`);
     if (keys.has(key)) return refuse(row, line, `the requirement ${key} is listed twice`);
     if (title.length === 0) return refuse(row, line, 'the title is empty');

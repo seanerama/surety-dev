@@ -14,7 +14,7 @@ import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
 import { deployTimeoutMs, parseDeploy } from './deploy/deploy-command.js';
-import { configureHarness, setHarnessSwitches, setProbeOverrides, setRealLane } from './testing/seam.js';
+import { configureHarness, setHarnessSwitches, setPackageOmit, setProbeOverrides, setRealLane } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -91,6 +91,7 @@ const adapterVersionValues: string[] = [];
 let serviceProfileVariantValue: string | null = null;
 const hostFactUnreadValues: string[] = [];
 let profileMaximaValue: string | null = null;
+const packageOmitValues: string[] = [];
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -148,7 +149,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-adapter-version' ||
     flag === '--harness-service-profile-variant' ||
     flag === '--harness-host-fact-unread' ||
-    flag === '--harness-profile-maxima'
+    flag === '--harness-profile-maxima' ||
+    flag === '--harness-package-omit'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -223,6 +225,9 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-profile-maxima') {
       // SEAM.md §427: every role (or check) domain of this start admitted at this maximum.
       profileMaximaValue = value;
+    } else if (flag === '--harness-package-omit') {
+      // Row M442 (b): a package element left out of every role package.
+      packageOmitValues.push(value);
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -242,6 +247,8 @@ const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, pro
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
 if (overrideProblem !== null) usage(overrideProblem);
+const omitProblem = harness ? setPackageOmit(packageOmitValues) : null;
+if (omitProblem !== null) usage(omitProblem);
 const switchProblem = setHarnessSwitches({
   templateVersions: templateVersionValues,
   hostId: hostIdValue,

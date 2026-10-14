@@ -51,6 +51,17 @@ export const SENSITIVE_AREAS = [
   'data_migrations_destructive',
   'irreversible_external_actions',
 ];
+// Each area's name, as the templates give it (TPL §4; IBT), for the
+// packages that state the closed list (src/packages/reads.ts).
+export const SENSITIVE_AREA_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  authentication: 'authentication',
+  authorization: 'authorization',
+  payments_financial_data: 'payments and financial data',
+  personal_data: 'personal data',
+  secrets_credentials: 'secrets and credential handling',
+  data_migrations_destructive: 'data migrations and destructive data operations',
+  irreversible_external_actions: 'irreversible external actions',
+});
 // Kinds an acceptance-origin check covers criteria with (D3 §1.3).
 export const COVERING_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
 export const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];

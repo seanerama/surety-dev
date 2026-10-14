@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 
 import type { Claim } from '../store/transitions/runs.js';
 import { canaryPromptText } from '../trust/canaries.js';
+import { type PackageName, type ReadsElement, architectElements, readsIds, readsText, specElements, statedElements } from '../packages/reads.js';
 
 // The role's artifact as the session's workspace holds it before the turn
 // (D6 §2.2: "the current state of the role's artifact"), read by the main
@@ -66,10 +67,27 @@ const RETROFIT: Record<string, string[]> = {
 const TASK: Record<string, string> = {
   vision: 'You are the Vision role in a conversation with the project owner. Help the owner clarify the idea, then rewrite `.surety/idea.md` into the project identity: the idea brief\'s sections, closing with one fenced block whose info string is `yaml surety-identity` holding exactly the keys name, one_line, users, non_goals, success_measures, sensitive_areas, tier_recommendation and environments.',
   spec_writer:
-    'You are the Spec Writer role in a conversation with the project owner. Turn the accepted idea record into `.surety/spec/spec.md` in the specification template\'s exact shape: the header, one `### R<n>. <title>` subsection per requirement with its statement, `**Sensitive areas:**` line and criteria `- R<n>.<m> ...`, and the section 5 index table that agrees with section 4. You may not approve your own specification.',
+    'You are the Spec Writer role in a conversation with the project owner. Turn the accepted idea record into `.surety/spec/spec.md`, in exactly the forms the engine reads (below). You may not approve your own specification.',
   architect:
-    'You are the Architect role in a conversation with the project owner. From the approved specification write the architecture, the module map (`.surety/architecture/modules.json`), the ADRs (`.surety/adrs/ADR-<nnn>.md`), the roadmap (`.surety/roadmap/roadmap.json`, every approved requirement in exactly one phase) and the next phase\'s plan (`.surety/phases/phase-<n>.json`). You may not approve your own proposals.',
+    'You are the Architect role in a conversation with the project owner. From the approved specification write the architecture (`.surety/architecture/architecture.md`, prose), the module map, the ADRs, the roadmap and the next phase\'s plan, in exactly the forms the engine reads (below). You may not approve your own proposals.',
 };
+
+// What the turn's package states of what the engine reads from the role's
+// product (row M442; src/packages/reads.ts): the Spec Writer's and the
+// Architect's, each with its retrofit variant; Vision's identity block is
+// in its task.
+export function sessionReads(facts: Pick<SessionContextFacts, 'role' | 'retrofit'>): { pkg: PackageName | null; elements: ReadsElement[] } {
+  const retrofit = facts.retrofit !== null && facts.retrofit !== undefined;
+  if (facts.role === 'spec_writer') {
+    const pkg: PackageName = retrofit ? 'spec_writer_retrofit' : 'spec_writer';
+    return { pkg, elements: statedElements(pkg, specElements({ retrofit })) };
+  }
+  if (facts.role === 'architect') {
+    const pkg: PackageName = retrofit ? 'architect_retrofit' : 'architect';
+    return { pkg, elements: statedElements(pkg, architectElements({ retrofit })) };
+  }
+  return { pkg: null, elements: [] };
+}
 
 // B.7: the turn's result (beside §68's status and summary).
 export const TURN_RESULT_SCHEMA = {
@@ -106,6 +124,7 @@ export function writeSessionPackage(
     files.push({ path, kind, source: null, sha256: createHash('sha256').update(content).digest('hex') });
   };
   const last = facts.transcript === null ? undefined : facts.transcript.filter((e) => e.speaker === 'owner').at(-1);
+  const reads = canary ? { pkg: null, elements: [] } : sessionReads(facts);
   put(
     'prompt.md',
     'prompt',
@@ -135,6 +154,7 @@ export function writeSessionPackage(
       ...(facts.approved.length > 0 ? [`The approved inputs you work from are in approved/: ${facts.approved.map((a) => `${a.name} (${a.what})`).join(', ')}. The checkout may hold a newer draft; these are what was approved.`, ''] : []),
       'The whole conversation so far is in transcript.json, and your artifact as it stands now is under artifact/ (artifact.json lists it). Read instructions.md first.',
       '',
+      ...(reads.elements.length > 0 ? [...readsText(reads.elements).slice(1), ''] : []),
       ...(canary ? canaryPromptText(canary) : []),
     ].join('\n'),
   );
@@ -164,5 +184,5 @@ export function writeSessionPackage(
   put('artifact.json', 'artifact', `${JSON.stringify({ files: art.files.map((f) => f.path), omitted: art.omitted, ...(art.unknown ? { unknown: art.unknown } : {}) }, null, 2)}\n`);
   if (canary) put('canary.json', 'instructions', `${JSON.stringify(canary, null, 2)}\n`);
   put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
-  writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files }, null, 2)}\n`);
+  writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
 }

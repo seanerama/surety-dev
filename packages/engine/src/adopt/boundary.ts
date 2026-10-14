@@ -15,6 +15,11 @@ import { posix } from 'node:path';
 
 import { gitOk, repoContext } from '../git/exec.js';
 
+// B.7's `adopted_tests` entry and the boundary's dispositions, as the
+// authoring package states them (src/packages/reads.ts; M442).
+export const ADOPTED_TEST_FIELDS = ['from', 'to', 'criteria', 'dependency_boundary'] as const;
+export const BOUNDARY_DISPOSITIONS = ['copied', 'replaced', 'application'] as const;
+
 export interface AdoptedTest {
   from: string[];
   to: string;
@@ -53,12 +58,12 @@ export function adoptedTestsValid(v: unknown): v is AdoptedTest[] {
     v.every(
       (t) =>
         isObj(t) &&
-        Object.keys(t).every((k) => ['from', 'to', 'criteria', 'dependency_boundary'].includes(k)) &&
+        Object.keys(t).every((k) => (ADOPTED_TEST_FIELDS as readonly string[]).includes(k)) &&
         strings(t.from) &&
         typeof t.to === 'string' &&
         strings(t.criteria) &&
         Array.isArray(t.dependency_boundary) &&
-        t.dependency_boundary.every((b) => isObj(b) && Object.keys(b).every((k) => k === 'path' || k === 'disposition') && typeof b.path === 'string' && ['copied', 'replaced', 'application'].includes(b.disposition as string)),
+        t.dependency_boundary.every((b) => isObj(b) && Object.keys(b).every((k) => k === 'path' || k === 'disposition') && typeof b.path === 'string' && (BOUNDARY_DISPOSITIONS as readonly string[]).includes(b.disposition as string)),
     )
   );
 }

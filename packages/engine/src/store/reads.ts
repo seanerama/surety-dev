@@ -17,6 +17,8 @@ import type { WorkRow } from './transitions/work.js';
 import type { CheckWritingFacts } from '../checks/guide.js';
 import type { Governed } from '../checks/schema.js';
 import { openObligationsOf } from '../spec/change.js';
+import { isAdopted } from '../adopt/records.js';
+import type { BuilderStageFacts } from '../packages/reads.js';
 
 // The project's effective ungoverned policy: the revision the engine
 // recorded over the schema defaults, or the defaults with revision null.
@@ -130,7 +132,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null; text: string | null };
   let requirements: Req[] = [];
   let adrs: { id: string; key: string; text: string }[] = [];
-  let modules: { id: string; name: string; paths: unknown }[] = [];
+  let modules: { id: string; name: string; paths: unknown; interfaces?: unknown[] }[] = [];
   let plan: Record<string, unknown> | null = null;
   if (stage) {
     const ids = [...new Set([...parse<string[]>(stage.requirement_ids, []), ...parse<string[]>(stage.implements, [])])];
@@ -149,6 +151,39 @@ export function contextFacts(db: Database, args: { run: string }) {
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
   }
+  // What a stage's Builder is told of its stage (row M442; B.5; D6 §6.4):
+  // its tasks, what it implements, its integration obligations, the stages
+  // it depends on and the module map's interfaces of their modules, read
+  // from the active generation's approved bundle. The interfaces are null
+  // when the map cannot be read: unknown, never none.
+  let builderStage: BuilderStageFacts | null = null;
+  const moduleMap = stage ? bundleModules(db, String(stage.phase_plan)) : null;
+  if (stage && run.role === 'builder') {
+    const keyOf = (r: string): string => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
+    const dependsOn = parse<unknown[]>(stage.depends_on, []).filter((n): n is number => typeof n === 'number');
+    const siblings = activeStages<{ number: number; modules: string }>(db, activePlanOf(db, String(stage.phase_plan)));
+    const depModules = dependsOn.flatMap((n) => {
+      const sib = siblings.find((x) => x.number === n);
+      return sib ? parse<string[]>(sib.modules, []).map((m) => ({ stage: n, module: m })) : [];
+    });
+    builderStage = {
+      number: Number(stage.number),
+      goal: String(stage.goal),
+      tasks: parse<string[]>(stage.tasks, []),
+      implements: parse<string[]>(stage.implements, []).map(keyOf),
+      integration_obligations: parse<string[]>(stage.integration_obligations, []),
+      depends_on: dependsOn,
+      dependency_interfaces:
+        moduleMap === null
+          ? null
+          : depModules.flatMap(({ stage: n, module }) =>
+              (moduleMap.find((m) => m.name === module)?.interfaces ?? []).map((i) => ({ stage: n, module, name: i.name, kind: i.kind, path: i.path ?? null, description: i.description })),
+            ),
+    };
+  }
+  // Each module's interfaces as the approved module map gives them (B.3),
+  // beside its paths; absent when the map cannot be read.
+  if (moduleMap !== null) modules = modules.map((m) => ({ ...m, interfaces: (moduleMap.find((x) => x.name === m.name)?.interfaces ?? []).map((i) => ({ name: i.name, kind: i.kind, path: i.path ?? null, description: i.description })) }));
   // Work that builds no stage of a plan (a fix naming no stage, a replan, an
   // assessment): every approved requirement and every ADR, by the approved
   // bindings the baseline texts carry, never a checkpoint's file in the
@@ -341,6 +376,9 @@ export function contextFacts(db: Database, args: { run: string }) {
     check_keys: checkKeys,
     criteria,
     check_writing: checkWriting,
+    // Whether the project was adopted (D6 §8): the retrofit packages.
+    adopted: isAdopted(db, item.project),
+    builder_stage: builderStage,
     // The phase-authoring package (D6 §6.2; N04; SEAM.md §428).
     authoring: item.kind === 'check_authoring' ? authoringFacts(db, item.project, subjectId('phase_plan'), item) : null,
     resumed,
@@ -365,6 +403,35 @@ export function contextFacts(db: Database, args: { run: string }) {
           })
         : null,
   };
+}
+
+// The active generation of a plan (D6 §5.7): followed through replaced_by.
+function activePlanOf(db: Database, planId: string): string {
+  let id = planId;
+  for (let hops = 0; hops < 64; hops++) {
+    const r = db.prepare('SELECT "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(id) as { active: number; replaced_by: string | null } | undefined;
+    if (!r || r.active === 1 || r.replaced_by === null) break;
+    id = r.replaced_by;
+  }
+  return id;
+}
+
+// The module map of a plan's approved bundle (its active generation's, else
+// its own), or null when none can be read.
+type BundleModule = { name: string; interfaces?: { name: string; kind: string; path?: string; description: string }[] };
+function bundleModules(db: Database, planId: string): BundleModule[] | null {
+  for (const id of [...new Set([activePlanOf(db, planId), planId])]) {
+    const plan = db.prepare('SELECT "bundle" FROM "phase_plans" WHERE "id" = ?').get(id) as { bundle: string | null } | undefined;
+    const bundle = plan?.bundle ? (db.prepare('SELECT "artifacts" FROM "plan_bundles" WHERE "id" = ?').get(plan.bundle) as { artifacts: string } | undefined) : undefined;
+    if (!bundle) continue;
+    try {
+      const modules = (JSON.parse(bundle.artifacts) as { modules?: { modules?: BundleModule[] } } | null)?.modules?.modules;
+      if (Array.isArray(modules)) return modules;
+    } catch {
+      // unreadable: try the next, else unknown
+    }
+  }
+  return null;
 }
 
 // The project's environments as the Verifier of check_correction work is

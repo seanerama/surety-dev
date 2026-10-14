@@ -85,17 +85,21 @@ export function compareKeys(prev: SpecRepresentation | null, next: SpecRepresent
   return { renumbered, withdrawn: [...new Set([...withdrawn, ...criteria])].sort(), reused: [...new Set(reused)].sort() };
 }
 
+// The open-question guard's blocker codes (D6 reading 1; B04), as the
+// Spec Writer's package states them (src/packages/reads.ts).
+export const QUESTION_BLOCKER_CODES = { no_hint: 'QUESTION_NO_PHASE_HINT', requirement_no_hint: 'REQUIREMENT_NO_PHASE_HINT', phase_1: 'QUESTION_BLOCKS_PHASE_1' } as const;
+
 // `CODE:subject` strings, as every option blocker is written.
 export function questionBlockers(rep: SpecRepresentation): string[] {
   const out: string[] = [];
   const byKey = new Map(rep.requirements.filter((r) => r.withdrawn !== true).map((r) => [r.key, r]));
   for (const q of rep.questions) {
-    if (q.phase_hint === null) out.push(`QUESTION_NO_PHASE_HINT:${q.id}`);
+    if (q.phase_hint === null) out.push(`${QUESTION_BLOCKER_CODES.no_hint}:${q.id}`);
     for (const key of q.blocks) {
       const r = byKey.get(key);
       if (!r) continue;
-      if (r.phase_hint === null) out.push(`REQUIREMENT_NO_PHASE_HINT:${key}:${q.id}`);
-      else if (r.phase_hint === 1) out.push(`QUESTION_BLOCKS_PHASE_1:${q.id}:${key}`);
+      if (r.phase_hint === null) out.push(`${QUESTION_BLOCKER_CODES.requirement_no_hint}:${key}:${q.id}`);
+      else if (r.phase_hint === 1) out.push(`${QUESTION_BLOCKER_CODES.phase_1}:${q.id}:${key}`);
     }
   }
   return [...new Set(out)];
