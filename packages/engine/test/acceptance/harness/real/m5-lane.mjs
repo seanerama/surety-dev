@@ -104,12 +104,13 @@ export const M443_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet',
 export const M444_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet', 'm5_activation', 'm5r_adopt', 'm5r_spec', 'm5r_architecture', 'm5r_conformance', 'm5r_qualify', 'm5r_deploy', 'm5r_teardown', 'm5r_replan', 'm5r_phase2']);
 
 export const HOME_MAX_BYTES = 56;
-// The journeys' budgets (the Verifier's choice, Sean's to change): a run
-// bound of 1 000 000 billable tokens, since a session is one run whose turns
-// re-send the transcript and add up (D6 §2.6's cumulative budget; M4's 300 000
-// was sized for one one-shot), and a day limit above each journey's estimate
-// (about 5 and 3 USD), so that the limit stops a runaway and not the journey.
-export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 1_000_000, M443_day_usd: 15, M444_day_usd: 10 });
+// The journeys' caps, Sean's choice of 2026-10-14: a run bound of 2 000 000
+// billable tokens (a session is one run whose turns re-send the transcript
+// and add up, D6 §2.6) and day limits of 30 and 20 USD; the estimates stay
+// about 5 and 3 USD. A session turn with unknown usage keeps D1 §13.3's
+// fail-closed behaviour (it reserves the run allowance and the session
+// closes; Sean, 2026-10-14): the report says so plainly if it ever happens.
+export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 2_000_000, M443_day_usd: 30, M444_day_usd: 20 });
 export const SECRET_REF = 'deploy/ref_secret';
 export const SECRET_VAR = 'REF_SECRET';
 export const STEP_HOURS = 4;
@@ -134,7 +135,7 @@ export function costStatement(row) {
       ? '  Three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet (two check authorings, four Builders, four Verifiers, four Reviewers, two phase verifications, one replan, one Spec Writer change run, plus repairs).'
       : '  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks\' roles).',
     `  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).`,
-    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier. The only hard maximum is your subscription's own usage limits.`,
+    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier (caps of Sean's choice, 2026-10-14; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.`,
     'An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.',
   ].join('\n');
 }
