@@ -143,15 +143,26 @@ describe('M441 (a), (c), (e) the pace read after the journey on the kernel lane'
     const stages = stagesOfProject(fx.home, p.id).filter((s) => s.status === 'verified');
     assert.ok(stages.length >= 4, `the fixture is live: four verified stages (${stages.length})`);
     const at = (type, item) => eventsOfType(fx.home, type).find((e) => e.subject?.work_item === item)?.at ?? null;
+    const firstEvaluationAt = (stage) => rowsOf(fx.home, `SELECT "created_at" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid LIMIT 1`, p.id, stage)[0]?.created_at ?? null;
+    const reversed = (from, to) => typeof from === 'string' && typeof to === 'string' && Date.parse(to) < Date.parse(from);
+    // The driver's ruling (objection 106): a duration is a number, or
+    // {unknown: 'clock_stepped_back'} only where the store's two recorded wall
+    // times run backwards (the host's clock stepped back between them, E148).
+    const measuredOrStepped = (figure, from, to, what) => {
+      if (reversed(from, to)) assert.ok(isUnknown(figure) && figure.unknown === 'clock_stepped_back', `${what}: the recorded wall times run backwards (${from} → ${to}), so {unknown: clock_stepped_back} (${show(figure)})`);
+      else assert.ok(typeof figure === 'number', `${what}: a number from ${from} to ${to} (${show(figure)})`);
+    };
     for (const s of stages) {
       const f = pace.stages.find((x) => x.id === s.id);
       assert.ok(f, `stage ${s.id} is in the read`);
       const what = `stage ${f.number} of phase ${f.phase}`;
       const met = at('work.dependency_met', s.work_item);
       assert.ok(met, `${what}: work.dependency_met † was recorded when both milestones were met (D6 §7.6)`);
-      assertDerived(f.eligible_to_integrated, seconds(met, at('work.integrated', s.work_item)), `${what}: eligible_to_integrated †`);
-      assert.ok(typeof f.integrated_to_first_evaluation === 'number', `${what}: integrated_to_first_evaluation † (${show(f.integrated_to_first_evaluation)})`);
-      assert.ok(typeof f.to_verified === 'number', `${what}: to_verified † (${show(f.to_verified)})`);
+      const integrated = at('work.integrated', s.work_item);
+      if (reversed(met, integrated)) measuredOrStepped(f.eligible_to_integrated, met, integrated, `${what}: eligible_to_integrated †`);
+      else assertDerived(f.eligible_to_integrated, seconds(met, integrated), `${what}: eligible_to_integrated †`);
+      measuredOrStepped(f.integrated_to_first_evaluation, integrated, firstEvaluationAt(s.id), `${what}: integrated_to_first_evaluation †`);
+      measuredOrStepped(f.to_verified, integrated, at('work.complete', s.work_item), `${what}: to_verified †`);
       const builders = rowsOf(fx.home, `SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "role" = 'builder'`, s.work_item)[0].n;
       assert.equal(f.runs?.builder, builders, `${what}: runs.builder † (${show(f.runs)})`);
       for (const role of ['verifier', 'reviewer', 'fix']) assert.ok(Number.isInteger(f.runs?.[role]), `${what}: runs.${role} † (${show(f.runs)})`);
