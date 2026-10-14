@@ -925,6 +925,24 @@ export function verificationOf(db: Db, candidate: string): { id: string; status:
     .get(candidate) as { id: string; status: string; chain: number } | undefined;
 }
 
+// The generation of a candidate's review trigger (slice 37): a review whose
+// sign-offs are all bound to acceptance content the candidate no longer has
+// (a protected version applied while it ran: under D6 K2 a check
+// correction and the review run side by side) is asked again, once per
+// content, as the next generation. A review that signed nothing, or one
+// still under way, is not repeated.
+export function reviewGeneration(db: Db, project: string, candidate: string, contentHash: string): number {
+  const latest = db
+    .prepare(`SELECT "id", "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND "trigger_source" = 'verification' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
+    .get(project, candidate) as { id: string; status: string; trigger_generation: number } | undefined;
+  if (!latest) return 1;
+  if (latest.status !== 'complete') return latest.trigger_generation;
+  const signed = db
+    .prepare(`SELECT s."acceptance_content_hash" AS "hash" FROM "signoffs" s JOIN "runs" r ON r."id" = s."run" WHERE r."work_item" = ? AND s."candidate" = ?`)
+    .all(latest.id, candidate) as { hash: string }[];
+  return signed.length > 0 && !signed.some((x) => x.hash === contentHash) ? latest.trigger_generation + 1 : latest.trigger_generation;
+}
+
 // The engine queues the review a tier requires (E36 item 3; E38; SEAM.md
 // §70): at T2 and T3, once the candidate's verification work is complete and
 // every check its stage scope requires has passed. One per candidate; it is
@@ -938,9 +956,10 @@ function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Reco
   const verification = verificationOf(tx.db, candidate.id);
   if (!verification || verification.status !== 'complete') return;
   const run = tx.db.prepare(`SELECT "chain" FROM "runs" WHERE "work_item" = ? AND "outcome" = 'completed' ORDER BY "seq" DESC LIMIT 1`).get(verification.id) as { chain: number } | undefined;
+  const generation = reviewGeneration(tx.db, candidate.project, candidate.id, scope.contentHash);
   observeTrigger(
     tx,
-    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: 1, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1, chain_origin: originOfItem(tx.db, verification.id) },
+    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: generation, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1, chain_origin: originOfItem(tx.db, verification.id) },
     {},
   );
 }
