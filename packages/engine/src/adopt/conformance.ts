@@ -66,6 +66,19 @@ export function bindConformanceStage(tx: Tx, args: { project: string; stage: str
 // The candidates a conformance stage is held by: every candidate nominated
 // after its publication (its source binding precedes them all; its own
 // state, not a work item, says whether it is done).
+// Whether a candidate of the project was nominated since the first event
+// about the stage, by the event log's order (the slice-36 review's M3).
+export function nominatedSince(db: Db, project: string, stage: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM "events" n WHERE n."type" = 'candidate.nominated' AND json_extract(n."subject", '$.project') = ?
+           AND n."seq" >= COALESCE((SELECT MIN(e."seq") FROM "events" e WHERE json_extract(e."subject", '$.stage') = ?), 0) LIMIT 1`,
+      )
+      .get(project, stage) !== undefined
+  );
+}
+
 // Which came first is read from the event log's order, never from wall time
 // (D1's monotonic rule; BS5 §4.1 rule 17): the candidate's nomination and
 // the first event about the stage. Where either is not found, the stage is
@@ -92,7 +105,9 @@ export function conformanceNominationDue(tx: Tx, args: { project: string }): voi
     if (s.conformance_state !== 'source_bound') continue;
     const plan = tx.db.prepare('SELECT "authoring_ready_at", "status", "active" FROM "phase_plans" WHERE "id" = ?').get(s.phase_plan) as { authoring_ready_at: string | null; status: string; active: number } | undefined;
     if (!plan || plan.authoring_ready_at === null || plan.status !== 'published' || plan.active !== 1) continue;
-    const held = tx.db.prepare('SELECT 1 FROM "candidates" WHERE "project" = ? AND "nominated_at" >= ? LIMIT 1').get(args.project, s.created_at);
+    // A candidate nominated after the stage, by the event log's order, not
+    // by wall time (the slice-36 review's M3; as conformanceHeldBy).
+    const held = nominatedSince(tx.db, args.project, s.id);
     if (held) continue;
     const due = (tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null }).nomination_due;
     if (due !== null) continue;

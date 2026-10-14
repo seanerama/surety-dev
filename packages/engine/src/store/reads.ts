@@ -16,6 +16,7 @@ import { type FindingRow, candidateSignoffs, findingApplies } from './transition
 import type { WorkRow } from './transitions/work.js';
 import type { CheckWritingFacts } from '../checks/guide.js';
 import type { Governed } from '../checks/schema.js';
+import { openObligationsOf } from '../spec/change.js';
 
 // The project's effective ungoverned policy: the revision the engine
 // recorded over the schema defaults, or the defaults with revision null.
@@ -310,7 +311,10 @@ export function contextFacts(db: Database, args: { run: string }) {
   const proposalRow = proposalId === null ? undefined : (db.prepare('SELECT "id", "seq", "requested_change_kind", "classified_change_kind", "status", "base_revision", "tree_id", "diff_hash", "run" FROM "protected_proposals" WHERE "id" = ? AND "project" = ?').get(proposalId, item.project) as Record<string, unknown> | undefined);
   // A spec change's request (D6 §4.3; SEAM.md §353).
   const requestId = subjectId('request');
-  const changeRequest = requestId === null ? undefined : (db.prepare('SELECT "id", "seq", "spec_revision", "request_text" AS "text", "source" FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(requestId, item.project) as Record<string, unknown> | undefined);
+  const changeRequestRow = requestId === null ? undefined : (db.prepare('SELECT "id", "seq", "spec_revision", "request_text" AS "text", "source" FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(requestId, item.project) as Record<string, unknown> | undefined);
+  // A correction's package lists the change's open obligations (the
+  // slice-36 review's S3): what the Verifier still has to resolve.
+  const changeRequest = changeRequestRow && item.kind === 'check_correction' ? { ...changeRequestRow, open_obligations: openObligationsOf(db, String(changeRequestRow.id)) } : changeRequestRow;
   return {
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,

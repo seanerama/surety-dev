@@ -259,7 +259,7 @@ export class QualificationDriver {
     };
     const answered = replyOf(t2);
     const found = answered !== null && answered.includes(token);
-    const quiescent = t1 !== undefined && t2 !== undefined && t1.domain_status === 'terminated' && t1.ended_at !== null && t2.launched_at !== null && t1.ended_at <= t2.launched_at;
+    const quiescent = t1 !== undefined && t2 !== undefined && t1.domain_status === 'terminated' && t1.ended_order !== null && t2.launched_order !== null && t1.ended_order < t2.launched_order;
     const carried = await this.carriedBetween(facts.inventories, facts.turns.map((t) => t.domain ?? null));
     const real = a.backend === 'claude';
     // A model the turns did not request answered (E86 item 3).
@@ -713,7 +713,7 @@ const FAILURE: Record<string, string> = { positive: 'invalid_result', cancellati
 // What the continuation canary's judgement reads of its session run.
 interface ContinuationFacts {
   state: string;
-  turns: { number: number; invocation: string; domain?: string | null; outcome: string | null; usage_status: string | null; settled_at: string | null; reply: string | null; domain_status: string | null; launched_at: string | null; ended_at: string | null }[];
+  turns: { number: number; invocation: string; domain?: string | null; outcome: string | null; usage_status: string | null; settled_at: string | null; reply: string | null; domain_status: string | null; launched_at: string | null; ended_at: string | null; launched_order: number | null; ended_order: number | null }[];
   inventories: { id: string; path: string | null; sha256: string | null; bytes: number | null }[];
   models_observed: string[];
 }

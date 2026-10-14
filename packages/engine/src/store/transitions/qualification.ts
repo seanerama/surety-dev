@@ -291,8 +291,13 @@ export function continuationFacts(db: Tx['db'], a: { run: string }) {
   }[]).map((t) => {
     const at = (status: string[]) =>
       (db.prepare(`SELECT MIN("at") AS at FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" IN (${status.map(() => '?').join(', ')})`).get(t.invocation, ...status) as { at: string | null }).at;
+    // Which came first is the store's insertion order, never the wall times
+    // (D1's monotonic rule; the slice-36 review's M4): a clock step must not
+    // fail the canary.
+    const order = (status: string[]) =>
+      (db.prepare(`SELECT MIN(rowid) AS o FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" IN (${status.map(() => '?').join(', ')})`).get(t.invocation, ...status) as { o: number | null }).o;
     const d = db.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(t.domain) as { status: string } | undefined;
-    return { ...t, domain_status: d?.status ?? null, launched_at: at(['launched']), ended_at: at(['ended', 'unknown']) };
+    return { ...t, domain_status: d?.status ?? null, launched_at: at(['launched']), ended_at: at(['ended', 'unknown']), launched_order: order(['launched']), ended_order: order(['ended', 'unknown']) };
   });
   const inventories = db
     .prepare(`SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid, "id"`)

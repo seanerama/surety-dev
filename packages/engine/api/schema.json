@@ -2580,6 +2580,9 @@
         },
         "memory_max": {
           "required": false
+        },
+        "supervision_lost_seq": {
+          "required": false
         }
       }
     },

@@ -199,7 +199,7 @@ import {
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
-import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, recordAssessments, requestSpecChange } from '../spec/change.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
 import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
@@ -650,7 +650,6 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),
   // D6 §§4.3, 4.5: a spec change's side ref, and its approval's application.
   'spec.intend_proposal': (tx, a) => intendProposal(tx, a),
-  'spec.record_assessments': (tx, a) => recordAssessments(tx, a),
   'spec.application_facts': (tx, a) => specApplicationFacts(tx, a),
   'spec.begin_application': (tx, a) => beginSpecApplication(tx, a),
   'spec.refuse_application': (tx, a) => refuseSpecApplication(tx, a),

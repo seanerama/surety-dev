@@ -68,3 +68,9 @@ WHEN NEW.assigned_phase IS NOT OLD.assigned_phase
 BEGIN
   SELECT RAISE(ABORT, 'requirements.assigned_phase follows the current roadmap revision');
 END;
+
+-- ---- execution_domains: when supervision was lost, in the store's order -----------------
+-- (D1's monotonic rule; the slice-36 review's M2): the highest event seq at
+-- the loss, so a result is judged before or after it by the order the store
+-- recorded them, never by wall time. `supervision_lost_at` stays as data.
+ALTER TABLE execution_domains ADD COLUMN supervision_lost_seq INTEGER;

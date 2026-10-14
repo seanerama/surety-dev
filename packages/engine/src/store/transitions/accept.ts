@@ -18,6 +18,7 @@ import type { ReplanPrepared } from '../../plan/bundle.js';
 import { type ChainOrigin, originOfItem, transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
+import { type ApplicabilityEntry, recordAssessments } from '../../spec/change.js';
 
 export interface RunResult {
   summary: string;
@@ -157,18 +158,23 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
 
 // A Verifier's or a Reviewer's run that changed nothing: what its role
 // reported is recorded (SEAM.md §68).
-export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string | null)[]; alpha?: AlphaPrepared[] }): void {
+export function recordRunReport(tx: Tx, args: { run: string; evidence?: (string | null)[]; alpha?: AlphaPrepared[]; assessments?: Assessments }): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
   recordReport(tx, args);
+  // The Verifier's applicability assessments, with the run's report (the
+  // slice-36 review's S1): never in a transaction of their own.
+  if (args.assessments) recordAssessments(tx, { run: run.id, ...args.assessments });
 }
+
+type Assessments = { entries: ApplicabilityEntry[]; rationales: string[] };
 
 // A Verifier's protected-only diff is captured as a proposal (D1 §§4.1, 7.3;
 // SEAM.md §68): the run is proposal_captured, the proposal recorded, and what
 // its role reported recorded. Capture is not a commit.
 export function captureRunProposal(
   tx: Tx,
-  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[]; adoptedTests?: unknown[] | null; deferredCriteria?: unknown[] | null; boundaryErrors?: unknown[] },
+  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[]; adoptedTests?: unknown[] | null; deferredCriteria?: unknown[] | null; boundaryErrors?: unknown[]; assessments?: Assessments },
 ): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
@@ -190,6 +196,8 @@ export function captureRunProposal(
     boundaryErrors: args.boundaryErrors ?? [],
   });
   recordReport(tx, { run: run.id, evidence: args.evidence });
+  // With the captured correction, in its transaction (S1).
+  if (args.assessments) recordAssessments(tx, { run: run.id, ...args.assessments });
 }
 
 // The snapshot of a quiescent workspace, recorded once.

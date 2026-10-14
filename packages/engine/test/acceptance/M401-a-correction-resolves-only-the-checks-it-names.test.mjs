@@ -14,7 +14,7 @@ import { describe, test } from 'node:test';
 
 import { evaluate } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
-import { authoringReady, candidatesOfProject, checkRows, obligationsOf, planOfPhase, pump, serviceCorrectionScript, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
+import { authoringReady, candidatesOfProject, checkRows, obligationsOf, planOfPhase, pump, serviceCorrectionScript, specRevisions, stagesOfPlan } from './harness/journey/drive.mjs';
 import { SPEC_R2_BOTH, journeyProject, postChange } from './harness/journey/review31b.mjs';
 import { step } from './harness/scripted.mjs';
 
@@ -29,7 +29,9 @@ describe('M401 (h) S2: a correction resolves only the obligations of the checks 
     const listed = obligationsOf(fx.home, p.id).filter((o) => o.reason === 'spec_changed');
     assert.deepEqual([...new Set(listed.map((o) => o.key))].sort(), ['accept-r2', 'integration'], `the fixture is live: obligations on accept-r2 and integration (${JSON.stringify(listed)})`);
     // The correction (accept-r2's test alone) applied.
-    await pump(fx, ctx, () => workOf(fx.home, p.id, 'check_correction').find((w) => w.status === 'complete') && obligationsOf(fx.home, p.id).some((o) => o.key === 'accept-r2' && o.resolved_at), { what: 'the correction applied and accept-r2\'s obligation resolved', max: 60 });
+    // The correction item itself does not complete while integration's obligation stands
+    // (the slice-36 review's S3; SEAM §427): the wait is for accept-r2's resolution alone.
+    await pump(fx, ctx, () => obligationsOf(fx.home, p.id).some((o) => o.key === 'accept-r2' && o.resolved_at), { what: 'the correction applied and accept-r2\'s obligation resolved', max: 60 });
     const after = obligationsOf(fx.home, p.id).filter((o) => o.reason === 'spec_changed');
     assert.ok(after.filter((o) => o.key === 'accept-r2').every((o) => o.resolved_at), 'accept-r2\'s obligation is resolved by the correction that names it');
     assert.ok(after.filter((o) => o.key === 'integration').every((o) => o.resolved_at === null), `integration's obligation is not: the correction does not name it (${JSON.stringify(after)})`);

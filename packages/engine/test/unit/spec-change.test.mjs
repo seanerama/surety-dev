@@ -71,3 +71,34 @@ test('spec_applicability: a Verifier\'s field of entries {check, criteria, ratio
     assert.equal(parseReport({ spec_applicability: [bad] }), null, `refused: ${JSON.stringify(bad)}`);
   }
 });
+
+const { dependencyManifest, workClass } = await import(join(dist, 'spec', 'change.js'));
+const { deliveryOf } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
+
+test('a work item\'s generation in the dependency manifest is its class: routine progress keeps it, a parked item retried changes it', () => {
+  const db = store();
+  const item = (id, status) =>
+    db
+      .prepare(`INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold") VALUES (?, 't', 'p', ?, 'stage_build', '{}', ?, 'plan', ?, 1, 0, 0, 0, 0)`)
+      .run(id, Number(id.slice(3)), status, id);
+  item('wi_1', 'eligible');
+  item('wi_2', 'parked');
+  const manifest = () => dependencyManifest(db, { project: 'p', phases: [], stages: [], keys: [], checks: [], findings: [], results: [], work: ['wi_1', 'wi_2'] }).work;
+  const before = manifest();
+  assert.deepEqual(before.map((w) => w.generation), ['active', 'held']);
+  for (const status of ['claimed', 'executing', 'integrating', 'integrated', 'verifying']) {
+    db.prepare('UPDATE "work_items" SET "status" = ?, "repair_attempts" = "repair_attempts" + 1 WHERE "id" = \'wi_1\'').run(status);
+    assert.deepEqual(manifest(), before, `${status}: a build's progress is no material change`);
+  }
+  db.prepare('UPDATE "work_items" SET "status" = \'eligible\' WHERE "id" = \'wi_2\'').run();
+  assert.notDeepEqual(manifest(), before, 'the parked item retried is');
+  assert.deepEqual(['eligible', 'awaiting_decision', 'held', 'parked', 'complete', 'cancelled'].map(workClass), ['active', 'active', 'held', 'held', 'terminal', 'terminal']);
+});
+
+test('a withdrawn requirement is delivered by no stage, so it is no gate\'s obligation', () => {
+  const db = store();
+  db.prepare(`UPDATE "requirements" SET "withdrawn_at" = 't', "status" = 'withdrawn' WHERE "id" = 'req_5'`).run();
+  db.prepare(`INSERT INTO "stages" ("id", "created_at", "project", "phase_plan", "number", "goal", "modules", "requirement_ids", "implements", "status", "integrated_revision") VALUES ('st_1', 't', 'p', 'plan_1', 1, 'g', '[]', '[]', '["req_1","req_5"]', 'verified', 'abc')`).run();
+  const d = deliveryOf(db, 'p', { id: 'cand_1', project: 'p', revision: 'abc' });
+  assert.deepEqual(d.delivered, ['req_1'], 'R5 withdrawn: not delivered, not an obligation');
+});

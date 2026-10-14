@@ -118,7 +118,9 @@ export function deliveryOf(db: Db, project: string, candidate: CandidateRow): De
   // The active obligation set (D6 §5.7; B08): a stage an early replacement
   // cancelled or superseded delivers nothing, its code history only.
   const stages = db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL').all(project) as StageRow[];
-  const requirements = (db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as { id: string }[]).map((r) => r.id);
+  // A withdrawn requirement has nothing to validate (D6 §4.5; TPL §5): it is
+  // delivered by no stage and so is no gate's obligation; its history stays.
+  const requirements = (db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL ORDER BY "id"').all(project) as { id: string }[]).map((r) => r.id);
   const implementsOf = new Map<string, string[]>();
   for (const s of stages) implementsOf.set(s.id, JSON.parse(s.implements) as string[]);
   const integrated = (s: StageRow) => s.integrated_revision !== null && isAncestorRecorded(db, project, s.integrated_revision, candidate.revision);

@@ -105,6 +105,12 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
   return { id: p.id, phase_number: p.phase_number, generation: p.generation, status: p.status, published_at: p.published_at, completed_at: p.completed_at, completion_binding: json(p.completion_binding), stages };
 }
 
+// A finding raised after the plan's publication and not after its
+// completion, by event seq (parameters: the plan twice).
+export const FINDING_RAISED_BETWEEN = `EXISTS (SELECT 1 FROM "events" r WHERE r."type" = 'finding.raised' AND json_extract(r."subject", '$.finding') = f."id"
+  AND r."seq" >= COALESCE((SELECT MIN(p."seq") FROM "events" p WHERE p."type" = 'plan.published' AND json_extract(p."subject", '$.phase_plan') = ?), 0)
+  AND r."seq" <= COALESCE((SELECT MIN(c."seq") FROM "events" c WHERE c."type" = 'baseline.phase_complete' AND json_extract(c."subject", '$.phase_plan') = ?), 9223372036854775807))`;
+
 const FINDING_COLUMNS = '"id", "seq", "created_at", "scope", "candidate", "category", "effective_severity" AS "severity", "message", "check", "criterion", "sensitive_area", "status", "disposition", "disposition_at", "defer_target", "linked_issue", "source_role", "remediation"';
 
 export function replanFacts(db: Db, item: { id: string; project: string; trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null }): ReplanFacts {
@@ -143,12 +149,13 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
         | { id: string; candidate: string; outcome: string; reasons: string; check_states: string; computed_at: string; stale: number }
         | undefined)
     : undefined;
-  // The phase's findings: raised while it was open, or still open.
-  const from = completed?.published_at ?? '';
-  const to = completed?.completed_at ?? '9999';
-  const findings = db
-    .prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND (("created_at" >= ? AND "created_at" <= ?) OR "status" IN ('open', 'dispositioned')) ORDER BY "seq"`)
-    .all(project, from, to) as Record<string, unknown>[];
+  // The phase's findings: raised while it was open, or still open. "While"
+  // is the event log's order, between the plan's publication and its
+  // completion, never wall time (the slice-36 review's N2): a clock step
+  // drops no finding.
+  const findings = completed
+    ? (db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" f WHERE f."project" = ? AND (${FINDING_RAISED_BETWEEN} OR f."status" IN ('open', 'dispositioned')) ORDER BY f."seq"`).all(project, completed.id, completed.id) as Record<string, unknown>[])
+    : (db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? ORDER BY "seq"`).all(project) as Record<string, unknown>[]);
   const deferred = db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND "disposition" = 'defer' AND "status" <> 'resolved' ORDER BY "seq"`).all(project) as Record<string, unknown>[];
   const obligations = (db.prepare('SELECT "id", "key", "criteria", "generation", "reason", "request", "created_at" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"').all(project) as Record<string, unknown>[]).map((o) => ({
     ...o,
