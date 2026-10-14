@@ -218,7 +218,7 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
   } catch {
     asked = false;
   }
-  const revision = db.prepare(`SELECT "id" FROM "revisions" WHERE "created_by_run" = ? AND "kind" = 'checkpoint' ORDER BY "recorded_at", "id" LIMIT 1`).get(args.run) as { id: string } | undefined;
+  const revision = db.prepare(`SELECT "id" FROM "revisions" WHERE "created_by_run" = ? AND "kind" = 'checkpoint' ORDER BY rowid, "id" LIMIT 1`).get(args.run) as { id: string } | undefined;
   const checkpoint = revision
     ? { status: 'accepted', revision: revision.id }
     : asked

@@ -176,7 +176,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined;
       const binding = { acceptance_hash: hash, protected_version: effectiveVersion(tx.db, project)?.id ?? null, spec_revision: spec?.id ?? null, plan_generation: plan.generation };
       if (refusal !== null) {
-        const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
+        const active = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string; generation: number } | undefined;
         tx.emit('signoff.refused', { project, candidate: candidate.id, run: run.id, phase_plan: plan.id }, {
           scope: 'phase',
           binding,

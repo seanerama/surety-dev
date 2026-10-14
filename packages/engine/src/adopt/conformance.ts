@@ -48,7 +48,7 @@ export interface ConformanceStageRow {
 }
 
 export const conformanceStagesOf = (db: Db, project: string): ConformanceStageRow[] =>
-  db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL ORDER BY "created_at"').all(project) as ConformanceStageRow[];
+  db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "conformance" = 1 AND "cancelled_at" IS NULL ORDER BY rowid').all(project) as ConformanceStageRow[];
 
 export const isConformanceStage = (db: Db, stage: string | null): boolean => stage !== null && db.prepare('SELECT 1 FROM "stages" WHERE "id" = ? AND "conformance" = 1').get(stage) !== undefined;
 
@@ -176,7 +176,7 @@ export function dueConformanceGates(db: Db, candidate: CandidateRow): string[] {
     const s = db.prepare('SELECT "conformance_state" FROM "stages" WHERE "id" = ?').get(id) as { conformance_state: string | null };
     if (s.conformance_state === 'conformed') continue;
     const latest = db
-      .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+      .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
       .get(candidate.id, id) as { stale: number } | undefined;
     if (!latest || latest.stale === 1) out.push(id);
   }
@@ -198,7 +198,7 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
   for (const c of candidates) {
     if (c.source_digest === null || c.source_digest !== a.source_digest) continue;
     if (c.progress !== 'alpha_deployed') continue;
-    const last = db.prepare(`SELECT "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(c.id) as { outcome: string; stale: number } | undefined;
+    const last = db.prepare(`SELECT "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(c.id) as { outcome: string; stale: number } | undefined;
     if (last && last.outcome === 'satisfied' && last.stale === 0) return { adopted: true, open: true, reason: null, candidate: c.id };
   }
   return {
@@ -213,13 +213,13 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
 // barrier open, the replan created once from its trigger (idempotent).
 export function conformancePhaseComplete(db: Db, project: string): { plan: string; phase: number } | null {
   if (!adoptionOf(db, project)) return null;
-  const p = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 1 AND "completed_at" IS NOT NULL ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string; phase_number: number } | undefined;
+  const p = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 1 AND "completed_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string; phase_number: number } | undefined;
   return p ? { plan: p.id, phase: p.phase_number } : null;
 }
 
 export const conformanceStateOf = (db: Db, project: string): { stage: string; state: string | null; source_revision: string | null; reasons: unknown }[] =>
   conformanceStagesOf(db, project).map((s) => {
-    const last = db.prepare(`SELECT "reasons" FROM "gate_evaluations" WHERE "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`).get(s.id) as { reasons: string } | undefined;
+    const last = db.prepare(`SELECT "reasons" FROM "gate_evaluations" WHERE "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(s.id) as { reasons: string } | undefined;
     return { stage: s.id, state: s.conformance_state, source_revision: s.source_revision, reasons: parseJson<unknown>(last?.reasons ?? null) };
   });
 

@@ -54,7 +54,7 @@ const NONE: PhaseStepResult = { evaluate: null, completed: null };
 
 function openPlan(db: Db, project: string): PlanRow | undefined {
   return db
-    .prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "authoring_ready_at" IS NOT NULL AND "completed_at" IS NULL ORDER BY "created_at" DESC LIMIT 1`)
+    .prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "authoring_ready_at" IS NOT NULL AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`)
     .get(project) as PlanRow | undefined;
 }
 

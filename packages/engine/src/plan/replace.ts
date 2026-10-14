@@ -47,7 +47,7 @@ export interface Replaces extends ReplacementTarget {
 
 // The project's open plan: published, active, not complete.
 export function activePlan(db: Db, project: string): { id: string; phase_number: number; generation: number } | undefined {
-  return db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY "created_at" DESC LIMIT 1`).get(project) as
+  return db.prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`).get(project) as
     | { id: string; phase_number: number; generation: number }
     | undefined;
 }

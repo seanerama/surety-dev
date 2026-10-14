@@ -810,7 +810,7 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
       `SELECT r."id" AS "run", r."project", r."state" FROM "leases" l JOIN "runs" r ON r."id" = l."resource_id"
        WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ?
          AND NOT (r."kind" = 'session' AND r."session_state" IN ('allocated', 'open_idle', 'saving'))
-       ORDER BY r."created_at", r."id"`,
+       ORDER BY r.rowid, r."id"`,
     )
     .all(at) as { run: string; project: string; state: RunState }[];
 }
@@ -941,7 +941,7 @@ export function finishRun(
     if (terminal === undefined) terminal = seen.includes('launched') ? 'ended' : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     if (seen.includes('launched') && terminal === 'refused') terminal = 'unknown';
     // How the backend ended, as the boundary established it (D2 §1.6, A.3).
-    const exit = tx.db.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "invocation" = ? ORDER BY "created_at" DESC LIMIT 1').get(receipt.id) as
+    const exit = tx.db.prepare('SELECT "exit_class", "exit_evidence" FROM "execution_domains" WHERE "invocation" = ? ORDER BY rowid DESC LIMIT 1').get(receipt.id) as
       | { exit_class: string | null; exit_evidence: string | null }
       | undefined;
     observe(tx, run, receipt.id, terminal, terminal === 'refused' ? null : (exit ?? null));
@@ -981,7 +981,7 @@ export function finishRun(
   // The run's transcript, once it is a published record (SEAM.md §56). A
   // stream that was not published is never named.
   const transcript = tx.db
-    .prepare(`SELECT "id" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+    .prepare(`SELECT "id" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 ORDER BY rowid DESC, "id" DESC LIMIT 1`)
     .get(run.id) as { id: string } | undefined;
   setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0, ...(transcript ? { transcript: transcript.id } : {}) });
   const payload: Record<string, unknown> = { outcome: run.outcome, reason_class: run.reason_class };
@@ -1050,7 +1050,7 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       // waits for it (the driver's ruling Q13): applied, it completes;
       // rejected, it takes its repair, then parks (spec/change.ts).
       if (item.status === 'executing' && correctionRequestOf(tx.db, item.id) !== null) {
-        const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
+        const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
         if (p && p.status === 'rejected') {
           correctionFailed(tx, item, { ...cause, proposal: p.id, cause: 'proposal_rejected' });
           return;
@@ -1214,5 +1214,5 @@ export function endFacts(tx: Tx, runId: string): EndFacts {
 
 // Runs that have not ended, oldest first.
 export function unendedRuns(tx: Tx): RunRow[] {
-  return tx.db.prepare(`SELECT * FROM "runs" WHERE "state" <> 'ended' ORDER BY "created_at", "id"`).all() as RunRow[];
+  return tx.db.prepare(`SELECT * FROM "runs" WHERE "state" <> 'ended' ORDER BY rowid, "id"`).all() as RunRow[];
 }

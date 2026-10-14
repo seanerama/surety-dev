@@ -342,7 +342,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
 // question names them (D6 §5.6; M424 (d)).
 function replanRefusal(tx: Tx, item: string): string {
   const c = tx.db
-    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c."created_at" DESC LIMIT 1`)
+    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c.rowid DESC LIMIT 1`)
     .get(item) as { reasons: string } | undefined;
   const reasons = parseJson<{ code: string; subjects: string[] }[]>(c?.reasons ?? null) ?? [];
   if (reasons.length > 0) return ` (the plan check refused it: ${reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')})`;
@@ -461,7 +461,7 @@ const ROLLOUT_PARTIAL: KindSpec = {
 export function controlManifest(tx: Tx, runId: string, kind: 'stop_confirm' | 'abandon_confirm'): Record<string, unknown> {
   const run = getRun(tx, runId);
   const domains = (tx.db.prepare('SELECT "id" FROM "execution_domains" WHERE "run" = ? ORDER BY "id"').all(runId) as { id: string }[]).map((r) => r.id);
-  const lease = tx.db.prepare(`SELECT "generation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? ORDER BY "acquired_at" DESC LIMIT 1`).get(runId) as
+  const lease = tx.db.prepare(`SELECT "generation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? ORDER BY rowid DESC LIMIT 1`).get(runId) as
     | { generation: number }
     | undefined;
   const ws = tx.db.prepare('SELECT "id", "snapshot_tree" FROM "workspaces" WHERE "run" = ?').get(runId) as { id: string; snapshot_tree: string | null } | undefined;
@@ -1220,7 +1220,7 @@ export function correctionManifest(tx: Tx, proposalId: string, facts?: Facts): R
   const rationale = p.rationale
     ? (tx.db.prepare('SELECT "post_scan", "missing_at" FROM "records" WHERE "id" = ?').get(p.rationale) as { post_scan: string; missing_at: string | null } | undefined)
     : undefined;
-  const scopeApproval = tx.db.prepare('SELECT "id" FROM "scope_approvals" WHERE "proposal" = ? ORDER BY "created_at" LIMIT 1').get(p.id) as { id: string } | undefined;
+  const scopeApproval = tx.db.prepare('SELECT "id" FROM "scope_approvals" WHERE "proposal" = ? ORDER BY rowid LIMIT 1').get(p.id) as { id: string } | undefined;
   return {
     proposal_status: p.status,
     tree: p.tree_id,

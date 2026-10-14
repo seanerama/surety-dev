@@ -170,7 +170,7 @@ interface SemanticsRowLite {
 }
 
 const semanticsOfRun = (db: Db, run: string): SemanticsRowLite | undefined =>
-  db.prepare('SELECT "git_blob", "representation", "readable" FROM "spec_semantics" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run) as SemanticsRowLite | undefined;
+  db.prepare('SELECT "git_blob", "representation", "readable" FROM "spec_semantics" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run) as SemanticsRowLite | undefined;
 
 // The specification awaiting approval: the run of the newest open
 // `spec_approval`, and its last save's representation.
@@ -385,5 +385,5 @@ export function reraiseOnPolicy(tx: Tx, project: string): void {
 
 // Every project's repository path (Q1: one project per repository).
 export function projectRepositories(db: Db): { id: string; name: string; dev_repo_path: string }[] {
-  return db.prepare('SELECT "id", "name", "dev_repo_path" FROM "projects" ORDER BY "created_at"').all() as { id: string; name: string; dev_repo_path: string }[];
+  return db.prepare('SELECT "id", "name", "dev_repo_path" FROM "projects" ORDER BY rowid').all() as { id: string; name: string; dev_repo_path: string }[];
 }

@@ -559,7 +559,7 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
 export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefined {
   if (r.proposal_blob === null) return undefined;
   return db
-    .prepare(`SELECT s.* FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .prepare(`SELECT s.* FROM "spec_semantics" s JOIN "runs" u ON u."id" = s."run" WHERE u."work_item" = ? AND s."git_blob" = ? ORDER BY s.rowid DESC, s."id" DESC LIMIT 1`)
     .get(r.work_item, r.proposal_blob) as SemanticsRow | undefined;
 }
 
@@ -629,7 +629,7 @@ function sideRefObservation(db: Db, r: RequestRow): { ref: string; found: string
   const o = db
     .prepare(
       `SELECT o."found" FROM "out_of_band_changes" o JOIN "ref_registry" g ON g."id" = o."ref"
-       WHERE o."project" = ? AND g."ref" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at" DESC, o."id" DESC LIMIT 1`,
+       WHERE o."project" = ? AND g."ref" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o.rowid DESC, o."id" DESC LIMIT 1`,
     )
     .get(r.project, r.side_ref) as { found: string | null } | undefined;
   return o ? { ref: r.side_ref, found: o.found } : null;
@@ -983,7 +983,7 @@ interface OpenObligation {
 }
 
 const openObligations = (db: Db, project: string): OpenObligation[] =>
-  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY "created_at", "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
+  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
     (o) => ({ id: o.id, key: o.key, criteria: parseJson<string[]>(o.criteria) ?? [], request: o.request }),
   );
 
@@ -1009,7 +1009,7 @@ export function correctionFacts(db: Db, args: { run: string; entries: Applicabil
 export function recordAssessments(tx: Tx, args: { run: string; entries: ApplicabilityEntry[]; rationales: string[] }): string[] {
   const run = tx.db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string } | undefined;
   if (!run) throw notFound('run', args.run);
-  const done = tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ? ORDER BY "created_at", "id"').all(args.run) as { id: string }[];
+  const done = tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ? ORDER BY rowid, "id"').all(args.run) as { id: string }[];
   if (done.length > 0) return done.map((a) => a.id);
   const request = correctionRequestOf(tx.db, run.work_item);
   const effective = effectiveVersion(tx.db, run.project);

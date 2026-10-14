@@ -21,7 +21,7 @@ export interface NotificationRow {
 
 // Intents a tick takes on: queued ones, and ones left sending.
 export function notificationsDue(db: Db, args: { project: string }): (NotificationRow & { decision: string })[] {
-  return (db.prepare(`SELECT * FROM "notification_intents" WHERE "project" = ? AND "status" IN ('queued', 'sending') ORDER BY "created_at"`).all(args.project) as NotificationRow[]).map((n) => ({
+  return (db.prepare(`SELECT * FROM "notification_intents" WHERE "project" = ? AND "status" IN ('queued', 'sending') ORDER BY rowid`).all(args.project) as NotificationRow[]).map((n) => ({
     ...n,
     decision: (JSON.parse(n.source) as { decision: string }).decision,
   }));

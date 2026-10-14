@@ -196,7 +196,7 @@ export function qualify(
 
 // ---- an authorized attempt's canaries (D2 §7.2, K10; trust/attempts.ts) ----------------------
 
-export const attemptsDue = (db: Tx['db']) => db.prepare(`SELECT "id", "status" FROM "qualification_attempts" WHERE "status" IN ('authorized', 'running') ORDER BY "created_at", "id"`).all() as { id: string; status: string }[];
+export const attemptsDue = (db: Tx['db']) => db.prepare(`SELECT "id", "status" FROM "qualification_attempts" WHERE "status" IN ('authorized', 'running') ORDER BY rowid, "id"`).all() as { id: string; status: string }[];
 
 export function startAttemptRun(tx: Tx, a: { attempt: string }): AttemptRow {
   const row = getAttempt(tx.db, a.attempt);
@@ -284,7 +284,7 @@ export function continuationFacts(db: Tx['db'], a: { run: string }) {
     return { ...t, domain_status: d?.status ?? null, launched_at: at(['launched']), ended_at: at(['ended', 'unknown']) };
   });
   const inventories = db
-    .prepare(`SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at", "id"`)
+    .prepare(`SELECT "id", "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid, "id"`)
     .all(a.run) as { id: string; path: string | null; sha256: string | null; bytes: number | null }[];
   const models = (db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL').all(a.run) as { model_observed: string }[]).flatMap((r) => r.model_observed.split(','));
   return { state: run?.state ?? 'unknown', turns, inventories, models_observed: [...new Set(models.map((m) => m.trim()).filter((m) => m !== ''))] };

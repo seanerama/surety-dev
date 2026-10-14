@@ -43,7 +43,7 @@ export interface SemanticsRow {
 // The saved representation of a session's last save (the row the save
 // wrote), or none.
 export function latestSemantics(db: Db, run: string): SemanticsRow | undefined {
-  return db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1').get(run) as SemanticsRow | undefined;
+  return db.prepare('SELECT * FROM "spec_semantics" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run) as SemanticsRow | undefined;
 }
 
 // Record a save's representation (sessions/driver.ts calls it with what the
@@ -157,7 +157,7 @@ export function previousRepresentation(db: Db, project: string): SpecRepresentat
   // A session's save only: a specification change's proposal is no save
   // (the review's N5).
   const row = db
-    .prepare(`SELECT s."representation" FROM "spec_semantics" s JOIN "runs" r ON r."id" = s."run" WHERE s."project" = ? AND s."readable" = 1 AND s."representation" IS NOT NULL AND r."kind" = 'session' ORDER BY s."created_at" DESC, s."id" DESC LIMIT 1`)
+    .prepare(`SELECT s."representation" FROM "spec_semantics" s JOIN "runs" r ON r."id" = s."run" WHERE s."project" = ? AND s."readable" = 1 AND s."representation" IS NOT NULL AND r."kind" = 'session' ORDER BY s.rowid DESC, s."id" DESC LIMIT 1`)
     .get(project) as { representation: string } | undefined;
   if (!row) return null;
   try {

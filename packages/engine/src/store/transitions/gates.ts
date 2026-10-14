@@ -628,7 +628,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       const latest = db
         .prepare(
           `SELECT x."spec_generation" AS sg FROM "check_results" r JOIN "checks" k ON k."id" = r."check" LEFT JOIN "check_executions" x ON x."id" = r."execution"
-           WHERE r."project" = ? AND r."candidate" = ? AND k."key" = ? ORDER BY r."execution_seq" DESC, r."created_at" DESC LIMIT 1`,
+           WHERE r."project" = ? AND r."candidate" = ? AND k."key" = ? ORDER BY r."execution_seq" DESC, r.rowid DESC LIMIT 1`,
         )
         .get(args.project, candidate.id, c.key) as { sg: number | null } | undefined;
       return latest !== undefined && (latest.sg ?? 0) < g;
@@ -1029,7 +1029,7 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
       const stage = parseJson<{ stage?: string }>(item.subject)?.stage;
       if (!stage) continue;
       const latest = db
-        .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+        .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
         .get(c.id, stage) as { stale: number } | undefined;
       if (!latest || latest.stale === 1) out.push({ candidate: c.id, stage });
     }

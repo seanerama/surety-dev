@@ -56,7 +56,7 @@ export interface ProjectCandidates {
 // alone can tell. The scheduler's prerequisite steps decide the rest, and the
 // claim transaction checks it all again.
 export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: number }): ProjectCandidates[] {
-  const projects = db.prepare('SELECT "id", "dev_repo_path", "integration_branch" FROM "projects" ORDER BY "created_at", "id"').all() as {
+  const projects = db.prepare('SELECT "id", "dev_repo_path", "integration_branch" FROM "projects" ORDER BY rowid, "id"').all() as {
     id: string;
     dev_repo_path: string;
     integration_branch: string;
@@ -84,12 +84,12 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
 }
 
 export function projectIds(db: Database): string[] {
-  return (db.prepare('SELECT "id" FROM "projects" ORDER BY "created_at", "id"').all() as { id: string }[]).map((r) => r.id);
+  return (db.prepare('SELECT "id" FROM "projects" ORDER BY rowid, "id"').all() as { id: string }[]).map((r) => r.id);
 }
 
 // Runs that are quarantined, for the observation at every tick (SEAM.md §14).
 export function quarantinedRuns(db: Database): { id: string; project: string }[] {
-  return db.prepare(`SELECT "id", "project" FROM "runs" WHERE "state" = 'finalizing' AND "quarantined" = 1 ORDER BY "created_at"`).all() as {
+  return db.prepare(`SELECT "id", "project" FROM "runs" WHERE "state" = 'finalizing' AND "quarantined" = 1 ORDER BY rowid`).all() as {
     id: string;
     project: string;
   }[];
@@ -224,7 +224,7 @@ export function contextFacts(db: Database, args: { run: string }) {
       .filter((f) => findingApplies(db, f, candidate))
       .map(findingFacts);
     const assessments = db
-      .prepare(`SELECT "id", "finding", "candidate", "reason", "status" FROM "applicability_assessments" WHERE "project" = ? AND "candidate" = ? AND "status" = 'proposed' ORDER BY "created_at", "id"`)
+      .prepare(`SELECT "id", "finding", "candidate", "reason", "status" FROM "applicability_assessments" WHERE "project" = ? AND "candidate" = ? AND "status" = 'proposed' ORDER BY rowid, "id"`)
       .all(item.project, candidate.id) as { id: string; finding: string; candidate: string; reason: string; status: string }[];
     const previous = db.prepare('SELECT "revision" FROM "candidates" WHERE "project" = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1').get(item.project, candidate.seq) as { revision: string } | undefined;
     const recorded = previous
@@ -298,7 +298,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     const parent = db.prepare('SELECT "id", "outcome", "reason_class", "result_value" FROM "runs" WHERE "id" = ?').get(run.parent_run) as { id: string; outcome: unknown; reason_class: unknown; result_value: string | null } | undefined;
     if (parent) {
       const records = db
-        .prepare(`SELECT "id", "kind", "path" FROM "records" WHERE "run" = ? AND "published" = 1 AND "kind" <> 'raw_user_report' ORDER BY "created_at", "id"`)
+        .prepare(`SELECT "id", "kind", "path" FROM "records" WHERE "run" = ? AND "published" = 1 AND "kind" <> 'raw_user_report' ORDER BY rowid, "id"`)
         .all(parent.id) as { id: string; kind: string; path: string | null }[];
       resumed = { run: parent.id, outcome: parent.outcome, reason_class: parent.reason_class, summary: parse<{ summary?: unknown } | null>(parent.result_value, null)?.summary ?? null, records };
     }
@@ -394,7 +394,7 @@ function stagePlan(db: Database, project: string, requirements: readonly { id: s
   try {
     // The active obligation set: no stage an early replacement cancelled or
     // superseded (D6 §5.7; the review's N5).
-    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
+    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL ORDER BY "number", rowid, "id"').all(project) as { number: number; status: string; implements: string }[];
     const keyOf = (r: string): string => requirements.find((q) => q.id === r || q.key === r)?.key ?? r;
     return rows.map((s) => {
       const ids = JSON.parse(s.implements) as unknown;
@@ -418,7 +418,7 @@ function stagePlan(db: Database, project: string, requirements: readonly { id: s
 export type RevisionRecords = Record<string, { by_run: boolean; kinds: string[]; purpose: string | null }>;
 export function revisionRecords(db: Database, project: string): RevisionRecords | null {
   try {
-    const rows = db.prepare('SELECT "sha", "kind", "created_by_run" FROM "revisions" WHERE "project" = ? ORDER BY "recorded_at", "created_at", "id"').all(project) as {
+    const rows = db.prepare('SELECT "sha", "kind", "created_by_run" FROM "revisions" WHERE "project" = ? ORDER BY rowid, "id"').all(project) as {
       sha: string;
       kind: string;
       created_by_run: string | null;

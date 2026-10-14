@@ -314,7 +314,7 @@ export function registerPlan(
         next: done + 1,
       });
     }
-    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as
+    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY rowid DESC LIMIT 1`).get(args.project) as
       | { id: string; generation: number }
       | undefined;
     const replaces = publication.replaces ?? null;

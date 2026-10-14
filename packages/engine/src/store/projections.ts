@@ -90,7 +90,7 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
     .prepare(
       `SELECT o."id", o."subject_kind", o."decision", r."ref", r."kind", c."path" FROM "out_of_band_changes" o
        LEFT JOIN "ref_registry" r ON r."id" = o."ref" LEFT JOIN "managed_checkouts" c ON c."id" = o."checkout"
-       WHERE o."project" = ? AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o."detected_at", o."id"`,
+       WHERE o."project" = ? AND o."disposition" IS NULL AND o."closed_at" IS NULL ORDER BY o.rowid, o."id"`,
     )
     .all(project) as { id: string; subject_kind: string; decision: string; ref: string | null; kind: string | null; path: string | null }[];
   const unreadable = observations.find((o) => o.subject_kind === 'repository');
@@ -221,7 +221,7 @@ function environmentsOf(db: Db, project: string) {
   const rows = db
     .prepare(
       `SELECT e."id", e."name", r."observed" FROM "environments" e LEFT JOIN "environment_records" r ON r."environment" = e."id"
-       WHERE e."project" = ? ORDER BY e."created_at", e."id"`,
+       WHERE e."project" = ? ORDER BY e.rowid, e."id"`,
     )
     .all(project) as { id: string; name: string; observed: string | null }[];
   return rows.map((row) => {
@@ -276,7 +276,7 @@ function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
 // GET /v1/projects
 export function listProjects(db: Db, args: { maxConcurrentRuns: number }) {
   const head = envelope(db);
-  const ids = (db.prepare('SELECT "id" FROM "projects" ORDER BY "created_at", "id"').all() as { id: string }[]).map((r) => r.id);
+  const ids = (db.prepare('SELECT "id" FROM "projects" ORDER BY rowid, "id"').all() as { id: string }[]).map((r) => r.id);
   return { ...head, projects: ids.map((id) => projectSummary(db, id, args.maxConcurrentRuns)) };
 }
 
@@ -673,7 +673,7 @@ export function runTail(db: Db, args: { project: string; run: string }) {
   const run = db.prepare('SELECT "project", "state" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; state: string } | undefined;
   if (!run || run.project !== args.project) throw notFound('run', args.run);
   const record = db
-    .prepare(`SELECT "id", "path", "sha256", "bytes", "post_scan" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at" DESC, "id" DESC LIMIT 1`)
+    .prepare(`SELECT "id", "path", "sha256", "bytes", "post_scan" FROM "records" WHERE "run" = ? AND "kind" = 'transcript' AND "published" = 1 AND "path" IS NOT NULL ORDER BY rowid DESC, "id" DESC LIMIT 1`)
     .get(args.run) as { id: string; path: string; sha256: string | null; bytes: number | null; post_scan: string } | undefined;
   return { ended: run.state === 'ended', record: record ? { id: record.id, path: record.path, sha256: record.sha256, bytes: record.bytes, quarantined: record.post_scan === 'hit' } : null };
 }

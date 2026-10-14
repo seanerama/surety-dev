@@ -160,7 +160,7 @@ export function expireRecord(tx: Tx, args: { record: string }): { path: string |
 // startup checks (D1 §16.1 step 5).
 export function referencedRecords(db: Db): { id: string; path: string; sha256: string; bytes: number; missing_at: string | null }[] {
   return db
-    .prepare(`SELECT rec."id", rec."path", rec."sha256", rec."bytes", rec."missing_at" FROM "records" rec WHERE rec."published" = 1 AND rec."path" IS NOT NULL AND ${REFERENCED} ORDER BY rec."created_at"`)
+    .prepare(`SELECT rec."id", rec."path", rec."sha256", rec."bytes", rec."missing_at" FROM "records" rec WHERE rec."published" = 1 AND rec."path" IS NOT NULL AND ${REFERENCED} ORDER BY rec.rowid`)
     .all() as { id: string; path: string; sha256: string; bytes: number; missing_at: string | null }[];
 }
 
@@ -180,7 +180,7 @@ export function recordAudited(tx: Tx, args: { record: string; whole: boolean; wh
 // Records the post-write scan is run over: every published record whose
 // bytes are still stored.
 export function storedRecords(db: Db): { id: string; path: string }[] {
-  return db.prepare('SELECT "id", "path" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY "created_at"').all() as { id: string; path: string }[];
+  return db.prepare('SELECT "id", "path" FROM "records" WHERE "published" = 1 AND "path" IS NOT NULL ORDER BY rowid').all() as { id: string; path: string }[];
 }
 
 export function getRecord(db: Db, args: { project: string; record: string }): RecordRow {

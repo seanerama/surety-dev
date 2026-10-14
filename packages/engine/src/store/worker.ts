@@ -445,11 +445,11 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
       .prepare(
         `SELECT p."id", p."dev_repo_path", r."expected_oid" AS "head" FROM "projects" p
          JOIN "ref_registry" r ON r."project" = p."id" AND r."kind" = 'integration' AND r."ref" = 'refs/heads/' || p."integration_branch"
-         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p."created_at", p."id"`,
+         WHERE p."name" = ? AND p."dev_repo_path" <> ? AND p."dev_repo_path" LIKE '%/qualification/fixture' ORDER BY p.rowid, p."id"`,
       )
       .all(a.name, a.repo),
   'qualification.engine_fixture': (d, a: { repo: string }) =>
-    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY "created_at" LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
+    (d.prepare('SELECT "id" FROM "projects" WHERE "dev_repo_path" = ? ORDER BY rowid LIMIT 1').get(a.repo) as { id: string } | undefined)?.id ?? null,
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
   // D6 §2 (M5 slice 31): the sessions' reads.
   'session.pending_turns': (d) => pendingTurns(d, null),
@@ -512,7 +512,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     d
       .prepare(
         `SELECT r."id" AS "run", a."id" AS "attempt", a."status" FROM "runs" r JOIN "qualification_attempts" a ON a."id" = r."qualification_attempt"
-         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r."created_at"`,
+         WHERE r."kind" = 'session' AND r."state" NOT IN ('finalizing', 'ended') AND a."status" <> 'running' ORDER BY r.rowid`,
       )
       .all(),
   // D6 §2.6 (SEAM.md §393): the entry a session qualification names.
@@ -522,7 +522,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'boundary.domains': (d) => boundaryDomains(d),
   'boundary.terminated_ids': (d, a: { ids: string[] }) =>
     a.ids.filter((id) => (d.prepare('SELECT "status" FROM "execution_domains" WHERE "id" = ?').get(id) as { status: string } | undefined)?.status === 'terminated'),
-  'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY "created_at", "id"`).all(),
+  'boundary.unterminated': (d) => d.prepare(`SELECT "id" FROM "execution_domains" WHERE "status" <> 'terminated' ORDER BY rowid, "id"`).all(),
   'boundary.prior_scopes': (d, a: { incarnation: string }) => priorScopes(d, a),
   'run.regrant_facts': (d, a: { run: string; incarnation: string }) => regrantFacts(d, a),
   'domain.row': (d, a: { domain: string }) => getDomain(d, a.domain) ?? null,
@@ -539,7 +539,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
   'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
   'qualification.provider_files': (d, a: { run: string }) =>
-    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY "created_at" DESC LIMIT 1`).get(a.run) ?? null,
+    d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
 };
 

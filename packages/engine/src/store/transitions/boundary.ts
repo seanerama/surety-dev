@@ -217,7 +217,7 @@ export function boundaryDomains(db: Db): (DomainRow & { incarnation: string })[]
   return db
     .prepare(
       `SELECT d.*, o."incarnation" FROM "execution_domains" d JOIN "process_ownership" o ON o."domain" = d."id"
-       WHERE d."status" <> 'terminated' AND d."cgroup_path" IS NOT NULL ORDER BY d."created_at", d."id"`,
+       WHERE d."status" <> 'terminated' AND d."cgroup_path" IS NOT NULL ORDER BY d.rowid, d."id"`,
     )
     .all() as (DomainRow & { incarnation: string })[];
 }
@@ -225,7 +225,7 @@ export function boundaryDomains(db: Db): (DomainRow & { incarnation: string })[]
 // The scopes the store records for this home's earlier incarnations.
 export function priorScopes(db: Db, args: { incarnation: string }): { incarnation: string; scope_cgroup: string }[] {
   return db
-    .prepare(`SELECT "id" AS "incarnation", "scope_cgroup" FROM "engine_incarnations" WHERE "id" <> ? AND "scope_cgroup" IS NOT NULL ORDER BY "created_at", "id"`)
+    .prepare(`SELECT "id" AS "incarnation", "scope_cgroup" FROM "engine_incarnations" WHERE "id" <> ? AND "scope_cgroup" IS NOT NULL ORDER BY rowid, "id"`)
     .all(args.incarnation) as { incarnation: string; scope_cgroup: string }[];
 }
 
@@ -248,7 +248,7 @@ export function regrantFacts(
   if (lease.closing === 1 || run.state === 'finalizing' || run.state === 'ended') return none('the run is ending');
   if (lease.owner_incarnation !== args.incarnation) return none('the lease is another incarnation\'s');
   const d = db
-    .prepare(`SELECT d.* FROM "execution_domains" d WHERE d."run" = ? AND d."status" = 'launched' ORDER BY d."created_at" DESC, d."id" DESC LIMIT 1`)
+    .prepare(`SELECT d.* FROM "execution_domains" d WHERE d."run" = ? AND d."status" = 'launched' ORDER BY d.rowid DESC, d."id" DESC LIMIT 1`)
     .get(args.run) as DomainRow | undefined;
   if (!d || d.launch_state !== 'authorized' || d.launch_binding === null) return none('the run has no authorized domain');
   const binding = JSON.parse(d.launch_binding) as LaunchBinding;

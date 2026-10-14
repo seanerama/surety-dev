@@ -127,7 +127,7 @@ export function specView(db: Database, args: { project: string }) {
 export function planView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
   const road = db.prepare('SELECT "version", "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number; phases: string } | undefined;
-  const p = db.prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY "created_at" DESC LIMIT 1`).get(args.project) as
+  const p = db.prepare(`SELECT * FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
     | Record<string, unknown>
     | undefined;
   let plan: Record<string, unknown> | null = null;
@@ -160,13 +160,13 @@ export function planView(db: Database, args: { project: string }) {
     };
   }
   const proposals: { bundle: string | null; phase: number | null; status: string; run?: string | null; path?: string; plan_check?: string }[] = (
-    db.prepare('SELECT "id", "phase_number", "status", "run" FROM "plan_bundles" WHERE "project" = ? ORDER BY "created_at"').all(args.project) as { id: string; phase_number: number | null; status: string; run: string | null }[]
+    db.prepare('SELECT "id", "phase_number", "status", "run" FROM "plan_bundles" WHERE "project" = ? ORDER BY rowid').all(args.project) as { id: string; phase_number: number | null; status: string; run: string | null }[]
   ).map((b) => ({ bundle: b.id, phase: b.phase_number, status: b.status, run: b.run }));
   // A replan's plan its check refused (D6 §5.3, §5.6): recorded with no
   // bundle, listed `stale` when its baseline moved under it
   // (PLAN_STALE_BASELINE; M424 (f)), else `refused`; never current.
   for (const c of db
-    .prepare(`SELECT "id", "phase_number", "reasons", json_extract("evidence", '$.run') AS "run" FROM "plan_checks" WHERE "project" = ? AND "bundle" IS NULL AND "outcome" = 'refused' ORDER BY "created_at"`)
+    .prepare(`SELECT "id", "phase_number", "reasons", json_extract("evidence", '$.run') AS "run" FROM "plan_checks" WHERE "project" = ? AND "bundle" IS NULL AND "outcome" = 'refused' ORDER BY rowid`)
     .all(args.project) as { id: string; phase_number: number | null; reasons: string; run: string | null }[]) {
     const reasons = json<{ code: string }[]>(c.reasons, []);
     proposals.push({ bundle: null, phase: c.phase_number, status: reasons.some((r) => r.code === 'PLAN_STALE_BASELINE') ? 'stale' : 'refused', run: c.run, plan_check: c.id });
@@ -189,7 +189,7 @@ export function planView(db: Database, args: { project: string }) {
       if (!published) proposals.push({ bundle: null, phase, status: 'proposed', run: n.id, path });
     }
   }
-  const checks = (db.prepare('SELECT * FROM "plan_checks" WHERE "project" = ? ORDER BY "created_at"').all(args.project) as Record<string, unknown>[]).map((c) => ({
+  const checks = (db.prepare('SELECT * FROM "plan_checks" WHERE "project" = ? ORDER BY rowid').all(args.project) as Record<string, unknown>[]).map((c) => ({
     ...c,
     reasons: json<unknown>(c.reasons, []),
     changes_architecture: json<unknown>(c.changes_architecture, null),

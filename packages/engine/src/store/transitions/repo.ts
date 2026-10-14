@@ -237,7 +237,7 @@ export function candidateObservation(db: Tx['db'], project: string, seq: number)
       `SELECT o.* FROM "out_of_band_changes" o JOIN "ref_registry" r ON r."id" = o."ref"
        WHERE o."project" = ? AND o."subject_kind" = 'ref' AND o."disposition" IS NULL AND o."closed_at" IS NULL
        AND r."kind" = 'nomination' AND r."ref" = ?
-       ORDER BY o."detected_at", o."id" LIMIT 1`,
+       ORDER BY o.rowid, o."id" LIMIT 1`,
     )
     .get(project, nominationRef(seq)) as OobRow | undefined;
 }

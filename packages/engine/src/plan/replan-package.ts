@@ -135,11 +135,11 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
   const triggered = item.trigger_source === 'phase_complete' ? item.trigger_id : null;
   const latestDone = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL ORDER BY "phase_number" DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
   const completed = planOf(db, project, triggered ?? latestDone);
-  const openId = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY "created_at" DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
+  const openId = (db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string } | undefined)?.id ?? null;
   const open = planOf(db, project, openId);
   const binding = completed?.completion_binding as { candidate?: string } | null | undefined;
   const ev = binding?.candidate
-    ? (db.prepare(`SELECT "id", "candidate", "outcome", "reasons", "check_states", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "candidate" = ? ORDER BY "computed_at" DESC, "id" DESC LIMIT 1`).get(project, binding.candidate) as
+    ? (db.prepare(`SELECT "id", "candidate", "outcome", "reasons", "check_states", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "candidate" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(project, binding.candidate) as
         | { id: string; candidate: string; outcome: string; reasons: string; check_states: string; computed_at: string; stale: number }
         | undefined)
     : undefined;
@@ -150,7 +150,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     .prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND (("created_at" >= ? AND "created_at" <= ?) OR "status" IN ('open', 'dispositioned')) ORDER BY "seq"`)
     .all(project, from, to) as Record<string, unknown>[];
   const deferred = db.prepare(`SELECT ${FINDING_COLUMNS} FROM "findings" WHERE "project" = ? AND "disposition" = 'defer' AND "status" <> 'resolved' ORDER BY "seq"`).all(project) as Record<string, unknown>[];
-  const obligations = (db.prepare('SELECT "id", "key", "criteria", "generation", "reason", "request", "created_at" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY "created_at", "id"').all(project) as Record<string, unknown>[]).map((o) => ({
+  const obligations = (db.prepare('SELECT "id", "key", "criteria", "generation", "reason", "request", "created_at" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"').all(project) as Record<string, unknown>[]).map((o) => ({
     ...o,
     criteria: json(o.criteria),
   }));
@@ -162,7 +162,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     | { id: string; reason_class: string | null; reason_text: string | null }
     | undefined;
   const check = last
-    ? (db.prepare(`SELECT "id", "phase_number", "reasons" FROM "plan_checks" WHERE "project" = ? AND json_extract("evidence", '$.run') = ? AND "outcome" = 'refused' ORDER BY "created_at" DESC LIMIT 1`).get(project, last.id) as
+    ? (db.prepare(`SELECT "id", "phase_number", "reasons" FROM "plan_checks" WHERE "project" = ? AND json_extract("evidence", '$.run') = ? AND "outcome" = 'refused' ORDER BY rowid DESC LIMIT 1`).get(project, last.id) as
         | { id: string; phase_number: number | null; reasons: string }
         | undefined)
     : undefined;
