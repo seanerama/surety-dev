@@ -381,3 +381,22 @@ test('a check applied after a change was approved, from a proposal captured befo
   h.run(`UPDATE check_obligations SET resolved_at = ? WHERE key = 'accept-r4'`, AT);
   assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_late', version: 'pv_2' })), 0);
 });
+
+test('a check the new version carries over unchanged owes no late obligation; only one the proposal made or changed does', (t) => {
+  const h = store(t);
+  h.item('wi_auth', 'check_authoring', { phase_plan: 'plan_2' }, 'complete');
+  h.runOf('run_auth', 'wi_auth');
+  h.run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_early', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'applied')`, AT);
+  h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, impact_value) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'approved', ?)`, AT, JSON.stringify({ affected_criteria: ['R2.1', 'R4.1'], added_criteria: [] }));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('protected.proposed', { project: 'prj_1', proposal: 'prop_early', run: 'run_auth' }, {}));
+  transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('spec.change_approved', { project: 'prj_1', spec_change_request: 'scr_1' }, {}));
+  h.run(`INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, effective_from, roots, authorized_revision, superseded_by) VALUES ('pv_1', ?, 'prj_1', 1, 'f', 'initial', 'h', 'human', ?, 1, NULL, '[]', 'r', 'pv_2')`, AT, AT);
+  version(h, 'pv_2', 2);
+  const check = (id, v, key, criteria, hash) =>
+    h.run(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES (?, ?, 'prj_1', ?, ?, 'acceptance', ?, 1, '["stage"]', 'x', ?, 'direct')`, id, AT, v, key, JSON.stringify(criteria), hash);
+  check('c1', 'pv_1', 'accept-r2', ['R2.1'], 'h2');
+  check('c2', 'pv_2', 'accept-r2', ['R2.1'], 'h2');
+  check('c3', 'pv_2', 'accept-r4', ['R4.1'], 'h4');
+  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_early', version: 'pv_2' })), 1);
+  assert.deepEqual(h.db.prepare(`SELECT key FROM check_obligations`).all().map((o) => o.key), ['accept-r4'], 'accept-r2, carried over unchanged, owes nothing');
+});

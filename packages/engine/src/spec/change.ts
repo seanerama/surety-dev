@@ -1193,7 +1193,17 @@ export function lateObligations(tx: Tx, args: { project: string; proposal: strin
     .prepare(`SELECT json_extract(w."subject", '$.request') AS request FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item" WHERE p."id" = ? AND w."kind" = 'check_correction'`)
     .get(args.proposal) as { request: string | null } | undefined;
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" AS g FROM "projects" WHERE "id" = ?').get(args.project) as { g: number }).g;
-  const checks = tx.db.prepare('SELECT "id", "key", "criteria" FROM "checks" WHERE "protected_version" = ?').all(args.version) as { id: string; key: string; criteria: string | null }[];
+  // Only the checks this proposal made or changed: a check the version
+  // carries over unchanged from the one it superseded is not authored by it
+  // (its obligation, if any, was the change's own and is resolved by its
+  // correction).
+  const previous = tx.db.prepare('SELECT "id" FROM "protected_versions" WHERE "superseded_by" = ? ORDER BY "seq" DESC LIMIT 1').get(args.version) as { id: string } | undefined;
+  const before = new Map(
+    previous ? (tx.db.prepare('SELECT "key", "definition_hash", "criteria" FROM "checks" WHERE "protected_version" = ?').all(previous.id) as { key: string; definition_hash: string; criteria: string | null }[]).map((c) => [c.key, `${c.definition_hash}|${c.criteria ?? ''}`]) : [],
+  );
+  const checks = (tx.db.prepare('SELECT "id", "key", "criteria", "definition_hash" FROM "checks" WHERE "protected_version" = ?').all(args.version) as { id: string; key: string; criteria: string | null; definition_hash: string }[]).filter(
+    (c) => before.get(c.key) !== `${c.definition_hash}|${c.criteria ?? ''}`,
+  );
   const requests = tx.db
     .prepare(
       `SELECT r."id", r."impact_value", (SELECT MIN(e."seq") FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id") AS approved_seq
