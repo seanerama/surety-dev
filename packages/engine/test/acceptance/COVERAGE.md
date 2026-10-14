@@ -4,6 +4,8 @@ How one Verifier session hands over to the next (build spec §7). Every Plan row
 
 **Status values:** `written` (a test exists and is listed in the manifest); `deferred → N` (not written; waits for slice N); `not written (slice N)` (the slice it waited for has been verified and the case was left out, with the reason; nobody is going to write it unless the owner asks; `docs/acceptance/reports/M1-not-claimed.md` lists every such case and says what M1 therefore does not claim); `not started` (row not yet split).
 
+Slice 35, planning and the phase, 2026-10-13, on `verify/m5-s35` (from `verify/m5-s34` at `96574a8`): rows M425 to M430 in nine kernel files under manifest slice `35`, plus the carried `M413-a-conformance-stage-in-phase-two`, with SEAM §§406 to 414. The straddles are `phase_size` in the contract and in the journeys' policies, `replan` on X2's blocker, and M44's `phase` route. See "M5 slice 35" below for each case and how each file fails on `build/m5-s35` at `1b527a0`. The paragraph that follows is the previous pass's.
+
 Slice 34, the specification and the Architect's products, 2026-10-13, on `verify/m5-s34` (from `verify/m5-s33` at `4866861`): rows M421 to M424, M448 and M449 in seven kernel files under manifest slice `34`, with SEAM §§396 to 403. See "M5 slice 34" below for each case and how each file fails alone on `build/m5-s34` at `c2dc20a`. The paragraph that follows is the previous pass's.
 
 Objection 077 and the driver's two rulings, 2026-10-13, on `verify/m5-s33` (SEAM §§390, 394, 395):
@@ -2657,6 +2659,113 @@ The project-lane files were not run here.
 **The safety rule (BS5 §4.1; E64).** Kernel lane only: no domain, no unit, no signal but the test's own engine's (`fx.engine.kill()` of the process it spawned, as every kernel file). Every secret-shaped value is absent; nothing paid; no session on a real model.
 
 **What was run, 2026-10-12, on this branch** (`main` at `15209c4` merged; `npm run build` clean; `node --check` of every new and changed `.mjs`): the four kernel files once each, alone, with `node --test --test-concurrency=1`: **M402 1/9, M403 0/9, M404 0/9, M405 0/6**, every failing case at `POST /v1/projects` with `idea` → 400 `unknown_field` ("idea" is not a field of a project), the first unbuilt route; M402 (e) passes as built. No engine process left; the two `/tmp/surety-static-*` directories present are dated 2026-10-11, before this pass (E137 names one). The migrated accepted files were not run.
+
+## M5 slice 35: planning and the phase (BS5 §9.2; D6 §§5.2 to 5.8, A.2 to A.6; the driver's approval of the outline and rulings, 2026-10-13)
+
+2026-10-13, by the Verifier of slice 35, on `verify/m5-s35` cut from `verify/m5-s34` at `96574a8`. This covers rows M425 to M430 of the M5 plan §3.5, in nine kernel files under manifest slice `35`, plus one carried M413 case. The seams are §§406 to 414. The names follow the Builder's approved design (migration 0027) and the driver's rulings.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M425 | kernel | `M425-plan-references-and-approvals.test.mjs` (4) | (a) seven references at the first close, each with its reason, 422 `plan_refused`, a refused `plan_checks` row with subjects and `baseline.plan_refused`, and nothing published; a withdrawn R4 (by an approved change); (b) no reason; (c) spec version superseded; (d) a protected application and the session's checkpoint under the session: published prepared against the moved head; (e) ADR-002 deleted by a competing proposal published first: 409 `plan_generation_stale` naming `PLAN_UNKNOWN_ADR ADR-002` | written; (c) for architecture and roadmap: M424 (f), M448 (a); (d) material: M424 (f) |
+| M426 | kernel | `M426-plan-dependencies-and-validation.test.mjs` (7) | (a) a cycle, a module outside the phase, R2 unplanned, a prerequisite phase incomplete; (c) `stage 1:R1.1`, `stage 2:integration`, `stage 2:secrets_credentials` (and its control), T3 kinds for the overridden module's stage only; (d) the obligations record per stage and phase, no check, execution or result; the lexical case; (e) scoped `descriptive_unverified` R1 excluded; (f) `phase_size` `uncertain`, passed | written |
+| M426 | kernel | `M426-replans-against-the-roadmap.test.mjs` (2) | (b) a roadmap dropping R4, one assigning it twice (refused naming R4), one moving it to phase 3 (routed with the whole roadmap; effective only on approval); (f) a two-stage replan under {3, 5} routed, never refused; (a) the regression variant: `PLAN_DEPENDENCY_INCOMPLETE` `phase 1` (the 2026-10-12 ruling) | written |
+| M427 | kernel | `M427-plan-routing-from-the-artifacts.test.mjs` (1, a chain) | (b) eight baseline changes, each declared `within_baseline` with `adrs_changed` empty: `plan_approval`, `declared` recorded, `routing` `human`, the diff, nothing published; (d) each rejected with a note: the next generation of the same trigger, the note in its package; (c) `uncertain` alone; (e) R9: the refusal names `POST …/spec/change-requests`, `needs_spec_change`, no request; (a) unchanged: `engine:plan_check` | written |
+| M427 | kernel | `M427-a-requirement-conflict-and-a-rebased-reroute.test.mjs` (2) | (e) a `requirement_conflict` in the result: a finding of the run, a blocker offering `change_spec`, nothing of the spec changed; (f) a held replan, the owner's policy commit, the routing check bound to the moved head | written |
+| M428 | kernel | `M428-the-phase-gate-and-t1-nomination.test.mjs` (5) | (a), (b), (f) T1 ordering by event seq; (c), (h) T2 phase 2: the `phase`-only check and the earlier-stage checks only on the final candidate, the first phase evaluation after their results, none earlier, `phase_verification` after it; (d) the gate route on stage 3's candidate (R4's check required while undelivered; 400s; no completion) and `accept-r1` failing on the final candidate; (e) `AUTHORING_INCOMPLETE` `stage 2:R2.2` (T1), `PLAN_REQUIREMENT_UNPLANNED` `phase 1:R3` (ruling 3); (g) the route replaces M3's `unsupported` | written |
+| M429 | kernel | `M429-phase-verification-and-its-sign-off.test.mjs` (4) | (a) after the evaluation, the package holding it and the findings; (b) `scope` `phase`, `phase_plan`, the four-field binding; (c) T2 with no sign-off: incomplete; (d) a replaced generation: no row, `signoff.refused`, the work complete; (e) the finding recorded and its `fix` making fix work | written; (c) at T1: M406 (a); at T3: not written (ruling 7); (d)'s superseded candidate: deferred → 37 (ruling 4) |
+| M430 | kernel | `M430-early-replanning-as-a-compare-and-swap.test.mjs` (5) | (a) `spec_change`, `blocker_replan`, `objection_upheld`, `contract_conflict` (`target: "plan"`), each with its evidence; (b) the objection alone: nothing; (c) T1 three stages, integrated, building and planned at the swap: generation 2 active, 1 `replaced`, S3 cancelled with its work, S1 kept, only S4 and S5 registered; (d) S2's tasks changed: history, `superseded`; unchanged: retained, no duplicate; (f) completion from the active set, the finding kept; (g) the stale recorded | written; (f)'s floor not exercised: the reference project has no sensitive area |
+| M430 | kernel | `M430-two-replacements-and-a-restart.test.mjs` (1) | (e) two routed replacements; the first approved with a kill at `plan.after_publication` and a restart: generation 2 once, the remainder once; the second 409 `plan_generation_stale` | written |
+| M413 (b) | kernel | `M413-a-conformance-stage-in-phase-two.test.mjs` (1, slice 35) | carried item (ii): the change-phase replan of the adopted fixture carrying a conformance stage: `PLAN_CONFORMANCE_MISPLACED` naming stage 3 | written |
+
+**Carried item (i)** (an architecture revision with a later plan, published after both approvals) has no kernel case. The Builder covers it with a developer test (the driver), and M448 (a) M4 publishes an architecture-revising replan against version 2.
+
+**The straddles (the driver's rulings 1 and K5; each former case recorded here):**
+- `contract/config.json` gains the project key `phase_size` (`{min 3, max 5}`, each 1 to 12). M07's closed-configuration cases compare it.
+- The journeys pin their size: Tally's projects use `{2, 5}` and the adopted fixture's use `{1, 5}`, through policy calls they already make. The files are `harness/journey/drive.mjs` (`TALLY_PHASE_SIZE`, `ADOPTED_PHASE_SIZE`, `JOURNEY_POLICY`), `harness/journey/review31b.mjs`, `harness/journey/project.mjs`, `harness/retrofit/drive.mjs` (`toConformancePublished` now always commits the owner's policy), M406, M401's T1 variant, M407 and M408. Without the pin, every Tally replan (two stages) would route `uncertain` to the owner, and computed routing (SEAM §352) would no longer be reachable. On a build without the key, every file built on these helpers fails at the policy change (400 `unknown_field`).
+- `harness/checks/repair.mjs` `X2_OPTIONS` gains `replan`. M236's, M234's and M401-S5's X2 blockers now offer exactly five options; the former set of four is pinned as no longer the answer.
+- M44's `UNBUILT_KINDS` loses `phase`. The former 501 `unsupported` case for the `phase` route is replaced by M428 (d), (g).
+
+**What was run, 2026-10-13.**
+
+The setup:
+- A scratch checkout of `build/m5-s35` at `1b527a0`. The Builder had nothing committed beyond slice 34's review, so this is slice 34 with no slice-35 code. It carried this branch's acceptance tree, with `npm ci` and `npm run build`.
+- Each file was run alone with `node --test`, only when no other test run was under way. Nothing was left running.
+
+**As committed,** every new file fails at its first project, because the engine refuses `phase_size` as a policy key (400 `unknown_field`): the `phase_size` straddle.
+- That holds for M425 0/4, M426 0/7 and 0/2, M427 0/1 and 0/2, M428 0/5, M429 0/4, M430 0/5 and 0/1, and M413 (b) 0/1.
+- The exception is M426's lexical case, which fails on its own: `plan/check.ts` does not call `computeScope`.
+- Of the straddled accepted files:
+  - M44 passes, 7/7;
+  - M406 fails 0/2 at the same policy change;
+  - M236 fails 1/10 at the X2 blocker, which offers four options, not five.
+
+**A diagnostic run, to see past the straddle.** Each file was then run with `phase_size` stripped from the owner's policy changes, in the scratch copy only (an env-gated line in its `ownerPolicy`). That run is not the committed test. It shows where each case fails once the key exists. Every failure below is for a reason of the unbuilt slice:
+
+- **M425 3/4.** (a) to (d) already pass. (e) answers `plan_generation_stale`, but its cause names the moved head and the paths, not `PLAN_UNKNOWN_ADR ADR-002`.
+- **M426 (first close) 3/7.** (a), the area case and the T3 case with (d) pass. The remaining four fail as follows:
+  - `PLAN_CRITERION_UNVALIDATED`'s subject is the bare `R1.1`, not `stage 1:R1.1`;
+  - the lexical case fails;
+  - (e): the scoped plan without the descriptive R1 is refused `PLAN_REQUIREMENT_UNPLANNED (R1)`;
+  - (f): `uncertain` is null.
+- **M426 (replans) 0/2.** The drop and twice refusals already pass, as parse refusals naming R4. The two-stage plan is published by `engine:plan_check`; the run with the key in place is the real test of (f). The regression variant's parked blocker offers `retry` and `cancel`, with no `replan`.
+- **M427 (chain) 0/1.** At the first variant (an ADR added), `plan_checks.declared` is null. In an earlier diagnostic order, a roadmap-only revision (phase 2's goal) prepared against architecture 1 was refused `PLAN_STALE_BASELINE (architecture_version 1 (bundle 2), roadmap.json architecture_version 1 (bundle 2))`. **A finding for the Builder:** a replan that revises only the roadmap is counted as a new architecture version. The chain pins architecture 1 for it.
+- **M427 (e), (f) 0/2.**
+  - (e): the replan with a `requirement_conflict` completes, and no finding is recorded.
+  - (f): the routing check's bundle is bound to the head before the policy commit.
+- **M428 1/5.**
+  - (c), (h) pass.
+  - (a): a Verifier run is dispatched (event 497) before the last check registration (548). The phase scope's registrations follow the dispatch. **The order is pinned from the row's (b)**, "registered and run …, `verification` dispatched, … evaluated afterwards". The driver may want to confirm that reading.
+  - (d): the route is 501 `unsupported`.
+  - (e): no phase evaluation on the T1 candidate when R2.2 is uncovered, and no evaluation naming `PLAN_REQUIREMENT_UNPLANNED`.
+- **M429 2/4.** (c) and (e) pass. (a): the package holds no evaluation (`acceptance-content-hash.txt`, `findings.json`, the prompt files). (d): the phase-1 replacement replan completes and publishes or raises nothing.
+- **M430 0/5 and 0/1.**
+  - Every replacement of the open phase completes silently: no swap, no decision.
+  - The parked blocker offers only `retry` and `cancel`, with no `replan`.
+  - The X2 blocker offers no `replan`.
+  - A Reviewer's `target: "plan"` disposition creates no replan.
+- **M413 (b)** passes already: `PLAN_CONFORMANCE_MISPLACED` with `stage 3: phase 2 is not the conformance phase`. The driver's ruling allows it.
+
+Run times were 3 s to 6 s per file as committed. In the diagnostic run they were 10 s to 220 s; M429's (d) was 5 min before the pump learned to report a silently completed replan.
+
+**Objections 082 to 086, upheld as test-side (the driver, 2026-10-13; SEAM §415).**
+- **082 (M425 (e)):** phase 2's active plan is read by its phase.
+- **083 (M428 (d)):** stage 3's candidate is the first one above phase 1's completion candidate by `seq`.
+- **084 (M427):** each launch writes its whole proposed tree.
+- **085 (M401 (i)):** phase 2's stages are read across its generations.
+- **086 (M408 (a); `retrofit/drive.mjs`):** the `phase_size` commit comes after the mode is answered.
+
+**What was run after the objections, 2026-10-13.** A scratch checkout of `build/m5-s35` at `52f52fc`, with this branch at `a980dce` merged, `npm ci` and `npm run build`. Each file was run alone.
+- **Passing:**
+  - M425 4/4;
+  - M426 7/7 and 2/2;
+  - M427 (e), (f) 2/2;
+  - M428 5/5;
+  - M429 4/4;
+  - M430 5/5 and 1/1;
+  - M413 (b) 1/1;
+  - M236 10/10, M234 11/11 and `M401-spec-change-work-from-a-finding-is-not-dispatched` 1/1 (the X2 straddle).
+- **On the project lane**, each run with the runner's read-only checks before and after: M408 8/8 and M401 part 2 5/5. The manager was `running` before, no `surety-*` unit existed before or after, and nothing new was left in `/dev/shm` or `/tmp`.
+- **M427 (the chain) fails 0/1 at (e).** The refused replan's `reason_text` is `the plan check refused phase 2: PLAN_UNKNOWN_REQUIREMENT (R9)`. The build names the route in the session's 422 text and in `baseline.plan_refused`'s payload (`spec_change_route`), not in the run's text. Every variant of (b), (c) and (d) before it passes. This is a question for the driver: either the refusal text is the run's, which is the case as written, or the event's field is enough.
+
+**The slice-35 review's cases** (the driver's message, 2026-10-13; SEAM §415):
+
+| Finding | Row | File | Case | Status |
+|---|---|---|---|---|
+| S1 (a), S1 (b), S2, M4 | M430 | `M430-replacements-pending-while-stages-move.test.mjs` (4) | a changed building stage integrated before the approval; a kept stage's work parked before it; a kept `verifying` stage's repair after the swap; a parked integrated stage kept with its blocker, then its own `blocker_replan` | written |
+| M2 | M429 | `M429-a-replacement-at-phase-verification.test.mjs` (1) | a replacement keeping every stage during `phase_verification`: a new one for generation 2, completion on it | written |
+| M3 | M430 | `M430-blockers-and-reopened-dispositions.test.mjs` (3) | (i) a fix's X2 blocker offers no `replan` (`X2_FIX_OPTIONS`); (ii) the stage's blocker raised again after its replan parks; (iii) a losing plan-targeted `fix` reopened | written |
+
+**What was run for the review's cases, 2026-10-13.** The same scratch (`52f52fc` with this branch merged). Each file was run alone. Every case fails, and each failure is the finding the case pins:
+- **S1 (a) and S1 (b):** answering the open approval returns 200, and the stale bundle is **published**. The plan read lists it `published`, not `stale`.
+- **S2:** after the swap, stage 1's failed `accept-r1` sends its work back to `eligible`. It is never dispatched again: one run, and still `integrated` after 160 rounds.
+- **M4:** the spec-change replacement cancels the integrated stage 1 (`cancelled_at` set).
+- **M2:** after the swap, the held `phase_verification`'s sign-off is refused (one `signoff.refused`). No second `phase_verification` is registered, and phase 1 does not complete on generation 2.
+- **M3:**
+  - (i): the fix's X2 blocker offers `replan`;
+  - (ii): the refused replan parks, and no blocker about stage 1's work is open again;
+  - (iii): A's disposition stays `fix` (`dispositioned`) after its replacement loses with 409.
+- **Each replacement's approval is read from the open decision when the owner answers.** A pending `plan_approval` is raised again as its next generation when stages integrate (slice 34's ruling, SEAM §405).
+
 
 ## M5 slice 34: the specification and the Architect's products (BS5 §9.2; D6 §§2.5, 3.2 to 3.5, 5.3, 5.5, 5.6, B.2; the driver's approval of the outline, 2026-10-13)
 

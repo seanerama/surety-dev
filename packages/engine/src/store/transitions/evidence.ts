@@ -115,7 +115,9 @@ export interface Delivery {
 // the candidate's revision or an ancestor of it, is not started; some is
 // partial; all is delivered.
 export function deliveryOf(db: Db, project: string, candidate: CandidateRow): Delivery {
-  const stages = db.prepare('SELECT * FROM "stages" WHERE "project" = ?').all(project) as StageRow[];
+  // The active obligation set (D6 §5.7; B08): a stage an early replacement
+  // cancelled or superseded delivers nothing, its code history only.
+  const stages = db.prepare('SELECT * FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL').all(project) as StageRow[];
   const requirements = (db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as { id: string }[]).map((r) => r.id);
   const implementsOf = new Map<string, string[]>();
   for (const s of stages) implementsOf.set(s.id, JSON.parse(s.implements) as string[]);
@@ -292,12 +294,14 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
     const obligations = plan
       ? (db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NOT NULL AND "assigned_phase" <= ? AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project, plan.phase_number) as { id: string }[]).map((r) => r.id)
       : [];
+    // A cancelled or superseded stage whose code was integrated keeps its
+    // modules in the scope: cancellation lowers no sensitivity floor (D6 §5.7).
     const stageModules = plan
       ? (
           db
             .prepare(
               `SELECT s."modules" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan"
-               WHERE p."project" = ? AND p."phase_number" <= ? AND p."status" IN ('published', 'completed') AND s."cancelled_at" IS NULL`,
+               WHERE p."project" = ? AND p."phase_number" <= ? AND p."status" IN ('published', 'completed', 'replaced') AND (s."cancelled_at" IS NULL OR s."integrated_revision" IS NOT NULL)`,
             )
             .all(args.project, plan.phase_number) as { modules: string }[]
         ).flatMap((s) => JSON.parse(s.modules) as string[])

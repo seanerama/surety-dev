@@ -1,6 +1,7 @@
 // Read-only queries. Reads never write and never call out of the store.
 
 import { replanFacts } from '../plan/replan-package.js';
+import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
@@ -103,7 +104,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ?').get(args.run) as Record<string, unknown> | undefined;
   // A session's turn has its own package (sessions/package.ts).
   if (!run || run.work_item === null) return null;
-  const item = db.prepare('SELECT "id", "kind", "subject", "project", "trigger_source", "trigger_id", "trigger_generation" FROM "work_items" WHERE "id" = ?').get(run.work_item) as {
+  const item = db.prepare('SELECT "id", "kind", "subject", "project", "trigger_source", "trigger_id", "trigger_generation", "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(run.work_item) as {
     id: string;
     kind: string;
     subject: string;
@@ -111,6 +112,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     trigger_source: string | null;
     trigger_id: string | null;
     trigger_generation: number | null;
+    trigger_evidence: string | null;
   };
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
@@ -311,6 +313,9 @@ export function contextFacts(db: Database, args: { run: string }) {
   return {
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,
+    // The phase Verifier's (D6 §5.8; M429 (a)): the phase evaluation and
+    // the phase's findings.
+    phase: phaseVerificationFacts(db, item),
     change_request: changeRequest ?? null,
     proposal: proposalRow ?? null,
     run: { id: run.id as string, role: run.role as string, base_revision: run.base_revision as string, content_hash: (run.content_hash as string | null) ?? null },
@@ -387,7 +392,9 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
 // `implements` cannot be read: the plan is then unknown, never empty.
 function stagePlan(db: Database, project: string, requirements: readonly { id: string; key: string }[]): { number: number; status: string; implements: string[] }[] | null {
   try {
-    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
+    // The active obligation set: no stage an early replacement cancelled or
+    // superseded (D6 §5.7; the review's N5).
+    const rows = db.prepare('SELECT "number", "status", "implements" FROM "stages" WHERE "project" = ? AND "cancelled_at" IS NULL ORDER BY "number", "created_at", "id"').all(project) as { number: number; status: string; implements: string }[];
     const keyOf = (r: string): string => requirements.find((q) => q.id === r || q.key === r)?.key ?? r;
     return rows.map((s) => {
       const ids = JSON.parse(s.implements) as unknown;

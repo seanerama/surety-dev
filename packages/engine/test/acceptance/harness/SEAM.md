@@ -6449,6 +6449,172 @@ A question that blocks only phase-2 requirements, and carries a hint (`(phase 2)
   - **A head move that changes a bound input** (a spec change approved) marks the bundle `stale`, and no open decision binds it.
   - **Never an orphan:** every bundle the plan read lists `proposed` has an open decision binding it.
 
+# M5 slice 35: planning and the phase
+
+Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13, on `verify/m5-s35` from `verify/m5-s34` at `96574a8`). They cover rows M425 to M430 of the M5 plan §3.5, and carry one earlier review's item as an M413 case. They follow the driver's approval of the outline and his rulings of 2026-10-13, and they use the Builder's approved names (migration 0027 and the contract additions). Where something is left to the tests, it is marked †.
+
+## 406. The files, the lane, the straddles and what is not re-tested
+
+- **Ten kernel-lane files under manifest slice `35`:**
+  - `M425-plan-references-and-approvals`;
+  - `M426-plan-dependencies-and-validation` (the first close) and `M426-replans-against-the-roadmap`;
+  - `M427-plan-routing-from-the-artifacts` and `M427-a-requirement-conflict-and-a-rebased-reroute`;
+  - `M428-the-phase-gate-and-t1-nomination`;
+  - `M429-phase-verification-and-its-sign-off`;
+  - `M430-early-replanning-as-a-compare-and-swap` and `M430-two-replacements-and-a-restart`;
+  - `M413-a-conformance-stage-in-phase-two` (carried item (ii); M413 (b)'s clause).
+- None of them needs a domain or a unit, and none is destructive.
+- **The shared helper** is `harness/journey/plan35.mjs`. It holds:
+  - `specReady`, `firstClose` and `phaseOnePlan`, for plans at the first Architect close;
+  - `replan35`, a replan of any phase that writes the artifacts it changes beside its plan;
+  - `journey35`, which is `journeyProject` with the first products, policy and phase-1 stages varied;
+  - `approvedChange`, a spec change carried to its approval;
+  - `planCheckRows`, `subjectsOf` and `diffText`, the plan check's columns;
+  - `nextReplanOutcome`, a pump that stops at the next refused, routed or published replan.
+- **Straddles (each is recorded in COVERAGE):**
+  - **`phase_size`** is added to `contract/config.json`: `{min, max}`, default `{3, 5}`, each 1 to 12. M07 fails until the engine has the key.
+  - **The journeys pin their phase size** through the policy calls they already make, under the driver's ruling 1. Tally's projects use `{2, 5}` (`TALLY_PHASE_SIZE`): `harness/journey/drive.mjs` `JOURNEY_POLICY`, `review31b.mjs` `journeyProject`, `project.mjs` `PROJECT_POLICY`, M406, M401's T1 variant and M407. The adopted fixture uses `{1, 5}` (`ADOPTED_PHASE_SIZE`): `retrofit/drive.mjs` `toConformancePublished`, now with a policy commit on every adoption it drives, and M408. On a build without the key, each of these fails at the policy change.
+  - **`harness/checks/repair.mjs` `X2_OPTIONS`** gains `replan`, so D3 §5 X2's blocker now offers exactly five options (M236, M234, M401's S5).
+  - **M44's `UNBUILT_KINDS`** loses `phase` (§411).
+- **Not re-tested here:**
+  - (c)'s superseded architecture or roadmap version: M424 (f) and M448 (a).
+  - (d)'s material move: M424 (f).
+  - M429 (c) at T1: M406 (a).
+  - M429 (c) at T3: not written (the driver's ruling 7).
+  - M429 (d)'s superseded-candidate half: deferred to slice 37 (the driver's ruling 4).
+  - Carried item (i), an architecture revision with a later plan after both approvals: covered by the Builder's developer test, and M448 (a) M4 already publishes an architecture-revising replan.
+
+## 407. The plan check as the tests read it (migration 0027)
+
+- **`plan_checks`** gains:
+  - `uncertain`: an array of strings. `phase_size: …` is one; the role's declaration of `uncertain` is another.
+  - `declared`: `{conformance, adrs_changed, roadmap_revision, notes}`, exactly as the role declared them.
+  - `diff`: a `records` id. The record holds each changed artifact's approved and proposed content. The tests read it as text and look for both.
+  - `routing`, `needs_spec_change` and `changes_*` are as built.
+- **Subjects:**
+  - Clause 1: the key (`R9`, `ui`, `ADR-009`), the criterion (`R2.1`), `stage 2 -> 7` †, `stage 1` (duplicate).
+  - Clause 3: `stage <n>:<module>`; the requirement key; `phase <n>` for an incomplete prerequisite.
+  - Clause 4: **`stage <n>:<criterion>`**, `stage <n>:<area>` and `stage <n>:<kind>`. The criterion's subject now names its stage, which is the driver's form; as built it was the bare criterion.
+- **A refused first close** records a refused `plan_checks` row with the subjects and one `baseline.plan_refused` whose payload carries the reasons. It answers 422 `plan_refused`.
+
+## 408. References and approvals (M425)
+
+- **A withdrawn requirement** is reached by an approved spec change (version 2) that drops R4, with `kind: withdrawn`. A stage implementing R4 is then `PLAN_UNKNOWN_REQUIREMENT` naming `R4`.
+- **A harmless move under a session (d)** happens after the session's save:
+  - the owner's governed edit, applied (`governedEdit`, `humanApplies` as `tightening`), moves the head;
+  - the close is accepted;
+  - after both approvals, `phase_plans.prepared_against_revision` is the moved head.
+- **(e)** Phase 1 is published with ADR-001 and ADR-002.
+  - The replan for phase 2 references ADR-002, declares `uncertain`, and waits on `plan_approval`.
+  - The owner's Architect session for phase 2 deletes ADR-002 (architecture version 2, roadmap version 2), and both its decisions are approved: it publishes first.
+  - Answering the replan's `plan_approval` then gives **409 `plan_generation_stale`**, and the body names **`PLAN_UNKNOWN_ADR ADR-002`** (the driver's ruling).
+
+## 409. Dependencies, validation, the obligations and `phase_size` (M426)
+
+- **The planned obligations** (`phase_plans.planned_obligations`, a record) are read from the record's JSON field `planned_obligations` (as built: `{bundle, planned_obligations}`) †. Each entry is `{scope: {kind: "stage" | "phase", number}, tier, criteria[], kinds[], sensitive_areas[]}`. A module's `tier_override` T3 makes its stage's entry T3 with the T3 kinds (`property`, `failure_recovery`). After publication there is no `checks` row, no execution and no result.
+- **The lexical case** (the driver's ruling 6) checks the one module under `src/` that defines `function checkPlan`. That module must call `computeScope(`, must declare no `KIND_INVENTORY` of its own, and must spell out no kind literal (`security_lint`, `property`, `failure_recovery`).
+- **`descriptive_unverified`** requirements are excluded from the obligations and from the unplanned clause (the driver's ruling). The scoped case puts R1 (descriptive) in phase 1 with the conformance stage touching `service` alone. The close is accepted, and no obligation names `R1.`.
+- **`phase_size`:** a plan outside the bound gets `outcome` `passed`, `uncertain` naming `phase_size: …`, and routing to the owner. It is never refused.
+- **The regression** (the 2026-10-12 ruling; §352):
+  - phase 1 is completed;
+  - `accept-r1` fails on a phase-2 candidate (the scripted boundary);
+  - stage 4's Builder crashes and parks (`repair_attempts_max` 0), and its blocker is answered `replan`.
+  - The replacement is refused `invalid_result`, and its text names `PLAN_DEPENDENCY_INCOMPLETE` and `phase 1`.
+- **A roadmap revision that drops R4 or assigns it twice** fails the replan `invalid_result` naming R4. **Moving R4** to a new phase 3 routes to the owner with the whole roadmap in the diff. Before `approve`, R4's `assigned_phase` is 2 and there is still only roadmap version 1. After it, there is roadmap version 2 and R4 is in phase 3.
+
+## 410. Routing from the artifacts (M427)
+
+- **Each variant declares `within_baseline` with an empty `adrs_changed`.** For each one, the routing check is `passed`, its `routing` is `human`, `declared` is recorded as given, the change appears in `changes_*`, and the diff holds the artifact. Nothing is published until an answer.
+  - A changed phase goal goes in `changes_roadmap.goals`.
+  - ADR changes go in `changes_adrs.added`, `changed` and `deleted`.
+  - A move goes in `assignments`, with the new phase in `phases_added`.
+  - A module's sensitivity sets `changes_architecture.changed` with `modules` in its subjects.
+  - A dependency goes in `dependencies`.
+  - Edited architecture text sets `changed` with `architecture` in its subjects.
+- **A rejection** is answered with `note` (the answer's field). It makes the replan's **next generation of the same trigger**, `(trigger_source, trigger_id, trigger_generation + 1)`, and the note is in that run's dumped package.
+- **An unknown requirement** fails the run `invalid_result`, and its text names `PLAN_UNKNOWN_REQUIREMENT R9` and `POST …/spec/change-requests`. The refused row has `needs_spec_change` 1, and no `spec_change_requests` row exists.
+- **A `requirement_conflict` in the replan's result** is a `findings` row whose `source_run` is the replan's run. It produces an open `blocker` about the replan's work item that offers `change_spec` †. No spec version, change request or `spec_change` work exists before the owner answers.
+- **A rebased reroute.** A held replan revises ADR-001, and the owner's policy commit moves the head during the hold. The routing check's bundle (`plan_bundles.head`) is the moved head, and its `changes_adrs.changed` names ADR-001.
+
+## 411. The phase gate (M428; the driver's rulings 2, 3 and 8)
+
+- **The route:** `POST /v1/projects/:p/candidates/:c/gates/phase` with `{"phase_plan": "<id>"}` answers 200 with `evaluation.gate_kind` `phase`. It has no completion effect. A missing or unknown `phase_plan` is 400 `invalid_value`. The scope's required set holds the checks of every requirement assigned to the phase, delivered or not, and of earlier phases. This replaces M3's 501 `unsupported` (M44's straddle).
+- **Ordering** is read from event `seq`, never from counts:
+  - at T1, `phase.authoring_ready` comes before `candidate.nominated`;
+  - every `check.registered` of the candidate's executions comes after the nomination;
+  - the `work.created` of the candidate's `verification` work comes after the last registration;
+  - every `gate.evaluated` of its stage and `phase` evaluations comes after its last `check.result`.
+  - At T2, the first `gate.evaluated` of the final candidate's `phase` evaluations comes after the results of `phase-regression` and `accept-r1` on it. No earlier phase-2 candidate has a `phase` evaluation or a `phase-regression` execution. `phase_verification`'s `work.created` follows the first `phase` evaluation, and at T1 there is none.
+  - An event is matched to a row by the row's id appearing in the event.
+- **The gate's reasons** (`phase` only, this slice):
+  - **`AUTHORING_INCOMPLETE` `stage 2:R2.2`**: phase 1's authoring omits `integration`, and its `accept-r2` covers R2.1 alone (T1).
+  - **`PLAN_REQUIREMENT_UNPLANNED` `phase 1:R3`**: once both phase-1 stages are integrated and no run is under way, the owner's Architect session writes a roadmap moving R3 into phase 1. The close raises the owner's decision, which is approved. Phase 1 does not complete.
+
+## 412. Phase verification (M429; the driver's rulings 4 and the refused sign-off)
+
+- **The package** † holds the `phase` evaluation's id in some file and a file whose name contains `finding`.
+- **The sign-off** is a `signoffs` row with `scope` `phase` and `phase_plan` the plan. Its `binding` has exactly the keys `acceptance_hash`, `plan_generation`, `protected_version` and `spec_revision`.
+- **A refused sign-off** writes no `signoffs` row and emits one **`signoff.refused`** whose payload names the binding (`plan_generation`) and a `cause`. The run's work item is `complete`.
+- **How the replaced generation is reached** (the driver's ruling 5):
+  - a change touching R4 alone is approved during phase 1;
+  - its `replan` replaces phase 1 with the same stages, declared `uncertain`, so it awaits the owner;
+  - `phase_verification` holds, and the owner approves the replacement while it holds.
+
+## 413. Early replacement (M430)
+
+- **`phase_plans.replacement`** is JSON: `{trigger, evidence, stale[], kept[], retained[], cancelled[], superseded[]}`. The lists hold stage ids, and `trigger` carries the trigger source. **`plan_bundles.replaces`** is `{phase_plan, generation}`.
+- **Generation 1 after the swap** has `status` `replaced` and is not active. A planned stage has `status` `cancelled` with `cancelled_at`, and its `stage_build` is `cancelled`. A superseded `building` stage's `stage_build` carries `superseded` in its row once its run ends (the driver's ruling; the field is not pinned †).
+- **Triggers:**
+  - `spec_change`;
+  - `blocker_replan`: the trigger names the blocker or the parked work;
+  - `objection_upheld`: the trigger names the objection's finding;
+  - `contract_conflict`: `trigger_id` is the finding, reached by a Reviewer's disposition `{finding, disposition: "fix", target: "plan"}`, and no `fix` work is made.
+- **How a stage is `building` at the swap:**
+  - the T1 three-stage plan (R3 in phase 1, phase 1's authoring covering it) has its authoring decision withheld until the replacement is pending;
+  - S1 integrates and S2's Builder is held;
+  - the owner approves the replacement during the hold.
+- **Two replacements:**
+  - two independent stages park, and each blocker is answered `replan`;
+  - both replacements are routed `uncertain` and pending;
+  - the first is approved with a kill at `plan.after_publication` (§401), and the engine restarts;
+  - the second answer gets 409 `plan_generation_stale`.
+
+## 414. Names the Verifier fixed in this pass, and what is deferred
+
+| What | Fixed as | Why |
+|---|---|---|
+| Clause 4's subjects † | `stage <n>:<criterion \| area \| kind>` | the row's "naming the stage"; the driver's form |
+| The gate route's body | `{phase_plan}` | the driver's ruling 2 |
+| The planned-obligations record's shape † | §409 | D6 A.3 names the record, not its form |
+| The phase package's contents † | the evaluation's id; a findings file | D6 §5.8 "reads the evaluation and the phase's findings" |
+| The Architect's conflict route † | a `blocker` about the replan offering `change_spec` | D6 §5.4; D3 X2 |
+| The superseded marker † | `superseded` in the work row | the driver's ruling; the column is the Builder's |
+
+**Deferred:** M429 (d)'s superseded candidate (slice 37); M430 (f)'s floor, since the reference project has no sensitive area (COVERAGE).
+
+## 415. The slice-35 review's cases, and objections 082 to 086 (the driver, 2026-10-13)
+
+**The objections, upheld as test-side:**
+- **082 (M425 (e)).** A completed plan stays its phase's active generation, so phase 2's plan is read by its phase: `planOfPhase(…, 2).find(active)`.
+- **083 (M428 (d)).** Stage 3's candidate is the first candidate whose `seq` is above phase 1's completion candidate.
+- **084 (M427).** A rejected replan's commit stays on the integration branch as a draft. So each launch writes the whole tree it proposes: the approved ADR-001, module map, architecture text and roadmap, ADR-002 removed, its own change over them (`whole`).
+- **085 (M401 (i)).** CR-1's replan replaces phase 2 early, and kept stages keep their rows on generation 1. Phase 2's stages are therefore read across its generations, with the cancelled ones excluded.
+- **086 (M408 (a); `retrofit/drive.mjs`).** The `phase_size` policy commit lands after `adoption_mode` is answered, because a policy commit re-raises an open `adoption_mode`.
+
+**The review's cases** (`harness/journey/review35.mjs`: `replacementPending`, a replacement of phase 1 routed `uncertain` and pending before readiness; `advanceHolding`, a pump whose `exits(x)` may leave an execution queued):
+- **S1 (a)** and **S1 (b)** (`M430-replacements-pending-while-stages-move`). On approval, "stale" means either:
+  - 409 `plan_generation_stale`; or
+  - the bundle listed `stale` with the replan's next generation of the same trigger.
+
+  Either way, nothing is published that silently drops a changed stage. "No endless error" means at most three replan generations, and at most three new runs in ten further rounds.
+- **S2.** The kept stage 1 reaches `verified` after one failed `accept-r1` on a later candidate, with its work run at least twice.
+- **M4.** The spec-change replacement (within the baseline, so registered by `engine:plan_check`) keeps stage 1's row, its parked work and its open blocker (the same decision id). The blocker answered `replan` publishes generation 3, and generation 2 becomes `replaced` †.
+- **M2** (`M429-a-replacement-at-phase-verification`). After the swap, a second `phase_verification` work item runs. Phase 1 completes with `completion_binding.generation` 2. The only `phase` sign-off is bound to generation 2.
+- **M3** (`M430-blockers-and-reopened-dispositions`):
+  - (i) the X2 blocker of a `fix` item offers exactly `correct_check`, `change_spec`, `retry` and `cancel` (`harness/checks/repair.mjs` `X2_FIX_OPTIONS`; `x2Blocker` chooses the set by the item's kind);
+  - (ii) the refused replan parks, and a new open blocker about the stage's work is raised;
+  - (iii) the losing replacement's answer is 409, and the finding's `disposition` is no longer `fix` †, the finding itself kept.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33" and "M5 slice 34".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34" and "M5 slice 35".

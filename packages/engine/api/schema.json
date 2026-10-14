@@ -582,7 +582,8 @@
       "planned",
       "building",
       "integrated",
-      "verified"
+      "verified",
+      "cancelled"
     ],
     "TrustMode": [
       "one_shot_headless",
@@ -769,6 +770,7 @@
       "assessment.approved",
       "assessment.rejected",
       "signoff.recorded",
+      "signoff.refused",
       "intent.recorded",
       "intent.executing",
       "intent.done",
@@ -3548,6 +3550,9 @@
         "check_authoring": {
           "required": false,
           "references": "work_items"
+        },
+        "replacement": {
+          "required": false
         }
       }
     },
@@ -3605,6 +3610,9 @@
           "required": false
         },
         "stale_reason": {
+          "required": false
+        },
+        "replaces": {
           "required": false
         }
       }
@@ -3673,6 +3681,16 @@
         },
         "evidence": {
           "required": false
+        },
+        "uncertain": {
+          "required": true
+        },
+        "declared": {
+          "required": false
+        },
+        "diff": {
+          "required": false,
+          "references": "records"
         }
       }
     },
@@ -5272,6 +5290,12 @@
         "held": {
           "required": false,
           "enum": "HoldReason"
+        },
+        "trigger_evidence": {
+          "required": false
+        },
+        "end_cause": {
+          "required": false
         }
       }
     },
@@ -6344,7 +6368,7 @@
       "owner": "store/transitions/queue.ts"
     },
     "finding.resolved": {
-      "owner": "store/transitions/gates.ts"
+      "owner": "store/transitions/gates.ts, store/transitions/work.ts"
     },
     "finding.reopened": {
       "owner": "store/transitions/protected.ts"
@@ -6362,6 +6386,9 @@
       "owner": "store/transitions/findings.ts, store/transitions/queue.ts"
     },
     "signoff.recorded": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "signoff.refused": {
       "owner": "store/transitions/findings.ts"
     },
     "intent.recorded": {
@@ -6575,7 +6602,7 @@
       "owner": "sessions/session.ts"
     },
     "phase.authoring_ready": {
-      "owner": "store/transitions/protected.ts"
+      "owner": "store/transitions/protected.ts, store/transitions/work.ts"
     },
     "phase.completion_bound": {
       "owner": "plan/phase.ts"
@@ -7322,6 +7349,18 @@
           "on_phase_complete"
         ],
         "widening": "later"
+      },
+      "phase_size": {
+        "default": {
+          "min": 3,
+          "max": 5
+        },
+        "type": "size_range",
+        "range": {
+          "min": 1,
+          "max": 12
+        },
+        "widening": "never"
       },
       "backend_mode": {
         "default": "one_shot_headless",

@@ -29,6 +29,7 @@ import { operatorGuard } from './harness/deploy/host.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import { answer, decisionsOfKind } from './harness/decisions.mjs';
 import {
+  ADOPTED_PHASE_SIZE,
   authoringReady,
   buildActs,
   candidatesOfProject,
@@ -38,6 +39,7 @@ import {
   evaluationsOfKind,
   journeyContext,
   nextPhasePublished,
+  ownerPolicy,
   phaseCompleted,
   planOfPhase,
   projectRow,
@@ -103,6 +105,9 @@ describe('M408 the retrofit journey on the project lane', () => {
     J.p = { id, repo, A: J.A };
     J.created = { row: projectRow(fx.home, id), adoption: adoptionOf(fx.home, id) };
     J.mode = await chooseMode(fx, id, 'full');
+    // `phase_size` (slice 35; SEAM.md §406): the adopted fixture's phases have one stage each. Committed
+    // once the mode is answered: a policy commit re-raises an open `adoption_mode` (objection 086).
+    await ownerPolicy(fx, id, { phase_size: ADOPTED_PHASE_SIZE });
     // (b) the retrofit Spec Writer session; approve refused while a row is open.
     J.spec = await retrofitSpecSession(fx, id);
     J.approveEarly = await answer(fx.engine, id, J.spec.approval, 'approve');

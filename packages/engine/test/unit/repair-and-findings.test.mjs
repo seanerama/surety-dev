@@ -224,14 +224,14 @@ function objection(db, { role = 'builder', candidate = null, category = 'contrac
   ).run(AT, candidate, role, category, check);
 }
 
-test("a Builder's objection to a check that then fails: the X2 blocker instead of the repair, offering exactly its four answers", (t) => {
+test("a Builder's objection to a check that then fails: the X2 blocker instead of the repair, offering exactly its five answers (D6 §5.7 adds replan)", (t) => {
   const db = store(t);
   objection(db);
   post(db, 'chk_acc', 'cand_1', 1);
   const row = item(db);
   assert.deepEqual([row.status, row.continuation, row.repair_attempts, row.blocker.reason, row.blocker.findings, row.blocker.checks], ['awaiting_decision', 'verifying', 0, 'check_conflict', ['fnd_x'], ['chk_acc']]);
   const d = openBlocker(db);
-  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['correct_check', 'change_spec', 'retry', 'cancel']);
+  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['correct_check', 'change_spec', 'retry', 'replan', 'cancel']);
   assert.equal(JSON.parse(d.dependency_manifest).cause, 'check_conflict');
 });
 
@@ -291,7 +291,7 @@ test('a correction that ends with no corrected version raises the X2 blocker aga
   reconcile(db);
   const row = item(db);
   assert.deepEqual([row.status, row.repair_attempts, row.blocker.reason, row.blocker.findings], ['awaiting_decision', 0, 'check_conflict', ['fnd_x']]);
-  assert.deepEqual(JSON.parse(openBlocker(db).options).map((o) => o.key), ['correct_check', 'change_spec', 'retry', 'cancel']);
+  assert.deepEqual(JSON.parse(openBlocker(db).options).map((o) => o.key), ['correct_check', 'change_spec', 'retry', 'replan', 'cancel']);
   answer(db, 'correct_check');
   const all = db.prepare(`SELECT id, trigger_generation FROM work_items WHERE kind = 'check_correction' ORDER BY seq`).all();
   assert.deepEqual(all.map((x) => x.trigger_generation), [1, 2], 'the next generation of its trigger');

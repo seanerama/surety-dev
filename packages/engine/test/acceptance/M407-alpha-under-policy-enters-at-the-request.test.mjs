@@ -77,7 +77,8 @@ async function phaseOneComplete(t, { alpha_deploy = 'manual', omit, onePhase = f
   await fx.engine.kill();
   await fx.start();
   journeyScripts(fx, omit === undefined ? {} : { omit });
-  const p = await createWithIdea(fx, { tier: 'T2', policy: { autonomy: 'phase', alpha_deploy, deploy_auto_retries_max: 0 } });
+  // `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases, so the replan keeps computed routing.
+  const p = await createWithIdea(fx, { tier: 'T2', policy: { autonomy: 'phase', alpha_deploy, deploy_auto_retries_max: 0, phase_size: { min: 2, max: 5 } } });
   await visionSession(fx, p.id);
   await specSession(fx, p.id, onePhase ? { second: specText({ requirements: REQUIREMENTS.slice(0, 2) }) } : {});
   const over = onePhase ? { '.surety/roadmap/roadmap.json': { ...ROADMAP_JSON, phases: [ROADMAP_JSON.phases[0]] }, '.surety/roadmap/roadmap.md': ROADMAP_MD } : {};

@@ -23,7 +23,11 @@ export { checkIds, def };
 const json = (text) => (text === null || text === undefined ? text : typeof text === 'string' ? JSON.parse(text) : text);
 
 // The options of the blocker D3 §5 X2 raises, sorted.
-export const X2_OPTIONS = Object.freeze(['cancel', 'change_spec', 'correct_check', 'retry']);
+// M5 slice 35 (D6 §5.7, A.2; the driver's ruling, 2026-10-13; SEAM.md §406): the
+// X2 blocker of stage work gains `replan` (an objection upheld as against the
+// plan); a `fix` item's offers none (the slice-35 review's M3 (i); SEAM.md §415).
+export const X2_OPTIONS = Object.freeze(['cancel', 'change_spec', 'correct_check', 'replan', 'retry']);
+export const X2_FIX_OPTIONS = Object.freeze(['cancel', 'change_spec', 'correct_check', 'retry']);
 
 // A T1 project whose checks are discovered: `acc` (acceptance, covering
 // R1.1) and `smoke`, both at both gates, and the plan's one stage
@@ -124,7 +128,9 @@ export const optionKeys = (row) => (row.options ?? []).map((o) => o.key).sort();
 // The X2 blocker about the item, open (D3 §5 X2; SEAM.md §232).
 export async function x2Blocker(fx, project, item) {
   const row = await openDecision(fx, project, 'blocker', item);
-  assert.deepEqual(optionKeys(row), [...X2_OPTIONS], `the blocker about ${item} offers exactly correct_check, change_spec, retry and cancel (D3 §5 X2) (it offers ${JSON.stringify(optionKeys(row))})`);
+  const fix = itemRow(fx.home, item)?.kind === 'fix';
+  const want = fix ? X2_FIX_OPTIONS : X2_OPTIONS;
+  assert.deepEqual(optionKeys(row), [...want], `the blocker about ${fix ? 'the fix' : 'the stage work'} ${item} offers exactly ${want.join(', ')} (D3 §5 X2; D6 §5.7) (it offers ${JSON.stringify(optionKeys(row))})`);
   return row;
 }
 

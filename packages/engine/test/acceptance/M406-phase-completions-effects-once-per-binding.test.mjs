@@ -69,7 +69,8 @@ async function developing(t, { tier = 'T2', spec, roadmap } = {}) {
   await fx.engine.kill();
   await fx.start();
   journeyScripts(fx);
-  const p = await createWithIdea(fx, { tier, policy: { autonomy: 'phase', alpha_deploy: 'manual' } });
+  // `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases, so the replan keeps computed routing.
+  const p = await createWithIdea(fx, { tier, policy: { autonomy: 'phase', alpha_deploy: 'manual', phase_size: { min: 2, max: 5 } } });
   await visionSession(fx, p.id);
   await specSession(fx, p.id, spec === undefined ? {} : { second: spec });
   const over = roadmap === undefined ? {} : { '.surety/roadmap/roadmap.json': roadmap, '.surety/roadmap/roadmap.md': ROADMAP_MD };

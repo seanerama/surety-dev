@@ -5,6 +5,7 @@
 // approved proposal through the journal. The git work (fingerprints, trees,
 // commits) is done on the main thread and handed in.
 
+import { registerPhaseAtApplication } from '../../plan/phase.js';
 import { resolveByCorrection } from '../../spec/change.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
@@ -336,6 +337,7 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   // The new version's checks, registered in the transaction that invalidates
   // the old results (D3 §2.5, §3.5; L2).
   registerAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  registerPhaseAtApplication(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // Queued executions of the superseded version never launch (T15).
   cancelSuperseded(tx, op.project);
   // A finding the new version leaves without a verifying check is routed

@@ -500,14 +500,16 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         // The engine computes three gate kinds (`alpha_complete` since M4,
         // D4 §5.5); every other is refused before any effect, whatever the
         // body (build spec §3; row M08).
-        if (kind !== 'stage' && kind !== 'alpha_authorize' && kind !== 'alpha_complete') return { kind: 'refuse', refusal: unsupported(`Evaluating the ${kind} gate`) };
+        // `phase` (D6 §5.8; K5): evaluated on the candidate for the plan the
+        // body names; the evaluation completes nothing (the phase step does).
+        if (kind !== 'stage' && kind !== 'alpha_authorize' && kind !== 'alpha_complete' && kind !== 'phase') return { kind: 'refuse', refusal: unsupported(`Evaluating the ${kind} gate`) };
         return {
           kind: 'prepared',
           name: 'gate.evaluate',
           prepare: async (b) => {
-            const body = onlyFields(b, kind === 'stage' ? ['stage'] : kind === 'alpha_complete' ? ['operation'] : ['authorization']);
+            const body = onlyFields(b, kind === 'stage' ? ['stage'] : kind === 'alpha_complete' ? ['operation'] : kind === 'phase' ? ['phase_plan'] : ['authorization']);
             const facts = await gateFacts(runtime(), project, candidate);
-            return { project, candidate, kind, stage: body.stage, authorization: body.authorization, operation: body.operation, ...facts };
+            return { project, candidate, kind, stage: body.stage, authorization: body.authorization, operation: body.operation, phase_plan: kind === 'phase' ? (body.phase_plan ?? null) : undefined, ...facts };
           },
         };
       }

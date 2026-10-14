@@ -52,7 +52,8 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     await fx.engine.kill();
     await fx.start();
     journeyScripts(fx);
-    const p = await createWithIdea(fx, { tier: 'T1', policy: { autonomy: 'phase', alpha_deploy: 'on_phase_complete' } });
+    // `phase_size` (slice 35; SEAM.md §406): Tally's two-stage phases, so the replan keeps computed routing.
+    const p = await createWithIdea(fx, { tier: 'T1', policy: { autonomy: 'phase', alpha_deploy: 'on_phase_complete', phase_size: { min: 2, max: 5 } } });
     await visionSession(fx, p.id);
     await specSession(fx, p.id);
     const arch = await architectSession(fx, p.id, p.repo);

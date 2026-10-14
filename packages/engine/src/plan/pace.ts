@@ -5,6 +5,7 @@
 // when it occurred is unknown, never recomputed from the present and never
 // a measured zero. Nothing here writes, evaluates or probes.
 
+import { activeStages } from './active.js';
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
@@ -118,7 +119,8 @@ export function paceView(db: Database, args: { project: string }) {
     routing: (r.routing as string | null) ?? unknown('the plan records no routing'),
     published_to_completed: between(r.published_at as string | null, r.completed_at as string | null, ['the plan published', 'the phase completed']),
     published_to_authoring_ready: between(r.published_at as string | null, r.authoring_ready_at as string | null, ['the plan published', 'authoring readiness']),
-    stages: (db.prepare('SELECT COUNT(*) AS n FROM "stages" WHERE "phase_plan" = ?').get(r.id) as { n: number }).n,
+    // The generation's active stages (D6 §5.7; the review's M1).
+    stages: activeStages(db, r.id as string).length,
   }));
 
   const stages = (db.prepare(`SELECT s."id", s."number", s."status", s."work_item", s."created_at", p."phase_number" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE s."project" = ? ORDER BY p."phase_number", s."number", s.rowid`).all(p) as {

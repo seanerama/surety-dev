@@ -269,6 +269,12 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
+  // A stage an early replacement superseded is never dispatched again (D6
+  // §5.7; the review's N2): its work is settled by the phase step.
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    if (stage && db.prepare('SELECT 1 FROM "stages" WHERE "id" = ? AND "cancelled_at" IS NOT NULL').get(stage)) return 'stage superseded';
+  }
   for (const dep of JSON.parse(item.depends_on ?? '[]') as (string | Milestone)[]) {
     if (typeof dep === 'string') {
       const row = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(dep) as { status: string } | undefined;
@@ -305,7 +311,13 @@ function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
     return null;
   }
   if (m.milestone === 'authoring_ready') {
-    const plan = db.prepare('SELECT "authoring_ready_at", "active" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number } | undefined;
+    // The active generation's readiness (D6 §5.7; the review's S2): a plan
+    // an early replacement replaced is followed to the generation that
+    // replaced it.
+    let plan = db.prepare('SELECT "authoring_ready_at", "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(m.phase_plan) as { authoring_ready_at: string | null; active: number; replaced_by: string | null } | undefined;
+    for (let hops = 0; plan && plan.active !== 1 && plan.replaced_by && hops < 64; hops++) {
+      plan = db.prepare('SELECT "authoring_ready_at", "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(plan.replaced_by) as typeof plan;
+    }
     if (!plan) return `plan ${m.phase_plan} missing`;
     if (plan.active !== 1) return 'plan not active';
     if (plan.authoring_ready_at === null) return 'authoring not ready';
@@ -444,6 +456,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const repairs = item.repair_due === 1 ? item.repair_attempts + 1 : item.repair_attempts;
   transitionWork(tx, item, 'claimed', { prior_status: 'eligible', repair_attempts: repairs, repair_due: 0 }, { run });
   tx.db.prepare('UPDATE "work_items" SET "held" = NULL WHERE "id" = ?').run(item.id);
+  // D1 A.5 StageStatus: a stage whose Builder is first claimed is
+  // `building` (D6 §5.7 tells a building stage from a planned one).
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    if (stage) tx.db.prepare(`UPDATE "stages" SET "status" = 'building' WHERE "id" = ? AND "status" = 'planned'`).run(stage);
+  }
 
   const lease = tx.newId('lease_');
   tx.db
