@@ -92,7 +92,9 @@ test('a work item\'s generation in the dependency manifest is its class: routine
   }
   db.prepare('UPDATE "work_items" SET "status" = \'eligible\' WHERE "id" = \'wi_2\'').run();
   assert.notDeepEqual(manifest(), before, 'the parked item retried is');
-  assert.deepEqual(['eligible', 'awaiting_decision', 'held', 'parked', 'complete', 'cancelled'].map(workClass), ['active', 'active', 'held', 'held', 'terminal', 'terminal']);
+  // Slice 37's refinement: awaiting a decision is owner-held, as parked is;
+  // a dispatch hold is no status, so no class (review37.test.mjs).
+  assert.deepEqual(['eligible', 'awaiting_decision', 'held', 'parked', 'complete', 'cancelled'].map(workClass), ['active', 'held', 'held', 'held', 'terminal', 'terminal']);
 });
 
 test('a withdrawn requirement is delivered by no stage, so it is no gate\'s obligation', () => {
