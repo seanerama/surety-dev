@@ -12,7 +12,7 @@
 // integration branch's head is handed in.
 
 import { activeStages } from '../../plan/active.js';
-import { type ConformanceFacts, conformanceAfterEvaluation, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
+import { type ConformanceFacts, conformanceAfterEvaluation, conformanceSnapshot, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
 import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -831,6 +831,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     findings: findings.map((f) => f.id),
     signoffs: signoffs.map((s) => s.id),
     head_fingerprint: args.headFingerprint ?? null,
+    // A conformance stage's source as this evaluation read it (B11): what
+    // makes its gate due again when it moves (adopt/conformance.ts).
+    ...(conformance ? { conformance: conformanceSnapshot(db, target.stage!, args.conformance) } : {}),
   };
   tx.db
     .prepare(
