@@ -374,7 +374,12 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
       }
     }
     for (const d of openDecisions(fx.home, project)) {
-      if (!ROUTED_KINDS.includes(d.kind)) continue;
+      // `ctx.answerKinds`: the kinds the owner answers in this journey (by
+      // default the routed ones). Under `classifier_authority:
+      // authoritative` a tightening is the Reviewer's to apply (SEAM.md
+      // §351), and a journey that says so leaves its question unanswered
+      // (objection 105; SEAM.md §451).
+      if (!(ctx.answerKinds ?? ROUTED_KINDS).includes(d.kind)) continue;
       const option = d.options.some((o) => o.key === answer) ? answer : d.options[0].key;
       const res = await fx.engine.post(`/v1/projects/${project}/decisions/${d.id}/answer`, { option, preview_hash: d.preview_hash });
       ctx.humanActs.push({ kind: d.kind, id: d.id, option, status: res.status, at: new Date().toISOString() });
