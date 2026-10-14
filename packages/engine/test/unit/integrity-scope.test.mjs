@@ -269,3 +269,13 @@ test("a checkout's baseline is remembered while nothing it rests on changes; a w
   assert.notEqual(after.tracked_tree_hash, first.tracked_tree_hash, 'and the change is seen');
   assert.deepEqual(after, await checkoutBaseline(ctx, fx.scratch), 'the same as computed afresh');
 });
+
+test('an integrity report read against an expectation that has moved since (an adoption committed between the read and the record) records nothing; one read against the expectation still standing does', (t) => {
+  const fx = fixture(t);
+  const report = (expected) => ({ project: 'prj_1', unreadable: false, refs: [{ registry: 'ref_main', expected, found: 'f'.repeat(40) }], checkouts: [], released: [], added: [] });
+  fx.db.prepare(`UPDATE ref_registry SET expected_oid = ? WHERE id = 'ref_main'`).run('e'.repeat(40));
+  transact(fx.db, ENGINE_ACTOR, (tx) => recordIntegrity(tx, report(fx.head)));
+  assert.equal(fx.db.prepare(`SELECT COUNT(*) AS n FROM out_of_band_changes`).get().n, 0, 'read against the old expectation: stale, nothing recorded');
+  transact(fx.db, ENGINE_ACTOR, (tx) => recordIntegrity(tx, report('e'.repeat(40))));
+  assert.equal(fx.db.prepare(`SELECT COUNT(*) AS n FROM out_of_band_changes`).get().n, 1, 'read against the standing one: observed');
+});
