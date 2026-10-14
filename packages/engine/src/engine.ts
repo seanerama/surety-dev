@@ -411,7 +411,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // engine restricted.
   state.step = 'integrity';
   try {
-    for (const project of await runtime.read<string[]>('scheduler.projects')) await observeIntegrity(runtime, project);
+    for (const project of await runtime.read<string[]>('scheduler.projects')) await observeIntegrity(runtime, project, { startup: true });
   } catch (err) {
     return fail('integrity', err);
   }

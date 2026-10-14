@@ -20,14 +20,25 @@ export interface IntegrityFacts {
   checkouts: (CheckoutRow & { active: boolean; adminDir: string | null; pending: Pending | null })[];
 }
 
-export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFacts {
+// The checkouts an evaluation reads (Sean's ruling, 2026-10-14: "check at
+// startup only"). Every tick: the registered refs, the integration
+// worktrees and the retained workspaces of sessions, which a later turn
+// reuses and a resume reads (D6 §2.4). The retained workspace of an ended
+// work-item run is read by nothing after its run, so it is evaluated at
+// startup integrity (D1 §1.4 step 5, §16.1 step 8; `startup`) and before
+// anything reads it, never at each tick: its cost no longer grows with the
+// project's history. It stays on disk, and what startup finds in it takes
+// the out-of-band route unchanged.
+export const ENDED_WORK_WORKSPACE = `c."kind" = 'run_workspace' AND r."state" = 'ended' AND r."kind" <> 'session'`;
+
+export function integrityFacts(tx: Tx, args: { project: string; startup?: boolean }): IntegrityFacts {
   const p = projectRepoRow(tx, args.project);
   const checkouts = (
     tx.db
       .prepare(
         `SELECT c.*, r."state" AS "run_state", w."metadata_baseline" FROM "managed_checkouts" c
          LEFT JOIN "runs" r ON r."id" = c."owner_run" LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
-         WHERE c."project" = ? AND c."released_at" IS NULL ORDER BY c."id"`,
+         WHERE c."project" = ? AND c."released_at" IS NULL${args.startup === true ? '' : ` AND NOT (${ENDED_WORK_WORKSPACE})`} ORDER BY c."id"`,
       )
       .all(args.project) as (CheckoutRow & { run_state: string | null; metadata_baseline: string | null })[]
   ).map(({ run_state, metadata_baseline, ...c }) => ({

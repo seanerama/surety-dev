@@ -64,6 +64,37 @@ export function movingRefs(db: Tx['db'], project: string): Record<string, string
   return out;
 }
 
+// The other managed checkouts a run's snapshot validation compares with
+// their current recorded baselines (D1 §7.3 step 4, §7.6; BS5 rule 17; the
+// driver's ruling on M450, slice 37): the integration worktrees and the
+// retained workspaces of ended sessions. Not this run's own workspace, which
+// its own validation reads; not one owned by another active run, which that
+// run's validator evaluates (under D6 K2 a project's runs write their
+// workspaces side by side); and not the retained workspace of an ended
+// work-item run, evaluated at startup and before anything reads it (Sean's
+// ruling, 2026-10-14; integrity.ts ENDED_WORK_WORKSPACE). The baseline is
+// the one recorded now, read when the validation runs: a run that ended
+// meanwhile has its own end's baseline. The registered refs are compared
+// apart (AcceptFacts.registry).
+export function validatorCheckouts(db: Tx['db'], project: string, run: string): AcceptFacts['others'] {
+  return (
+    db
+      .prepare(
+        `SELECT c.*, w."metadata_baseline" FROM "managed_checkouts" c
+         LEFT JOIN "runs" r ON r."id" = c."owner_run" LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
+         WHERE c."project" = ? AND c."released_at" IS NULL
+           AND (c."owner_run" IS NULL OR (c."owner_run" <> ? AND r."state" = 'ended' AND r."kind" = 'session'))
+         ORDER BY c."id"`,
+      )
+      .all(project, run) as { kind: string; path: string; baseline: string; metadata_baseline: string | null }[]
+  ).map((c) => ({
+    kind: c.kind,
+    path: c.path,
+    adminDir: c.metadata_baseline ? ((JSON.parse(c.metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
+    baseline: JSON.parse(c.baseline) as Baseline,
+  }));
+}
+
 export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
   const run = getRun(tx, args.run);
   if (!run) throw notFound('run', args.run);
@@ -85,19 +116,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
     : undefined;
   const ref = integrationRef(p.integration_branch);
   const head = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(run.project, ref) as { expected_oid: string } | undefined;
-  const others = (
-    tx.db
-      .prepare(
-        `SELECT c.*, w."metadata_baseline" FROM "managed_checkouts" c LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
-         WHERE c."project" = ? AND c."released_at" IS NULL AND (c."owner_run" IS NULL OR c."owner_run" <> ?)`,
-      )
-      .all(run.project, run.id) as { kind: string; path: string; baseline: string; metadata_baseline: string | null }[]
-  ).map((c) => ({
-    kind: c.kind,
-    path: c.path,
-    adminDir: c.metadata_baseline ? ((JSON.parse(c.metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
-    baseline: JSON.parse(c.baseline) as Baseline,
-  }));
+  const others = validatorCheckouts(tx.db, run.project, run.id);
   const commits = opsOfRun(tx.db, run.id, 'commit_tree').map((o) => {
     const inputs = JSON.parse(o.inputs) as CommitInputs;
     return { id: o.id, state: o.state, status: o.status, sha: inputs.sha, parent: inputs.parent, tree: inputs.tree };

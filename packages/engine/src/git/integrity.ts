@@ -1,7 +1,8 @@
 // Repository integrity (D1 §§1.4, 7.6, 8.1 step 3; SEAM.md §32): at startup
 // and at every tick, before anything of a project is dispatched, every
 // registered ref and every managed checkout is read and compared with what
-// the engine expects. A registered ref somewhere else than its expected
+// the engine expects; the retained workspace of an ended work-item run at
+// startup only (Sean's ruling, 2026-10-14; integrityFacts). A registered ref somewhere else than its expected
 // commit, and than any commit the engine's own journal is moving it to, is
 // an out-of-band change; so is a managed checkout that differs from its
 // baseline, unless it is an active run's workspace (the validator's). A
@@ -19,8 +20,11 @@ import { canonicalPath, worktreeMetadata } from './worktree.js';
 
 const same = (a: string, b: string) => a === b || (canonicalPath(a) ?? a) === (canonicalPath(b) ?? b);
 
-export async function observeIntegrity(rt: Runtime, project: string): Promise<void> {
-  const facts = await rt.engine<IntegrityFacts>('integrity.facts', { project });
+// `startup`: the evaluation at startup (D1 §1.4 step 5), which also reads
+// the retained workspaces of ended work-item runs (store/transitions/
+// integrity.ts integrityFacts); a tick's does not.
+export async function observeIntegrity(rt: Pick<Runtime, 'engine' | 'home' | 'scratch'>, project: string, opts: { startup?: boolean } = {}): Promise<void> {
+  const facts = await rt.engine<IntegrityFacts>('integrity.facts', { project, ...(opts.startup === true ? { startup: true } : {}) });
   const ctx = repoContext(facts.repo);
   const refs = await readRefs(ctx, facts.registry.map((r) => r.ref));
   const list = refs === null ? null : await listWorktrees(ctx);
