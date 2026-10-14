@@ -6615,6 +6615,90 @@ Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13,
   - (ii) the refused replan parks, and a new open blocker about the stage's work is raised;
   - (iii) the losing replacement's answer is 409, and the finding's `disposition` is no longer `fix` †, the finding itself kept.
 
+## 416. Slice 36: the files, the lane, the straddles and what is not re-tested
+
+- **Seven kernel-lane files under manifest slice `36`:**
+  - `M431-the-change-request-and-the-side-ref` ((a), (d), (e), (f)) and `M431-one-proposal-at-a-time-and-a-finding` ((b), (c), and M433 (c));
+  - `M432-the-impact-exact-and-bound` ((a), (b), (c), (e), and M433 (b), (d), (e)) and `M432-an-impact-that-cannot-be-computed` ((d));
+  - `M433-the-decision-stales-on-each-dependency` ((a)) and `M433-old-generation-runs-and-what-resolves-an-obligation` ((f), (g), and the 31b review's M2);
+  - `M434-an-unassigned-requirement` (M434, and M433 (d)'s "and not otherwise").
+- None needs a domain or a unit; none is destructive. The CLI is run against the test's own home (`SURETY_HOME`), as M342 does.
+- **The shared helper** is `harness/journey/change36.mjs`:
+  - `SPEC_CHANGES`, the proposed specifications, each one change against Tally's version 1 (`a`: R5 added, R2 withdrawn, R3.1 changed, `secrets_credentials` on R4 and on `service` in §6; `reordered`; `r3Statement`; `indexUnparsable`; `renumbered`; `r1Reworded`; `moved`; `r2Both`), and `R5`;
+  - `changeScript`, the Spec Writer's one-shot (optionally held);
+  - `surety`, the CLI;
+  - `requestRow`, `registryRow`, `specAt`, `blobAt`, `changeDecisions`, `impactRecordOf`, `impactRequirements`, `impactCheckKeys`;
+  - `pumpHolding`, a pump that keeps chosen executions queued and answers only the kinds given; `untilProposedOrFailed`, `propose`, `rejectProposal`, `nextOpenChange`, `findingsOn` (a Reviewer's findings with no wait for idle), `holding`, `launchHolding`;
+  - `phaseTwoAtRest`: Tally carried by the journey's own path into phase 2 and left at rest (phase 1 complete, phase 2 published and authored, stage 3 verified, stage 4's Builder failing until its work parks with its blocker unanswered, nothing live, nothing queued), with ADR-001 citing R2 (`ADR_CITING_R2`).
+- **Straddles:** none changes an earlier file. The 31b review's S5 (`M401-spec-change-work-from-a-finding-is-not-dispatched`) stays as it is (the driver's ruling Q14): its project (M3's repair fixture) has no approved specification, so no request can be recorded from its finding; M431 (c) is the request from a finding, on Tally.
+- **Not re-tested here:** M431 (e)'s path refusal beyond what M423 (d) pins (one case of it is kept in M431's file); the moved side ref under M433 (a) (M431 (f) is it); the request's change-log row (M422 (b)); the spec change of a retrofit project (M411, M452); the replan the change registers, beyond its registration (M430 (a), M401 (h)).
+- **No new barrier** (confirmed by the driver): plan §2.3's `spec_change.previewed` and `spec_change.approved` are not used; the scripted check boundary (§190) and `intent.recorded` give every point these cases need.
+
+## 417. The request and its side ref (M431; D6 §4.2, §4.3; A.2)
+
+- **`surety spec change-request --project <p> --file <path>`** † posts `POST /v1/projects/:p/spec/change-requests` with the file's text and prints the route's body as one line of JSON (`{request: {id, seq, status}, work_item: {id}}`), exit 0. The request's `text` record holds the file's bytes exactly.
+- **The side ref** `refs/surety/spec-change/<seq>` is registered with **`RefKind` `spec_change`** † (D6 A.2), written by one journaled `ref_update` (`payload.ref` the side ref), finalized; the request's `proposal_revision` is the side ref's revision. The integration branch does not move until the approval's effect.
+- **A diff the engine refuses** (a path outside `.surety/spec/`; a renumbered key or criterion) is refused at the run (Q1): `failed` `invalid_result`, the renumbering's `reason_text` naming `spec_keys_renumbered`; the work takes its repair, then the request is `failed` with a `failure` naming why; no side ref, no `proposal_revision`, no `spec_change` decision.
+- **A replayed side-ref write** (a kill at `journal.ref_update.effect_applied`): the side ref's operation is recovered (its events lack `applied`) and finalized once; one `spec.change_proposed`, one decision, the proposal's identity kept.
+- **A side ref moved by hand** before the answer: the answer on the earlier preview is stale (§76: `decision_stale` or `decision_invalidated`); `proposal_revision` is kept; whatever the owner approves afterwards, no approved version and no integration-branch `spec.md` carries the moved revision's blob.
+- **One proposal at a time** (D6 §4.2): while a request is dispatched, and while its proposal awaits its decision, every other request's work is `eligible` with no run, and the request is `requested` with no decision. After the decision one waiting request proceeds; which one is not pinned. Its impact's `approved_digest` is the version current when it ran.
+- **A request from a finding**: D3 §5 X2's `change_spec` answer records a `spec_change_requests` row with `source` `finding` and **`finding`** † the finding's id (D6 A.3), `spec.change_requested` with `payload.source` `finding`, one `spec_change` work item (the request's), dispatched like the owner's.
+- **`reject`** (M433 (c)): the request `rejected`; its side ref kept at its revision and still registered; **`spec.change_rejected`** † once, `subject.spec_change_request` the request; no version, no generation.
+
+## 418. The impact as the tests read it (M432; D6 §4.4; A.3)
+
+- **The record.** The request's `impact` names a `records` row of kind `spec_impact`; the tests read its content as JSON. The `spec_change` decision's evidence names it with provenance `observed`.
+- **Its fields**, as built where they exist, with these added †:
+  - `approved_digest`, `proposed_digest`;
+  - `requirements: [{key, changes: [ImpactKind]}]`, only keys with a change;
+  - `affected_criteria`, `removed_criteria`, `added_criteria`;
+  - `checks: {obligations: [{check, key, criteria}], criterion_unknown: [{check, key, criteria}], uncovered: [criterion]}`;
+  - `stages: [{stage, number, status, phase_plan}]`; `phases`; `touches_current`;
+  - `evidence: {results, evaluations}`; `work`;
+  - **`findings`** †: the ids of every finding whose `criterion` is a removed, changed or affected criterion;
+  - **`adrs`** †: `[{key, class: "textual", cites: [key]}]`, each ADR whose text cites an affected key;
+  - **`modules`** †: `[{name, class: "structural"}]`, each module whose sensitive areas the change alters (§6, or the areas of a requirement it holds);
+  - **`uncertain_scope`** †: an array naming each requirement whose statement changed and whose key no ADR cites;
+  - **`dependency_manifest`** †: `{plans, requirements, checks, findings, results, work}`, each an array of `{id, generation}`; the active plan's `generation` is `phase_plans.generation`; every subject the impact lists is in its class. What `generation` is for the other classes is the Builder's, so long as it changes when the subject changes materially (§420).
+- **Exactness** (M432 (a)): the expected sets are read from the store with nothing live (`phaseTwoAtRest`), so "nothing else" is an equality. Evaluations are those not stale whose `inputs_snapshot.results` includes a listed result.
+- **A reorder** (b) is recorded as a proposal whose impact lists no requirement and no check, its two digests equal; whether it may be approved is not pinned (Q3).
+
+## 419. An impact that cannot be computed (M432 (d); Q2)
+
+- **`POST /v1/harness/faults` `{"point": "spec_blob_read", "project", "times"?}`** † (harness only, §61's rules): the next `times` reads of a specification blob that the change's run acceptance or impact makes fail as an unreadable object. The engine as merged answers 400 `invalid_value`.
+- **The refusal** is at the run: `failed` `invalid_result`, the `reason_text` naming `spec_index_invalid` (an index row that does not parse) or **`spec_blob_unreadable`** † (the fault); after its repair the request is `failed`, its `failure` naming the same; no `impact`, no `spec_impact` record, no side ref, no decision. Never an empty impact.
+
+## 420. The decision's staleness (M433 (a); D6 §4.4, §4.5; Q4, Q5)
+
+- Each of these, made between the preview and the answer and touching a subject the impact lists, makes the answer stale (§76), and the next generation is raised about the same request: a work item of a listed stage changing status; a new result of a listed check; a new finding naming a listed criterion; a new effective protected version; the active plan's generation changing (an early replacement); a new spec version.
+- **A new spec version** while a proposal is pending is made by a Spec Writer session in `developing`, closed and its `spec_approval` approved (Q4). The engine opens that session in `developing` (observed on `build/m5-s35` at `79f1b9d`), so the case is not narrowed to the manifest's `spec_version` binding.
+- **A change that touches no listed subject** (Q5): a result of a check the impact does not list leaves the answer valid; the case makes it with the project at rest (no run live, no work status changing for two rounds) and then answers.
+- **Between the answer and the effect**, a new result of a listed check invalidates the effect's intent (`EFFECT_PRECONDITION_CHANGED`, §76): nothing applied, the request not approved.
+
+## 421. Approval, the generation and invalidation (M433 (b), (d), (e))
+
+- **Approval** writes `spec_revisions` n+1 (`supersedes`, `semantic_digest`); the integration branch's diff from the head before is `.surety/spec/spec.md` alone; requirements keep their keys, a withdrawn one `status` `withdrawn` with `withdrawn_at`; **an added requirement's `assigned_phase` is null whatever its index hint** (Q8; D6 §4.5: the roadmap places it); `baseline.spec_approved` with `payload.version`; `projects.spec_evidence_generation` + 1.
+- **In the same finalizer:** every listed result `invalidated_reason` `spec_changed`; every listed evaluation `stale`; the effective version's `discovery_errors` gain `criterion_unknown` at each definition naming a removed criterion; one `check_obligations` row per listed check (both classes), at the new generation, unresolved; one `check_correction` item whose row (subject or trigger evidence) names the affected and uncovered criteria; one `replan` item with `trigger_source` `spec_change` when the current or a later phase is touched, and none when only completed phases are (M434's file).
+- **A candidate nominated before the change** keeps its `spec_revision`; an evaluation of it afterwards has an acceptance scope whose `spec_revision` is the new version.
+
+## 422. Old-generation work and what resolves an obligation (M433 (f), (g); Q6, Q7, Q12)
+
+- **The generation of a result** is `check_results.generation` (A.3), or the execution's `spec_generation` as built (§375).
+- **An execution registered before the approval** (queued, running, or collecting with its callback after) records its result with the old generation when it finishes. Such a result clears no obligation and decides nothing for a check with an obligation of a later generation: the gate carries **`EVIDENCE_GENERATION_STALE`** † naming the check (Q12), and the entry's `deciding` is none of those results. Results of checks with no such obligation stay evidence (§375).
+- **What resolves an obligation** (D6 §4.5): a protected correction applied that names its criteria, `resolved_by` the **applied protected version's id** (Q7; A.3); or **the Verifier's assessment** on the correction item: the correction result's optional **`spec_applicability: [{check: <key>, criteria: [...], rationale}]`** † (Q6), recorded as an assessment row with provenance, `resolved_by` its id. D6 B.7 says the correction result of D3 is unchanged; D6 §4.5 names the assessment as one of the two resolutions and §12 as the one assessment D6 creates, so §4.5 governs (the driver's ruling). A rediscovery (a new protected version that leaves the check alone) resolves nothing. A resolution still needs fresh deciding evidence under the current generation; evidence alone, with the obligation open, leaves `ACCEPTANCE_SCOPE_INCOMPLETE` naming the check.
+
+## 423. An obligation that can never be resolved (the 31b review's M2; Q13)
+
+- **A criterion a later change withdraws:** an obligation is resolved by the applied correction that removes its check (or drops the withdrawn criteria from its `covers`), whichever request recorded the obligation. After it no gate names the check.
+- **A correction item that ends with nothing applied and no assessment** (its Verifier reports no proposal and no `spec_applicability`, or the owner rejects its proposal) does not complete: it takes its repair, then parks with a `blocker` offering `retry` and `cancel` whose question (or the item's blocker) names the open obligation's check (the driver's ruling Q13). The obligation stays unresolved and every gate names it.
+
+## 424. An unassigned requirement (M434; D6 §4.5, §4.7; reading 6; Q9 to Q11)
+
+- **`REQUIREMENT_UNASSIGNED`** † on the `phase` gate of every phase later than the change's approval, its subjects naming the key, while the requirement has no phase.
+- **The reads** (Q9): `GET …/spec` and `GET …/plan` `requirements[]` show it with `assigned_phase` null and `status` `pending`.
+- **The store's trigger** (Q11): an `UPDATE` of `requirements.assigned_phase` to a value the current roadmap revision does not assign the key is aborted; the engine's own writes follow the roadmap row it has just written.
+- **`moved_requirements`** (B.4) accepts `{key, from: null, to}` for a requirement with no phase (Q10). A revision leaving another requirement out fails the replan `invalid_result` naming it (§409). The complete revision routes to the owner; approved and published, `baseline.roadmap_revised` carries `moved_requirements` naming the key, `assigned_phase` is the phase given, and the reason is cleared.
+
 ## What was run
 
-See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34" and "M5 slice 35".
+See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35" and "M5 slice 36".
