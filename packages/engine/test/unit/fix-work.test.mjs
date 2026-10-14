@@ -55,7 +55,8 @@ test('a fix the human approved registers one chained fix item naming the finding
   assert.deepEqual([item.status, item.trigger_source, item.trigger_id, item.trigger_generation, item.chain], ['eligible', 'finding', 'fnd_A', 1, 1]);
   // The finding names no criterion, so from M3 slice 21 the same transaction
   // also routes check_correction work (D3 §2.11; repair-and-findings.test.mjs).
-  const events = db.prepare(`SELECT type, tx, json_extract(subject, '$.work_item') AS w FROM events ORDER BY seq`).all();
+  // Each eligible item also requests a tick (D6 K1; scheduler.tick_requested), not part of the path here.
+  const events = db.prepare(`SELECT type, tx, json_extract(subject, '$.work_item') AS w FROM events WHERE type <> 'scheduler.tick_requested' ORDER BY seq`).all();
   assert.deepEqual(events.map((e) => e.type), ['finding.dispositioned', 'work.created', 'work.created']);
   assert.equal(events[1].w, item.id, "the fix's work.created comes first");
   assert.ok(events.every((e) => e.tx === events[0].tx), 'one transaction');

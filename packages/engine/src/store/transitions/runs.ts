@@ -291,6 +291,19 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // may survive. The project run count K2 removes had kept this; K2 does not
   // lift it.
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "quarantined" = 1 AND "state" <> 'ended'`, item.project) > 0) return 'project has a quarantined run';
+  // At most one replan run of a project at a time (the driver's ruling,
+  // slice 37, extending ruling 1): every replan writes the phase plan's
+  // files, so two at once would make the second's integration conflict
+  // with the first's (M430). The next is dispatched once the one under way
+  // has ended.
+  if (item.kind === 'replan') {
+    const replanning = live(
+      `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" = 'replan'`,
+      item.project,
+    );
+    if (replanning > 0) return 'depends on a replan running';
+  }
   if (PROTECTED_WRITERS.includes(item.kind)) {
     const writer = live(
       `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
