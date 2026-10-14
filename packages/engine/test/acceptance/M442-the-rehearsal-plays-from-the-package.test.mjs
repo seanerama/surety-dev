@@ -26,7 +26,9 @@
 //
 // Not here: the retrofit packages' own elements (`spec_writer.claims_table`,
 // `verifier.adoption_rule`), which the retrofit rehearsal of M444 reads
-// (SEAM.md §456); the parts of a product only an execution reads (a check's
+// (SEAM.md §456), and `architect.spec_change_requests`, which only a scoped
+// adoption's replan touching a descriptive module can need (none in M444's
+// full mode); the parts of a product only an execution reads (a check's
 // program, the Builder's code), which the kernel lane does not run: the
 // real-lane rehearsals run them in real domains.
 
@@ -49,7 +51,9 @@ import {
   judgeArchitect,
   judgeAuthoring,
   judgeBuilder,
+  judgePhaseVerification,
   judgeSpec,
+  judgeSpecChange,
   lastPlay,
   named,
   omit,
@@ -58,8 +62,8 @@ import {
   specApproved,
   wholeElements,
 } from './harness/real/kernel-rehearsal.mjs';
-import { tallyBrief } from './harness/real/rehearsal-content.mjs';
-import { createWithIdea, JOURNEY_POLICY } from './harness/journey/drive.mjs';
+import { TALLY_CHANGE_TEXT, tallyBrief } from './harness/real/rehearsal-content.mjs';
+import { createWithIdea, JOURNEY_POLICY, ROUTED_KINDS } from './harness/journey/drive.mjs';
 import { pauseProject } from './harness/runs.mjs';
 
 const show = (v) => JSON.stringify(v)?.slice(0, 1500);
@@ -269,4 +273,68 @@ describe('M442 (b) the Builder under its package with one element omitted', () =
       assert.ok(named(f).includes(id), `the judgement names ${id} (${show(f)})`);
     });
   }
+});
+
+describe("M442 (b) the phase Verifier and the Spec Writer's change, each under its package with its element omitted", () => {
+  const shared = sharedFixture();
+  const C = {};
+  // A project to phase 1's verification, the omission set from the start
+  // (it touches only the phase Verifier's package); stopped at its play.
+  const phase = async (fx, ids) => {
+    const { p } = await specApproved(fx);
+    await publishedPaused(fx, p);
+    await alphaConfigured(fx, p);
+    await omit(fx, ids);
+    await resume(fx, p);
+    const ctx = { ...contextOf(fx, p), answerKinds: ROUTED_KINDS };
+    await pump(fx, ctx, () => (playsOf(fx, p.id, 'phase_verification').length > 0 ? true : undefined), { what: 'the phase Verifier to play', max: 120 });
+    await omit(fx, []);
+    await pauseProject(fx.engine, p.id);
+    return playsOf(fx, p.id, 'phase_verification')[0];
+  };
+  // A project with its first plan ready, then the owner's change request.
+  const change = async (fx, ids) => {
+    const { p } = await specApproved(fx);
+    await publishedPaused(fx, p);
+    await alphaConfigured(fx, p);
+    await omit(fx, ids);
+    await resume(fx, p);
+    const ctx = { ...contextOf(fx, p), answerKinds: ROUTED_KINDS };
+    const res = await fx.engine.post(`/v1/projects/${p.id}/spec/change-requests`, { text: TALLY_CHANGE_TEXT });
+    assert.equal(res.status, 201, `the owner's change request (→ ${res.status} ${res.text})`);
+    await pump(fx, ctx, () => (playsOf(fx, p.id, 'spec_change').length > 0 ? true : undefined), { what: 'the Spec Writer\'s change to play', max: 60 });
+    await omit(fx, []);
+    await pauseProject(fx.engine, p.id);
+    return playsOf(fx, p.id, 'spec_change')[0];
+  };
+  before(async () => {
+    const fx = await fakeEngine(shared.context);
+    C.phaseControl = await phase(fx, []);
+    C.phaseOmitted = await phase(fx, ['verifier.phase_signoff']);
+    C.changeControl = await change(fx, []);
+    C.changeOmitted = await change(fx, ['spec_writer.change_result']);
+  });
+  after(shared.cleanup);
+
+  test('(b) control: with the packages whole, the phase Verifier signs the phase off and the change lists its changes', () => {
+    assert.ok(C.phaseControl && C.changeControl, 'both played');
+    assert.deepEqual(judgePhaseVerification(C.phaseControl.result, C.phaseControl.blocks ?? {}), []);
+    assert.deepEqual(judgeSpecChange(C.changeControl.result, C.changeControl.blocks ?? {}), []);
+  });
+
+  test('(b) verifier.phase_signoff omitted: the package lacks it, the result signs nothing off, the rehearsal fails naming it', () => {
+    const c = C.phaseOmitted;
+    assert.ok(c, 'the phase Verifier played');
+    assert.ok(!('verifier.phase_signoff' in (c.blocks ?? {})), 'no verifier.phase_signoff block in the package');
+    const f = judgePhaseVerification(c.result, C.phaseControl.blocks ?? {});
+    assert.ok(named(f).includes('verifier.phase_signoff'), `the judgement names it (${show(f)})`);
+  });
+
+  test('(b) spec_writer.change_result omitted: the package lacks it, the result lists no change, the rehearsal fails naming it', () => {
+    const c = C.changeOmitted;
+    assert.ok(c, 'the Spec Writer\'s change played');
+    assert.ok(!('spec_writer.change_result' in (c.blocks ?? {})), 'no spec_writer.change_result block in the package');
+    const f = judgeSpecChange(c.result, C.changeControl.blocks ?? {});
+    assert.ok(named(f).includes('spec_writer.change_result'), `the judgement names it (${show(f)})`);
+  });
 });

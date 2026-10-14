@@ -104,6 +104,12 @@ export const M443_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet',
 export const M444_STEPS = Object.freeze(['m5_attempt_opus', 'm5_attempt_sonnet', 'm5_activation', 'm5r_adopt', 'm5r_spec', 'm5r_architecture', 'm5r_conformance', 'm5r_qualify', 'm5r_deploy', 'm5r_teardown', 'm5r_replan', 'm5r_phase2']);
 
 export const HOME_MAX_BYTES = 56;
+// The journeys' budgets (the Verifier's choice, Sean's to change): a run
+// bound of 1 000 000 billable tokens, since a session is one run whose turns
+// re-send the transcript and add up (D6 §2.6's cumulative budget; M4's 300 000
+// was sized for one one-shot), and a day limit above each journey's estimate
+// (about 5 and 3 USD), so that the limit stops a runaway and not the journey.
+export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 1_000_000, M443_day_usd: 15, M444_day_usd: 10 });
 export const SECRET_REF = 'deploy/ref_secret';
 export const SECRET_VAR = 'REF_SECRET';
 export const STEP_HOURS = 4;
@@ -128,7 +134,7 @@ export function costStatement(row) {
       ? '  Three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet (two check authorings, four Builders, four Verifiers, four Reviewers, two phase verifications, one replan, one Spec Writer change run, plus repairs).'
       : '  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks\' roles).',
     `  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).`,
-    `At most: each run is bounded by ${REAL.runBillableTokens} billable tokens; the project's day limit of ${REAL.dayVerifiedUsd.pathOne} USD in estimates stops it earlier. The only hard maximum is your subscription's own usage limits.`,
+    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier. The only hard maximum is your subscription's own usage limits.`,
     'An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.',
   ].join('\n');
 }
@@ -380,8 +386,9 @@ export function rehearsalScript(ctx, content) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const fakes = readFileSync(new URL('../standin/package-fakes.cjs', import.meta.url), 'utf8');
   const fake = readFileSync(new URL('../standin/rehearsal-claude.cjs', import.meta.url), 'utf8');
-  const text = `// SURETY REHEARSAL FAKE CLAUDE, with the package-driven fakes and the rehearsal's content (M5; SEAM.md §456).\nvar SURETY_REHEARSAL_CONTENT = ${JSON.stringify(content)};\n${fakes}\n${fake}`;
-  const path = join(dir, 'rehearsal-claude-m5.cjs');
+  // A script with node by path on its first line, as M4's fixture entry ran it (attempt.mjs); no dot in its name.
+  const text = `#!${process.execPath}\n// SURETY REHEARSAL FAKE CLAUDE, with the package-driven fakes and the rehearsal's content (M5; SEAM.md §456).\nvar SURETY_REHEARSAL_CONTENT = ${JSON.stringify(content)};\n${fakes}\n${fake}`;
+  const path = join(dir, 'fake-backend-m5');
   writeFileSync(path, text, { mode: 0o755 });
   chmodSync(path, 0o755);
   return path;
@@ -428,10 +435,13 @@ export async function m5Activation(ctx, row, content) {
 // `policy_widening` decision, which Sean answers (printed) and the rehearsal
 // answers itself. `role_memory_max` is left at its default (the entries'
 // profile).
-export async function projectPolicy(ctx, fx, project, { widen = {}, ...extra } = {}) {
-  const change = { ...realPolicy(REAL.dayVerifiedUsd.pathOne), ...ROLE_MODELS, backend_builder: 'claude', backend_verifier: 'claude', backend_reviewer: 'claude', backend_architect: 'claude', backend_spec_writer: 'claude', backend_vision: 'claude', ...extra };
+export async function projectPolicy(ctx, fx, project, { widen = {}, dayUsd = REAL.dayVerifiedUsd.pathOne, ...extra } = {}) {
+  const change = { ...realPolicy(dayUsd), budget_run_billable_tokens: JOURNEY_BUDGET.budget_run_billable_tokens, ...ROLE_MODELS, backend_builder: 'claude', backend_verifier: 'claude', backend_reviewer: 'claude', backend_architect: 'claude', backend_spec_writer: 'claude', backend_vision: 'claude', ...extra };
+  const revision = async () => (await fx.engine.get(`/v1/projects/${project}/policy`)).body?.revision ?? 0;
+  const before = await revision();
   const res = await fx.engine.post(`/v1/projects/${project}/policy`, change);
   if (res.status !== 200) notEstablished('the project\'s policy', 'the owner\'s policy change was refused', { status: res.status, text: res.text });
+  await pollUntil(async () => ((await revision()) > before ? true : undefined), { timeoutMs: 120_000, everyMs: 1_000, what: 'the policy revision to be effective' });
   const out = { change, status: res.status, widened: null };
   if (Object.keys(widen).length > 0) {
     const w = await fx.engine.post(`/v1/projects/${project}/policy`, widen);
@@ -542,6 +552,9 @@ export function tokenSearch(ctx, repos) {
   return { roots: [ctx.runDir], repos, hits: hits.length, where: hits.map((h) => h.replace(ctx.keyValue, '[the key]')) };
 }
 
+// A project registered (its bootstrap committed) before its policy changes.
+const registered = (fx, project) => pollUntil(() => one(fx.home, `SELECT "id" FROM "projects" WHERE "id" = ? AND "registration_state" = 'registered'`, project), { timeoutMs: 120_000, everyMs: 1_000, what: `project ${project} to be registered` });
+
 // ==== M443: idea to Alpha ======================================================================
 
 const tallyName = 'm5-real-tally';
@@ -564,7 +577,8 @@ export async function m5aCreate(ctx) {
       const res = await fx.engine.post('/v1/projects', { name: tallyName, tier: 'T2', dev_repo_path: repo, integration_branch: 'main', idea });
       if (res.status !== 201) notEstablished('m5a_create', 'the project was not created', { status: res.status, text: res.text });
       const project = res.body.project?.id ?? res.body.id;
-      const policy = await projectPolicy(ctx, fx, project, { phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
+      await registered(fx, project);
+      const policy = await projectPolicy(ctx, fx, project, { dayUsd: JOURNEY_BUDGET.M443_day_usd, phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
       await fx.engine.post(`/v1/projects/${project}/pause`, {});
       const out = { project, repo, idea_from: ideaFile ? `Sean's ${ideaFile}` : 'the reference brief (harness/journey/reference.mjs IDEA_BRIEF)', policy } ;
       observe(ctx, 'M443', 'create', out);
@@ -688,42 +702,71 @@ export async function m5aChange(ctx) {
 
 export const m5aQualify = (ctx) => qualifyStep(ctx, 'M443', 'm5a_qualify', stepValue(ctx, 'm5a_create').project);
 
+// Phase 2, then Alpha under policy (K9, B14), in one engine: the engine
+// requests Alpha at phase 2's completion and deploys at once, so the
+// deployment is never split across two engines. `m5a_phase2` records the
+// phase; `m5a_alpha` the request, the deployment, the verification and
+// `alpha_deployed`, with the host read while the service runs; the teardown
+// (`m5a_teardown`) in `finally`. A rerun of `m5a_alpha` alone starts its own
+// engine; a unit of the prefix may then be loaded, and must be one this
+// home's store names in an attempt intent.
 export async function m5aPhase2(ctx) {
-  return realStep(ctx, 'm5a_phase2', async () => {
-    const { project } = stepValue(ctx, 'm5a_create');
-    return onEngine(ctx, 'M443 m5a_phase2', { projects: [project], resume: project }, async (fx) => {
+  const { project } = stepValue(ctx, 'm5a_create');
+  const phaseDone = (() => { try { return JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps?.m5a_phase2?.status === 'done'; } catch { return false; } })();
+  if (phaseDone) return m5aAlpha(ctx);
+  refuseLoadedUnits(ctx, 'M443 m5a_phase2');
+  refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
+  const fx = await m5Engine(ctx);
+  try {
+    await fx.engine.post(`/v1/projects/${project}/resume`, {});
+    await realStep(ctx, 'm5a_phase2', async () => {
       const d = await drive(ctx, fx, project, () => activePlanOf(fx.home, project, 2)?.completed_at ?? undefined, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 2 built, verified and complete' });
       const out = { ...d, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })) };
       observe(ctx, 'M443', 'phase2', out);
       return out;
     });
-  });
+    return await m5aAlpha(ctx, fx);
+  } finally {
+    await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
+    await fx.engine.stop();
+  }
 }
 
-// Alpha under policy (K9, B14): the engine's request at phase 2's
-// completion, the deployment, the verification, `alpha_deployed`; the host
-// read while the service runs; the teardown in `finally`.
-export async function m5aAlpha(ctx) {
-  return realStep(ctx, 'm5a_alpha', async () => {
-    const { project } = stepValue(ctx, 'm5a_create');
-    refuseLoadedUnits(ctx, 'M443 m5a_alpha');
-    const fx = await m5Engine(ctx);
-    let out = null;
+// Every loaded unit of the run home's prefix is named in an attempt intent of
+// its store (the hands-on's read_prefix), or the step refuses.
+function ownUnitsOnly(ctx, path) {
+  const loaded = unitsOfRunHome(ctx, path);
+  const intended = new Set(intendedUnits(homeOf(ctx)));
+  const strange = loaded.filter((u) => !intended.has(u));
+  if (strange.length > 0) throw new Error(`${path} refused: units of the run home's prefix that its store names in no attempt intent are loaded (${strange.join(', ')}). Nothing was started.`);
+}
+
+export async function m5aAlpha(ctx, given = null) {
+  const { project } = stepValue(ctx, 'm5a_create');
+  const run = async (fx) => {
     try {
-      await fx.engine.post(`/v1/projects/${project}/resume`, {});
-      const d = await drive(ctx, fx, project, () => candidatesOf(fx.home, project).find((c) => c.progress === 'alpha_deployed'), { expect: [], what: "Alpha requested under policy, deployed and verified (alpha_deployed)", timeoutMs: 2 * HOURS });
-      out = { candidate: { id: d.value.id, progress: d.value.progress }, requests: deploymentRequestsOf(fx.home, project).map((r) => ({ id: r.id, requested_by: r.requested_by, status: r.status, request_key: json(r.request_key) })), alpha_authorize: evaluationsOf(fx.home, project, 'alpha_authorize').at(-1) ?? null, alpha_complete: evaluationsOf(fx.home, project, 'alpha_complete').at(-1) ?? null, host: hostWhileRunning(ctx), shown: d.shown };
-      observe(ctx, 'M443', 'alpha', out);
-      return out;
+      return await realStep(ctx, 'm5a_alpha', async () => {
+        const d = await drive(ctx, fx, project, () => candidatesOf(fx.home, project).find((c) => c.progress === 'alpha_deployed'), { expect: [], what: 'Alpha requested under policy, deployed and verified (alpha_deployed)', timeoutMs: 2 * HOURS });
+        const out = { candidate: { id: d.value.id, progress: d.value.progress }, requests: deploymentRequestsOf(fx.home, project).map((r) => ({ id: r.id, requested_by: r.requested_by, status: r.status, request_key: json(r.request_key) })), alpha_authorize: evaluationsOf(fx.home, project, 'alpha_authorize').at(-1) ?? null, alpha_complete: evaluationsOf(fx.home, project, 'alpha_complete').at(-1) ?? null, host: hostWhileRunning(ctx), shown: d.shown };
+        observe(ctx, 'M443', 'alpha', out);
+        return out;
+      });
     } finally {
-      try {
-        await teardownStep(ctx, 'M443', 'm5a_teardown', project, fx);
-      } finally {
-        await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
-        await fx.engine.stop();
-      }
+      await teardownStep(ctx, 'M443', 'm5a_teardown', project, fx);
     }
-  });
+  };
+  if (given) return run(given);
+  const steps = (() => { try { return JSON.parse(readFileSync(join(ctx.runDir, 'state.json'), 'utf8')).steps ?? {}; } catch { return {}; } })();
+  if (steps.m5a_alpha?.status === 'done' && steps.m5a_teardown?.status === 'done') return steps.m5a_alpha.value;
+  ownUnitsOnly(ctx, 'M443 m5a_alpha');
+  const fx = await m5Engine(ctx);
+  try {
+    await fx.engine.post(`/v1/projects/${project}/resume`, {});
+    return await run(fx);
+  } finally {
+    await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
+    await fx.engine.stop();
+  }
 }
 
 export const m5aTeardown = (ctx) => teardownStep(ctx, 'M443', 'm5a_teardown', stepValue(ctx, 'm5a_create').project);
@@ -733,6 +776,7 @@ export async function m5aRecords(ctx) {
   const { project, repo } = stepValue(ctx, 'm5a_create');
   return onEngine(ctx, 'M443 records', { projects: [project], teardown: true }, async (fx) => {
     const pace = await readPace(fx, project);
+    mkdirSync(join(ctx.runDir, 'observed'), { recursive: true, mode: 0o700 });
     writeFileSync(join(ctx.runDir, 'observed', 'pace-M443.json'), `${JSON.stringify(pace.body, null, 2)}\n`, { mode: 0o600 });
     const out = { pace_status: pace.status, acts: humanActs(fx.home, project), ledger: ledgerOfProject(fx.home, project).map((l) => ({ run: l.run, model_requested: l.model_requested, model_observed: l.model_observed, cost_status: l.cost_status, cost_usd: l.cost_usd })), results: resultsOfProject(fx.home, project).map((r) => ({ id: r.id, execution: r.execution, runner_id: r.runner_id })), token: tokenSearch(ctx, [repo]) };
     observe(ctx, 'M443', 'records', out);
@@ -788,8 +832,10 @@ export async function m5rAdopt(ctx) {
       const before = new Set(rows(fx.home, 'SELECT "id" FROM "projects"').map((r) => r.id));
       const cli = seanTypes(ctx, fx.home, ['project', 'adopt', sumsName, '--repo', source.repo, '--branch', 'main', '--tier', 'T1'], 'the adoption of the repository');
       const project = (await pollUntil(() => rows(fx.home, 'SELECT "id" FROM "projects" WHERE "name" = ?', sumsName).find((r) => !before.has(r.id)), { timeoutMs: ctx.waitMinutes * 60_000, what: 'the adopted project' })).id;
-      await projectPolicy(ctx, fx, project, { phase_size: { min: 1, max: 5 } });
+      await registered(fx, project);
+      // The mode first: a policy commit re-raises an open adoption_mode (objection 086).
       const d = await drive(ctx, fx, project, () => rows(fx.home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = 'adoption_mode' AND "status" = 'consumed'`, project)[0], { expect: ['adoption_mode'], answer: () => 'full', what: 'the adoption mode (full, D6 §8.5)' });
+      await projectPolicy(ctx, fx, project, { dayUsd: JOURNEY_BUDGET.M444_day_usd, phase_size: { min: 1, max: 5 } });
       const p = one(fx.home, 'SELECT "adoption" FROM "projects" WHERE "id" = ?', project);
       const out = { project, source, cli, adoption: json(p?.adoption), mode: json(d.value.answer)?.option ?? null, shown: d.shown };
       observe(ctx, 'M444', 'adopt', out);
@@ -904,6 +950,7 @@ export async function m5rRecords(ctx) {
   const { project, source } = stepValue(ctx, 'm5r_adopt');
   return onEngine(ctx, 'M444 records', { projects: [project], teardown: true }, async (fx) => {
     const pace = await readPace(fx, project);
+    mkdirSync(join(ctx.runDir, 'observed'), { recursive: true, mode: 0o700 });
     writeFileSync(join(ctx.runDir, 'observed', 'pace-M444.json'), `${JSON.stringify(pace.body, null, 2)}\n`, { mode: 0o600 });
     const out = { pace_status: pace.status, acts: humanActs(fx.home, project), ledger: ledgerOfProject(fx.home, project).map((l) => ({ run: l.run, model_requested: l.model_requested, cost_status: l.cost_status, cost_usd: l.cost_usd })), results: resultsOfProject(fx.home, project).map((r) => ({ id: r.id, execution: r.execution, runner_id: r.runner_id })), token: tokenSearch(ctx, [source.repo]) };
     observe(ctx, 'M444', 'records', out);

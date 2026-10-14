@@ -265,3 +265,20 @@ export function judgeBuilder(written, result, W) {
 }
 
 export const named = (failures) => [...new Set(failures.map((f) => f.element))];
+
+// The Spec Writer's change result against `spec_writer.change_result`.
+export function judgeSpecChange(result, W) {
+  const out = [];
+  const cr = W['spec_writer.change_result'];
+  const listed = cr ? result?.[cr.field] : null;
+  if (cr && !(Array.isArray(listed) && listed.length > 0 && listed.every((c) => typeof c.key === 'string' && (cr.item?.kind ?? []).includes(c.kind) && typeof c.reason === 'string'))) fail(out, 'spec_writer.change_result', `the result lists no change in the form ${JSON.stringify(cr.item)}`);
+  return out;
+}
+
+// The phase Verifier's result against `verifier.phase_signoff`.
+export function judgePhaseVerification(result, W) {
+  const out = [];
+  const ps = W['verifier.phase_signoff'];
+  if (ps && !(result?.[ps.field] ?? []).some((x) => x?.scope === ps.scope)) fail(out, 'verifier.phase_signoff', `the result signs no phase off (${ps.field} with scope ${ps.scope})`);
+  return out;
+}
