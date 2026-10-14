@@ -24,7 +24,7 @@
 
    ```
    npm run build
-   bash packages/engine/test/acceptance/harness/standin/build-rehearsal-claude.sh "$HOME/surety-m5-rehearsal-claude"
+   bash packages/engine/test/acceptance/harness/standin/build-rehearsal-claude.sh "$HOME/surety-m5-rehearsal-claude"   # needs cc and node (no xxd)
    install -m 600 /dev/null "$HOME/surety-m5-rehearsal.key"
    printf 'sk-ant-api03-rehearsal-%s\n' "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$HOME/surety-m5-rehearsal.key"
    export SURETY_REAL_RUN_DIR=$HOME/s5r-a     # short: the engine home inside it must be at most 56 bytes
