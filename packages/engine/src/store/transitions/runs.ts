@@ -286,6 +286,11 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // (`check_correction`, `check_authoring`) run of a project at a time and
   // none while a review of a protected proposal is eligible or running.
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended'`, item.id) > 0) return 'work item has a run';
+  // A quarantined run's project is one the engine cannot act on (D1 §§4.5
+  // step 3, 12.3): nothing is dispatched onto it while a writer of that run
+  // may survive. The project run count K2 removes had kept this; K2 does not
+  // lift it.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "quarantined" = 1 AND "state" <> 'ended'`, item.project) > 0) return 'project has a quarantined run';
   if (PROTECTED_WRITERS.includes(item.kind)) {
     const writer = live(
       `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
