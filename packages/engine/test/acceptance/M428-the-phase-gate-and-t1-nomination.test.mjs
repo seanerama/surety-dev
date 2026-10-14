@@ -73,7 +73,7 @@ describe('M428 the phase gate and T1 nomination', () => {
     const done = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 1).find((x) => active(x) && x.completed_at), { what: 'phase 1 to complete at T1', max: 160 });
     // (f) read from the store at the earlier integration, not by polling
     // between pump rounds (M5 slice 37, D6 K1, K2; objection 100; SEAM.md
-    // §436): under K1 and K2 the two stages' Builders may run at once and
+    // §447): under K1 and K2 the two stages' Builders may run at once and
     // their integrations, the nomination and the registrations follow within
     // one round. The ordinary integration is the one before the completion of
     // building: before the later stage's `work.integrated`, no candidate was

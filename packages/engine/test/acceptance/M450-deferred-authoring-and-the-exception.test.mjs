@@ -3,7 +3,7 @@
 // `deferred_authoring`; BlockerOption `build_first`), A.3 (`check_obligations`,
 // `phase_plans.authoring_ready_by → decisions`), B.7 (`deferred_criteria`); F
 // §5.1; B07, N04; carried item (v) (slice 35's ruling 9); SEAM.md §§351,
-// 428
+// 439.
 //
 // The reference project published with its project paused
 // (`harness/exec37/authoring.mjs`), its phase-1 authoring scripted:

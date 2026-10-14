@@ -2,7 +2,7 @@
 // 37; SANDBOX LANE). M5 plan §3.7 M438 (g); D6-X06 ("on the real boundary a
 // role domain's memory.max reads back as role_memory_max"); D6 §6.4, A.3
 // (`execution_domains.memory_max`); K2; B09; BS5 §4.1 rules 10, 12;
-// SEAM.md §§168, 427
+// SEAM.md §§168, 438
 //
 // The project's `role_memory_max` (768 MiB) and `check_memory_max`
 // (640 MiB), set low through the policy route (rule 10: never by filling

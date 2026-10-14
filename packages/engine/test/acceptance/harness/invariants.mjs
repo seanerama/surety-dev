@@ -64,7 +64,7 @@ export function workPath(db, workItem) {
   assert.equal(events[0].type, 'work.created', `the first work event of ${workItem}`);
   const path = [events[0].payload.to];
   for (const e of events.slice(1)) {
-    // M5 slice 37 (objection 095; SEAM.md §§427, 431): `work.hold_began`,
+    // M5 slice 37 (objection 095; SEAM.md §§438, 442): `work.hold_began`,
     // `work.hold_ended` and `work.dependency_met` are work.* events with no
     // `to`: observations about the item, not steps of its path.
     if (e.payload?.to === undefined) continue;
@@ -354,7 +354,7 @@ export function assertOneRunAtATime(db, project) {
 }
 
 // One run per work item (D6 K2, which removes the project and engine run
-// counts and keeps this rule; SEAM.md §426): no run of a work item is created
+// counts and keeps this rule; SEAM.md §437): no run of a work item is created
 // while another run of the same item has not ended. A run whose created event
 // names no work item (`subject.work_item` absent) is read from the store.
 export function assertOneRunPerItem(db, project) {
@@ -378,7 +378,7 @@ export function assertOneRunPerItem(db, project) {
 }
 
 // The most role domains that held a slot at one time (D6 K2: the slots of
-// `max_concurrent_domains` bound concurrency, not a run count; SEAM.md §§426,
+// `max_concurrent_domains` bound concurrency, not a run count; SEAM.md §§437,
 // 435). A run's domain holds its slot from the run's creation (the dispatch
 // transaction allocates it) to its `domain.terminated`, which comes before the
 // run's `run.ended`: the next run may be admitted while the last is still

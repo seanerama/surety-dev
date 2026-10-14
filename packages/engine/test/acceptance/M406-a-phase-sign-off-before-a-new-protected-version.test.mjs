@@ -37,7 +37,7 @@ describe('M406 S3: a phase sign-off made before a new protected version', () => 
     const proposal = await governedEdit(fx, p, { check_commands: { node: { path: process.execPath }, probe: { path: '/usr/bin/true' } } });
     const question = await pumpNoIdle(fx, ctx, () => decisionsOn(fx.home, 'check_correction_unclassifiable', proposal.id).find((d) => d.status === 'open'), { what: 'the correction\'s question', max: 10, answerKinds: [] });
     const before = effectiveNow(fx.home, p.id);
-    // M5 slice 37 (D6 K1; objection 100; SEAM.md §436): the Verifier's end and
+    // M5 slice 37 (D6 K1; objection 100; SEAM.md §447): the Verifier's end and
     // the answer each request a tick, and a tick evaluates the phase before it
     // applies an approval's effect; so "the sign-off recorded; then the
     // correction approved, before any tick evaluates the phase with it" is

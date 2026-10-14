@@ -3,7 +3,7 @@
 // program, the test's check program, no model). M5 plan §3.7 M451 (c), (d),
 // (f); D6-X09; D6 §2.6, §6.4; D2 §4.1, §7.2; D3 §2.4 (the runner's
 // qualification); K2; B09; Q1, Q7 (the driver's approval, 2026-10-13);
-// SEAM.md §§148, 149, 181, 392, 432 Its kernel cases are
+// SEAM.md §§148, 149, 181, 392, 443 Its kernel cases are
 // `M451-the-profile-is-part-of-the-qualification`.
 //   (c) a qualification attempt for the 768 MiB role profile (`role_memory_max`
 //       on `POST /v1/trust/qualify` †) runs its canaries, the continuation

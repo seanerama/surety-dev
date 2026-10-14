@@ -1,5 +1,5 @@
 // M437 (a), (b): order and dependencies (M5 slice 37; kernel lane). M5 plan
-// §3.7 M437; D6-X04; D6 §6.4, §6.6; K2; B08; SEAM.md §§347, 427
+// §3.7 M437; D6-X04; D6 §6.4, §6.6; K2; B08; SEAM.md §§347, 438
 //
 // The reference project's phase 1 of three stages on the journey's own path
 // (journey35: the production approvals, publication and authoring), stage 2

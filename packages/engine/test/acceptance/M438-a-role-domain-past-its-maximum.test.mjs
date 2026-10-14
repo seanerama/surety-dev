@@ -2,7 +2,7 @@
 // 37; EXHAUSTION LANE ONLY). M5 plan §3.7 M438 (h); D6-X06 ("a domain
 // exceeding it ends resource_limit, its run infra_error, nothing else
 // affected"); D6 §6.4 ("the cost, plainly"); E141 item 4; E69; E64; BS5 §4.1
-// rules 8 to 10, 16; SEAM.md §§155, 427 The other cases of the row are
+// rules 8 to 10, 16; SEAM.md §§155, 438 The other cases of the row are
 // `M438-the-envelope-as-built` (kernel) and
 // `M438-the-profile-maxima-on-the-real-boundary` (sandbox).
 //

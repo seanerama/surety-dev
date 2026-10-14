@@ -110,7 +110,7 @@ describe('M15 repository integrity as the prerequisite step that overruns', () =
     const b = (await addGitProject(fx)).id;
     await tick(fx.engine, a);
 
-    // M5 slice 37 (D6 K1; objection 100; SEAM.md §436): the fault is armed
+    // M5 slice 37 (D6 K1; objection 100; SEAM.md §447): the fault is armed
     // first, and the tick the items request is the one whose step overruns.
     const delay = 4000;
     await armFault(fx.engine, { point: 'tick_step', step: 'integrity', project: a, delay_ms: delay });

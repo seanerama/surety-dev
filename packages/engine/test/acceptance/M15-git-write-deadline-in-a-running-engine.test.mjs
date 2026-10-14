@@ -92,14 +92,14 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     assert.deepEqual(writes.heldLog().map((line) => line.split(' ')[1]), ['hash-object'], 'the fixture is live: one write was held, the commit object');
     // A second item of the project, added once the commit's ambiguity has been
     // read, to show what is and is not dispatched meanwhile. M5 slice 37 (D6
-    // K1; objection 100; SEAM.md §436): its creation requests a tick, whose
+    // K1; objection 100; SEAM.md §447): its creation requests a tick, whose
     // journal step probes the killed write at once; added before the read, it
     // would have the attempt reconciled before the case could read it
     // ambiguous. The probe now pauses at the `reconciled` barrier armed above.
     const later = await addItem(fx, project.id, 'verification');
     fx.scripted.script(later, [script.complete()]);
     // Nothing is taken for failed or made on the strength of the timer.
-    // M5 slice 37 (D6 K2; objection 100; SEAM.md §436): with no project run
+    // M5 slice 37 (D6 K2; objection 100; SEAM.md §447): with no project run
     // count, `later` may run while the run's operations are the engine's own
     // and in flight; what the journal forbids is a dispatch while one is
     // unresolved. So each window is given the number of `later`'s runs when
@@ -138,10 +138,10 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     // ---- the branch update ---------------------------------------------------------------
     // The integration follows: its compare-and-swap is held, killed at the
     // deadline, and recorded ambiguous; the branch has not moved. M5 slice 37
-    // (D6 K1; objection 100; SEAM.md §436): the commit's finalization
+    // (D6 K1; objection 100; SEAM.md §447): the commit's finalization
     // requests a tick, and a tick after the kill would probe the branch update
     // before the case reads it ambiguous; so the scheduler is held at
-    // `scheduler.tick_running` (§430), in a tick that ran its journal step
+    // `scheduler.tick_running` (§441), in a tick that ran its journal step
     // while the update was still in flight, until the ambiguity has been read.
     await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
     await requestTick(fx.engine, project.id);
@@ -224,7 +224,7 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     // A Stop is confirmed. The end is decided: nothing renews the lease
     // (E27 item 5). But the run is not ended while its operation is
     // unresolved (D1 §4.5 step 4; SEAM.md §47). M5 slice 37 (D6 K1;
-    // objection 100; SEAM.md §436): the Stop's answer requests a tick, whose
+    // objection 100; SEAM.md §447): the Stop's answer requests a tick, whose
     // journal step may probe at once, so "with no tick, nothing ends" is read
     // as: sampled throughout three seconds, the run is never seen ended, nor
     // its work held, while the operation is not yet finalized.

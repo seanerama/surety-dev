@@ -90,7 +90,7 @@ describe('M16 unknown termination is never success', () => {
   test('the role process exited, but the boundary still reports the domain running', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
-    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): `item` is
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
     // scripted while the project is paused, and `waiting` is made once the
     // quarantine is observed: made eligible before the first tick, it would be
     // dispatched beside the run before any quarantine existed.
@@ -130,7 +130,7 @@ describe('M16 unknown termination is never success', () => {
   test('the boundary cannot read membership', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
-    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): `item` is
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
     // scripted while the project is paused, and `waiting` is made once the
     // quarantine is observed: made eligible before the first tick, it would be
     // dispatched beside the run before any quarantine existed.
@@ -156,7 +156,7 @@ describe('M16 unknown termination is never success', () => {
   test('cancellation fails: the boundary keeps reporting the domain running after Stop', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
-    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): `item` is
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
     // scripted while the project is paused, and `waiting` is made once the
     // quarantine is observed: made eligible before the first tick, it would be
     // dispatched beside the run before any quarantine existed.
@@ -269,7 +269,7 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     const config = { terminate_grace: 6, kill_grace: 2 };
     const fx = await scriptedEngine(t, { config });
     const project = (await addProject(fx)).id;
-    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): `item` is
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
     // scripted while the project is paused, and `waiting` is made once the
     // quarantine is observed: made eligible before the first tick, it would be
     // dispatched beside the run before any quarantine existed.

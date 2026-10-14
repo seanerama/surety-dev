@@ -95,7 +95,7 @@ function assertPlanRegistered(fx, project, phase, stages) {
   return { plan, stages: rows, items };
 }
 
-// M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): a registered plan's
+// M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): a registered plan's
 // stage work, and a fixture plan's, request a tick that would dispatch them
 // at once, so a case that reads them as registered (planned, eligible, no
 // run) pauses the project once the replan's run is under way: the run goes on

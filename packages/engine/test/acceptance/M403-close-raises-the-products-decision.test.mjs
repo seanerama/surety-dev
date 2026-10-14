@@ -62,7 +62,7 @@ async function readyForArchitect(fx, { policy } = {}) {
 }
 
 // D1 §4.6's stale answer, as a bundle's approval reads it since M5 slice 37
-// (D6 K1; objection 100; SEAM.md §436): the second session's save finalizes
+// (D6 K1; objection 100; SEAM.md §447): the second session's save finalizes
 // an operation, which requests a tick, and that tick finds the bundle unable
 // to publish and invalidates its decisions (`plan_generation_stale`, the
 // driver's ruling (5) of slice 34: a committed 409). Before K1 nothing ticked

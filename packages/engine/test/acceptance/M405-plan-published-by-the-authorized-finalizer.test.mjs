@@ -150,7 +150,7 @@ describe('M405 the plan published atomically, by the authorized finalizer only',
     await closeSession(fx, p.id, three.run.id, { refuse: true });
     assert.deepEqual(nothingPublished(fx.home, p.id), NOTHING);
     // Phase 1 published; then a second plan for phase 1. M5 slice 37 (D6 K1;
-    // objection 100; SEAM.md §436): the publication makes phase 1's
+    // objection 100; SEAM.md §447): the publication makes phase 1's
     // check_authoring eligible, and its requested tick dispatches it at once,
     // so its Verifier is scripted with phase 1's authoring (a proposal, which
     // goes to the owner as unclassifiable and launches nothing further) and

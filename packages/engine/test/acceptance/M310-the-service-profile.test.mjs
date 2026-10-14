@@ -28,7 +28,7 @@
 //       holds every process of the domain;
 //   (f) admission: the service domain's reservation is `service_memory_max`
 //       and one check domain's memory: M5 slice 37 (D6 K2, E126; B09; SEAM.md
-//       §426) sizes the shared check capacity to the largest effective
+//       §437) sizes the shared check capacity to the largest effective
 //       `check_memory_max` of the projects it serves, min(the project's value
 //       or its 2 GiB default, `domain_memory_max`), no longer the ceiling;
 //   (g) the writable bounds: the service's writes to /tmp refused at the

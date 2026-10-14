@@ -105,7 +105,7 @@ describe('M10 one trigger identity, one work item', () => {
     assert.equal(workItem(fx.home, item).status, 'complete', 'the first generation is untouched');
   });
 
-  // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §436): "the one run a
+  // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): "the one run a
   // project may have" was the project run count K2 removes; what stays is one
   // run per work item. A new generation is a new item, still subject to the
   // project's pause, and once resumed it runs beside generation 1's run, each

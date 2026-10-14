@@ -143,7 +143,7 @@ describe('M15 deadlines', () => {
     const b = (await addProject(fx)).id;
     await tick(fx.engine, [a, b]);
 
-    // M5 slice 37 (D6 K1; objection 100; SEAM.md §436): new eligible work
+    // M5 slice 37 (D6 K1; objection 100; SEAM.md §447): new eligible work
     // requests a tick at once, so the fault is armed first and the tick the
     // items request is the one whose step overruns: A's item, then B's
     // within the overrun, both eligible at that tick's selection.

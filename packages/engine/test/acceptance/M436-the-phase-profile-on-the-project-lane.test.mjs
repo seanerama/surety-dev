@@ -4,7 +4,7 @@
 // M401's project at `phase` with no boundary but the routed ones"); D6-X03;
 // D6 §6.5; F §9.1; E10; the driver's ruling Q14 of slice 37 (phase 1 to
 // phase 2 published only: M401 part 2 counts the human acts to Alpha);
-// BS5 §4.1 rules 12, 13 (met in slice 31), 20; SEAM.md §§356, 357, 429
+// BS5 §4.1 rules 12, 13 (met in slice 31), 20; SEAM.md §§356, 357, 440
 // The kernel-lane cases of the row are `M436-the-autonomy-profiles` and
 // `M436-the-floor-under-phase`.
 //

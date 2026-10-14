@@ -3,7 +3,7 @@
 // D6-D02; D6 §6.8 ("the policy is not an unbounded retry"; "a failed attempt
 // retains the request's outcome"); K1 (requested ticks make an unbounded
 // retry a hot loop); K9; B14; the driver's ruling Q4 of slice 37; SEAM.md
-// §§354, 374, 433 The refusal at preparation (a `Refusal`) is S6's,
+// §§354, 374, 444 The refusal at preparation (a `Refusal`) is S6's,
 // `M407-a-policy-request-refused-in-preparation`.
 //
 // The one-phase variant under `on_phase_complete`, `alpha` configured and the

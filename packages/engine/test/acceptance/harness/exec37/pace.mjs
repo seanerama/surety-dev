@@ -1,5 +1,5 @@
 // Helpers for rows M440 (the event-driven tick) and M441 (the pace read) of
-// M5 slice 37 (SEAM.md §431). Kernel lane. Durations the tests measure
+// M5 slice 37 (SEAM.md §442). Kernel lane. Durations the tests measure
 // are read from the monotonic clock (SEAM.md §333), never from the engine's
 // timestamps, and no expectation relies on the order of wall-clock
 // timestamps: the workstation's clock steps back about a second every 31 s.

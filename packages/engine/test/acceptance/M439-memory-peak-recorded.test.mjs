@@ -2,7 +2,7 @@
 // check domains on D2's launcher and init, the scripted role program and the
 // test's check program, no model). M5 plan §3.7 M439; D6-X08; D6 §6.4, §7.6,
 // A.2 (`domain.peak_recorded`), A.3 (`execution_domains.memory_peak`,
-// `memory_max`); K2; N01; SEAM.md §432
+// `memory_max`); K2; N01; SEAM.md §443
 //   (a) a role domain (a stage's Builder) and a check domain at termination:
 //       `memory_peak` and `memory_max` on `execution_domains`, the peak read
 //       before the cgroup is removed and bound to the domain's identity and

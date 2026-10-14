@@ -43,7 +43,7 @@ export const step = {
   // performs git; a role with a shell can still run it).
   git: (...args) => ({ git: args }),
   sleep: (ms) => ({ sleep_ms: ms }),
-  // M5 slice 37 (SEAM.md §432; row M439 (d)): allocate `bytes` (at most
+  // M5 slice 37 (SEAM.md §443; row M439 (d)): allocate `bytes` (at most
   // 32 MiB) and keep them; the role program refuses unless `memoryMax`, the
   // domain's memory.max the test read from the host, is at least 8 x bytes.
   // Not exhausting; sandbox lane only.

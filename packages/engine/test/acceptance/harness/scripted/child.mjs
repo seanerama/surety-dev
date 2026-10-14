@@ -38,7 +38,7 @@
 //           {"git": ["<argument>", ...]}                    git, run in the workspace
 //           {"sleep_ms": <n>}
 //           {"hold": "<name>", "heartbeat_ms": <n, default 1000; 0 = silent>}
-//           {"hold_bytes": {"bytes": <n>, "memory_max": <m>}}   M5 slice 37 (SEAM.md §432): allocate n bytes
+//           {"hold_bytes": {"bytes": <n>, "memory_max": <m>}}   M5 slice 37 (SEAM.md §443): allocate n bytes
 //                                                           (every page touched) and keep them until the
 //                                                           program exits. NOT EXHAUSTING, sandbox lane only:
 //                                                           n is at most 32 MiB; m is the domain's memory.max
@@ -670,7 +670,7 @@ const INODE_CEILING = 128; // at most 128 files created
 const FLOOD_CEILING = 4 * 1024 * 1024; // at most 4 MiB written to stdout
 const EXHAUSTING = new Set(['fork_to_limit', 'allocate_to_limit', 'write_to_limit', 'create_to_limit', 'stdout_flood']);
 
-// THE `hold_bytes` STEP (M5 slice 37; SEAM.md §432; row M439 (d)). Not
+// THE `hold_bytes` STEP (M5 slice 37; SEAM.md §443; row M439 (d)). Not
 // an exhaustion instrument and not guarded: it allocates a fixed, small
 // amount far below the domain's limit and never loops toward a limit. Its
 // own bounds (do not raise them): at most HOLD_BYTES_MAX, and only where the
@@ -1990,7 +1990,7 @@ async function runSteps(steps, ctx) {
       log('git', { args: step.git, status: done.status, stdout: (done.stdout ?? '').slice(0, 2000), stderr: (done.stderr ?? '').slice(0, 2000) });
     } else if (step.sleep_ms !== undefined) await sleep(step.sleep_ms);
     else if (step.hold_bytes !== undefined) {
-      // M5 slice 37 (SEAM.md §432; row M439 (d)): a bounded, non-exhausting
+      // M5 slice 37 (SEAM.md §443; row M439 (d)): a bounded, non-exhausting
       // allocation, so that two domains' memory.peak differ by a known amount.
       const reasons = holdBytesRefusal(step.hold_bytes);
       if (reasons.length > 0) {

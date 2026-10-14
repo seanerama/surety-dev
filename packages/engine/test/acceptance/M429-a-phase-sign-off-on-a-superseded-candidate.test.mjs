@@ -2,7 +2,7 @@
 // §3.5 M429 (d); D6-F02; D6 §5.8 (the sign-off bound to candidate content,
 // protected version, spec revision and plan generation); B06; the driver's
 // ruling 4 of slice 35 (the half reachable once concurrency exists, K2);
-// SEAM.md §§412, 433 The plan-generation half is
+// SEAM.md §§412, 444 The plan-generation half is
 // `M429-phase-verification-and-its-sign-off` (d).
 //
 // At T2 under `phase`, phase 1's `phase_verification` Verifier holds before

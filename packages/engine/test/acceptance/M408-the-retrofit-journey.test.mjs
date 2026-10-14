@@ -88,7 +88,7 @@ describe('M408 the retrofit journey on the project lane', () => {
     guard = operatorGuard();
     // Objection 076 (SEAM.md §386) ran this engine at `domain_memory_max`
     // 4 GiB until slice 37 made the per-profile maxima the default (D6 K2;
-    // E140 N1; SEAM.md §426): a role domain is now admitted at
+    // E140 N1; SEAM.md §437): a role domain is now admitted at
     // `role_memory_max` 4 GiB and a check domain, and the shared check
     // capacity beside Alpha's service, at `check_memory_max` 2 GiB, under the
     // 8 GiB ceiling. The override is gone; the defaults stand.

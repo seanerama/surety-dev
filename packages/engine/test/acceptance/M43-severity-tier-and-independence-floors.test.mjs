@@ -112,7 +112,7 @@ describe('M43 severity at Alpha', () => {
     const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
     await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
     // M5 slice 37 (D6 K1, K2; objection 100, with objection 030's remedy;
-    // SEAM.md §436): the failed result below sends the stage's work to its
+    // SEAM.md §447): the failed result below sends the stage's work to its
     // repair, which K1's requested tick would dispatch beside the fixture
     // roles' runs, with no script of its own. The case is about the gate's
     // reading of findings, not the repair, so the project allows none: the

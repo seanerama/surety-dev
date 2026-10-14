@@ -7,7 +7,7 @@
 //   (c) the envelope's view of the session: its turn's domain records its
 //       `memory_max` as the project's effective `role_memory_max`, the value
 //       the envelope counts: 4 GiB by default (E140 N1), a project's own
-//       value when set (M5 slice 37, D6 K2, B09; SEAM.md §426: slice 33
+//       value when set (M5 slice 37, D6 K2, B09; SEAM.md §437: slice 33
 //       pinned the configured `domain_memory_max`, the driver's ruling (b),
 //       until the per-profile maxima existed);
 //   (d) a session while a one-shot runs: refused `session_busy` until the run

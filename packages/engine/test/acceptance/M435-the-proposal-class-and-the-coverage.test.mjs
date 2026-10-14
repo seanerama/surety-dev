@@ -1,7 +1,7 @@
 // M435, the authoring proposal's class and the actual protected coverage
 // (slice 37; kernel lane). M5 plan §3.7 M435 (c), (e); D6-W04; D6 §6.2; D3
 // §3.1; Q9; B07, N04; carried item (v) (slice 35's ruling 9:
-// `AUTHORING_INCOMPLETE` on `alpha_authorize`); SEAM.md §§216, 351, 428
+// `AUTHORING_INCOMPLETE` on `alpha_authorize`); SEAM.md §§216, 351, 439
 //
 //   (c) the proposal's class as the classifier computes it, never assumed:
 //       phase 1's, which writes `check_commands`, `unclassifiable` and routed

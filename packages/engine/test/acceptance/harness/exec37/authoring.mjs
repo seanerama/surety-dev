@@ -1,4 +1,4 @@
-// Slice 37's check-authoring cases (M435, M450; SEAM.md §428): the
+// Slice 37's check-authoring cases (M435, M450; SEAM.md §439): the
 // reference project published with its project paused, so that no
 // `check_authoring` run is dispatched before a test has scripted it and armed
 // its barriers; the readers of readiness, obligations and holds. Kernel lane:
