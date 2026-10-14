@@ -4,7 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
-import { correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
+import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
 import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
@@ -1033,12 +1033,7 @@ function workAfterRun(tx: Tx, run: RunRow): void {
   // review of 662cd7f, S2): it applied to the work. Whatever the run's
   // outcome, the work is held (Stop) or under its dispatch hold (Abandon),
   // as a Stop or an Abandon during validating leaves it (SEAM.md §47).
-  const afterExit = tx.db
-    .prepare(
-      `SELECT "kind" FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "kind" IN ('stop_confirm', 'abandon_confirm') AND "status" = 'consumed'
-         AND json_extract("answer", '$.applied_to') = 'work' ORDER BY "consumed_at" LIMIT 1`,
-    )
-    .get(run.id) as { kind: string } | undefined;
+  const afterExit = stopAfterExitOf(tx.db, run.id);
   if (afterExit && item.status !== 'verifying' && !['stopped', 'abandoned'].includes(run.outcome ?? '')) {
     if (afterExit.kind === 'stop_confirm') transitionWork(tx, item, 'held', {}, { ...cause, cause: 'stop_after_exit' });
     else transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon_after_exit' });
@@ -1059,6 +1054,10 @@ function workAfterRun(tx: Tx, run: RunRow): void {
           transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'correction_proposed', raised_at: tx.at, proposal: p.id }) }, { ...cause, proposal: p.id });
           return;
         }
+        // Applied already, or assessed only: complete only with every
+        // obligation resolved (the slice-36 review's S3).
+        correctionApplied(tx, item, { run: run.id, ...(p ? { proposal: p.id } : {}) });
+        return;
       }
       // A Verifier's or a Reviewer's work is complete with its accepted run.
       // A candidate's verification no longer completes the work it holds: a
@@ -1145,6 +1144,17 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     default:
       return;
   }
+}
+
+// The first Stop or Abandon of a run confirmed as applying to its work, by
+// insertion order, never by `consumed_at` (the slice-36 review's N1).
+export function stopAfterExitOf(db: Tx['db'], run: string): { kind: string } | undefined {
+  return db
+    .prepare(
+      `SELECT "kind" FROM "decisions" WHERE "subject_type" = 'run' AND "subject_id" = ? AND "kind" IN ('stop_confirm', 'abandon_confirm') AND "status" = 'consumed'
+         AND json_extract("answer", '$.applied_to') = 'work' ORDER BY rowid LIMIT 1`,
+    )
+    .get(run) as { kind: string } | undefined;
 }
 
 const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];

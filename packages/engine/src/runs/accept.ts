@@ -52,6 +52,7 @@ import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
 import { seamSpecBlobFault } from '../testing/seam.js';
+import type { ApplicabilityEntry } from '../spec/change.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
@@ -552,14 +553,17 @@ export class Acceptor {
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
     if (outside) return failed(outside.klass, outside.text);
     // A specification change's correction (D6 §4.5; the driver's rulings Q6,
-    // Q13, Q-D): the Verifier's applicability assessments are validated
-    // against the open obligations and recorded before anything else of the
-    // run; a correction that changes no check and assesses nothing while
+    // Q13, Q-D; the slice-36 review's S1): the Verifier's applicability
+    // assessments are validated against the open obligations here, and
+    // recorded only in the transaction that records the run's report or
+    // captures its correction, so a run that fails or is retried resolves
+    // nothing. A correction that changes no check and assesses nothing while
     // its obligations are open is refused.
     const assessed = await this.correctionAssessments(facts, diff.changes.length);
-    if (assessed !== null) return assessed;
+    if ('outcome' in assessed) return assessed;
+    const assessments = assessed.assessments;
     if (diff.changes.length === 0) {
-      await this.recordReport(facts);
+      await this.recordReport(facts, assessments);
       return { outcome: 'completed', reason: 'none' };
     }
     const report = facts.result?.report ?? {};
@@ -599,17 +603,19 @@ export class Acceptor {
       requested: proposal?.requested_change_kind ?? 'unclassifiable',
       changesRequiredSet: (await required(base)) !== (await required(tree)),
       evidence,
+      ...(assessments ? { assessments } : {}),
     });
     return { outcome: 'completed', reason: 'none' };
   }
 
-  private async correctionAssessments(facts: AcceptFacts, changes: number): Promise<RunEnd | null> {
+  private async correctionAssessments(facts: AcceptFacts, changes: number): Promise<RunEnd | { assessments: { entries: ApplicabilityEntry[]; rationales: string[] } | null }> {
     const entries = facts.result?.report?.spec_applicability ?? [];
     if (facts.work.kind !== 'check_correction') {
-      return entries.length > 0 ? failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only') : null;
+      return entries.length > 0 ? failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only') : { assessments: null };
     }
-    const c = await this.rt.read<{ request: string | null; open: string[]; resolves: string[][] }>('spec.correction_facts', { run: facts.run.id, entries });
+    const c = await this.rt.read<{ request: string | null; open: string[]; resolves: string[][]; outside: string[] }>('spec.correction_facts', { run: facts.run.id, entries });
     if (entries.length > 0 && c.request === null) return failed('invalid_result', 'spec_applicability is the field of a specification change\'s correction only; this correction is not one');
+    if (c.outside.length > 0) return failed('invalid_result', `spec_applicability names a check the effective protected version does not have: ${c.outside.join(', ')}`);
     const unmatched = entries.filter((_, i) => (c.resolves[i] ?? []).length === 0);
     if (unmatched.length > 0) {
       return failed('invalid_result', `spec_applicability names no open obligation it covers: ${unmatched.map((e) => `${e.check} (${e.criteria.join(', ')})`).join('; ')}`);
@@ -617,11 +623,10 @@ export class Acceptor {
     if (c.request !== null && c.open.length > 0 && changes === 0 && entries.length === 0) {
       return failed('invalid_result', `the correction changed no check and assessed none: the specification change's obligations on ${c.open.join(', ')} stay open`);
     }
-    if (entries.length === 0) return null;
+    if (entries.length === 0) return { assessments: null };
     const rationales: string[] = [];
     for (const e of entries) rationales.push(await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'assessment_evidence', content: Buffer.from(e.rationale) }));
-    await this.rt.engine('spec.record_assessments', { run: facts.run.id, entries, rationales });
-    return null;
+    return { assessments: { entries, rationales } };
   }
 
   // The records an applicability proposal's evidence is published as.
@@ -637,8 +642,8 @@ export class Acceptor {
   }
 
   // What a Verifier's or a Reviewer's role reported, recorded with its run.
-  private async recordReport(facts: AcceptFacts): Promise<void> {
-    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts), alpha: await this.alphaOf(facts) });
+  private async recordReport(facts: AcceptFacts, assessments: { entries: ApplicabilityEntry[]; rationales: string[] } | null = null): Promise<void> {
+    await this.rt.engine('accept.record_report', { run: facts.run.id, evidence: await this.evidenceOf(facts), alpha: await this.alphaOf(facts), ...(assessments ? { assessments } : {}) });
   }
 
   // A Reviewer's Alpha exception proposals (D2 §5 C1): one that may be made

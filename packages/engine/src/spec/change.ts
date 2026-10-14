@@ -214,6 +214,8 @@ export interface Impact {
   stages: { stage: string; number: number; status: string; phase_plan: string }[];
   phases: number[];
   touches_current: boolean;
+  // A phase after the current one (the slice-36 review's M1).
+  touches_later: boolean;
   evidence: { results: string[]; evaluations: string[] };
   work: string[];
   // D6 §4.4 (B05): the findings naming a removed, changed or affected
@@ -359,10 +361,15 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
   const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' AND "active" = 1`).get(args.project) as { done: number };
   // Before any roadmap there is no phase, current or later, to touch (D6 §4.5).
   const hasRoadmap = db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(args.project) !== undefined;
-  const touchesCurrent = hasRoadmap && affectedKeys.some((k) => {
-    const p = phaseOf(k);
-    return p === null || p > done;
-  });
+  // The current phase: the open plan's (published, active, not complete),
+  // else the first not completed (the slice-36 review's M1). The change
+  // touches it when an affected requirement is in it or has no phase yet (a
+  // requirement a change adds is in none until the roadmap places it); it
+  // touches a later phase when one is beyond it. Only the first is an early
+  // replacement of the current plan; either registers a replan (F §3.10.7).
+  const touch = phasesTouched(db, args.project, affectedKeys.map((k) => reqIds.get(k)?.assigned_phase ?? null));
+  const touchesCurrent = hasRoadmap && touch.current;
+  const touchesLater = hasRoadmap && touch.later;
   const work = stages.length === 0
     ? []
     : (db
@@ -412,6 +419,7 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     stages,
     phases,
     touches_current: touchesCurrent,
+    touches_later: touchesLater,
     evidence: { results, evaluations },
     work,
     findings,
@@ -421,6 +429,17 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     claimed: args.claimed,
     dependency_manifest: dependencyManifest(db, { project: args.project, phases, stages: stages.map((s) => s.stage), keys: affectedKeys, checks: listedChecks, findings, results, work }),
   };
+}
+
+// Whether requirements placed in these phases (null: none yet) touch the
+// project's current phase or a later one (the slice-36 review's M1). The
+// current phase is the open plan's (published, active, not complete), else
+// the first not completed.
+export function phasesTouched(db: Db, project: string, placed: (number | null)[]): { current: boolean; later: boolean; phase: number } {
+  const { done } = db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS done FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' AND "active" = 1`).get(project) as { done: number };
+  const open = db.prepare(`SELECT "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`).get(project) as { phase_number: number } | undefined;
+  const phase = open?.phase_number ?? done + 1;
+  return { current: placed.some((p) => p === null || p === phase), later: placed.some((p) => p !== null && p > phase), phase };
 }
 
 // What each subject the impact lists is now (B05; A.3; SEAM.md §418): the
@@ -573,14 +592,33 @@ export function proposalSemantics(db: Db, r: RequestRow): SemanticsRow | undefin
 }
 
 export function currentImpact(db: Db, r: RequestRow): Impact | null {
+  const out = impactNow(db, r);
+  return 'impact' in out ? out.impact : null;
+}
+
+// The impact as it stands now, or why it cannot be computed (D6 §4.4).
+export function impactNow(db: Db, r: RequestRow): { impact: Impact } | { reason: string } {
   const sem = proposalSemantics(db, r);
   const representation = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
-  if (!representation) return null;
+  if (!representation) return { reason: "the proposal's representation cannot be read" };
   try {
-    return computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null });
-  } catch {
-    return null;
+    return { impact: computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null }) };
+  } catch (err) {
+    return { reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// A pending proposal whose impact can no longer be computed is refused with
+// the reason (D6 §4.4; the slice-36 review's S2): the request ends `failed`
+// naming it, its work ends, and the one-at-a-time slot frees for the next.
+function refuseProposal(tx: Tx, r: RequestRow, reason: string): void {
+  if (r.status !== 'proposed') return;
+  const failure = `spec_impact_uncomputable: the proposal is refused, its impact cannot be computed against the specification now approved: ${reason}`;
+  tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(failure, r.id);
+  tx.emit('spec.change_failed', { project: r.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'spec_impact_uncomputable', failure });
+  settleWork(tx, r, 'refused');
+  // A request waiting for the slot may now be dispatched.
+  markStale(tx, { project: r.project });
 }
 
 // ---- the decision (D6 §4.5; floor) ---------------------------------------------------------
@@ -617,7 +655,7 @@ function changeManifest(db: Db, id: string): Record<string, unknown> {
     impact:
       impact === null
         ? null
-        : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current })),
+        : sha256(canonical({ digests: [impact.approved_digest, impact.proposed_digest], requirements: impact.requirements, affected: impact.affected_criteria, removed: impact.removed_criteria, added: impact.added_criteria, checks: impact.checks, phases: impact.phases, touches_current: impact.touches_current, touches_later: impact.touches_later })),
     // The dependency generations of what the impact lists, recomputed (D6
     // §4.4): a new result, finding, work status or plan generation touching
     // a listed subject makes the answer stale; one touching nothing listed
@@ -649,9 +687,13 @@ export function specChangeKind(): KindSpec {
     preview(tx, d) {
       const r = getRequest(tx.db, d.subject_id);
       if (!r || r.status !== 'proposed' || r.proposal_revision === null) return null;
+      const now = impactNow(tx.db, r);
+      if ('reason' in now) {
+        refuseProposal(tx, r, now.reason);
+        return null;
+      }
+      const impact = now.impact;
       const manifest = changeManifest(tx.db, r.id);
-      const impact = currentImpact(tx.db, r);
-      if (impact === null) return null;
       const listed = impact.checks.obligations.map((c) => c.key);
       return {
         manifest,
@@ -876,8 +918,13 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Before any roadmap there is no phase to touch (D6 §4.5; the
   // coordinator's ruling on slice 34): no replan holds the project then.
   const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
-  if (impact.touches_current && roadmap) {
-    const open = tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string; generation: number } | undefined;
+  if ((impact.touches_current || impact.touches_later === true) && roadmap) {
+    // Only a change touching the current phase replaces its plan early (D6
+    // §5.7; the slice-36 review's M1): a later-only change's replan binds no
+    // open plan and supersedes none of the current phase's stages.
+    const open = impact.touches_current
+      ? (tx.db.prepare(`SELECT "id", "generation" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "completed_at" IS NULL ORDER BY "phase_number" LIMIT 1`).get(op.project) as { id: string; generation: number } | undefined)
+      : undefined;
     // An early replan (D6 §5.7; B08): it names the generation it replaces,
     // and records the impact as its evidence and what the impact made stale.
     const stale = [
@@ -999,15 +1046,22 @@ const openObligations = (db: Db, project: string): OpenObligation[] =>
 // What a correction run's acceptance needs (runs/accept.ts): whether its
 // item is a specification change's, the open obligations of that request,
 // and, per assessment entry, the open obligations it would resolve.
-export function correctionFacts(db: Db, args: { run: string; entries: ApplicabilityEntry[] }): { request: string | null; open: string[]; resolves: string[][] } {
+export function correctionFacts(db: Db, args: { run: string; entries: ApplicabilityEntry[] }): { request: string | null; open: string[]; resolves: string[][]; outside: string[] } {
   const run = db.prepare('SELECT "project", "work_item" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; work_item: string | null } | undefined;
-  if (!run || run.work_item === null) return { request: null, open: [], resolves: args.entries.map(() => []) };
+  if (!run || run.work_item === null) return { request: null, open: [], resolves: args.entries.map(() => []), outside: [] };
+  // An assessment is of a check of the effective protected version (the
+  // slice-36 review's N3): one naming a key the version does not have is
+  // refused, never recorded against an obligation by its key alone.
+  const effective = effectiveVersion(db, run.project);
+  const keys = new Set(effective ? checksOfVersion(db, effective.id).map((c) => c.key) : []);
+  const outside = uniq(args.entries.map((e) => e.check).filter((k) => !keys.has(k))).sort();
   const request = correctionRequestOf(db, run.work_item);
   const all = openObligations(db, run.project);
   return {
     request,
     open: request === null ? [] : uniq(all.filter((o) => o.request === request).map((o) => o.key)).sort(),
     resolves: args.entries.map((e) => all.filter((o) => o.key === e.check && o.criteria.every((c) => e.criteria.includes(c))).map((o) => o.id)),
+    outside,
   };
 }
 
@@ -1060,10 +1114,46 @@ export function correctionProposalDecided(tx: Tx, args: { proposal: string; appl
   if (blocker?.reason !== 'correction_proposed' || blocker.proposal !== args.proposal) return;
   const resumed = transitionWork(tx, item, 'executing', { blocker: null }, { proposal: args.proposal, cause: args.applied ? 'proposal_applied' : 'proposal_rejected' });
   if (args.applied) {
-    transitionWork(tx, resumed, 'complete', {}, { proposal: args.proposal, cause: 'proposal_applied' });
+    correctionApplied(tx, resumed, { proposal: args.proposal });
     return;
   }
   correctionFailed(tx, resumed, { proposal: args.proposal, cause: 'proposal_rejected' });
+}
+
+// A specification change's correction whose proposal was applied, or whose
+// run's assessments were recorded (the slice-36 review's S3): it completes
+// only when none of its request's obligations is open. One that resolved
+// some returns the rest to the Verifier, with the open obligations listed;
+// one that resolved none takes its repair, then parks (Q13).
+export function correctionApplied(tx: Tx, item: WorkRow, args: { proposal?: string; run?: string }): void {
+  const request = correctionRequestOf(tx.db, item.id);
+  const open = correctionOpenKeys(tx.db, item.id);
+  const cause = { ...(args.proposal ? { proposal: args.proposal } : {}), ...(args.run ? { run: args.run } : {}) };
+  if (request === null || open.length === 0) {
+    transitionWork(tx, item, 'complete', {}, { ...cause, cause: 'obligations_resolved' });
+    return;
+  }
+  const version = args.proposal ? ((tx.db.prepare('SELECT "resulting_version" FROM "protected_proposals" WHERE "id" = ?').get(args.proposal) as { resulting_version: string | null } | undefined)?.resulting_version ?? null) : null;
+  const assessed = args.run ? (tx.db.prepare('SELECT "id" FROM "assessments" WHERE "run" = ?').all(args.run) as { id: string }[]).map((a) => a.id) : [];
+  const by = [...(version ? [version] : []), ...assessed];
+  const resolved = by.length === 0 ? 0 : (tx.db.prepare(`SELECT COUNT(*) AS n FROM "check_obligations" WHERE "request" = ? AND "resolved_by" IN (SELECT value FROM json_each(?))`).get(request, JSON.stringify(by)) as { n: number }).n;
+  if (resolved === 0) {
+    correctionFailed(tx, item, { ...cause, cause: 'nothing_resolved', open });
+    return;
+  }
+  const te = tx.db.prepare('SELECT "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(item.id) as { trigger_evidence: string | null } | undefined;
+  const evidence = parseJson<Record<string, unknown>>(te?.trigger_evidence ?? null) ?? {};
+  tx.db.prepare('UPDATE "work_items" SET "trigger_evidence" = ? WHERE "id" = ?').run(JSON.stringify({ ...evidence, open }), item.id);
+  transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'obligations_open', open });
+}
+
+// The open obligations of a request, for its correction's package.
+export function openObligationsOf(db: Db, request: string): { check: string; criteria: string[]; generation: number }[] {
+  return (db.prepare(`SELECT "key", "criteria", "generation" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY rowid`).all(request) as { key: string; criteria: string; generation: number }[]).map((o) => ({
+    check: o.key,
+    criteria: parseJson<string[]>(o.criteria) ?? [],
+    generation: o.generation,
+  }));
 }
 
 // A correction attempt that ended with nothing applied (Q13): its repair,
