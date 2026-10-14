@@ -80,6 +80,11 @@ export class Scheduler {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  // No tick of any kind before the scheduler has started, after the lift to
+  // full (D1 §1.4, §16; D2 §7.3; K1: never ahead of D1 §8.1's safety
+  // steps; the slice-37 review's S2). A request made during startup is
+  // coalesced into the first tick after the start.
+  private started = false;
   // When the last tick began, on the engine's clock: the interval tick falls
   // due at it plus tick_interval (the driver's ruling Q12, slice 37).
   private lastTickAt = nowMs();
@@ -93,6 +98,7 @@ export class Scheduler {
   ) {}
 
   start(): void {
+    this.started = true;
     this.lastTickAt = nowMs();
     // `tick_interval` stays the ceiling of idle (K1): a tick falls due on the
     // engine's clock, polled each second; a clock that steps back only delays
@@ -102,6 +108,7 @@ export class Scheduler {
       if (nowMs() - this.lastTickAt >= this.rt.setting('tick_interval') * 1000) this.request();
     }, 1000);
     this.timer.unref();
+    if (this.flag && !this.running && !this.stopped) void this.loop();
   }
 
   stop(): void {
@@ -119,7 +126,7 @@ export class Scheduler {
     this.rt.deploy?.observer.wake();
     this.flag = true;
     this.requests += Math.max(1, n);
-    if (!this.running && !this.stopped) void this.loop();
+    if (this.started && !this.running && !this.stopped) void this.loop();
   }
 
   private async loop(): Promise<void> {

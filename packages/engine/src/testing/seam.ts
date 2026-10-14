@@ -110,6 +110,9 @@ const MAIN_BARRIERS: readonly string[] = [
   'scheduler.tick_running',
   'check_authoring.before_proposal',
   'check_authoring.applied',
+  // SEAM.md §450 (the slice-37 review's S1): a run's snapshot validation,
+  // its facts read, before the comparison outside its diff.
+  'snapshot.before_validate_outside',
   // SEAM.md §365 (M5 slice 31a review, S1): a session's close, after its
   // save and before it enters `closing` and raises its decision.
   'session.close_saved',

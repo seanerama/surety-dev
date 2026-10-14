@@ -342,7 +342,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     criteria,
     check_writing: checkWriting,
     // The phase-authoring package (D6 §6.2; N04; SEAM.md §428).
-    authoring: item.kind === 'check_authoring' ? authoringFacts(db, item.project, subjectId('phase_plan')) : null,
+    authoring: item.kind === 'check_authoring' ? authoringFacts(db, item.project, subjectId('phase_plan'), item) : null,
     resumed,
     // What each environment's current configuration fixes, for a Builder
     // (BS4 §3, the role packages; CD4): never a secret's value.
@@ -383,8 +383,12 @@ export interface AuthoringFacts {
   interfaces: { module: string; name: string; kind: string; path: string | null; description: string }[] | null;
   architecture: string | null;
   environments: { name: string; fields: Record<string, string> }[] | null;
+  // A deferral's follow-up (D6 §6.2; the slice-37 review's M6): the
+  // obligation it is asked for, with the stages as they stand now; null for
+  // the phase's first authoring.
+  follow_up: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
 }
-function authoringFacts(db: Database, project: string, planId: string | null): AuthoringFacts {
+function authoringFacts(db: Database, project: string, planId: string | null, item: { trigger_source: string | null; trigger_id: string | null }): AuthoringFacts {
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
       return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
@@ -419,12 +423,28 @@ function authoringFacts(db: Database, project: string, planId: string | null): A
   const approved = db.prepare('SELECT "semantic_digest" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { semantic_digest: string } | undefined;
   const sem = approved ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "project" = ? AND "semantic_digest" = ? AND "readable" = 1 ORDER BY rowid DESC LIMIT 1').get(project, approved.semantic_digest) as { representation: string | null } | undefined) : undefined;
   const environments = sem?.representation ? (parse<{ environments?: { name: string; fields: Record<string, string> }[] } | null>(sem.representation, null)?.environments ?? null) : null;
+  const obligation =
+    item.trigger_source === 'deferred_authoring' || item.trigger_source === 'authoring_pending'
+      ? (db.prepare('SELECT "id", "criteria", "deferred_reason", "prerequisite" FROM "check_obligations" WHERE "id" = ?').get(item.trigger_id) as
+          | { id: string; criteria: string; deferred_reason: string | null; prerequisite: string | null }
+          | undefined)
+      : undefined;
+  const follow_up = obligation
+    ? {
+        obligation: obligation.id,
+        criteria: parse<string[]>(obligation.criteria, []),
+        reason: obligation.deferred_reason,
+        prerequisite: parse<unknown>(obligation.prerequisite, null),
+        stages: plan ? activeStages<{ number: number; status: string }>(db, plan.id).map((s) => ({ number: s.number, status: s.status })) : [],
+      }
+    : null;
   return {
     phase_plan: plan ? { id: plan.id, phase_number: plan.phase_number, generation: plan.generation } : null,
     stages,
     interfaces,
     architecture: content?.architecture_text ?? null,
     environments,
+    follow_up,
   };
 }
 

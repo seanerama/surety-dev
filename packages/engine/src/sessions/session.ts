@@ -14,6 +14,7 @@
 // (M415 to M420), which hardens what is built here.
 
 import { notePeakDomains } from '../plan/pace.js';
+import { envelopeHold } from '../store/transitions/envelope.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
 import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.js';
@@ -372,6 +373,12 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
       spent,
     });
   }
+  // The turn's domain is admitted through the same envelope and slot cap as
+  // any role domain (D6-S08, K2, B09; the slice-37 review's M2): held, the
+  // turn is refused with the hold, and nothing is written.
+  const turnMax = canaryOf ? attemptProfileMax(tx.db, canaryOf) : effectiveProfileMax(tx.db, run.project, 'role');
+  const held = envelopeHold(tx.db, { kind: 'role', project: run.project, memory: turnMax });
+  if (held !== null) throw new Refusal(409, held.code, held.reason, 'Send the turn again once a domain is free.', { run: run.id, ...held.subject });
   const lease = tx.db.prepare(`SELECT "id", "generation", "closing", "owner_incarnation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as
     | { id: string; generation: number; closing: number; owner_incarnation: string }
     | undefined;
@@ -413,7 +420,7 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
     )
     // The project's effective role maximum (D6 §2.7, K2, B09), or the profile
     // a continuation canary's attempt qualifies.
-    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, canaryOf ? attemptProfileMax(tx.db, canaryOf) : effectiveProfileMax(tx.db, run.project, 'role'));
+    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, turnMax);
   tx.db.prepare('INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('proc_'), tx.at, run.project, domain, invocation, args.incarnation);
   notePeakDomains(tx);
   const deadlineSeconds = policy[`deadline_${run.role}`]!;

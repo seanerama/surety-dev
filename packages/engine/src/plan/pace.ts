@@ -374,6 +374,19 @@ export function paceView(db: Database, args: { project: string }) {
     const evaluations = db.prepare(`SELECT "candidate", "created_at" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid`).all(p, s.id) as { candidate: string; created_at: string }[];
     const candidates = [...new Set(evaluations.map((e) => e.candidate))];
     const onCandidates = (kind: string) => candidates.flatMap((c) => itemsOf(kind, 'candidate', c));
+    // The stage's lineage (the slice-37 review's M9): the verification and
+    // review items on its candidates, and the fixes of the findings raised on
+    // them, which carry no subject.stage, so their waits are the stage's.
+    const fixesOfFindings =
+      candidates.length === 0
+        ? []
+        : (db
+            .prepare(
+              `SELECT w."id" FROM "work_items" w WHERE w."project" = ? AND w."kind" = 'fix'
+                 AND json_extract(w."subject", '$.finding') IN (SELECT f."id" FROM "findings" f WHERE f."candidate" IN (${candidates.map(() => '?').join(', ')}))`,
+            )
+            .all(p, ...candidates) as { id: string }[]).map((w) => w.id);
+    for (const i of [...onCandidates('verification'), ...onCandidates('review'), ...fixesOfFindings]) if (!items.includes(i)) items.push(i);
     const fixItems = [...new Set([...items.filter((i) => (db.prepare('SELECT "kind" FROM "work_items" WHERE "id" = ?').get(i) as { kind: string }).kind === 'fix')])];
     const checks = candidates.length === 0 ? [] : (db.prepare(`SELECT "started_at", "finished_at", "status" FROM "check_executions" WHERE "candidate" IN (${candidates.map(() => '?').join(', ')}) AND "status" = 'recorded'`).all(...candidates) as { started_at: string | null; finished_at: string | null }[]);
     const checkSecs = checks.map((x) => between(x.started_at, x.finished_at, ['the check started', 'it finished']));

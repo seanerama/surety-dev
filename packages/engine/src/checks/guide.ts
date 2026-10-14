@@ -397,6 +397,7 @@ export interface PhaseAuthoringFacts {
   interfaces: { module: string; name: string; kind: string; path: string | null; description: string }[] | null;
   architecture: string | null;
   environments: { name: string; fields: Record<string, string> }[] | null;
+  follow_up?: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
 }
 
 // The authoring result's own fields (B.7), beside the Verifier's: its
@@ -433,6 +434,26 @@ export const AUTHORING_RESULT_FIELDS: Record<string, Record<string, unknown>> = 
 
 export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
   const out: string[] = ['', "## The phase's check authoring", ''];
+  // A deferral's follow-up (the slice-37 review's M6): what it is asked for,
+  // and the stages as they stand, not the first authoring's account.
+  if (a.follow_up) {
+    const f = a.follow_up;
+    out.push(
+      f.criteria.length > 0
+        ? `You author the checks a deferral left owed in ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'}: obligation ${f.obligation}, for ${f.criteria.join(', ')}. It was deferred because ${f.reason ?? 'of a reason not recorded'}; its prerequisite (${JSON.stringify(f.prerequisite)}) has integrated, so the interface it exercises now exists in the code. Builders of this phase have run: the stages as they stand now are below. Write the checks for these criteria against the code as it is; the other checks of the phase are already applied.`
+        : `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'}, owed by obligation ${f.obligation}: ${f.reason ?? 'the authoring was not done before the build'}. Its Builders have run and their stages have integrated: the stages as they stand now are below. Write a definition and a program for every criterion the stages validate, the kinds of each stage's tier and the areas of the sensitivity floor, against the code as it is; until they are applied and pass, the phase and deployment gates carry AUTHORING_INCOMPLETE.`,
+      '',
+      'A proposal grants no execution authority: what you leave under the protected roots is captured as a protected proposal, classified by the engine as the classifier computes it (never as you request it), and decided on through the protected update route.',
+      '',
+      '### The stages now',
+      '',
+      '```json',
+      JSON.stringify(f.stages, null, 2),
+      '```',
+    );
+    out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation`:', '', '```json', JSON.stringify(a.stages, null, 2), '```');
+    return out;
+  }
   out.push(
     `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'} before any of its stages is built: a definition and a program for every criterion its stages validate, the kinds of each stage's tier, the areas of the sensitivity floor, and, in the first phase, the post-deploy checks of the environments below. No Builder of the phase runs until your checks are applied (authoring readiness), so write them against the interfaces the stages will create, named below.`,
     '',

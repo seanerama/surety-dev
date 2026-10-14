@@ -88,28 +88,13 @@ export class Acceptor {
     private readonly journal: Journal,
   ) {}
 
-  // The project's integration, one at a time (D1 §7.5; K2): an in-process
-  // queue per project, and inside it the durable `integration` lease, taken
-  // for this run and released when the step ends, whatever its end.
-  private readonly integrating = new Map<string, Promise<void>>();
-  private async underIntegrationLease<T>(project: string, run: string, fn: () => Promise<T>): Promise<T> {
-    const before = this.integrating.get(project) ?? Promise.resolve();
-    let release: () => void = () => {};
-    const mine = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const chained = before.then(() => mine);
-    this.integrating.set(project, chained);
-    await before;
-    let lease: string | null = null;
-    try {
-      lease = await this.rt.engine<string>('integration.acquire', { project, run, incarnation: this.rt.incarnation });
-      return await fn();
-    } finally {
-      if (lease !== null) await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project, run }));
-      release();
-      if (this.integrating.get(project) === chained) this.integrating.delete(project);
-    }
+  // The project's integration, one at a time (D1 §7.5; K2): the project's
+  // journal held, with its durable `integration` lease, from the read of
+  // the head to the nomination (journal/driver.ts withProject), shared with
+  // every other engine writer of the integration ref (the slice-37 review's
+  // M3).
+  private underIntegrationLease<T>(project: string, run: string, fn: () => Promise<T>): Promise<T> {
+    return this.journal.withProject(project, fn, run);
   }
 
   // The role exited 0 after a valid result: accept what it left. The run is
@@ -255,7 +240,7 @@ export class Acceptor {
     if (facts.commits.length === 0) {
       const diff = await validateDiff(repo, base, tree, role, facts.caps, facts.roots);
       if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
-      const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
+      const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
       if (outside) return failed(outside.klass, outside.text);
     }
 
@@ -586,7 +571,7 @@ export class Acceptor {
     const diff = await validateDiff(repo, base, tree, facts.run.role, facts.caps, facts.roots);
     if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
     const ws = facts.workspace!;
-    const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
+    const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
     if (outside) return failed(outside.klass, outside.text);
     // A specification change's correction (D6 §4.5; the driver's rulings Q6,
     // Q13, Q-D; the slice-36 review's S1): the Verifier's applicability
@@ -630,6 +615,12 @@ export class Acceptor {
     if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, [...(await this.rt.read<AdoptedTest[]>('project.adopted_tests', { project: facts.project.id })), ...adoptedTests]);
     // B.7: deferrals are a phase authoring's only (D6 §6.2).
     if ((report.deferred_criteria ?? []).length > 0 && facts.work.kind !== 'check_authoring') return failed('invalid_result', 'deferred_criteria is the field of a phase\'s check authoring only');
+    // Each deferral's prerequisite names a stage of the plan or an interface
+    // of its module map (the slice-37 review's M5).
+    if ((report.deferred_criteria ?? []).length > 0) {
+      const invalid = await this.rt.read<string | null>('deferral.refs_invalid', { run: facts.run.id, deferrals: report.deferred_criteria });
+      if (invalid !== null) return failed('invalid_result', invalid);
+    }
     // SEAM.md §428: an authoring run's protected diff read, its proposal
     // not yet written.
     if (facts.work.kind === 'check_authoring') await pausePoint('check_authoring.before_proposal');

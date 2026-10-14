@@ -20,6 +20,7 @@
 // engine knows its command's result, and goes on from it (probing as the
 // ordinary course does). Every operation is driven by one caller at a time.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { GIT_HOME_MARKER, GIT_INCARNATION_MARKER, GIT_OPERATION_MARKER, gitSettings } from '../git/exec.js';
@@ -64,8 +65,16 @@ export class Journal {
   }
 
   // Run `fn` with the project's journal to itself: integrations, policy
-  // changes, nominations and discards of one project are serial (E18).
-  async withProject<T>(project: string, fn: () => Promise<T>): Promise<T> {
+  // changes, nominations and discards of one project are serial (E18). Every
+  // engine writer of the integration ref holds it from its read of the head
+  // to its drive (the slice-37 review's M3): an in-process queue per project
+  // and, inside it, the project's durable `integration` lease (D1 §7.5;
+  // A.3), so under D6 K2 they are ordered rather than conflicting. Nested
+  // calls within the holder run at once (reentrant by async context).
+  private readonly holding = new AsyncLocalStorage<Set<string>>();
+  async withProject<T>(project: string, fn: () => Promise<T>, holder = 'journal'): Promise<T> {
+    const held = this.holding.getStore();
+    if (held?.has(project)) return fn();
     const before = this.projectLocks.get(project) ?? Promise.resolve();
     let release: () => void = () => {};
     const mine = new Promise<void>((resolve) => {
@@ -74,11 +83,25 @@ export class Journal {
     const chained = before.then(() => mine);
     this.projectLocks.set(project, chained);
     await before;
+    let lease: string | null = null;
     try {
-      return await fn();
+      lease = await this.acquireIntegration(project, holder);
+      return await this.holding.run(new Set([...(held ?? []), project]), fn);
     } finally {
+      if (lease !== null) await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project }));
       release();
       if (this.projectLocks.get(project) === chained) this.projectLocks.delete(project);
+    }
+  }
+
+  // The durable lease, taken over only from a holder that is gone (an
+  // earlier incarnation, or one whose lease_ttl passed): a live holder of
+  // this incarnation is waited for.
+  private async acquireIntegration(project: string, holder: string): Promise<string> {
+    for (;;) {
+      const lease = await this.rt.engine<string | null>('integration.acquire', { project, run: holder, incarnation: this.rt.incarnation });
+      if (lease !== null) return lease;
+      await sleep(250);
     }
   }
 

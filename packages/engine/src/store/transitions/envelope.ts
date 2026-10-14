@@ -21,7 +21,7 @@
 // domain slots apply to its domain rows, and the memory arithmetic only as
 // the harness scripts it (SEAM.md §427).
 
-import { readFileSync, statfsSync } from 'node:fs';
+import { existsSync, readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { effectiveProfileMax, projectPolicy } from './settings.js';
@@ -142,7 +142,7 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   // holds its reservation from its admission (the slice-24 review, m4).
   const all = db
     .prepare(
-      `SELECT d."id", d."cgroup_path", d."profile", d."reservation", d."project", d."status", d."observation", d."memory_max", (x."deployment" IS NOT NULL) AS "bound"
+      `SELECT d."id", d."cgroup_path", d."profile", d."reservation", d."project", d."status", d."observation", d."memory_max", d."cgroup_inode", (x."deployment" IS NOT NULL) AS "bound"
        FROM "execution_domains" d LEFT JOIN "check_executions" x ON x."id" = d."check_execution"
        WHERE d."status" <> 'terminated' AND (d."cgroup_path" IS NOT NULL OR d."profile" = 'service' OR ?)`,
     )
@@ -155,19 +155,24 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
     status: string;
     observation: string | null;
     memory_max: number | null;
+    cgroup_inode: number | null;
     bound: number;
   }[];
   const services = all.filter((d) => d.profile === 'service');
   const running = all.filter((d) => d.profile !== 'service');
-  const serviceMemory = services.reduce((n, d) => {
-    let m = 0;
+  // A service's reservation as recorded at its admission; one that cannot
+  // be read is unknown, never 0 bytes (the slice-37 review's N2): nothing is
+  // admitted on it.
+  const reservationOf = (d: (typeof all)[number]): number | null => {
     try {
-      m = Number((JSON.parse(d.reservation ?? '{}') as { memory?: number }).memory ?? 0);
+      const m = (JSON.parse(d.reservation ?? 'null') as { memory?: unknown } | null)?.memory;
+      return typeof m === 'number' && Number.isFinite(m) && m >= 0 ? m : null;
     } catch {
-      m = 0;
+      return null;
     }
-    return n + (Number.isFinite(m) ? m : 0);
-  }, 0);
+  };
+  const unreadReservation = services.find((d) => reservationOf(d) === null);
+  const serviceMemory = services.reduce((n, d) => n + (reservationOf(d) ?? 0), 0);
   const serviceWritable = services.reduce((n, d) => n + (projectPolicy(db, d.project).service_writable_bytes ?? 0), 0);
   const newService = admitting.kind === 'service' ? admitting : null;
   // The check capacity kept free for post-deploy checks: while a service runs
@@ -194,6 +199,9 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   // cgroup than the one recorded cannot be accounted (D4 §9.2; E110 item 1;
   // the driver's ruling on slice 26, item A): no domain is admitted while
   // one is, a service's included.
+  if (unreadReservation) {
+    return hold(`the reservation of service domain ${unreadReservation.id} cannot be read; admission waits.`, { limit: 'host_reserve_memory', unreadable: 'reservation', domain: unreadReservation.id });
+  }
   const unaccounted = services.filter((d) => (d.status === 'allocated' || d.status === 'launched' || d.status === 'quarantined') && d.observation === 'unknown');
   if (unaccounted.length > 0) {
     return hold(`the reservation of ${unaccounted.length === 1 ? 'a service domain' : `${unaccounted.length} service domains`} cannot be accounted: the host reports its unit under another cgroup than the one recorded.`, {
@@ -221,7 +229,11 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
   const held: { domain: string; value: number | null }[] = [];
   if (real) {
     available = memAvailable();
-    for (const d of all) if (d.cgroup_path !== null) held.push({ domain: d.id, value: readNumber(join(d.cgroup_path, 'memory.current')) });
+    // A domain whose cgroup the engine has not made yet (claimed, its path
+    // set, the directory made at its preparation) holds nothing yet: its
+    // maximum is already counted. Only a made cgroup's missing or
+    // unreadable memory.current is unknown (the slice-37 review's M1).
+    for (const d of all) if (d.cgroup_path !== null) held.push({ domain: d.id, value: d.cgroup_inode === null && !existsSync(d.cgroup_path) ? 0 : readNumber(join(d.cgroup_path, 'memory.current')) });
     for (const b of boxes) held.push({ domain: b.cgroup, value: readNumber(join(b.cgroup, 'memory.current')) });
   } else {
     const sc = scripted!;

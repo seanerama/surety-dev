@@ -28,6 +28,7 @@ import {
   recordSnapshot,
   recordWorkspaceMetadata,
 } from './transitions/accept.js';
+import { deferralRefsInvalidForRun } from '../plan/deferral.js';
 import { integrityFacts, recordIntegrity, registryFacts } from './transitions/integrity.js';
 import {
   blockOperation,
@@ -266,6 +267,7 @@ import {
   requestChecks,
   runnerQualification,
   setCheckRunner,
+  checkProfilesNow,
   treeInUse,
   treeHeld,
   recordLinkLog,
@@ -426,6 +428,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'scheduler.candidates': (d) => dispatchCandidates(d),
   'scheduler.projects': (d) => projectIds(d),
   'integrity.registry': (d, a: { project: string }) => registryFacts(d, a),
+  'deferral.refs_invalid': (d, a) => deferralRefsInvalidForRun(d, a),
+  'checks.profiles_now': (d) => checkProfilesNow(d),
   // D1 §8.1 step 4: the project's day limits, read before select (throws on a failed read).
   // D2 §3.7; K2: whether the envelope holds a role domain of the project now.
   'scheduler.envelope_holds': (d, a: { project: string; workItem: string }) => envelopeHoldsDispatch(d, a),

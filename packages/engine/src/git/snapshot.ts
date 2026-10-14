@@ -284,6 +284,13 @@ export async function validateOutside(args: {
   moving: Record<string, string[]>;
   others: OtherCheckout[];
   scratch: string;
+  // What the engine expects of its registered refs, read from the store
+  // (the slice-37 review's S1): called just before and just after the refs
+  // are read, so a ref an engine-journaled operation moves meanwhile (an
+  // integration of another run of the project, D6 K2) is never a
+  // violation; an out-of-band move still is. Without it, `registry` and
+  // `moving` are taken as they were given.
+  refFacts?: () => Promise<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>;
 }): Promise<Violation | null> {
   const { repo, path, metadata } = args;
   const reject = (text: string): Violation => ({ klass: 'ref_violation', text });
@@ -297,13 +304,24 @@ export async function validateOutside(args: {
   if (contentHash(join(path, '.git')) !== createHash('sha256').update(metadata.gitlink).digest('hex')) return reject(`the workspace's .git file was changed`);
   if (contentHash(join(repo, '.git', 'config')) !== metadata.config) return reject(`the repository's configuration was changed`);
   if (contentHash(join(repo, '.git', 'hooks')) !== metadata.hooks) return reject(`the repository's hooks directory was changed`);
+  const before = args.refFacts ? await args.refFacts() : { registry: args.registry, moving: args.moving };
   const refs = await readAllRefs(repoContext(repo));
   if (refs === null) return reject(`the repository's refs cannot be read`);
-  for (const row of args.registry) {
-    const found = refs.get(row.ref) ?? null;
-    if (found === row.expected_oid) continue;
-    if (found !== null && (args.moving[row.ref] ?? []).includes(found)) continue;
-    return reject(`the registered ref ${row.ref} is ${found === null ? 'gone' : `at ${found}`}, not at ${row.expected_oid}`);
+  const after = args.refFacts ? await args.refFacts() : before;
+  const expected = new Map<string, Set<string>>();
+  for (const facts of [before, after]) {
+    for (const row of facts.registry) {
+      const allowed = expected.get(row.ref) ?? new Set<string>();
+      allowed.add(row.expected_oid);
+      for (const oid of facts.moving[row.ref] ?? []) allowed.add(oid);
+      expected.set(row.ref, allowed);
+    }
+  }
+  for (const [ref, allowed] of expected) {
+    const found = refs.get(ref) ?? null;
+    if (found !== null && allowed.has(found)) continue;
+    const now = after.registry.find((r) => r.ref === ref) ?? before.registry.find((r) => r.ref === ref);
+    return reject(`the registered ref ${ref} is ${found === null ? 'gone' : `at ${found}`}, not at ${now?.expected_oid ?? [...allowed].join(' or ')}`);
   }
   for (const other of args.others) {
     const ctxOther = other.adminDir ? worktreeContext(repo, other.adminDir, other.path) : repoContext(other.path);

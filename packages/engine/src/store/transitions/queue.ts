@@ -9,6 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
+import { recordAuthoringPending } from '../../plan/deferral.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { inConformancePhase } from '../../adopt/conformance.js';
 import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
@@ -433,6 +434,11 @@ function applyBuildFirst(tx: Tx, d: DecisionRow, item: WorkRow, e: BuildFirst): 
   const ready = tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ? AND "authoring_ready_at" IS NULL').run(tx.at, d.id, e.binding.phase_plan).changes;
   if (ready > 0) tx.emit('phase.authoring_ready', { project: item.project, phase_plan: e.binding.phase_plan }, { decision: d.id, exception: 'build_first', reason: e.reason, review: e.review, binding: e.binding });
   transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'build_first' });
+  // The authoring still owed (the slice-37 review's M8): an `authoring_pending`
+  // obligation of the plan, whose follow-up check_authoring the engine
+  // raises once the plan's stages have integrated (plan/deferral.ts), so
+  // AUTHORING_INCOMPLETE clears by authoring.
+  recordAuthoringPending(tx, { project: item.project, phase_plan: e.binding.phase_plan, decision: d.id });
   recordMetMilestones(tx, item.project);
 }
 
