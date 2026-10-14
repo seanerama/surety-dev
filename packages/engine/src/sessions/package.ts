@@ -38,6 +38,9 @@ export interface SessionContextFacts {
   approved: { name: string; blob: string; what: string }[];
   // D6 §8.2: an adopted project's sessions run in retrofit mode.
   retrofit?: { pinned_revision: string; mode: string | null; paths: string[]; total: number | { unknown: string } } | null;
+  // The Architect's: what its plan must name in `prepared_against`
+  // (plan/bundle.ts preparedAgainstFacts); null when it cannot be read.
+  prepared_against?: import('../plan/bundle.js').PreparedAgainstFacts | null;
 }
 
 // D6 §8.2 (K10; B10; SEAM.md §381): retrofit mode, a package variant, not a
@@ -76,7 +79,7 @@ const TASK: Record<string, string> = {
 // product (row M442; src/packages/reads.ts): the Spec Writer's and the
 // Architect's, each with its retrofit variant; Vision's identity block is
 // in its task.
-export function sessionReads(facts: Pick<SessionContextFacts, 'role' | 'retrofit'>): { pkg: PackageName | null; elements: ReadsElement[] } {
+export function sessionReads(facts: Pick<SessionContextFacts, 'role' | 'retrofit' | 'prepared_against'>): { pkg: PackageName | null; elements: ReadsElement[] } {
   const retrofit = facts.retrofit !== null && facts.retrofit !== undefined;
   if (facts.role === 'spec_writer') {
     const pkg: PackageName = retrofit ? 'spec_writer_retrofit' : 'spec_writer';
@@ -84,7 +87,7 @@ export function sessionReads(facts: Pick<SessionContextFacts, 'role' | 'retrofit
   }
   if (facts.role === 'architect') {
     const pkg: PackageName = retrofit ? 'architect_retrofit' : 'architect';
-    return { pkg, elements: statedElements(pkg, architectElements({ retrofit })) };
+    return { pkg, elements: statedElements(pkg, architectElements({ retrofit, prepared_against: facts.prepared_against ?? null, kind: 'session' })) };
   }
   return { pkg: null, elements: [] };
 }

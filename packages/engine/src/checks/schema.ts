@@ -65,6 +65,8 @@ export const SENSITIVE_AREA_NAMES: Readonly<Record<string, string>> = Object.fre
 // Kinds an acceptance-origin check covers criteria with (D3 §1.3).
 export const COVERING_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
 export const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];
+// A definition's `requires` values (D4 §5.1).
+export const REQUIRES_VALUES = ['environment', 'artifact_digest'] as const;
 export const SYSTEM_DIRS = ['/usr', '/bin', '/lib', '/lib64'];
 // The variables the engine sets in a check's environment (D3 §2.3); a
 // definition or the governed env may name none of them, nor any SURETY_ one.
@@ -647,7 +649,7 @@ export function parseDefinition(file: string, stem: string, text: string, govern
     if (!Array.isArray(v.requires)) e.at('/requires', 'invalid_value');
     else
       v.requires.forEach((x, n) => {
-        if (x !== 'environment' && x !== 'artifact_digest') e.at(`/requires/${n}`, 'invalid_value');
+        if (!(REQUIRES_VALUES as readonly unknown[]).includes(x)) e.at(`/requires/${n}`, 'invalid_value');
         else if (requires.includes(x)) e.at(`/requires/${n}`, 'duplicate_entry');
         else requires.push(x);
       });

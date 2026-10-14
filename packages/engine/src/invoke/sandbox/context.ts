@@ -109,7 +109,7 @@ export function environmentText(envs: NonNullable<ContextFacts['environments']>)
 // (row M442; src/packages/reads.ts): the role package by the run's role and
 // work, its elements less any the test seam omits. A qualification attempt
 // states none.
-export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'>, facts: ContextFacts | null): { pkg: PackageName | null; elements: ReadsElement[] } {
+export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt' | 'base_revision'>, facts: ContextFacts | null): { pkg: PackageName | null; elements: ReadsElement[] } {
   if (claim.attempt || facts === null) return { pkg: null, elements: [] };
   const retrofit = facts.adopted === true;
   const pick = (pkg: PackageName, built: Parameters<typeof statedElements>[1]) => ({ pkg, elements: statedElements(pkg, built) });
@@ -117,7 +117,13 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
     return pick(retrofit ? 'verifier_authoring_retrofit' : 'verifier_authoring', verifierElements(facts.check_writing ?? null, { authoring: true, retrofit }));
   }
   if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', verifierElements(facts.check_writing, { authoring: false, retrofit }));
-  if (claim.role === 'architect' && facts.replan) return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit }));
+  if (claim.role === 'architect' && facts.replan) {
+    // A replan's plan names the approved versions and the head it started
+    // from (plan/bundle.ts replanBaseline): from its package's generation.
+    const g = facts.replan.generation;
+    const prepared = g.spec_revision && g.architecture_revision && g.roadmap_revision ? { spec_version: g.spec_revision.version, architecture_version: g.architecture_revision.version, roadmap_version: g.roadmap_revision.version, revision: claim.base_revision } : null;
+    return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit, prepared_against: prepared, kind: 'replan' }));
+  }
   if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
   if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', specElements({ retrofit }));
   if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));

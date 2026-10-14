@@ -189,7 +189,7 @@ test("a check_correction Verifier's package: the roots, the definitions director
     if (ELEMENT_MEMBERS.includes(m)) assert.ok(!prompt.includes(`- \`"${m}"\` (`), `the member "${m}" is not restated in prose`);
     else assert.ok(prompt.includes(`- \`"${m}"\` (`), `the member "${m}"`);
   }
-  assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy'], 'the correction package states the six check elements');
+  assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'], 'the correction package states the check elements');
   assert.equal(blocks['verifier.kinds'].member, 'kind');
   assert.equal(blocks['verifier.covers'].criteria, 'criteria');
   assert.deepEqual(blocks['verifier.gate_kinds_floor'], { tier: 'T1', floor: ['acceptance', 'smoke'], gate_kinds: ['stage', 'alpha_authorize'] });
@@ -414,7 +414,9 @@ test("a check_correction Verifier in a project with an environment: the kinds, t
   const blocks = readsBlocks(prompt);
   assert.deepEqual(blocks['verifier.post_deploy'], { kinds: ['post_deploy_behavior', 'post_deploy_identity'], gate_kind: 'alpha_complete', required: 'post_deploy_behavior', variable: 'SURETY_TARGET_<NAME>', environments: [{ name: 'alpha', targets: ['app'] }] });
   assert.deepEqual(blocks['verifier.requires'], { member: 'requires', values: ['environment', 'artifact_digest'], kinds: ['post_deploy_behavior', 'post_deploy_identity'] });
-  assert.deepEqual(blocks['verifier.secrets'], { member: 'secrets', reference: 'deploy/<name>', variable: 'SURETY_SECRET_<NAME>', environments: [{ name: 'alpha', check_secrets: ['deploy/probe_key'] }] });
+  assert.deepEqual(blocks['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/probe_key'], variables: [{ ref: 'deploy/probe_key', variable: 'SURETY_SECRET_PROBE_KEY' }] }]);
+  assert.deepEqual(blocks['verifier.target_variables'].environments, [{ name: 'alpha', targets: [{ name: 'app', variable: 'SURETY_TARGET_APP' }] }]);
+  assert.equal(blocks['verifier.target_variables'].value_form, 'http://127.0.0.1:<port>');
   assert.ok(blocks['verifier.covers'].refused_on.includes('post_deploy_behavior'));
   assert.ok(prompt.includes('environment_unbound'));
   // The slice-30 review, minors 1 to 3: no `egress`, and how the check is required (prose no element states).
@@ -453,7 +455,7 @@ test('no environment, an environment with no configuration, an unreadable one, u
   ]);
   assert.match(some.prompt, /- Environment `broken`: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it/);
   assert.match(some.prompt, /- Environment `unconfigured`: it has no configuration/);
-  assert.deepEqual(readsBlocks(some.prompt)['verifier.secrets'].environments.find((e) => e.name === 'odd'), { name: 'odd', check_secrets: null }, 'unread secrets are null, never none');
+  assert.deepEqual(readsBlocks(some.prompt)['verifier.secrets'].environments.find((e) => e.name === 'odd'), { name: 'odd', check_secrets: null, variables: null }, 'unread secrets are null, never none');
   for (const facts of [undefined, null]) assert.match(deploymentChecksText({ environments: facts }).join('\n'), /could not be read here, so their target names are unknown: write no environment-bound check/);
 });
 

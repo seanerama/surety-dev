@@ -252,7 +252,7 @@ export interface PhasePlanFile {
 }
 
 export const PLAN_FILE = /^\.surety\/phases\/phase-([1-9][0-9]*)\.json$/;
-export const planPath = (phase: number): string => `.surety/phases/phase-${phase}.json`;
+export const planPath = (phase: number | '<n>'): string => `.surety/phases/phase-${phase}.json`;
 
 export function parsePhasePlan(text: string, file: string, phase: number): Parsed<PhasePlanFile> {
   const p = parseJsonObject(file, text);
@@ -341,6 +341,7 @@ export interface AdrFrontMatter {
 }
 
 export const ADR_FILE = /^\.surety\/adrs\/(ADR-[0-9]{3,})\.md$/;
+export const adrPath = (key: string): string => `.surety/adrs/${key}.md`;
 export const ADR_STATUSES = ['proposed', 'accepted', 'superseded'];
 export const ADR_FIELDS = { fields: ['key', 'status', 'supersedes', 'reconstructed'], required: ['key', 'status'] } as const;
 export const ADR_HEADINGS = ['Context', 'Decision', 'Consequences'] as const;

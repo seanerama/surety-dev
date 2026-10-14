@@ -21,15 +21,17 @@
 
 import { ADOPTED_TEST_FIELDS, BOUNDARY_DISPOSITIONS } from '../adopt/boundary.js';
 import { AUTHORING_RESULT_FIELDS, type CheckWritingFacts, DEPLOYMENT_GATE } from '../checks/guide.js';
-import { INDEX_COLUMNS, INDEX_ORIGIN_COLUMN, ORIGINS } from '../checks/requirement-index.js';
+import { INDEX_COLUMNS, INDEX_CRITERION, INDEX_KEY, INDEX_LIST_SEPARATOR, INDEX_NONE, INDEX_ORIGIN_COLUMN, INDEX_PHASE, INDEX_SEPARATOR_CELL, ORIGINS } from '../checks/requirement-index.js';
+import { SECRET_NAME_RULE, SECRET_PREFIX, TARGET_NAME_RULE, TARGET_PREFIX, checkSecretVariable, targetValue, targetVariable } from '../checks/variables.js';
 import { dirname } from 'node:path';
 
-import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, DIRECT_RUNNER_MEMBERS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
+import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, DIRECT_RUNNER_MEMBERS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
 import { KIND_INVENTORY, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS } from '../plan/check.js';
-import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE } from '../plan/schemas.js';
+import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE, adrPath, planPath } from '../plan/schemas.js';
+import type { PreparedAgainstFacts } from '../plan/bundle.js';
 import { QUESTION_BLOCKER_CODES } from '../spec/keys.js';
-import { CLAIMS_COLUMNS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
+import { CLAIMS_COLUMNS, ENVIRONMENT_FIELDS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
 import { seamPackageOmitted } from '../testing/seam.js';
 import { ELEMENT_TITLES, type ElementId, PACKAGE_ELEMENTS, type PackageName } from './elements.js';
 
@@ -125,7 +127,7 @@ export function specElements(opts: { retrofit: boolean }): Built {
         section: section(SPEC_SECTIONS.environments, 'Environments'),
         heading: '### <name>',
         line: '- **<Field>:** <value>',
-        fields: ['Purpose', 'Verified means', 'Target', 'Runtime and start command', 'Port', 'Excluded from the artifact', 'Required post-deploy behaviour check', 'Stable arguments'],
+        fields: [...ENVIRONMENT_FIELDS],
       },
     },
     'spec_writer.sensitive_areas': {
@@ -137,6 +139,23 @@ export function specElements(opts: { retrofit: boolean }): Built {
       id: 'spec_writer.tier_table',
       gloss: "The header's Tier is one of these; each requires checks of its kinds at every gate.",
       data: { tiers: (Object.keys(KIND_INVENTORY) as Tier[]).map((tier) => ({ tier, name: TIER_NAME[tier], kinds: [...KIND_INVENTORY[tier]] })) },
+    },
+    'spec_writer.index_cells': {
+      id: 'spec_writer.index_cells',
+      gloss: "Each row's cells, as the engine parses them; the second line of the table is the separator row.",
+      data: {
+        key: 'R<n>',
+        key_pattern: INDEX_KEY.source,
+        phase: '<integer>',
+        phase_pattern: INDEX_PHASE.source,
+        phase_empty: 'an empty cell is a requirement with no phase hint',
+        sensitive_areas: `<ids, ${INDEX_LIST_SEPARATOR === ',' ? 'comma' : INDEX_LIST_SEPARATOR}-separated, or ${INDEX_NONE}>`,
+        criteria: `<R<n>.<m>, ${INDEX_LIST_SEPARATOR === ',' ? 'comma' : INDEX_LIST_SEPARATOR}-separated; empty for a marked requirement>`,
+        criterion_pattern: INDEX_CRITERION.source,
+        list_separator: `${INDEX_LIST_SEPARATOR} `,
+        origin: ORIGINS.join(' | '),
+        separator_row: { rule: 'the line after the header, one cell per column, each cell three or more - (optionally : at either end)', cell_pattern: INDEX_SEPARATOR_CELL.source },
+      },
     },
     'spec_writer.approval_blockers': {
       id: 'spec_writer.approval_blockers',
@@ -263,15 +282,15 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
 };
 const RETROFIT_REASONS: readonly string[] = ['PLAN_DESCRIPTIVE_MODULE_TOUCHED', 'PLAN_CONFORMANCE_MISPLACED'];
 
-export function architectElements(opts: { retrofit: boolean }): Built {
+export function architectElements(opts: { retrofit: boolean; prepared_against?: PreparedAgainstFacts | Omit<PreparedAgainstFacts, 'roadmap_version_if_changed'> | null; kind?: 'session' | 'replan' }): Built {
   return {
     'architect.schema.modules': { id: 'architect.schema.modules', gloss: 'The module map: JSON in exactly this schema; an unknown field is refused by name.', data: { file: MODULES_FILE, schema: MODULE_MAP_SCHEMA } },
     'architect.schema.roadmap': { id: 'architect.schema.roadmap', gloss: 'The roadmap: every approved requirement in exactly one phase.', data: { file: ROADMAP_FILE, schema: ROADMAP_SCHEMA } },
-    'architect.schema.phase_plan': { id: 'architect.schema.phase_plan', gloss: 'The plan of the next phase only.', data: { file: '.surety/phases/phase-<n>.json', schema: PHASE_PLAN_SCHEMA } },
+    'architect.schema.phase_plan': { id: 'architect.schema.phase_plan', gloss: 'The plan of the next phase only.', data: { file: planPath('<n>'), schema: PHASE_PLAN_SCHEMA } },
     'architect.schema.adr': {
       id: 'architect.schema.adr',
       gloss: 'One decision per file: front matter between two `---` lines, then the three headings.',
-      data: { file: '.surety/adrs/ADR-<nnn>.md', front_matter: ADR_FRONT_MATTER_SCHEMA, headings: [...ADR_HEADINGS] },
+      data: { file: adrPath('ADR-<nnn>'), front_matter: ADR_FRONT_MATTER_SCHEMA, headings: [...ADR_HEADINGS] },
     },
     'architect.plan_reasons': {
       id: 'architect.plan_reasons',
@@ -295,6 +314,24 @@ export function architectElements(opts: { retrofit: boolean }): Built {
           },
         }
       : null,
+    'architect.prepared_against':
+      opts.prepared_against === undefined
+        ? null
+        : {
+            id: 'architect.prepared_against',
+            gloss: "The plan check compares the plan's prepared_against, and roadmap.json's version and architecture_version, with these; any difference refuses the plan (PLAN_STALE_BASELINE).",
+            data: {
+              rule:
+                (opts.kind ?? 'session') === 'replan'
+                  ? "A replan's plan names the approved specification's version, the approved architecture and roadmap versions, and revision, the commit your workspace started from; roadmap.json keeps the approved version unless you revise it, which goes to the owner."
+                  : "A session's plan names the approved specification's version; the architecture version this bundle allocates; the roadmap version (the approved one, or the next if you change roadmap.json, which then carries that version and this architecture version); and revision, the commit your session started from.",
+              facts:
+                opts.prepared_against === null
+                  ? null
+                  : { spec_version: opts.prepared_against.spec_version, architecture_version: opts.prepared_against.architecture_version, roadmap_version: opts.prepared_against.roadmap_version, revision: opts.prepared_against.revision },
+              ...(opts.prepared_against && 'roadmap_version_if_changed' in opts.prepared_against ? { roadmap_version_if_changed: opts.prepared_against.roadmap_version_if_changed } : {}),
+            },
+          },
     'architect.routing': {
       id: 'architect.routing',
       gloss: "A plan that passes the check is registered by the engine when nothing it compares changed; otherwise the owner decides.",
@@ -338,7 +375,7 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     'verifier.requires': {
       id: 'verifier.requires',
       gloss: 'A definition of a post-deploy kind requires the environment and the artifact digest; no other kind takes `requires`.',
-      data: { member: 'requires', values: ['environment', 'artifact_digest'], kinds: [...POST_DEPLOY_ORDER] },
+      data: { member: 'requires', values: [...REQUIRES_VALUES], kinds: [...POST_DEPLOY_ORDER] },
     },
     'verifier.covers': {
       id: 'verifier.covers',
@@ -354,12 +391,28 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     'verifier.secrets': {
       id: 'verifier.secrets',
       gloss: "`secrets` names deployment secret references an environment allows its checks, only on a check that requires `environment`; never a value.",
-      data: { member: 'secrets', reference: 'deploy/<name>', variable: 'SURETY_SECRET_<NAME>', environments: envs === null ? null : envs.map((e) => ({ name: e.name, check_secrets: e.check_secrets })) },
+      data: {
+        member: 'secrets',
+        reference: 'deploy/<name>',
+        variable: `${SECRET_PREFIX}<NAME>`,
+        name_rule: SECRET_NAME_RULE,
+        environments: envs === null ? null : envs.map((e) => ({ name: e.name, check_secrets: e.check_secrets, variables: e.check_secrets === null ? null : e.check_secrets.map((ref) => ({ ref, variable: checkSecretVariable(ref) })) })),
+      },
     },
     'verifier.post_deploy': {
       id: 'verifier.post_deploy',
       gloss: `The ${DEPLOYMENT_GATE} gate needs a required ${BEHAVIOR} check exercising a user operation through the target's variable; it lists only ${DEPLOYMENT_GATE} and covers nothing.`,
-      data: { kinds: [...POST_DEPLOY_ORDER], gate_kind: DEPLOYMENT_GATE, required: BEHAVIOR, variable: 'SURETY_TARGET_<NAME>', environments: envs === null ? null : envs.map((e) => ({ name: e.name, targets: e.targets })) },
+      data: { kinds: [...POST_DEPLOY_ORDER], gate_kind: DEPLOYMENT_GATE, required: BEHAVIOR, variable: `${TARGET_PREFIX}<NAME>`, environments: envs === null ? null : envs.map((e) => ({ name: e.name, targets: e.targets })) },
+    },
+  };
+  out['verifier.target_variables'] = {
+    id: 'verifier.target_variables',
+    gloss: "In a deployment's verification each target of the environment reaches the check as a variable holding the service's address; the check asks the service through it.",
+    data: {
+      variable: `${TARGET_PREFIX}<NAME>`,
+      name_rule: TARGET_NAME_RULE,
+      value_form: targetValue('<port>'),
+      environments: envs === null ? null : envs.map((e) => ({ name: e.name, targets: e.targets === null ? null : e.targets.map((t) => ({ name: t, variable: targetVariable(t) })) })),
     },
   };
   if (opts.authoring) {

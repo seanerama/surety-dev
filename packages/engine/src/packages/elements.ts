@@ -16,9 +16,10 @@ const SPEC_FORMS = [
   'spec_writer.environment_fields',
   'spec_writer.sensitive_areas',
   'spec_writer.tier_table',
+  'spec_writer.index_cells',
 ] as const;
-const ARCHITECT = ['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing'] as const;
-const VERIFIER = ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy'] as const;
+const ARCHITECT = ['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing', 'architect.prepared_against'] as const;
+const VERIFIER = ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'] as const;
 
 export const PACKAGE_ELEMENTS = Object.freeze({
   // The Spec Writer's session, and its retrofit variant.
@@ -57,6 +58,7 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'spec_writer.environment_fields': 'Environments (section 7)',
   'spec_writer.sensitive_areas': 'The closed list of sensitive areas',
   'spec_writer.tier_table': 'The tiers',
+  'spec_writer.index_cells': "The requirement index's cells",
   'spec_writer.approval_blockers': "What blocks the owner's approval",
   'spec_writer.claims_table': 'Claims and reality (section 12)',
   'spec_writer.change_result': 'Your result: the changes you propose',
@@ -66,6 +68,7 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'architect.schema.adr': 'An ADR (B.6)',
   'architect.plan_reasons': 'The mechanical plan check',
   'architect.routing': 'How a plan is routed',
+  'architect.prepared_against': "What a plan's prepared_against names",
   'architect.spec_change_requests': 'Asking for the criteria of descriptive requirements',
   'verifier.kinds': "A check's kind",
   'verifier.gate_kinds_floor': "A check's gate kinds and the tier's kind floor",
@@ -73,6 +76,7 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'verifier.covers': 'What a check covers',
   'verifier.secrets': "A check's secrets",
   'verifier.post_deploy': 'Checks against a deployed environment',
+  'verifier.target_variables': "The target variables a deployment's checks are given",
   'verifier.authoring_result': 'Your result: governed changes and deferrals',
   'verifier.toolchain': "The governed file and the toolchain your checks run under",
   'verifier.adoption_rule': 'Adopting an existing test',

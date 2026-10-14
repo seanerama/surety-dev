@@ -173,7 +173,7 @@ test('the correction package states the six check elements and no governed chang
   assert.equal(c.schema.properties.governed_changes, undefined);
   assert.deepEqual(c.reads['verifier.gate_kinds_floor'], { tier: 'T1', floor: KIND_INVENTORY.T1, gate_kinds: ['stage', 'alpha_authorize'] });
   assert.deepEqual(c.reads['verifier.post_deploy'].environments, [{ name: 'alpha', targets: ['app'] }]);
-  assert.deepEqual(c.reads['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/ref'] }]);
+  assert.deepEqual(c.reads['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/ref'], variables: [{ ref: 'deploy/ref', variable: 'SURETY_SECRET_REF' }] }]);
   assert.deepEqual(c.reads['verifier.covers'].refused_on, ['smoke', 'security_lint', 'post_deploy_identity', 'post_deploy_behavior']);
   const a = oneShot(t, 'verifier', 'check_authoring', { check_writing: writing, authoring });
   assert.equal(a.manifest.package, 'verifier_authoring');
@@ -373,4 +373,74 @@ test("the phase Verifier's package states its sign-off and its schema takes it; 
   const o = oneShot(t, 'verifier', 'phase_verification', { phase, criteria: [] });
   assert.equal(o.schema.properties.signoffs, undefined, 'omitted: no sign-off field');
   assert.equal(o.reads['verifier.phase_signoff'], undefined);
+});
+
+// The slice-38 review: S1 (the target variables), S2 (prepared_against), M5
+// (the index's cells), the first close's refusal; each from the engine's
+// own code.
+const { targetVariable, checkSecretVariable } = await import(join(dist, 'checks', 'variables.js'));
+const { parseRequirementIndex } = await import(join(dist, 'checks', 'requirement-index.js'));
+const { preparedAgainstFacts, bundleBaselineFacts } = await import(join(dist, 'plan', 'bundle.js'));
+const { firstPlanMissing } = await import(join(dist, 'sessions', 'driver.js'));
+
+test("S1: both Verifier packages state each target's variable and value form, and each secret's variable, from the runner's own naming", (t) => {
+  const facts = { ...writing, environments: [{ name: 'alpha', targets: ['app', 'web-1'], check_secrets: ['deploy/probe_key'], runtime: null }, { name: 'beta', targets: null, check_secrets: null, runtime: null }] };
+  for (const [kind, extra] of [['check_correction', {}], ['check_authoring', { authoring }]]) {
+    const p = oneShot(t, 'verifier', kind, { check_writing: facts, ...extra });
+    const tv = p.reads['verifier.target_variables'];
+    assert.ok(p.manifest.reads.includes('verifier.target_variables'), kind);
+    assert.equal(tv.variable, 'SURETY_TARGET_<NAME>');
+    assert.equal(tv.value_form, 'http://127.0.0.1:<port>');
+    assert.match(tv.name_rule, /upper-cased/);
+    assert.deepEqual(tv.environments, [{ name: 'alpha', targets: [{ name: 'app', variable: targetVariable('app') }, { name: 'web-1', variable: targetVariable('web-1') }] }, { name: 'beta', targets: null }]);
+    assert.equal(tv.environments[0].targets[1].variable, 'SURETY_TARGET_WEB_1');
+    assert.deepEqual(p.reads['verifier.secrets'].environments[0].variables, [{ ref: 'deploy/probe_key', variable: checkSecretVariable('deploy/probe_key') }]);
+    assert.equal(p.reads['verifier.secrets'].environments[1].variables, null, 'unread secrets: unknown, never none');
+  }
+});
+
+test("S2: the Architect's session package states prepared_against's rule and the values the check compares with; the replan's names the approved ones", (t) => {
+  const dir = scratch(t);
+  writeSessionPackage(dir, { run: 'run_s' }, { run: 'run_s', project: 'prj_1', role: 'architect', turn: 1, paths: [], transcript: [], findings: [], approved: [], retrofit: null, prepared_against: { spec_version: 1, architecture_version: 1, roadmap_version: 1, roadmap_version_if_changed: 1, revision: 'c'.repeat(40) } });
+  const b = blocks(read(dir, 'prompt.md'))['architect.prepared_against'];
+  assert.deepEqual(b.facts, { spec_version: 1, architecture_version: 1, roadmap_version: 1, revision: 'c'.repeat(40) });
+  assert.match(b.rule, /revision, the commit your session started from/);
+  const replan = { completed_plan: null, open_plan: null, generation: { spec_revision: { version: 2 }, architecture_revision: { version: 1 }, roadmap_revision: { version: 3 }, plan: null, spec_evidence_generation: 2 }, trigger: {}, trigger_subject: {}, refusal: null };
+  const r = oneShot(t, 'architect', 'replan', { replan });
+  assert.deepEqual(r.reads['architect.prepared_against'].facts, { spec_version: 2, architecture_version: 1, roadmap_version: 3, revision: 'b'.repeat(40) });
+  // The session's facts are the check's own (bundleBaselineFacts), never computed apart.
+  const db = plainStore(t);
+  db.prepare(`INSERT INTO spec_revisions (id, created_at, project, version, git_path, git_blob, semantic_digest, approved_by, approved_at) VALUES ('spec_1', ?, 'prj_1', 1, '.surety/spec/spec.md', 'blob', 'd', 'sean', ?)`).run(AT, AT);
+  const head = 'e'.repeat(40);
+  const f = preparedAgainstFacts(db, 'prj_1', head);
+  const base = bundleBaselineFacts(db, { project: 'prj_1', head, withPlan: true });
+  assert.deepEqual(f, { spec_version: base.baseline.spec_version, architecture_version: base.baseline.architecture_version, roadmap_version: base.baseline.roadmap_version, roadmap_version_if_changed: 1, revision: base.baseline.head });
+  assert.deepEqual([f.spec_version, f.architecture_version, f.roadmap_version], [1, 1, 1], 'a first bundle: version 1 of each');
+});
+
+test("M5: an index written from spec_writer.index_cells and index_columns parses; its patterns are the parser's", (t) => {
+  const s = session(t, 'spec_writer');
+  const cells = s.reads['spec_writer.index_cells'];
+  const cols = s.reads['spec_writer.index_columns'].columns;
+  assert.ok(new RegExp(cells.separator_row.cell_pattern).test('---'));
+  const sep = `|${cols.map(() => '---').join('|')}|`;
+  const join = (xs) => xs.join(cells.list_separator);
+  const table = [`| ${cols.join(' | ')} |`, sep, `| R1 | A | 1 | ${join(['authentication', 'personal_data'])} | ${join(['R1.1', 'R1.2'])} | intended |`, '| R2 | B |  | none |  | observed |'].join('\n');
+  const parsed = parseRequirementIndex(table);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed));
+  assert.deepEqual(parsed.rows.map((r) => [r.key, r.phase, r.criteria, r.origin]), [['R1', 1, ['R1.1', 'R1.2'], 'intended'], ['R2', null, [], 'observed']]);
+  assert.ok(new RegExp(cells.key_pattern).test('R12') && !new RegExp(cells.key_pattern).test('R0'));
+  assert.ok(new RegExp(cells.phase_pattern).test('3') && !new RegExp(cells.phase_pattern).test('phase 3'));
+  assert.ok(new RegExp(cells.criterion_pattern).test('R1.2'));
+});
+
+test('the first Architect close without the first phase plan is refused, naming the plan; a later one may close without a plan', () => {
+  assert.deepEqual(firstPlanMissing([], { architecture_revision: null, phase: 1 }), {
+    code: 'machine_file_invalid',
+    path: '.surety/phases/phase-1.json',
+    subject: { path: '.surety/phases/phase-1.json', field: null },
+    message: ".surety/phases/phase-1.json is missing: the first architecture is approved with the first phase's plan, in one bundle",
+  });
+  assert.equal(firstPlanMissing([1], { architecture_revision: null, phase: 1 }), null, 'the first bundle with its plan');
+  assert.equal(firstPlanMissing([], { architecture_revision: 'arch_1', phase: 2 }), null, 'a later session on an approved architecture');
 });
