@@ -110,7 +110,13 @@ export const HOME_MAX_BYTES = 56;
 // about 5 and 3 USD. A session turn with unknown usage keeps D1 §13.3's
 // fail-closed behaviour (it reserves the run allowance and the session
 // closes; Sean, 2026-10-14): the report says so plainly if it ever happens.
-export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 2_000_000, M443_day_usd: 30, M444_day_usd: 20 });
+// budget_day_unknown_tokens at least the run cap, twice it (the driver's
+// ruling under Sean's looser caps, 2026-10-14, after rehearsal 4): a run
+// whose usage is incomplete reserves the rest of its cap as unknown, and a
+// day bound below the cap refused every other item for the day.
+export const JOURNEY_BUDGET = Object.freeze({ budget_run_billable_tokens: 2_000_000, budget_day_unknown_tokens: 4_000_000, M443_day_usd: 30, M444_day_usd: 20 });
+// How long a step's end waits for its project's runs in flight to end before it stops the engine.
+export const DRAIN_MINUTES = 45;
 export const SECRET_REF = 'deploy/ref_secret';
 export const SECRET_VAR = 'REF_SECRET';
 export const STEP_HOURS = 4;
@@ -135,7 +141,7 @@ export function costStatement(row) {
       ? '  Three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet (two check authorings, four Builders, four Verifiers, four Reviewers, two phase verifications, one replan, one Spec Writer change run, plus repairs).'
       : '  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks\' roles).',
     `  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).`,
-    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier (caps of Sean's choice, 2026-10-14; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.`,
+    `At most: each run (a session is one run) is bounded by ${JOURNEY_BUDGET.budget_run_billable_tokens} billable tokens; the project's day limit of ${row === 'M443' ? JOURNEY_BUDGET.M443_day_usd : JOURNEY_BUDGET.M444_day_usd} USD in estimates stops it earlier, and its day bound on unknown usage is ${JOURNEY_BUDGET.budget_day_unknown_tokens} tokens, twice the run cap (caps of Sean's choice, 2026-10-14, the unknown-usage bound the driver's ruling under it; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.`,
     'An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.',
   ].join('\n');
 }
@@ -221,6 +227,38 @@ export function resuming(ctx) {
   return Object.entries(steps).some(([name, s]) => name !== currentStep && s?.status !== 'done');
 }
 
+// A step's end (the driver's ruling, 2026-10-14, after rehearsal 4): the
+// projects paused, then their runs in flight waited for (bounded by
+// DRAIN_MINUTES, ticking), so that no engine stops with a run in flight on
+// the in-order path; an idle open session is not in flight. Returns what it
+// waited for and what, if anything, was still live when the bound ran out.
+export async function drain(ctx, fx, projects) {
+  const ids = projects.filter(Boolean);
+  for (const p of ids) await fx.engine.post(`/v1/projects/${p}/pause`, {}).catch(() => null);
+  const live = () => ids.flatMap((p) => rows(fx.home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, p)).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle'));
+  const started = performance.now();
+  const first = live();
+  while (live().length > 0 && performance.now() - started < DRAIN_MINUTES * 60_000) {
+    for (const p of ids) await fx.engine.post(`/v1/projects/${p}/tick`, {}).catch(() => null);
+    await sleep(ctx.rehearsal ? 2_000 : 10_000);
+  }
+  return { paused: ids, waited_for: first.map((r) => ({ id: r.id, kind: r.kind, role: r.role })), waited_ms: Math.round(performance.now() - started), still_live: live().map((r) => ({ id: r.id, kind: r.kind, role: r.role, state: r.state })) };
+}
+
+// Work a recovery left `held` (D1 §15.3: a run in flight when an engine
+// stopped ends `recovered`, its item held, and nothing resumes it):
+// resumed through the owner's route (POST …/work/:w/resume) as the runner's
+// setup, printed and recorded.
+export async function resumeHeld(ctx, row, fx, project) {
+  const held = rows(fx.home, `SELECT "id", "kind" FROM "work_items" WHERE "project" = ? AND "status" = 'held'`, project);
+  const out = [];
+  for (const w of held) {
+    const res = await fx.engine.post(`/v1/projects/${project}/work/${w.id}/resume`, {});
+    out.push({ work_item: w.id, kind: w.kind, status: res.status });
+  }
+  return out.length > 0 ? setupNote(ctx, row, `resume_${Date.now()}`, `the work a recovery left held, resumed (POST …/work/<w>/resume): ${out.map((w) => `${w.kind} ${w.work_item} → ${w.status}`).join(', ')}`, out) : null;
+}
+
 // A step on the run home's engine: the refusals before anything starts, the
 // project resumed if asked, and in `finally` the project paused before the
 // engine stops (BS5 §12). Refused, with nothing started: a loaded unit of
@@ -232,14 +270,22 @@ export async function onEngine(ctx, path, { projects = [], resume = null, teardo
   if (!teardown) refuseLoadedUnits(ctx, path);
   if (resuming(ctx)) refuseLeftovers(path, leftovers(homeOf(ctx), projects.filter(Boolean)), { evenIfPaused: resume !== null });
   const fx = await m5Engine(ctx, { production });
+  let drained = null;
   try {
     if (resume) {
+      const row = path.split(' ')[0];
+      const held = await resumeHeld(ctx, row, fx, resume);
+      if (held) observe(ctx, row, `held_resumed_${path.split(' ').slice(1).join('_')}`, held);
       const res = await fx.engine.post(`/v1/projects/${resume}/resume`, {});
       if (![200, 204, 409].includes(res.status)) notEstablished(path, 'the project could not be resumed', { status: res.status, text: res.text });
     }
-    return await fn(fx);
+    const value = await fn(fx);
+    drained = await drain(ctx, fx, projects);
+    if (value && typeof value === 'object' && !Array.isArray(value)) value.drained = drained;
+    return value;
   } finally {
-    for (const p of projects.filter(Boolean)) await fx.engine.post(`/v1/projects/${p}/pause`, {}).catch(() => null);
+    if (drained === null) drained = await drain(ctx, fx, projects).catch((err) => ({ error: String(err?.message ?? err) }));
+    observe(ctx, path.split(' ')[0], `drained_${path.split(' ').slice(1).join('_') || 'step'}`, drained);
     await fx.engine.stop();
   }
 }
@@ -495,7 +541,8 @@ export function setupNote(ctx, row, key, what, detail) {
 export async function projectPolicy(ctx, row, fx, project, { widen = {}, dayUsd = REAL.dayVerifiedUsd.pathOne, ...extra } = {}) {
   const change = { ...realPolicy(dayUsd), ...ROLE_MODELS, backend_builder: 'claude', backend_verifier: 'claude', backend_reviewer: 'claude', backend_architect: 'claude', backend_spec_writer: 'claude', backend_vision: 'claude', ...extra };
   delete change.budget_run_billable_tokens;
-  const wide = { budget_run_billable_tokens: JOURNEY_BUDGET.budget_run_billable_tokens, ...widen };
+  delete change.budget_day_unknown_tokens;
+  const wide = { budget_run_billable_tokens: JOURNEY_BUDGET.budget_run_billable_tokens, budget_day_unknown_tokens: JOURNEY_BUDGET.budget_day_unknown_tokens, ...widen };
   const policyOf = async () => (await fx.engine.get(`/v1/projects/${project}/policy`)).body ?? {};
   const apply = async (body, what) => {
     const before = (await policyOf()).revision ?? 0;
@@ -742,6 +789,7 @@ export async function m5aPhase1(ctx) {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_phase1', { projects: [project] }, async (fx) => {
       const alpha = await alphaOnce(ctx, 'M443', fx, project);
+      await resumeHeld(ctx, 'M443', fx, project);
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const one_ = activePlanOf(fx.home, project, 1); const two = activePlanOf(fx.home, project, 2); return one_?.completed_at && two?.published_at ? { phase1: one_.id, phase2: two.id } : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 1 built, verified and complete, and phase 2 planned by the replan' });
       const out = { ...d, setup: alpha, stages: stagesOf(fx.home, project).map((s) => ({ number: s.number, status: s.status })), runs: runsOfProject(fx.home, project) };
@@ -794,6 +842,7 @@ export async function m5aPhase2(ctx) {
   if (resuming(ctx)) refuseLeftovers('M443 m5a_phase2', leftovers(homeOf(ctx), [project]), { evenIfPaused: true });
   const fx = await m5Engine(ctx);
   try {
+    await resumeHeld(ctx, 'M443', fx, project);
     await fx.engine.post(`/v1/projects/${project}/resume`, {});
     await step(ctx, 'm5a_phase2', async () => {
       const d = await drive(ctx, fx, project, () => activePlanOf(fx.home, project, 2)?.completed_at ?? undefined, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 2 built, verified and complete' });
@@ -803,7 +852,7 @@ export async function m5aPhase2(ctx) {
     });
     return await m5aAlpha(ctx, fx);
   } finally {
-    await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
+    observe(ctx, 'M443', `drained_${Date.now()}`, await drain(ctx, fx, [project]).catch((err) => ({ error: String(err?.message ?? err) })));
     await fx.engine.stop();
   }
 }
@@ -837,10 +886,11 @@ export async function m5aAlpha(ctx, given = null) {
   ownUnitsOnly(ctx, 'M443 m5a_alpha');
   const fx = await m5Engine(ctx);
   try {
+    await resumeHeld(ctx, 'M443', fx, project);
     await fx.engine.post(`/v1/projects/${project}/resume`, {});
     return await run(fx);
   } finally {
-    await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
+    observe(ctx, 'M443', `drained_${Date.now()}`, await drain(ctx, fx, [project]).catch((err) => ({ error: String(err?.message ?? err) })));
     await fx.engine.stop();
   }
 }
@@ -958,6 +1008,7 @@ export async function m5rConformance(ctx) {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_conformance', { projects: [project] }, async (fx) => {
       const alpha = await alphaOnce(ctx, 'M444', fx, project);
+      await resumeHeld(ctx, 'M444', fx, project);
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const d = await drive(ctx, fx, project, () => { const p = activePlanOf(fx.home, project, 1); const st = stagesOf(fx.home, project).find((x) => x.conformance === 1); return p?.completed_at || ['conformed', 'blocked'].includes(st?.conformance_state) ? { plan: p?.id, state: st?.conformance_state ?? null } : undefined; }, { expect: [...CORRECTIONS], what: 'the conformance phase: the authoring with adoption, the conformance stage against A, phase verification' });
       const proposals = rows(fx.home, 'SELECT "id", "status", "classified_change_kind" FROM "protected_proposals" WHERE "project" = ? ORDER BY "seq"', project);
@@ -979,6 +1030,7 @@ export async function m5rDeploy(ctx) {
     refuseLoadedUnits(ctx, 'M444 m5r_deploy');
     const fx = await m5Engine(ctx);
     try {
+      await resumeHeld(ctx, 'M444', fx, project);
       await fx.engine.post(`/v1/projects/${project}/resume`, {});
       const c1 = candidatesOf(fx.home, project)[0];
       if (!c1) notEstablished('m5r_deploy', 'no candidate c-1');
@@ -991,7 +1043,7 @@ export async function m5rDeploy(ctx) {
       try {
         await teardownStep(ctx, 'M444', 'm5r_teardown', project, fx);
       } finally {
-        await fx.engine.post(`/v1/projects/${project}/pause`, {}).catch(() => null);
+        observe(ctx, 'M444', `drained_${Date.now()}`, await drain(ctx, fx, [project]).catch((err) => ({ error: String(err?.message ?? err) })));
         await fx.engine.stop();
       }
     }
