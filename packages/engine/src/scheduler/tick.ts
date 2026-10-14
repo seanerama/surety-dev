@@ -38,7 +38,7 @@ import type { ProjectCandidates } from '../store/reads.js';
 import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
-import { pausePoint, seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
+import { pausePoint, seamNotifyChannel, seamPrepareError, seamStepDelay } from '../testing/seam.js';
 import { nowMs } from '../clock.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
@@ -217,20 +217,34 @@ export class Scheduler {
   private async alphaPolicy(project: string): Promise<void> {
     const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
     if (!due) return;
-    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
-    try {
-      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
-    } catch (err) {
-      // Refused at its preparation (the runtime, the artifact): recorded
-      // `not_issued` under its key with the reason, never made again (the
-      // 31b review's S6). Anything else is retried at a later tick.
+    // Refused at its preparation (the runtime, the artifact): recorded
+    // `not_issued` under its key with the reason, never made again (the 31b
+    // review's S6). Any other error is counted on the key's row and the key
+    // prepared again at most `deploy_auto_retries_max` more times, then
+    // `not_issued` `preparation_failed` (the driver's ruling Q4, slice 37):
+    // with ticks requested by events, an unbounded retry would be a hot loop.
+    const failed = async (err: unknown) => {
       if (err instanceof Refusal) {
         await this.rt.engine('deploy.policy_refused', { project, candidate: due.candidate, environment: due.environment, key: due.key, refusal: { code: err.code, reason: err.reason } });
         return;
       }
-      throw err;
+      log('alpha policy preparation', err, { project });
+      await this.rt.engine('deploy.policy_preparation_failed', { project, candidate: due.candidate, environment: due.environment, key: due.key, error: err instanceof Error ? err.message : String(err) });
+    };
+    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
+    try {
+      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    } catch (err) {
+      await failed(err);
+      return;
     }
     try {
+      // SEAM.md §433: an unexpected error after the sealing, before the
+      // request's transaction: the preparation's.
+      if (seamPrepareError(project)) {
+        await failed(new Error('an unexpected error in the preparation of the deploy request (injected)'));
+        return;
+      }
       await this.rt.engine('deploy.policy_request', prepared);
     } finally {
       await settleDeployment(this.rt, prepared);

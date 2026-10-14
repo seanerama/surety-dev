@@ -11,6 +11,7 @@ import { Refusal } from '../refusal.js';
 import { type IndexRow, parseRequirementIndex } from '../checks/requirement-index.js';
 import type { Discovery } from '../checks/discovery.js';
 import { type ScriptedStep, runnerQualification, scriptExecutionStep, setCheckRunner } from '../store/transitions/checks.js';
+import { defaultProfileMax, roleProfileOf } from '../store/transitions/settings.js';
 import { createProject } from '../store/transitions/project.js';
 import type { Baseline } from '../store/transitions/repo.js';
 import { allocateReceipt } from '../store/transitions/runs.js';
@@ -539,6 +540,7 @@ export interface EntryFixture {
   binary: Binary;
   evidence: string[];
   boundaries: { boundary: unknown; mechanism: unknown; evidence: 'own' | null; overshoot: unknown }[];
+  role_memory_max: number | null;
   entry: Omit<EntryInput, 'host_qualification' | 'qualification_attempt' | 'evidence' | 'enforceable_boundaries' | 'host_id' | 'help_sha256' | 'binary_path' | 'binary_sha256'>;
 }
 
@@ -548,6 +550,9 @@ const ENTRY_FIELDS = [
   // SEAM.md §391 (M5 slice 33): the entry as qualified for sessions, its
   // attempt then carrying a passing continuation canary.
   'session_qualified',
+  // SEAM.md §432 (M5 slice 37): the role profile's maximum it is qualified
+  // at; the engine's effective default role maximum when absent.
+  'role_memory_max',
 ];
 
 export function parseEntryFixture(body: unknown): EntryFixture {
@@ -583,8 +588,10 @@ export function parseEntryFixture(body: unknown): EntryFixture {
     });
   }
   const template = TEMPLATES[backend]!;
+  if (b.role_memory_max !== undefined && !(Number.isSafeInteger(b.role_memory_max) && (b.role_memory_max as number) > 0)) throw invalid('role_memory_max', 'must be a positive whole number of bytes');
   return {
     status,
+    role_memory_max: (b.role_memory_max as number | undefined) ?? null,
     binary: binaryOf(b),
     evidence,
     boundaries,
@@ -636,7 +643,7 @@ export function installTrustEntry(db: Database, actor: Actor, args: { body: Entr
     const hq = currentHq(tx.db);
     const attempt = writeAttempt(
       tx,
-      attemptInput({ backend: f.entry.backend, version: f.entry.version, model: f.entry.model, template_version: f.entry.template_version, binary: f.binary, fixture_project: null }, args.helpSha256, hq),
+      { ...attemptInput({ backend: f.entry.backend, version: f.entry.version, model: f.entry.model, template_version: f.entry.template_version, binary: f.binary, fixture_project: null }, args.helpSha256, hq), profile: roleProfileOf(f.role_memory_max ?? defaultProfileMax('role')) },
       FIXTURE_LABEL,
     );
     tx.db.prepare(`UPDATE "qualification_attempts" SET "status" = 'succeeded', "canaries" = ? WHERE "id" = ?`).run(

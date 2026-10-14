@@ -7,6 +7,8 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { followUpsDue } from '../../plan/deferral.js';
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { reraiseOnPolicy } from '../../adopt/records.js';
 import { conformanceNominated } from '../../adopt/conformance.js';
 import { illegal } from './common.js';
@@ -252,6 +254,11 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   }
   if (inputs.stage) {
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
+    // Its dependants' stage-code milestone (D6 §6.4; B08), after its
+    // work.integrated; a deferral it was the prerequisite of, its follow-up
+    // (D6 §6.2; D6-W06), once.
+    recordMetMilestones(tx, op.project);
+    followUpsDue(tx, op.project);
     // A stage an early replacement superseded while its Builder ran (D6
     // §5.7; the driver's ruling 10): its late integration is history, the
     // code on the branch; its work completes `superseded` and is never

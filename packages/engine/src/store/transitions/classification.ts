@@ -38,6 +38,8 @@ export interface StoredClassification extends Classified {
   // The discovery of the proposal's tree, frozen (D3 §1.4): the new
   // version's checks when it is applied.
   discovery: Discovery;
+  // D6 §6.2 (B07): the existing checks whose input fingerprint moves.
+  fingerprint_changes?: { check: string; from: string; to: string }[];
 }
 
 // The configured setting (A.7), as the store was handed it at open.
@@ -69,8 +71,18 @@ export const discoveryHash = (d: Discovery | null | undefined): string | null =>
 
 function buildClassification(tx: Tx, project: string, effective: string, inputs: ClassifyInputs): StoredClassification {
   const c = classify(inputs.p0, inputs.p1, knownCriteria(tx.db, project));
+  // D6 §6.2 (B07; SEAM.md §428): every existing check whose input
+  // fingerprint the proposal moves, with the fingerprint of its inputs
+  // before and after; [] when none moves. The class is the classifier's.
+  const before = new Map(inputs.p0.discovery.checks.map((x) => [x.key, x]));
+  const fingerprint_changes = inputs.p1.discovery.checks
+    .filter((x) => before.has(x.key))
+    .map((x) => ({ check: x.key, from: sha256(canonical(before.get(x.key)!.input_manifest)), to: sha256(canonical(x.input_manifest)) }))
+    .filter((x) => x.from !== x.to)
+    .sort((a, b) => a.check.localeCompare(b.check));
   return {
     ...c,
+    fingerprint_changes,
     effective_version: effective,
     spec_revision: specRevision(tx.db, project),
     classifier_version: runningClassifierVersion(),
@@ -81,8 +93,8 @@ function buildClassification(tx: Tx, project: string, effective: string, inputs:
 
 function writeClassification(tx: Tx, p: ProposalRow, c: StoredClassification): void {
   tx.db
-    .prepare('UPDATE "protected_proposals" SET "classification" = ?, "affected_checks" = ?, "classified_change_kind" = ? WHERE "id" = ?')
-    .run(JSON.stringify(c), JSON.stringify(c.affected_checks), c.change_kind, p.id);
+    .prepare('UPDATE "protected_proposals" SET "classification" = ?, "affected_checks" = ?, "classified_change_kind" = ?, "fingerprint_changes" = ? WHERE "id" = ?')
+    .run(JSON.stringify(c), JSON.stringify(c.affected_checks), c.change_kind, JSON.stringify((c as { fingerprint_changes?: unknown }).fingerprint_changes ?? []), p.id);
 }
 
 // ---- classification at a tick after the capture (D3 §1.6; SEAM.md §215) --------------------

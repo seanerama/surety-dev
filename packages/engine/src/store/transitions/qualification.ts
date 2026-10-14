@@ -30,7 +30,7 @@ import {
 } from './trust.js';
 import type { Tx } from './tx.js';
 import { attemptSpendEstimate } from './ledger.js';
-import { projectPolicy } from './settings.js';
+import { type RoleProfile, defaultProfileMax, engineSettings, projectPolicy, roleProfileOf } from './settings.js';
 
 // An attempt is proposed and its approval asked for; nothing runs until a
 // person authorizes it (Q7).
@@ -111,8 +111,16 @@ export function qualify(
     provider_cap_usd?: number | null;
     mode_requested?: 'one_shot_headless' | 'session_headless';
     session_entry?: string | null;
+    role_memory_max?: number | null;
   },
 ): CommandResult {
+  // The role profile the attempt qualifies (D6-X09; B09): an entry's own for
+  // its session qualification; else the one asked for, never above the
+  // engine's ceiling, or the default under it.
+  const ceiling = engineSettings().domain_memory_max;
+  if (a.role_memory_max != null && ceiling !== undefined && a.role_memory_max > ceiling) {
+    throw new Refusal(400, 'invalid_value', `role_memory_max must be at most the engine's domain_memory_max (${ceiling}).`, 'Ask for a profile under the ceiling.', { field: 'role_memory_max', max: ceiling });
+  }
   // An entry's session qualification (D6 §2.6): the entry active, not yet
   // qualified for sessions.
   if (a.session_entry) {
@@ -190,6 +198,9 @@ export function qualify(
     spend,
     mode: a.mode_requested ?? 'one_shot_headless',
     session_entry: a.session_entry ?? null,
+    profile: a.session_entry
+      ? (JSON.parse(((tx.db.prepare('SELECT "profile" FROM "trust_entries" WHERE "id" = ?').get(a.session_entry) as { profile: string | null } | undefined)?.profile ?? 'null')) as RoleProfile | null)
+      : roleProfileOf(a.role_memory_max ?? defaultProfileMax('role')),
   });
   return { status: 201, body: { qualification_attempt: { id: attempt.id, status: attempt.status }, decision } };
 }

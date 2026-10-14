@@ -153,6 +153,15 @@ export function planView(db: Database, args: { project: string }) {
       routing: p.routing,
       published_at: p.published_at,
       authoring_ready_at: p.authoring_ready_at,
+      authoring_ready_by: p.authoring_ready_by ?? null,
+      // The `build_first` exception, where readiness is a decision's (D6
+      // §6.2; F §5.1; SEAM.md §428): its decision, reason, review and binding.
+      authoring_exception: (() => {
+        const d = typeof p.authoring_ready_by === 'string' ? (db.prepare(`SELECT "id", "answer" FROM "decisions" WHERE "id" = ? AND "kind" = 'blocker'`).get(p.authoring_ready_by) as { id: string; answer: string | null } | undefined) : undefined;
+        if (!d) return null;
+        const a = json<{ reason?: unknown; review?: unknown; binding?: unknown } | null>(d.answer, null);
+        return { decision: d.id, reason: a?.reason ?? null, review: a?.review ?? null, binding: a?.binding ?? null };
+      })(),
       completed_at: p.completed_at,
       completion_binding: json<unknown>(p.completion_binding, null),
       bundle: p.bundle,

@@ -1044,7 +1044,9 @@ function resolveObligation(tx: Tx, args: { project: string; obligation: string; 
 // naming the open obligations. Called when the proposal is decided.
 export function correctionProposalDecided(tx: Tx, args: { proposal: string; applied: boolean }): void {
   const row = tx.db.prepare('SELECT r."work_item" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE p."id" = ?').get(args.proposal) as { work_item: string | null } | undefined;
-  if (!row?.work_item || correctionRequestOf(tx.db, row.work_item) === null) return;
+  if (!row?.work_item) return;
+  const kind = (tx.db.prepare('SELECT "kind" FROM "work_items" WHERE "id" = ?').get(row.work_item) as { kind: string } | undefined)?.kind;
+  if (kind !== 'check_authoring' && correctionRequestOf(tx.db, row.work_item) === null) return;
   const item = getWorkItem(tx, row.work_item);
   if (!item || item.status !== 'awaiting_decision') return;
   const blocker = parseJson<{ reason?: string; proposal?: string }>(item.blocker);

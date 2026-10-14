@@ -16,6 +16,11 @@ ALTER TABLE work_items ADD COLUMN held_intervals TEXT;
 -- chain's first item; NULL for an item written before this migration.
 ALTER TABLE work_items ADD COLUMN chain_origin TEXT;
 
+-- ---- work_items.milestones_met (D6 §6.4, §7.6; SEAM.md §427) --------------------------------
+-- The stage-work milestones already recorded met (work.dependency_met), as
+-- ["authoring_ready" | "stage_code:<stage id>"]: each recorded once.
+ALTER TABLE work_items ADD COLUMN milestones_met TEXT;
+
 -- ---- execution_domains.memory_peak (D6 §6.4, §7.6, A.3; K2; N01) ----------------------------
 -- The cgroup's memory.peak read before the cgroup was removed; NULL when it
 -- could not be read (never 0, never a value read later).
@@ -57,6 +62,9 @@ ALTER TABLE check_obligations_0029 RENAME TO check_obligations;
 -- [{check, from, to}], one entry per existing check whose input fingerprint
 -- the proposal moves; [] when none moves; NULL until it is classified.
 ALTER TABLE protected_proposals ADD COLUMN fingerprint_changes TEXT;
+-- An authoring proposal's `deferred_criteria` (B.7), as the Verifier's
+-- result gave them; recorded as obligations when it is applied.
+ALTER TABLE protected_proposals ADD COLUMN deferred_criteria TEXT;
 
 -- ---- deployment_requests.preparation_attempts (D6 §6.8; the driver's ruling Q4) --------------
 -- How many times the policy prepared the request; the row exists from the

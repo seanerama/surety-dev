@@ -51,7 +51,7 @@ import { redactText } from '../records/redact.js';
 import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
-import { seamSpecBlobFault } from '../testing/seam.js';
+import { pausePoint, seamSpecBlobFault } from '../testing/seam.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
@@ -623,11 +623,17 @@ export class Acceptor {
     // What earlier applied proposals declared stays declared (their copies
     // are already under the root): the boundary is theirs and this one's.
     if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, [...(await this.rt.read<AdoptedTest[]>('project.adopted_tests', { project: facts.project.id })), ...adoptedTests]);
+    // B.7: deferrals are a phase authoring's only (D6 §6.2).
+    if ((report.deferred_criteria ?? []).length > 0 && facts.work.kind !== 'check_authoring') return failed('invalid_result', 'deferred_criteria is the field of a phase\'s check authoring only');
+    // SEAM.md §428: an authoring run's protected diff read, its proposal
+    // not yet written.
+    if (facts.work.kind === 'check_authoring') await pausePoint('check_authoring.before_proposal');
     await this.rt.engine('accept.capture_proposal', {
       run,
       base,
       tree,
       adoptedTests: report.adopted_tests ?? null,
+      deferredCriteria: report.deferred_criteria ?? null,
       boundaryErrors: boundary === null ? [{ file: null, import: null, resolved: null, why: "the proposal's tree under the protected root could not be read, so its import boundary is unknown" }] : boundary,
       diffHash: diffHashOf(diff.changes),
       rationale,

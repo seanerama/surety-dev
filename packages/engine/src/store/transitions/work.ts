@@ -3,6 +3,7 @@
 // Resume. Every status change goes through transitionWork, which checks the
 // table in work-table.ts and writes exactly one work.* event.
 
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
 import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
 import { authoringShortfall } from '../../plan/phase.js';
@@ -569,6 +570,9 @@ export function registerPlan(
         : {}),
     });
   }
+  // Milestones already met at publication (an inherited readiness, a
+  // stage already integrated) are recorded now (D6 §6.4).
+  if (publication) recordMetMilestones(tx, args.project);
   return { plan: { id: plan, phase, generation }, stages: out, check_authoring: authoring };
 }
 

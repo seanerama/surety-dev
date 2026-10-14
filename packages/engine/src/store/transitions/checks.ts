@@ -7,6 +7,7 @@
 // execution (admission, its domain, its launch, its result) is
 // check-executions.ts.
 
+import { notePeakDomains } from '../../plan/pace.js';
 import type { Discovery } from '../../checks/discovery.js';
 import { type DiscoveryError, criterionErrors, requirementKeyOf } from '../../checks/schema.js';
 import { Refusal } from '../../refusal.js';
@@ -667,6 +668,7 @@ export function admitExecution(
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "check_execution", "incarnation") VALUES (?, ?, ?, ?, NULL, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, args.project, domain, x.id, args.incarnation);
+  notePeakDomains(tx);
   const lease = tx.newId('lease_');
   tx.db
     .prepare(

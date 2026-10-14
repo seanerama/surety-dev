@@ -121,6 +121,7 @@ import {
   requestDeployment,
   requestFacts,
   policyRequestDue,
+  policyPreparationFailed,
   policyRequestRefused,
   artifactAdmission,
   artifactPaths,
@@ -740,6 +741,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
+  'deploy.policy_preparation_failed': (tx, a) => policyPreparationFailed(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a
   // time: its reply or failure, its usage, then the session idle.

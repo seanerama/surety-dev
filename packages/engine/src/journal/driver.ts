@@ -213,6 +213,9 @@ export class Journal {
     const receipts = await this.rt.engine<Record<string, unknown>>('journal.finalize', { operation: op.id });
     await pausePoint(`journal.${op.kind}.finalizer_committed`);
     if (named !== null) await pausePoint(`${named}.finalized`);
+    // SEAM.md §428: a phase's authoring version made effective, readiness
+    // recorded in that transaction, before anything further is selected.
+    if (purpose === 'protected' && (receipts as { authoring_ready?: boolean } | null)?.authoring_ready === true) await pausePoint('check_authoring.applied');
     return { op: await this.detail(op.id), end: 'finalized', receipts };
   }
 

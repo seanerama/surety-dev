@@ -8,6 +8,8 @@ export const EVENT_OWNERS = {
   'engine.tick': 'store/transitions/engine.ts',
   // D6 K1 (M5 slice 37; SEAM.md §430): one per requesting transition.
   'scheduler.tick_requested': 'store/transitions/tick-requests.ts',
+  // D6 A.2 (§7.6; N01): the host observed for a project at its start or an engine start.
+  'host.observed': 'plan/pace.ts',
   'engine.quarantine': 'store/transitions/runs.ts',
   'api.act': 'store/transitions/audit.ts',
   'project.created': 'store/transitions/project.ts',
@@ -192,7 +194,9 @@ export const EVENT_OWNERS = {
   // D6 §4.5 (M5 slice 36): the rejection keeping its side ref; an
   // obligation resolved; the Verifier's applicability assessment.
   'spec.change_rejected': 'spec/change.ts',
-  'check.obligation_resolved': 'spec/change.ts',
+  'check.obligation_resolved': 'spec/change.ts, plan/deferral.ts',
+  // D6 A.2 (B07; SEAM.md §428): a deferral's obligation recorded.
+  'check.obligation_recorded': 'plan/deferral.ts',
   'spec.assessment_recorded': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
   // D6 §8 (M5 slice 32): the adoption, the confirmations, the conformance

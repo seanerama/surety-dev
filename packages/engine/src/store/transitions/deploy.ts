@@ -638,6 +638,30 @@ function requestKey(db: Db, args: { project: string; candidate: string; config: 
 const requestOfKey = (db: Db, project: string, key: string): RequestRow | undefined =>
   db.prepare('SELECT * FROM "deployment_requests" WHERE "project" = ? AND "request_key" = ?').get(project, key) as RequestRow | undefined;
 
+// A policy request whose preparation failed with an error that is not a
+// refusal, still within its bound (D6 §6.8; the driver's ruling Q4, slice
+// 37; SEAM.md §433): its row stands `pending` with no authorization, and the
+// key is prepared again; any other row of the key admits no new request.
+const preparing = (r: RequestRow | undefined): boolean =>
+  r !== undefined && r.requested_by === 'policy' && r.outcome === 'pending' && r.authorization === null && (r as RequestRow & { preparation_attempts?: number | null }).preparation_attempts != null;
+
+// The policy's preparation failed unexpectedly: counted on the key's row
+// (made `pending` at the first error); past 1 + `deploy_auto_retries_max`
+// preparations, `not_issued` with reason `preparation_failed`, and the key
+// is never prepared again. The policy is not an unbounded retry (D6 §6.8).
+export function policyPreparationFailed(tx: Tx, args: { project: string; candidate: string; environment: string; key: string; error: string }): { attempts: number; outcome: string } {
+  const env = environmentByName(tx.db, args.project, args.environment);
+  if (!env) throw notFound('environment', args.environment);
+  let row = requestOfKey(tx.db, args.project, args.key) as (RequestRow & { preparation_attempts?: number | null }) | undefined;
+  if (row && !preparing(row)) return { attempts: row.preparation_attempts ?? 0, outcome: row.outcome };
+  if (!row) row = recordRequest(tx, { project: args.project, key: args.key, requested_by: 'policy', candidate: args.candidate, environment: env.id, authorization: null, work_item: null, outcome: 'pending' }) as RequestRow & { preparation_attempts?: number | null };
+  const attempts = (row.preparation_attempts ?? 0) + 1;
+  const bound = 1 + (projectPolicy(tx.db, args.project).deploy_auto_retries_max ?? 0);
+  const outcome = attempts >= bound ? 'not_issued' : 'pending';
+  tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = ?, "outcome" = ?, "reason" = ? WHERE "id" = ?').run(attempts, outcome, outcome === 'not_issued' ? 'preparation_failed' : null, row.id);
+  return { attempts, outcome };
+}
+
 // The request's row: one per key. The owner's request again under a key
 // already requested takes the row on (its authorization, work and outcome
 // are the newest request's); a policy request never makes a second one.
@@ -672,7 +696,12 @@ function recordRequest(
 export function policyRequestRefused(tx: Tx, args: { project: string; candidate: string; environment: string; key: string; refusal: { code: string; reason: string } }): { recorded: boolean } {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env) throw notFound('environment', args.environment);
-  if (requestOfKey(tx.db, args.project, args.key)) return { recorded: false };
+  const existing = requestOfKey(tx.db, args.project, args.key);
+  if (existing && preparing(existing)) {
+    tx.db.prepare(`UPDATE "deployment_requests" SET "outcome" = 'not_issued', "reason" = ?, "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?`).run(args.refusal.code, existing.id);
+    return { recorded: true };
+  }
+  if (existing) return { recorded: false };
   recordRequest(tx, { project: args.project, key: args.key, requested_by: 'policy', candidate: args.candidate, environment: env.id, authorization: null, work_item: null, outcome: 'not_issued', refusal: args.refusal });
   return { recorded: true };
 }
@@ -704,7 +733,8 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     if (!config || config.status === 'secrets_changed') continue;
     if (qualificationFor(db, env) === undefined) continue;
     const key = requestKey(db, { project: args.project, candidate, config: config.id });
-    if (requestOfKey(db, args.project, key)) continue;
+    const existing = requestOfKey(db, args.project, key);
+    if (existing && !preparing(existing)) continue;
     const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
     if (all.some((a) => pending(db, a))) continue;
     return { candidate, environment: env.name, key };
@@ -803,7 +833,10 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   if (requestedBy === 'policy') {
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
-    if (requestOfKey(tx.db, args.project, key)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    const existing = requestOfKey(tx.db, args.project, key);
+    if (existing && !preparing(existing)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    // Re-prepared under its key after an unexpected error: one more preparation counted.
+    if (existing) tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?').run(existing.id);
     if (pendingRow) return { status: 200, body: { request: null, skipped: 'pending' } };
   }
   const record = (auth: string, outcome: string) =>

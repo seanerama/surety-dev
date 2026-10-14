@@ -481,10 +481,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           kind: 'prepared',
           name: 'decision.answer',
           prepare: async (b) => {
-            const body = onlyFields(b, ['option', 'preview_hash', 'note']);
+            // `reason` and `review`: the `build_first` exception's (D6 §6.2;
+            // F §5.1; SEAM.md §428), read by that answer alone.
+            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review']);
             const facts = await answerFacts(runtime(), project, decision);
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts, waits };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, facts, waits };
           },
           // A committed answer is answered 200 whatever follows it: a failed
           // effect or publication is logged and carried by the next tick

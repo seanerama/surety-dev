@@ -386,3 +386,78 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
   );
   return out;
 }
+
+// ---- the phase-authoring package (D6 §6.2; N04, B07, B13; SEAM.md §428) ------------------
+
+// What a phase's `check_authoring` Verifier is given beside the check-writing
+// facts (store/reads.ts authoringFacts).
+export interface PhaseAuthoringFacts {
+  phase_plan: { id: string; phase_number: number; generation: number } | null;
+  stages: { number: number; goal: string; modules: string[]; implements: string[]; depends_on: unknown[]; validation: unknown }[];
+  interfaces: { module: string; name: string; kind: string; path: string | null; description: string }[] | null;
+  architecture: string | null;
+  environments: { name: string; fields: Record<string, string> }[] | null;
+}
+
+// The authoring result's own fields (B.7), beside the Verifier's: its
+// governed-change permissions and its deferrals.
+export const AUTHORING_RESULT_FIELDS: Record<string, Record<string, unknown>> = {
+  governed_changes: {
+    type: 'object',
+    description:
+      "The governed changes your proposal declares: whether it names the toolchain in the governed file's `check_commands` (the first phase's authoring must), and the check programs it adds. A declaration: the class of the change is the classifier's, and a change to `check_commands` goes to the owner.",
+    additionalProperties: false,
+    properties: { check_commands: { type: 'boolean' }, programs: { type: 'array', items: { type: 'string' } } },
+  },
+  deferred_criteria: {
+    type: 'array',
+    description:
+      'A criterion whose check you cannot write yet, because the interface it exercises does not exist: its reason and its prerequisite, a stage of this plan by number or an interface of the module map by name. The engine records an obligation for each and asks for its checks again, once, when the prerequisite integrates; until they exist and pass, the phase and deployment gates name it (AUTHORING_INCOMPLETE).',
+    items: {
+      type: 'object',
+      required: ['criterion', 'reason', 'prerequisite'],
+      additionalProperties: false,
+      properties: {
+        criterion: { type: 'string' },
+        reason: { type: 'string' },
+        prerequisite: {
+          oneOf: [
+            { type: 'object', required: ['stage'], additionalProperties: false, properties: { stage: { type: 'integer', minimum: 1 } } },
+            { type: 'object', required: ['interface'], additionalProperties: false, properties: { interface: { type: 'string' } } },
+          ],
+        },
+      },
+    },
+  },
+};
+
+export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
+  const out: string[] = ['', "## The phase's check authoring", ''];
+  out.push(
+    `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'} before any of its stages is built: a definition and a program for every criterion its stages validate, the kinds of each stage's tier, the areas of the sensitivity floor, and, in the first phase, the post-deploy checks of the environments below. No Builder of the phase runs until your checks are applied (authoring readiness), so write them against the interfaces the stages will create, named below.`,
+    '',
+    'A proposal grants no execution authority: what you leave under the protected roots is captured as a protected proposal, classified by the engine as the classifier computes it (never as you request it), and decided on through the protected update route; only once it is applied are your checks run, and the phase is ready for its Builders.',
+    '',
+    "The governed file's `check_commands` names the toolchain your programs run under. The first phase's authoring names it (declare it in your result's `governed_changes`); such a change is `unclassifiable` and goes to the owner under every authority, one decision per project. A later phase adds checks under new declared inputs; a check whose inputs cover the whole protected tree changes with any addition, and the classifier says so.",
+    '',
+    "If a criterion's check cannot be written yet because its interface does not exist, do not write a check that cannot pass: list it in your result's `deferred_criteria` with your reason and its prerequisite (a stage of this plan by number, or an interface below by name). The engine asks you for it again, once, when the prerequisite integrates; nothing of its coverage is waived meanwhile.",
+  );
+  out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation` (the criteria, kinds and areas its checks must cover):', '', '```json', JSON.stringify(a.stages, null, 2), '```');
+  out.push('', "### The module map's interfaces", '');
+  if (a.interfaces === null) out.push("The module map of the plan's approved bundle could not be read, so its interfaces are unknown here; say so in your summary.");
+  else if (a.interfaces.length === 0) out.push('The module map names no interface.');
+  else for (const i of a.interfaces) out.push(`- \`${i.name}\` (${i.kind}) of module \`${i.module}\`${i.path ? ` at \`${i.path}\`` : ''}: ${i.description}`);
+  out.push('', "### The architecture", '');
+  out.push(a.architecture ?? "The architecture's text could not be read; say so in your summary.");
+  out.push('', '### The environments', '');
+  if (a.environments === null) out.push("The approved specification's environments could not be read; say so in your summary.");
+  else if (a.environments.length === 0) out.push('The approved specification names no environment.');
+  else for (const e of a.environments) out.push(`- \`${e.name}\`: ${Object.entries(e.fields).map(([k, v]) => `${k}: ${v}`).join('; ')}`);
+  out.push(
+    '',
+    '### Your result',
+    '',
+    "Your result follows /surety/context/result-schema.json: beside `summary` and `proposal`, `governed_changes` (what of the governed file you change) and `deferred_criteria` (what you cannot write yet). /surety/context/authoring.json holds this section's facts.",
+  );
+  return out;
+}

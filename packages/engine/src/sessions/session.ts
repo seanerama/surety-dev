@@ -13,6 +13,7 @@
 // exhaustion, resume and the races at every settlement step are slice 33's
 // (M415 to M420), which hardens what is built here.
 
+import { notePeakDomains } from '../plan/pace.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
 import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.js';
@@ -414,6 +415,7 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
     // a continuation canary's attempt qualifies.
     .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, canaryOf ? attemptProfileMax(tx.db, canaryOf) : effectiveProfileMax(tx.db, run.project, 'role'));
   tx.db.prepare('INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('proc_'), tx.at, run.project, domain, invocation, args.incarnation);
+  notePeakDomains(tx);
   const deadlineSeconds = policy[`deadline_${run.role}`]!;
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'turn_running', "turn_count" = ?, "deadline_at" = ? WHERE "id" = ?`).run(turn, addSeconds(tx.at, deadlineSeconds), run.id);
   tx.emit('session.turn_started', { project: run.project, run: run.id, invocation }, { turn, idle_generation: run.idle_generation });

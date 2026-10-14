@@ -11,6 +11,7 @@
 // recorded beforehand (evidence.ts), and the protected fingerprint of the
 // integration branch's head is handed in.
 
+import { activeStages } from '../../plan/active.js';
 import { type ConformanceFacts, conformanceAfterEvaluation, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
 import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
@@ -534,6 +535,23 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       const unassigned = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NULL AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project) as { key: string }[]).map((r) => r.key);
       if (unassigned.length > 0) add('REQUIREMENT_UNASSIGNED', unassigned);
     }
+  }
+  // `alpha_authorize` (D6 §6.2; B07; the driver's ruling 2 of slice 37,
+  // carried from slice 35's ruling 9): the planned and deferred authoring
+  // obligations of the phases whose stages the candidate delivers, as the
+  // phase gate reads them; nothing is waived by building first.
+  if (kind === 'alpha_authorize') {
+    const delivered = new Set(scope.delivered);
+    const keys = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
+    const plans = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY "phase_number"`).all(args.project) as { id: string }[];
+    const shortfall: string[] = [];
+    for (const plan of plans) {
+      const delivers = activeStages<{ implements: string | null }>(db, plan.id).some((st) =>
+        (parseJson<string[]>(st.implements) ?? []).some((r) => delivered.has(r) || delivered.has(keys.get(r) ?? '')),
+      );
+      if (delivers) shortfall.push(...authoringShortfall(db, plan.id, scope.effective.id));
+    }
+    if (shortfall.length > 0) add('AUTHORING_INCOMPLETE', [...new Set(shortfall)]);
   }
 
   // (2) The protected path is authorized and effective. A protected set

@@ -44,6 +44,9 @@ export interface Report {
   changes?: { key: string; kind: string; reason: string }[];
   // D6 §8.3, B.7 (B13): a Verifier's adopted tests with their boundary.
   adopted_tests?: import('../../adopt/boundary.js').AdoptedTest[];
+  // D6 §6.2, B.7: a phase authoring's deferrals and governed changes.
+  deferred_criteria?: { criterion: string; reason: string; prerequisite: { stage?: number; interface?: string } }[];
+  governed_changes?: { check_commands?: boolean; programs?: string[] };
   // D6 §8.3 (B.7): an Architect's retrofit replan's requests for criteria.
   spec_change_requests?: { keys: string[]; text: string }[];
   // D6 §4.5 (Q6): a Verifier's applicability assessment on a correction.

@@ -4,6 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import { notePeakDomains } from '../../plan/pace.js';
 import { correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
@@ -335,7 +336,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
 }
 
 // Why a milestone is unmet (D6 §6.4), or null.
-function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
+export function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
   if (m.milestone === 'spec_change_requests') {
     for (const id of m.requests) {
       const r = db.prepare('SELECT "status" FROM "spec_change_requests" WHERE "id" = ?').get(id) as { status: string } | undefined;
@@ -560,6 +561,8 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
+  // The peak number of domains at once (D6 §7.6; N01).
+  notePeakDomains(tx);
 
   // What the run is told of its failed repair checks, read at dispatch.
   const outputs = canary ? undefined : checkOutputsFor(tx.db, item);
@@ -1099,7 +1102,10 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       // A specification change's correction whose run captured a proposal
       // waits for it (the driver's ruling Q13): applied, it completes;
       // rejected, it takes its repair, then parks (spec/change.ts).
-      if (item.status === 'executing' && correctionRequestOf(tx.db, item.id) !== null) {
+      // A phase's check authoring likewise (D6 §6.2; B07; K7): readiness is
+      // the applied version, and a rejected proposal is repaired, then parks
+      // with its blocker (M435 (d)).
+      if (item.status === 'executing' && (correctionRequestOf(tx.db, item.id) !== null || item.kind === 'check_authoring')) {
         const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
         if (p && p.status === 'rejected') {
           correctionFailed(tx, item, { ...cause, proposal: p.id, cause: 'proposal_rejected' });

@@ -18,12 +18,15 @@ import { AUTH_MODES, TEMPLATES, templateOf } from '../invoke/adapters/templates.
 import { canonicalHost } from '../invoke/proxy/proxy.js';
 import { ECHO_HOST } from '../invoke/proxy/echo.js';
 import { Refusal } from '../refusal.js';
+import { PROJECT_POLICY } from '../config/schema.js';
 import { seamQualifyMode, seamRefuseBinary } from '../testing/seam.js';
 import { helpHash, versionOf } from '../invoke/static.js';
 import { resolveInstallation } from './fixture.js';
 import { pinBinary } from './pin.js';
 
-const FIELDS = ['backend', 'mode', 'model', 'auth_mode', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines'];
+// `role_memory_max` (D6-X09; B09; SEAM.md §432): the role profile the attempt
+// qualifies; the engine's default under its ceiling when absent.
+const FIELDS = ['backend', 'mode', 'model', 'auth_mode', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines', 'role_memory_max'];
 // D6 §2.6 (SEAM.md §393): an active entry's session qualification, the
 // continuation canary alone; the rest is the entry's.
 const ENTRY_FIELDS = ['entry', 'mode', 'model', 'fixture_project', 'canary_deadlines'];
@@ -51,6 +54,8 @@ export interface QualifyRequest {
   // D6 §2.6 (M5 slice 33).
   mode_requested: 'one_shot_headless' | 'session_headless';
   session_entry: string | null;
+  // D6-X09 (M5 slice 37): the role profile's memory maximum, or null for the default.
+  role_memory_max?: number | null;
 }
 
 // Outside the test mode: the engine's own fixture project, made and
@@ -118,6 +123,10 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
       deadlines[k as keyof typeof deadlines] = v as number;
     }
   }
+  const roleMax = body.role_memory_max;
+  if (roleMax !== undefined && !(Number.isSafeInteger(roleMax) && (roleMax as number) >= PROJECT_POLICY.role_memory_max!.min)) {
+    throw invalid('role_memory_max', `must be a whole number of bytes, at least ${PROJECT_POLICY.role_memory_max!.min}`);
+  }
   const binary = body.binary;
   const path =
     given ??
@@ -142,6 +151,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     candidate_egress: [...new Set(list.map((h) => canonicalHost(String(h))))],
     fixture_project: fixtureProject,
     canary_deadlines: deadlines,
+    role_memory_max: (roleMax as number | undefined) ?? null,
   };
 }
 

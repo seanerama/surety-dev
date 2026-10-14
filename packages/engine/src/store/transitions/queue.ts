@@ -9,6 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { inConformancePhase } from '../../adopt/conformance.js';
 import { executionSeqHigh, proposalDiscovery, proposalHasErrors } from './checks.js';
 import { configuredAuthority, discoveryHash } from './classification.js';
@@ -44,7 +45,7 @@ import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
-import { getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
+import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
@@ -92,7 +93,7 @@ interface KindSpec {
   // The tick raises the next generation itself when a dependency changed
   // (not for a question a command raises: SEAM.md §76).
   reraise: boolean;
-  answer(tx: Tx, d: DecisionRow, option: string, note: string | null, facts: Facts): CommandResult;
+  answer(tx: Tx, d: DecisionRow, option: string, note: string | null, facts: Facts, extra?: AnswerExtra): CommandResult;
   // Before anything else of an answer (D6 §5.5; M448 (d)): a refusal the
   // kind's subject itself gives, committed with what it records (a bundle
   // marked stale), or null to go on. Asked of an open or invalidated
@@ -101,6 +102,13 @@ interface KindSpec {
   // An effect of this kind was invalidated: undo the consumption's local
   // transition; return whether the question is raised again.
   withdraw?(tx: Tx, d: DecisionRow): boolean;
+}
+
+// What an answer carries beside its option and note: the `build_first`
+// exception's reason and independent review (D6 §6.2; F §5.1).
+export interface AnswerExtra {
+  reason?: unknown;
+  review?: unknown;
 }
 
 const consumed = (d: DecisionRow, effects: Effect[] = []): CommandResult => ({ status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects });
@@ -231,6 +239,20 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
             ? [{ key: 'change_spec', label: 'Change the spec', consequence: 'spec_change work is raised for each conflict the Architect reported; nothing of the spec changes until it is approved. This replan is cancelled: the approved change replans.', effect: { work_item: item.id, register: 'spec_change', findings: replanConflicts(tx.db, item) } }]
             : []),
           { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
+          // D6 §6.2, A.2 (F §5.1): a phase's authoring parked, the owner may
+          // let its Builders build first, with a reason and an independent
+          // review; nothing of the coverage is waived.
+          ...(item.kind === 'check_authoring'
+            ? [
+                {
+                  key: 'build_first',
+                  label: 'Build first',
+                  consequence:
+                    "The phase's Builders are released before its checks exist: the answer records your reason, an independent review (a person's or a Reviewer run's) and the phase it binds; the authoring obligations stay, and the phase and deployment gates carry AUTHORING_INCOMPLETE until the checks exist and pass.",
+                  effect: { work_item: item.id, exception: 'build_first' },
+                },
+              ]
+            : []),
         ],
         question:
           item.kind === 'replan'
@@ -340,6 +362,47 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
   return null;
 }
 
+// The `build_first` exception's three conditions (D6 §6.2; F §5.1;
+// SEAM.md §428): the owner's reason, an independent review (a person's,
+// named, with a note; or a Reviewer run of the project that ended
+// completed), and the gate-visible binding the engine computes (the plan
+// and its generation). Without the review: refused 400 naming it.
+interface BuildFirst {
+  reason: string;
+  review: { kind: 'human'; reviewer: string; note: string } | { kind: 'run'; run: string };
+  binding: { phase_plan: string; generation: number };
+}
+function buildFirstOf(tx: Tx, item: WorkRow, extra: AnswerExtra): BuildFirst {
+  const bad = (field: string, why: string) => new Refusal(400, 'invalid_value', `build_first ${why}.`, 'Send {"option": "build_first", "preview_hash", "reason", "review": {"kind": "human", "reviewer", "note"} | {"kind": "run", "run"}}; nothing was changed.', { field });
+  if (typeof extra.reason !== 'string' || extra.reason.trim() === '') throw bad('reason', 'needs the owner\'s reason');
+  const r = extra.review;
+  if (typeof r !== 'object' || r === null || Array.isArray(r)) throw bad('review', 'needs an independent review: a person\'s or a Reviewer run\'s');
+  const review = r as Record<string, unknown>;
+  let parsed: BuildFirst['review'];
+  if (review.kind === 'human' && Object.keys(review).every((k) => ['kind', 'reviewer', 'note'].includes(k)) && typeof review.reviewer === 'string' && review.reviewer.trim() !== '' && typeof review.note === 'string' && review.note.trim() !== '') {
+    parsed = { kind: 'human', reviewer: review.reviewer, note: review.note };
+  } else if (review.kind === 'run' && Object.keys(review).every((k) => ['kind', 'run'].includes(k)) && typeof review.run === 'string') {
+    const run = tx.db.prepare('SELECT "project", "role", "outcome" FROM "runs" WHERE "id" = ?').get(review.run) as { project: string; role: string; outcome: string | null } | undefined;
+    if (!run || run.project !== item.project || run.role !== 'reviewer' || run.outcome !== 'completed') throw bad('review', 'names no Reviewer run of the project that completed');
+    parsed = { kind: 'run', run: review.run };
+  } else throw bad('review', 'is neither {"kind": "human", "reviewer", "note"} nor {"kind": "run", "run"}');
+  const planId = parseJson<{ phase_plan?: string }>(item.subject)?.phase_plan ?? null;
+  const plan = planId ? (tx.db.prepare('SELECT "id", "generation" FROM "phase_plans" WHERE "id" = ?').get(planId) as { id: string; generation: number } | undefined) : undefined;
+  if (!plan) throw bad('option', 'binds no phase plan: the authoring work names none');
+  return { reason: extra.reason, review: parsed, binding: { phase_plan: plan.id, generation: plan.generation } };
+}
+
+// Recorded with the answer; the phase ready by the decision (A.3
+// `authoring_ready_by → decisions`); the Builders released. The item ends
+// (its checks are owed as the gates say, never waived).
+function applyBuildFirst(tx: Tx, d: DecisionRow, item: WorkRow, e: BuildFirst): void {
+  tx.db.prepare(`UPDATE "decisions" SET "answer" = json_set("answer", '$.reason', ?, '$.review', json(?), '$.binding', json(?)) WHERE "id" = ?`).run(e.reason, JSON.stringify(e.review), JSON.stringify(e.binding), d.id);
+  const ready = tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ? AND "authoring_ready_at" IS NULL').run(tx.at, d.id, e.binding.phase_plan).changes;
+  if (ready > 0) tx.emit('phase.authoring_ready', { project: item.project, phase_plan: e.binding.phase_plan }, { decision: d.id, exception: 'build_first', reason: e.reason, review: e.review, binding: e.binding });
+  transitionWork(tx, item, 'cancelled', { blocker: null }, { decision: d.id, cause: 'build_first' });
+  recordMetMilestones(tx, item.project);
+}
+
 // The reasons the replan's last plan check refused it, as the blocker's
 // question names them (D6 §5.6; M424 (d)).
 function replanRefusal(tx: Tx, item: string): string {
@@ -370,10 +433,17 @@ const BLOCKER: KindSpec = {
   manifest: (tx, d) =>
     blockerPreview(tx, d)?.manifest ?? { subject_status: null, quarantined: null, cause: null, evidence: BLOCKER_EVIDENCE, continuation: null },
   reraise: true,
-  answer(tx, d, option, note) {
+  answer(tx, d, option, note, _facts, extra) {
     if (d.subject_type === 'work_item') {
       const item = getWorkItem(tx, d.subject_id)!;
+      // The exception (D6 §6.2; F §5.1): validated before anything is
+      // consumed, so a refused answer changes nothing.
+      const exception = option === 'build_first' ? buildFirstOf(tx, item, extra ?? {}) : null;
       consumeDecision(tx, d, option, note);
+      if (exception !== null) {
+        applyBuildFirst(tx, d, item, exception);
+        return consumed(d, [{ kind: 'tick' }]);
+      }
       if (item.status === 'eligible') {
         // The human step at the chaining boundary (D1-34; SEAM.md §40): the
         // work starts a new chain and the scheduler dispatches it once; the
@@ -1567,7 +1637,7 @@ export function raiseQuestion(
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §76).
-export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; facts?: Facts | undefined }): CommandResult {
+export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; facts?: Facts | undefined }): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
   if ((d.status === 'open' || d.status === 'invalidated') && typeof args.option === 'string') {
@@ -1596,7 +1666,7 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
       blockers: option.blockers,
     });
   }
-  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts);
+  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review });
 }
 
 // POST /v1/projects/:p/decisions/answer-batch (D1 §10.3; SEAM.md §81): one
