@@ -4,7 +4,7 @@
 // defaults are inspectable and actually used; nothing missing or null means
 // unlimited. Through M4 per-project concurrency stayed exactly 1 and the
 // engine-wide run count was configurable within its bound; M5 slice 37 (D6
-// K2, A.7; B09; SEAM.md §426) removes both: `max_concurrent_runs` is refused
+// K2, A.7; B09; SEAM.md §437) removes both: `max_concurrent_runs` is refused
 // as a setting at either scope (`unknown_field`), and the project gains
 // `role_memory_max` and `check_memory_max`, never above `domain_memory_max`.
 //

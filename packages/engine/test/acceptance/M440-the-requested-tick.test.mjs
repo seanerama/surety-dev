@@ -1,6 +1,6 @@
 // M440 (a) to (d), the event-driven tick (M5 slice 37; kernel lane, the
 // controlled clock). M5 plan §3.7 M440; D6-X07; D6 K1, §7.2; D1 §1.5, §8.1;
-// N02; the driver's rulings Q12 and Q13 of 2026-10-13; SEAM.md §430
+// N02; the driver's rulings Q12 and Q13 of 2026-10-13; SEAM.md §441
 //   (a) a run's end, a result's recording, an operation's finalization, a
 //       decision's answer and work becoming eligible each request a tick
 //       (`scheduler.tick_requested` † with `payload.cause` `run_ended`,

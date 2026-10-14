@@ -3,7 +3,7 @@
 // preparation error (M407; carried item (i)). Kernel lane: the scripted
 // backend, the scripted check boundary (§190) and the scripted deployment
 // adapter (§247). Nothing here acts on a unit or a process but the test's
-// own engine. SEAM.md §429
+// own engine. SEAM.md §440
 //
 // Ordering is by insertion (`seq`, rowid), never by a wall-clock timestamp:
 // the workstation's clock steps back about 1 s every 31 s (the slice-36
@@ -43,7 +43,7 @@ export const workRow = (home, id) => {
   const w = withStore(home, (db) => db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(id));
   return w ? { ...w, subject: json(w.subject), blocker: json(w.blocker), depends_on: json(w.depends_on) } : w;
 };
-// `work_items.chain_origin` † (SEAM §429): the trigger identity of the
+// `work_items.chain_origin` † (SEAM §440): the trigger identity of the
 // chain's first item, {trigger_source, trigger_id, trigger_generation}.
 export const chainOriginOf = (home, id) => {
   const w = withStore(home, (db) => db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(id));

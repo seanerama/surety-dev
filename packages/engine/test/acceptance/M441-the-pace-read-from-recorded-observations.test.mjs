@@ -3,7 +3,7 @@
 // D6-M01, D6-M02; D6 §7.6, A.3; N01; D1 §12.2; the driver's ruling Q3 of
 // 2026-10-13 (hold intervals as `work.hold_began` / `work.hold_ended` † and
 // `work_items.held_intervals` †; D1's status event `work.held` unchanged);
-// SEAM.md §355 and §431
+// SEAM.md §355 and §442
 //   (b) a run with no `launched` observation (refused before launch): its
 //       launch and invocation elapsed time `unknown`, never zero; a stage
 //       with no evaluation: its intervals `unknown`; a run interrupted by an

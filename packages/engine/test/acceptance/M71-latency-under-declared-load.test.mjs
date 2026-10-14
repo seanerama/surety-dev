@@ -39,7 +39,7 @@
 // boundary's process scan while a run is ending; COVERAGE.md) is covered by
 // the second case: health is sampled while two runs are being terminated.
 
-// M5 slice 37 (D6 K2; SEAM.md §426): the engine key `max_concurrent_runs`
+// M5 slice 37 (D6 K2; SEAM.md §437): the engine key `max_concurrent_runs`
 // (8 here before) is refused at start; the bound that stays, the domain
 // slots (applied on the kernel lane, the driver's ruling Q2), is set to 8 so
 // the declared concurrency is unchanged.

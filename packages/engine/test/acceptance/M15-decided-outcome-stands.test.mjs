@@ -20,7 +20,7 @@
 //     the expiry: the run ends completed.
 // The clock is the controlled clock.
 
-// M5 slice 37 (D6 K2, C.2; SEAM.md §426): the project run count is removed,
+// M5 slice 37 (D6 K2, C.2; SEAM.md §437): the project run count is removed,
 // so a project's `next` item may now run beside the case's item; the
 // one-run-per-project assertions are narrowed to one run per work item.
 

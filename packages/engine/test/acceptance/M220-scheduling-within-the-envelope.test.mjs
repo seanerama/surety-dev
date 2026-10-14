@@ -19,7 +19,7 @@
 // SAFETY: the check program holds at a release file and exits 0. Nothing
 // consumes host memory or disk: the reserves are configuration.
 //
-// M5 slice 37 (D6 K2, C.2; B09; SEAM.md §426): a role domain is admitted at
+// M5 slice 37 (D6 K2, C.2; B09; SEAM.md §437): a role domain is admitted at
 // its project's effective `role_memory_max` and a check domain at its
 // project's `check_memory_max`, each min(the project's value or default, the
 // `domain_memory_max` ceiling). The `host_reserve_memory` round keeps its

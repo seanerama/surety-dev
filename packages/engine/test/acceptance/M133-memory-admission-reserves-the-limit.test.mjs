@@ -16,7 +16,7 @@
 // domain's M against the memory available now), the second is admitted.
 // The two domains belong to two projects, with `max_concurrent_domains` 2.
 //
-// M5 slice 37 (D6 K2, C.2; B09; reading 12; SEAM.md §426): a role domain is
+// M5 slice 37 (D6 K2, C.2; B09; reading 12; SEAM.md §437): a role domain is
 // now admitted at its project's effective `role_memory_max`, min(the
 // project's value or its 4 GiB default, `domain_memory_max`), recorded on the
 // domain at admission. The ceiling case is kept by setting both projects'

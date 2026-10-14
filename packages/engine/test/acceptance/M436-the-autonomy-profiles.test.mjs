@@ -1,6 +1,6 @@
 // M436, the autonomy profiles (slice 37; kernel lane). M5 plan §3.7 M436 (a)
 // to (d) and (f); D6-X01, D6-X02, D6-X03; D6 §6.5, §6.7; K3; Q3; N02; D1-34;
-// SEAM.md §429 (e), the floor, is `M436-the-floor-under-phase`; its
+// SEAM.md §440 (e), the floor, is `M436-the-floor-under-phase`; its
 // project-lane part is `M436-the-phase-profile-on-the-project-lane`.
 //
 //   (a) `step`: a boundary decision after a role run (D1-34), the decision's

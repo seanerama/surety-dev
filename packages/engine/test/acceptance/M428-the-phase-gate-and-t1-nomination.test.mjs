@@ -70,15 +70,21 @@ const gateRoute = (fx, project, candidate, body) => fx.engine.post(`/v1/projects
 describe('M428 the phase gate and T1 nomination', () => {
   test('(a), (b), (f) T1: one integration nominates nothing; at the completion of building one candidate by engine cadence, its checks registered and run, verification, then the stage and phase evaluations; complete with no phase_verification', async (t) => {
     const { fx, p, ctx, plan } = await journey35(t, { tier: 'T1' });
-    let ordinary = null;
-    const done = await pump(fx, ctx, () => {
-      const stages = stagesOfPlan(fx.home, plan.id);
-      if (!ordinary && stages[0].status === 'integrated' && !['integrated', 'verified'].includes(stages[1].status)) {
-        ordinary = { candidates: candidatesOfProject(fx.home, p.id).length, executions: executionsCount(fx, p.id) };
-      }
-      return planOfPhase(fx.home, p.id, 1).find((x) => active(x) && x.completed_at);
-    }, { what: 'phase 1 to complete at T1', max: 160 });
-    assert.deepEqual(ordinary, { candidates: 0, executions: 0 }, '(f) an ordinary T1 integration: no candidate, no execution');
+    const done = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 1).find((x) => active(x) && x.completed_at), { what: 'phase 1 to complete at T1', max: 160 });
+    // (f) read from the store at the earlier integration, not by polling
+    // between pump rounds (M5 slice 37, D6 K1, K2; objection 100; SEAM.md
+    // §447): under K1 and K2 the two stages' Builders may run at once and
+    // their integrations, the nomination and the registrations follow within
+    // one round. The ordinary integration is the one before the completion of
+    // building: before the later stage's `work.integrated`, no candidate was
+    // nominated and no execution registered.
+    const stageItems = stagesOfPlan(fx.home, plan.id).map((s) => s.work_item);
+    const integratedAt = stageItems.map((item) => Math.min(...eventsOfType(fx.home, 'work.integrated').filter((e) => e.subject?.work_item === item).map((e) => e.seq)));
+    assert.ok(integratedAt.every(Number.isFinite), `the fixture is live: each stage's work integrated (${JSON.stringify(integratedAt)})`);
+    const lastIntegration = Math.max(...integratedAt);
+    // The engine holds this one project.
+    const before = (type) => eventsOfType(fx.home, type).filter((e) => e.seq < lastIntegration).length;
+    assert.deepEqual({ candidates: before('candidate.nominated'), executions: before('check.registered') }, { candidates: 0, executions: 0 }, '(f) an ordinary T1 integration: no candidate, no execution');
     const [c] = candidatesOfProject(fx.home, p.id);
     assert.equal(candidatesOfProject(fx.home, p.id).length, 1, 'one candidate for the phase');
     assert.equal(c.nominated_by, 'engine_cadence', 'by engine cadence');

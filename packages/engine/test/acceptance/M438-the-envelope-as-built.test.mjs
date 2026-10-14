@@ -1,7 +1,7 @@
 // M438 (a) to (f): the concurrency envelope as built and the per-profile
 // maxima (M5 slice 37; kernel lane). M5 plan §3.7 M438; D6-X06; D6 §6.4,
 // A.7; K2; E140 N1, N2; reading 12; E126; B09; BS5 §5 ("the envelope is as
-// built"); SEAM.md §§156, 168, 256, 427
+// built"); SEAM.md §§156, 168, 256, 438
 //
 // `MemAvailable` and each domain's `memory.current` are scripted through
 // the kernel lane's envelope † (`POST /v1/harness/envelope`); every domain

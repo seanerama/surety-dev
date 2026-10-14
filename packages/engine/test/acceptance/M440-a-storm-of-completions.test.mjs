@@ -2,7 +2,7 @@
 // the controlled clock). M5 plan §3.7 M440 (e); D6-X07; D6 K1, N02; D1 §1.5,
 // §8.1 steps 1 to 4, §8.3; and the K1 straddle of M12, M15, M18 and M71
 // (D6 C.2: "event-storm, expiry and cancellation cases, not only faster
-// happy-path ticks"; the driver's ruling Q11, 2026-10-13); SEAM.md §430
+// happy-path ticks"; the driver's ruling Q11, 2026-10-13); SEAM.md §441
 //
 // The storm: one project's short `verification` items, a new one made
 // eligible every quarter of a second for fifteen seconds, each completing at

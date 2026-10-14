@@ -41,6 +41,8 @@ import {
   assertRunQuarantined,
   getRow,
   leasesOf,
+  pauseProject,
+  resumeProject,
   run as runRow,
   runsOf,
   scriptedEngine,
@@ -88,16 +90,22 @@ describe('M16 unknown termination is never success', () => {
   test('the role process exited, but the boundary still reports the domain running', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
+    // scripted while the project is paused, and `waiting` is made once the
+    // quarantine is observed: made eligible before the first tick, it would be
+    // dispatched beside the run before any quarantine existed.
+    await pauseProject(fx.engine, project);
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     fx.scripted.script(item, [script.complete([step.write('report.txt', 'verified')])]);
-    fx.scripted.script(waiting, [script.hold('gate')]);
     // The parent exits normally; the boundary says something of the domain still runs.
     fx.scripted.boundary({ default: BOUNDARY.running });
+    await resumeProject(fx.engine, project);
 
     await tick(fx.engine, project);
     const first = await waitForRun(fx.home, item);
     await waitForQuarantine(fx.home, first.id);
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(waiting, [script.hold('gate')]);
     const [launch] = fx.scripted.launches({ run: first.id });
     assert.equal(fx.scripted.isLive(launch), false, 'the process the engine spawned has exited');
     const ids = { runId: first.id, item, waiting };
@@ -122,10 +130,14 @@ describe('M16 unknown termination is never success', () => {
   test('the boundary cannot read membership', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
+    // scripted while the project is paused, and `waiting` is made once the
+    // quarantine is observed: made eligible before the first tick, it would be
+    // dispatched beside the run before any quarantine existed.
+    await pauseProject(fx.engine, project);
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     fx.scripted.script(item, [script.hold('gate')]);
-    fx.scripted.script(waiting, [script.hold('gate')]);
+    await resumeProject(fx.engine, project);
     await tick(fx.engine, project);
     await fx.scripted.waitForHolding({ work_item: item });
     const first = await waitForRun(fx.home, item, { state: 'executing' });
@@ -133,6 +145,8 @@ describe('M16 unknown termination is never success', () => {
     fx.scripted.boundary({ default: BOUNDARY.unknown });
     await stopRun(fx.engine, project, first.id);
     await waitForQuarantine(fx.home, first.id);
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(waiting, [script.hold('gate')]);
     const ids = { runId: first.id, item, waiting, outcome: 'stopped' };
     const before = await assertQuarantineHolds(fx, project, ids);
     assert.equal(leasesOf(fx.home, first.id).filter((l) => l.resource_kind === 'run' && l.released_at === null).length, 0, 'unknown is not execution authority');
@@ -142,10 +156,14 @@ describe('M16 unknown termination is never success', () => {
   test('cancellation fails: the boundary keeps reporting the domain running after Stop', async (t) => {
     const fx = await scriptedEngine(t, { config: GRACE });
     const project = (await addProject(fx)).id;
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
+    // scripted while the project is paused, and `waiting` is made once the
+    // quarantine is observed: made eligible before the first tick, it would be
+    // dispatched beside the run before any quarantine existed.
+    await pauseProject(fx.engine, project);
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     fx.scripted.script(item, [script.hold('gate', { on_term: 'ignore' })]);
-    fx.scripted.script(waiting, [script.hold('gate')]);
+    await resumeProject(fx.engine, project);
     await tick(fx.engine, project);
     await fx.scripted.waitForHolding({ work_item: item });
     const first = await waitForRun(fx.home, item, { state: 'executing' });
@@ -154,6 +172,8 @@ describe('M16 unknown termination is never success', () => {
     fx.scripted.boundary({ domains: { [domain.id]: BOUNDARY.running } });
     await stopRun(fx.engine, project, first.id);
     await waitForQuarantine(fx.home, first.id);
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(waiting, [script.hold('gate')]);
     const ids = { runId: first.id, item, waiting, outcome: 'stopped' };
     const before = await assertQuarantineHolds(fx, project, ids);
     assert.ok(existsSync(before.workspaces[0].path), 'the workspace is not discarded or reused');
@@ -249,10 +269,14 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     const config = { terminate_grace: 6, kill_grace: 2 };
     const fx = await scriptedEngine(t, { config });
     const project = (await addProject(fx)).id;
+    // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): `item` is
+    // scripted while the project is paused, and `waiting` is made once the
+    // quarantine is observed: made eligible before the first tick, it would be
+    // dispatched beside the run before any quarantine existed.
+    await pauseProject(fx.engine, project);
     const item = await addWork(fx.engine, project, 'verification');
-    const waiting = await addWork(fx.engine, project, 'review');
     fx.scripted.script(item, [script.hold('gate', { on_term: 'ignore' })]);
-    fx.scripted.script(waiting, [script.complete()]);
+    await resumeProject(fx.engine, project);
     await tick(fx.engine, project);
     const launch = await fx.scripted.waitForHolding({ work_item: item });
     const first = await waitForRun(fx.home, item, { state: 'executing' });
@@ -270,6 +294,8 @@ describe('M16 an unknown report is acted on when it is made (review)', () => {
     assert.equal(row.quarantined, 1, 'unknown is never termination');
     assert.equal(fx.scripted.isLive(launch), true, `SIGKILL is not due before terminate_grace (${config.terminate_grace} s): the role that ignores SIGTERM is still running when the quarantine is recorded`);
     assertRunQuarantined(fx.home, first.id, { outcome: 'stopped' });
+    const waiting = await addWork(fx.engine, project, 'review');
+    fx.scripted.script(waiting, [script.complete()]);
 
     // D1 §4.5 step 2: TERM, terminate_grace, KILL. No tick is asked for: the
     // signalling is the run-end protocol's own, and a quarantine does not end it.

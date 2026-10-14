@@ -1,4 +1,4 @@
-// M5 slice 37 (rows M437, M438; SEAM.md §427): the scripted envelope of
+// M5 slice 37 (rows M437, M438; SEAM.md §438): the scripted envelope of
 // the kernel lane, admission reads, and the three-stage phase of the
 // reference project with its stages scripted by work item. Kernel lane: the
 // scripted backend, the scripted check boundary; nothing here acts on a

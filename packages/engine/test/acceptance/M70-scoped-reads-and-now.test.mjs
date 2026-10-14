@@ -50,7 +50,7 @@
 // identifier, a project's git operations (pending and blocked ones included),
 // and its environments as a route of their own.
 
-// M5 slice 37 (D6 K2; SEAM.md §426): the engine key `max_concurrent_runs`
+// M5 slice 37 (D6 K2; SEAM.md §437): the engine key `max_concurrent_runs`
 // (8 here before) is refused at start; the bound that stays, the domain
 // slots (applied on the kernel lane, the driver's ruling Q2), is set to 8 so
 // the declared concurrency is unchanged.
@@ -133,7 +133,7 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
       // "untouched": nothing was ever dispatched. "ready": eligible work that no tick has seen yet.
       // Objection 095 (D6 K1): new eligible work requests a tick at once, so
       // the scheduler is held first, in a tick at `scheduler.tick_running`
-      // (after the prerequisite steps, before select; SEAM.md §430), and kept
+      // (after the prerequisite steps, before select; SEAM.md §441), and kept
       // there for this describe's reads: no tick can select "ready"'s item.
       p.untouched = (await addProject(fx)).id;
       p.ready = (await addProject(fx)).id;

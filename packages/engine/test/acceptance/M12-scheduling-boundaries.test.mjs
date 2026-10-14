@@ -6,7 +6,7 @@
 // One run per work item; engine-wide concurrency is bounded by the domain
 // slots; simultaneous tick requests do not multiply anything; pausing lets
 // the run under way finish.
-// M5 slice 37 (D6 K2, C.2; SEAM.md §426): "a project has one run at a time"
+// M5 slice 37 (D6 K2, C.2; SEAM.md §437): "a project has one run at a time"
 // and "concurrency across projects is bounded by the engine setting" were
 // accepted under the project and engine run counts K2 removes. They are
 // narrowed to one run per work item (two items of one project now run at

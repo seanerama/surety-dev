@@ -1,5 +1,5 @@
 // M5 slice 37: reads for rows M439 (the memory peak recorded) and M451 (the
-// profile is part of the qualification). SEAM.md §432 Read only: the
+// profile is part of the qualification). SEAM.md §443 Read only: the
 // store, the events, and a domain's cgroup files from the host side.
 
 import assert from 'node:assert/strict';
@@ -51,7 +51,7 @@ export const hostMemoryPeak = (dir) => {
   return v !== null && /^\d+$/.test(v) ? Number(v) : null;
 };
 
-// The one-shot `domain_peak` fault (SEAM.md §432): the next domain of
+// The one-shot `domain_peak` fault (SEAM.md §443): the next domain of
 // `project` to terminate has its memory.peak unreadable, or read only after
 // its cgroup was removed.
 export const armPeakFault = (engine, project, mode) => armFault(engine, { point: 'domain_peak', mode, project });
@@ -82,7 +82,7 @@ export function assertPeakRecorded(home, domainId, { memoryMax, atLeast, what })
 
 // ---- trust entries and their profile (M451) --------------------------------------------------
 
-// The entry's recorded profile (SEAM.md §432): {memory_max, writable_bytes, writable_inodes, tasks_max}.
+// The entry's recorded profile (SEAM.md §443): {memory_max, writable_bytes, writable_inodes, tasks_max}.
 export function entryProfile(entry) {
   const p = json(entry?.profile);
   return p && typeof p === 'object' ? p : null;

@@ -2,7 +2,7 @@
 // the scripted engine with a stand-in bound to a real backend's name, as
 // M101's). M5 plan §3.7 M451 (a), (b), (e); D6-X09; D6 §2.6, §6.4; D2 §4.1,
 // §7.2; K2; B09; Q1, Q7 (the driver's approval, 2026-10-13); SEAM.md §§116,
-// 150, 432 Its sandbox cases, (c), (d) and (f), which need real canaries,
+// 150, 443. Its sandbox cases, (c), (d) and (f), which need real canaries,
 // a qualified check runner and a real domain, are
 // `M451-the-qualified-profile-on-a-real-domain`.
 //   (a) a trust entry qualified at `role_memory_max` 8 GiB, the project set

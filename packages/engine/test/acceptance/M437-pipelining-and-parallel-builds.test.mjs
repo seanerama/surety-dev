@@ -1,6 +1,6 @@
 // M437 (c), (d), (e): pipelining and parallel builds (M5 slice 37; kernel
 // lane). M5 plan §3.7 M437; D6-X05; D6 §6.4; K2; B08, B09; D1 §7.5;
-// SEAM.md §§43, 427
+// SEAM.md §§43, 438
 //
 // The reference project on the journey's own path (journey35), its stages'
 // Builders scripted by work item, under the kernel lane's scripted envelope

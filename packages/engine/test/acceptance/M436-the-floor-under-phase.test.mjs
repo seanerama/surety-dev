@@ -1,7 +1,7 @@
 // M436 (e), the floor under `autonomy: phase` (slice 37; kernel lane). M5
 // plan §3.7 M436 (e); D6-X03 ("no floor item is skipped, each of F §9.1's
 // items and E10's asserted, not three examples"); D6 §6.5; F §9.1; E10;
-// D4 §4.1; SEAM.md §429 The project-lane part of (e) is
+// D4 §4.1; SEAM.md §440 The project-lane part of (e) is
 // `M436-the-phase-profile-on-the-project-lane`.
 //
 // On the reference project at `developing` under `phase`, the scripted

@@ -1,7 +1,7 @@
 // M441 (a), (c), (e), the pace read after the journey (M5 slice 37; kernel
 // lane). M5 plan §3.7 M441; D6-M01; D6 §7.6, A.3 (`host_observations`,
 // `work_items.held`), N01; D1 §11.3, §12.2; BS5 §10; SEAM.md §355 and
-// §431 (the read's figures, each from the observation it declares).
+// §442 (the read's figures, each from the observation it declares).
 //
 // The journey (M401's reference project, T2, `autonomy: phase`,
 // `alpha_deploy: on_phase_complete`) on the scripted backend, the scripted

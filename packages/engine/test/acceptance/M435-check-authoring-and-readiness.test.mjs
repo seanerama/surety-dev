@@ -1,7 +1,7 @@
 // M435, check authoring per phase and readiness (slice 37; kernel lane). M5
 // plan §3.7 M435 (a), (b), (d); D6-W04; D6 §6.2; F §3.10.3, §5.1; reading 4;
 // B07, N01 (HoldReason `authoring_readiness`), N04; D6 C.2 K7 (M13 to M18:
-// cancellation of new one-shot work); SEAM.md §§351, 428
+// cancellation of new one-shot work); SEAM.md §§351, 439
 //
 // The reference project published with its project paused, so that nothing
 // of the plan is dispatched before the case has scripted the authoring run
@@ -72,7 +72,7 @@ describe('M435 check authoring per phase and readiness', () => {
       assert.ok((w.depends_on ?? []).some((d) => d.milestone === 'authoring_ready' && d.phase_plan === plan.id), `stage work depends on the phase's authoring readiness (${JSON.stringify(w.depends_on)})`);
       assert.equal(w.status, 'eligible', 'stage work stays eligible, undispatched');
     }
-    // N01: the hold is an interval recorded with its reason (SEAM.md §428; Q3: work.hold_began / work.hold_ended).
+    // N01: the hold is an interval recorded with its reason (SEAM.md §439; Q3: work.hold_began / work.hold_ended).
     const began = eventsOfProject(fx.home, 'work.hold_began', p.id);
     for (const w of stageItems(fx, p)) {
       assert.ok(
