@@ -785,8 +785,11 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 function advanceClock(body: unknown): { now: string } {
   const seconds = isObject(body) ? body.seconds : undefined;
-  if (!isObject(body) || Object.keys(body).some((k) => k !== 'seconds') || typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 1) {
-    throw new Refusal(400, 'invalid_value', '"seconds" must be a positive integer.', 'Send {"seconds": <n>}.', { field: 'seconds' });
+  // SEAM.md §425: a negative `seconds` moves the controlled clock back and
+  // leaves it there (the wall clock of a host that steps back), harness
+  // mode only; zero moves nothing and is refused.
+  if (!isObject(body) || Object.keys(body).some((k) => k !== 'seconds') || typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds === 0) {
+    throw new Refusal(400, 'invalid_value', '"seconds" must be a non-zero integer (negative: the clock steps back).', 'Send {"seconds": <n>}.', { field: 'seconds' });
   }
   Atomics.add(clockCell!, 0, BigInt(seconds * 1000));
   return { now: new Date(Date.now() + clockOffsetMs()).toISOString() };
