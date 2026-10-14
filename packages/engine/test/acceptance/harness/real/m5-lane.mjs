@@ -1109,7 +1109,9 @@ export async function m5rPhase2(ctx) {
     const { project } = stepValue(ctx, 'm5r_adopt');
     return onEngine(ctx, 'M444 m5r_phase2', { projects: [project], resume: project }, async (fx) => {
       const plan = activePlanOf(fx.home, project, 2);
-      const d = await drive(ctx, fx, project, () => { const st = stagesOf(fx.home, project).filter((s) => s.phase_plan === plan?.id); return st.length > 0 && st.every((s) => s.status === 'verified') ? st : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 2\'s stage built by a real Builder and verified' });
+      void plan;
+      // Every plan of phase 2 (an early replacement keeps its stages on their own rows; E148 item 3).
+      const d = await drive(ctx, fx, project, () => { const phase2 = new Set(plansOf(fx.home, project).filter((p) => p.phase_number === 2).map((p) => p.id)); const st = stagesOf(fx.home, project).filter((s) => phase2.has(s.phase_plan) && s.status !== 'cancelled'); return st.length > 0 && st.every((s) => s.status === 'verified') ? st : undefined; }, { expect: [...CORRECTIONS, 'plan_approval'], what: 'phase 2\'s stage built by a real Builder and verified' });
       const out = { stages: d.value.map((s) => ({ number: s.number, status: s.status })), builds: runsOfProject(fx.home, project).filter((r) => r.role === 'builder'), shown: d.shown };
       observe(ctx, 'M444', 'phase2', out);
       return out;

@@ -74,6 +74,12 @@ const preflight = () => {
 };
 const rows = (home, sql, ...p) => withStore(home, (db) => db.prepare(sql).all(...p));
 const show = (v) => JSON.stringify(v)?.slice(0, 2000);
+// A phase's stages as the engine keeps them across an early replacement
+// (D6 §5.7; E148 item 3): kept stages stay on their own generation's plan
+// row, so every plan of the phase is read, and a cancelled stage is not the
+// phase's.
+const stagesOfPhase = (home, project, phase) =>
+  rows(home, `SELECT s."number", s."status" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE p."project" = ? AND p."phase_number" = ? AND s."status" <> 'cancelled' ORDER BY s."number"`, project, phase);
 
 // The journey's steps in order, each run at most once per run directory, up to `last`.
 async function upTo(ctx, last) {
@@ -155,7 +161,7 @@ describe('M443 the real journey from an idea to Alpha (real lane, paid)', () => 
         const results = rows(home, 'SELECT * FROM "check_results" WHERE "project" = ?', project);
         assert.ok(results.length > 0 && results.every((r) => r.execution !== null && r.runner_id !== 'test_fixture'), `every check result an engine execution (${results.length})`);
         const plan1 = rows(home, 'SELECT * FROM "phase_plans" WHERE "id" = ?', p1.value.phase1)[0];
-        const stages = rows(home, 'SELECT "number", "status" FROM "stages" WHERE "phase_plan" = ?', plan1.id);
+        const stages = stagesOfPhase(home, project, 1);
         assert.ok(stages.length >= 1 && stages.every((s) => s.status === 'verified'), `phase 1's stages verified (${show(stages)})`);
         assert.ok(plan1.completed_at, 'phase 1 complete');
         assert.ok(rows(home, `SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'replan'`, project).length >= 1, 'the replan registered');
@@ -186,7 +192,7 @@ describe('M443 the real journey from an idea to Alpha (real lane, paid)', () => 
       await store(ctx, (home) => {
         const plan2 = rows(home, `SELECT * FROM "phase_plans" WHERE "project" = ? AND "phase_number" = 2 AND "active" = 1`, project)[0];
         assert.ok(plan2?.completed_at, `phase 2 complete (${show(plan2)})`);
-        const stages = rows(home, 'SELECT "number", "status" FROM "stages" WHERE "phase_plan" = ?', plan2.id);
+        const stages = stagesOfPhase(home, project, 2);
         assert.ok(stages.length >= 1 && stages.every((s) => s.status === 'verified'), `phase 2's stages verified (${show(stages)})`);
         const results = rows(home, 'SELECT * FROM "check_results" WHERE "project" = ?', project);
         assert.ok(results.every((r) => r.execution !== null && r.runner_id !== 'test_fixture'), 'every check result an engine execution');
