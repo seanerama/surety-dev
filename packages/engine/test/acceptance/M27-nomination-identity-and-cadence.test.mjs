@@ -264,6 +264,11 @@ describe('M27 a nomination that a crash interrupts is completed by its finalizer
     assert.equal(workItem(fx.home, items[0]).status, 'verifying');
     assert.equal(runRow(fx.home, run.id).state, 'ended');
 
+    // The first ticks after the restart record what they observe of the
+    // verification item (its `work.hold_began` while its decision is open);
+    // under K1 one may come before or after a snapshot taken at once
+    // (objection 114; SEAM §461), so the snapshot is taken after them.
+    await ticks(fx, project.id);
     const receipts = receiptSnapshot(fx.home, project.id);
     await fx.engine.kill();
     await fx.start();

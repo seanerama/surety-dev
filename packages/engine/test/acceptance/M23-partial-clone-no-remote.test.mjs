@@ -33,7 +33,7 @@ import { git, gitEnv } from './harness/git.mjs';
 import { addItem, roleThat, runToEnd } from './harness/gitruns.mjs';
 import { assertCommitted } from './harness/journal.mjs';
 import { fileAt, gitQuiet, readEvidence, refOid } from './harness/repos.mjs';
-import { assertRunEnded, runsOf, scriptedEngine, tick, tickOnce, waitForIdle, waitForRun } from './harness/runs.mjs';
+import { assertRunEnded, pauseProject, resumeProject, runsOf, scriptedEngine, tick, tickOnce, waitForIdle, waitForRun } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 
 // A commit on the origin's branch holding `files`; returns its id.
@@ -106,6 +106,11 @@ describe("M23 engine git never contacts a remote, and runs no program a remote's
     const files = { 'src/added.txt': 'added by the Builder\n', 'notes.txt': 'notes, as the Builder left them\n' };
     fx.scripted.script(item, [roleThat(Object.entries(files).map(([path, content]) => step.write(path, content)))]);
     await tickOnce(fx.engine, project);
+    // Under K1 each failed run's end requests a tick that dispatches the next
+    // repair, which fails on the same absent blob until the item parks
+    // (objection 114; SEAM §461): the project is paused once the first run is
+    // dispatched, and resumed once the blob is supplied.
+    await pauseProject(fx.engine, project);
     const refused = await waitForRun(fx.home, item, { state: 'ended' });
     await waitForIdle(fx.home, project);
     assert.ok(readEvidence(evidence) === null, `engine git ran the program the repository's configuration names as its remote's upload-pack:\n${readEvidence(evidence)}`);
@@ -120,6 +125,7 @@ describe("M23 engine git never contacts a remote, and runs no program a remote's
     assert.ok(readEvidence(evidence) === null, 'supplying the blob by hand ran no program');
 
     // The repair's whole course: workspace, snapshot, commit, ref update, and two ticks with their integrity step.
+    await resumeProject(fx.engine, project);
     const run = await runToEnd(fx, project, item, { index: runsOf(fx.home, item).length });
     for (let i = 0; i < 2; i++) await tick(fx.engine, project);
     await waitForIdle(fx.home, project);
