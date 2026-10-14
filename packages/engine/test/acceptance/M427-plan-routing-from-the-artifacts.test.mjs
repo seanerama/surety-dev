@@ -29,7 +29,7 @@ import { describe, test } from 'node:test';
 
 import { changeRequests, planOfPhase, runsOfProject, workOf } from './harness/journey/drive.mjs';
 import { afterRefusal, checkOfApproval, diffText, journey35, nextReplanOutcome, openPlanApprovals, phaseOf, planCheckRows, rejectWithNote, replan35, roadmapWith, outcomes, stagesWith, unpublished, phaseCompleteNoPlanAnswer } from './harness/journey/plan35.mjs';
-import { ADR_001, ADR_001_REVISED, ADR_KEY, ARCHITECTURE_MD, MODULES_JSON, T2_KINDS, adrText } from './harness/journey/reference.mjs';
+import { ADR_001, ADR_001_REVISED, ADR_KEY, ARCHITECTURE_MD, MODULES_JSON, ROADMAP_JSON, T2_KINDS, adrText } from './harness/journey/reference.mjs';
 import { packageOf } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -43,49 +43,54 @@ const NEW_GOAL = 'count the sums, then show them on /stats';
 const ARCH_EDIT = '\nThe service logs every request to standard error.\n';
 const ADR_2 = adrText({ key: 'ADR-002', decision: 'Every answer is JSON.' });
 const noAdrs = stagesWith(2, { 3: { adrs: [] }, 4: { adrs: [] } });
+// Objection 084: a rejected replan's commit stays on the integration branch as a draft (D6 §3.4,
+// B02), so each launch writes the whole tree it proposes: the approved artifacts, with its own
+// change over them (a null removes a file).
+const APPROVED = Object.freeze({ [ADR_PATH]: ADR_001, [ADR_2_PATH]: null, [MODULES]: MODULES_JSON, [ARCHITECTURE]: ARCHITECTURE_MD, [ROADMAP]: ROADMAP_JSON });
+const whole = (opts = {}) => replan35({ ...opts, files: { ...APPROVED, ...(opts.files ?? {}) } });
 const sensitiveStages = stagesWith(2, { 4: { validation: { sensitive_areas: ['secrets_credentials'], kinds: [...T2_KINDS, 'sensitivity_floor'] } } });
 
 // The baseline-changing variants of (b): {what, script, diff: [texts the diff holds], changed(check)}.
 const VARIANTS = [
   {
     what: 'an ADR added',
-    script: replan35({ architecture_version: 2, before: DUMP, files: { [ADR_2_PATH]: ADR_2 } }),
+    script: whole({ architecture_version: 2, before: DUMP, files: { [ADR_2_PATH]: ADR_2 } }),
     diff: ['Every answer is JSON.'],
     changed: (c) => (c.changes_adrs?.added ?? []).includes('ADR-002'),
   },
   {
     what: 'ADR-001 altered',
-    script: replan35({ architecture_version: 2, before: DUMP, files: { [ADR_PATH]: ADR_001_REVISED } }),
+    script: whole({ architecture_version: 2, before: DUMP, files: { [ADR_PATH]: ADR_001_REVISED } }),
     diff: ['content type application/json', 'no dependency.'],
     changed: (c) => (c.changes_adrs?.changed ?? []).includes(ADR_KEY),
   },
   {
     what: 'ADR-001 deleted',
-    script: replan35({ architecture_version: 2, before: DUMP, stages: noAdrs, files: { [ADR_PATH]: null } }),
+    script: whole({ architecture_version: 2, before: DUMP, stages: noAdrs, files: { [ADR_PATH]: null } }),
     diff: [ADR_001.split('\n').find((l) => l.startsWith('The service uses'))],
     changed: (c) => (c.changes_adrs?.deleted ?? []).includes(ADR_KEY),
   },
   {
     what: 'a module\'s sensitivity changed',
-    script: replan35({ architecture_version: 2, before: DUMP, stages: sensitiveStages, files: { [MODULES]: { ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: ['secrets_credentials'] } : m)) } } }),
+    script: whole({ architecture_version: 2, before: DUMP, stages: sensitiveStages, files: { [MODULES]: { ...MODULES_JSON, modules: MODULES_JSON.modules.map((m) => (m.name === 'service' ? { ...m, sensitive_areas: ['secrets_credentials'] } : m)) } } }),
     diff: ['secrets_credentials'],
     changed: (c) => c.changes_architecture?.changed === true && JSON.stringify(c.changes_architecture.subjects).includes('modules'),
   },
   {
     what: 'the architecture text edited',
-    script: replan35({ architecture_version: 2, before: DUMP, files: { [ARCHITECTURE]: ARCHITECTURE_MD + ARCH_EDIT } }),
+    script: whole({ architecture_version: 2, before: DUMP, files: { [ARCHITECTURE]: ARCHITECTURE_MD + ARCH_EDIT } }),
     diff: ['logs every request to standard error', 'Two modules'],
     changed: (c) => c.changes_architecture?.changed === true && JSON.stringify(c.changes_architecture.subjects).includes('architecture'),
   },
   {
     what: 'phase 2\'s goal changed',
-    script: replan35({ roadmap_version: 2, before: DUMP, files: { [ROADMAP]: roadmapWith({ phases: [phaseOf(1), { ...phaseOf(2), goal: NEW_GOAL }] }) } }),
+    script: whole({ roadmap_version: 2, before: DUMP, files: { [ROADMAP]: roadmapWith({ phases: [phaseOf(1), { ...phaseOf(2), goal: NEW_GOAL }] }) } }),
     diff: [NEW_GOAL, 'count the sums and show the stats'],
     changed: (c) => (c.changes_roadmap?.goals ?? []).length > 0,
   },
   {
     what: 'R4 moved to an added phase 3',
-    script: replan35({
+    script: whole({
       roadmap_version: 2,
       before: DUMP,
       stages: [stagesWith(2, {})[0]],
@@ -96,7 +101,7 @@ const VARIANTS = [
   },
   {
     what: 'a phase dependency changed',
-    script: replan35({ roadmap_version: 2, before: DUMP, files: { [ROADMAP]: roadmapWith({ phases: [phaseOf(1), { ...phaseOf(2), depends_on: [] }] }) } }),
+    script: whole({ roadmap_version: 2, before: DUMP, files: { [ROADMAP]: roadmapWith({ phases: [phaseOf(1), { ...phaseOf(2), depends_on: [] }] }) } }),
     diff: ['depends_on'],
     changed: (c) => (c.changes_roadmap?.dependencies ?? []).length > 0,
   },
@@ -108,9 +113,9 @@ describe('M427 plan routing from the artifacts', () => {
     const R9 = stagesWith(2, { 3: { implements: ['R3', 'R9'] } });
     fx.scripted.kindScript('replan', [
       ...VARIANTS.map((v) => v.script),
-      replan35({ before: DUMP, conformance: 'uncertain' }),
-      replan35({ before: DUMP, stages: R9 }),
-      replan35({ before: DUMP }),
+      whole({ before: DUMP, conformance: 'uncertain' }),
+      whole({ before: DUMP, stages: R9 }),
+      whole({ before: DUMP }),
     ]);
     const seen = outcomes();
     await phaseCompleteNoPlanAnswer(fx, ctx, 1);

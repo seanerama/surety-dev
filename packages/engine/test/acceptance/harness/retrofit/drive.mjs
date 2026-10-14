@@ -208,9 +208,10 @@ export async function retrofitArchitectSession(fx, project, repo, { files, answe
 // Returns {p: {id, repo, A}, ctx, spec, confirmations, architect}.
 export async function toConformancePublished(fx, { mode = 'full', answers = FULL_ANSWERS, spec = SPEC, architect = {}, policy, tier = TIER, repoOpts } = {}) {
   const p = await adoptProject(fx, { tier, repoOpts });
-  // `phase_size` (slice 35; SEAM.md §406): the adopted fixture's phases have one stage each.
-  await ownerPolicy(fx, p.id, { phase_size: ADOPTED_PHASE_SIZE, ...(policy ?? {}) });
   const modeAnswer = await chooseMode(fx, p.id, mode);
+  // `phase_size` (slice 35; SEAM.md §406): the adopted fixture's phases have one stage each. Committed
+  // once the mode is answered: a policy commit re-raises an open `adoption_mode` (objection 086).
+  await ownerPolicy(fx, p.id, { phase_size: ADOPTED_PHASE_SIZE, ...(policy ?? {}) });
   const specSession = await retrofitSpecSession(fx, p.id, { spec });
   const confirmations = await confirmAndApprove(fx, p.id, answers);
   const arch = await retrofitArchitectSession(fx, p.id, p.repo, architect);

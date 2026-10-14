@@ -137,7 +137,9 @@ describe('M428 the phase gate and T1 nomination', () => {
     const done1 = await phaseCompleted(fx, ctx, 1);
     const plan2 = await nextPhasePublished(fx, ctx, 2);
     const exits = (x) => (x.key === 'accept-r1' && x.candidate !== done1.completion_binding.candidate ? 1 : 0);
-    const c3 = await pump(fx, ctx, () => candidatesOfProject(fx.home, p.id).find((c) => c.id !== done1.completion_binding.candidate && !executionsOf(fx.home, c.id).some((x) => x.key === 'accept-r4')), { what: 'stage 3\'s candidate', max: 80, exits });
+    // Objection 083: stage 3's candidate is the first nominated after phase 1's completion candidate.
+    const seq1 = candidatesOfProject(fx.home, p.id).find((c) => c.id === done1.completion_binding.candidate).seq;
+    const c3 = await pump(fx, ctx, () => candidatesOfProject(fx.home, p.id).find((c) => c.seq > seq1), { what: 'stage 3\'s candidate', max: 80, exits });
     // (g), (d): the route.
     const res = await gateRoute(fx, p.id, c3.id, { phase_plan: plan2.id });
     assert.equal(res.status, 200, `POST …/gates/phase evaluates (the driver's ruling 2; M3's unsupported replaced) (→ ${res.status} ${res.text})`);

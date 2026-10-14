@@ -2727,6 +2727,46 @@ The setup:
 
 Run times were 3 s to 6 s per file as committed. In the diagnostic run they were 10 s to 220 s; M429's (d) was 5 min before the pump learned to report a silently completed replan.
 
+**Objections 082 to 086, upheld as test-side (the driver, 2026-10-13; SEAM §415).**
+- **082 (M425 (e)):** phase 2's active plan is read by its phase.
+- **083 (M428 (d)):** stage 3's candidate is the first one above phase 1's completion candidate by `seq`.
+- **084 (M427):** each launch writes its whole proposed tree.
+- **085 (M401 (i)):** phase 2's stages are read across its generations.
+- **086 (M408 (a); `retrofit/drive.mjs`):** the `phase_size` commit comes after the mode is answered.
+
+**What was run after the objections, 2026-10-13.** A scratch checkout of `build/m5-s35` at `52f52fc`, with this branch at `a980dce` merged, `npm ci` and `npm run build`. Each file was run alone.
+- **Passing:**
+  - M425 4/4;
+  - M426 7/7 and 2/2;
+  - M427 (e), (f) 2/2;
+  - M428 5/5;
+  - M429 4/4;
+  - M430 5/5 and 1/1;
+  - M413 (b) 1/1;
+  - M236 10/10, M234 11/11 and `M401-spec-change-work-from-a-finding-is-not-dispatched` 1/1 (the X2 straddle).
+- **On the project lane**, each run with the runner's read-only checks before and after: M408 8/8 and M401 part 2 5/5. The manager was `running` before, no `surety-*` unit existed before or after, and nothing new was left in `/dev/shm` or `/tmp`.
+- **M427 (the chain) fails 0/1 at (e).** The refused replan's `reason_text` is `the plan check refused phase 2: PLAN_UNKNOWN_REQUIREMENT (R9)`. The build names the route in the session's 422 text and in `baseline.plan_refused`'s payload (`spec_change_route`), not in the run's text. Every variant of (b), (c) and (d) before it passes. This is a question for the driver: either the refusal text is the run's, which is the case as written, or the event's field is enough.
+
+**The slice-35 review's cases** (the driver's message, 2026-10-13; SEAM §415):
+
+| Finding | Row | File | Case | Status |
+|---|---|---|---|---|
+| S1 (a), S1 (b), S2, M4 | M430 | `M430-replacements-pending-while-stages-move.test.mjs` (4) | a changed building stage integrated before the approval; a kept stage's work parked before it; a kept `verifying` stage's repair after the swap; a parked integrated stage kept with its blocker, then its own `blocker_replan` | written |
+| M2 | M429 | `M429-a-replacement-at-phase-verification.test.mjs` (1) | a replacement keeping every stage during `phase_verification`: a new one for generation 2, completion on it | written |
+| M3 | M430 | `M430-blockers-and-reopened-dispositions.test.mjs` (3) | (i) a fix's X2 blocker offers no `replan` (`X2_FIX_OPTIONS`); (ii) the stage's blocker raised again after its replan parks; (iii) a losing plan-targeted `fix` reopened | written |
+
+**What was run for the review's cases, 2026-10-13.** The same scratch (`52f52fc` with this branch merged). Each file was run alone. Every case fails, and each failure is the finding the case pins:
+- **S1 (a) and S1 (b):** answering the open approval returns 200, and the stale bundle is **published**. The plan read lists it `published`, not `stale`.
+- **S2:** after the swap, stage 1's failed `accept-r1` sends its work back to `eligible`. It is never dispatched again: one run, and still `integrated` after 160 rounds.
+- **M4:** the spec-change replacement cancels the integrated stage 1 (`cancelled_at` set).
+- **M2:** after the swap, the held `phase_verification`'s sign-off is refused (one `signoff.refused`). No second `phase_verification` is registered, and phase 1 does not complete on generation 2.
+- **M3:**
+  - (i): the fix's X2 blocker offers `replan`;
+  - (ii): the refused replan parks, and no blocker about stage 1's work is open again;
+  - (iii): A's disposition stays `fix` (`dispositioned`) after its replacement loses with 409.
+- **Each replacement's approval is read from the open decision when the owner answers.** A pending `plan_approval` is raised again as its next generation when stages integrate (slice 34's ruling, SEAM §405).
+
+
 ## M5 slice 34: the specification and the Architect's products (BS5 §9.2; D6 §§2.5, 3.2 to 3.5, 5.3, 5.5, 5.6, B.2; the driver's approval of the outline, 2026-10-13)
 
 2026-10-13, by the Verifier of slice 34, on `verify/m5-s34` cut from `verify/m5-s33` at `4866861`. This covers rows M421 to M424, M448 and M449 of the M5 plan §3.4, in seven kernel files under manifest slice `34`. The seams are §§396 to 403, and the names follow the Builder's approved design where it gave one.

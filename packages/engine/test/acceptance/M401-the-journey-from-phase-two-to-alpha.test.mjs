@@ -47,6 +47,7 @@ import {
   obligationsOf,
   paceLeaves,
   phaseCompleted,
+  planOfPhase,
   projectRow,
   readPace,
   requirementsOf,
@@ -196,7 +197,10 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
   test('(i) phase 2 as (f) and (g), without a next phase: each stage integrated then verified through engine-run checks in check domains by the self-tested runner, a Verifier and a Reviewer run, the phase sign-off bound, no replan', () => {
     const { fx, p, phase2, switched } = J;
     assert.ok(phase2.completed_at && phase2.completion_binding);
-    assert.deepEqual(stagesOfPlan(fx.home, phase2.id).map((s) => s.status), ['verified', 'verified']);
+    // Objection 085: CR-1's replan replaces phase 2 early (D6 §5.7; M430), and the kept stages keep their
+    // rows on generation 1: phase 2's stages are read across its generations, the cancelled excluded.
+    const phase2Stages = planOfPhase(fx.home, p.id, 2).flatMap((x) => stagesOfPlan(fx.home, x.id)).filter((s) => !s.cancelled_at);
+    assert.deepEqual(phase2Stages.map((s) => s.status), ['verified', 'verified']);
     assert.equal(workOf(fx.home, p.id, 'replan').filter((w) => w.trigger_source === 'phase_complete' && w.trigger_id === phase2.id).length, 0, 'no replan after the last phase');
     assert.ok(evaluationsOfKind(fx.home, p.id, 'phase').some((e) => e.candidate === phase2.completion_binding.candidate && e.outcome === 'satisfied'), 'the phase gate satisfied on the bound candidate');
     const signoff = signoffsOfProject(fx.home, p.id).find((s) => s.scope === 'phase' && s.candidate === phase2.completion_binding.candidate);
