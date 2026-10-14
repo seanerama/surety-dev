@@ -433,7 +433,8 @@
       "M432-an-impact-that-cannot-be-computed.test.mjs",
       "M433-the-decision-stales-on-each-dependency.test.mjs",
       "M433-old-generation-runs-and-what-resolves-an-obligation.test.mjs",
-      "M434-an-unassigned-requirement.test.mjs"
+      "M434-an-unassigned-requirement.test.mjs",
+      "M422-the-latest-save-by-insertion-not-wall-time.test.mjs"
     ]
   },
   "sandbox": [

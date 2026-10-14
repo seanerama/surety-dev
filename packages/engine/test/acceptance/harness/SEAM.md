@@ -6699,6 +6699,14 @@ Sections 406 to 414 were written with the slice-35 acceptance tests (2026-10-13,
 - **The store's trigger** (Q11): an `UPDATE` of `requirements.assigned_phase` to a value the current roadmap revision does not assign the key is aborted; the engine's own writes follow the roadmap row it has just written.
 - **`moved_requirements`** (B.4) accepts `{key, from: null, to}` for a requirement with no phase (Q10). A revision leaving another requirement out fails the replan `invalid_result` naming it (§409). The complete revision routes to the owner; approved and published, `baseline.roadmap_revised` carries `moved_requirements` naming the key, `assigned_phase` is the phase given, and the reason is cleared.
 
+## 425. "The latest" is by insertion order; a clock that steps back (the driver's ruling, 2026-10-13)
+
+(Found and reproduced by the driver: the workstation's clock steps back about 1.1 s every ~31 s, and a step between a Spec Writer's two saves made `approve` carry `spec_criterion_mismatch:R2.2` from the earlier save. D6 §3.2, §3.4; D1 §7.3; §18, §274.) File `M422-the-latest-save-by-insertion-not-wall-time`, manifest slice `36`.
+- **The rule:** wherever the engine takes "the latest" row of a kind (a session's or a project's `spec_semantics`, and the other "latest" reads), it takes the one inserted last, never the one with the latest wall-clock `created_at`.
+- **`POST /v1/harness/clock/advance` with a negative `seconds`** † (harness only): the controlled clock moves back by that much, and stays there until the next advance; timestamps the engine takes afterwards are earlier than those it took before. It is the smallest addition that lets a test step the clock back within one engine's life; §18's forward advance is unchanged. The engine as merged answers 400 `invalid_value` ("`seconds` must be a positive integer").
+- **Across a restart**, with the seams the engine already has: an engine started with `--harness-clock-offset 60` (§274) and restarted with none takes timestamps 60 s earlier. An open Spec Writer session survives the restart idle and is continued by its next turn and save (`resume` is refused `session_not_idle` while it is open).
+- **What the cases read:** the project's `spec_semantics` rows in `rowid` order, the second save's row last with a `created_at` not after the first's; `spec_approval`'s `approve` with no blocker; the answer giving `spec_revisions` version 1 whose `semantic_digest` is the second save's.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35" and "M5 slice 36".
