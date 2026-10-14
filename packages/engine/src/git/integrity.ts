@@ -13,7 +13,7 @@
 import { join } from 'node:path';
 
 import type { Runtime } from '../runtime.js';
-import type { IntegrityFacts, IntegrityReport } from '../store/transitions/integrity.js';
+import type { IntegrityFacts, IntegrityReport, RegistryFacts } from '../store/transitions/integrity.js';
 import { type GitContext, repoContext, worktreeContext } from './exec.js';
 import { checkoutBaseline, listWorktrees, readRefs } from './repo.js';
 import { canonicalPath, worktreeMetadata } from './worktree.js';
@@ -142,4 +142,27 @@ export async function checkoutContext(repo: string, path: string): Promise<GitCo
   const admin = worktreeMetadata(repo, path);
   if (admin === null || admin === 'unknown') return null;
   return worktreeContext(repo, admin, path);
+}
+
+// Whether a registered ref of the project is anywhere but where the engine
+// expects it (or is moving it), read just before the project's dispatch
+// (D1 §8.1; D1-20; the driver's ruling on M70, slice 37). The integrity
+// step reads the refs at the start of a tick; under K1 a tick may start
+// while the project is paused, and a hand move and a resume may then land
+// between that step and the dispatch. Re-read here, a move is observed in
+// the tick that would otherwise dispatch onto it. A read that fails, or a
+// ref whose state is unknown, counts as moved: unknown is never clean, and
+// the integrity evaluation that follows records it as it is.
+export async function registeredRefsMoved(rt: Pick<Runtime, 'read'>, project: string): Promise<boolean> {
+  const f = await rt.read<RegistryFacts>('integrity.registry', { project });
+  const refs = await readRefs(repoContext(f.repo), f.registry.map((r) => r.ref));
+  if (refs === null) return true;
+  for (const row of f.registry) {
+    const read = refs.get(row.ref);
+    if (!read || read.state !== 'ok') return true;
+    if (read.oid === row.expected_oid) continue;
+    if ((f.moving[row.ref] ?? []).includes(read.oid)) continue;
+    return true;
+  }
+  return false;
 }

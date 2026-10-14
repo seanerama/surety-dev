@@ -28,7 +28,7 @@ import {
   recordSnapshot,
   recordWorkspaceMetadata,
 } from './transitions/accept.js';
-import { integrityFacts, recordIntegrity } from './transitions/integrity.js';
+import { integrityFacts, recordIntegrity, registryFacts } from './transitions/integrity.js';
 import {
   blockOperation,
   finalizeOperation,
@@ -425,6 +425,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
   'scheduler.candidates': (d) => dispatchCandidates(d),
   'scheduler.projects': (d) => projectIds(d),
+  'integrity.registry': (d, a: { project: string }) => registryFacts(d, a),
   // D1 §8.1 step 4: the project's day limits, read before select (throws on a failed read).
   // D2 §3.7; K2: whether the envelope holds a role domain of the project now.
   'scheduler.envelope_holds': (d, a: { project: string; workItem: string }) => envelopeHoldsDispatch(d, a),

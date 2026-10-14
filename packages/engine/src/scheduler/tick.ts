@@ -32,7 +32,7 @@
 import type { PhaseStepResult } from '../plan/phase.js';
 import { performance } from 'node:perf_hooks';
 
-import { observeIntegrity } from '../git/integrity.js';
+import { observeIntegrity, registeredRefsMoved } from '../git/integrity.js';
 import { Launcher } from '../invoke/choke.js';
 import type { Journal } from '../journal/driver.js';
 import type { ProjectCandidates } from '../store/reads.js';
@@ -321,6 +321,17 @@ export class Scheduler {
       // projects are taken in turn, one item each round, so no project's
       // queue starves another's under tick_budget (N02).
       const queues = candidates.filter((c) => !ineligible.has(c.project) && c.items.length > 0).map((c) => ({ c, items: [...c.items] }));
+      // The registered refs read again for each project about to be
+      // dispatched (D1 §8.1, D1-20): a move made after this tick's
+      // integrity step is observed now, and nothing of the project is
+      // dispatched onto it (git/integrity.ts registeredRefsMoved).
+      for (const q of queues) {
+        const moved = await registeredRefsMoved(this.rt, q.c.project).catch(() => true);
+        if (!moved) continue;
+        q.items = [];
+        ineligible.add(q.c.project);
+        await observeIntegrity(this.rt, q.c.project).catch((err) => log('integrity recheck', err, { project: q.c.project }));
+      }
       // Each item claimed in turn, in priority order; what the claimed runs
       // need before their spawns made side by side, and waited for before
       // the tick ends (D1 §8.1 step 9: the tick waits for what a dispatch

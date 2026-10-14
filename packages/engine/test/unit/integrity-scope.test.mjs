@@ -3,7 +3,9 @@
 // ruling on M450's ref_violation. Each tick's integrity step reads the
 // registered refs, the integration worktree and the retained workspaces of
 // sessions. The retained workspace of an ended work-item run is read at
-// startup only, and a tampered one is still observed there. A run's
+// startup only, and a tampered one is still observed there. The registered
+// refs are read again just before a project's dispatch, so a branch moved by
+// hand after the tick's integrity step is seen in that tick (M70). A run's
 // snapshot validation never classifies another active run's workspace, nor
 // an ended work-item run's. It does compare the integration worktree and an
 // ended session's workspace with their current recorded baselines. Real
@@ -25,12 +27,12 @@ const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
-const { integrityFacts, recordIntegrity } = await import(join(dist, 'store', 'transitions', 'integrity.js'));
+const { integrityFacts, recordIntegrity, registryFacts } = await import(join(dist, 'store', 'transitions', 'integrity.js'));
 const { validatorCheckouts } = await import(join(dist, 'store', 'transitions', 'accept.js'));
 const { configureGit, repoContext, worktreeContext } = await import(join(dist, 'git', 'exec.js'));
 const { checkoutBaseline } = await import(join(dist, 'git', 'repo.js'));
 const { captureMetadata, validateOutside } = await import(join(dist, 'git', 'snapshot.js'));
-const { observeIntegrity } = await import(join(dist, 'git', 'integrity.js'));
+const { observeIntegrity, registeredRefsMoved } = await import(join(dist, 'git', 'integrity.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -201,4 +203,21 @@ test('snapshot validation: two concurrent runs of one project, one ending midway
   // As does a change to an ended session's retained workspace.
   writeFileSync(join(session.path, 'a.txt'), 'by hand\n');
   assert.deepEqual(await validate(), { klass: 'ref_violation', text: `the managed checkout ${session.path} differs from its baseline` });
+});
+
+test('the pre-dispatch recheck: a registered ref at its expected commit is not moved; one moved by hand, or deleted, is', async (t) => {
+  const fx = fixture(t);
+  const rt = { read: async (op, a) => (op === 'integrity.registry' ? registryFacts(fx.db, a) : assert.fail(`unexpected read ${op}`)) };
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), false, 'the branch is where the engine expects it');
+  // The integration branch moved by hand, after the tick's integrity step.
+  writeFileSync(join(fx.repo, 'stray.txt'), 'moved by hand\n');
+  fx.g('-C', fx.repo, 'add', 'stray.txt');
+  fx.g('-C', fx.repo, 'commit', '-q', '-m', 'by hand');
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), true, 'a commit made by hand moves it');
+  // Once the engine expects the new commit, it is not moved.
+  fx.db.prepare(`UPDATE ref_registry SET expected_oid = ? WHERE id = 'ref_main'`).run(fx.g('-C', fx.repo, 'rev-parse', 'HEAD'));
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), false);
+  // A registered ref that is gone is moved, never clean.
+  fx.db.prepare(`INSERT INTO ref_registry (id, created_at, project, ref, kind, expected_oid, immutable) VALUES ('ref_gone', ?, 'prj_1', 'refs/surety/gone', 'nomination', ?, 1)`).run(AT, fx.head);
+  assert.equal(await registeredRefsMoved(rt, 'prj_1'), true);
 });

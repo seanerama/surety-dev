@@ -120,3 +120,22 @@ export function recordIntegrity(tx: Tx, report: IntegrityReport): { observed: nu
   }
   return { observed };
 }
+
+// The registered refs of a project and where the engine's journal is moving
+// them: what the pre-dispatch recheck reads (git/integrity.ts
+// registeredRefsMoved).
+export interface RegistryFacts {
+  repo: string;
+  registry: { ref: string; expected_oid: string }[];
+  moving: Record<string, string[]>;
+}
+
+export function registryFacts(db: Tx['db'], args: { project: string }): RegistryFacts {
+  const p = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string } | undefined;
+  if (!p) throw new Error(`project ${args.project} is not registered`);
+  return {
+    repo: p.dev_repo_path,
+    registry: db.prepare('SELECT "ref", "expected_oid" FROM "ref_registry" WHERE "project" = ? ORDER BY "id"').all(args.project) as { ref: string; expected_oid: string }[],
+    moving: movingRefs(db, args.project),
+  };
+}
