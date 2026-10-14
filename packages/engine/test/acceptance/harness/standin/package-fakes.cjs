@@ -252,8 +252,9 @@ var SURETY_PACKAGE_FAKES = (function () {
       }
       L.push('');
     }
-    L.push('## 1. Purpose', '', o.purpose ?? '', '', '## 2. Non-goals', '', ...(o.non_goals ?? []).map((x) => `- ${x}`), '', '## 3. Users and situations', '', o.users ?? '', '', '## 4. Requirements', '');
+    L.push('## 1. Purpose', '', o.purpose ?? '', '', '## 2. Non-goals', '', ...(o.non_goals ?? []).map((x) => `- ${x}`), '', '## 3. Users and situations', '', o.users ?? '', '');
     const form = R['spec_writer.requirement_form'];
+    L.push(form && form.section ? form.section : '## 4. Requirements', '');
     const marks = R['spec_writer.marks'];
     for (const r of o.requirements ?? []) {
       if (form) {
@@ -292,7 +293,7 @@ var SURETY_PACKAGE_FAKES = (function () {
       L.push(ef.section, '');
       for (const e of o.environments ?? []) {
         L.push(String(ef.heading).replace('<name>', e.name), '');
-        for (const f of ef.fields) L.push(`- **${f}:** ${(e.fields ?? {})[f] ?? 'not stated'}`);
+        for (const f of ef.fields) L.push(String(ef.line ?? '- **<Field>:** <value>').replace('<Field>', f).replace('<value>', (e.fields ?? {})[f] ?? 'not stated'));
         L.push('');
       }
     }
@@ -444,16 +445,41 @@ var SURETY_PACKAGE_FAKES = (function () {
 
   // ---- the Verifier: phase authoring and correction (D3 Appendix B; §6.2; §8.3) ----------------
 
-  function governedOf(ws, content) {
-    const g = content && content.governed;
-    const now = g ? parse(ws.read(g.path), null) : null;
-    return { path: g ? g.path : null, current: now, toolchain: content && content.toolchain ? content.toolchain.name : null };
+  // The governed file the first phase's authoring writes, from the
+  // package's `verifier.toolchain` element alone: its file, its closed
+  // members, the effective values (`current`) and the runtimes it offers;
+  // the toolchain is the first runtime, read from where its path lies.
+  function governedFrom(R) {
+    const t = R['verifier.toolchain'];
+    if (!t || !Array.isArray(t.runtimes) || t.runtimes.length === 0) return null;
+    const rt = t.runtimes[0];
+    const cur = t.current && typeof t.current === 'object' ? t.current : {};
+    const members = Array.isArray(t.members) ? t.members : [];
+    const g = {};
+    if (members.includes('protected_paths') && cur.protected_paths) g.protected_paths = cur.protected_paths;
+    if (members.includes('check_discovery') && cur.check_discovery) g.check_discovery = cur.check_discovery;
+    g.check_commands = { ...(cur.check_commands ?? {}), [rt.name]: { path: rt.path, ...(rt.sha256 ? { sha256: rt.sha256 } : {}) } };
+    const readPaths = [...new Set([...(cur.read_paths ?? []), ...(rt.read_paths ?? [])])];
+    const dirs = [...new Set([...(rt.path_dirs ?? [path.dirname(rt.path)]), ...(cur.path ?? [])])];
+    g.runner_config = { direct: { read_paths: readPaths, path: dirs } };
+    return { file: t.file, text: `${JSON.stringify(g, null, 2)}\n`, program: rt.name };
   }
 
-  function definitionsDir(ws, content) {
-    const g = content && content.governed ? parse(content.governed.text, null) : null;
-    return (g && g.check_discovery && g.check_discovery.definitions) || '.surety/checks/defs/';
+  function definitionsDir(R) {
+    const t = R['verifier.toolchain'];
+    const cur = t && t.current && typeof t.current === 'object' ? t.current : null;
+    return (cur && cur.check_discovery && cur.check_discovery.definitions) || '.surety/checks/defs/';
   }
+
+  // The program a definition names: one the governed values already name,
+  // else the toolchain's runtime this run writes in.
+  function programOf(R, governed) {
+    const t = R['verifier.toolchain'];
+    const named = t && t.current && t.current.check_commands ? Object.keys(t.current.check_commands) : [];
+    return named[0] ?? (governed ? governed.program : null);
+  }
+
+  const had0 = (ws, dir) => ws.list(dir).some((n) => n.endsWith('.json'));
 
   function existingKinds(ws, dir) {
     const out = new Set();
@@ -464,12 +490,12 @@ var SURETY_PACKAGE_FAKES = (function () {
     return out;
   }
 
-  function checkDefinition(pkg, content, { key, kind, criteria = [], areas = [], gates, postDeploy = false, env = null }) {
+  function checkDefinition(pkg, content, { key, kind, criteria = [], areas = [], gates, postDeploy = false, env = null, program = null }) {
     const R = pkg.reads;
     const body = (content.checks ?? {})[key] ?? { files: { [`.surety/checks/run/${key}.mjs`]: `// rehearsal check ${key}\nprocess.exit(0);\n` }, run: [`.surety/checks/run/${key}.mjs`] };
     const d = { schema: 1, key };
     if (kind) d.kind = kind;
-    d.command = [content.toolchain ? content.toolchain.name : 'node', ...body.run];
+    d.command = [...(program ? [program] : []), ...body.run];
     d.timeout_s = 120;
     d.gate_kinds = gates;
     const cv = R['verifier.covers'];
@@ -478,7 +504,7 @@ var SURETY_PACKAGE_FAKES = (function () {
       const rq = R['verifier.requires'];
       if (rq && Array.isArray(rq.values)) d[rq.member] = rq.values;
       const sc = R['verifier.secrets'];
-      const allowed = sc && Array.isArray(sc.environments) ? ((sc.environments.find((e) => e && e.name === env) || {}).check_secrets ?? []) : [];
+      const allowed = sc && Array.isArray(sc.environments) ? [...new Set(sc.environments.filter((e) => e && e.name === env && Array.isArray(e.check_secrets)).flatMap((e) => e.check_secrets))] : [];
       if (sc && allowed.length > 0) d[sc.member] = allowed;
     }
     d.inputs = Object.keys(body.files);
@@ -495,7 +521,9 @@ var SURETY_PACKAGE_FAKES = (function () {
     const floor = R['verifier.gate_kinds_floor'];
     const gates = floor && Array.isArray(floor.gate_kinds) ? floor.gate_kinds : ['stage'];
     const floorKinds = floor && Array.isArray(floor.floor) ? floor.floor : [];
-    const dir = definitionsDir(ws, content);
+    const dir = definitionsDir(R);
+    const governed = had0(ws, dir) ? null : governedFrom(R);
+    const program = programOf(R, governed);
     const had = existingKinds(ws, dir);
     const first = had.size === 0;
     const out = [];
@@ -505,7 +533,7 @@ var SURETY_PACKAGE_FAKES = (function () {
     if (adoptRule && Array.isArray(content.adopt)) {
       for (const t of content.adopt) {
         for (const [p, text] of Object.entries(t.files)) ws.write(p, text);
-        out.push(checkDefinition(pkg, { ...content, checks: { [t.key]: { files: t.files, run: t.run } } }, { key: t.key, kind: accept, criteria: t.criteria, gates }));
+        out.push(checkDefinition(pkg, { ...content, checks: { [t.key]: { files: t.files, run: t.run } } }, { program, key: t.key, kind: accept, criteria: t.criteria, gates }));
         adopted.push({ from: t.from, to: t.to, criteria: t.criteria, dependency_boundary: t.dependency_boundary });
         for (const c of t.criteria) adoptedCriteria.add(c);
       }
@@ -514,34 +542,33 @@ var SURETY_PACKAGE_FAKES = (function () {
       const crit = (s.validation && s.validation.criteria) || [];
       for (const key of s.implements ?? []) {
         const mine = crit.filter((c) => c.startsWith(`${key}.`) && !adoptedCriteria.has(c));
-        if (mine.length > 0) out.push(checkDefinition(pkg, content, { key: `accept-${key.toLowerCase()}`, kind: accept, criteria: mine, gates }));
+        if (mine.length > 0) out.push(checkDefinition(pkg, content, { program, key: `accept-${key.toLowerCase()}`, kind: accept, criteria: mine, gates }));
       }
       for (const k of floorKinds.filter((k) => criteriaKinds.includes(k) && k !== 'acceptance')) {
-        if (crit.length > 0) out.push(checkDefinition(pkg, content, { key: `${k}-s${s.number}`, kind: k, criteria: [crit[crit.length - 1]], gates }));
+        if (crit.length > 0) out.push(checkDefinition(pkg, content, { program, key: `${k}-s${s.number}`, kind: k, criteria: [crit[crit.length - 1]], gates }));
       }
     }
-    for (const k of floorKinds.filter((k) => !criteriaKinds.includes(k) && !had.has(k))) out.push(checkDefinition(pkg, content, { key: k === 'security_lint' ? 'lint' : k, kind: k, gates }));
+    for (const k of floorKinds.filter((k) => !criteriaKinds.includes(k) && !had.has(k))) out.push(checkDefinition(pkg, content, { program, key: k === 'security_lint' ? 'lint' : k, kind: k, gates }));
     const pd = R['verifier.post_deploy'];
     if (pd && Array.isArray(pd.environments) && !had.has(pd.required)) {
-      for (const e of pd.environments) if (e && Array.isArray(e.targets) && e.targets.length > 0) out.push(checkDefinition(pkg, content, { key: 'operation', kind: pd.required, gates: [pd.gate_kind], postDeploy: true, env: e.name }));
+      const envs = [...new Set(pd.environments.filter((e) => e && Array.isArray(e.targets) && e.targets.length > 0).map((e) => e.name))];
+      for (const e of envs.map((name) => ({ name }))) out.push(checkDefinition(pkg, content, { program, key: 'operation', kind: pd.required, gates: [pd.gate_kind], postDeploy: true, env: e.name }));
     }
     for (const { d, files } of out) {
       for (const [p, text] of Object.entries(files)) ws.write(p, text);
       ws.write(`${dir}${d.key}.json`, `${JSON.stringify(d, null, 2)}\n`);
     }
-    const g = governedOf(ws, content);
-    let governed;
-    if (first && content.governed) {
-      ws.write(content.governed.path, content.governed.text);
-      governed = { check_commands: true, programs: [content.toolchain.name] };
+    let governedChanges;
+    if (first && governed) {
+      ws.write(governed.file, governed.text);
+      governedChanges = { check_commands: true, programs: [governed.program] };
     }
     return shapeResult(pkg, {
       summary: `wrote ${out.length} checks for phase ${a.phase_plan ? a.phase_plan.phase_number : '?'}`,
       proposal: { rationale: 'the phase\'s checks, from the plan\'s validation and the package\'s rules', requested_change_kind: first ? 'unclassifiable' : 'tightening' },
-      governed_changes: governed,
+      governed_changes: governedChanges,
       deferred_criteria: [],
       adopted_tests: adopted.length > 0 ? adopted : undefined,
-      _governed: g.path,
     });
   }
 
@@ -613,7 +640,7 @@ var SURETY_PACKAGE_FAKES = (function () {
     else if (kind === 'phase_verification') result = shapeResult(pkg, { summary: 'the phase verified', signoffs: [{ scope: 'phase' }] });
     else result = shapeResult(pkg, { summary: `rehearsal: ${role} ${kind}` });
     delete result._governed;
-    return { role, kind, reads: Object.keys(pkg.reads), written: ws.written, result };
+    return { role, kind, blocks: pkg.reads, written: ws.written, result };
   }
 
   return { play, readPackage, readSpec, taggedBlock, prune };
