@@ -353,7 +353,12 @@ export function paceView(db: Database, args: { project: string }) {
 
   const phases = phaseRows.map((r) => {
     const plan = r.id as string;
-    const authoring = itemsOf('check_authoring', 'phase_plan', plan);
+    // The plan's authoring: its own items, and those of the generations an
+    // early replacement replaced, whose readiness it inherits (D6 §5.7).
+    const generations = (db
+      .prepare(`WITH RECURSIVE "gen"("id") AS (SELECT ? UNION SELECT p."id" FROM "phase_plans" p JOIN "gen" g ON p."replaced_by" = g."id") SELECT "id" FROM "gen"`)
+      .all(plan) as { id: string }[]).map((g) => g.id);
+    const authoring = [...new Set(generations.flatMap((g) => itemsOf('check_authoring', 'phase_plan', g)))];
     const authoringRuns = runsOfItems(authoring);
     const proposal = authoring.length === 0
       ? undefined
