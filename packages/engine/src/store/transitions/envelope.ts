@@ -135,7 +135,8 @@ export type Admitting =
 export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): EnvelopeHold | null {
   const s = settings;
   if (s === null) return null;
-  const real = s.real === true;
+  // Real unless the engine says otherwise (the kernel lane sets false).
+  const real = s.real !== false;
   // Every live domain with a cgroup (on the kernel lane, every live domain
   // row), and every service domain not terminated, placed or not: a service
   // holds its reservation from its admission (the slice-24 review, m4).
@@ -231,13 +232,15 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
     }
   }
   if (available === null) {
-    return hold("the room for another domain cannot be read (MemAvailable unreadable); admission waits.", { limit: 'host_reserve_memory', value: s.host_reserve_memory, unreadable: 'MemAvailable' });
+    return hold("the room for another domain cannot be read (MemAvailable unreadable); admission waits.", { limit: 'host_reserve_memory', value: s.host_reserve_memory, available: null, held_by_running: null, unreadable: 'MemAvailable' });
   }
   const unread = held.find((h) => h.value === null);
   if (unread) {
     return hold(`the room for another domain cannot be read (the memory.current of ${unread.domain} unreadable); admission waits.`, {
       limit: 'host_reserve_memory',
       value: s.host_reserve_memory,
+      available,
+      held_by_running: null,
       unreadable: 'memory.current',
       domain: unread.domain,
     });

@@ -15,8 +15,9 @@
 //   (4. budgets: a project whose day has passed a day limit is not
 //      dispatched; the select step and the claim check it, and a check whose
 //      read fails dispatches nothing of the project.)
-//   8. Select, and 9. dispatch: at most one run per project and
-//      max_concurrent_runs engine-wide; work at its chaining boundary is not
+//   8. Select, and 9. dispatch: every eligible item in priority order, each
+//      the envelope admits (D6 K2: no run count at either scope; one run
+//      per work item); work at its chaining boundary is not
 //      dispatched and gets one decision instead (D1-34); the tick waits for
 //      what a dispatch writes before its spawn, never for the spawn or the run.
 //  Then records whose retention has passed expire, and
@@ -151,21 +152,18 @@ export class Scheduler {
     }
   }
 
-  private readonly observed = new Set<string>();
 
   private async decide(project: string): Promise<void> {
-    // The host as it is at this engine start, once per project (D6 §7.6).
-    if (!this.observed.has(project)) {
-      await this.rt.engine('pace.observe_host', {
-          project,
-          incarnation: this.rt.incarnation,
-          engine_version: ENGINE_VERSION,
-          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains'] as const).map((k) => [k, this.rt.setting(k)])),
-        }).then(
-        () => this.observed.add(project),
-        (err) => log('host observation', err, { project }),
-      );
-    }
+    // The host as it is at this engine start, once per project and
+    // incarnation (D6 §7.6); its backend entry kept current within it.
+    await this.rt
+      .engine('pace.observe_host', {
+        project,
+        incarnation: this.rt.incarnation,
+        engine_version: ENGINE_VERSION,
+        settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains'] as const).map((k) => [k, this.rt.setting(k)])),
+      })
+      .catch((err) => log('host observation', err, { project }));
     await ensureAncestry(this.rt, project);
     // The repairs failed checks owe (D3 §2.10): reconciled from durable
     // state at every tick, so a failure recorded while its item was not yet

@@ -51,7 +51,16 @@ test('decision targets merge over the defaults and refuse the untargeted kinds',
 });
 
 test('project policy: defaults, the non-integer budget, and whole-submission refusal', () => {
-  assert.equal(projectPolicyDefaults().max_concurrent_runs, 1);
+  // D6 K2 (M5 slice 37): no project run count; the per-profile maxima, each
+  // under the engine's ceiling at the policy route.
+  assert.equal(projectPolicyDefaults().max_concurrent_runs, undefined);
+  assert.equal(projectPolicyDefaults().role_memory_max, 4 * 1024 ** 3);
+  assert.equal(projectPolicyDefaults().check_memory_max, 2 * 1024 ** 3);
+  refusedWith(() => validatePolicySubmission({ max_concurrent_runs: 1 }), 'unknown_field', 'max_concurrent_runs');
+  refusedWith(() => validatePolicySubmission({ role_memory_max: 9 * 1024 ** 3 }, 8 * 1024 ** 3), 'invalid_value', 'role_memory_max');
+  assert.deepEqual(validatePolicySubmission({ check_memory_max: 8 * 1024 ** 3 }, 8 * 1024 ** 3), { check_memory_max: 8 * 1024 ** 3 });
+  refusedWith(() => validateEngineConfig({ max_concurrent_runs: 2 }), 'unknown_field', 'max_concurrent_runs');
+  assert.equal(validateEngineConfig({}).values.max_concurrent_domains, 4);
   assert.deepEqual(validatePolicySubmission({ budget_day_verified_usd: 12.5 }), { budget_day_verified_usd: 12.5 });
   refusedWith(() => validatePolicySubmission({ repair_attempts_max: 2, bogus: 1 }), 'unknown_field', 'bogus');
   refusedWith(() => validatePolicySubmission({ deadline_builder: 300.5 }), 'invalid_value', 'deadline_builder');

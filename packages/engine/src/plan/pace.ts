@@ -472,14 +472,20 @@ export function paceView(db: Database, args: { project: string }) {
 // incarnation (D6 §7.6, A.3): `project_start` at the project's first
 // observation, `engine_start` at each later incarnation's.
 export function observeHost(tx: Tx, args: { project: string; incarnation: string; engine_version: string; settings: Record<string, number>; scripted?: string | null }): boolean {
-  const exists = tx.db.prepare('SELECT 1 FROM "host_observations" WHERE "project" = ? AND "incarnation" = ?').get(args.project, args.incarnation);
-  if (exists) return false;
+  const resolved = resolveBackend(tx.db, { project: args.project, role: 'builder', scripted: args.scripted ?? null });
+  const entry = resolved.kind === 'entry' ? { id: resolved.entry.id, binary_sha256: resolved.entry.binary_sha256, model: resolved.entry.model } : null;
+  const exists = tx.db.prepare('SELECT "id", "backend_entry" FROM "host_observations" WHERE "project" = ? AND "incarnation" = ?').get(args.project, args.incarnation) as { id: string; backend_entry: string | null } | undefined;
+  if (exists) {
+    // The backend entry this incarnation serves the project with: an entry
+    // activated, or a backend named, after the observation is this
+    // incarnation's too (its settings stay as observed at its start).
+    if (entry !== null && exists.backend_entry !== JSON.stringify(entry)) tx.db.prepare('UPDATE "host_observations" SET "backend_entry" = ? WHERE "id" = ?').run(JSON.stringify(entry), exists.id);
+    return false;
+  }
   const earlier = tx.db.prepare('SELECT 1 FROM "host_observations" WHERE "project" = ? LIMIT 1').get(args.project);
   const settings: Record<string, number> = Object.fromEntries(Object.entries(args.settings ?? {}).filter(([, v]) => typeof v === 'number'));
   settings.role_memory_max = effectiveProfileMax(tx.db, args.project, 'role');
   settings.check_memory_max = effectiveProfileMax(tx.db, args.project, 'check');
-  const resolved = resolveBackend(tx.db, { project: args.project, role: 'builder', scripted: args.scripted ?? null });
-  const entry = resolved.kind === 'entry' ? { id: resolved.entry.id, binary_sha256: resolved.entry.binary_sha256, model: resolved.entry.model } : null;
   const live = (tx.db.prepare(`SELECT COUNT(*) AS n FROM "execution_domains" WHERE "status" <> 'terminated' AND "profile" <> 'service'`).get() as { n: number }).n;
   const id = tx.newId('hobs_');
   tx.db
