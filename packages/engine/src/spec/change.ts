@@ -107,6 +107,43 @@ export function requestSpecChange(tx: Tx, args: { project: string; text: string;
   return { status: 201, body: { request: { id, seq, status: 'requested' }, work_item: { id: work.work_item.id } }, effects: [{ kind: 'tick' }] };
 }
 
+// D3 §5 X2's `change_spec` answer about a finding (D6 §4.2; M431 (c)): a
+// request with source `finding` naming it, its text the finding's message,
+// and its `spec_change` work, dispatched like the owner's (one proposal at a
+// time). Returns the request, or null when the project has no approved
+// specification to change: then, as before, a `spec_change` item about the
+// finding is recorded and never dispatched (the driver's ruling Q14).
+export function requestFromFinding(tx: Tx, args: { project: string; finding: string; decision: string }): string | null {
+  const spec = currentSpec(tx.db, args.project);
+  if (!spec) {
+    observeTrigger(tx, { project: args.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: args.finding, trigger_generation: 1, subject: { finding: args.finding }, chain: 0, engineRaised: true }, { finding: args.finding, decision: args.decision });
+    return null;
+  }
+  const open = tx.db.prepare(`SELECT "id" FROM "spec_change_requests" WHERE "project" = ? AND "finding" = ? AND "status" IN ('requested', 'proposed')`).get(args.project, args.finding) as { id: string } | undefined;
+  if (open) return open.id;
+  const f = tx.db.prepare('SELECT "message" FROM "findings" WHERE "id" = ? AND "project" = ?').get(args.finding, args.project) as { message: string } | undefined;
+  if (!f) throw notFound('finding', args.finding);
+  const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS seq FROM "spec_change_requests" WHERE "project" = ?').get(args.project) as { seq: number };
+  const id = tx.newId('scr_');
+  tx.db
+    .prepare(
+      `INSERT INTO "spec_change_requests" ("id", "created_at", "project", "seq", "spec_revision", "text", "request_text", "source", "status", "finding")
+       VALUES (?, ?, ?, ?, ?, NULL, ?, 'finding', 'requested', ?)`,
+    )
+    .run(id, tx.at, args.project, seq, spec.id, f.message, args.finding);
+  // A finding asked about again after an earlier request of it ended is a
+  // new generation of the same trigger.
+  const { n } = tx.db.prepare('SELECT COUNT(*) AS n FROM "spec_change_requests" WHERE "project" = ? AND "finding" = ?').get(args.project, args.finding) as { n: number };
+  const work = observeTrigger(
+    tx,
+    { project: args.project, kind: 'spec_change', trigger_source: 'spec_change', trigger_id: args.finding, trigger_generation: n, subject: { request: id }, chain: 0 },
+    { request: id, finding: args.finding, decision: args.decision },
+  );
+  tx.db.prepare('UPDATE "spec_change_requests" SET "work_item" = ? WHERE "id" = ?').run(work.work_item.id, id);
+  tx.emit('spec.change_requested', { project: args.project, spec_change_request: id }, { seq, spec_revision: spec.id, work_item: work.work_item.id, source: 'finding', finding: args.finding, decision: args.decision });
+  return id;
+}
+
 // A retrofit replan's requests (D6 §8.3; B.7): each an ordinary request,
 // source `replan`, its spec_change work registered as the owner's is; the
 // owner approves its proposal like any. A request the same replan work

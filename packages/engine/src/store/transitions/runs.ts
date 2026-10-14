@@ -259,6 +259,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
     if (typeof request !== 'string' || !db.prepare('SELECT 1 FROM "spec_change_requests" WHERE "id" = ? AND "project" = ?').get(request, item.project)) {
       return 'a spec_change names no change request (a finding\'s spec change is not dispatched)';
     }
+    // One proposal at a time per project (D6 §4.2; D6-C01): while another
+    // request is dispatched, or its proposal awaits the owner's decision,
+    // this one waits eligible, so every impact is computed against one
+    // current version and no second proposal is approved meanwhile.
+    const pending = db
+      .prepare(
+        `SELECT r."seq" FROM "spec_change_requests" r LEFT JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE r."project" = ? AND r."id" <> ? AND (r."status" = 'proposed' OR (r."status" = 'requested' AND w."status" IN ('claimed', 'executing', 'awaiting_decision')))
+         ORDER BY r."seq" LIMIT 1`,
+      )
+      .get(item.project, request) as { seq: number } | undefined;
+    if (pending) return `spec_change_pending: specification change ${pending.seq} is dispatched or awaits its decision`;
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
