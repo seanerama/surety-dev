@@ -6,10 +6,14 @@
 // `before_event` fault), 422, 423, 427.
 //
 // S1: the correction's run carries a proposal for accept-r2 and an assessment
-//     that integration applies unchanged, and its acceptance fails once (a
-//     one-shot fault on `protected.proposed`). The failed run's assessment
-//     resolves nothing: both obligations stay open after it. Its repair
-//     captures the correction and the assessment, and resolves both then.
+//     that integration applies unchanged, and the capture's transaction is
+//     faulted (`before_event` on `protected.proposed`). Once: the run either
+//     fails and is repaired or retries the step and completes (objection
+//     099, upheld); a fault that persists past the retries: nothing is
+//     captured, assessed or resolved while it stands, and all of it once it
+//     is cleared. Either way no assessment or resolution ever stands for a
+//     run whose correction was not captured; in the end one assessment for
+//     integration, and both obligations resolved.
 // S3: the change lists accept-r2 and integration; the correction fixes
 //     accept-r2's test and assesses neither. accept-r2's obligation is
 //     resolved; the item does not complete; the remaining obligation returns
@@ -20,7 +24,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { answer, decision } from './harness/decisions.mjs';
-import { armFault } from './harness/engine.mjs';
+import { armFault, clearFaults } from './harness/engine.mjs';
+import { tick } from './harness/runs.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -28,7 +33,7 @@ import { ROUTED_KINDS, authoringReady, obligationsOf, specRevisions, workOf } fr
 import { effectiveVersion } from './harness/gates.mjs';
 import { journey35 } from './harness/journey/plan35.mjs';
 import { CORRECTED_SERVICE_TEST } from './harness/journey/reference.mjs';
-import { SPEC_CHANGES, changeScript, launchHolding, pumpHolding, untilProposedOrFailed } from './harness/journey/change36.mjs';
+import { SPEC_CHANGES, changeScript, pumpHolding, untilProposedOrFailed } from './harness/journey/change36.mjs';
 
 const OWNER_KINDS = ROUTED_KINDS.filter((k) => k !== 'spec_change');
 const SERVICE_TEST = '.surety/checks/tests/service.test.mjs';
@@ -36,6 +41,35 @@ const PROPOSAL = { rationale: 'R2.1 and R2.2 now name the content type; accept-r
 const ASSESSMENT = [{ check: 'integration', criteria: ['R2.2'], rationale: 'integration asserts the refusal\'s status alone, which the reworded R2.2 leaves unchanged.' }];
 const runsOf = (home, item) => withStore(home, (db) => db.prepare('SELECT * FROM "runs" WHERE "work_item" = ? ORDER BY "seq"').all(item));
 const obligations = (home, project) => Object.fromEntries(obligationsOf(home, project).filter((o) => o.reason === 'spec_changed').map((o) => [o.key, o]));
+
+// The correction every launch of the request's item makes: accept-r2's test, and integration assessed.
+const CORRECTION = roleThat([step.write(SERVICE_TEST, CORRECTED_SERVICE_TEST)], { proposal: PROPOSAL, spec_applicability: ASSESSMENT });
+// The assessments recorded on the project (SEAM §422: the table `assessments`, a run per row).
+const assessmentsOf = (home, project) => withStore(home, (db) => (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'assessments'`).get() ? db.prepare('SELECT * FROM "assessments" WHERE "project" = ? ORDER BY rowid').all(project) : []));
+const proposalsOfItem = (home, item) => withStore(home, (db) => db.prepare('SELECT p.* FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."work_item" = ?').all(item));
+// What stands for a run with no captured correction: an assessment of such a
+// run, or an obligation resolved by one (the driver's ruling on S1).
+function uncaptured(home, project, item) {
+  const captured = new Set(proposalsOfItem(home, item).map((x) => x.run));
+  const bad = [];
+  const byId = new Map(assessmentsOf(home, project).map((a) => [a.id, a]));
+  for (const a of byId.values()) if (!captured.has(a.run)) bad.push({ assessment: a.id, run: a.run });
+  for (const o of obligationsOf(home, project).filter((x) => x.resolved_by && x.resolved_by.startsWith('asmt_'))) {
+    const a = byId.get(o.resolved_by);
+    if (!a || !captured.has(a.run)) bad.push({ obligation: o.key, resolved_by: o.resolved_by });
+  }
+  return bad;
+}
+// In the end: one assessment of integration, from a run that captured the
+// correction; integration resolved by it and accept-r2 by the applied version.
+function assertOneAssessment(home, project, item) {
+  const integration = assessmentsOf(home, project).filter((a) => a.check_key === 'integration');
+  assert.equal(integration.length, 1, `exactly one assessment for integration (${JSON.stringify(integration.map((a) => [a.id, a.run]))})`);
+  assert.ok(proposalsOfItem(home, item).some((x) => x.run === integration[0].run), 'recorded by a run whose correction was captured');
+  const end = obligations(home, project);
+  assert.equal(end.integration.resolved_by, integration[0].id, 'integration resolved by that assessment');
+  assert.equal(end['accept-r2'].resolved_by, effectiveVersion(home, project).id, 'accept-r2 resolved by the applied correction');
+}
 
 // The change rewording R2.1 and R2.2 (accept-r2 and integration listed),
 // approved; `beforeAnswer` runs between the proposal and the answer.
@@ -56,29 +90,51 @@ async function approvedR2(fx, ctx, { beforeAnswer } = {}) {
 }
 
 describe('M433: a correction run that fails, and one that resolves only part', () => {
-  test('S1: the failed run\'s assessment resolves nothing; its repair captures the correction and the assessment and resolves both', async (t) => {
+  test('S1, one fault: whether the faulted capture fails the run (then its repair) or is retried within it, no obligation is resolved without its captured correction; one assessment for integration; both resolved', async (t) => {
     const { fx, p, ctx } = await journey35(t, { policy: { repair_attempts_max: 1 } });
     ctx.holdOpts = { answerKinds: OWNER_KINDS };
-    // Launch 1: the correction and the assessment (its acceptance faulted). Launch 2, the repair: the same, held before its result.
-    fx.scripted.kindScript('check_correction', [
-      roleThat([step.write(SERVICE_TEST, CORRECTED_SERVICE_TEST)], { proposal: PROPOSAL, spec_applicability: ASSESSMENT }),
-      { steps: [step.write(SERVICE_TEST, CORRECTED_SERVICE_TEST), step.hold('gate', { heartbeat_ms: 250 }), step.result({ status: 'completed', summary: 'the correction', proposal: PROPOSAL, spec_applicability: ASSESSMENT })] },
-    ]);
+    fx.scripted.kindScript('check_correction', CORRECTION);
     await authoringReady(fx, ctx, 1);
     const { item } = await approvedR2(fx, ctx, { beforeAnswer: () => armFault(fx.engine, { point: 'before_event', event_type: 'protected.proposed' }) });
-    const first = await pumpHolding(fx, ctx, () => runsOf(fx.home, item.id).find((r) => r.state === 'ended'), { what: 'the first correction run to end', max: 30, ...ctx.holdOpts });
-    assert.notEqual(first.outcome, 'completed', `the fixture is live: the faulted acceptance fails the run (${first.outcome}/${first.reason_class}: ${first.reason_text})`);
-    await pumpHolding(fx, ctx, () => launchHolding(fx, 'check_correction', 1), { what: 'the repair held before its result', max: 30, ...ctx.holdOpts });
-    const after = obligations(fx.home, p.id);
-    assert.equal(after.integration.resolved_at, null, `the failed run's assessment resolves nothing: integration's obligation stays open (resolved_by ${after.integration.resolved_by})`);
-    assert.equal(after['accept-r2'].resolved_at, null, 'nor accept-r2\'s');
-    fx.scripted.release('all', 'gate');
-    await pumpHolding(fx, ctx, () => Object.values(obligations(fx.home, p.id)).every((o) => o.resolved_at), { what: 'both obligations resolved by the repair', max: 60, ...ctx.holdOpts });
-    const end = obligations(fx.home, p.id);
-    const second = runsOf(fx.home, item.id).at(-1);
-    assert.equal(second.outcome, 'completed', 'the repair\'s run is accepted');
-    assert.ok(end.integration.resolved_by, 'integration resolved by the repair\'s assessment');
-    assert.equal(end['accept-r2'].resolved_by, effectiveVersion(fx.home, p.id).id, 'accept-r2 resolved by the applied correction');
+    const seen = [];
+    await pumpHolding(fx, ctx, () => {
+      seen.push(...uncaptured(fx.home, p.id, item.id));
+      return Object.values(obligations(fx.home, p.id)).every((o) => o.resolved_at);
+    }, { what: 'both obligations resolved', max: 80, ...ctx.holdOpts });
+    seen.push(...uncaptured(fx.home, p.id, item.id));
+    assert.deepEqual(seen, [], 'no assessment and no resolution ever stood for a run with no captured correction');
+    const runs = runsOf(fx.home, item.id).filter((r) => r.state === 'ended');
+    assert.ok(runs.some((r) => r.outcome === 'completed'), `a run of the correction completed, the first after a retry or its repair (${JSON.stringify(runs.map((r) => [r.outcome, r.reason_class]))})`);
+    assertOneAssessment(fx.home, p.id, item.id);
+  });
+
+  test('S1, a fault that persists past the retries: while it stands nothing is captured, assessed or resolved; once it is cleared the correction and the assessment resolve both, one assessment', async (t) => {
+    const { fx, p, ctx } = await journey35(t, { policy: { repair_attempts_max: 1 } });
+    ctx.holdOpts = { answerKinds: OWNER_KINDS };
+    fx.scripted.kindScript('check_correction', CORRECTION);
+    await authoringReady(fx, ctx, 1);
+    const { item } = await approvedR2(fx, ctx, { beforeAnswer: () => armFault(fx.engine, { point: 'before_event', event_type: 'protected.proposed', times: 1000 }) });
+    // The correction's run reaches its acceptance and the capture keeps failing.
+    await pumpHolding(fx, ctx, () => runsOf(fx.home, item.id).length > 0 && fx.scripted.launches({ work_item: item.id }).length > 0, { what: 'the correction launched', max: 30, ...ctx.holdOpts });
+    const seen = [];
+    for (let i = 0; i < 12; i++) {
+      seen.push(...uncaptured(fx.home, p.id, item.id));
+      await tick(fx.engine, p.id, { rounds: 1 });
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    seen.push(...uncaptured(fx.home, p.id, item.id));
+    assert.deepEqual(seen, [], 'while the capture fails, no assessment or resolution stands for a run with no captured correction');
+    assert.deepEqual(proposalsOfItem(fx.home, item.id), [], 'no proposal captured while the fault stands');
+    assert.deepEqual(assessmentsOf(fx.home, p.id), [], 'no assessment recorded while the fault stands');
+    const open = obligations(fx.home, p.id);
+    assert.ok(Object.values(open).every((o) => o.resolved_at === null), `both obligations open while the fault stands (${JSON.stringify(Object.values(open).map((o) => [o.key, o.resolved_by]))})`);
+    await clearFaults(fx.engine);
+    await pumpHolding(fx, ctx, () => {
+      seen.push(...uncaptured(fx.home, p.id, item.id));
+      return Object.values(obligations(fx.home, p.id)).every((o) => o.resolved_at);
+    }, { what: 'both obligations resolved once the fault is cleared', max: 80, ...ctx.holdOpts });
+    assert.deepEqual(seen, [], 'no assessment or resolution ever stood for a run with no captured correction');
+    assertOneAssessment(fx.home, p.id, item.id);
   });
 
   test('S3: a correction that fixes accept-r2 and assesses neither: the item does not complete; integration\'s obligation returns to check_correction work naming it', async (t) => {
