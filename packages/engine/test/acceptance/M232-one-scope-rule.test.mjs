@@ -46,6 +46,7 @@ import { alphaTarget, evaluate, raiseFindings, reasonCodes, review } from './har
 import { answer, assertStaleAnswer, consume, decision, nextGeneration, openDecision } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
+import { withStore } from './harness/store.mjs';
 import { script } from './harness/scripted.mjs';
 import { requestChecks } from './harness/checks/fixtures.mjs';
 import { reviseSpec } from './harness/checks/classifier.mjs';
@@ -55,7 +56,13 @@ import { buildStages, candidatesOfProject, checkIds, def, incomplete, inventoryD
 async function redefineModules(fx, project, modules) {
   const res = await fx.engine.post('/v1/harness/fixtures/plan', { project, modules, stages: [{ number: 1, goal: 'a later plan', implements: [] }] });
   assert.equal(res.status, 201, `a later plan fixture call redefines the modules (body: ${res.text})`);
-  fx.scripted.script(res.body.stages[0].work_item, [script.crash(), script.crash(), script.crash(), script.crash(), script.crash()]);
+  const item = res.body.stages[0].work_item;
+  fx.scripted.script(item, [script.crash(), script.crash(), script.crash(), script.crash(), script.crash()]);
+  // Under K1/K2 the later stage's failing Builder is dispatched by the ticks
+  // its ends request, each with its journaled workspace, and a gate evaluated
+  // while one of them is in flight is GIT_JOURNAL_PENDING (objection 114, as
+  // M229 (c) under 111; SEAM §461): the modules are read once it has parked.
+  await tickUntil(fx.engine, project, () => withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(item)).status === 'parked', { max: 16, what: "the later plan's Builder parked" });
 }
 
 // The candidate of the shared shape (T2 by default), complete, signed off

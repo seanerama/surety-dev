@@ -391,7 +391,11 @@ describe('M70 the work read', () => {
       "the other project's one item, eligible and unblocked, and none of the first project's",
     );
 
-    // Reading writes nothing.
+    // Reading writes nothing. The first tick of a project in an incarnation
+    // records its host observation (D6 §7.6); the other project's, requested
+    // by its item under K1, is run first, so it cannot land inside the window
+    // (objection 114; SEAM §461). The project is paused: it dispatches nothing.
+    await tick(engine, other, { rounds: 1 });
     const unchanged = quiet(fx);
     for (let round = 0; round < 3; round++) {
       await listWork(engine, mine);
