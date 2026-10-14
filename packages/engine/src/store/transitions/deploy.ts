@@ -2935,6 +2935,16 @@ export function attemptSupervision(db: Db, a: AttemptRow): 'attached' | 'unknown
   return supervisionOf(a, (serviceDomainOf(db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null);
 }
 
+// Whether a result was recorded after the service's supervision was lost
+// (the slice-36 review's M2): by the store's event order, its check.result
+// after the highest seq at the loss; none recorded is after (unknown fails
+// closed). A loss with no recorded order falls back to the times.
+export function resultAfterLoss(db: Db, args: { result: string; finishedAt: string | null; lostAt: string; lostSeq: number | null }): boolean {
+  if (args.lostSeq === null) return args.finishedAt === null || Date.parse(args.finishedAt) >= Date.parse(args.lostAt);
+  const ev = db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'check.result' AND json_extract("subject", '$.check_result') = ?`).get(args.result) as { s: number | null };
+  return ev.s === null || ev.s > args.lostSeq;
+}
+
 // The service's control channel closed while this incarnation supervised it
 // (D4 §9.2; E110): its supervision is `unknown` from now on, durably.
 export function supervisionLost(tx: Tx, args: { attempt: string; why: string }): void {
@@ -2945,7 +2955,8 @@ export function supervisionLost(tx: Tx, args: { attempt: string; why: string }):
   // observed, has nothing left to supervise.
   if (d.app_exit !== null || d.status === 'terminated') return;
   // The record is the column; D4 A.5 names no event for it.
-  tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, d.id);
+  const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) AS seq FROM "events"').get() as { seq: number };
+  tx.db.prepare('UPDATE "execution_domains" SET "supervision_lost_at" = ?, "supervision_lost_seq" = ? WHERE "id" = ? AND "supervision_lost_at" IS NULL').run(tx.at, seq, d.id);
 }
 
 // The reads a bracket recorded, one per target: what the adapter answered,
@@ -3112,7 +3123,15 @@ export function finalizeRound(
   // A result that finished after the service's control channel was lost is
   // no evidence (the driver's ruling m3 on D4 §5.3 item 6): missing, naming
   // supervision; one that finished before the loss still counts.
-  const lostAt = (serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null } | undefined)?.supervision_lost_at ?? null;
+  const lostDomain = serviceDomainOf(tx.db, a.id) as { supervision_lost_at?: string | null; supervision_lost_seq?: number | null } | undefined;
+  const lostAt = lostDomain?.supervision_lost_at ?? null;
+  const lostSeq = lostDomain?.supervision_lost_seq ?? null;
+  // Whether a result came after the loss is read in the store's order (the
+  // slice-36 review's M2): its check.result event after the highest seq at
+  // the loss; a result with no such event is taken to be after (unknown
+  // fails closed). A loss recorded before this order was kept falls back
+  // to the times.
+  const recordedAfterLoss = (res: ResultRow): boolean => resultAfterLoss(tx.db, { result: res.id, finishedAt: res.finished_at, lostAt: lostAt!, lostSeq });
   // The deciding results of the round's required checks (item 6).
   const required = (JSON.parse(r.required_checks) as string[]).map((id) => tx.db.prepare('SELECT "id", "key", "kind" FROM "checks" WHERE "id" = ?').get(id) as { id: string; key: string; kind: string });
   const results: { check: string; key: string; kind: string; execution: string | null; result: string | null; state: string }[] = [];
@@ -3122,7 +3141,7 @@ export function finalizeRound(
     const res = reg?.result ? (tx.db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(reg.result) as ResultRow | undefined) : undefined;
     // Only a result bound to this round, of its candidate and protected
     // version, is ever selected for it (D4-V01; E114).
-    const afterLoss = res !== undefined && lostAt !== null && (res.finished_at === null || Date.parse(res.finished_at) >= Date.parse(lostAt));
+    const afterLoss = res !== undefined && lostAt !== null && recordedAfterLoss(res);
     const state = res && res.invalidated_at === null && resultBoundTo(res, r) && !afterLoss ? resultState(res) : 'missing';
     if (state === 'failed') failedCheck = true;
     // A required check never registered is named by its id (SEAM.md §279).
