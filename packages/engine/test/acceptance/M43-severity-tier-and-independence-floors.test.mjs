@@ -51,7 +51,7 @@ import {
   stageGate,
 } from './harness/gates.mjs';
 import { addGitProject, roleThatHolds, runToHold } from './harness/gitruns.mjs';
-import { eventsOfType, workItemsOf } from './harness/journal.mjs';
+import { changePolicy, eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { addWork, runsOf, scriptedEngine, tick, tickUntil, waitForRunState, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
 
@@ -111,6 +111,13 @@ describe('M43 severity at Alpha', () => {
     const project = ctx.project.id;
     const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
     await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
+    // M5 slice 37 (D6 K1, K2; objection 100, with objection 030's remedy;
+    // SEAM.md §436): the failed result below sends the stage's work to its
+    // repair, which K1's requested tick would dispatch beside the fixture
+    // roles' runs, with no script of its own. The case is about the gate's
+    // reading of findings, not the repair, so the project allows none: the
+    // work parks and nothing runs beside the roles.
+    await changePolicy(fx.engine, project, { repair_attempts_max: 0 });
     await postResult(fx.engine, project, { candidate: ctx.candidate.id, check: k.import, exit_status: 1 });
 
     const finding = (severity, message, extra = {}) => ({ category: 'defect', severity, message, ...extra });

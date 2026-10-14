@@ -142,24 +142,30 @@ describe('M15 deadlines', () => {
     const a = (await addProject(fx)).id;
     const b = (await addProject(fx)).id;
     await tick(fx.engine, [a, b]);
-    const itemA = await addWork(fx.engine, a, 'verification');
-    const itemB = await addWork(fx.engine, b, 'verification');
 
+    // M5 slice 37 (D6 K1; objection 100; SEAM.md §436): new eligible work
+    // requests a tick at once, so the fault is armed first and the tick the
+    // items request is the one whose step overruns: A's item, then B's
+    // within the overrun, both eligible at that tick's selection.
     const delay = 4000;
     await armFault(fx.engine, { point: 'tick_step', step: 'recover', project: a, delay_ms: delay });
+    const before = tickEvents(fx.home).at(-1) ?? 0;
     const requested = performance.now();
-    const tickSeq = await oneTick(fx, a);
+    const itemA = await addWork(fx.engine, a, 'verification');
+    const itemB = await addWork(fx.engine, b, 'verification');
+    const tickSeq = await waitFor(() => tickEvents(fx.home).find((seq) => seq > before), { what: 'the tick the items requested to finish' });
     assert.equal((await fx.engine.get('/v1/health')).status, 200, 'the API answers while a step is overrunning');
 
     // In that tick: B was dispatched, A was not.
     const runB = await waitForRun(fx.home, itemB);
     assert.ok(createdSeq(fx.home, runB.id) < tickSeq, 'the other project was dispatched in the same tick');
-    assert.equal(runsOf(fx.home, itemA).length, 0, 'the project whose prerequisite overran was not dispatched in that tick');
+    assert.ok(runsOf(fx.home, itemA).every((r) => createdSeq(fx.home, r.id) > tickSeq), 'the project whose prerequisite overran was not dispatched in that tick');
 
-    // The slow step completes late. Nothing is dispatched on the strength of it.
+    // The slow step completes late. Nothing is dispatched on the strength of
+    // it: a run of A, if any yet, was created by a later tick (K1: B's end
+    // requests one), never by the tick whose step overran.
     await sleep(Math.max(0, requested + delay + 1500 - performance.now()));
-    assert.equal(runsOf(fx.home, itemA).length, 0, 'a late completion does not dispatch');
-    assert.equal(workItem(fx.home, itemA).status, 'eligible');
+    for (const r of runsOf(fx.home, itemA)) assert.ok(createdSeq(fx.home, r.id) > tickSeq, 'a late completion does not dispatch in the tick it overran');
     await waitForWork(fx.home, itemB, 'complete');
 
     // The next tick, with its prerequisites in time, dispatches it.
@@ -173,18 +179,20 @@ describe('M15 deadlines', () => {
     fx.scripted.defaultScript(script.complete());
     const a = (await addProject(fx)).id;
     await tick(fx.engine, a);
-    const item = await addWork(fx.engine, a, 'verification');
 
     // Two prerequisite steps, each within its step budget, together over the tick budget
     // by three seconds: more than the host's wall clock steps back at a time
     // (measured at 1.7 to 1.8 s on 2026-10-02; SEAM.md §39). With one second to
     // spare, an engine that times its tick by the wall clock saw the tick as
     // within budget whenever a step back fell inside it.
+    // M5 slice 37 (D6 K1; objection 100): the faults are armed before the
+    // item, whose own requested tick is then the over-budget one.
     await armFault(fx.engine, { point: 'tick_step', step: 'recover', project: a, delay_ms: 4000 });
     await armFault(fx.engine, { point: 'tick_step', step: 'journal', project: a, delay_ms: 4000 });
-    const tickSeq = await oneTick(fx, a);
-    assert.equal(runsOf(fx.home, item).length, 0, 'the over-budget tick dispatched nothing');
-    assert.equal(workItem(fx.home, item).status, 'eligible');
+    const before = tickEvents(fx.home).at(-1) ?? 0;
+    const item = await addWork(fx.engine, a, 'verification');
+    const tickSeq = await waitFor(() => tickEvents(fx.home).find((seq) => seq > before), { what: 'the tick the item requested to finish' });
+    assert.ok(runsOf(fx.home, item).every((r) => createdSeq(fx.home, r.id) > tickSeq), 'the over-budget tick dispatched nothing');
     assert.ok(tickSeq > 0);
 
     await tick(fx.engine, a);

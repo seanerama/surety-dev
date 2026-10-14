@@ -47,10 +47,12 @@ import {
   workOf,
 } from './harness/journey/drive.mjs';
 import { STAGES, architectFiles, phasePlan } from './harness/journey/reference.mjs';
+import { authoringScript } from './harness/journey/drive.mjs';
 import { refOid } from './harness/repos.mjs';
-import { scriptedEngine, tick } from './harness/runs.mjs';
+import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { closeRefused, closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from './harness/sessions.mjs';
 import { waitFor } from './harness/engine.mjs';
+import { withStore } from './harness/store.mjs';
 
 async function readyForArchitect(fx) {
   const p = await createWithIdea(fx);
@@ -147,9 +149,23 @@ describe('M405 the plan published atomically, by the authorized finalizer only',
     assertRefused(three.closeRes, 409, 'phase_not_next', 'a plan for phase 3 while phase 1 is open');
     await closeSession(fx, p.id, three.run.id, { refuse: true });
     assert.deepEqual(nothingPublished(fx.home, p.id), NOTHING);
-    // Phase 1 published; then a second plan for phase 1.
+    // Phase 1 published; then a second plan for phase 1. M5 slice 37 (D6 K1;
+    // objection 100; SEAM.md §436): the publication makes phase 1's
+    // check_authoring eligible, and its requested tick dispatches it at once,
+    // so its Verifier is scripted with phase 1's authoring (a proposal, which
+    // goes to the owner as unclassifiable and launches nothing further) and
+    // the project is let go idle before the session opens (a one-shot holding
+    // the project refuses it session_busy, D6-S08).
+    fx.scripted.kindScript('check_authoring', authoringScript(1));
     await architectSession(fx, p.id, p.repo);
     const published = assertOnePublication(fx.home, p.id, 'phase 1');
+    await waitFor(
+      () => {
+        const runs = withStore(fx.home, (db) => db.prepare(`SELECT r."state", w."kind" FROM "runs" r LEFT JOIN "work_items" w ON w."id" = r."work_item" WHERE r."project" = ?`).all(p.id));
+        return runs.some((r) => r.kind === 'check_authoring' && r.state === 'ended') && runs.every((r) => r.state === 'ended') ? true : undefined;
+      },
+      { what: 'phase 1\'s check_authoring run ended and the project idle' },
+    );
     const run = await openSession(fx, p.id, 'architect');
     const other = phasePlan(1, { revision: refOid(p.repo.path, p.repo.ref), stages: [{ ...STAGES[1][0], goal: 'the sum library, again' }, STAGES[1][1]] });
     scriptTurns(fx, run.id, [turnThatWrites({ '.surety/phases/phase-1.json': `${JSON.stringify(other, null, 2)}\n` }, { reply: 'Another plan for phase 1.', done: true })]);
