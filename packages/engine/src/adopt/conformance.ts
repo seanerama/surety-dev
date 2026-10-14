@@ -66,12 +66,19 @@ export function bindConformanceStage(tx: Tx, args: { project: string; stage: str
 // The candidates a conformance stage is held by: every candidate nominated
 // after its publication (its source binding precedes them all; its own
 // state, not a work item, says whether it is done).
+// Which came first is read from the event log's order, never from wall time
+// (D1's monotonic rule; BS5 §4.1 rule 17): the candidate's nomination and
+// the first event about the stage. Where either is not found, the stage is
+// taken to hold the candidate (unknown fails closed).
 export function conformanceHeldBy(db: Db, candidate: CandidateRow): string[] {
-  const nominated = (db.prepare('SELECT "nominated_at" FROM "candidates" WHERE "id" = ?').get(candidate.id) as { nominated_at: string } | undefined)?.nominated_at;
-  if (nominated === undefined) return [];
+  if (!db.prepare('SELECT 1 FROM "candidates" WHERE "id" = ?').get(candidate.id)) return [];
+  const nominated = (db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'candidate.nominated' AND json_extract("subject", '$.candidate') = ?`).get(candidate.id) as { s: number | null }).s;
   return conformanceStagesOf(db, candidate.project)
-    .filter((s) => s.created_at <= nominated)
-    .map((s) => s.id);
+    .filter((st) => {
+      const first = (db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE json_extract("subject", '$.stage') = ?`).get(st.id) as { s: number | null }).s;
+      return nominated === null || first === null || first <= nominated;
+    })
+    .map((st) => st.id);
 }
 
 // The nomination owed: once the phase's authoring is ready, the head is
