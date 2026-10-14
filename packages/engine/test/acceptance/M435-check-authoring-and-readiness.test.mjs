@@ -119,40 +119,40 @@ describe('M435 check authoring per phase and readiness', () => {
     assert.deepEqual(missing, [], `the phase-authoring package (N04) lacks: ${missing.join('; ')} (files: ${Object.keys(pkg).join(', ')})`);
   });
 
-  test('(d) the run complete and the proposal not captured, then captured and unapplied: no readiness, no Builder; applied: readiness by that version, then the Builders', async (t) => {
+  // The slice-37 review (SEAM.md §449): observed, not true by construction.
+  // A barrier held in the engine holds its selection too, so "no Builder while
+  // held at a barrier" proves nothing; here the scheduler runs freely. The
+  // first phase's proposal is unclassifiable and waits for the owner: while it
+  // is captured and unapplied, rounds of ticks run and no Builder launches.
+  // The rest is read from the recorded events: the authoring run's end and
+  // the proposal's capture precede `phase.authoring_ready`, which precedes
+  // every Builder's `run.created`; readiness is the applied version.
+  test('(d) the run complete, then the proposal captured and unapplied with the scheduler running: no readiness, no Builder; applied: readiness by that version, and every Builder after it', async (t) => {
     const { fx, p, ctx, plan } = await pausedDeveloping(t);
-    await armBarrier(fx.engine, 'check_authoring.before_proposal', 'pause');
-    await armBarrier(fx.engine, 'check_authoring.applied', 'pause');
     await go(fx, p);
-    // Held before the proposal's capture: the Verifier's run has done its work.
-    await round(fx, ctx).catch(() => null);
-    await waitFor(() => barrierWaiting(fx, 'check_authoring.before_proposal'), { what: 'the engine to wait at check_authoring.before_proposal', timeoutMs: 60_000 });
-    assert.equal(proposalRows(fx.home, p.id).length, 0, 'no proposal captured yet');
-    assert.equal(planRow(fx.home, plan.id).authoring_ready_at ?? null, null, 'no readiness at the run\'s completion');
-    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder');
-    await release(fx, 'check_authoring.before_proposal');
-    // Captured, unapplied: the owner's decision open.
+    // Captured, unapplied: the owner's decision open, the scheduler not held.
     const open = await until(fx, ctx, () => openAuthoringDecision(fx, p), { what: 'the proposal captured and routed' });
-    for (let i = 0; i < 3; i++) await round(fx, ctx);
-    assert.equal(planRow(fx.home, plan.id).authoring_ready_at ?? null, null, 'a captured, unapplied proposal establishes no readiness');
-    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder while the proposal is unapplied');
-    // Applied: held after the version's transaction.
+    const [authoring] = authoringRuns(fx.home, p.id);
+    assert.ok(authoring && authoring.state === 'ended', `the fixture is live: the Verifier's run has ended (${JSON.stringify(authoring)})`);
+    for (let i = 0; i < 4; i++) await round(fx, ctx);
+    assert.equal(planRow(fx.home, plan.id).authoring_ready_at ?? null, null, 'a run complete and its proposal captured, unapplied: no readiness');
+    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder while the proposal is unapplied, the scheduler running');
+    // Applied by the owner's approval.
     await consume(fx, p.id, decision(fx.home, open.id), 'approve');
-    await waitFor(
-      async () => {
-        if (await barrierWaiting(fx, 'check_authoring.applied')) return true;
-        await tick(fx.engine, p.id, { rounds: 1 }).catch(() => null);
-        return undefined;
-      },
-      { what: 'the engine to wait at check_authoring.applied', timeoutMs: 60_000 },
-    );
+    await until(fx, ctx, () => builderRuns(fx.home, p.id)[0], { what: 'the Builders after readiness' });
     const row = planRow(fx.home, plan.id);
     const version = protectedVersionsOf(fx.home, p.id).at(-1);
     assert.ok(row.authoring_ready_at, 'readiness recorded with the application');
     assert.equal(row.authoring_ready_by, version.id, `readiness is the applied protected version (${row.authoring_ready_by} vs ${version.id})`);
-    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder yet at the barrier');
-    await release(fx, 'check_authoring.applied');
-    await until(fx, ctx, () => builderRuns(fx.home, p.id)[0], { what: 'the Builders after readiness' });
+    const seqOf = (type, pred) => eventsOfProject(fx.home, type, p.id).filter(pred).map((e) => e.seq);
+    const ended = seqOf('run.ended', (e) => e.subject?.run === authoring.id);
+    const proposed = seqOf('protected.proposed', () => true);
+    const ready = seqOf('phase.authoring_ready', (e) => JSON.stringify(e).includes(plan.id));
+    const builders = builderRuns(fx.home, p.id).map((r) => seqOf('run.created', (e) => e.subject?.run === r.id)[0]);
+    const order = { ended, proposed, ready, builders };
+    assert.ok(ended.length === 1 && proposed.length >= 1 && ready.length === 1, `the fixture is live: each recorded (${JSON.stringify(order)})`);
+    assert.ok(ended[0] < ready[0] && proposed[0] < ready[0], `readiness after the run's end and the proposal's capture, not at either (${JSON.stringify(order)})`);
+    assert.ok(builders.every((seq) => Number.isInteger(seq) && seq > ready[0]), `every Builder created after phase.authoring_ready (${JSON.stringify(order)})`);
   });
 
   test('(d) rejected: no readiness; the item\'s repair or its blocker; never a Builder', async (t) => {

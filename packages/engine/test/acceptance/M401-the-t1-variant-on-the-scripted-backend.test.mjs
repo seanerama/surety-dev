@@ -58,14 +58,19 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     await specSession(fx, p.id);
     const arch = await architectSession(fx, p.id, p.repo);
     const ctx = journeyContext(fx, p, { tier: 'T1' });
-    await alphaReady(fx, ctx);
+    // One scripted deploy answer per deployment the journey makes: under
+    // `on_phase_complete` one per completed phase (objection 104, the
+    // driver's ruling 3: under K1 and K2 phase 1's candidate is deployed
+    // first, then superseded by phase 2's, whose deployment is the one
+    // expected; SEAM.md §449).
+    await alphaReady(fx, ctx, { answers: [{ result: 'issued', apply: true }, { result: 'issued', apply: true }] });
     J = { fx, p, ctx, plan: arch.published };
     J.phase1 = await phaseCompleted(fx, ctx, 1);
     J.candidatesAfterPhase1 = candidatesOfProject(fx.home, p.id);
     await nextPhasePublished(fx, ctx, 2);
     J.change = await changeRequest(fx, ctx);
     J.phase2 = await phaseCompleted(fx, ctx, 2, { max: 200 });
-    J.deployed = await alphaDeployed(fx, ctx);
+    J.deployed = await alphaDeployed(fx, ctx, { newest: true });
   });
   after(shared.cleanup);
 

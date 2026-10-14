@@ -132,7 +132,9 @@ describe('M450 deferred authoring and the exception', () => {
     const c1 = candidatesOfProject(fx.home, p.id).at(-1);
     const phaseRes = await fx.engine.post(`/v1/projects/${p.id}/candidates/${c1.id}/gates/phase`, { phase_plan: plan.id });
     assert.equal(phaseRes.status, 200, phaseRes.text);
-    assert.ok(incompleteNames(reasonsOf(phaseRes)).some((s) => s.includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on the phase gate (${JSON.stringify(reasonsOf(phaseRes))})`);
+    // The subject names the deferral itself, `deferred:R2.2` (the slice-37
+    // review; SEAM.md §449), not merely a subject mentioning R2.2.
+    assert.ok(incompleteNames(reasonsOf(phaseRes)).includes('deferred:R2.2'), `AUTHORING_INCOMPLETE naming deferred:R2.2 on the phase gate (${JSON.stringify(reasonsOf(phaseRes))})`);
 
     // (b) stage 2 integrated, then integrated again by a fix, then a restart.
     fx.scripted.release('all', 's2');
@@ -149,7 +151,7 @@ describe('M450 deferred authoring and the exception', () => {
     await alphaReady(fx, ctx);
     const refused = await requestDeployment(fx.engine, p.id, withService.id, 'alpha');
     assertRefused(refused, 409, 'authorization_not_issued', 'a deploy request while R2.2\'s checks are deferred');
-    assert.ok(incompleteNames(reasonsOf(refused)).some((s) => s.includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on alpha_authorize (${JSON.stringify(reasonsOf(refused))})`);
+    assert.ok(incompleteNames(reasonsOf(refused)).includes('deferred:R2.2'), `AUTHORING_INCOMPLETE naming deferred:R2.2 on alpha_authorize (${JSON.stringify(reasonsOf(refused))})`);
     fx.scripted.release('all', 'r2f');
     await waitForIdle(fx.home, p.id, { timeoutMs: 60_000 }).catch(() => null);
     const c2 = candidatesOfProject(fx.home, p.id).at(-1);

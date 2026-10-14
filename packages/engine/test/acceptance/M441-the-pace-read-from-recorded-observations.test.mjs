@@ -261,7 +261,11 @@ describe('M441 (f) across a restart with a settings change and a domain removed'
     assert.equal(policy.status, 200, `the fixture is live: role_memory_max † is a project setting (→ ${policy.status} ${policy.text})`);
     assert.equal(h2.role_memory_max, 3 * GIB, 'and the present role_memory_max');
     assert.equal(r2.host.tick_interval, 300, 'the host block is the latest observation');
-    // The domain of the held run, removed by the restart's recovery: its peak was never read.
+    // The domain of the held run, removed by the restart's recovery: on the
+    // kernel lane no memory.peak exists to read, so its peak is unknown; a
+    // peak recorded on real domains, and one removed by recovery, are
+    // `M441-the-peak-across-a-restart-on-the-real-boundary`'s (the slice-37
+    // review; SEAM.md §449).
     const domain = r2.domains.find((d) => d.run === heldRun.id) ?? r2.domains.at(-1);
     assert.ok(domain && isUnknown(domain.memory_peak), `the removed domain's memory_peak is unknown, never a value (${show(domain)})`);
     const heldBefore = r1.domains.find((d) => d.id === domain.id);

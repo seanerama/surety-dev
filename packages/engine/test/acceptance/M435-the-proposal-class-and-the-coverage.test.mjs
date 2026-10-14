@@ -105,12 +105,17 @@ describe('M435 the proposal\'s class and the coverage', () => {
     const phaseRes = await fx.engine.post(`/v1/projects/${p.id}/candidates/${c.id}/gates/phase`, { phase_plan: plan.id });
     assert.equal(phaseRes.status, 200, `POST …/gates/phase (→ ${phaseRes.status} ${phaseRes.text})`);
     const phaseNames = (phaseRes.body?.evaluation?.reasons ?? []).filter((r) => r.code === 'AUTHORING_INCOMPLETE').flatMap((r) => r.subjects ?? []);
-    assert.ok(phaseNames.some((s) => String(s).includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on the phase gate (${JSON.stringify(phaseRes.body?.evaluation?.reasons)})`);
+    // The exact subject (the slice-37 review; SEAM.md §449): the planned
+    // obligation's shortfall, `stage 2:R2.2`; R2.2 was not deferred, so no
+    // `deferred:` subject.
+    assert.ok(phaseNames.includes('stage 2:R2.2'), `AUTHORING_INCOMPLETE naming stage 2:R2.2 on the phase gate (${JSON.stringify(phaseRes.body?.evaluation?.reasons)})`);
+    assert.ok(!phaseNames.some((s) => String(s).startsWith('deferred:')), `and no deferred: subject (${JSON.stringify(phaseNames)})`);
     await alphaReady(fx, ctx);
     const refused = await requestDeployment(fx.engine, p.id, c.id, 'alpha');
     assertRefused(refused, 409, 'authorization_not_issued', 'the owner\'s deploy request with R2.2 unauthored');
     const deployNames = (refused.body?.subject?.reasons ?? []).filter((r) => r.code === 'AUTHORING_INCOMPLETE').flatMap((r) => r.subjects ?? []);
-    assert.ok(deployNames.some((s) => String(s).includes('R2.2')), `AUTHORING_INCOMPLETE naming R2.2 on alpha_authorize (B07; slice 35's ruling 9) (${JSON.stringify(refused.body?.subject?.reasons)})`);
+    assert.ok(deployNames.includes('stage 2:R2.2'), `AUTHORING_INCOMPLETE naming stage 2:R2.2 on alpha_authorize (B07; slice 35's ruling 9) (${JSON.stringify(refused.body?.subject?.reasons)})`);
+    assert.ok(!deployNames.some((s) => String(s).startsWith('deferred:')), `and no deferred: subject (${JSON.stringify(deployNames)})`);
     // The coverage restored: a correction adding `integration` and accept-r2 covering R2.2 again.
     const before = protectedVersionsOf(fx.home, p.id).length;
     fx.scripted.kindScript('check_correction', roleThat([step.write('.surety/checks/defs/integration.json', authoringFiles(1)['.surety/checks/defs/integration.json']), step.write('.surety/checks/tests/integration.test.mjs', CHECK_PROGRAMS['.surety/checks/tests/integration.test.mjs']), step.write('.surety/checks/defs/accept-r2.json', authoringFiles(1)['.surety/checks/defs/accept-r2.json'])], { proposal: { rationale: 'R2.2 covered again.', requested_change_kind: 'tightening' } }));

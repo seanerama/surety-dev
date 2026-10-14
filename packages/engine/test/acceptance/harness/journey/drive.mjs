@@ -451,9 +451,21 @@ export async function alphaReady(fx, ctx, { name = 'alpha', port = 8080, answers
   return { env, qualification };
 }
 
-// The candidate `alpha_deployed` (§354).
-export const alphaDeployed = (fx, ctx, opts = {}) =>
-  pump(fx, ctx, () => candidatesOfProject(fx.home, ctx.project).find((c) => c.progress === 'alpha_deployed') ?? undefined, { what: 'a candidate to be alpha_deployed', max: 80, ...opts });
+// The candidate `alpha_deployed` (§354). With `newest`, the project's newest
+// candidate (by seq), and no other, must reach it (objection 104: under K1
+// and K2 the policy may deploy an earlier phase's candidate first, which the
+// next phase's supersedes; SEAM.md §449).
+export const alphaDeployed = (fx, ctx, { newest = false, ...opts } = {}) =>
+  pump(
+    fx,
+    ctx,
+    () => {
+      const all = candidatesOfProject(fx.home, ctx.project);
+      if (newest) return all.at(-1)?.progress === 'alpha_deployed' ? all.at(-1) : undefined;
+      return all.find((c) => c.progress === 'alpha_deployed') ?? undefined;
+    },
+    { what: newest ? 'the newest candidate to be alpha_deployed' : 'a candidate to be alpha_deployed', max: 80, ...opts },
+  );
 
 // The work a check-correction decision answered as the owner came from
 // (SEAM.md §370): the kind of the work item whose Verifier run captured the
