@@ -87,19 +87,6 @@ export function settleAwaitingItem(tx: Tx, id: string): boolean {
     if (kind && deps?.raiseQuestion(tx, { project: p.project, kind, subjectType: 'protected_proposal', subjectId: p.id })) return true;
     return false;
   }
-  // A proposed change whose question waits for its evidence to settle
-  // (the driver's ruling (B)): the tick raises it (raiseSettledChanges).
-  if (blocker?.reason === 'spec_change' && (blocker as { settling?: boolean }).settling === true) {
-    const subject = (() => {
-      try {
-        return JSON.parse(item.subject) as { request?: string };
-      } catch {
-        return {};
-      }
-    })();
-    const r = subject.request ? (tx.db.prepare('SELECT "status" FROM "spec_change_requests" WHERE "id" = ?').get(subject.request) as { status: string } | undefined) : undefined;
-    if (r?.status === 'proposed') return true;
-  }
   return deps?.raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id }) != null;
 }
 

@@ -146,7 +146,18 @@ export class Scheduler {
   private async step(name: (typeof PREREQUISITES)[number], project: string): Promise<void> {
     await seamStepDelay(name, project);
     if (name === 'recover') {
-      this.ender.retryDue(project);
+      // The recovery's run ends finish before the journal step begins
+      // (D1 §8.1 steps 1 then 2; M440 (d)); one that hangs is waited for at
+      // most half the step's budget, and the project's tick goes on.
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        this.ender.retryDue(project),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, (this.rt.setting('tick_step_budget') * 1000) / 2);
+          timer.unref();
+        }),
+      ]);
+      clearTimeout(timer);
       await this.ender.observeQuarantines(project);
       await this.ender.reconcileExpired(project);
     } else if (name === 'journal') {
@@ -176,8 +187,6 @@ export class Scheduler {
     // state at every tick, so a failure recorded while its item was not yet
     // verifying is repaired by the next tick at the latest.
     await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
-    // A proposed change's question, held while its evidence settled, raised.
-    await this.rt.engine('spec.raise_settled', { project }).catch((err) => log('spec change question', err, { project }));
     // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
     const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
       log('awaiting sweep', err, { project });
@@ -341,11 +350,11 @@ export class Scheduler {
       // integrity step is observed now, and nothing of the project is
       // dispatched onto it (git/integrity.ts registeredRefsMoved).
       for (const q of queues) {
-        const moved = await registeredRefsMoved(this.rt, q.c.project).catch(() => true);
+        const moved = await registeredRefsMoved(this.rt, q.c.project).catch(() => 'unknown' as const);
         if (!moved) continue;
         q.items = [];
         ineligible.add(q.c.project);
-        await observeIntegrity(this.rt, q.c.project).catch((err) => log('integrity recheck', err, { project: q.c.project }));
+        if (moved === 'moved') await observeIntegrity(this.rt, q.c.project).catch((err) => log('integrity recheck', err, { project: q.c.project }));
       }
       // Each item claimed in turn, in priority order; what the claimed runs
       // need before their spawns made side by side, and waited for before

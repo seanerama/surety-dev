@@ -84,6 +84,9 @@ export interface DecisionSpec {
   blockedOperation?: string | undefined;
   // D1 A.3: the records the question rests on, with their provenance.
   evidence?: { record: string; provenance: 'observed' | 'claimed' | 'configured' }[] | undefined;
+  // Facts recorded with the question when it is raised, not bound by its
+  // preview (decision.raised's payload; a spec_change's `settling`).
+  raised?: Record<string, unknown> | undefined;
 }
 
 const SCOPE = 'subject';
@@ -219,7 +222,7 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
       target,
     );
   const row = getDecision(tx, id)!;
-  tx.emit('decision.raised', decisionSubject(row), { kind: spec.kind, semantic_generation: identity.semantic_generation, preview_hash: preview });
+  tx.emit('decision.raised', decisionSubject(row), { kind: spec.kind, semantic_generation: identity.semantic_generation, preview_hash: preview, ...(spec.raised ?? {}) });
   return row;
 }
 

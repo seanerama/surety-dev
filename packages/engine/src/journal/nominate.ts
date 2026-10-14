@@ -11,6 +11,14 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import type { Journal } from './driver.js';
 
 export async function nominate(rt: Runtime, journal: Journal, project: string): Promise<void> {
+  // Nothing due: no lease taken (each tick runs this; a lease row per tick
+  // would be a write with nothing to write, M303 (a)). Due is read again
+  // under the lease by the intent itself.
+  if (!(await rt.read<boolean>('nomination.due_project', { project }))) {
+    await ensureAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
+    await ensurePresence(rt, project).catch((err) => log('module presence', err, { project }));
+    return;
+  }
   await journal.withProject(project, async () => {
     await ensureNominationAncestry(rt, project).catch((err) => log('ancestry', err, { project }));
     await ensureNominationPresence(rt, project).catch((err) => log('module presence', err, { project }));

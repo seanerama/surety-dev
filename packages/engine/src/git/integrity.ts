@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import type { Runtime } from '../runtime.js';
 import type { IntegrityFacts, IntegrityReport, RegistryFacts } from '../store/transitions/integrity.js';
 import { type GitContext, repoContext, worktreeContext } from './exec.js';
+import { mapBounded } from './bounded.js';
 import { checkoutBaseline, listWorktrees, readRefs } from './repo.js';
 import { canonicalPath, worktreeMetadata } from './worktree.js';
 
@@ -99,20 +100,6 @@ export async function observeIntegrity(rt: Pick<Runtime, 'engine' | 'home' | 'sc
 
 const INTEGRITY_PARALLEL = 8;
 
-// `fn` over `items`, at most `limit` at once; the results in the items' order.
-async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return out;
-}
 
 // The developer's checkouts of the integration branch, with what each holds:
 // what a project installed or created on the repository starts managing.
@@ -150,19 +137,27 @@ export async function checkoutContext(repo: string, path: string): Promise<GitCo
 // step reads the refs at the start of a tick; under K1 a tick may start
 // while the project is paused, and a hand move and a resume may then land
 // between that step and the dispatch. Re-read here, a move is observed in
-// the tick that would otherwise dispatch onto it. A read that fails, or a
-// ref whose state is unknown, counts as moved: unknown is never clean, and
-// the integrity evaluation that follows records it as it is.
-export async function registeredRefsMoved(rt: Pick<Runtime, 'read'>, project: string): Promise<boolean> {
+// the tick that would otherwise dispatch onto it ('moved'; the integrity
+// evaluation that follows records it). A read that fails, or a ref whose
+// state is unknown, is 'unknown' (N02; the driver's ruling on M209 (b)):
+// it holds the project's dispatch in this tick, never clean, and records
+// nothing, since a failed read is not an observed change.
+export async function registeredRefsMoved(rt: Pick<Runtime, 'read'>, project: string): Promise<'moved' | 'unknown' | false> {
   const f = await rt.read<RegistryFacts>('integrity.registry', { project });
   const refs = await readRefs(repoContext(f.repo), f.registry.map((r) => r.ref));
-  if (refs === null) return true;
+  if (refs === null) return 'unknown';
+  let unknown = false;
   for (const row of f.registry) {
     const read = refs.get(row.ref);
-    if (!read || read.state !== 'ok') return true;
+    // A verified deletion is a move; an unverified absence is unknown.
+    if (read?.state === 'missing') return 'moved';
+    if (!read || read.state !== 'ok') {
+      unknown = true;
+      continue;
+    }
     if (read.oid === row.expected_oid) continue;
     if ((f.moving[row.ref] ?? []).includes(read.oid)) continue;
-    return true;
+    return 'moved';
   }
-  return false;
+  return unknown ? 'unknown' : false;
 }

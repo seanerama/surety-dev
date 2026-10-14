@@ -310,6 +310,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // may survive. The project run count K2 removes had kept this; K2 does not
   // lift it.
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "quarantined" = 1 AND "state" <> 'ended'`, item.project) > 0) return 'project has a quarantined run';
+  // And while a quarantine is pending (the driver's ruling on M115, slice
+  // 37): a run of the project ending whose domains' termination is not yet
+  // established (allocated, launched or quarantined) may still have a
+  // writer; whether it becomes a quarantine is not known yet.
+  if (
+    live(
+      `SELECT COUNT(*) AS n FROM "runs" r WHERE r."project" = ? AND r."state" = 'finalizing'
+         AND EXISTS (SELECT 1 FROM "execution_domains" d WHERE d."run" = r."id" AND d."status" <> 'terminated')`,
+      item.project,
+    ) > 0
+  )
+    return 'project has a run whose termination is not established';
   // At most one replan run of a project at a time (the driver's ruling,
   // slice 37, extending ruling 1): every replan writes the phase plan's
   // files, so two at once would make the second's integration conflict

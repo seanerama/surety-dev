@@ -417,7 +417,8 @@ test('a check the new version carries over unchanged owes no late obligation; on
   assert.deepEqual(h.db.prepare(`SELECT key FROM check_obligations`).all().map((o) => o.key), ['accept-r4'], 'accept-r2, carried over unchanged, owes nothing');
 });
 
-const { authoredAgainst, impactSettling, raiseSettledChanges } = await import(join(dist, 'spec', 'change.js'));
+const { authoredAgainst, impactSettling } = await import(join(dist, 'spec', 'change.js'));
+const { raiseDecision } = await import(join(dist, 'store', 'transitions', 'decisions.js'));
 
 test("(A) an owner who approves an earlier-authored proposal after the change's approval does so knowingly: its question names what it was authored against, and no late obligation is raised", (t) => {
   const h = store(t);
@@ -443,7 +444,7 @@ test("(A) an owner who approves an earlier-authored proposal after the change's 
   assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => lateObligations(tx, { project: 'prj_1', proposal: 'prop_a', version: 'pv_2' })), 0, "the owner's knowing approval stands");
 });
 
-test("(B) a proposed change's question waits while executions of its impact's checks are queued, materializing or running", (t) => {
+test("(3), replacing (B): a proposed change's question records how many executions of its impact's checks were queued, materializing or running when it was raised; it is not held", (t) => {
   const h = store(t);
   const impact = { checks: { obligations: [{ check: 'chk_r2', key: 'accept-r2', criteria: ['R2.1'] }], criterion_unknown: [], uncovered: [] }, evidence: { results: [], evaluations: [] } };
   h.run(`INSERT INTO spec_change_requests (id, created_at, project, seq, request_text, source, status, impact_value) VALUES ('scr_1', ?, 'prj_1', 1, 'c', 'owner', 'proposed', ?)`, AT, JSON.stringify(impact));
@@ -461,7 +462,12 @@ test("(B) a proposed change's question waits while executions of its impact's ch
   assert.equal(impactSettling(h.db, 'scr_1'), 0, "a check outside the impact doesn't hold it");
   exec('cx_r2', 'accept-r2', 'queued');
   assert.equal(impactSettling(h.db, 'scr_1'), 1);
-  assert.equal(transact(h.db, ENGINE_ACTOR, (tx) => raiseSettledChanges(tx, { project: 'prj_1' })), 0, 'no question while it settles');
+  // Recorded with the raised question, outside its preview.
+  const d = transact(h.db, ENGINE_ACTOR, (tx) =>
+    raiseDecision(tx, { project: 'prj_1', kind: 'spec_change', subjectType: 'spec_change_request', subjectId: 'scr_1', question: 'q', options: [], manifest: { a: 1 }, raised: { settling: impactSettling(tx.db, 'scr_1') } }),
+  );
+  const raised = JSON.parse(h.db.prepare(`SELECT payload FROM events WHERE type = 'decision.raised' AND json_extract(subject, '$.decision') = ?`).get(d.id).payload);
+  assert.equal(raised.settling, 1, 'decision.raised carries settling');
   h.run(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_r2'`);
-  assert.equal(impactSettling(h.db, 'scr_1'), 0, 'settled: the tick raises it');
+  assert.equal(impactSettling(h.db, 'scr_1'), 0, 'settled: 0');
 });

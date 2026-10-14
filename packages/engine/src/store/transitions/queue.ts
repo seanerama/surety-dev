@@ -82,6 +82,9 @@ export interface Preview {
   evidence?: DecisionSpec['evidence'];
   blockedWorkItems?: string[];
   blockedOperation?: string;
+  // Facts recorded with the question when it is raised, never bound by it
+  // (decision.raised's payload).
+  raised?: Record<string, unknown>;
 }
 
 type Subject = Pick<DecisionRow, 'project' | 'kind' | 'subject_type' | 'subject_id' | 'scope' | 'options'>;
@@ -1713,6 +1716,7 @@ export function raiseQuestion(
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
     evidence: args.evidence ?? p.evidence,
+    raised: p.raised,
   });
   if (args.kind === 'blocker' && args.subjectType === 'work_item') {
     // The item's blocker names the decision that holds it.

@@ -577,16 +577,6 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
-  // The question waits while the evidence its impact lists is still being
-  // made (the driver's ruling (B), slice 37): executions of the impact's
-  // checks queued, materializing or running. A hold, not a failure; the
-  // tick raises it once they settle (raiseSettledChanges).
-  if (impactSettling(tx.db, r.id) > 0) {
-    if (item && item.status === 'executing') {
-      transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: null, settling: true }) }, { spec_change_request: r.id, settling: true });
-    }
-    return { request: r.id, decision: null, settling: true };
-  }
   const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   if (d && item && item.status === 'executing') {
     transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
@@ -709,9 +699,15 @@ export function specChangeKind(): KindSpec {
       const impact = now.impact;
       const manifest = changeManifest(tx.db, r.id);
       const listed = impact.checks.obligations.map((c) => c.key);
+      // An honesty aid (the driver's ruling (3) on (B), slice 37): how many
+      // executions of the impact's checks were queued, materializing or
+      // running when the question was raised. Not bound: a result they
+      // record that moves the impact asks again (D6 §4.4).
+      const settling = impactSettling(tx.db, r.id);
       return {
         manifest,
-        question: `${r.last_refusal ? `The last approval of specification change ${r.seq} could not be applied (${REFUSAL_TEXT[r.last_refusal.split(':')[0]!] ?? r.last_refusal}). ` : ''}Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.`,
+        raised: { settling },
+        question: `${r.last_refusal ? `The last approval of specification change ${r.seq} could not be applied (${REFUSAL_TEXT[r.last_refusal.split(':')[0]!] ?? r.last_refusal}). ` : ''}Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.${settling > 0 ? ` ${settling} execution(s) of its checks were still queued or running when this was asked; a result they record may change the impact, and the question is then asked again.` : ''}`,
         options: [
           {
             key: 'approve',
@@ -1309,28 +1305,3 @@ export function impactSettling(db: Db, request: string): number {
     .get(r.project, JSON.stringify([...keys])) as { n: number }).n;
 }
 
-// The tick's step: a proposed change whose question waited for its
-// evidence has it raised once that settles, and its work waits on it.
-export function raiseSettledChanges(tx: Tx, args: { project: string }): number {
-  const rows = tx.db
-    .prepare(
-      `SELECT r."id", r."work_item" FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'proposed'
-         AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'spec_change' AND d."subject_id" = r."id" AND d."status" IN ('open', 'answered', 'consumed'))
-       ORDER BY r."seq"`,
-    )
-    .all(args.project) as { id: string; work_item: string | null }[];
-  let n = 0;
-  for (const r of rows) {
-    if (impactSettling(tx.db, r.id) > 0) continue;
-    const d = raiseQuestion(tx, { project: args.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
-    if (!d) continue;
-    n++;
-    const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
-    if (item && item.status === 'awaiting_decision') {
-      tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }), item.id);
-    } else if (item && item.status === 'executing') {
-      transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
-    }
-  }
-  return n;
-}
