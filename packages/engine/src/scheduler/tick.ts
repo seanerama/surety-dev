@@ -313,7 +313,7 @@ export class Scheduler {
     });
     await pausePoint('scheduler.tick_running');
     steps.push('select');
-    if (remaining() > 0) {
+    if (remaining() > 0 && this.rt.selectHeld === 0) {
       const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates');
       steps.push('dispatch');
       // D6 K2 (B09): every eligible item in priority order, each admitted

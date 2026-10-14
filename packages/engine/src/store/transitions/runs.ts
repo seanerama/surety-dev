@@ -561,8 +561,10 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
-  // The peak number of domains at once (D6 §7.6; N01).
+  // The peak number of domains at once (D6 §7.6; N01), and the dispatch
+  // itself as an event the pace read can bound waits by (D6 A.2).
   notePeakDomains(tx);
+  tx.emit('work.dispatched', { project: item.project, work_item: item.id, run }, { domain, memory_max: memoryMax });
 
   // What the run is told of its failed repair checks, read at dispatch.
   const outputs = canary ? undefined : checkOutputsFor(tx.db, item);

@@ -27,7 +27,8 @@ export const EVENT_OWNERS = {
   // interval, and a stage work item's milestone met.
   'work.hold_began': 'store/transitions/work.ts',
   'work.hold_ended': 'store/transitions/work.ts',
-  'work.dependency_met': 'store/transitions/work.ts',
+  'work.dependency_met': 'scheduler/milestones.ts',
+  'work.dispatched': 'store/transitions/runs.ts',
   'work.resumed': 'store/transitions/work.ts',
   'work.parked': 'store/transitions/work.ts',
   'work.cancelled': 'store/transitions/work.ts',
