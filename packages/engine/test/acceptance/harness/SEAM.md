@@ -6888,6 +6888,53 @@ Accepted cases that relied on nothing ticking between the case's own ticks, or o
 - **M401-the-t1-variant (m)** counts the human acts by request: of the kinds `check_correction_unclassifiable`, `spec_change`, `spec_change_request` only; CR-1 submitted once; one correction approval from phase 1's check authoring (the toolchain) and at least one from CR-1's check correction (a correction's repaired proposal, after an approved one conflicted with the moved head, is a new question); every `spec_change` answer about CR-1 (under Q2 the owner is asked once per change unless a new result or finding moves its impact, so more than one answer is a re-raised generation, not another change).
 - **M441-the-pace-read-after-the-journey (a)**, the review's N6: `project.idle.<reason>` is the elapsed time of the reason's closed intervals where one was recorded, and `unknown` for a reason with none, never a measured 0.
 
+## 453. Slice 38: the files, the lanes, and the package seam (M442 to M446; BS5 §§3, 12, 13; E135; the Builder's design approved by the driver, 2026-10-14)
+
+(Written 2026-10-14 on `verify/m5-s38` from slice 37's gated head `f767609`.)
+
+- **Files and lanes.** Kernel (manifest slice `38`): `M442-the-role-packages-state-what-the-engine-reads` ((a)), `M442-the-rehearsal-plays-from-the-package` ((b), (c)). Real (manifest `real` only, never a slice or `npm test`): `M443-the-real-journey-from-an-idea-to-alpha`, `M444-the-real-retrofit-journey` (§456). Report (M445): `docs/acceptance/reports/M5-report.md` (§458). Hands-on (M446): `docs/acceptance/reports/M5-hands-on.sh` (§457).
+- **What a package states** (E87 item 10; E135: M4's real Verifier was never told the floor its gate applied). Each element a role's product is read by is rendered into the package's `prompt.md` as a section `## What the engine reads: <title>`, a gloss, and one fenced block whose info string is exactly `json surety-reads <element id>`, holding one JSON value: the element's data, taken from the engine's own parser and gate constants (never a second copy of them). `manifest.json` gains **`reads`** †: the ids of the elements the package carries. An element that adds result fields also adds them to `result-schema.json` (`verifier.authoring_result`, `verifier.adoption_rule`). Which elements each package carries, and each one's JSON, is §454.
+- **The omission seam** † (harness mode only, SEAM §7's confinement; M74's lint): `serve --harness-package-omit <id>` (repeatable) at start; `POST /v1/harness/package-omit {"elements": [ids]}` replaces the set (`[]` clears it; an unknown id is refused **400** naming the known ids); **`GET /v1/harness/package-elements`** → 200 `{"elements": [{"id", "title", "packages": [names]}]}`, the registry, unaffected by the omission set. An omitted element is gone from every package written while it is omitted: its section, its block, its result-schema fields and its `reads` entry. A package is written at its launch, so a case sets the set before the tick that launches the role and clears it after.
+- **Who writes what.** The registry and its rendering are the Builder's (`src/packages/`). The package-driven fakes, the rehearsal's judgement and the rehearsal content are the Verifier's (`harness/standin/package-fakes.cjs`, `harness/real/`).
+
+## 454. The elements, and the JSON each block holds (M442 (a))
+
+The cases read only the members named here; the engine may add others. Every JSON Schema is inline (no `$ref`), every object in it `additionalProperties: false` with its `required` list. `harness/real/packages.mjs` (`elementProblems`, `packageProblems`) is the reading.
+
+| Element | Carried by | JSON |
+|---|---|---|
+| `spec_writer.header_fields` | Spec Writer session | `{"fields": [{"name": "Spec version", "line": "**Spec version:**"}, {"name": "Status", "line": "**Status:**", "value": "draft"}, {"name": "Tier", "line": "**Tier:**"}, {"name": "Owner", "line": "**Owner:**"}]}`, in that order |
+| `spec_writer.requirement_form` | Spec Writer session | `{"heading": "### R<n>. <title>", "statement": <text>, "sensitive_areas": "**Sensitive areas:**", "criterion": "- R<n>.<m> <text>"}` |
+| `spec_writer.marks` | Spec Writer session | `{"human_test": "**Human test.**", "descriptive": "**Descriptive.**"}` |
+| `spec_writer.question_form` | Spec Writer session | `{"section": "## 10. Open questions", "item": "- Q<k> <text>", "phase_hint": "(phase <n>)"}` |
+| `spec_writer.index_columns` | Spec Writer session | `{"section": "## 5. Requirement index", "columns": ["Key", "Title", "Phase", "Sensitive areas", "Criteria", "Origin"], "origin": ["intended", "observed"], "default_origin": "intended"}` |
+| `spec_writer.module_table` | Spec Writer session | `{"section": "## 6. Modules and protected paths", "columns": ["Module", "Paths", "Sensitive areas"]}` |
+| `spec_writer.environment_fields` | Spec Writer session | `{"section": "## 7. Environments", "heading": "### <name>", "fields": ["Purpose", "Verified means", "Target", "Runtime and start command", "Port", "Excluded from the artifact", "Required post-deploy behaviour check", "Stable arguments"]}` |
+| `spec_writer.sensitive_areas` | Spec Writer session | `{"areas": [{"id", "name"}], "none": "none"}`: F §5.6's seven by id, each with TPL's name (`secrets_credentials` "secrets and credential handling", …) |
+| `spec_writer.tier_table` | Spec Writer session | `{"tiers": [{"tier": "T1", "name": "prototype", "kinds": [...]}, {"tier": "T2", "name": "standard", …}, {"tier": "T3", "name": "critical", …}]}`, `kinds` the engine's `KIND_INVENTORY` |
+| `spec_writer.approval_blockers` | Spec Writer session | `{"blockers": [{"code", "when"}]}` with at least `spec_semantics_invalid`, `QUESTION_NO_PHASE_HINT`, `REQUIREMENT_NO_PHASE_HINT`, `QUESTION_BLOCKS_PHASE_1` |
+| `spec_writer.claims_table` | Spec Writer session, retrofit only | `{"section": "## 12. Claims and reality", "columns": ["Source", "Claim", "Observed", "Requirement"], "not_checked": "not checked", "none": "none"}` |
+| `architect.schema.modules` | Architect session; `replan` | `{"file": ".surety/architecture/modules.json", "schema": <B.3>}` |
+| `architect.schema.roadmap` | Architect session; `replan` | `{"file": ".surety/roadmap/roadmap.json", "schema": <B.4>}` |
+| `architect.schema.phase_plan` | Architect session; `replan` | `{"file": ".surety/phases/phase-<n>.json", "schema": <B.5>}` |
+| `architect.schema.adr` | Architect session; `replan` | `{"file": ".surety/adrs/ADR-<nnn>.md", "front_matter": <schema: key, status enum proposed/accepted/superseded, supersedes>, "headings": ["Context", "Decision", "Consequences"]}` |
+| `architect.plan_reasons` | Architect session; `replan` | `{"reasons": [{"code", "rule"}], "kinds_by_tier": KIND_INVENTORY}`: the fifteen codes every plan check applies (D6 A.4; `PLAN_REASONS` less the retrofit two), and in retrofit also `PLAN_DESCRIPTIVE_MODULE_TOUCHED` and `PLAN_CONFORMANCE_MISPLACED` |
+| `architect.routing` | Architect session; `replan` | `{"registered": "engine:plan_check", "human": "plan_approval", "compared": [what the diff compares], "declarations": <text: a declaration can add uncertainty, never suppress a change>}` |
+| `verifier.kinds` | `check_authoring`; `check_correction` | `{"kinds": CHECK_KINDS, "criteria_kinds": ["acceptance", "integration", "property", "failure_recovery"], "by_tier": KIND_INVENTORY}` |
+| `verifier.gate_kinds_floor` | `check_authoring`; `check_correction` | `{"tier": <project tier>, "floor": KIND_INVENTORY[tier], "gate_kinds": ["stage", "alpha_authorize"]}`: each floor kind needs a required acceptance-origin check listing each of `gate_kinds` (E135) |
+| `verifier.requires` | `check_authoring`; `check_correction` | `{"member": "requires", "values": ["environment", "artifact_digest"], "kinds": ["post_deploy_behavior", …]}` |
+| `verifier.covers` | `check_authoring`; `check_correction` | `{"member": "covers", "criteria": "criteria", "sensitive_areas": "sensitive_areas", "criteria_kinds": [...], "refused_on": [kinds, at least post_deploy_behavior]}` |
+| `verifier.secrets` | `check_authoring`; `check_correction` | `{"member": "secrets", "reference": "deploy/<name>", "variable": "SURETY_SECRET_<NAME>", "environments": [{"name", "check_secrets": [refs] \| null}] \| null}` |
+| `verifier.post_deploy` | `check_authoring`; `check_correction` | `{"kinds": ["post_deploy_behavior", "post_deploy_identity"], "gate_kind": "alpha_complete", "required": "post_deploy_behavior", "variable": "SURETY_TARGET_<NAME>", "environments": [{"name", "targets": [...] \| null}] \| null}` |
+| `verifier.authoring_result` | `check_authoring` only | `{"fields": ["governed_changes", "deferred_criteria"] (+ "adopted_tests" in retrofit), "no_execution_authority": "A proposal grants no execution authority …"}`; `result-schema.json` carries `governed_changes` (with `check_commands`) and `deferred_criteria` |
+| `verifier.adoption_rule` | `check_authoring` in retrofit only | `{"field": "adopted_tests", "dispositions": ["copied", "replaced", "application"], "protected_root": ".surety/checks/", "rule": <D6 §8.3, naming the acceptance logic and the dependency boundary>}`; `result-schema.json` carries `adopted_tests[].dependency_boundary[].disposition` with that enum |
+| `builder.tasks` | `stage_build` | `{"stage": n, "goal", "tasks": [...]}` as the stage row holds them |
+| `builder.implements` | `stage_build` | `{"implements": [requirement keys]}` |
+| `builder.integration_obligations` | `stage_build` | `{"integration_obligations": [...]}` as registered |
+| `builder.dependency_interfaces` | `stage_build` | `{"depends_on": [stage numbers], "interfaces": [{"stage", "module", "name", "kind", "path", "description"}]}`: the module map's interfaces of the modules of the stages it depends on |
+
+**The correction package** (D3's restrictions kept, M442 (a)): carries `verifier.kinds` to `verifier.post_deploy` and neither `verifier.authoring_result` nor `verifier.adoption_rule`; its `result-schema.json` has neither `governed_changes` nor `adopted_tests`. **The cases** (`M442-the-role-packages-state-what-the-engine-reads`): (a1) the Spec Writer's, (a3) the Architect's session and (a4) its replan's, (a5) phase 1's authoring, (a6) CR-1's correction, (a7) stages 1 and 2's Builders (stage 2's dependency interfaces `lib:sum`, `lib:tally`), (a8) the registry, on M401's Tally journey with every role dumping its package first; (a2) the retrofit Spec Writer's, Architect's and conformance authoring's on M408's Sums journey.
+
 ## What was run
 
 See `../COVERAGE.md`, "M3 slice 15" to "M3 slice 22", "M4 slice 23" to "M4 slice 30", "M5 slice 31a", "M5 slice 31b", "M5 slice 33", "M5 slice 34", "M5 slice 35", "M5 slice 36" and "M5 slice 37".

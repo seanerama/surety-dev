@@ -460,6 +460,9 @@
       "M451-the-qualified-profile-on-a-real-domain.test.mjs",
       "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
       "M437-a-run-validated-after-another-runs-integration.test.mjs"
+    ],
+    "38": [
+      "M442-the-role-packages-state-what-the-engine-reads.test.mjs"
     ]
   },
   "sandbox": [
