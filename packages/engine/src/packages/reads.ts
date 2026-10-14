@@ -61,8 +61,8 @@ export function statedElements(pkg: PackageName, built: Built): ReadsElement[] {
 // fenced block.
 export function readsText(elements: readonly ReadsElement[]): string[] {
   if (elements.length === 0) return [];
-  const out = ['', '## What the engine reads', '', 'The engine reads your product mechanically, in exactly the forms below and nothing outside them. Each `surety-reads` block is exact: follow it.'];
-  for (const e of elements) out.push('', `### ${ELEMENT_TITLES[e.id]}`, '', e.gloss, '', `\`\`\`json ${READS_INFO} ${e.id}`, JSON.stringify(e.data, null, 2), '```');
+  const out = ['', 'The engine reads your product mechanically, in exactly the forms the sections below state and nothing outside them. Each `surety-reads` block is exact: follow it.'];
+  for (const e of elements) out.push('', `## What the engine reads: ${ELEMENT_TITLES[e.id]}`, '', e.gloss, '', `\`\`\`json ${READS_INFO} ${e.id}`, JSON.stringify(e.data, null, 2), '```');
   return out;
 }
 
@@ -290,7 +290,7 @@ export const NO_EXECUTION_AUTHORITY =
   'A proposal grants no execution authority: what you leave under the protected roots is captured as a protected proposal, classified by the engine as the classifier computes it (never as you request it), and decided on through the protected update route; only once it is applied are your checks run.';
 
 export const ADOPTION_RULE =
-  "Existing tests are the Builder's and evidence of nothing as they stand. To adopt one, copy its acceptance logic (the assertions, the expectations, the fixtures, the assertion helpers it imports and the runner configuration that decide its verdict) under the protected root, rewrite the copy's imports to the copies or replace them with your own protected logic, and give it a definition of origin acceptance naming the criteria it covers. An adopted check never delegates its verdict to the original suite or its helpers: nothing under the protected root may import outside it except a dependency_boundary entry with disposition application (the application as the subject under test). List each adoption in adopted_tests with every file it depends on and its disposition. Prefer tests that run the candidate as a child.";
+  "Existing tests are the Builder's and evidence of nothing as they stand. To adopt one, copy its acceptance logic (the assertions, the expectations, the fixtures, the assertion helpers it imports and the runner configuration that decide its verdict) under the protected root, rewrite the copy's imports to the copies or replace them with your own protected logic, and give it a definition of origin acceptance naming the criteria it covers. An adopted check never delegates its verdict to the original suite or its helpers: nothing under the protected root may import outside it except a dependency_boundary entry with disposition application (the application as the subject under test). List each adoption in adopted_tests with its dependency boundary: every file it depends on and its disposition. Prefer tests that run the candidate as a child.";
 
 export function verifierElements(f: CheckWritingFacts | null, opts: { authoring: boolean; retrofit: boolean }): Built {
   const tier = f && Object.hasOwn(KIND_INVENTORY, f.tier) ? (f.tier as Tier) : null;

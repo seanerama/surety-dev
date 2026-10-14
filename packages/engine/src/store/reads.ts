@@ -160,7 +160,11 @@ export function contextFacts(db: Database, args: { run: string }) {
   const moduleMap = stage ? bundleModules(db, String(stage.phase_plan)) : null;
   if (stage && run.role === 'builder') {
     const keyOf = (r: string): string => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
-    const dependsOn = parse<unknown[]>(stage.depends_on, []).filter((n): n is number => typeof n === 'number');
+    // The stage row holds its dependencies by stage id (registerPlan); a
+    // number is taken as it is.
+    const dependsOn = parse<unknown[]>(stage.depends_on, [])
+      .map((d) => (typeof d === 'number' ? d : typeof d === 'string' ? ((db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined)?.number ?? null) : null))
+      .filter((n): n is number => typeof n === 'number');
     const siblings = activeStages<{ number: number; modules: string }>(db, activePlanOf(db, String(stage.phase_plan)));
     const depModules = dependsOn.flatMap((n) => {
       const sib = siblings.find((x) => x.number === n);
