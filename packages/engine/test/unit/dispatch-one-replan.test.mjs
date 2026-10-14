@@ -141,9 +141,15 @@ test("a project's specification change and its protected writers cannot interlea
   // Its run ended, its proposal captured and not decided: still held.
   db.prepare(`UPDATE runs SET state = 'ended', outcome = 'completed' WHERE id = 'run_auth'`).run();
   db.prepare(`UPDATE work_items SET status = 'awaiting_decision', continuation = 'executing' WHERE id = 'wi_auth'`).run();
-  db.prepare(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_1', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'awaiting_human')`).run(AT);
+  db.prepare(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('prop_1', ?, 'prj_1', 1, 'verifier_run', 'run_auth', 'b', 't', 'd', 'tightening', 'captured')`).run(AT);
   assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), 'depends on a protected proposal not yet applied or rejected');
   assert.equal(holdReasonOf(dispatchBlocker(db, get('wi_sc'), { check: false })), 'depends_on');
+  // Its question routed to the owner: the owner orders the two answers.
+  db.prepare(`UPDATE protected_proposals SET status = 'awaiting_human' WHERE id = 'prop_1'`).run();
+  assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), null, "a proposal awaiting the owner's answer holds nothing");
+  // Approved, its application under way: held again.
+  db.prepare(`UPDATE protected_proposals SET status = 'approved' WHERE id = 'prop_1'`).run();
+  assert.equal(dispatchBlocker(db, get('wi_sc'), { check: false }), 'depends on a protected proposal not yet applied or rejected');
   // Applied: the change goes on.
   db.prepare(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'prop_1'`).run();
   db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_auth'`).run();

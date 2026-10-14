@@ -277,11 +277,14 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     // A project's specification change and its protected writers exclude
     // each other (the driver's ruling on Q2, slice 37; ruling 1's family): no
     // proposal of a change is made, so no owner's question raised, while a
-    // protected writer runs or a protected proposal is captured and not yet
-    // applied or rejected. Held, not failed.
+    // protected writer runs or a protected proposal is in the engine's hands
+    // (captured and not yet classified, or approved and not yet applied).
+    // One whose question awaits an answer (classified, awaiting_human) is
+    // the owner's to order: exempt, as anything the owner explicitly
+    // answers. Held, not failed.
     const writing = (db.prepare(`SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" IN ('check_correction', 'check_authoring')`).get(item.project) as { n: number }).n;
     if (writing > 0) return 'depends on a protected-path writer running';
-    const unapplied = (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" IN ('captured', 'classified', 'awaiting_human', 'approved')`).get(item.project) as { n: number }).n;
+    const unapplied = (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" IN ('captured', 'approved')`).get(item.project) as { n: number }).n;
     if (unapplied > 0) return 'depends on a protected proposal not yet applied or rejected';
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
