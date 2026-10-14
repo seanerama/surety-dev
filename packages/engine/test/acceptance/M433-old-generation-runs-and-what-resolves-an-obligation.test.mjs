@@ -102,8 +102,11 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
     await drive(fx.engine, late, ['materializing', 'running', 'collecting']);
     const old = projectRow(fx.home, p.id).spec_evidence_generation;
     // The rediscovery to come (objection 087): a Verifier's correction of
-    // another check's test (accept-r1's), held from before the approval so it
-    // lands after it, while the request's own correction waits behind it.
+    // another check's test (accept-r1's), registered while the change is
+    // proposed. Q2 (objection 106): no protected writer but the request's own
+    // correction is dispatched while a change is proposed or approved and
+    // unapplied, so it is held then, and runs (held at its gate) once the
+    // change has applied, landing under the new generation.
     let rediscovery = null;
     const request = await proposeAndApprove(fx, ctx, SPEC_CHANGES.r2Both, [{ key: 'R2', kind: 'criteria_changed', reason: 'content type' }], 2, {
       beforeAnswer: async () => {
@@ -117,12 +120,14 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
             ],
           },
         ]);
-        await pumpHolding(fx, ctx, () => {
-          const launch = fx.scripted.launches({ work_item: rediscovery }).at(-1);
-          return launch && fx.scripted.eventsOf(launch.pid, 'holding').length > 0;
-        }, { what: 'the other correction holding', max: 20, ...ctx.holdOpts });
+        await pumpHolding(fx, ctx, () => false, { max: 3, ...ctx.holdOpts }).catch(() => null);
+        assert.deepEqual(fx.scripted.launches({ work_item: rediscovery }), [], 'Q2: the other correction is not dispatched while the change is proposed');
       },
     });
+    await pumpHolding(fx, ctx, () => {
+      const launch = fx.scripted.launches({ work_item: rediscovery }).at(-1);
+      return launch && fx.scripted.eventsOf(launch.pid, 'holding').length > 0;
+    }, { what: 'the other correction holding once the change has applied', max: 40, ...ctx.holdOpts });
     const gen = projectRow(fx.home, p.id).spec_evidence_generation;
     assert.equal(gen, old + 1, 'the fixture is live: the generation advanced');
     // The request's correction: its first launch fails (it parks); retried, it

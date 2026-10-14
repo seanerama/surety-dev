@@ -35,6 +35,7 @@ import {
   phaseOf,
   refusalText,
   replan35,
+  replanRunsOf,
   seenNow,
   specReady,
   stagesWith,
@@ -133,6 +134,9 @@ describe('M425 plan references and approvals', () => {
     const seen = seenNow(fx.home, p.id);
     const a = await nextReplanOutcome(fx, ctx, 2, seen);
     assert.ok(a.approval, `the replan awaits the owner (${JSON.stringify(Object.keys(a))})`);
+    // The approval is raised in the replan's finalization, before its run ends;
+    // no session opens beside a one-shot run (D6 §2.7; objection 106).
+    await tickUntil(fx.engine, p.id, () => replanRunsOf(fx.home, p.id).length > 0 && replanRunsOf(fx.home, p.id).every((r) => r.state === 'ended'), { max: 20, what: 'the replan\'s run to end' });
     // Proposal B: the owner's Architect session for phase 2, deleting ADR-002.
     const run = await openSession(fx, p.id, 'architect');
     const head = refOid(p.repo.path, p.repo.ref);
