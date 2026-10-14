@@ -331,6 +331,13 @@ export class Scheduler {
               await this.rt.engine('scheduler.chain_boundary', { workItem: item.id });
               continue;
             }
+            // An item the envelope holds now is not offered to the launcher,
+            // whose preflight reads and runs the entry's binary: with every
+            // eligible item selected (K2) and ticks requested by events (K1),
+            // that would be done for every held item at every tick. An item
+            // whose backend the store already refuses goes on, so a refusal
+            // never waits behind a domain (D2 §3.7).
+            if (await this.rt.read<boolean>('scheduler.envelope_holds', { project: q.c.project, workItem: item.id })) continue;
             if (await this.launcher.dispatch(q.c, item)) dispatched++;
           } catch (err) {
             log('dispatch', err);

@@ -375,6 +375,16 @@ export function dispatchEntryProbe(db: Tx['db'], args: { project: string; workIt
   return r.kind === 'entry' ? { entry: r.entry.id, backend: r.backend, binary_path: r.entry.binary_path } : null;
 }
 
+// Whether the envelope would hold this item's dispatch now, its backend not
+// refused by the store (the tick's pre-check; the claim decides again).
+export function envelopeHoldsDispatch(db: Tx['db'], args: { project: string; workItem: string }): boolean {
+  const item = db.prepare('SELECT "kind", "project" FROM "work_items" WHERE "id" = ?').get(args.workItem) as { kind: string; project: string } | undefined;
+  if (!item || item.project !== args.project) return false;
+  const role = ROLE_OF[item.kind];
+  if (role && resolveBackend(db, { project: item.project, role, scripted: 'harness' }).kind === 'refused') return false;
+  return envelopeHold(db, { kind: 'role', project: item.project }) !== null;
+}
+
 export const CHAIN_BOUNDARY = 'chaining boundary';
 // The kinds that write the protected path through a proposal (D3 §3).
 export const PROTECTED_WRITERS = ['check_correction', 'check_authoring'];

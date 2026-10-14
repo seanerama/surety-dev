@@ -65,7 +65,7 @@ import {
   recordUsage,
   renewLease,
   unendedRuns,
- dispatchEntryProbe } from './transitions/runs.js';
+ dispatchEntryProbe, envelopeHoldsDispatch } from './transitions/runs.js';
 import { budgetCheck, exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import {
   chunkReceipt,
@@ -426,6 +426,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'scheduler.candidates': (d) => dispatchCandidates(d),
   'scheduler.projects': (d) => projectIds(d),
   // D1 §8.1 step 4: the project's day limits, read before select (throws on a failed read).
+  // D2 §3.7; K2: whether the envelope holds a role domain of the project now.
+  'scheduler.envelope_holds': (d, a: { project: string; workItem: string }) => envelopeHoldsDispatch(d, a),
   'scheduler.budgets': (d, a: { project: string }) => exhaustedLimits(d, a.project, { check: true, dispatch: true }),
   'runs.quarantined': (d) => quarantinedRuns(d),
   'runs.expired_leases': (d) => expiredRunLeases(d, nowIso()),
