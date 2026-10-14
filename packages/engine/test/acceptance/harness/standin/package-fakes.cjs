@@ -440,7 +440,11 @@ var SURETY_PACKAGE_FAKES = (function () {
     }
     text = text.replace(/^(\*\*Spec version:\*\*)\s*(\d+)/m, (_, a, n) => `${a} ${Number(n) + 1}`);
     ws.write('.surety/spec/spec.md', text);
-    return shapeResult(pkg, { summary: 'the change proposed', changes });
+    // The result's list of changes, in the form the package states it (spec_writer.change_result).
+    const cr = pkg.reads['spec_writer.change_result'];
+    const kinds = cr && cr.item && Array.isArray(cr.item.kind) ? cr.item.kind : [];
+    const listed = cr ? changes.filter((c) => kinds.includes(c.kind)) : [];
+    return shapeResult(pkg, { summary: 'the change proposed', ...(cr ? { [cr.field]: listed } : {}) });
   }
 
   // ---- the Verifier: phase authoring and correction (D3 Appendix B; §6.2; §8.3) ----------------
@@ -637,7 +641,11 @@ var SURETY_PACKAGE_FAKES = (function () {
     else if (kind === 'check_correction') result = correctionRun(pkg, ws, content);
     else if (kind === 'stage_build') result = builderRun(pkg, ws, content);
     else if (role === 'reviewer') result = reviewerRun(pkg);
-    else if (kind === 'phase_verification') result = shapeResult(pkg, { summary: 'the phase verified', signoffs: [{ scope: 'phase' }] });
+    else if (kind === 'phase_verification') {
+      // The sign-off in the form the package states it (verifier.phase_signoff).
+      const ps = pkg.reads['verifier.phase_signoff'];
+      result = shapeResult(pkg, { summary: 'the phase verified', ...(ps ? { [ps.field]: [ps.item] } : {}) });
+    }
     else result = shapeResult(pkg, { summary: `rehearsal: ${role} ${kind}` });
     delete result._governed;
     return { role, kind, blocks: pkg.reads, written: ws.written, result };

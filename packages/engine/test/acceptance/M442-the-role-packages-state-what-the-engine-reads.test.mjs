@@ -80,6 +80,8 @@ import {
   AUTHORING_ELEMENTS,
   AUTHORING_RETROFIT_ELEMENTS,
   BUILDER_ELEMENTS,
+  PHASE_VERIFICATION_ELEMENTS,
+  SPEC_CHANGE_ELEMENTS,
   CORRECTION_ABSENT,
   CORRECTION_ELEMENTS,
   SPEC_WRITER_ELEMENTS,
@@ -144,6 +146,7 @@ describe('M442 (a) the role packages say what the engine reads: the journey from
     fx.scripted.kindScript('replan', [dumped(replanScript()), dumped(replanScript({ spec_version: 2 })), dumped(replanScript({ spec_version: 2 }))]);
     fx.scripted.kindScript('spec_change', dumped(specChangeScript()));
     fx.scripted.kindScript('check_correction', dumped(correctionScript()));
+    fx.scripted.kindScript('phase_verification', dumped(roleThat([], { signoffs: [{ scope: 'phase' }] })));
     const p = await createWithIdea(fx, { policy: JOURNEY_POLICY });
     await visionSession(fx, p.id);
     const spec = await specSession(fx, p.id, { dumpSecond: true });
@@ -214,6 +217,23 @@ describe('M442 (a) the role packages say what the engine reads: the journey from
       problems.push(...packageProblems(own.files, BUILDER_ELEMENTS, { facts }).map((s) => `stage ${number}: ${s}`));
     }
     assertNoGaps(problems, "the Builders' packages");
+  });
+
+  test("(a9) the Spec Writer's change one-shot: the nine form elements and the result's changes, without the approval's blockers", () => {
+    const changes = dumpsOfKind(J.fx, 'spec_change');
+    assert.ok(changes.length > 0, 'CR-1\'s Spec Writer dumped its package');
+    const problems = packageProblems(changes[0].files, SPEC_CHANGE_ELEMENTS, { absent: ['spec_writer.approval_blockers', 'spec_writer.claims_table'], facts: { tier: 'T2' } });
+    if (!packageReads(changes[0].files).resultSchema?.properties?.changes) problems.push('result-schema.json: changes');
+    assertNoGaps(problems, "the spec_change package");
+  });
+
+  test("(a10) the phase Verifier's package: the phase sign-off, with signoffs of scope phase in result-schema.json", () => {
+    const phases = dumpsOfKind(J.fx, 'phase_verification');
+    assert.ok(phases.length > 0, 'phase 1\'s Verifier dumped its package');
+    const problems = packageProblems(phases[0].files, PHASE_VERIFICATION_ELEMENTS);
+    const scope = packageReads(phases[0].files).resultSchema?.properties?.signoffs?.items?.properties?.scope?.enum;
+    if (!(Array.isArray(scope) && scope.includes('phase'))) problems.push(`result-schema.json: signoffs of scope phase (got ${JSON.stringify(scope)})`);
+    assertNoGaps(problems, "the phase Verifier's package");
   });
 
   test('(a8) the registry lists every element id, each with the packages that carry it', async () => {

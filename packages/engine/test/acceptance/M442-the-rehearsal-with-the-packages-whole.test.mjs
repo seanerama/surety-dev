@@ -23,8 +23,8 @@ import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import { ROUTED_KINDS, alphaDeployed, blockers, buildActs, changeRequest, evaluationsOfKind, nextPhasePublished, phaseCompleted, runsOfProject } from './harness/journey/drive.mjs';
-import { ARCHITECT_ELEMENTS, AUTHORING_ELEMENTS, BUILDER_ELEMENTS, SPEC_WRITER_ELEMENTS } from './harness/real/packages.mjs';
-import { alphaConfigured, contextOf, fakeEngine, judgeArchitect, judgeAuthoring, judgeBuilder, judgeSpec, publishedPaused, resume, specApproved, wholeElements } from './harness/real/kernel-rehearsal.mjs';
+import { ARCHITECT_ELEMENTS, AUTHORING_ELEMENTS, BUILDER_ELEMENTS, PHASE_VERIFICATION_ELEMENTS, SPEC_CHANGE_ELEMENTS, SPEC_WRITER_ELEMENTS } from './harness/real/packages.mjs';
+import { alphaConfigured, contextOf, fakeEngine, judgeArchitect, judgeAuthoring, judgeBuilder, judgePhaseVerification, judgeSpec, judgeSpecChange, publishedPaused, resume, specApproved, wholeElements } from './harness/real/kernel-rehearsal.mjs';
 import { TALLY_CHANGE_TEXT, tallyBrief } from './harness/real/rehearsal-content.mjs';
 
 const show = (v) => JSON.stringify(v)?.slice(0, 6000);
@@ -75,6 +75,8 @@ describe('M442 (c) the rehearsal with the packages whole: the journey on the pac
     for (const e of by('session').filter((x) => x.role === 'architect' && Object.keys(x.written ?? {}).length > 0)) failures.push(...judgeArchitect(e.written, J.W, { adrs: ['ADR-001'] }).map((f) => ({ ...f, at: 'architect session' })));
     for (const e of by('replan')) failures.push(...judgeArchitect(e.written ?? {}, J.W, { routing: 'replan' }).map((f) => ({ ...f, at: 'replan' })));
     by('check_authoring').forEach((e, i) => failures.push(...judgeAuthoring(e.written ?? {}, e.result, e.blocks ?? {}, { first: i === 0 }).map((f) => ({ ...f, at: `check_authoring ${i + 1}` }))));
+    for (const e of by('spec_change')) failures.push(...judgeSpecChange(e.result, e.blocks ?? {}).map((f) => ({ ...f, at: 'spec_change' })));
+    for (const e of by('phase_verification')) failures.push(...judgePhaseVerification(e.result, e.blocks ?? {}).map((f) => ({ ...f, at: 'phase_verification' })));
     for (const e of by('stage_build')) failures.push(...judgeBuilder(e.written ?? {}, e.result, e.blocks ?? {}).map((f) => ({ ...f, at: `stage ${e.blocks?.['builder.tasks']?.stage}` })));
     assert.ok(by('stage_build').length >= 4, `four Builders played (${by('stage_build').length})`);
     assert.deepEqual(failures, [], 'the rehearsal\'s judgement of every product');
@@ -82,7 +84,7 @@ describe('M442 (c) the rehearsal with the packages whole: the journey on the pac
 
   test('(c3) every package the fakes read carried its elements, none omitted', () => {
     const missing = [];
-    const want = { spec_writer: SPEC_WRITER_ELEMENTS, architect: ARCHITECT_ELEMENTS, replan: ARCHITECT_ELEMENTS, check_authoring: AUTHORING_ELEMENTS, stage_build: BUILDER_ELEMENTS };
+    const want = { spec_writer: SPEC_WRITER_ELEMENTS, architect: ARCHITECT_ELEMENTS, replan: ARCHITECT_ELEMENTS, check_authoring: AUTHORING_ELEMENTS, stage_build: BUILDER_ELEMENTS, spec_change: SPEC_CHANGE_ELEMENTS, phase_verification: PHASE_VERIFICATION_ELEMENTS };
     for (const e of J.plays) {
       const key = e.kind === 'session' ? e.role : e.launch?.work_kind;
       for (const id of want[key] ?? []) if (!(id in (e.blocks ?? {}))) missing.push(`${key} (${e.launch?.run ?? '?'}): ${id}`);

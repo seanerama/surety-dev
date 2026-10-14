@@ -39,8 +39,14 @@ export const CORRECTION_ELEMENTS = VERIFIER_COMMON_ELEMENTS;
 // What the correction package must NOT carry (M442 (a): "the correction
 // package without the governed-change permissions").
 export const CORRECTION_ABSENT = Object.freeze(['verifier.toolchain', 'verifier.authoring_result', 'verifier.adoption_rule']);
+// The spec_change one-shot (the Spec Writer's change): the nine form
+// elements and its result's `changes` (the Builder's note, 2026-10-14).
+export const SPEC_CHANGE_ELEMENTS = Object.freeze([...SPEC_WRITER_ELEMENTS.filter((e) => e !== 'spec_writer.approval_blockers'), 'spec_writer.change_result']);
+export const PHASE_VERIFICATION_ELEMENTS = Object.freeze(['verifier.phase_signoff']);
+export const REPLAN_RETROFIT_ELEMENTS = Object.freeze([...ARCHITECT_ELEMENTS, 'architect.spec_change_requests']);
+export const IMPACT_KINDS = Object.freeze(['added', 'withdrawn', 'text_changed', 'criteria_added', 'criteria_removed', 'criteria_changed', 'areas_changed']);
 export const BUILDER_ELEMENTS = Object.freeze(['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces']);
-export const ALL_ELEMENTS = Object.freeze([...new Set([...SPEC_WRITER_RETROFIT_ELEMENTS, ...ARCHITECT_ELEMENTS, ...AUTHORING_RETROFIT_ELEMENTS, ...BUILDER_ELEMENTS])]);
+export const ALL_ELEMENTS = Object.freeze([...new Set([...SPEC_WRITER_RETROFIT_ELEMENTS, 'spec_writer.change_result', ...REPLAN_RETROFIT_ELEMENTS, ...AUTHORING_RETROFIT_ELEMENTS, ...PHASE_VERIFICATION_ELEMENTS, ...BUILDER_ELEMENTS])]);
 
 // D6 A.4: the sixteen plan reasons; and the two of retrofit.
 export const PLAN_REASONS_EVERY_PLAN = Object.freeze([
@@ -209,6 +215,17 @@ export function elementProblems(id, d, facts = {}) {
       want(typeof d.section === 'string' && /12\./.test(d.section), 'section 12');
       want(same(d.columns, ['Source', 'Claim', 'Observed', 'Requirement']), 'columns Source, Claim, Observed, Requirement');
       want(d.not_checked === 'not checked' && d.none === 'none', 'not checked and none');
+      break;
+    case 'spec_writer.change_result':
+      want(d.field === 'changes' && d.item?.key === 'R<n>' && typeof d.item?.reason === 'string', 'changes [{key, kind, reason}]');
+      want(setEq(d.item?.kind, IMPACT_KINDS), 'kind one of D6 A.2\'s ImpactKind');
+      break;
+    case 'architect.spec_change_requests':
+      want(d.field === 'spec_change_requests' && Array.isArray(d.item?.keys) && typeof d.item?.text === 'string', 'spec_change_requests [{keys, text}]');
+      break;
+    case 'verifier.phase_signoff':
+      want(d.field === 'signoffs' && d.scope === 'phase' && d.item?.scope === 'phase', 'signoffs with scope phase');
+      want(setEq(d.binding, ['acceptance_hash', 'protected_version', 'spec_revision', 'plan_generation']), 'bound to the acceptance hash, the protected version, the spec revision and the plan generation');
       break;
     case 'architect.schema.modules': {
       const s = d.schema;
