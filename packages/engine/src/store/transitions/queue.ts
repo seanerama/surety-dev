@@ -1727,6 +1727,52 @@ export function raiseQuestion(
   return row;
 }
 
+// A refused deployment completion whose every reason was
+// ACCEPTANCE_SCOPE_INCOMPLETE on spec_changed obligations (a check with an
+// obligation, or `obligation:<key>`) is evaluated again once those
+// obligations resolve: a new verification round, as POST …/verify makes,
+// and its blocker question invalidated (the driver's ruling 2 on M401's T1
+// runs, slice 37; as the *_PENDING retry of a policy request). Any other
+// reason keeps the owner's blocker. Returns the operations re-verified.
+export function reverifyResolvedCompletions(tx: Tx, args: { project: string }): string[] {
+  const items = tx.db.prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'deploy' AND "status" = 'awaiting_decision' ORDER BY "seq"`).all(args.project) as { id: string }[];
+  const done: string[] = [];
+  for (const { id } of items) {
+    const item = getWorkItem(tx, id)!;
+    const refused = refusedCompletionFacts(tx.db, item);
+    if (refused === null || !refused.reverify || refused.cause !== 'deploy_completion_refused:ACCEPTANCE_SCOPE_INCOMPLETE') continue;
+    const evaluation = parseJson<{ evaluation?: string }>(item.blocker)?.evaluation;
+    if (typeof evaluation !== 'string') continue;
+    const row = tx.db.prepare('SELECT "reasons" FROM "gate_evaluations" WHERE "id" = ?').get(evaluation) as { reasons: string } | undefined;
+    const reasons = parseJson<{ code: string; subjects?: string[] }[]>(row?.reasons ?? null) ?? [];
+    if (reasons.length === 0 || reasons.some((r) => r.code !== 'ACCEPTANCE_SCOPE_INCOMPLETE')) continue;
+    const subjects = reasons.flatMap((r) => r.subjects ?? []);
+    if (subjects.length === 0) continue;
+    const keys: string[] = [];
+    let all = true;
+    for (const s of subjects) {
+      const key = s.startsWith('obligation:') ? s.slice('obligation:'.length) : (tx.db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(s) as { key: string } | undefined)?.key;
+      const owed = key !== undefined && tx.db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed' LIMIT 1`).get(args.project, key) !== undefined;
+      if (!owed) {
+        all = false;
+        break;
+      }
+      keys.push(key!);
+    }
+    if (!all) continue;
+    const open = tx.db
+      .prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL AND "key" IN (SELECT value FROM json_each(?)) LIMIT 1`)
+      .get(args.project, JSON.stringify(keys));
+    if (open !== undefined) continue;
+    requestVerification(tx, { project: item.project, operation: refused.operation, incarnation: engineSettings().incarnation! }, (db, project, candidate, version) =>
+      requiredSet(db, { project, candidate, kind: 'alpha_complete', stage: null, version }).required,
+    );
+    dropBlockQuestion(tx, item.id);
+    done.push(refused.operation);
+  }
+  return done;
+}
+
 // The open blocker question about a work item, when the item left
 // awaiting_decision by another route than its answer (awaiting.ts).
 export function dropBlockQuestion(tx: Tx, item: string): void {

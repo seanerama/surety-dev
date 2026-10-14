@@ -187,6 +187,9 @@ export class Scheduler {
     // state at every tick, so a failure recorded while its item was not yet
     // verifying is repaired by the next tick at the latest.
     await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
+    // A deployment completion refused only on spec_changed obligations,
+    // verified again once they resolve (store/transitions/queue.ts).
+    await this.rt.engine('deploy.reverify_resolved', { project }).catch((err) => log('completion re-verification', err, { project }));
     // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
     const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
       log('awaiting sweep', err, { project });

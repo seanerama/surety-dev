@@ -280,7 +280,7 @@ import { recordRefusedReplan } from '../plan/bundle.js';
 import { registerAwaiting, settleAwaiting, sweepAwaiting } from './transitions/awaiting.js';
 import { registerAfterTransition } from './transitions/tx.js';
 import { CORRECTION_KIND as AWAIT_CORRECTION_KIND } from './transitions/protected.js';
-import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion } from './transitions/queue.js';
+import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion, reverifyResolvedCompletions } from './transitions/queue.js';
 import { correctionProposalDecided as awaitProposalDecided } from '../spec/change.js';
 
 // No work item awaits a decision without one it waits on (slice 37).
@@ -637,6 +637,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
+  'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),

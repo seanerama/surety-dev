@@ -722,6 +722,11 @@ function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_
 // joins another request.
 export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
   if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
+  // The policy waits for a specification change to settle (the driver's
+  // ruling 1 on M401's T1 runs, slice 37): no request while a change of the
+  // project is proposed, its approval included until it is applied. An
+  // owner's own request is his explicit act, never held.
+  if (db.prepare(`SELECT 1 FROM "spec_change_requests" WHERE "project" = ? AND "status" = 'proposed' LIMIT 1`).get(args.project) !== undefined) return null;
   const plan = db
     .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "phase_number" DESC, rowid DESC LIMIT 1`)
     .get(args.project) as { completion_binding: string } | undefined;
@@ -1326,7 +1331,7 @@ export function preemptTeardown(tx: Tx, args: { environment: string; cause: stri
 
 // The operation's way out (D4 §4.7): the lease released, the orchestration
 // ended, and the deploy work item settled.
-function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string): void {
+function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string, blockerFacts: Record<string, unknown> = {}): void {
   const f = frozenOf(op);
   if (op.orchestration_stage !== 'ended') bumpRevision(tx, f.environment);
   releaseOperationLeases(tx, op);
@@ -1342,7 +1347,7 @@ function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'block
   } else if (work === 'cancelled') {
     transitionWork(tx, item, 'cancelled', { blocker: null }, { operation: op.id, cause });
   } else if (item.status === 'executing') {
-    const waiting = transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id }) }, { operation: op.id, cause });
+    const waiting = transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id, ...blockerFacts }) }, { operation: op.id, cause });
     // D4 §4.7: the work item waits on a blocker that names the cause and
     // offers what applies (re-verification, abandonment of completion, the
     // preempting teardown): a decision, never a blocker with none (the
@@ -3417,7 +3422,7 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
   // Never while an execution of its rounds is live: its link may be open,
   // and the lease is released only once ingress is closed (D4 §4.7; m1).
   if (liveExecutionIds(tx.db, op.id).length > 0) return;
-  if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`);
+  if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`, { evaluation: args.evaluation });
 }
 
 // ---- reads (D4 §6.1; N02: stored reads only) --------------------------------------------------------
