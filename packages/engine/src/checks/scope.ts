@@ -53,7 +53,20 @@ export interface ScopeRequirement {
   // Either way the requirement is uncertain (D3 §4.3).
   criteria: string[] | null;
   sensitive_areas: string[];
+  // TPL §4's `**Human test.**` with no criteria: the owner accepts a human
+  // test for it. No check can establish it, so it imposes no criterion and
+  // no kind on any scope (the driver's ruling on the real M443 run's phase
+  // 2); it stays owed (GET …/pace human_tests), never verified.
+  human_test?: boolean;
 }
+
+// A requirement only a person tests: no criteria, the human-test mark.
+export const isHumanTest = (r: Pick<ScopeRequirement, 'criteria' | 'human_test'> | undefined): boolean => r?.human_test === true && (r.criteria === null || r.criteria.length === 0);
+
+// The kinds that cover criteria (checks/schema.ts COVERING_KINDS): a scope
+// whose obligations are all human tests has no criterion for them to cover,
+// so it is held only to the tier's revision-wide kinds.
+const CRITERIA_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
 
 export interface ScopeModule {
   id: string;
@@ -160,6 +173,7 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   const criteria: string[] = [];
   for (const id of obligations) {
     const r = inputs.requirements.find((x) => x.id === id);
+    if (isHumanTest(r)) continue;
     if (!r || r.criteria === null || r.criteria.length === 0) {
       missing.uncertain.push(id);
       continue;
@@ -173,12 +187,16 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   for (const id of touched) {
     if (missing.uncertain.includes(id)) continue;
     const r = inputs.requirements.find((x) => x.id === id);
+    if (isHumanTest(r)) continue;
     if (!r || r.criteria === null) missing.uncertain.push(id);
   }
+  // Every obligation a human test: only the revision-wide kinds.
+  const onlyHumanTests = obligations.length > 0 && obligations.every((id) => isHumanTest(inputs.requirements.find((x) => x.id === id)));
+  const kinds = onlyHumanTests ? KIND_INVENTORY[tier].filter((k) => !CRITERIA_KINDS.includes(k)) : KIND_INVENTORY[tier];
   // A floor counts only when acceptance-origin, like a criterion or a kind
   // (slice 20 review, minor 4).
   const uncovered = coverageMissing(
-    { criteria, kinds: KIND_INVENTORY[tier], areas: [...categories].sort() },
+    { criteria, kinds, areas: [...categories].sort() },
     inputs.covering ?? { criteria: counting.flatMap((c) => c.criteria), kinds: counting.map((c) => c.kind), areas: counting.filter(isFloor).flatMap((c) => c.sensitive_areas) },
   );
   missing.criteria.push(...uncovered.criteria);
@@ -186,7 +204,7 @@ export function computeScope(inputs: ScopeInputs): ScopeResult {
   missing.areas.push(...uncovered.areas.map((a) => `area:${a}`));
   if (inputs.modules === null) missing.unread.push(MODULE_PRESENCE);
 
-  return { tier, kinds: KIND_INVENTORY[tier], modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
+  return { tier, kinds, modules, obligations, categories: [...categories].sort(), required, missing, signoffs: signoffsOf(tier, modules) };
 }
 
 // D3 §4.3's coverage primitive (B04; D6 §5.3 clause 4, D6-P04): what an

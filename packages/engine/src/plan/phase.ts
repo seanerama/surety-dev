@@ -325,8 +325,15 @@ export function registerGapAuthoring(tx: Tx, args: { project: string }): number 
     .prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" IN ('check_authoring', 'check_correction') AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`)
     .get(args.project);
   if (busy) return 0;
+  // A plan the Architect's bundle published, whose authoring has had its
+  // turn (ready): a fixture's plan, published by no check, owes no authoring
+  // (authoringShortfall), and a plan still being authored is that
+  // authoring's.
   const plan = tx.db
-    .prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`)
+    .prepare(
+      `SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL
+         AND "bundle" IS NOT NULL AND "authoring_ready_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1`,
+    )
     .get(args.project) as { id: string } | undefined;
   const version = effectiveVersion(tx.db, args.project);
   if (!plan || !version) return 0;

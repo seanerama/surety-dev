@@ -59,7 +59,7 @@ function store(t) {
   check('chk_acc8', 'acceptance-server', 'acceptance', ['R8.1'], ['req_8']);
   check('chk_int8', 'integration-server', 'integration', ['R8.1'], ['req_8']);
   check('chk_acc10', 'acceptance-page', 'acceptance', ['R10.1'], ['req_10']);
-  run(`INSERT INTO phase_plans (id, created_at, project, phase_number, prepared_against_revision, git_path, status, active, generation) VALUES ('plan_1', ?, 'prj_1', 1, 'r', 'x', 'published', 1, 1)`, AT);
+  run(`INSERT INTO phase_plans (id, created_at, project, phase_number, prepared_against_revision, git_path, status, active, generation, bundle, authoring_ready_at) VALUES ('plan_1', ?, 'prj_1', 1, 'r', 'x', 'published', 1, 1, 'b1', ?)`, AT, AT);
   const stage = (id, number, reqs, mods) =>
     run(
       `INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, depends_on)
@@ -87,6 +87,9 @@ test('the sweep registers one check_authoring follow-up naming the gaps; not whi
      VALUES ('wi_corr', ?, 'prj_1', 1, 'check_correction', '{}', 'parked', 'test', 'x', 1, 0, 0, 0, 0)`,
     AT,
   );
+  s.run(`UPDATE phase_plans SET bundle = NULL WHERE id = 'plan_1'`);
+  assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 0, "a fixture's plan (no bundle) owes no authoring");
+  s.run(`UPDATE phase_plans SET bundle = 'b1' WHERE id = 'plan_1'`);
   assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 0, 'a parked correction: nothing yet');
   s.run(`UPDATE work_items SET status = 'cancelled' WHERE id = 'wi_corr'`);
   assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 1);
@@ -135,4 +138,23 @@ test("a replacement whose planned obligations the version meets by pooling, but 
   );
   assert.ok(out.check_authoring, 'its own check_authoring, not readiness inherited');
   assert.equal(s.db.prepare('SELECT authoring_ready_at FROM phase_plans WHERE id = ?').get(out.plan.id).authoring_ready_at, null);
+});
+
+test('a stage implementing only human-test requirements is no gap, and the pace read shows them owed', async (t) => {
+  const s = store(t);
+  const { paceView } = await import(join(dist, 'plan', 'pace.js'));
+  s.run(`INSERT INTO requirements (id, created_at, project, key, text_ref, criteria, status, human_test, assigned_phase) VALUES ('req_6', ?, 'prj_1', 'R6', 't', '[]', 'active', 1, 1), ('req_7', ?, 'prj_1', 'R7', 't', NULL, 'active', 1, 1)`, AT, AT);
+  s.run(`DELETE FROM stages WHERE id = 'stage_5'`);
+  s.run(
+    `INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, depends_on)
+     VALUES ('stage_7', ?, 'prj_1', 'plan_1', 7, 'g', '["mod_page"]', '[]', '["req_6","req_7"]', 'integrated', '[]')`,
+    AT,
+  );
+  assert.deepEqual(stageScopeGaps(s.db, 'plan_1', 'pv_1'), [], 'smoke and lint applied: nothing owed by the human-test stage');
+  assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 0);
+  const view = paceView(s.db, { project: 'prj_1' });
+  assert.deepEqual(view.human_tests, [
+    { requirement: 'R6', phase: 1, status: 'owed' },
+    { requirement: 'R7', phase: 1, status: 'owed' },
+  ]);
 });

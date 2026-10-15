@@ -260,12 +260,13 @@ const toScopeCheck = (c: CheckRow): ScopeCheck => ({
 });
 
 function requirementRows(db: Db, project: string): ScopeRequirement[] {
-  return (db.prepare('SELECT "id", "key", "criteria", "sensitive_areas" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as {
+  return (db.prepare('SELECT "id", "key", "criteria", "sensitive_areas", "human_test" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as {
     id: string;
     key: string;
     criteria: string | null;
     sensitive_areas: string;
-  }[]).map((r) => ({ id: r.id, key: r.key, criteria: r.criteria === null ? null : (JSON.parse(r.criteria) as string[]), sensitive_areas: JSON.parse(r.sensitive_areas) as string[] }));
+    human_test: number;
+  }[]).map((r) => ({ id: r.id, key: r.key, criteria: r.criteria === null ? null : (JSON.parse(r.criteria) as string[]), sensitive_areas: JSON.parse(r.sensitive_areas) as string[], human_test: r.human_test === 1 }));
 }
 
 export interface RequiredSet {

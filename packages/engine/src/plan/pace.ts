@@ -505,9 +505,19 @@ export function paceView(db: Database, args: { project: string }) {
     memory_max: d.memory_max ?? unknown('the maximum was not recorded at admission'),
   }));
 
+  // The human tests the owner accepted for requirements no check can
+  // establish (TPL §4): owed, never verified; recording their results is
+  // for after M5 (the driver's ruling on the real M443 run's phase 2).
+  const humanTests = (
+    db
+      .prepare(`SELECT "key", "assigned_phase" FROM "requirements" WHERE "project" = ? AND "human_test" = 1 AND ("criteria" IS NULL OR "criteria" = '[]') AND "withdrawn_at" IS NULL ORDER BY "key"`)
+      .all(p) as { key: string; assigned_phase: number | null }[]
+  ).map((r) => ({ requirement: r.key, phase: r.assigned_phase, status: 'owed' as const }));
+
   return {
     labels: { invocation_elapsed: 'invocation elapsed time' },
     project: projectSection,
+    human_tests: humanTests,
     sessions,
     phases,
     stages,

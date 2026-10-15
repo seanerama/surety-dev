@@ -26,7 +26,7 @@ export interface PlanReason {
 export interface BundleBaseline {
   spec_version: number;
   // The approved requirements: key → criteria ids, areas, withdrawn.
-  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean }[];
+  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean; human_test?: boolean }[];
   // TPL §10's open questions of the bundle's specification (B04; D6-P07),
   // each with the keys it blocks and its `(phase n)` hint.
   questions?: { id: string; blocks: string[]; phase_hint: number | null }[];
@@ -316,7 +316,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // Only a requirement with criteria to validate is an obligation: a
   // descriptive one is excluded (ruling 7).
   const obligated = (k: string) => reqs.has(k) && reqs.get(k)!.descriptive_unverified !== true && !reqs.get(k)!.withdrawn;
-  const scopeRequirements = baseline.requirements.map((r) => ({ id: r.key, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas }));
+  const scopeRequirements = baseline.requirements.map((r) => ({ id: r.key, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas, human_test: r.human_test === true }));
   const scopeModules = (names: string[]) => moduleRows.filter((m) => names.includes(m.name)).map((m) => ({ id: m.name, name: m.name, sensitive_areas: m.sensitive_areas, tier_override: m.tier_override ?? null }));
   const planned = (kind: 'stage' | 'phase', keys: string[], modules: string[], covering?: { criteria: string[]; kinds: string[]; areas: string[] }) =>
     computeScope({ kind, projectTier: baseline.project_tier, checks: [], requirements: scopeRequirements, delivered: keys, partial: [], stageImplements: keys, modules: scopeModules(modules), ...(covering ? { covering } : {}) });
