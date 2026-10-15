@@ -12,7 +12,7 @@
 // integration branch's head is handed in.
 
 import { activeStages } from '../../plan/active.js';
-import { type ConformanceFacts, conformanceAfterEvaluation, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
+import { type ConformanceFacts, conformanceAfterEvaluation, conformanceSnapshot, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
 import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -831,6 +831,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     findings: findings.map((f) => f.id),
     signoffs: signoffs.map((s) => s.id),
     head_fingerprint: args.headFingerprint ?? null,
+    // A conformance stage's source as this evaluation read it (B11): what
+    // makes its gate due again when it moves (adopt/conformance.ts).
+    ...(conformance ? { conformance: conformanceSnapshot(db, target.stage!, args.conformance) } : {}),
   };
   tx.db
     .prepare(
@@ -886,7 +889,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (conformance && superseded === null) {
     const failed = scope.required.some((c) => states[c.id] === 'failed');
     const blockedBy = reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED' || r.code === 'FINDING_BLOCKING' || r.code === 'FINDING_UNSATISFIED') || failed;
-    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id });
+    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id, sourceMoved: reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED') });
   }
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
   if (kind === 'alpha_complete') {

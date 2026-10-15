@@ -1,9 +1,10 @@
 // Developer test for the driver's ruling on M53 case 8 (slice 37): a ref
-// update the engine intended and never attempted, whose ref was moved by
-// hand to a commit the engine did not put there, is attempted, and git's
-// compare-and-swap refusal is a definite failure without effect
-// (compare_and_swap_failed), never an ambiguity. An outcome the engine does
-// not know (the ref cannot be read) still blocks as ambiguous. Real git in a
+// update this incarnation's own finalizer intended (a commit's follow-on) and
+// never attempted, whose ref was moved by hand to a commit the engine did not
+// put there, is attempted, and git's compare-and-swap refusal is a definite
+// failure without effect (compare_and_swap_failed), never an ambiguity. The
+// same update found so by recovery after a restart blocks (M29, M70), and
+// an outcome the engine does not know (the ref cannot be read) blocks. Real git in a
 // scratch repository; a stub runtime records what the driver asks the store.
 
 import assert from 'node:assert/strict';
@@ -38,12 +39,18 @@ function repo(t) {
 // A stub of the store side of the driver: one operation, the calls recorded.
 function runtime(op) {
   const calls = [];
+  // A commit already confirmed, whose finalizer intends op_1 next.
+  const commit = { id: 'op_c', project: 'prj_1', kind: 'commit_tree', state: 'confirmed', attempts: [], payload: {}, inputs: { purpose: 'run' } };
   const rt = {
     incarnation: 'inc_unit',
     home: '/nonexistent-home',
     engine: async (name, args) => {
       calls.push(name);
-      if (name === 'journal.detail') return op;
+      if (name === 'journal.detail') return args.operation === 'op_c' ? commit : op;
+      if (name === 'journal.finalize') {
+        commit.state = 'finalized';
+        return { revision: 'rev_1', follow: 'op_1' };
+      }
       if (name === 'journal.refuse_moved_base') return false;
       if (name === 'journal.start_attempt') {
         op.attempts = [{ attempt_number: 1, status: 'started', incarnation: 'inc_unit' }];
@@ -76,7 +83,7 @@ const refUpdate = (path, ref, old, next) => ({
   inputs: { purpose: 'nomination', ref_kind: 'nomination' },
 });
 
-test('a never-attempted ref update whose ref was moved by hand is attempted, and git\'s refusal fails it without effect: no ambiguity, no blocker', async (t) => {
+test("a never-attempted ref update its own commit's finalizer intended, its ref moved by hand, is attempted, and git's refusal fails it without effect: no ambiguity, no blocker", async (t) => {
   const r = repo(t);
   const H = r.commit('a');
   const N = r.commit('b');
@@ -86,12 +93,29 @@ test('a never-attempted ref update whose ref was moved by hand is attempted, and
   r.g('update-ref', 'refs/surety/cand/1', R);
   const op = refUpdate(r.path, 'refs/surety/cand/1', H, N);
   const { rt, calls } = runtime(op);
-  const settled = await new Journal(rt).drive('op_1');
+  const journal = new Journal(rt);
+  assert.equal((await journal.drive('op_c')).end, 'finalized', 'the commit finalized, intending op_1');
+  const settled = await journal.drive('op_1');
   assert.equal(settled.end, 'failed');
   assert.equal(op.failed?.reason, 'compare_and_swap_failed', `the detail names the refused swap (${JSON.stringify(op.failed)})`);
   assert.ok(calls.includes('journal.start_attempt'), 'git was asked: the swap was attempted');
   assert.ok(!calls.includes('journal.block') && !calls.includes('journal.ambiguous'), `never blocked or ambiguous (${calls.join(', ')})`);
   assert.equal(r.g('rev-parse', 'refs/surety/cand/1'), R, 'the ref stays where the hand put it');
+});
+
+test('the same update found by recovery after a restart (not intended by this incarnation) blocks: nothing is attempted or overwritten (M29)', async (t) => {
+  const r = repo(t);
+  const H = r.commit('a');
+  const N = r.commit('b');
+  r.g('update-ref', 'refs/surety/cand/1', H);
+  const R = r.commit('c');
+  r.g('update-ref', 'refs/surety/cand/1', R);
+  const op = refUpdate(r.path, 'refs/surety/cand/1', H, N);
+  const { rt, calls } = runtime(op);
+  const settled = await new Journal(rt).drive('op_1');
+  assert.equal(settled.end, 'blocked');
+  assert.ok(calls.includes('journal.block') && !calls.includes('journal.start_attempt'), `blocked, not attempted (${calls.join(', ')})`);
+  assert.equal(r.g('rev-parse', 'refs/surety/cand/1'), R);
 });
 
 test('a ref update whose ref cannot be read is not attempted: its outcome is unknown, and it blocks', async (t) => {

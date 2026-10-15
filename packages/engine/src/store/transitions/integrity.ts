@@ -110,11 +110,20 @@ export function recordIntegrity(tx: Tx, report: IntegrityReport): { observed: nu
   markBlockedStale(tx, report.project, ['REF_UNREAD']);
   for (const id of report.released ?? []) releaseCheckouts(tx, { id });
   for (const c of report.added ?? []) addCheckout(tx, { project: report.project, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
+  // What the engine expects now, in this transaction: a read made against
+  // an expectation that has moved since (an adoption, or the engine's own
+  // journaled move, committed between the read and this record) is stale
+  // and records nothing; the next evaluation reads again (M413 (d)'s
+  // second observation of a move already adopted).
   for (const r of report.refs ?? []) {
+    const now = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "id" = ?').get(r.registry) as { expected_oid: string } | undefined;
+    if (now !== undefined && now.expected_oid !== r.expected) continue;
     recordObservation(tx, report.project, { subject: 'ref', ref: r.registry, expected: r.expected, found: r.found });
     observed++;
   }
   for (const c of report.checkouts ?? []) {
+    const now = tx.db.prepare('SELECT "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(c.id) as { baseline: string } | undefined;
+    if (now !== undefined && now.baseline !== c.expected) continue;
     recordObservation(tx, report.project, { subject: 'checkout', checkout: c.id, expected: c.expected, found: JSON.stringify(c.found) });
     observed++;
   }

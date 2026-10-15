@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { assertRefused, assertNoEffect, maxEventSeq, storeState } from './harness/fixtures.mjs';
+import { waitFor } from './harness/engine.mjs';
 import {
   addProject,
   addWork,
@@ -105,6 +106,10 @@ describe('M08 excluded work never launches, and no real backend exists', () => {
       await resumeProject(engine, project);
       await requestTick(engine, project);
       const run = await waitForRun(fx.home, item, { state: 'ended' });
+      // Under K1 the refused run's end requests a tick that dispatches the
+      // item again (objection 114; SEAM §461): the project is paused once the
+      // first refusal is read, and the count is read against the refused runs.
+      await pauseProject(engine, project);
       const facts = assertRunEnded(fx.home, run.id, { outcome: 'refused', reason_class: 'preflight_refused', launched: false, recovery: false });
       assert.deepEqual(facts.receipts.flatMap((r) => r.statuses).filter((s) => s === 'launched'), [], 'nothing was launched');
       assert.equal(facts.receipts.every((r) => r.usage.length === 0 && r.ledger.length === 0), true, 'no usage and no charge were fabricated');
@@ -121,8 +126,14 @@ describe('M08 excluded work never launches, and no real backend exists', () => {
       const other = await engine.get(`/v1/projects/proj_00000000000000000000000000/runs/${run.id}`);
       assertRefused(other, 404, 'not_found', 'the run read through another project');
 
-      const row = await waitForWork(fx.home, item, 'eligible');
-      assert.equal(row.preflight_refusals, 1, 'the refusal is counted on the work item');
+      const row = await waitFor(() => {
+        const w = workItem(fx.home, item);
+        return ['eligible', 'parked'].includes(w.status) && runsOf(fx.home, item).every((r) => r.state === 'ended') ? w : undefined;
+      }, { timeoutMs: 30_000, what: 'the item at rest once the project is paused' });
+      const refused = runsOf(fx.home, item);
+      assert.ok(refused.every((r) => r.outcome === 'refused' && r.reason_class === 'preflight_refused'), `every dispatch was refused before launch (${JSON.stringify(refused.map((r) => [r.outcome, r.reason_class]))})`);
+      assert.equal(row.preflight_refusals, refused.length, `each refusal is counted on the work item, once (${refused.length} refused runs)`);
+      assert.ok(row.preflight_refusals >= 1);
       assert.notEqual(row.status, 'complete');
     });
   }

@@ -18,7 +18,7 @@ import { join, posix } from 'node:path';
 import { type GitContext, SHA, gitOk, repoContext, worktreeContext } from './exec.js';
 import { mapBounded } from './bounded.js';
 import { isProtected, isUnderRoot } from '../protected/set.js';
-import { type Baseline, type Change, type TreeEntry, blobSizes, catBlob, checkoutBaseline, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
+import { type Baseline, type Change, type TreeEntry, blobSizes, catBlob, checkoutBaseline, checkoutBaselineRemembered, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
 import { workspaceLink } from './worktree.js';
 
 const VALIDATE_PARALLEL = 8;
@@ -331,7 +331,7 @@ export async function validateOutside(args: {
   // are among them); the first in order that differs is named.
   const found = await mapBounded(args.others, VALIDATE_PARALLEL, async (other) => {
     const ctxOther = other.adminDir ? worktreeContext(repo, other.adminDir, other.path) : repoContext(other.path);
-    const now = await checkoutBaseline(ctxOther, args.scratch);
+    const now = await checkoutBaselineRemembered(ctxOther, args.scratch, { path: other.path, gitDir: other.adminDir ?? join(other.path, '.git') });
     if (now === null) return reject(`the managed checkout ${other.path} cannot be read`);
     if (now.head !== other.baseline.head || now.index_hash !== other.baseline.index_hash || now.tracked_tree_hash !== other.baseline.tracked_tree_hash) {
       return reject(`the managed checkout ${other.path} differs from its baseline`);

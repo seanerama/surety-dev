@@ -117,7 +117,7 @@ describe('M114 a restart observes before it believes', () => {
   test('(c) the recorded cgroup_path edited to a path outside the verified hierarchy: unknown and quarantined, the real role untouched; an absent path inside it: terminated', async (t) => {
     // Outside: the path of another scope's (a test scope with a sentinel).
     const outside = await killedWithRoleHolding(t);
-    const other = await cgroupSentinel(t);
+    const other = await cgroupSentinel(t, null, { home: outside.fx.home });
     const elsewhere = makeLeaf(cgroupOfPid(other.pid), 'dom_elsewhere');
     moveIntoCgroup(other.pid, elsewhere);
     assert.equal(populated(elsewhere), 1, 'the fixture is live: a populated directory under another scope');
@@ -146,7 +146,7 @@ describe('M114 a restart observes before it believes', () => {
     const { fx, run, domain, launch, scope } = await killedWithRoleHolding(t);
     // The scope must outlive the restart's observation: a leaf of the test's own keeps it populated.
     const keep = makeLeaf(scope.path, 'test_keep');
-    const sentinel = await cgroupSentinel(t, keep);
+    const sentinel = await cgroupSentinel(t, keep, { home: fx.home });
     makeUnreadable(scope.supervisor, 'cgroup.events');
     t.after(() => {
       try {

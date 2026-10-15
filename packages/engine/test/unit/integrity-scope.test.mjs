@@ -31,7 +31,7 @@ const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 's
 const { integrityFacts, recordIntegrity, registryFacts } = await import(join(dist, 'store', 'transitions', 'integrity.js'));
 const { validatorCheckouts } = await import(join(dist, 'store', 'transitions', 'accept.js'));
 const { configureGit, repoContext, worktreeContext } = await import(join(dist, 'git', 'exec.js'));
-const { checkoutBaseline } = await import(join(dist, 'git', 'repo.js'));
+const { checkoutBaseline, checkoutBaselineRemembered } = await import(join(dist, 'git', 'repo.js'));
 const { captureMetadata, validateOutside } = await import(join(dist, 'git', 'snapshot.js'));
 const { observeIntegrity, registeredRefsMoved } = await import(join(dist, 'git', 'integrity.js'));
 
@@ -251,4 +251,31 @@ test("S1: a run's validation reads the registered refs between two reads of what
   const outOfBand = async () => ({ registry: stale, moving: {} });
   const v = await validateOutside({ repo: fx.repo, path: a.path, metadata: a.metadata, registry: stale, moving: {}, others: [], scratch: fx.scratch, refFacts: outOfBand });
   assert.equal(v?.klass, 'ref_violation');
+});
+
+test("a checkout's baseline is remembered while nothing it rests on changes; a write to a tracked file, even one restoring the size and the mtime, computes it again", async (t) => {
+  const fx = fixture(t);
+  const at = { path: fx.repo, gitDir: join(fx.repo, '.git') };
+  const ctx = repoContext(fx.repo);
+  const first = await checkoutBaselineRemembered(ctx, fx.scratch, at);
+  assert.ok(first);
+  assert.equal(await checkoutBaselineRemembered(ctx, fx.scratch, at), first, 'unchanged: the remembered baseline');
+  const { statSync, utimesSync } = await import('node:fs');
+  const before = statSync(join(fx.repo, 'a.txt'));
+  writeFileSync(join(fx.repo, 'a.txt'), 'b\n');
+  utimesSync(join(fx.repo, 'a.txt'), before.atime, before.mtime);
+  const after = await checkoutBaselineRemembered(ctx, fx.scratch, at);
+  assert.notEqual(after, first, 'a write moves ctime: computed again');
+  assert.notEqual(after.tracked_tree_hash, first.tracked_tree_hash, 'and the change is seen');
+  assert.deepEqual(after, await checkoutBaseline(ctx, fx.scratch), 'the same as computed afresh');
+});
+
+test('an integrity report read against an expectation that has moved since (an adoption committed between the read and the record) records nothing; one read against the expectation still standing does', (t) => {
+  const fx = fixture(t);
+  const report = (expected) => ({ project: 'prj_1', unreadable: false, refs: [{ registry: 'ref_main', expected, found: 'f'.repeat(40) }], checkouts: [], released: [], added: [] });
+  fx.db.prepare(`UPDATE ref_registry SET expected_oid = ? WHERE id = 'ref_main'`).run('e'.repeat(40));
+  transact(fx.db, ENGINE_ACTOR, (tx) => recordIntegrity(tx, report(fx.head)));
+  assert.equal(fx.db.prepare(`SELECT COUNT(*) AS n FROM out_of_band_changes`).get().n, 0, 'read against the old expectation: stale, nothing recorded');
+  transact(fx.db, ENGINE_ACTOR, (tx) => recordIntegrity(tx, report('e'.repeat(40))));
+  assert.equal(fx.db.prepare(`SELECT COUNT(*) AS n FROM out_of_band_changes`).get().n, 1, 'read against the standing one: observed');
 });
