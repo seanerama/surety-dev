@@ -22,6 +22,7 @@ import { alphaTarget, evaluate } from './harness/gates.mjs';
 import { armFault, clearFaults } from './harness/engine.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
+import { script } from './harness/scripted.mjs';
 import { entryByKey, executionsOf, gateCheckEntries } from './harness/checks/fixtures.mjs';
 import { buildStages, candidatesOfProject, def, passKeys, scopeProject } from './harness/checks/scope.mjs';
 
@@ -35,6 +36,11 @@ describe('M204 (f) a nomination whose required set needs the candidate\'s module
       modules: [{ name: 'billing', paths: ['billing/'], sensitive_areas: ['payments_financial_data'] }],
       stages: [{ number: 1, goal: 'R1', implements: ['R1'] }],
     });
+    // Under K1 a requested tick dispatches the candidate's verification work
+    // once it is nominated (objection 115; SEAM §463). Every launch with no
+    // script of its own ends at once (exit 3), so the Verifier's run ends,
+    // records no evidence, and every wait for the project's runs to end ends.
+    fx.scripted.defaultScript(script.crash());
     // The presence read fails from before the nomination until the case lifts it.
     await armFault(fx.engine, { point: 'module_presence_read', project: p.id, times: 100 });
     await buildStages(fx, p, { nominate: [true] });
