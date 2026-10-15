@@ -158,3 +158,13 @@ test('a stage implementing only human-test requirements is no gap, and the pace 
     { requirement: 'R7', phase: 1, status: 'owed' },
   ]);
 });
+
+test('a criterion an unresolved obligation owes (a deferral, a correction) is not a gap', (t) => {
+  const s = store(t);
+  s.run(`UPDATE checks SET criteria = '[]' WHERE id = 'chk_acc10'`);
+  s.run(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, criteria, requirement_ids, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_int10', ?, 'prj_1', 'pv_1', 'integration-page', 'integration', '[]', '["req_10"]', 1, '["stage","alpha_authorize"]', 'x', 'h', 'direct')`, AT);
+  s.run(`INSERT INTO check_obligations (id, created_at, project, criteria, generation, reason, prerequisite, follow_up, phase_plan) VALUES ('obl_1', ?, 'prj_1', '["R10.1"]', 1, 'deferred_authoring', '{"stage":5}', '{}', 'plan_1')`, AT);
+  assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 0, 'R10.1 is the deferral\'s, and nothing else is missing');
+  s.run(`UPDATE check_obligations SET resolved_at = ? WHERE id = 'obl_1'`, AT);
+  assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => registerGapAuthoring(tx, { project: 'prj_1' })), 1, 'resolved, and still uncovered: a gap');
+});

@@ -337,7 +337,15 @@ export function registerGapAuthoring(tx: Tx, args: { project: string }): number 
     .get(args.project) as { id: string } | undefined;
   const version = effectiveVersion(tx.db, args.project);
   if (!plan || !version) return 0;
-  const gaps = stageScopeGaps(tx.db, plan.id, version.id);
+  // A criterion an unresolved obligation already owes (a deferral's
+  // follow-up, a specification change's correction) is that route's, not a
+  // gap; a stage left with nothing else is no gap.
+  const owed = new Set(
+    (tx.db.prepare(`SELECT "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { criteria: string }[]).flatMap((o) => parseJson<string[]>(o.criteria) ?? []),
+  );
+  const gaps = stageScopeGaps(tx.db, plan.id, version.id)
+    .map((g) => ({ ...g, criteria: g.criteria.filter((c) => !owed.has(c)) }))
+    .filter((g) => g.kinds.length + g.criteria.length + g.areas.length > 0);
   if (gaps.length === 0) return 0;
   const last = tx.db
     .prepare(`SELECT "trigger_evidence", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
