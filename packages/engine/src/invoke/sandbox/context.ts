@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
-import { type CheckWritingFacts, checkWritingText } from '../../checks/guide.js';
+import { AUTHORING_RESULT_FIELDS, type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, phaseAuthoringText } from '../../checks/guide.js';
 import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
@@ -65,6 +65,8 @@ export type ContextFacts = {
   // For check_correction work: what its Verifier is told about writing the
   // project's checks (src/checks/guide.ts).
   check_writing?: CheckWritingFacts | null;
+  // For check_authoring work: the phase-authoring package (D6 §6.2; N04).
+  authoring?: PhaseAuthoringFacts | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
   // For a Builder: what each environment's current configuration fixes.
   environments?: { name: string; adapter: string | null; runtime: string | null; start: string[]; port: number | null; exclude: string[] }[] | null;
@@ -475,7 +477,8 @@ export function writeContextPackage(
   // check_correction work (BS3 §3): the Verifier writes the checks; the
   // finding it was registered for, if any, is one no check verifies, never
   // one it fixes in the code.
-  const correcting = claim.work_kind === 'check_correction';
+  const correcting = claim.work_kind === 'check_correction' || claim.work_kind === 'check_authoring';
+  const authoring = claim.work_kind === 'check_authoring' ? (facts?.authoring ?? null) : null;
   const fix = correcting ? null : (facts?.finding ?? null);
   const fixText = fix
     ? [
@@ -570,6 +573,7 @@ export function writeContextPackage(
     ...fixText,
     ...routedText,
     ...writingText,
+    ...(authoring ? phaseAuthoringText(authoring) : []),
     ...repairText,
     ...(facts?.replan ? replanPromptText(facts.replan) : []),
     ...(facts?.phase
@@ -605,8 +609,11 @@ export function writeContextPackage(
   const criteria = (reports || role === 'builder') && facts && facts.criteria !== undefined ? (facts.criteria ?? []) : undefined;
   const base = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
   // A replan's result (Appendix B.7): the plan it wrote and its declaration.
+  // A phase authoring's result (B.7; N04): its governed changes and deferrals.
+  const authored = authoring ? { ...base, title: "The Verifier's phase authoring result, written to /surety/out/result.json", properties: { ...(base.properties as Record<string, unknown>), ...AUTHORING_RESULT_FIELDS } } : base;
   const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings } } : base;
-  put('result-schema.json', 'result_schema', null, `${JSON.stringify(schema, null, 2)}\n`);
+  put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : authored, null, 2)}\n`);
+  if (authoring) put('authoring.json', 'instructions', authoring.phase_plan?.id ?? null, `${JSON.stringify(authoring, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);
     put('findings.json', 'instructions', facts!.candidate!.id, `${JSON.stringify({ candidate: facts!.candidate!.id, findings: review.findings }, null, 2)}\n`);

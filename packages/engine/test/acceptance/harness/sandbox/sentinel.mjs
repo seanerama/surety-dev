@@ -8,8 +8,8 @@
 // may be the root cgroup), so a cgroup sentinel is started in a transient
 // scope of its own through the manager, then moved.
 
-import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import { waitFor } from '../engine.mjs';
 import { signalPid, signallable } from '../proc.mjs';
@@ -29,10 +29,22 @@ export function hostSentinel(t) {
   return { pid: child.pid, alive: () => isHostAlive(child.pid), kill: () => child.kill('SIGKILL') };
 }
 
+// The sentinels made for each home, numbered from 1.
+const made = new Map();
+
 // A `sleep` started in its own transient user scope through the manager,
 // then moved into `dir` (when given). Returns {pid, unit, alive, cgroup, kill}.
-export async function cgroupSentinel(t, dir = null) {
-  const unit = `surety-test-sentinel-${randomBytes(4).toString('hex')}.scope`;
+// The unit is named from the test's own disposable home (BS5 §4.1 rules 1
+// and 2; the driver's ruling, slice 37; SEAM §462):
+// `surety-<h12(home)>-sentinel-<n>.scope`, `h12` the first twelve hex digits
+// of the home path's SHA-256 (as `homeHash` names the home's deploy units),
+// and in cleanup the sentinel's own `sleep` is killed and the unit stopped by
+// exactly that name.
+export async function cgroupSentinel(t, dir = null, { home } = {}) {
+  if (typeof home !== 'string' || home.length === 0) throw new Error('cgroupSentinel: the test\'s own home names the unit; none was given');
+  const n = (made.get(home) ?? 0) + 1;
+  made.set(home, n);
+  const unit = `surety-${createHash('sha256').update(home).digest('hex').slice(0, 12)}-sentinel-${n}.scope`;
   const runner = spawn('systemd-run', ['--user', '--scope', '--quiet', `--unit=${unit}`, 'sleep', '3600'], { stdio: 'ignore', detached: true });
   runner.unref();
   const pid = await waitFor(
@@ -57,6 +69,10 @@ export async function cgroupSentinel(t, dir = null) {
       signalPid(pid, 'SIGKILL');
     },
   };
-  t.after(() => sentinel.kill());
+  t.after(() => {
+    sentinel.kill();
+    // By exactly its name; a scope already emptied and collected is not loaded.
+    spawnSync('systemctl', ['--user', 'stop', unit], { stdio: 'ignore', timeout: 30_000 });
+  });
   return sentinel;
 }

@@ -4,6 +4,7 @@
 // None of them waits on a process, git or a stream: the main thread does
 // that between transitions and hands each result to the next one.
 
+import { notePeakDomains } from '../../plan/pace.js';
 import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
@@ -12,7 +13,7 @@ import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
-import { engineSettings, projectPolicy, roleModel } from './settings.js';
+import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy, roleModel } from './settings.js';
 import { settleOpenTurns } from '../../sessions/session.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
@@ -135,9 +136,9 @@ function observe(tx: Tx, run: RunRow, invocation: string, status: InvocationStat
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "invocation_status_observations" WHERE "invocation" = ?').get(invocation) as { n: number };
   tx.db
     .prepare(
-      'INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence", "incarnation") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run(tx.newId('iso_'), tx.at, run.project, invocation, n, status, tx.at, exit?.exit_class ?? null, exit?.exit_evidence ?? null);
+    .run(tx.newId('iso_'), tx.at, run.project, invocation, n, status, tx.at, exit?.exit_class ?? null, exit?.exit_evidence ?? null, engineSettings().incarnation ?? null);
   tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) });
 }
 
@@ -169,7 +170,6 @@ export interface ClaimArgs {
   // The scripted backend's version where this engine has it (harness mode
   // with a scripted directory), else null.
   scripted: string | null;
-  maxConcurrentRuns: number;
   // The provider-side cap held with each secret reference that has one
   // (D2 §4.2, Q2; SEAM.md §120).
   providerCaps?: Record<string, number>;
@@ -206,6 +206,9 @@ export interface Claim {
   cgroup_path: string | null;
   // The sandbox profile (D2 §§2.8, 3.8).
   profile: string;
+  // The memory maximum the domain was admitted at (D6 K2, B09): what its
+  // cgroup's memory.max is written as.
+  memory_max?: number | null;
   // The backend the run is dispatched to (D2 §4.1): the trust entry that
   // authorizes it, if any; or why it is refused before any domain or
   // process (`backend_refused`, `isolation_unqualified`,
@@ -231,7 +234,7 @@ export interface Claim {
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 // `check`: false for a projection, which reads the budget without being a
 // budget check (D1 §6.6 governs the check, not the read).
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: number, opts: { check?: boolean; canary?: boolean } = {}): string | null {
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean } = {}): string | null {
   // A canary's item is run only by its attempt's own dispatch (K10).
   if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
@@ -271,16 +274,138 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
       )
       .get(item.project, request) as { seq: number } | undefined;
     if (pending) return `spec_change_pending: specification change ${pending.seq} is dispatched or awaits its decision`;
+    // A project's specification change and its protected writers exclude
+    // each other (the driver's ruling on Q2, slice 37; ruling 1's family): no
+    // proposal of a change is made, so no owner's question raised, while a
+    // protected writer runs or a protected proposal is in the engine's or
+    // the Reviewer's hands (captured and not yet classified, a tightening
+    // classified for the Reviewer, or approved and not yet applied). Only a
+    // proposal awaiting the owner's answer (awaiting_human) is exempt, the
+    // owner's to order (the driver's rulings, slice 37). Held, not failed.
+    const writing = (db.prepare(`SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" IN ('check_correction', 'check_authoring')`).get(item.project) as { n: number }).n;
+    if (writing > 0) return 'depends on a protected-path writer running';
+    const unapplied = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM "protected_proposals" p WHERE p."project" = ? AND (p."status" IN ('captured', 'approved')
+             OR (p."status" = 'classified' AND EXISTS (SELECT 1 FROM "work_items" w WHERE w."project" = p."project" AND w."kind" = 'review' AND w."trigger_source" = 'protected_proposal' AND w."trigger_id" = p."id" AND w."status" NOT IN ('complete', 'cancelled'))))`,
+        )
+        .get(item.project) as { n: number }
+    ).n;
+    if (unapplied > 0) return 'depends on a protected proposal not yet applied or rejected';
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
   if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended'`, item.project) > 0) return 'session_busy';
-  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, item.project) > 0) return 'project has a run';
+  // D6 K2 (E139 item 4; B09): no run count caps admission at either scope.
+  // What stays: one run per work item; integration serial under its lease
+  // (runs/accept.ts); the session's exclusivity above; and, so that D3's
+  // protected process keeps the order one run per project gave it (the
+  // driver's ruling 1, slice 37), at most one protected-path writer
+  // (`check_correction`, `check_authoring`) run of a project at a time and
+  // none while a review of a protected proposal is eligible or running.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended'`, item.id) > 0) return 'work item has a run';
+  // A quarantined run's project is one the engine cannot act on (D1 §§4.5
+  // step 3, 12.3): nothing is dispatched onto it while a writer of that run
+  // may survive. The project run count K2 removes had kept this; K2 does not
+  // lift it.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "quarantined" = 1 AND "state" <> 'ended'`, item.project) > 0) return 'project has a quarantined run';
+  // And while a quarantine is pending (the driver's ruling on M115, slice
+  // 37): a run of the project ending whose domains' termination is not yet
+  // established (allocated, launched or quarantined) may still have a
+  // writer; whether it becomes a quarantine is not known yet.
+  if (
+    live(
+      `SELECT COUNT(*) AS n FROM "runs" r WHERE r."project" = ? AND r."state" = 'finalizing'
+         AND EXISTS (SELECT 1 FROM "execution_domains" d WHERE d."run" = r."id" AND d."status" <> 'terminated')`,
+      item.project,
+    ) > 0
+  )
+    return 'project has a run whose termination is not established';
+  // At most one replan run of a project at a time (the driver's ruling,
+  // slice 37, extending ruling 1): every replan writes the phase plan's
+  // files, so two at once would make the second's integration conflict
+  // with the first's (M430). The next is dispatched once the one under way
+  // has ended.
+  if (item.kind === 'replan') {
+    const replanning = live(
+      `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" = 'replan'`,
+      item.project,
+    );
+    if (replanning > 0) return 'depends on a replan running';
+    // A specification change's replan (the driver's ruling (a) on M434,
+    // slice 37): held, not failed, while the same request's check
+    // correction is unfinished, and until the phase checks its new protected
+    // version re-queued have results. Run beside them (D6 K2), its plan check
+    // would read the completed phase's evidence as unknown on the newest
+    // candidate and refuse the plan; unknown still never counts as held. A
+    // correction parked for the owner (M433 S3: it resolved part of what it
+    // was given) is not under way: the replan goes on, and its plan check
+    // reads the evidence as it is (M430's M4).
+    let request: unknown;
+    try {
+      request = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      request = undefined;
+    }
+    if (typeof request === 'string') {
+      const correcting = live(
+        `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND json_extract("subject", '$.request') = ? AND "status" NOT IN ('complete', 'cancelled', 'parked')`,
+        item.project,
+        request,
+      );
+      if (correcting > 0) return `depends on the check correction of specification change request ${request}`;
+      const requeued = live(
+        `SELECT COUNT(*) AS n FROM "check_executions" x
+           JOIN "protected_proposals" p ON p."id" = json_extract(x."trigger", '$.id')
+           JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE x."project" = ? AND json_extract(x."trigger", '$.source') = 'protected_application'
+           AND w."kind" = 'check_correction' AND json_extract(w."subject", '$.request') = ?
+           AND x."status" IN ('queued', 'materializing', 'running', 'quarantined', 'collecting')`,
+        item.project,
+        request,
+      );
+      if (requeued > 0) return `depends on the checks the correction of specification change request ${request} re-queued`;
+    }
+  }
+  if (PROTECTED_WRITERS.includes(item.kind)) {
+    const writer = live(
+      `SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE r."project" = ? AND r."state" <> 'ended' AND w."kind" IN ('check_correction', 'check_authoring')`,
+      item.project,
+    );
+    if (writer > 0) return 'depends on a protected-path writer running';
+    const review = live(
+      `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.proposal') IS NOT NULL
+         AND "status" IN ('eligible', 'claimed', 'executing')`,
+      item.project,
+    );
+    if (review > 0) return 'depends on the review of a protected proposal';
+    // And, the other way (the driver's ruling on Q2): no protected writer
+    // while a specification change of the project is being proposed, or
+    // proposed and not yet applied (its status `proposed` until its
+    // application's finalizer approves it). The request's own correction,
+    // which follows its application, is not held by it.
+    let own: unknown;
+    try {
+      own = (JSON.parse(item.subject) as { request?: unknown }).request;
+    } catch {
+      own = undefined;
+    }
+    const changing = db
+      .prepare(
+        `SELECT r."seq" FROM "spec_change_requests" r LEFT JOIN "work_items" w ON w."id" = r."work_item"
+         WHERE r."project" = ? AND r."id" IS NOT ? AND (r."status" = 'proposed' OR (r."status" = 'requested' AND w."status" IN ('claimed', 'executing', 'awaiting_decision')))
+         ORDER BY r."seq" LIMIT 1`,
+      )
+      .get(item.project, typeof own === 'string' ? own : null) as { seq: number } | undefined;
+    if (changing) return `depends on specification change ${changing.seq}, being proposed or not yet applied`;
+  }
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
-  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "state" <> 'ended'`) >= maxConcurrentRuns) return 'engine at max_concurrent_runs';
   // A stage an early replacement superseded is never dispatched again (D6
   // §5.7; the review's N2): its work is settled by the phase step.
   if (item.kind === 'stage_build') {
@@ -313,7 +438,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, maxConcurrentRuns: 
 }
 
 // Why a milestone is unmet (D6 §6.4), or null.
-function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
+export function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
   if (m.milestone === 'spec_change_requests') {
     for (const id of m.requests) {
       const r = db.prepare('SELECT "status" FROM "spec_change_requests" WHERE "id" = ?').get(id) as { status: string } | undefined;
@@ -335,8 +460,15 @@ function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
     if (plan.authoring_ready_at === null) return 'authoring not ready';
     return null;
   }
-  const d = db.prepare('SELECT "status", "parked_at", "cancelled_at" FROM "stages" WHERE "id" = ?').get(m.stage) as { status: string; parked_at: string | null; cancelled_at: string | null } | undefined;
-  if (!d || (d.status !== 'integrated' && d.status !== 'verified') || d.parked_at !== null || d.cancelled_at !== null) return `depends on stage ${m.stage}`;
+  const d = db
+    .prepare('SELECT s."status", s."parked_at", s."cancelled_at", w."status" AS "work_status" FROM "stages" s LEFT JOIN "work_items" w ON w."id" = s."work_item" WHERE s."id" = ?')
+    .get(m.stage) as { status: string; parked_at: string | null; cancelled_at: string | null; work_status: string | null } | undefined;
+  // A stage whose work is parked (a blocker: its repair limits, an
+  // objection) is parked: its historical integration releases nothing for
+  // later dispatch (D6 §6.6; B08).
+  if (!d || (d.status !== 'integrated' && d.status !== 'verified') || d.parked_at !== null || d.cancelled_at !== null || d.work_status === 'parked' || d.work_status === 'cancelled') {
+    return `depends on stage ${m.stage}`;
+  }
   return null;
 }
 
@@ -352,7 +484,19 @@ export function dispatchEntryProbe(db: Tx['db'], args: { project: string; workIt
   return r.kind === 'entry' ? { entry: r.entry.id, backend: r.backend, binary_path: r.entry.binary_path } : null;
 }
 
+// Whether the envelope would hold this item's dispatch now, its backend not
+// refused by the store (the tick's pre-check; the claim decides again).
+export function envelopeHoldsDispatch(db: Tx['db'], args: { project: string; workItem: string }): boolean {
+  const item = db.prepare('SELECT "kind", "project" FROM "work_items" WHERE "id" = ?').get(args.workItem) as { kind: string; project: string } | undefined;
+  if (!item || item.project !== args.project) return false;
+  const role = ROLE_OF[item.kind];
+  if (role && resolveBackend(db, { project: item.project, role, scripted: 'any-scripted-version' }).kind === 'refused') return false;
+  return envelopeHold(db, { kind: 'role', project: item.project }) !== null;
+}
+
 export const CHAIN_BOUNDARY = 'chaining boundary';
+// The kinds that write the protected path through a proposal (D3 §3).
+export const PROTECTED_WRITERS = ['check_correction', 'check_authoring'];
 export const RESOURCE_ENVELOPE = 'resource_envelope';
 
 // D1 §8.1 step 9, one transaction: the run (claimed), its work item claimed,
@@ -365,7 +509,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
   const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
   if (args.attempt && !canary) return null;
-  if (dispatchBlocker(tx.db, item, args.maxConcurrentRuns, { canary }) !== null) return null;
+  if (dispatchBlocker(tx.db, item, { canary }) !== null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -428,7 +572,11 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // max_concurrent_domains and the host's reserves; otherwise the work stays
   // eligible, nothing is written, and its read shows the hold. A dispatch
   // refused before launch admits no domain and is not held.
-  if (backend.kind !== 'refused' && envelopeHold(tx.db) !== null) return null;
+  // The domain's memory maximum, fixed now and never resized (D6 §6.4, K2,
+  // B09): the project's effective `role_memory_max`, or, for a canary, the
+  // profile its attempt qualifies.
+  const memoryMax = canary ? attemptProfileMax(tx.db, args.attempt!) : effectiveProfileMax(tx.db, item.project, 'role');
+  if (backend.kind !== 'refused' && envelopeHold(tx.db, { kind: 'role', project: item.project, memory: memoryMax }) !== null) return null;
   const leaseTtl = engineSettings().lease_ttl;
 
   // A Resume, or a retry after a timeout, is a new run linked to the one it
@@ -527,11 +675,13 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
        VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, 'authorizable', ?)`,
     )
     // The memory maximum it is admitted at, the value the envelope counts
-    // (D6 A.3; K2): the configured domain_memory_max (slice 33).
-    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath, engineSettings().domain_memory_max ?? null);
+    // (D6 A.3; K2; B09).
+    .run(domain, tx.at, item.project, run, invocation, profile, cgroupPath, memoryMax);
   tx.db
     .prepare(`INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)`)
     .run(tx.newId('proc_'), tx.at, item.project, domain, invocation, args.incarnation);
+  // The peak number of domains at once (D6 §7.6; N01).
+  notePeakDomains(tx);
 
   // What the run is told of its failed repair checks, read at dispatch.
   const outputs = canary ? undefined : checkOutputsFor(tx.db, item);
@@ -550,6 +700,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     ...(outputs === undefined ? {} : { check_outputs: outputs }),
     cgroup_path: cgroupPath,
     profile,
+    memory_max: memoryMax,
     backend: backend.backend,
     trust_entry: trustEntry,
     attempt: backend.kind === 'attempt' ? { id: backend.attempt.id, kind: canaryOf.canary_kind ?? 'positive' } : null,
@@ -836,6 +987,9 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
   // scripted boundary of the kernel lane, where no launcher exists, it is
   // recorded here.
   closeLaunch(tx, { domain: d.id, cause: 'termination' });
+  // D6 §6.4, §7.6 (K2; N01): a domain's peak is recorded before its
+  // termination; one not read by then is unknown, never zero.
+  recordPeak(tx, { domain: d.id, memory_peak: null, why: 'memory.peak was not read before the domain was removed (no cgroup of the real boundary, or its record lost)' });
   // `observed_at` is when emptiness was read, which a barrier may hold apart
   // from this record (SEAM.md §126).
   tx.db
@@ -851,6 +1005,24 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
     const seen = statuses(tx, d.invocation);
     if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
   }
+}
+
+// D6 §6.4, §7.6, A.2 (K2; N01; SEAM.md §432): a domain's `memory.peak`,
+// read before its cgroup is removed, bound to the domain and its
+// observation time; null with why when it could not be read. Once per
+// domain: a later record of it changes nothing.
+export function recordPeak(tx: Tx, args: { domain: string; memory_peak: number | null; why?: string; observed_at?: string }): void {
+  const d = tx.db.prepare('SELECT "id", "project", "run", "peak_recorded_at" FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
+    | { id: string; project: string; run: string | null; peak_recorded_at: string | null }
+    | undefined;
+  if (!d) throw notFound('domain', args.domain);
+  if (d.peak_recorded_at !== null) return;
+  const value = Number.isSafeInteger(args.memory_peak) && (args.memory_peak as number) > 0 ? (args.memory_peak as number) : null;
+  tx.db.prepare('UPDATE "execution_domains" SET "memory_peak" = ?, "peak_recorded_at" = ? WHERE "id" = ?').run(value, tx.at, d.id);
+  tx.emit('domain.peak_recorded', { project: d.project, domain: d.id, run: d.run }, {
+    memory_peak: value ?? { unknown: args.why ?? 'memory.peak could not be read' },
+    observed_at: args.observed_at ?? tx.at,
+  });
 }
 
 // A check execution's domain whose termination is unknown (L1; SEAM.md
@@ -1044,7 +1216,10 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       // A specification change's correction whose run captured a proposal
       // waits for it (the driver's ruling Q13): applied, it completes;
       // rejected, it takes its repair, then parks (spec/change.ts).
-      if (item.status === 'executing' && correctionRequestOf(tx.db, item.id) !== null) {
+      // A phase's check authoring likewise (D6 §6.2; B07; K7): readiness is
+      // the applied version, and a rejected proposal is repaired, then parks
+      // with its blocker (M435 (d)).
+      if (item.status === 'executing' && (correctionRequestOf(tx.db, item.id) !== null || item.kind === 'check_authoring')) {
         const p = tx.db.prepare('SELECT "id", "status" FROM "protected_proposals" WHERE "run" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1').get(run.id) as { id: string; status: string } | undefined;
         if (p && p.status === 'rejected') {
           correctionFailed(tx, item, { ...cause, proposal: p.id, cause: 'proposal_rejected' });

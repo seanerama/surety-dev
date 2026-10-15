@@ -109,26 +109,27 @@ describe('M15 repository integrity as the prerequisite step that overruns', () =
     const a = (await addGitProject(fx)).id;
     const b = (await addGitProject(fx)).id;
     await tick(fx.engine, a);
-    const itemA = await addItem(fx, a, 'verification');
-    const itemB = await addItem(fx, b, 'verification');
 
+    // M5 slice 37 (D6 K1; objection 100; SEAM.md §447): the fault is armed
+    // first, and the tick the items request is the one whose step overruns.
     const delay = 4000;
     await armFault(fx.engine, { point: 'tick_step', step: 'integrity', project: a, delay_ms: delay });
     const requested = performance.now();
     const before = tickEvents(fx.home).at(-1) ?? 0;
-    await requestTick(fx.engine, a);
-    const tickSeq = await waitFor(() => tickEvents(fx.home).find((seq) => seq > before), { what: 'the requested tick to finish' });
+    const itemA = await addItem(fx, a, 'verification');
+    const itemB = await addItem(fx, b, 'verification');
+    const tickSeq = await waitFor(() => tickEvents(fx.home).find((seq) => seq > before), { what: 'the tick the items requested to finish' });
     assert.equal((await fx.engine.get('/v1/health')).status, 200, 'the API answers while a step is overrunning');
 
     // In that tick: B was dispatched, A was not.
     const runB = await waitForRun(fx.home, itemB);
     assert.ok(createdSeq(fx.home, runB.id) < tickSeq, 'the other project was dispatched in the same tick');
-    assert.equal(runsOf(fx.home, itemA).length, 0, 'the project whose integrity step overran was not dispatched in that tick');
+    assert.ok(runsOf(fx.home, itemA).every((r) => createdSeq(fx.home, r.id) > tickSeq), 'the project whose integrity step overran was not dispatched in that tick');
 
-    // The slow step completes late. Nothing is dispatched on the strength of it.
+    // The slow step completes late. Nothing is dispatched on the strength of
+    // it: a run of A, if any yet, was created by a later tick.
     await sleep(Math.max(0, requested + delay + 1500 - performance.now()));
-    assert.equal(runsOf(fx.home, itemA).length, 0, 'a late completion does not dispatch');
-    assert.equal(workItem(fx.home, itemA).status, 'eligible');
+    for (const r of runsOf(fx.home, itemA)) assert.ok(createdSeq(fx.home, r.id) > tickSeq, 'a late completion does not dispatch in the tick it overran');
     await waitForWork(fx.home, itemB, 'complete');
 
     // The next tick, with its integrity step in time, dispatches it.

@@ -30,7 +30,7 @@ import { raiseFinding } from './findings.js';
 import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
-import { engineSettings, projectOptions, projectPolicy } from './settings.js';
+import { effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
@@ -638,6 +638,30 @@ function requestKey(db: Db, args: { project: string; candidate: string; config: 
 const requestOfKey = (db: Db, project: string, key: string): RequestRow | undefined =>
   db.prepare('SELECT * FROM "deployment_requests" WHERE "project" = ? AND "request_key" = ?').get(project, key) as RequestRow | undefined;
 
+// A policy request whose preparation failed with an error that is not a
+// refusal, still within its bound (D6 §6.8; the driver's ruling Q4, slice
+// 37; SEAM.md §433): its row stands `pending` with no authorization, and the
+// key is prepared again; any other row of the key admits no new request.
+const preparing = (r: RequestRow | undefined): boolean =>
+  r !== undefined && r.requested_by === 'policy' && r.outcome === 'pending' && r.authorization === null && (r as RequestRow & { preparation_attempts?: number | null }).preparation_attempts != null;
+
+// The policy's preparation failed unexpectedly: counted on the key's row
+// (made `pending` at the first error); past 1 + `deploy_auto_retries_max`
+// preparations, `not_issued` with reason `preparation_failed`, and the key
+// is never prepared again. The policy is not an unbounded retry (D6 §6.8).
+export function policyPreparationFailed(tx: Tx, args: { project: string; candidate: string; environment: string; key: string; error: string }): { attempts: number; outcome: string } {
+  const env = environmentByName(tx.db, args.project, args.environment);
+  if (!env) throw notFound('environment', args.environment);
+  let row = requestOfKey(tx.db, args.project, args.key) as (RequestRow & { preparation_attempts?: number | null }) | undefined;
+  if (row && !preparing(row)) return { attempts: row.preparation_attempts ?? 0, outcome: row.outcome };
+  if (!row) row = recordRequest(tx, { project: args.project, key: args.key, requested_by: 'policy', candidate: args.candidate, environment: env.id, authorization: null, work_item: null, outcome: 'pending' }) as RequestRow & { preparation_attempts?: number | null };
+  const attempts = (row.preparation_attempts ?? 0) + 1;
+  const bound = 1 + (projectPolicy(tx.db, args.project).deploy_auto_retries_max ?? 0);
+  const outcome = attempts >= bound ? 'not_issued' : 'pending';
+  tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = ?, "outcome" = ?, "reason" = ? WHERE "id" = ?').run(attempts, outcome, outcome === 'not_issued' ? 'preparation_failed' : null, row.id);
+  return { attempts, outcome };
+}
+
 // The request's row: one per key. The owner's request again under a key
 // already requested takes the row on (its authorization, work and outcome
 // are the newest request's); a policy request never makes a second one.
@@ -672,7 +696,12 @@ function recordRequest(
 export function policyRequestRefused(tx: Tx, args: { project: string; candidate: string; environment: string; key: string; refusal: { code: string; reason: string } }): { recorded: boolean } {
   const env = environmentByName(tx.db, args.project, args.environment);
   if (!env) throw notFound('environment', args.environment);
-  if (requestOfKey(tx.db, args.project, args.key)) return { recorded: false };
+  const existing = requestOfKey(tx.db, args.project, args.key);
+  if (existing && preparing(existing)) {
+    tx.db.prepare(`UPDATE "deployment_requests" SET "outcome" = 'not_issued', "reason" = ?, "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?`).run(args.refusal.code, existing.id);
+    return { recorded: true };
+  }
+  if (existing) return { recorded: false };
   recordRequest(tx, { project: args.project, key: args.key, requested_by: 'policy', candidate: args.candidate, environment: env.id, authorization: null, work_item: null, outcome: 'not_issued', refusal: args.refusal });
   return { recorded: true };
 }
@@ -693,6 +722,14 @@ function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_
 // joins another request.
 export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
   if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
+  // The policy waits for a specification change to settle (the driver's
+  // ruling 1 on M401's T1 runs, slice 37): no request while a change of the
+  // project is proposed, its approval included until it is applied. An
+  // owner's own request is his explicit act, never held.
+  if (db.prepare(`SELECT 1 FROM "spec_change_requests" WHERE "project" = ? AND "status" = 'proposed' LIMIT 1`).get(args.project) !== undefined) return null;
+  // Nor while an applied change's spec_changed obligations are unresolved
+  // (the driver's ruling on M401's T1 stall, slice 37).
+  if (db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL LIMIT 1`).get(args.project) !== undefined) return null;
   const plan = db
     .prepare(`SELECT "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "completed_at" IS NOT NULL AND "completion_binding" IS NOT NULL ORDER BY "phase_number" DESC, rowid DESC LIMIT 1`)
     .get(args.project) as { completion_binding: string } | undefined;
@@ -704,12 +741,37 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     if (!config || config.status === 'secrets_changed') continue;
     if (qualificationFor(db, env) === undefined) continue;
     const key = requestKey(db, { project: args.project, candidate, config: config.id });
-    if (requestOfKey(db, args.project, key)) continue;
+    const existing = requestOfKey(db, args.project, key);
+    if (existing && !preparing(existing)) continue;
     const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
     if (all.some((a) => pending(db, a))) continue;
     return { candidate, environment: env.name, key };
   }
   return null;
+}
+
+// A policy refusal reason a specification change leaves while its
+// evidence is made again (the driver's ruling on M401's T1 stall, slice
+// 37): EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks with no
+// current result for the candidate because the change invalidated it
+// (`spec_changed`) or its correction's version superseded it. Asked again
+// at the next tick, like *_PENDING.
+export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }): boolean {
+  if (r.code === 'EVIDENCE_GENERATION_STALE') return true;
+  if (r.code !== 'CHECK_NOT_PASSED') return false;
+  const subjects = r.subjects ?? [];
+  if (subjects.length === 0) return false;
+  return subjects.every((check) => {
+    const key = (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(check) as { key: string } | undefined)?.key;
+    if (key === undefined) return false;
+    const rows = db
+      .prepare(`SELECT x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
+      .all(candidate, key) as { invalidated_at: string | null; invalidated_reason: string | null }[];
+    // Invalidated by the change itself (`spec_changed`), or superseded by the
+    // protected version its correction applied (`protected_version_superseded`),
+    // the checks registered again under it (M401's T1 store, 17195cf..42c58ba).
+    return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed' || x.invalidated_reason === 'protected_version_superseded');
+  });
 }
 
 // What the request needs the main thread to read first.
@@ -803,7 +865,10 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   if (requestedBy === 'policy') {
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
-    if (requestOfKey(tx.db, args.project, key)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    const existing = requestOfKey(tx.db, args.project, key);
+    if (existing && !preparing(existing)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    // Re-prepared under its key after an unexpected error: one more preparation counted.
+    if (existing) tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?').run(existing.id);
     if (pendingRow) return { status: 200, body: { request: null, skipped: 'pending' } };
   }
   const record = (auth: string, outcome: string) =>
@@ -851,6 +916,24 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // The refused request keeps its evaluation on the proposed row (A.3:
     // the outcome and its reasons retained, SEAM.md §354).
     tx.db.prepare(`UPDATE "deployment_authorizations" SET "evaluation" = ? WHERE "id" = ? AND "status" = 'proposed'`).run(evaluation.id, auth.id);
+    // The policy's request refused only for what is still settling (a git
+    // operation of the project's journal in flight, a pending read): no
+    // outcome is recorded under its key, so the next tick requests again
+    // (under D6 K2 another run's integration is often in flight; a
+    // not_issued here would end the policy's deployment for good).
+    const reasons = (evaluation.reasons as { code: string; subjects?: string[] }[] | undefined) ?? [];
+    const settling = reasons.length > 0 && reasons.every((r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(tx.db, candidate.id, r)));
+    if (requestedBy === 'policy' && settling) {
+      return {
+        status: 409,
+        body: {
+          code: 'authorization_not_issued',
+          reason: `The ${env.name} deployment of candidate ${candidate.id} is not authorized yet: ${reasons.map((r) => r.code).join(', ')}; the policy requests it again at the next tick.`,
+          what_to_do: 'Nothing: the policy requests it again once the pending work settles.',
+          subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
+        },
+      };
+    }
     record(auth.id, 'not_issued');
     return {
       status: 409,
@@ -1275,7 +1358,7 @@ export function preemptTeardown(tx: Tx, args: { environment: string; cause: stri
 
 // The operation's way out (D4 §4.7): the lease released, the orchestration
 // ended, and the deploy work item settled.
-function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string): void {
+function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'blocked' | 'none', cause: string, blockerFacts: Record<string, unknown> = {}): void {
   const f = frozenOf(op);
   if (op.orchestration_stage !== 'ended') bumpRevision(tx, f.environment);
   releaseOperationLeases(tx, op);
@@ -1291,8 +1374,46 @@ function endOperation(tx: Tx, op: OpRow, work: 'complete' | 'cancelled' | 'block
   } else if (work === 'cancelled') {
     transitionWork(tx, item, 'cancelled', { blocker: null }, { operation: op.id, cause });
   } else if (item.status === 'executing') {
-    transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id }) }, { operation: op.id, cause });
+    const waiting = transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: cause, raised_at: tx.at, decision: null, operation: op.id, ...blockerFacts }) }, { operation: op.id, cause });
+    // D4 §4.7: the work item waits on a blocker that names the cause and
+    // offers what applies (re-verification, abandonment of completion, the
+    // preempting teardown): a decision, never a blocker with none (the
+    // driver's ruling 2 on M401, slice 37). With nothing to decide, the work
+    // ends with its reason.
+    if (raiseQuestion(tx, { project: op.project, kind: 'blocker', subjectType: 'work_item', subjectId: waiting.id }) === null) {
+      transitionWork(tx, getWorkItem(tx, waiting.id)!, 'cancelled', { blocker: null }, { operation: op.id, cause });
+    }
   }
+}
+
+// What a deploy work item waiting on a refused completion is offered (D4
+// §4.7; the driver's ruling 2 on M401, slice 37), or null when it is not
+// such an item: its operation and environment, and whether re-verification
+// can succeed: the operation a finalized deploy whose latest attempt
+// succeeded on the environment's current generation (as POST …/verify
+// requires), and its candidate not superseded (D4 §5.5 refuses
+// alpha_complete for a superseded candidate).
+export function refusedCompletionFacts(db: Db, item: { kind: string; status: string; blocker: string | null }): { operation: string; environment: string; environment_name: string; candidate: string | null; reverify: boolean; cause: string } | null {
+  if (item.kind !== 'deploy' || item.status !== 'awaiting_decision' || item.blocker === null) return null;
+  const blocker = JSON.parse(item.blocker) as { reason?: string; operation?: string };
+  if (typeof blocker.reason !== 'string' || !blocker.reason.startsWith('deploy_completion_refused') || typeof blocker.operation !== 'string') return null;
+  const op = getOp(db, blocker.operation);
+  if (!op) return null;
+  const frozen = frozenOf(op);
+  const j = journalOf(db, op.id);
+  const latest = attemptsOf(db, op.id).at(-1);
+  const env = getEnv(db, frozen.environment);
+  const candidate = frozen.candidate ? (db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ?').get(frozen.candidate) as { superseded_by: string | null } | undefined) : undefined;
+  const reverify =
+    op.kind === 'deploy' &&
+    j?.state === 'finalized' &&
+    latest !== undefined &&
+    (latest.status === 'succeeded' || latest.status === 'reconciled_succeeded') &&
+    env !== undefined &&
+    env.current_generation === latest.deployment_generation &&
+    candidate !== undefined &&
+    candidate.superseded_by === null;
+  return { operation: op.id, environment: frozen.environment, environment_name: frozen.environment_name, candidate: frozen.candidate, reverify, cause: blocker.reason };
 }
 
 // An operation that ends `failed` with nothing applied: the journal failed,
@@ -1986,7 +2107,9 @@ export function startDeployAttempt(
   if (op.kind === 'deploy') {
     domain = tx.newId('dom_');
     const policy = projectPolicy(tx.db, op.project) as Record<string, number>;
-    const reservation = { memory: policy.service_memory_max ?? null, check_capacity: args.service?.checkCapacity ?? null };
+    // The check capacity it reserves: its project's effective check maximum
+    // (D6 K2, E126; B09), no longer the ceiling.
+    const reservation = { memory: policy.service_memory_max ?? null, check_capacity: args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
     const runtimeDir = args.service ? serviceRuntimeDir(args.service.home, env.id, g) : null;
     tx.db
       .prepare(
@@ -3326,7 +3449,7 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
   // Never while an execution of its rounds is live: its link may be open,
   // and the lease is released only once ingress is closed (D4 §4.7; m1).
   if (liveExecutionIds(tx.db, op.id).length > 0) return;
-  if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`);
+  if (op.orchestration_stage === 'completion') endOperation(tx, op, 'blocked', `deploy_completion_refused:${args.reasons.join(',')}`, { evaluation: args.evaluation });
 }
 
 // ---- reads (D4 §6.1; N02: stored reads only) --------------------------------------------------------

@@ -11,7 +11,8 @@
 // recorded beforehand (evidence.ts), and the protected fingerprint of the
 // integration branch's head is handed in.
 
-import { type ConformanceFacts, conformanceAfterEvaluation, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
+import { activeStages } from '../../plan/active.js';
+import { type ConformanceFacts, conformanceAfterEvaluation, conformanceSnapshot, dueConformanceGates, isConformanceStage, recordCandidateDigest, sourceMoved } from '../../adopt/conformance.js';
 import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
@@ -24,7 +25,7 @@ import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
 import { verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
@@ -511,11 +512,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   const discoveryPaths = [...new Set(discoveryErrorsOf(db, scope.effective.id).map((e) => e.path))];
   // A check with an unresolved spec-change obligation (D6 §4.5, B05) is
   // named until the correction lands: the scope is not complete.
-  const owed = new Set(
-    (db.prepare(`SELECT DISTINCT "key" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as { key: string }[]).map((o) => o.key),
-  );
-  const obligated = scope.required.filter((c) => owed.has(c.key)).map((c) => c.id);
-  const missingNamed = [...missingSubjects(scope.missing), ...obligated];
+  const missingNamed = [...missingSubjects(scope.missing), ...obligationsHolding(db, args.project, scope)];
   const scopeComplete = scope.required.length > 0 && missingNamed.length === 0 && unreadable.ancestry !== true && discoveryPaths.length === 0;
   if (!scopeComplete) add('ACCEPTANCE_SCOPE_INCOMPLETE', [...missingNamed, ...discoveryPaths]);
   // The `phase` gate's own (D6 §5.8; A.4; K5, B07): an assigned requirement
@@ -534,6 +531,23 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       const unassigned = (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" IS NULL AND "withdrawn_at" IS NULL ORDER BY "key"').all(args.project) as { key: string }[]).map((r) => r.key);
       if (unassigned.length > 0) add('REQUIREMENT_UNASSIGNED', unassigned);
     }
+  }
+  // `alpha_authorize` (D6 §6.2; B07; the driver's ruling 2 of slice 37,
+  // carried from slice 35's ruling 9): the planned and deferred authoring
+  // obligations of the phases whose stages the candidate delivers, as the
+  // phase gate reads them; nothing is waived by building first.
+  if (kind === 'alpha_authorize') {
+    const delivered = new Set(scope.delivered);
+    const keys = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(args.project) as { id: string; key: string }[]).map((r) => [r.key, r.id]));
+    const plans = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY "phase_number"`).all(args.project) as { id: string }[];
+    const shortfall: string[] = [];
+    for (const plan of plans) {
+      const delivers = activeStages<{ implements: string | null }>(db, plan.id).some((st) =>
+        (parseJson<string[]>(st.implements) ?? []).some((r) => delivered.has(r) || delivered.has(keys.get(r) ?? '')),
+      );
+      if (delivers) shortfall.push(...authoringShortfall(db, plan.id, scope.effective.id));
+    }
+    if (shortfall.length > 0) add('AUTHORING_INCOMPLETE', [...new Set(shortfall)]);
   }
 
   // (2) The protected path is authorized and effective. A protected set
@@ -817,6 +831,9 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     findings: findings.map((f) => f.id),
     signoffs: signoffs.map((s) => s.id),
     head_fingerprint: args.headFingerprint ?? null,
+    // A conformance stage's source as this evaluation read it (B11): what
+    // makes its gate due again when it moves (adopt/conformance.ts).
+    ...(conformance ? { conformance: conformanceSnapshot(db, target.stage!, args.conformance) } : {}),
   };
   tx.db
     .prepare(
@@ -872,7 +889,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (conformance && superseded === null) {
     const failed = scope.required.some((c) => states[c.id] === 'failed');
     const blockedBy = reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED' || r.code === 'FINDING_BLOCKING' || r.code === 'FINDING_UNSATISFIED') || failed;
-    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id });
+    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id, sourceMoved: reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED') });
   }
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
   if (kind === 'alpha_complete') {
@@ -900,11 +917,52 @@ function completeStageWork(tx: Tx, candidate: CandidateRow, stage: string, evalu
   tx.db.prepare(`UPDATE "stages" SET "status" = 'verified' WHERE "id" = ? AND "status" = 'integrated'`).run(stage);
 }
 
+// The unresolved `spec_changed` obligations that hold a scope (D6 §4.5;
+// B05; the driver's ruling on M401's T1 run, slice 37): one on a check the
+// scope requires, named by the check's id; and one on a check this gate
+// kind does not require (a stage check, at the phase gate or
+// alpha_authorize or alpha_complete) whose criteria are of a requirement the
+// candidate delivers, named `obligation:<key>`.
+export function obligationsHolding(db: Db, project: string, scope: { required: { id: string; key: string }[]; delivered: string[] }): string[] {
+  const owed = db.prepare(`SELECT DISTINCT "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(project) as { key: string; criteria: string }[];
+  if (owed.length === 0) return [];
+  const owedKeys = new Set(owed.map((o) => o.key));
+  const obligated = scope.required.filter((c) => owedKeys.has(c.key)).map((c) => c.id);
+  const requiredKeys = new Set(scope.required.map((c) => c.key));
+  const delivered = new Set(scope.delivered);
+  const owner = new Map<string, string[]>();
+  for (const r of db.prepare('SELECT "id", "key", "criteria" FROM "requirements" WHERE "project" = ?').all(project) as { id: string; key: string; criteria: string | null }[]) {
+    for (const c of parseJson<string[]>(r.criteria) ?? []) owner.set(c, [r.id, r.key]);
+  }
+  const elsewhere = owed
+    .filter((o) => !requiredKeys.has(o.key) && (parseJson<string[]>(o.criteria) ?? []).some((c) => (owner.get(c) ?? []).some((x) => delivered.has(x))))
+    .map((o) => `obligation:${o.key}`);
+  return [...obligated, ...new Set(elsewhere)];
+}
+
 // The candidate's verification work: the item its nomination registered.
 export function verificationOf(db: Db, candidate: string): { id: string; status: string; chain: number } | undefined {
   return db
     .prepare(`SELECT "id", "status", "chain" FROM "work_items" WHERE "kind" = 'verification' AND "trigger_source" = 'nomination' AND "trigger_id" = ? AND "trigger_generation" = 1`)
     .get(candidate) as { id: string; status: string; chain: number } | undefined;
+}
+
+// The generation of a candidate's review trigger (slice 37): a review whose
+// sign-offs are all bound to acceptance content the candidate no longer has
+// (a protected version applied while it ran: under D6 K2 a check
+// correction and the review run side by side) is asked again, once per
+// content, as the next generation. A review that signed nothing, or one
+// still under way, is not repeated.
+export function reviewGeneration(db: Db, project: string, candidate: string, contentHash: string): number {
+  const latest = db
+    .prepare(`SELECT "id", "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND "trigger_source" = 'verification' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
+    .get(project, candidate) as { id: string; status: string; trigger_generation: number } | undefined;
+  if (!latest) return 1;
+  if (latest.status !== 'complete') return latest.trigger_generation;
+  const signed = db
+    .prepare(`SELECT s."acceptance_content_hash" AS "hash" FROM "signoffs" s JOIN "runs" r ON r."id" = s."run" WHERE r."work_item" = ? AND s."candidate" = ?`)
+    .all(latest.id, candidate) as { hash: string }[];
+  return signed.length > 0 && !signed.some((x) => x.hash === contentHash) ? latest.trigger_generation + 1 : latest.trigger_generation;
 }
 
 // The engine queues the review a tier requires (E36 item 3; E38; SEAM.md
@@ -920,9 +978,10 @@ function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Reco
   const verification = verificationOf(tx.db, candidate.id);
   if (!verification || verification.status !== 'complete') return;
   const run = tx.db.prepare(`SELECT "chain" FROM "runs" WHERE "work_item" = ? AND "outcome" = 'completed' ORDER BY "seq" DESC LIMIT 1`).get(verification.id) as { chain: number } | undefined;
+  const generation = reviewGeneration(tx.db, candidate.project, candidate.id, scope.contentHash);
   observeTrigger(
     tx,
-    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: 1, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1 },
+    { project: candidate.project, kind: 'review', trigger_source: 'verification', trigger_id: candidate.id, trigger_generation: generation, subject: { candidate: candidate.id }, chain: run?.chain ?? verification.chain + 1, chain_origin: originOfItem(tx.db, verification.id) },
     {},
   );
 }

@@ -51,7 +51,7 @@ import { redactText } from '../records/redact.js';
 import type { AlphaPrepared } from '../store/transitions/findings.js';
 import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
-import { seamSpecBlobFault } from '../testing/seam.js';
+import { pausePoint, seamSpecBlobFault } from '../testing/seam.js';
 import type { ApplicabilityEntry } from '../spec/change.js';
 
 const RETRY_FIRST_MS = 500;
@@ -75,6 +75,8 @@ interface Wait {
   wait: string;
 }
 type StepEnd = RunEnd | null | Wait;
+// The integration step went on to its nomination (underIntegrationLease).
+const GO_ON = Symbol('go_on');
 const isWait = (s: StepEnd): s is Wait => s !== null && 'wait' in s;
 const unresolved = (settled: Settled): Wait | null => (settled.end === 'ambiguous' || settled.end === 'blocked' ? { wait: settled.op.id } : null);
 const WAIT_POLL_MS = 250;
@@ -85,6 +87,15 @@ export class Acceptor {
     private readonly ender: RunEnder,
     private readonly journal: Journal,
   ) {}
+
+  // The project's integration, one at a time (D1 §7.5; K2): the project's
+  // journal held, with its durable `integration` lease, from the read of
+  // the head to the nomination (journal/driver.ts withProject), shared with
+  // every other engine writer of the integration ref (the slice-37 review's
+  // M3).
+  private underIntegrationLease<T>(project: string, run: string, fn: () => Promise<T>): Promise<T> {
+    return this.journal.withProject(project, fn, run);
+  }
 
   // The role exited 0 after a valid result: accept what it left. The run is
   // held by the pipeline until it ends it.
@@ -229,7 +240,8 @@ export class Acceptor {
     if (facts.commits.length === 0) {
       const diff = await validateDiff(repo, base, tree, role, facts.caps, facts.roots);
       if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
-      const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
+      await pausePoint('snapshot.before_validate_outside');
+      const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
       if (outside) return failed(outside.klass, outside.text);
     }
 
@@ -256,94 +268,104 @@ export class Acceptor {
 
     // 6. Integration.
     if (!(await this.rt.engine<boolean>('accept.integrating', { run }))) return null;
-    facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
-    let integration = facts.integrations.at(-1);
-    if (!integration) {
-      const at = await branchCheckedOutAt(repo, facts.project.branch, this.rt.home);
-      if (at !== null && at !== 'unknown') {
-        return failed(
-          'integration_conflict',
-          `the integration was refused: the integration branch ${facts.project.branch} is checked out in the worktree ${at}, which the engine does not own; switch that worktree to another branch, or detach it`,
-          { park: 'integration_branch_checked_out', worktree: at },
-        );
-      }
-      const head = facts.head;
-      if (head === null) return failed('infra_error', 'the integration branch is not registered');
-      let target = facts.commits.filter((c) => c.state === 'finalized').at(-1)!;
-      const ctx = repoContext(repo);
-      const fastForward = target.parent === head || (await isAncestor(ctx, head, target.sha)) === true;
-      if (!fastForward) {
-        // The branch moved: the run's changes are rebased onto the head,
-        // validated again, and committed on it (D1 §7.5).
-        const base = await mergeBase(ctx, head, target.sha);
-        if (base === null) return failed('infra_error', 'the merge base of the run and the integration branch could not be read');
-        const rebased = await rebaseTree(repo, base, target.sha, head, this.rt.scratch);
-        if (rebased === 'unknown') return failed('infra_error', 'the run could not be rebased onto the integration branch: the repository could not be read');
-        if (rebased.conflict !== null) {
-          return failed('integration_conflict', `the integration branch moved to ${head}, and the run's changes to ${rebased.conflict} do not apply to it`, { park: 'integration_conflict' });
-        }
-        const check = await validateDiff(repo, head, rebased.tree, role, facts.caps, facts.roots);
-        if (check.violation) return failed(check.violation.klass, `the rebased result: ${check.violation.text}`);
-        const again = facts.commits.find((c) => c.parent === head && c.tree === rebased.tree);
-        if (again && again.state === 'finalized') target = again;
-        else {
-          const made = again ? await this.driveCommit(again.id, again) : await this.commit(facts, rebased.tree, head, true);
-          if ('end' in made) return made.end;
-          target = made.commit;
-        }
-      }
-      const headTree = await treeOf(ctx, head);
-      const targetTree = await treeOf(ctx, target.sha);
-      if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
-      const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
-      if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
-      // A replan's plan in Appendix B.5's form (D6 §5.6): checked against
-      // the bundle now, on the main thread; its finalizer publishes it as its
-      // routing says. A plan in D1 §7.8's form registers as built.
-      let replan: ReplanPrepared | null = null;
-      let legacy = plans.plans;
-      if (role === 'architect' && plans.plans.length > 0) {
-        const prepared = await this.replanOf(facts, target.sha, plans.plans.map((x) => x.path), base);
-        if (prepared !== null && 'refused' in prepared) return failed('invalid_result', prepared.refused);
-        if (prepared !== null) {
-          replan = prepared.replan;
-          legacy = [];
-        }
-      }
-      const intent = await this.journal.withProject(facts.project.id, () =>
-        this.journal.intend(
-          'accept.intend_integration',
-          { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
-          'ref_update',
-        ),
-      );
-      if ('fenced' in intent) return null;
+    // Serial under the project's integration lease (D1 §7.5; D6 §6.4, K2;
+    // the driver's ruling 7, slice 37): the head is read, the run rebased
+    // onto it, the compare-and-swap intended and driven while this run holds
+    // the durable `integration` lease of its project; the compare-and-swap
+    // still guards the branch.
+    const serial = await this.underIntegrationLease(facts.project.id, run, async (): Promise<StepEnd | typeof GO_ON> => {
       facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
-      integration = facts.integrations.at(-1)!;
-    }
-    let settled: Settled | null = null;
-    if (integration.state !== 'finalized' && integration.state !== 'failed') {
-      settled = await this.journal.withProject(facts.project.id, () => this.journal.drive(integration!.id));
-    }
-    if (settled !== null) {
-      const wait = unresolved(settled);
-      if (wait) return wait;
-    }
-    const state = settled?.op.state ?? integration.state;
-    const detail = settled?.op.outcome_detail ?? integration.detail;
-    if (state === 'failed') {
-      const current = await this.rt.read<string | null>('run.state', { run });
-      if (current !== 'validating') return null;
-      if (detail?.reason === 'integration_branch_checked_out') {
-        return failed('integration_conflict', `the integration was refused: ${String(detail.text)}`, { park: 'integration_branch_checked_out', worktree: detail.worktree });
+      let integration = facts.integrations.at(-1);
+      if (!integration) {
+        const at = await branchCheckedOutAt(repo, facts.project.branch, this.rt.home);
+        if (at !== null && at !== 'unknown') {
+          return failed(
+            'integration_conflict',
+            `the integration was refused: the integration branch ${facts.project.branch} is checked out in the worktree ${at}, which the engine does not own; switch that worktree to another branch, or detach it`,
+            { park: 'integration_branch_checked_out', worktree: at },
+          );
+        }
+        const head = facts.head;
+        if (head === null) return failed('infra_error', 'the integration branch is not registered');
+        let target = facts.commits.filter((c) => c.state === 'finalized').at(-1)!;
+        const ctx = repoContext(repo);
+        const fastForward = target.parent === head || (await isAncestor(ctx, head, target.sha)) === true;
+        if (!fastForward) {
+          // The branch moved: the run's changes are rebased onto the head,
+          // validated again, and committed on it (D1 §7.5).
+          const base = await mergeBase(ctx, head, target.sha);
+          if (base === null) return failed('infra_error', 'the merge base of the run and the integration branch could not be read');
+          const rebased = await rebaseTree(repo, base, target.sha, head, this.rt.scratch);
+          if (rebased === 'unknown') return failed('infra_error', 'the run could not be rebased onto the integration branch: the repository could not be read');
+          if (rebased.conflict !== null) {
+            return failed('integration_conflict', `the integration branch moved to ${head}, and the run's changes to ${rebased.conflict} do not apply to it`, { park: 'integration_conflict' });
+          }
+          const check = await validateDiff(repo, head, rebased.tree, role, facts.caps, facts.roots);
+          if (check.violation) return failed(check.violation.klass, `the rebased result: ${check.violation.text}`);
+          const again = facts.commits.find((c) => c.parent === head && c.tree === rebased.tree);
+          if (again && again.state === 'finalized') target = again;
+          else {
+            const made = again ? await this.driveCommit(again.id, again) : await this.commit(facts, rebased.tree, head, true);
+            if ('end' in made) return made.end;
+            target = made.commit;
+          }
+        }
+        const headTree = await treeOf(ctx, head);
+        const targetTree = await treeOf(ctx, target.sha);
+        if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
+        const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
+        if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
+        // A replan's plan in Appendix B.5's form (D6 §5.6): checked against
+        // the bundle now, on the main thread; its finalizer publishes it as its
+        // routing says. A plan in D1 §7.8's form registers as built.
+        let replan: ReplanPrepared | null = null;
+        let legacy = plans.plans;
+        if (role === 'architect' && plans.plans.length > 0) {
+          const prepared = await this.replanOf(facts, target.sha, plans.plans.map((x) => x.path), base);
+          if (prepared !== null && 'refused' in prepared) return failed('invalid_result', prepared.refused);
+          if (prepared !== null) {
+            replan = prepared.replan;
+            legacy = [];
+          }
+        }
+        const intent = await this.journal.withProject(facts.project.id, () =>
+          this.journal.intend(
+            'accept.intend_integration',
+            { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
+            'ref_update',
+          ),
+        );
+        if ('fenced' in intent) return null;
+        facts = await this.rt.engine<AcceptFacts>('accept.facts', { run });
+        integration = facts.integrations.at(-1)!;
       }
-      if (detail?.reason === 'closing') return null;
-      return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict' });
-    }
-    if (state !== 'finalized') return { wait: integration.id };
-
-    // 7. A nomination that is due.
-    await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
+      let settled: Settled | null = null;
+      if (integration.state !== 'finalized' && integration.state !== 'failed') {
+        settled = await this.journal.withProject(facts.project.id, () => this.journal.drive(integration!.id));
+      }
+      if (settled !== null) {
+        const wait = unresolved(settled);
+        if (wait) return wait;
+      }
+      const state = settled?.op.state ?? integration.state;
+      const detail = settled?.op.outcome_detail ?? integration.detail;
+      if (state === 'failed') {
+        const current = await this.rt.read<string | null>('run.state', { run });
+        if (current !== 'validating') return null;
+        if (detail?.reason === 'integration_branch_checked_out') {
+          return failed('integration_conflict', `the integration was refused: ${String(detail.text)}`, { park: 'integration_branch_checked_out', worktree: detail.worktree });
+        }
+        if (detail?.reason === 'closing') return null;
+        return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict' });
+      }
+      if (state !== 'finalized') return { wait: integration.id };
+      // 7. A nomination that is due, still under the lease: each
+      // integration's own cadence point is nominated before the next
+      // integration of the project can move the branch (D1 §7.7; K2).
+      await this.rt.services?.nominate(facts.project.id).catch((err) => log('nomination', err, { project: facts.project.id }));
+      return GO_ON;
+    });
+    if (serial !== GO_ON) return serial;
     return { outcome: 'completed', reason: 'none' };
   }
 
@@ -550,7 +572,8 @@ export class Acceptor {
     const diff = await validateDiff(repo, base, tree, facts.run.role, facts.caps, facts.roots);
     if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
     const ws = facts.workspace!;
-    const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch });
+    await pausePoint('snapshot.before_validate_outside');
+    const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
     if (outside) return failed(outside.klass, outside.text);
     // A specification change's correction (D6 §4.5; the driver's rulings Q6,
     // Q13, Q-D; the slice-36 review's S1): the Verifier's applicability
@@ -592,11 +615,23 @@ export class Acceptor {
     // What earlier applied proposals declared stays declared (their copies
     // are already under the root): the boundary is theirs and this one's.
     if (adopted) boundary = await boundaryErrors(repo, tree, facts.roots, [...(await this.rt.read<AdoptedTest[]>('project.adopted_tests', { project: facts.project.id })), ...adoptedTests]);
+    // B.7: deferrals are a phase authoring's only (D6 §6.2).
+    if ((report.deferred_criteria ?? []).length > 0 && facts.work.kind !== 'check_authoring') return failed('invalid_result', 'deferred_criteria is the field of a phase\'s check authoring only');
+    // Each deferral's prerequisite names a stage of the plan or an interface
+    // of its module map (the slice-37 review's M5).
+    if ((report.deferred_criteria ?? []).length > 0) {
+      const invalid = await this.rt.read<string | null>('deferral.refs_invalid', { run: facts.run.id, deferrals: report.deferred_criteria });
+      if (invalid !== null) return failed('invalid_result', invalid);
+    }
+    // SEAM.md §428: an authoring run's protected diff read, its proposal
+    // not yet written.
+    if (facts.work.kind === 'check_authoring') await pausePoint('check_authoring.before_proposal');
     await this.rt.engine('accept.capture_proposal', {
       run,
       base,
       tree,
       adoptedTests: report.adopted_tests ?? null,
+      deferredCriteria: report.deferred_criteria ?? null,
       boundaryErrors: boundary === null ? [{ file: null, import: null, resolved: null, why: "the proposal's tree under the protected root could not be read, so its import boundary is unknown" }] : boundary,
       diffHash: diffHashOf(diff.changes),
       rationale,

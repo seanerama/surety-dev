@@ -20,6 +20,7 @@
 // engine knows its command's result, and goes on from it (probing as the
 // ordinary course does). Every operation is driven by one caller at a time.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { GIT_HOME_MARKER, GIT_INCARNATION_MARKER, GIT_OPERATION_MARKER, gitSettings } from '../git/exec.js';
@@ -64,8 +65,33 @@ export class Journal {
   }
 
   // Run `fn` with the project's journal to itself: integrations, policy
-  // changes, nominations and discards of one project are serial (E18).
-  async withProject<T>(project: string, fn: () => Promise<T>): Promise<T> {
+  // changes, nominations and discards of one project are serial (E18). Every
+  // engine writer of the integration ref holds it from its read of the head
+  // to its drive (the slice-37 review's M3): an in-process queue per project
+  // and, inside it, the project's durable `integration` lease (D1 §7.5;
+  // A.3), so under D6 K2 they are ordered rather than conflicting. Nested
+  // calls within the holder run at once (reentrant by async context).
+  // `lease: false`: the in-process queue only, for a holder that may find
+  // nothing to write (the tick's nomination step, M303 (a)); a nested call
+  // that writes takes the durable lease then, inside the queue.
+  private readonly holding = new AsyncLocalStorage<Set<string>>();
+  // Operations this incarnation's own finalizers intended (a commit's
+  // follow-on branch update), until driven.
+  private readonly ownFollows = new Set<string>();
+  private readonly leased = new AsyncLocalStorage<Set<string>>();
+  async withProject<T>(project: string, fn: () => Promise<T>, holder = 'journal', opts: { lease?: boolean } = {}): Promise<T> {
+    const wantLease = opts.lease !== false;
+    const held = this.holding.getStore();
+    const leasedNow = this.leased.getStore();
+    if (held?.has(project)) {
+      if (!wantLease || leasedNow?.has(project)) return fn();
+      const lease = await this.acquireIntegration(project, holder);
+      try {
+        return await this.leased.run(new Set([...(leasedNow ?? []), project]), fn);
+      } finally {
+        await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project }));
+      }
+    }
     const before = this.projectLocks.get(project) ?? Promise.resolve();
     let release: () => void = () => {};
     const mine = new Promise<void>((resolve) => {
@@ -74,11 +100,26 @@ export class Journal {
     const chained = before.then(() => mine);
     this.projectLocks.set(project, chained);
     await before;
+    let lease: string | null = null;
     try {
-      return await fn();
+      if (wantLease) lease = await this.acquireIntegration(project, holder);
+      const inner = () => this.holding.run(new Set([...(held ?? []), project]), fn);
+      return await (wantLease ? this.leased.run(new Set([...(leasedNow ?? []), project]), inner) : inner());
     } finally {
+      if (lease !== null) await this.rt.engine('integration.release', { lease }).catch((err) => log('integration lease', err, { project }));
       release();
       if (this.projectLocks.get(project) === chained) this.projectLocks.delete(project);
+    }
+  }
+
+  // The durable lease, taken over only from a holder that is gone (an
+  // earlier incarnation, or one whose lease_ttl passed): a live holder of
+  // this incarnation is waited for.
+  private async acquireIntegration(project: string, holder: string): Promise<string> {
+    for (;;) {
+      const lease = await this.rt.engine<string | null>('integration.acquire', { project, run: holder, incarnation: this.rt.incarnation });
+      if (lease !== null) return lease;
+      await sleep(250);
     }
   }
 
@@ -211,8 +252,22 @@ export class Journal {
     const named = purpose === 'nomination' ? 'nomination' : purpose === 'protected' ? 'protected_application' : null;
     if (named !== null) await pausePoint(`${named}.before_finalizer`);
     const receipts = await this.rt.engine<Record<string, unknown>>('journal.finalize', { operation: op.id });
+    // The operation a finalizer intended next (a commit's branch update),
+    // known to this incarnation as its own course (reconcile's `block`).
+    const follow = (receipts as { follow?: unknown } | null)?.follow;
+    if (typeof follow === 'string') this.ownFollows.add(follow);
     await pausePoint(`journal.${op.kind}.finalizer_committed`);
     if (named !== null) await pausePoint(`${named}.finalized`);
+    // SEAM.md §428: a phase's authoring version made effective, readiness
+    // recorded in that transaction, before anything further is selected.
+    if (purpose === 'protected' && (receipts as { authoring_ready?: boolean } | null)?.authoring_ready === true) {
+      this.rt.selectHeld++;
+      try {
+        await pausePoint('check_authoring.applied');
+      } finally {
+        this.rt.selectHeld--;
+      }
+    }
     return { op: await this.detail(op.id), end: 'finalized', receipts };
   }
 
@@ -280,6 +335,17 @@ export class Journal {
             await pausePoint(`journal.${op.kind}.reconciled`);
             return { op: await this.detail(op.id), end: 'failed', receipts: {} };
           }
+          // Moved somewhere else (by hand) while this engine itself is
+          // carrying the update: one its own finalizer intended in this
+          // incarnation and nothing attempted since. Its outcome is not
+          // unknown: it is attempted now, and git's compare-and-swap decides;
+          // refused because the old value does not match, it is a definite
+          // failure without effect, never an ambiguity (the driver's ruling on
+          // M53 case 8, slice 37). Found so by recovery after a restart, the
+          // operation's course is not this engine's to know, and it blocks as
+          // D1 §7.10 says (M29, M70). The move itself is integrity's to
+          // observe, out of band.
+          if (found !== 'unknown' && this.ownFollows.delete(op.id)) return this.execute(op);
         }
         return this.block(op, outcome);
     }

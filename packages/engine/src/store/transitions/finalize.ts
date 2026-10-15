@@ -7,6 +7,8 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { followUpsDue } from '../../plan/deferral.js';
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { reraiseOnPolicy } from '../../adopt/records.js';
 import { conformanceNominated } from '../../adopt/conformance.js';
 import { illegal } from './common.js';
@@ -18,7 +20,7 @@ import { intendOperation } from './journal.js';
 import { type Baseline, type RefKind, addCheckout, nextCounter, openLineage, recordRevision, registerRef, releaseCheckouts } from './repo.js';
 import type { Tx } from './tx.js';
 import { cancelSuperseded, registerAtNomination } from './checks.js';
-import { getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
+import { type ChainOrigin, getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
 import { supersededWhileRunning } from '../../plan/replace.js';
@@ -80,6 +82,8 @@ export interface RefInputs {
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
+  // The origin of the chain (D6 §6.5; K3): carried to the work it makes.
+  chain_origin?: ChainOrigin | null;
   // nomination
   seq?: number;
   by?: 'engine_cadence' | 'builder_request';
@@ -250,6 +254,11 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   }
   if (inputs.stage) {
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);
+    // Its dependants' stage-code milestone (D6 §6.4; B08), after its
+    // work.integrated; a deferral it was the prerequisite of, its follow-up
+    // (D6 §6.2; D6-W06), once.
+    recordMetMilestones(tx, op.project);
+    followUpsDue(tx, op.project);
     // A stage an early replacement superseded while its Builder ran (D6
     // §5.7; the driver's ruling 10): its late integration is history, the
     // code on the branch; its work completes `superseded` and is never
@@ -288,9 +297,22 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     transitionWork(tx, now, 'complete', {}, { run: inputs.run, operation: op.id });
   }
   if (inputs.nominate) {
-    tx.db
-      .prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?')
-      .run(JSON.stringify({ revision: inputs.new_oid, by: inputs.nominate.by, chain: inputs.chain ?? 1 }), op.project);
+    // A nomination still due when another integration finalizes (one
+    // finalized by recovery, outside the lease) is not lost (the slice-37
+    // review's N3): the integration branch moves by compare-and-swap, so the
+    // later revision holds the earlier one, and the due nomination is made
+    // at it, a Builder's request kept, the deeper chain and both origins
+    // carried.
+    const before = tx.db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(op.project) as { nomination_due: string | null };
+    const prior = before.nomination_due ? (JSON.parse(before.nomination_due) as { revision: string; by: string; chain: number; origin: unknown; subsumes?: string[] }) : null;
+    const due = {
+      revision: inputs.new_oid,
+      by: prior?.by === 'builder_request' ? 'builder_request' : inputs.nominate.by,
+      chain: Math.max(inputs.chain ?? 1, prior?.chain ?? 0),
+      origin: inputs.chain_origin ?? prior?.origin ?? null,
+      ...(prior ? { subsumes: [...(prior.subsumes ?? []), prior.revision] } : {}),
+    };
+    tx.db.prepare('UPDATE "projects" SET "nomination_due" = ? WHERE "id" = ?').run(JSON.stringify(due), op.project);
   }
   return { plans };
 }
@@ -357,7 +379,7 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   registerPhaseAtNomination(tx, { project: op.project, candidate });
   const verification = observeTrigger(
     tx,
-    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1 },
+    { project: op.project, kind: 'verification', trigger_source: 'nomination', trigger_id: candidate, trigger_generation: 1, subject: { candidate }, chain: inputs.chain ?? 1, chain_origin: inputs.chain_origin ?? null },
     {},
   );
   cancelSuperseded(tx, op.project);

@@ -299,7 +299,21 @@ export class SessionDriver {
   // The snapshot, its validation against the role's paths, the checkpoint
   // commit on the workspace's current base and its integration by a
   // compare-and-swap of the integration branch. `sha` null: nothing differs.
-  private async checkpoint(facts: SaveFacts): Promise<{ sha: string | null } | { refused: { code: string; text: string; refusal: Refusal } }> {
+  // With the project's journal and its integration lease held, from the read
+  // of the head to the drive (the slice-37 review's M3).
+  private checkpoint(facts: SaveFacts): Promise<{ sha: string | null } | { refused: { code: string; text: string; refusal: Refusal } }> {
+    return this.journal.withProject(
+      facts.project,
+      async () => {
+        const reg = await this.rt.read<{ registry: { ref: string; expected_oid: string }[] }>('integrity.registry', { project: facts.project });
+        const head = reg.registry.find((r) => r.ref === `refs/heads/${facts.branch}`)?.expected_oid ?? null;
+        return this.checkpointHeld({ ...facts, head });
+      },
+      `session:${facts.run}`,
+    );
+  }
+
+  private async checkpointHeld(facts: SaveFacts): Promise<{ sha: string | null } | { refused: { code: string; text: string; refusal: Refusal } }> {
     const ws = facts.workspace;
     if (!ws || !ws.metadata) return { sha: null };
     const metadata = ws.metadata as unknown as MetadataBaseline;

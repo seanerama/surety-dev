@@ -92,6 +92,7 @@ test('a work item\'s generation in the dependency manifest is its class: routine
   }
   db.prepare('UPDATE "work_items" SET "status" = \'eligible\' WHERE "id" = \'wi_2\'').run();
   assert.notDeepEqual(manifest(), before, 'the parked item retried is');
+  // A dispatch hold is no status, so no class (review37.test.mjs).
   assert.deepEqual(['eligible', 'awaiting_decision', 'held', 'parked', 'complete', 'cancelled'].map(workClass), ['active', 'active', 'held', 'held', 'terminal', 'terminal']);
 });
 

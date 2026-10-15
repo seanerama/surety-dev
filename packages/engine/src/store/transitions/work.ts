@@ -3,6 +3,7 @@
 // Resume. Every status change goes through transitionWork, which checks the
 // table in work-table.ts and writes exactly one work.* event.
 
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
 import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
 import { authoringShortfall } from '../../plan/phase.js';
@@ -127,7 +128,40 @@ export function transitionWork(tx: Tx, item: WorkRow, to: WorkStatus, changes: W
       item.id,
     );
   tx.emit(eventFor(from, to), { project: item.project, work_item: item.id }, { ...payload, from, to });
+  // A hold ends when its item leaves `eligible` (N01; SEAM.md §431).
+  if (from === 'eligible' && to !== 'eligible') setHold(tx, next, null);
   return next;
+}
+
+// Why an eligible item waits (N01 HoldReason; the driver's ruling Q3): one
+// interval per hold in `held_intervals` ([{from, to?, reason}]), opened with
+// `work.hold_began` and closed with `work.hold_ended` when the reason changes
+// or the item leaves `eligible`; `held` is the reason now. No status
+// changes. D1's `work.held` (a Stop's status change) is another thing.
+export type HoldReason = 'resource_envelope' | 'chain_boundary' | 'depends_on' | 'authoring_readiness' | 'open_decision' | 'session_busy';
+export function setHold(tx: Tx, item: Pick<WorkRow, 'id' | 'project' | 'status'>, reason: HoldReason | null): void {
+  const row = tx.db.prepare('SELECT "held", "held_intervals" FROM "work_items" WHERE "id" = ?').get(item.id) as { held: string | null; held_intervals: string | null } | undefined;
+  if (!row) return;
+  let intervals: { from: string; to?: string; reason: string }[] = [];
+  try {
+    intervals = row.held_intervals ? (JSON.parse(row.held_intervals) as typeof intervals) : [];
+  } catch {
+    intervals = [];
+  }
+  const open = intervals.length > 0 && intervals[intervals.length - 1]!.to === undefined ? intervals[intervals.length - 1]! : null;
+  if ((open?.reason ?? null) === reason) {
+    if (row.held !== reason) tx.db.prepare('UPDATE "work_items" SET "held" = ? WHERE "id" = ?').run(reason, item.id);
+    return;
+  }
+  if (open) {
+    open.to = tx.at;
+    tx.emit('work.hold_ended', { project: item.project, work_item: item.id }, { reason: open.reason, status: item.status, from: open.from });
+  }
+  if (reason !== null) {
+    intervals.push({ from: tx.at, reason });
+    tx.emit('work.hold_began', { project: item.project, work_item: item.id }, { reason, status: item.status });
+  }
+  tx.db.prepare('UPDATE "work_items" SET "held" = ?, "held_intervals" = ? WHERE "id" = ?').run(reason, JSON.stringify(intervals), item.id);
 }
 
 // POST /v1/harness/work/:w/transition applies this directly (SEAM.md §15): the
@@ -173,6 +207,39 @@ export interface TriggerInput {
   // D6 §5.7: an early replan's triggering evidence (the generation it
   // replaces, the evidence, what became stale), kept beside the subject.
   trigger_evidence?: Record<string, unknown>;
+  // D6 §6.5 (K3; N02): the trigger of the chain's first item, for work a
+  // run's outcome created (chain > 0); work at chain 0 is its own origin.
+  chain_origin?: ChainOrigin | null;
+}
+
+// The identity of a chain's origin (SEAM.md §429).
+export interface ChainOrigin {
+  trigger_source: string;
+  trigger_id: string;
+  trigger_generation: number;
+}
+
+// The origin of the chain a work item belongs to: recorded on it, or its own
+// trigger (an item written before slice 37 began its own chain).
+export function originOfItem(db: Tx['db'], id: string): ChainOrigin | null {
+  const row = db.prepare('SELECT "chain_origin", "trigger_source", "trigger_id", "trigger_generation" FROM "work_items" WHERE "id" = ?').get(id) as
+    | { chain_origin: string | null; trigger_source: string; trigger_id: string; trigger_generation: number }
+    | undefined;
+  if (!row) return null;
+  if (row.chain_origin !== null) {
+    try {
+      return JSON.parse(row.chain_origin) as ChainOrigin;
+    } catch {
+      // unreadable: the item's own trigger, below
+    }
+  }
+  return { trigger_source: row.trigger_source, trigger_id: row.trigger_id, trigger_generation: row.trigger_generation };
+}
+
+// The origin of the chain of a run's work item; null for a run with none.
+export function originOfRun(db: Tx['db'], run: string): ChainOrigin | null {
+  const r = db.prepare('SELECT "work_item" FROM "runs" WHERE "id" = ?').get(run) as { work_item: string | null } | undefined;
+  return r?.work_item ? originOfItem(db, r.work_item) : null;
 }
 
 const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization', 'phase_plan', 'request'];
@@ -217,8 +284,8 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
   tx.db
     .prepare(
       `INSERT INTO "work_items" ("id", "created_at", "project", "seq", "kind", "subject", "status", "depends_on",
-         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile", "trigger_evidence")
-       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)`,
+         "trigger_source", "trigger_id", "trigger_generation", "repair_attempts", "no_progress_count", "preflight_refusals", "dispatch_hold", "chain", "profile", "trigger_evidence", "chain_origin")
+       VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -234,6 +301,13 @@ export function observeTrigger(tx: Tx, input: TriggerInput, label: Record<string
       input.chain ?? 0,
       input.profile ?? null,
       input.trigger_evidence ? JSON.stringify(input.trigger_evidence) : null,
+      // A chain's origin (K3): inherited by work a run's outcome created, a
+      // fresh trigger (chain 0) its own.
+      JSON.stringify(
+        (input.chain ?? 0) > 0 && input.chain_origin
+          ? input.chain_origin
+          : { trigger_source: input.trigger_source, trigger_id: input.trigger_id, trigger_generation: input.trigger_generation },
+      ),
     );
   tx.emit('work.created', { project: input.project, work_item: id }, { ...label, to: 'eligible', kind: input.kind, seq });
   return { work_item: { id }, created: true };
@@ -496,6 +570,9 @@ export function registerPlan(
         : {}),
     });
   }
+  // Milestones already met at publication (an inherited readiness, a
+  // stage already integrated) are recorded now (D6 §6.4).
+  if (publication) recordMetMilestones(tx, args.project);
   return { plan: { id: plan, phase, generation }, stages: out, check_authoring: authoring };
 }
 

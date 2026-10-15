@@ -37,12 +37,12 @@ import { describe, test } from 'node:test';
 
 import { consume, openDecision } from './harness/decisions.mjs';
 import { postResult, raiseFindings, reasonSubjects, review, stageGate, successor } from './harness/gates.mjs';
-import { permittedEdit, roleThat, waitForCandidates } from './harness/gitruns.mjs';
+import { permittedEdit, roleThat, roleThatHolds, runToHold, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { readGate } from './harness/reads.mjs';
 import { recordFile, recordRow } from './harness/records.mjs';
 import { commitOnRef } from './harness/repos.mjs';
-import { addWork, answerDecision, runsOf, scriptedEngine, tick, tickUntil, workItem } from './harness/runs.mjs';
+import { addWork, answerDecision, runsOf, scriptedEngine, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { waitFor } from './harness/engine.mjs';
@@ -172,8 +172,19 @@ describe('M235 finding resolution', () => {
     });
     const [s1, s2] = p.stages.map((s) => s.work_item);
     fx.scripted.script(s1, [roleThat([permittedEdit()], { nominate: true })]);
-    fx.scripted.script(s2, [roleThat([step.write('src/stage-2.js', 'export const stage = 2;\n')], { nominate: true })]);
-    await tickUntil(fx.engine, p.id, () => [s1, s2].every((item) => runsOf(fx.home, item)[0]?.state === 'ended'), { max: 24, what: "both stages' Builder runs to end" });
+    // Under K2 stage 2's Builder runs beside stage 1's, and which candidate
+    // holds which stage depends on how their integrations and nominations
+    // interleave (one candidate may hold both, objection 109). Stage 2's
+    // Builder holds before it writes until candidate 1 exists, so candidate 2
+    // is stage 2's (objection 115; SEAM §463).
+    fx.scripted.script(s2, [roleThatHolds([], [step.write('src/stage-2.js', 'export const stage = 2;\n')], { nominate: true })]);
+    await runToHold(fx, p.id, s2);
+    if (runsOf(fx.home, s1).length === 0) await tick(fx.engine, p.id);
+    await waitForRun(fx.home, s1, { state: 'ended' });
+    const [c1] = await waitForCandidates(fx, p.id, 1);
+    assert.ok(JSON.parse(c1.held_work).includes(s1) && !JSON.parse(c1.held_work).includes(s2), `the fixture is live: candidate 1 is stage 1's alone (${c1.held_work})`);
+    fx.scripted.release(s2);
+    await waitForRun(fx.home, s2, { state: 'ended' });
     const c2 = (await waitForCandidates(fx, p.id, 2))[1];
     assert.ok(JSON.parse(c2.held_work).includes(s2), "the fixture is live: candidate 2 is stage 2's");
     const ids = checkIds(fx.home, p.id);

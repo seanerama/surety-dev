@@ -1,7 +1,8 @@
 // Repository integrity (D1 §§1.4, 7.6, 8.1 step 3; SEAM.md §32): at startup
 // and at every tick, before anything of a project is dispatched, every
 // registered ref and every managed checkout is read and compared with what
-// the engine expects. A registered ref somewhere else than its expected
+// the engine expects; the retained workspace of an ended work-item run at
+// startup only (Sean's ruling, 2026-10-14; integrityFacts). A registered ref somewhere else than its expected
 // commit, and than any commit the engine's own journal is moving it to, is
 // an out-of-band change; so is a managed checkout that differs from its
 // baseline, unless it is an active run's workspace (the validator's). A
@@ -12,15 +13,19 @@
 import { join } from 'node:path';
 
 import type { Runtime } from '../runtime.js';
-import type { IntegrityFacts, IntegrityReport } from '../store/transitions/integrity.js';
+import type { IntegrityFacts, IntegrityReport, RegistryFacts } from '../store/transitions/integrity.js';
 import { type GitContext, repoContext, worktreeContext } from './exec.js';
+import { mapBounded } from './bounded.js';
 import { checkoutBaseline, listWorktrees, readRefs } from './repo.js';
 import { canonicalPath, worktreeMetadata } from './worktree.js';
 
 const same = (a: string, b: string) => a === b || (canonicalPath(a) ?? a) === (canonicalPath(b) ?? b);
 
-export async function observeIntegrity(rt: Runtime, project: string): Promise<void> {
-  const facts = await rt.engine<IntegrityFacts>('integrity.facts', { project });
+// `startup`: the evaluation at startup (D1 §1.4 step 5), which also reads
+// the retained workspaces of ended work-item runs (store/transitions/
+// integrity.ts integrityFacts); a tick's does not.
+export async function observeIntegrity(rt: Pick<Runtime, 'engine' | 'home' | 'scratch'>, project: string, opts: { startup?: boolean } = {}): Promise<void> {
+  const facts = await rt.engine<IntegrityFacts>('integrity.facts', { project, ...(opts.startup === true ? { startup: true } : {}) });
   const ctx = repoContext(facts.repo);
   const refs = await readRefs(ctx, facts.registry.map((r) => r.ref));
   const list = refs === null ? null : await listWorktrees(ctx);
@@ -42,35 +47,40 @@ export async function observeIntegrity(rt: Runtime, project: string): Promise<vo
     report.refs.push({ registry: row.id, expected: row.expected_oid, found });
   }
   const owned = canonicalPath(join(rt.home, 'workspaces')) ?? join(rt.home, 'workspaces');
-  for (const c of facts.checkouts) {
-    if (c.active) continue;
+  // Each managed checkout's baseline, read side by side (a bounded number of
+  // git processes at once): with several runs of a project at once (D6 K2)
+  // a project has many retained workspaces, and the step is a prerequisite
+  // of every tick (D1 §8.1 step 3). The report keeps the checkouts' order.
+  const results = await mapBounded(facts.checkouts, INTEGRITY_PARALLEL, async (c) => {
+    if (c.active) return null;
     let context;
     if (c.kind === 'integration_worktree') {
       const entry = list.find((w) => same(w.path, c.path));
-      if (!entry || entry.branch !== facts.ref) {
-        report.released.push(c.id);
-        continue;
-      }
+      if (!entry || entry.branch !== facts.ref) return { released: c.id };
       if (same(c.path, facts.repo)) context = repoContext(facts.repo);
       else {
         const admin = worktreeMetadata(facts.repo, c.path);
-        if (admin === null || admin === 'unknown') continue;
+        if (admin === null || admin === 'unknown') return null;
         context = worktreeContext(facts.repo, admin, c.path);
       }
     } else {
-      if (c.adminDir === null) continue;
+      if (c.adminDir === null) return null;
       context = worktreeContext(facts.repo, c.adminDir, c.path);
     }
     const now = await checkoutBaseline(context, rt.scratch);
-    if (now === null) continue;
+    if (now === null) return null;
     const baseline = JSON.parse(c.baseline) as { head: string; index_hash: string; tracked_tree_hash: string };
     const same3 = (b: { head: string; index_hash: string; tracked_tree_hash: string }) => now.head === b.head && now.index_hash === b.index_hash && now.tracked_tree_hash === b.tracked_tree_hash;
     // An adoption of this checkout's edits in flight: the branch it has
     // checked out is being moved by the engine onto exactly what it holds.
-    if (c.pending !== null && now.tracked_tree_hash === c.pending.tree && c.pending.heads.includes(now.head) && c.pending.indexes.includes(now.index_hash)) continue;
-    if (!same3(baseline)) {
-      report.checkouts.push({ id: c.id, expected: c.baseline, found: now });
-    }
+    if (c.pending !== null && now.tracked_tree_hash === c.pending.tree && c.pending.heads.includes(now.head) && c.pending.indexes.includes(now.index_hash)) return null;
+    if (!same3(baseline)) return { changed: { id: c.id, expected: c.baseline, found: now } };
+    return null;
+  });
+  for (const r of results) {
+    if (r === null) continue;
+    if ('released' in r) report.released.push(r.released);
+    else report.checkouts.push(r.changed);
   }
   for (const w of list) {
     if (w.branch !== facts.ref) continue;
@@ -87,6 +97,9 @@ export async function observeIntegrity(rt: Runtime, project: string): Promise<vo
   }
   await rt.engine('integrity.record', report);
 }
+
+const INTEGRITY_PARALLEL = 8;
+
 
 // The developer's checkouts of the integration branch, with what each holds:
 // what a project installed or created on the repository starts managing.
@@ -116,4 +129,35 @@ export async function checkoutContext(repo: string, path: string): Promise<GitCo
   const admin = worktreeMetadata(repo, path);
   if (admin === null || admin === 'unknown') return null;
   return worktreeContext(repo, admin, path);
+}
+
+// Whether a registered ref of the project is anywhere but where the engine
+// expects it (or is moving it), read just before the project's dispatch
+// (D1 §8.1; D1-20; the driver's ruling on M70, slice 37). The integrity
+// step reads the refs at the start of a tick; under K1 a tick may start
+// while the project is paused, and a hand move and a resume may then land
+// between that step and the dispatch. Re-read here, a move is observed in
+// the tick that would otherwise dispatch onto it ('moved'; the integrity
+// evaluation that follows records it). A read that fails, or a ref whose
+// state is unknown, is 'unknown' (N02; the driver's ruling on M209 (b)):
+// it holds the project's dispatch in this tick, never clean, and records
+// nothing, since a failed read is not an observed change.
+export async function registeredRefsMoved(rt: Pick<Runtime, 'read'>, project: string): Promise<'moved' | 'unknown' | false> {
+  const f = await rt.read<RegistryFacts>('integrity.registry', { project });
+  const refs = await readRefs(repoContext(f.repo), f.registry.map((r) => r.ref));
+  if (refs === null) return 'unknown';
+  let unknown = false;
+  for (const row of f.registry) {
+    const read = refs.get(row.ref);
+    // A verified deletion is a move; an unverified absence is unknown.
+    if (read?.state === 'missing') return 'moved';
+    if (!read || read.state !== 'ok') {
+      unknown = true;
+      continue;
+    }
+    if (read.oid === row.expected_oid) continue;
+    if ((f.moving[row.ref] ?? []).includes(read.oid)) continue;
+    return 'moved';
+  }
+  return unknown ? 'unknown' : false;
 }

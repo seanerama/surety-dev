@@ -43,6 +43,11 @@ export const step = {
   // performs git; a role with a shell can still run it).
   git: (...args) => ({ git: args }),
   sleep: (ms) => ({ sleep_ms: ms }),
+  // M5 slice 37 (SEAM.md §443; row M439 (d)): allocate `bytes` (at most
+  // 32 MiB) and keep them; the role program refuses unless `memoryMax`, the
+  // domain's memory.max the test read from the host, is at least 8 x bytes.
+  // Not exhausting; sandbox lane only.
+  holdBytes: (bytes, memoryMax) => ({ hold_bytes: { bytes, memory_max: memoryMax } }),
   hold: (name = 'gate', opts = {}) => ({ hold: name, ...opts }),
   // The role's result (SEAM.md §143). In the kernel lane, the `result` line
   // on stdout, as in M1. In the sandbox lane, the value is written to

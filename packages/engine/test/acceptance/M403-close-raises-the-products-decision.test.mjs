@@ -25,7 +25,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, assertStaleAnswer, consume, decision, decisionsOfKind } from './harness/decisions.mjs';
+import { CODES, answer, approvalsOf, consume, decision, decisionsOfKind, intentsOf } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import {
   NOTHING,
@@ -59,6 +59,25 @@ async function readyForArchitect(fx, { policy } = {}) {
   const vision = await visionSession(fx, p.id);
   const spec = await specSession(fx, p.id);
   return { p, vision, spec };
+}
+
+// D1 §4.6's stale answer, as a bundle's approval reads it since M5 slice 37
+// (D6 K1; objection 100; SEAM.md §447): the second session's save finalizes
+// an operation, which requests a tick, and that tick finds the bundle unable
+// to publish and invalidates its decisions (`plan_generation_stale`, the
+// driver's ruling (5) of slice 34: a committed 409). Before K1 nothing ticked
+// in between and the answer met `decision_stale`. Either refusal is a stale
+// one; what the case pins stays: refused, nothing consumed, approved or
+// intended.
+async function assertStaleBundleAnswer(fx, project, previewed, option) {
+  const res = await answer(fx.engine, project, previewed, option);
+  assertRefused(res, 409, [CODES.stale, CODES.invalidated, 'plan_generation_stale'], `answering ${previewed.kind} with a preview taken before its dependency changed`);
+  const after = decision(fx.home, previewed.id);
+  assert.ok(['open', 'invalidated'].includes(after.status), `the decision is not consumed (it is ${after.status})`);
+  assert.equal(after.answer ?? null, null, 'no answer is recorded on it');
+  assert.equal(approvalsOf(fx.home, previewed.id).length, 0, 'no approval is recorded');
+  assert.equal(intentsOf(fx.home, previewed.id).length, 0, 'no effect is intended');
+  return res;
 }
 
 describe('M403 close raises the product\'s decision; the consolidated approval publishes once', () => {
@@ -200,8 +219,8 @@ describe('M403 close raises the product\'s decision; the consolidated approval p
     await sayAndSettle(fx, p.id, run.id, 'Revise the ADR.');
     await saveSession(fx, p.id, run.id);
     await closeSession(fx, p.id, run.id, { refuse: true });
-    await assertStaleAnswer(fx, p.id, first.decisions.architecture_approval, 'approve');
-    await assertStaleAnswer(fx, p.id, first.decisions.plan_approval, 'approve');
+    await assertStaleBundleAnswer(fx, p.id, first.decisions.architecture_approval, 'approve');
+    await assertStaleBundleAnswer(fx, p.id, first.decisions.plan_approval, 'approve');
     assert.deepEqual(nothingPublished(fx.home, p.id), NOTHING);
   });
 
@@ -231,7 +250,8 @@ describe('M403 close raises the product\'s decision; the consolidated approval p
       winner = first;
       await refusedPublication(second);
     } else {
-      assertRefused(firstArch, 409, ['decision_stale', 'decision_invalidated'], 'the first bundle after the second\'s saves');
+      // plan_generation_stale since K1 (see assertStaleBundleAnswer).
+      assertRefused(firstArch, 409, ['decision_stale', 'decision_invalidated', 'plan_generation_stale'], 'the first bundle after the second\'s saves');
       await consume(fx, p.id, second.decisions.architecture_approval, 'approve');
       await consume(fx, p.id, second.decisions.plan_approval, 'approve');
       await waitPublished(fx, p.id);

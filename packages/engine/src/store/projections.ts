@@ -64,12 +64,12 @@ const openDecisionCount = (db: Db, project: string): number =>
 // Eligible work the next tick could dispatch, as far as the store can tell.
 // A blocker that cannot be read (a budget read that fails) dispatches
 // nothing, so it is not ready.
-function dispatchable(db: Db, project: string, maxConcurrentRuns: number): number {
+function dispatchable(db: Db, project: string): number {
   const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible'`).all(project) as WorkRow[];
   let n = 0;
   for (const item of items) {
     try {
-      if (dispatchBlocker(db, item, maxConcurrentRuns, { check: false }) === null) n++;
+      if (dispatchBlocker(db, item, { check: false }) === null) n++;
     } catch {
       // not dispatchable on what can be read
     }
@@ -159,7 +159,7 @@ function refusalOf(db: Db, project: string, runs: ExecutionRun[]): { cause: stri
   return null;
 }
 
-function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, maxConcurrentRuns: number) {
+function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number) {
   const refusal = refusalOf(db, project, runs);
   let state: NowState;
   let reason: string;
@@ -179,7 +179,7 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
     reason = runs.length === 1 ? `Run ${runs[0]!.id} is under way.` : `${runs.length} runs are under way.`;
     primary = null;
   } else {
-    const ready = dispatchable(db, project, maxConcurrentRuns);
+    const ready = dispatchable(db, project);
     if (ready > 0) {
       state = 'ready';
       reason = ready === 1 ? 'One work item is eligible and can be dispatched at the next tick.' : `${ready} work items are eligible and can be dispatched at the next tick.`;
@@ -254,13 +254,13 @@ function environmentsOf(db: Db, project: string) {
 
 // ---- the projections ----------------------------------------------------------------------
 
-function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
+function projectSummary(db: Db, project: string) {
   const runs = executionRuns(db, project);
   const decisions = openDecisionCount(db, project);
   let now;
   try {
     seamStatusRead(project);
-    now = nowOf(db, project, runs, decisions, maxConcurrentRuns);
+    now = nowOf(db, project, runs, decisions);
   } catch (err) {
     now = unknownNow(err);
   }
@@ -274,21 +274,21 @@ function projectSummary(db: Db, project: string, maxConcurrentRuns: number) {
 }
 
 // GET /v1/projects
-export function listProjects(db: Db, args: { maxConcurrentRuns: number }) {
+export function listProjects(db: Db, _args: Record<string, unknown> = {}) {
   const head = envelope(db);
   const ids = (db.prepare('SELECT "id" FROM "projects" ORDER BY rowid, "id"').all() as { id: string }[]).map((r) => r.id);
-  return { ...head, projects: ids.map((id) => projectSummary(db, id, args.maxConcurrentRuns)) };
+  return { ...head, projects: ids.map((id) => projectSummary(db, id)) };
 }
 
 // GET /v1/projects/:p
-export function readProject(db: Db, args: { project: string; maxConcurrentRuns: number }) {
+export function readProject(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
   const row = db.prepare('SELECT "id", "name", "tier", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as Record<string, unknown>;
   return {
     ...head,
     project: {
-      ...projectSummary(db, args.project, args.maxConcurrentRuns),
+      ...projectSummary(db, args.project),
       name: row.name,
       tier: row.tier,
       paused: row.paused === 1,
@@ -624,7 +624,7 @@ export function readWork(db: Db, args: { project: string }) {
       // stays eligible, and this says why it is not dispatched now.
       // A deploy waiting for its service's admission (D4 §4.7, A.2) shows
       // the hold its operation recorded (SEAM.md §271).
-      dispatch_hold: w.status === 'eligible' ? envelopeHold(db) : w.kind === 'deploy' ? deployAdmissionHold(w) : null,
+      dispatch_hold: w.status === 'eligible' ? envelopeHold(db, { kind: 'role', project: w.project }) : w.kind === 'deploy' ? deployAdmissionHold(w) : null,
     })),
   };
 }

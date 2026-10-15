@@ -86,6 +86,31 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §8.3, B.7 (B13): a Verifier's adopted tests with their dependency
   // boundary, recorded on its authoring proposal.
   adopted_tests: (v) => adoptedTestsValid(v),
+  // D6 §6.2, B.7 (N04; SEAM.md §428): a phase authoring's deferrals, each a
+  // criterion with the Verifier's reason and its prerequisite, a stage of
+  // the plan by number or an interface of the module map by name.
+  deferred_criteria: (v) =>
+    listOf(
+      v,
+      (d) =>
+        Object.keys(d).every((k) => ['criterion', 'reason', 'prerequisite'].includes(k)) &&
+        isString(d.criterion) &&
+        d.criterion.length > 0 &&
+        isString(d.reason) &&
+        d.reason.trim().length > 0 &&
+        isObject(d.prerequisite) &&
+        Object.keys(d.prerequisite).length === 1 &&
+        ((Number.isSafeInteger((d.prerequisite as Record<string, unknown>).stage) && ((d.prerequisite as Record<string, unknown>).stage as number) > 0) ||
+          (isString((d.prerequisite as Record<string, unknown>).interface) && ((d.prerequisite as Record<string, unknown>).interface as string).length > 0)),
+    ),
+  // B.7: the governed changes an authoring proposal declares (the toolchain
+  // in `check_commands`, the check programs). A declaration: the class is the
+  // classifier's (B07).
+  governed_changes: (v) =>
+    isObject(v) &&
+    Object.keys(v).every((k) => k === 'check_commands' || k === 'programs') &&
+    (v.check_commands === undefined || typeof v.check_commands === 'boolean') &&
+    (v.programs === undefined || (Array.isArray(v.programs) && v.programs.every(isString))),
   // D6 §4.5 (the driver's ruling Q6): a Verifier's assessment, on a
   // specification change's correction, that a check applies unchanged to
   // the changed meaning of the criteria it names, with its rationale.
@@ -122,6 +147,8 @@ const ROLE_ONLY: Record<string, string> = {
   notes: 'architect',
   changes: 'spec_writer',
   adopted_tests: 'verifier',
+  deferred_criteria: 'verifier',
+  governed_changes: 'verifier',
   spec_applicability: 'verifier',
   spec_change_requests: 'architect',
 };

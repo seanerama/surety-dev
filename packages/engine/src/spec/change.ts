@@ -481,8 +481,12 @@ export function dependencyManifest(
     }[]
   ).map((r) => ({ id: r.id, generation: r.g }));
   // A work item's generation is its class (the driver's ruling on the
-  // slice-36 report): active, held (parked or held) or terminal. A parked
-  // item retried changes it (M433 (a)); a build's routine progress does not.
+  // slice-36 report, kept in slice 37): active (awaiting a decision among
+  // them), held (parked, or held by a Stop) or terminal. A parked item
+  // retried changes it (M433 (a)); a build's routine progress does not, nor
+  // does a dispatch hold (depends_on, the envelope, one replan at a time, a
+  // correction's hold, a quarantine, a barrier): those are the `held`
+  // column's, never the status.
   const work = (
     db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "id" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`).all(list(args.work)) as { id: string; status: string }[]
   ).map((w) => ({ id: w.id, generation: workClass(w.status) }));
@@ -572,8 +576,8 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .prepare(`UPDATE "spec_change_requests" SET "status" = 'proposed', "proposal_revision" = ?, "proposal_blob" = ?, "side_ref" = ?, "impact" = ?, "impact_value" = ? WHERE "id" = ?`)
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
-  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   if (d && item && item.status === 'executing') {
     transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
   }
@@ -639,7 +643,7 @@ const REFUSAL_TEXT: Record<string, string> = {
 
 export const SPEC_CHANGE_KEYS = ['spec_version', 'proposal_revision', 'protected_version', 'impact', 'dependency_manifest', 'side_ref', 'policy_revision'];
 
-function changeManifest(db: Db, id: string): Record<string, unknown> {
+export function changeManifest(db: Db, id: string): Record<string, unknown> {
   const r = getRequest(db, id);
   const project = r?.project ?? null;
   const spec = project === null ? undefined : currentSpec(db, project);
@@ -695,9 +699,15 @@ export function specChangeKind(): KindSpec {
       const impact = now.impact;
       const manifest = changeManifest(tx.db, r.id);
       const listed = impact.checks.obligations.map((c) => c.key);
+      // An honesty aid (the driver's ruling (3) on (B), slice 37): how many
+      // executions of the impact's checks were queued, materializing or
+      // running when the question was raised. Not bound: a result they
+      // record that moves the impact asks again (D6 §4.4).
+      const settling = impactSettling(tx.db, r.id);
       return {
         manifest,
-        question: `${r.last_refusal ? `The last approval of specification change ${r.seq} could not be applied (${REFUSAL_TEXT[r.last_refusal.split(':')[0]!] ?? r.last_refusal}). ` : ''}Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.`,
+        raised: { settling },
+        question: `${r.last_refusal ? `The last approval of specification change ${r.seq} could not be applied (${REFUSAL_TEXT[r.last_refusal.split(':')[0]!] ?? r.last_refusal}). ` : ''}Approve specification change ${r.seq} as version ${Number(manifest.spec_version) + 1}? It changes ${impact.requirements.map((q) => `${q.key} (${q.changes.join(', ')})`).join('; ') || 'nothing the engine can name'}; ${listed.length} check(s) would owe a correction (${listed.join(', ') || 'none'}), ${impact.evidence.results.length} result(s) would be invalidated${impact.touches_current ? ', and the current phase is touched, so a replan follows' : ''}.${settling > 0 ? ` ${settling} execution(s) of its checks were still queued or running when this was asked; a result they record may change the impact, and the question is then asked again.` : ''}`,
         options: [
           {
             key: 'approve',
@@ -961,14 +971,14 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
 
 // The unresolved obligations of a project's checks, by check key.
 export function unresolvedObligations(db: Db, project: string): Map<string, number> {
-  const rows = db.prepare(`SELECT "key", MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL GROUP BY "key"`).all(project) as { key: string; g: number }[];
+  const rows = db.prepare(`SELECT "key", MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL GROUP BY "key"`).all(project) as { key: string; g: number }[];
   return new Map(rows.map((r) => [r.key, r.g]));
 }
 
 // The highest generation of any obligation, resolved or not, on a check key:
 // a result registered under an earlier generation is history (D6 §4.5).
 export function obligationGeneration(db: Db, project: string, key: string): number | null {
-  const row = db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ?`).get(project, key) as { g: number | null };
+  const row = db.prepare(`SELECT MAX("generation") AS g FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed'`).get(project, key) as { g: number | null };
   return row.g;
 }
 
@@ -990,7 +1000,7 @@ export function resolveByCorrection(tx: Tx, args: { project: string; proposal: s
   const named = new Set((parseJson<{ check: string }[]>(row.affected_checks) ?? []).map((a) => a.check));
   // Whichever request recorded an obligation (the 31b review's M2, A): an
   // obligation a later change's correction meets is resolved by it.
-  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL`).all(args.project) as {
+  const open = tx.db.prepare(`SELECT "id", "key", "criteria" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).all(args.project) as {
     id: string;
     key: string;
     criteria: string;
@@ -1039,7 +1049,7 @@ interface OpenObligation {
 }
 
 const openObligations = (db: Db, project: string): OpenObligation[] =>
-  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
+  (db.prepare(`SELECT "id", "key", "criteria", "request" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL ORDER BY rowid, "id"`).all(project) as { id: string; key: string; criteria: string; request: string | null }[]).map(
     (o) => ({ id: o.id, key: o.key, criteria: parseJson<string[]>(o.criteria) ?? [], request: o.request }),
   );
 
@@ -1107,7 +1117,9 @@ function resolveObligation(tx: Tx, args: { project: string; obligation: string; 
 // naming the open obligations. Called when the proposal is decided.
 export function correctionProposalDecided(tx: Tx, args: { proposal: string; applied: boolean }): void {
   const row = tx.db.prepare('SELECT r."work_item" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE p."id" = ?').get(args.proposal) as { work_item: string | null } | undefined;
-  if (!row?.work_item || correctionRequestOf(tx.db, row.work_item) === null) return;
+  if (!row?.work_item) return;
+  const kind = (tx.db.prepare('SELECT "kind" FROM "work_items" WHERE "id" = ?').get(row.work_item) as { kind: string } | undefined)?.kind;
+  if (kind !== 'check_authoring' && correctionRequestOf(tx.db, row.work_item) === null) return;
   const item = getWorkItem(tx, row.work_item);
   if (!item || item.status !== 'awaiting_decision') return;
   const blocker = parseJson<{ reason?: string; proposal?: string }>(item.blocker);
@@ -1171,3 +1183,125 @@ export function correctionOpenKeys(db: Db, workItem: string): string[] {
   if (request === null) return [];
   return uniq((db.prepare(`SELECT "key" FROM "check_obligations" WHERE "request" = ? AND "resolved_at" IS NULL ORDER BY "key"`).all(request) as { key: string }[]).map((o) => o.key));
 }
+
+// A check applied after a specification change's approval that covers a
+// criterion the change touched, from a proposal captured before that
+// approval (authored against the earlier specification), owes a
+// `spec_changed` obligation at its application (the driver's ruling 2 on the
+// M401 journey, slice 37): no check covering a changed criterion escapes the
+// obligation by timing. The request's own correction is not such a check,
+// and one already owed is not recorded twice. Its correction is asked for by
+// the request's next correction generation. Returns how many were recorded.
+export function lateObligations(tx: Tx, args: { project: string; proposal: string; version: string }): number {
+  const captured = tx.db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'protected.proposed' AND json_extract("subject", '$.proposal') = ?`).get(args.proposal) as { s: number | null };
+  if (captured.s === null) return 0;
+  const own = tx.db
+    .prepare(`SELECT json_extract(w."subject", '$.request') AS request FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item" WHERE p."id" = ? AND w."kind" = 'check_correction'`)
+    .get(args.proposal) as { request: string | null } | undefined;
+  const generation = (tx.db.prepare('SELECT "spec_evidence_generation" AS g FROM "projects" WHERE "id" = ?').get(args.project) as { g: number }).g;
+  // Only the checks this proposal made or changed: a check the version
+  // carries over unchanged from the one it superseded is not authored by it
+  // (its obligation, if any, was the change's own and is resolved by its
+  // correction).
+  const previous = tx.db.prepare('SELECT "id" FROM "protected_versions" WHERE "superseded_by" = ? ORDER BY "seq" DESC LIMIT 1').get(args.version) as { id: string } | undefined;
+  const before = new Map(
+    previous ? (tx.db.prepare('SELECT "key", "definition_hash", "criteria" FROM "checks" WHERE "protected_version" = ?').all(previous.id) as { key: string; definition_hash: string; criteria: string | null }[]).map((c) => [c.key, `${c.definition_hash}|${c.criteria ?? ''}`]) : [],
+  );
+  const checks = (tx.db.prepare('SELECT "id", "key", "criteria", "definition_hash" FROM "checks" WHERE "protected_version" = ?').all(args.version) as { id: string; key: string; criteria: string | null; definition_hash: string }[]).filter(
+    (c) => before.get(c.key) !== `${c.definition_hash}|${c.criteria ?? ''}`,
+  );
+  const requests = tx.db
+    .prepare(
+      `SELECT r."id", r."impact_value", (SELECT MIN(e."seq") FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id") AS approved_seq
+       FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'approved' ORDER BY r."seq"`,
+    )
+    .all(args.project) as { id: string; impact_value: string | null; approved_seq: number | null }[];
+  // The owner's approval of this proposal, made after a change's approval,
+  // is the owner's knowing act (the driver's ruling (A), slice 37): its
+  // question named what the change touched (authoredAgainst), and no
+  // obligation is raised for that change.
+  const ownerApproved = (tx.db
+    .prepare(
+      `SELECT MAX(e."seq") AS s FROM "events" e JOIN "decisions" d ON d."id" = json_extract(e."subject", '$.decision')
+       WHERE e."type" = 'decision.consumed' AND d."subject_type" = 'protected_proposal' AND d."subject_id" = ?
+         AND json_extract(d."answer", '$.option') = 'approve' AND json_extract(d."answer", '$.actor') = 'human'`,
+    )
+    .get(args.proposal) as { s: number | null }).s;
+  let n = 0;
+  for (const r of requests) {
+    if (r.approved_seq === null || r.approved_seq < captured.s || own?.request === r.id) continue;
+    if (ownerApproved !== null && ownerApproved > r.approved_seq) continue;
+    const impact = parseJson<{ affected_criteria?: string[]; added_criteria?: string[] }>(r.impact_value) ?? {};
+    const touched = new Set([...(impact.affected_criteria ?? []), ...(impact.added_criteria ?? [])]);
+    if (touched.size === 0) continue;
+    const owed: string[] = [];
+    for (const c of checks) {
+      const covered = (parseJson<string[]>(c.criteria) ?? []).filter((x) => touched.has(x));
+      if (covered.length === 0) continue;
+      const open = tx.db.prepare(`SELECT 1 FROM "check_obligations" WHERE "project" = ? AND "key" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL`).get(args.project, c.key);
+      if (open) continue;
+      const id = tx.newId('obl_');
+      tx.db
+        .prepare(`INSERT INTO "check_obligations" ("id", "created_at", "project", "check", "key", "criteria", "generation", "reason", "request") VALUES (?, ?, ?, ?, ?, ?, ?, 'spec_changed', ?)`)
+        .run(id, tx.at, args.project, c.id, c.key, JSON.stringify(covered), generation, r.id);
+      tx.emit('check.obligation_recorded', { project: args.project, check_obligation: id }, { reason: 'spec_changed', criteria: covered, request: r.id, proposal: args.proposal, late: true });
+      owed.push(c.key);
+      n++;
+    }
+    if (owed.length > 0) {
+      const g = (tx.db.prepare(`SELECT COALESCE(MAX("trigger_generation"), 0) AS g FROM "work_items" WHERE "project" = ? AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ?`).get(args.project, r.id) as { g: number }).g;
+      observeTrigger(
+        tx,
+        { project: args.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: r.id, trigger_generation: g + 1, subject: { request: r.id }, trigger_evidence: { criteria: { affected: [...touched].sort(), uncovered: [], removed: [] }, checks: owed.sort(), generation }, chain: 0 },
+        { spec_change_request: r.id, checks: owed },
+      );
+    }
+  }
+  return n;
+}
+
+// What a protected proposal captured before a specification change's
+// approval was authored against (the driver's ruling (A), slice 37): the
+// specification version current at its capture, and the criteria the
+// changes approved since touched; null when no approved change came after
+// it. Its question names this, so an owner who approves it does so knowingly.
+export function authoredAgainst(db: Db, proposal: string): { version: number | null; touched: string[] } | null {
+  const captured = db.prepare(`SELECT MIN("seq") AS s FROM "events" WHERE "type" = 'protected.proposed' AND json_extract("subject", '$.proposal') = ?`).get(proposal) as { s: number | null };
+  if (captured.s === null) return null;
+  const project = (db.prepare('SELECT "project" FROM "protected_proposals" WHERE "id" = ?').get(proposal) as { project: string } | undefined)?.project;
+  if (!project) return null;
+  const later = db
+    .prepare(
+      `SELECT r."impact_value" FROM "spec_change_requests" r WHERE r."project" = ? AND r."status" = 'approved'
+         AND (SELECT MIN(e."seq") FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id") > ?`,
+    )
+    .all(project, captured.s) as { impact_value: string | null }[];
+  if (later.length === 0) return null;
+  const touched = new Set<string>();
+  for (const r of later) {
+    const i = parseJson<{ affected_criteria?: string[]; added_criteria?: string[] }>(r.impact_value) ?? {};
+    for (const c of [...(i.affected_criteria ?? []), ...(i.added_criteria ?? [])]) touched.add(c);
+  }
+  if (touched.size === 0) return null;
+  const at = db
+    .prepare(`SELECT json_extract("payload", '$.version') AS v FROM "events" WHERE "type" = 'baseline.spec_approved' AND json_extract("subject", '$.project') = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1`)
+    .get(project, captured.s) as { v: number | null } | undefined;
+  return { version: at?.v ?? null, touched: [...touched].sort() };
+}
+
+// Executions of the checks a proposed change's impact lists (its owed and
+// criterion-unknown checks, and the checks of its listed results) that are
+// queued, materializing or running: the evidence still settling.
+export function impactSettling(db: Db, request: string): number {
+  const r = getRequest(db, request);
+  if (!r) return 0;
+  const impact = parseJson<Impact>(r.impact_value);
+  if (!impact) return 0;
+  const keys = new Set([...impact.checks.obligations, ...impact.checks.criterion_unknown].map((c) => c.key));
+  for (const k of db.prepare(`SELECT DISTINCT k."key" FROM "check_results" x JOIN "checks" k ON k."id" = x."check" WHERE x."id" IN (SELECT value FROM json_each(?))`).all(JSON.stringify(impact.evidence.results)) as { key: string }[]) keys.add(k.key);
+  if (keys.size === 0) return 0;
+  return (db
+    .prepare(`SELECT COUNT(*) AS n FROM "check_executions" WHERE "project" = ? AND "key" IN (SELECT value FROM json_each(?)) AND "status" IN ('queued', 'materializing', 'running')`)
+    .get(r.project, JSON.stringify([...keys])) as { n: number }).n;
+}
+

@@ -76,7 +76,9 @@
       "redaction_unavailable"
     ],
     "CheckObligationsReason": [
-      "spec_changed"
+      "spec_changed",
+      "deferred_authoring",
+      "authoring_pending"
     ],
     "RunnerClass": [
       "direct",
@@ -692,6 +694,8 @@
       "engine.started",
       "engine.mode_changed",
       "engine.tick",
+      "scheduler.tick_requested",
+      "host.observed",
       "engine.quarantine",
       "api.act",
       "project.created",
@@ -705,6 +709,9 @@
       "work.integrated",
       "work.complete",
       "work.held",
+      "work.hold_began",
+      "work.hold_ended",
+      "work.dependency_met",
       "work.resumed",
       "work.parked",
       "work.cancelled",
@@ -718,6 +725,7 @@
       "run.quarantined",
       "domain.terminated",
       "domain.quarantined",
+      "domain.peak_recorded",
       "decision.raised",
       "decision.answered",
       "decision.consumed",
@@ -854,6 +862,7 @@
       "spec.change_failed",
       "spec.change_rejected",
       "check.obligation_resolved",
+      "check.obligation_recorded",
       "spec.assessment_recorded",
       "deploy.requested_by_policy",
       "project.adopted",
@@ -1644,11 +1653,11 @@
           "references": "projects"
         },
         "check": {
-          "required": true,
+          "required": false,
           "references": "checks"
         },
         "key": {
-          "required": true
+          "required": false
         },
         "criteria": {
           "required": true
@@ -1669,6 +1678,19 @@
         },
         "resolved_at": {
           "required": false
+        },
+        "prerequisite": {
+          "required": false
+        },
+        "deferred_reason": {
+          "required": false
+        },
+        "follow_up": {
+          "required": false
+        },
+        "phase_plan": {
+          "required": false,
+          "references": "phase_plans"
         }
       }
     },
@@ -2073,6 +2095,9 @@
           "enum": "DeploymentRequestsOutcome"
         },
         "reason": {
+          "required": false
+        },
+        "preparation_attempts": {
           "required": false
         }
       }
@@ -2583,6 +2608,12 @@
         },
         "supervision_lost_seq": {
           "required": false
+        },
+        "memory_peak": {
+          "required": false
+        },
+        "peak_recorded_at": {
+          "required": false
         }
       }
     },
@@ -2854,6 +2885,18 @@
         },
         "mem_available": {
           "required": false
+        },
+        "trigger": {
+          "required": false
+        },
+        "host_qualification": {
+          "required": false
+        },
+        "backend_entry": {
+          "required": false
+        },
+        "peak_domains": {
+          "required": false
         }
       }
     },
@@ -2992,6 +3035,9 @@
           "enum": "ExitClass"
         },
         "exit_evidence": {
+          "required": false
+        },
+        "incarnation": {
           "required": false
         }
       }
@@ -3998,6 +4044,12 @@
         },
         "boundary_errors": {
           "required": false
+        },
+        "fingerprint_changes": {
+          "required": false
+        },
+        "deferred_criteria": {
+          "required": false
         }
       }
     },
@@ -4156,6 +4208,9 @@
         "session_entry": {
           "required": false,
           "references": "trust_entries"
+        },
+        "profile": {
+          "required": false
         }
       }
     },
@@ -5088,6 +5143,9 @@
         },
         "revoked_reason": {
           "required": false
+        },
+        "profile": {
+          "required": false
         }
       }
     },
@@ -5356,6 +5414,15 @@
           "required": false
         },
         "end_cause": {
+          "required": false
+        },
+        "held_intervals": {
+          "required": false
+        },
+        "chain_origin": {
+          "required": false
+        },
+        "milestones_met": {
           "required": false
         }
       }
@@ -6204,6 +6271,12 @@
     "engine.tick": {
       "owner": "store/transitions/engine.ts"
     },
+    "scheduler.tick_requested": {
+      "owner": "store/transitions/tick-requests.ts"
+    },
+    "host.observed": {
+      "owner": "plan/pace.ts"
+    },
     "engine.quarantine": {
       "owner": "store/transitions/runs.ts"
     },
@@ -6243,6 +6316,15 @@
     "work.held": {
       "owner": "store/transitions/work.ts"
     },
+    "work.hold_began": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.hold_ended": {
+      "owner": "store/transitions/work.ts"
+    },
+    "work.dependency_met": {
+      "owner": "scheduler/milestones.ts"
+    },
     "work.resumed": {
       "owner": "store/transitions/work.ts"
     },
@@ -6280,6 +6362,9 @@
       "owner": "store/transitions/runs.ts, store/transitions/deploy.ts"
     },
     "domain.quarantined": {
+      "owner": "store/transitions/runs.ts"
+    },
+    "domain.peak_recorded": {
       "owner": "store/transitions/runs.ts"
     },
     "decision.raised": {
@@ -6688,7 +6773,10 @@
       "owner": "spec/change.ts"
     },
     "check.obligation_resolved": {
-      "owner": "spec/change.ts"
+      "owner": "spec/change.ts, plan/deferral.ts"
+    },
+    "check.obligation_recorded": {
+      "owner": "plan/deferral.ts"
     },
     "spec.assessment_recorded": {
       "owner": "spec/change.ts"
@@ -6776,12 +6864,6 @@
         "max": 365,
         "integer": true
       },
-      "max_concurrent_runs": {
-        "default": 2,
-        "min": 1,
-        "max": 8,
-        "integer": true
-      },
       "api_port": {
         "default": 7227,
         "min": 1024,
@@ -6850,7 +6932,7 @@
         "type": "boolean"
       },
       "max_concurrent_domains": {
-        "default": 2,
+        "default": 4,
         "min": 1,
         "max": 8,
         "integer": true
@@ -7101,10 +7183,16 @@
       }
     },
     "project": {
-      "max_concurrent_runs": {
-        "default": 1,
-        "min": 1,
-        "max": 1,
+      "role_memory_max": {
+        "default": 4294967296,
+        "min": 536870912,
+        "max": 68719476736,
+        "integer": true
+      },
+      "check_memory_max": {
+        "default": 2147483648,
+        "min": 536870912,
+        "max": 68719476736,
         "integer": true
       },
       "max_chained_roles": {

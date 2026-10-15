@@ -113,6 +113,9 @@ interface RunSpec {
   whileRunning?: (ctx: BoxContext) => Promise<void>;
   // Each line of its output as it arrives.
   onLine?: (line: string, ctx: BoxContext) => void;
+  // The box's memory.max: a check profile exercised beside the default
+  // (D6-X09; the slice-37 review's M7). Absent: the default profile.
+  memoryMax?: number;
 }
 
 interface BoxContext {
@@ -309,6 +312,8 @@ export class RunnerSelfTest {
       }
       return p;
     };
+    let qualified = false;
+    const profiles: { memory_max: number; exercised: string }[] = [];
     try {
       for (const name of SELF_TEST_CASES) {
         if (forced[name] === 'not_exercised') {
@@ -327,6 +332,22 @@ export class RunnerSelfTest {
         if (forced[name] === 'failed') verdict = { result: 'failed', evidence: { ...verdict.evidence, observed: verdict.result, forced: 'failed by the test seam' } };
         results.push({ case: name, control: CONTROLS[name], result: verdict.result, evidence: verdict.evidence });
       }
+      qualified = results.length === SELF_TEST_CASES.length && results.every((r) => r.result === 'passed');
+      // The check profiles this start exercised (D6-X09; the slice-37 review's
+      // M7): the default, which every case ran under, and each other profile a
+      // registered project uses, by one passing box at its memory.max. One not
+      // exercised is not recorded, so it is held runner_unqualified: never
+      // claimed.
+      const now = await this.rt.read<{ memory_max: number }[]>('checks.profiles_now', {});
+      if (qualified) {
+        const [first, ...others] = now;
+        if (first) profiles.push({ memory_max: first.memory_max, exercised: 'cases' });
+        for (const p of others) {
+          if (this.aborted) break;
+          const run = ctx === null ? null : await this.box(ctx, { key: `profile_${p.memory_max}`, args: ['exit', '0'], timeoutS: 30, memoryMax: p.memory_max }).catch(() => null);
+          if (run !== null && run.state === 'passed' && run.fields?.exit_status === 0) profiles.push({ memory_max: p.memory_max, exercised: 'box' });
+        }
+      }
     } finally {
       this.removeTree();
     }
@@ -334,7 +355,8 @@ export class RunnerSelfTest {
     const state: CheckRunnerState = {
       profile_fingerprint: checkProfileFingerprint(),
       self_test: results,
-      qualified: results.length === SELF_TEST_CASES.length && results.every((r) => r.result === 'passed'),
+      qualified,
+      profiles,
     };
     const row = await this.rt.engine<string | null>('checks.set_runner', state);
     return row === null ? null : state;
@@ -411,7 +433,7 @@ export class RunnerSelfTest {
     const area = realpathSync(made);
     const cgroup = join(ctx.scope.path, id);
     this.current = { cgroup, launch: null, area };
-    const bounds = checkDomainLimits(rt);
+    const bounds = checkDomainLimits(rt, spec.memoryMax);
     const limits: DomainLimits = { memoryMax: bounds.memoryMax, tasksMax: bounds.tasksMax };
     const notes: Record<string, unknown> = {};
     let proxy: DomainProxy | null = null;

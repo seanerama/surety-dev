@@ -181,10 +181,73 @@ export function sourceMoved(db: Db, args: { project: string; stage: string; fact
   return out;
 }
 
-// The stage's state after an evaluation of its gate (A.5).
-export function conformanceAfterEvaluation(tx: Tx, args: { stage: string; satisfied: boolean; blocked: boolean; evaluation: string }): void {
+// What a conformance stage's gate evaluation rests on of its source (the
+// driver's rulings on M413 (d) and M408 (e), slice 37): the commit the
+// engine expects the integration branch at (the registry's), the head the
+// evaluation read, the number of adoptions of out-of-band moves of the
+// integration branch so far, and the stage's recorded binding.
+export function conformanceSnapshot(db: Db, stage: string, facts: ConformanceFacts | undefined): { expected: string | null; head: string | null; adopted: number; source_revision: string | null; source_digest: string | null } {
+  const s = db.prepare('SELECT "project", "source_revision", "conformance_source_digest" FROM "stages" WHERE "id" = ?').get(stage) as
+    | { project: string; source_revision: string | null; conformance_source_digest: string | null }
+    | undefined;
+  return {
+    expected: s ? integrationExpected(db, s.project) : null,
+    head: facts?.head ?? null,
+    adopted: s ? integrationAdoptions(db, s.project) : 0,
+    source_revision: s?.source_revision ?? null,
+    source_digest: s?.conformance_source_digest ?? null,
+  };
+}
+
+// Out-of-band moves of the integration branch the owner adopted (a
+// commit's, or a checkout's edits'): the source changes no engine run made.
+function integrationAdoptions(db: Db, project: string): number {
+  const repo = db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(project) as { integration_branch: string } | undefined;
+  if (!repo) return 0;
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'repo.reconciled' AND json_extract("subject", '$.project') = ?
+           AND json_extract("payload", '$.disposition') = 'adopt' AND json_extract("payload", '$.ref') = ?`,
+      )
+      .get(project, integrationRef(repo.integration_branch)) as { n: number }
+  ).n;
+}
+
+function integrationExpected(db: Db, project: string): string | null {
+  const repo = db.prepare('SELECT "integration_branch" FROM "projects" WHERE "id" = ?').get(project) as { integration_branch: string } | undefined;
+  if (!repo) return null;
+  return (db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(project, integrationRef(repo.integration_branch)) as { expected_oid: string } | undefined)?.expected_oid ?? null;
+}
+
+// Whether what a conformance stage's last evaluation rested on has moved
+// since: the stage's recorded binding, or an adopted out-of-band move of the
+// integration branch (an unadopted one is integrity's, and holds the
+// project meanwhile). The engine's own journaled moves (its records, a later
+// phase's integrations) never make it due: the change phase changes the
+// source by design (the driver's ruling on M408 (e)). The next evaluation
+// reads the application source again and names CONFORMANCE_SOURCE_MOVED if
+// it moved. An evaluation with no snapshot (made before this rule) is due
+// once.
+function conformanceInputsMoved(db: Db, project: string, stage: string, snapshotJson: string | null): boolean {
+  const snap = parseJson<{ conformance?: { adopted?: number; source_revision: string | null; source_digest: string | null } }>(snapshotJson)?.conformance;
+  if (!snap || typeof snap.adopted !== 'number') return true;
+  const s = db.prepare('SELECT "source_revision", "conformance_source_digest" FROM "stages" WHERE "id" = ?').get(stage) as { source_revision: string | null; conformance_source_digest: string | null } | undefined;
+  if (!s || s.source_revision !== snap.source_revision || s.conformance_source_digest !== snap.source_digest) return true;
+  return integrationAdoptions(db, project) !== snap.adopted;
+}
+
+// The stage's state after an evaluation of its gate (A.5). A conformed
+// stage stays conformed unless its source moved (CONFORMANCE_SOURCE_MOVED):
+// no other reason of a later evaluation (a check not yet run again) takes
+// its conformance away.
+export function conformanceAfterEvaluation(tx: Tx, args: { stage: string; satisfied: boolean; blocked: boolean; evaluation: string; sourceMoved?: boolean }): void {
   const s = tx.db.prepare('SELECT "conformance_state" FROM "stages" WHERE "id" = ?').get(args.stage) as { conformance_state: string | null } | undefined;
-  if (!s || s.conformance_state === 'conformed') return;
+  if (!s) return;
+  if (s.conformance_state === 'conformed') {
+    if (args.sourceMoved === true) tx.db.prepare(`UPDATE "stages" SET "conformance_state" = 'blocked' WHERE "id" = ?`).run(args.stage);
+    return;
+  }
   const next = args.satisfied ? 'conformed' : args.blocked ? 'blocked' : 'verifying';
   if (args.satisfied) tx.db.prepare(`UPDATE "stages" SET "conformance_state" = 'conformed', "status" = 'verified' WHERE "id" = ?`).run(args.stage);
   else tx.db.prepare('UPDATE "stages" SET "conformance_state" = ? WHERE "id" = ?').run(next, args.stage);
@@ -196,11 +259,17 @@ export function dueConformanceGates(db: Db, candidate: CandidateRow): string[] {
   const out: string[] = [];
   for (const id of conformanceHeldBy(db, candidate)) {
     const s = db.prepare('SELECT "conformance_state" FROM "stages" WHERE "id" = ?').get(id) as { conformance_state: string | null };
-    if (s.conformance_state === 'conformed') continue;
     const latest = db
-      .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
-      .get(candidate.id, id) as { stale: number } | undefined;
-    if (!latest || latest.stale === 1) out.push(id);
+      .prepare(`SELECT "stale", "inputs_snapshot" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
+      .get(candidate.id, id) as { stale: number; inputs_snapshot: string } | undefined;
+    // Due: never evaluated, stale, or its source moved since (a conformed
+    // stage included: its conformance holds only while its source does).
+    const moved = latest !== undefined && conformanceInputsMoved(db, candidate.project, id, latest.inputs_snapshot);
+    if (s.conformance_state === 'conformed') {
+      if (moved) out.push(id);
+      continue;
+    }
+    if (!latest || latest.stale === 1 || moved) out.push(id);
   }
   return out;
 }

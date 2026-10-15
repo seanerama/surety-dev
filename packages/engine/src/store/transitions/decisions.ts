@@ -84,6 +84,9 @@ export interface DecisionSpec {
   blockedOperation?: string | undefined;
   // D1 A.3: the records the question rests on, with their provenance.
   evidence?: { record: string; provenance: 'observed' | 'claimed' | 'configured' }[] | undefined;
+  // Facts recorded with the question when it is raised, not bound by its
+  // preview (decision.raised's payload; a spec_change's `settling`).
+  raised?: Record<string, unknown> | undefined;
 }
 
 const SCOPE = 'subject';
@@ -170,7 +173,9 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
   const open = openDecision(tx, spec.project, spec.kind, spec.subjectType, spec.subjectId, scope);
   if (open) {
     if (currentPreview(open, spec.manifest, spec.options) === open.preview_hash) return open;
-    invalidateDecision(tx, open, 'dependency manifest changed');
+    // What moved, by path, recorded with the invalidation (the driver's ask
+    // on M401's re-raised spec_change, slice 37).
+    invalidateDecision(tx, open, 'dependency manifest changed', { changed: manifestChanges(open.dependency_manifest, spec.manifest) });
   }
   const { g } = tx.db
     .prepare(
@@ -217,14 +222,35 @@ export function raiseDecision(tx: Tx, spec: DecisionSpec): DecisionRow {
       target,
     );
   const row = getDecision(tx, id)!;
-  tx.emit('decision.raised', decisionSubject(row), { kind: spec.kind, semantic_generation: identity.semantic_generation, preview_hash: preview });
+  tx.emit('decision.raised', decisionSubject(row), { kind: spec.kind, semantic_generation: identity.semantic_generation, preview_hash: preview, ...(spec.raised ?? {}) });
   return row;
 }
 
-export function invalidateDecision(tx: Tx, d: DecisionRow, reason: string): void {
+export function invalidateDecision(tx: Tx, d: DecisionRow, reason: string, extra: Record<string, unknown> = {}): void {
   if (d.status !== 'open') return;
   tx.db.prepare(`UPDATE "decisions" SET "status" = 'invalidated', "invalidated_reason" = ? WHERE "id" = ?`).run(reason, d.id);
-  tx.emit('decision.invalidated', decisionSubject(d), { kind: d.kind, reason });
+  tx.emit('decision.invalidated', decisionSubject(d), { kind: d.kind, reason, ...extra });
+}
+
+// The paths at which two manifests differ (at most 50, the first by path).
+export function manifestChanges(before: unknown, after: unknown): string[] {
+  const flat = (v: unknown, path: string, out: Map<string, string>): Map<string, string> => {
+    if (v !== null && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) flat(x, `${path}.${k}`, out);
+    } else out.set(path, JSON.stringify(v));
+    return out;
+  };
+  let a: unknown = before;
+  if (typeof before === 'string') {
+    try {
+      a = JSON.parse(before);
+    } catch {
+      a = null;
+    }
+  }
+  const x = flat(a, '', new Map());
+  const y = flat(after, '', new Map());
+  return [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).sort().slice(0, 50);
 }
 
 // Answer and consume in one transaction (D1 §4.6, §10.5): open → answered →

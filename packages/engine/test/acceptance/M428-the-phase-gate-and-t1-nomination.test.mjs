@@ -70,15 +70,21 @@ const gateRoute = (fx, project, candidate, body) => fx.engine.post(`/v1/projects
 describe('M428 the phase gate and T1 nomination', () => {
   test('(a), (b), (f) T1: one integration nominates nothing; at the completion of building one candidate by engine cadence, its checks registered and run, verification, then the stage and phase evaluations; complete with no phase_verification', async (t) => {
     const { fx, p, ctx, plan } = await journey35(t, { tier: 'T1' });
-    let ordinary = null;
-    const done = await pump(fx, ctx, () => {
-      const stages = stagesOfPlan(fx.home, plan.id);
-      if (!ordinary && stages[0].status === 'integrated' && !['integrated', 'verified'].includes(stages[1].status)) {
-        ordinary = { candidates: candidatesOfProject(fx.home, p.id).length, executions: executionsCount(fx, p.id) };
-      }
-      return planOfPhase(fx.home, p.id, 1).find((x) => active(x) && x.completed_at);
-    }, { what: 'phase 1 to complete at T1', max: 160 });
-    assert.deepEqual(ordinary, { candidates: 0, executions: 0 }, '(f) an ordinary T1 integration: no candidate, no execution');
+    const done = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 1).find((x) => active(x) && x.completed_at), { what: 'phase 1 to complete at T1', max: 160 });
+    // (f) read from the store at the earlier integration, not by polling
+    // between pump rounds (M5 slice 37, D6 K1, K2; objection 100; SEAM.md
+    // §447): under K1 and K2 the two stages' Builders may run at once and
+    // their integrations, the nomination and the registrations follow within
+    // one round. The ordinary integration is the one before the completion of
+    // building: before the later stage's `work.integrated`, no candidate was
+    // nominated and no execution registered.
+    const stageItems = stagesOfPlan(fx.home, plan.id).map((s) => s.work_item);
+    const integratedAt = stageItems.map((item) => Math.min(...eventsOfType(fx.home, 'work.integrated').filter((e) => e.subject?.work_item === item).map((e) => e.seq)));
+    assert.ok(integratedAt.every(Number.isFinite), `the fixture is live: each stage's work integrated (${JSON.stringify(integratedAt)})`);
+    const lastIntegration = Math.max(...integratedAt);
+    // The engine holds this one project.
+    const before = (type) => eventsOfType(fx.home, type).filter((e) => e.seq < lastIntegration).length;
+    assert.deepEqual({ candidates: before('candidate.nominated'), executions: before('check.registered') }, { candidates: 0, executions: 0 }, '(f) an ordinary T1 integration: no candidate, no execution');
     const [c] = candidatesOfProject(fx.home, p.id);
     assert.equal(candidatesOfProject(fx.home, p.id).length, 1, 'one candidate for the phase');
     assert.equal(c.nominated_by, 'engine_cadence', 'by engine cadence');
@@ -98,9 +104,18 @@ describe('M428 the phase gate and T1 nomination', () => {
     assert.ok(vRuns.length > 0, 'a Verifier dispatched');
     const vDispatched = Math.min(...vRuns.map((id) => withStore(fx.home, (db) => db.prepare('SELECT MIN("seq") AS s FROM "events" WHERE "subject" LIKE ? OR "payload" LIKE ?').get(`%${id}%`, `%${id}%`).s ?? Infinity)));
     assert.ok(vDispatched > registered.last, `the Verifier dispatched after the registrations (${JSON.stringify({ vDispatched, registered })})`);
-    const evaluations = [...evaluationsOf(fx.home, c.id, 'stage'), ...evaluationsOf(fx.home, c.id, 'phase')].map((e) => e.id);
-    const evaluated = seqs(fx.home, 'gate.evaluated', evaluations);
-    assert.ok(evaluated.first > results.last, `the stage and phase evaluations after the last result (${JSON.stringify({ evaluated, results })})`);
+    // (b), read on the evaluations the stage and the phase completed on
+    // (M5 slice 37, D6 K1; objection 103; SEAM.md §448): the Verifier's end
+    // requests a tick that may evaluate a due gate while results are still
+    // being recorded, and the gate is evaluated again as they arrive. What (b)
+    // pins: every satisfied evaluation comes after the last result, and no
+    // evaluation made before the last result is satisfied.
+    const all = [...evaluationsOf(fx.home, c.id, 'stage'), ...evaluationsOf(fx.home, c.id, 'phase')];
+    const evaluatedAt = (e) => seqs(fx.home, 'gate.evaluated', [e.id]).first;
+    const satisfied = all.filter((e) => e.outcome === 'satisfied');
+    assert.ok(satisfied.some((e) => e.gate_kind === 'stage') && satisfied.some((e) => e.gate_kind === 'phase'), `the stage and phase gates satisfied on that candidate (${JSON.stringify(all.map((e) => [e.gate_kind, e.outcome]))})`);
+    for (const e of satisfied) assert.ok(evaluatedAt(e) > results.last, `the ${e.gate_kind} evaluation completed on comes after the last result (${JSON.stringify({ evaluated: evaluatedAt(e), results })})`);
+    for (const e of all) if (evaluatedAt(e) < results.last) assert.notEqual(e.outcome, 'satisfied', `no ${e.gate_kind} evaluation before the last result is satisfied (${JSON.stringify({ evaluated: evaluatedAt(e), results })})`);
     assert.ok(evaluationsOf(fx.home, c.id, 'phase').some((e) => e.outcome === 'satisfied'), 'the phase gate satisfied on that candidate');
     assert.deepEqual(workOf(fx.home, p.id, 'phase_verification'), [], 'no phase_verification at T1 (the driver\'s ruling)');
     assert.ok(done.completed_at);

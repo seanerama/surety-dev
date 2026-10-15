@@ -42,13 +42,14 @@ import { EGRESS_SOCKET } from '../invoke/sandbox/mounts.js';
 import { type Runtime, log } from '../runtime.js';
 import type { Admission, ResultFields } from '../store/transitions/checks.js';
 import type { DomainRow } from '../store/transitions/boundary.js';
-import { pausePoint, seamCheckDomainLimits, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamScriptedExecution } from '../testing/seam.js';
+import { pausePoint, seamCheckDomainLimits, seamLauncherBarriers, seamLauncherReached, seamMainFault, seamProfileMaxima, seamScriptedExecution } from '../testing/seam.js';
 import { hostIdentity } from '../trust/host.js';
 import { type CheckTree, MaterializationFailed, listTrees, materialize, projectionOf, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
 import { LINK_SOCKET, buildCheckPlan, inputMountConflict, inputOverlayOverlong, inputTargetConflict } from './profile.js';
 import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
+import { PROJECT_POLICY } from '../config/schema.js';
 import { checkSecretVariable, targetVariable } from './variables.js';
 
 let tools: ResolvedTools | null = null;
@@ -176,14 +177,23 @@ export const checkCwd = (def: Definition): string => (def.cwd === '.' ? '/surety
 
 // The limits of a check domain: the configured ones, or the test seam's
 // below them (SEAM.md §212).
-export function checkDomainLimits(rt: Runtime): { memoryMax: number; tasksMax: number; volBytes: number; volInodes: number } {
+// `memoryMax`: the maximum recorded on the domain at admission (D6 K2,
+// B09); without one (the runner self-test's box), the engine's default check
+// profile under the ceiling.
+export function checkDomainLimits(rt: Runtime, memoryMax?: number): { memoryMax: number; tasksMax: number; volBytes: number; volInodes: number } {
   const below = seamCheckDomainLimits();
   return {
-    memoryMax: below?.memory_max ?? rt.setting('domain_memory_max'),
+    memoryMax: below?.memory_max ?? memoryMax ?? defaultCheckProfileMax(rt),
     tasksMax: below?.pids_max ?? rt.setting('domain_tasks_max'),
     volBytes: below?.writable_bytes ?? rt.setting('domain_writable_bytes'),
     volInodes: below?.writable_inodes ?? rt.setting('domain_writable_inodes'),
   };
+}
+
+// The engine's default check profile maximum on the main thread: the
+// harness's profile maxima, else min(the schema default, the ceiling).
+export function defaultCheckProfileMax(rt: Runtime): number {
+  return seamProfileMaxima()?.check ?? Math.min(PROJECT_POLICY.check_memory_max!.default, rt.setting('domain_memory_max'));
 }
 
 // The exit report as recorded (A.2 InitReport `exit`): the status or signal,
@@ -529,7 +539,7 @@ export class Supervisor implements DomainHolder {
       await this.engine('checks.interrupt', { execution: a.execution, why: 'the domain could not be created in this engine scope' });
       return;
     }
-    const bounds = checkDomainLimits(this.rt);
+    const bounds = checkDomainLimits(this.rt, a.memory_max);
     const limits = { memoryMax: bounds.memoryMax, tasksMax: bounds.tasksMax };
     const inode = createDomainCgroup(may.cgroup_path, limits);
     await this.engine('domain.cgroup_created', { domain: a.domain, inode });

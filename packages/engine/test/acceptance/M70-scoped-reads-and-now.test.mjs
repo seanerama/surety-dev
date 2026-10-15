@@ -50,6 +50,11 @@
 // identifier, a project's git operations (pending and blocked ones included),
 // and its environments as a route of their own.
 
+// M5 slice 37 (D6 K2; SEAM.md §437): the engine key `max_concurrent_runs`
+// (8 here before) is refused at start; the bound that stays, the domain
+// slots (applied on the kernel lane, the driver's ruling Q2), is set to 8 so
+// the declared concurrency is unchanged.
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { closeSync, constants, ftruncateSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
@@ -68,7 +73,8 @@ import { arrange, killedAt } from './harness/probes.mjs';
 import { boundedGet, listDecisions, listEnvironments, listOperations, listProjects, listWork, readDecision, readGate, readProject, readRun } from './harness/reads.mjs';
 import { readRecord, recordFile, recordRow } from './harness/records.mjs';
 import { commitOnRef, makeUnreadable, refOid } from './harness/repos.mjs';
-import { addProject, addWork, advanceClock, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForQuarantine, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
+import { addProject, addWork, advanceClock, pauseProject, requestTick, resumeProject, runsOf, scriptedEngine, tick, tickOnce, tickUntil, waitForQuarantine, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
+import { reached } from './harness/session-lane.mjs';
 import { BOUNDARY, script } from './harness/scripted.mjs';
 import { dumpStore, withStore } from './harness/store.mjs';
 
@@ -85,7 +91,7 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
   const fixture = () =>
     (built ??= (async () => {
       await awayFromMidnight();
-      const fx = await scriptedEngine(shared.context, { config: { max_concurrent_runs: 8 } });
+      const fx = await scriptedEngine(shared.context, { config: { max_concurrent_domains: 8 } });
       const engine = fx.engine;
       ctx.fx = fx;
       fx.scripted.defaultScript(script.complete());
@@ -125,8 +131,15 @@ describe('M70 NOW, and the execution and spend facts beside it', () => {
       assertRefused(await engine.post(`/v1/projects/${p.waiting}/runs/${run.waiting.id}/stop`, {}), 409, 'confirm_required', 'the unconfirmed Stop');
 
       // "untouched": nothing was ever dispatched. "ready": eligible work that no tick has seen yet.
+      // Objection 095 (D6 K1): new eligible work requests a tick at once, so
+      // the scheduler is held first, in a tick at `scheduler.tick_running`
+      // (after the prerequisite steps, before select; SEAM.md §441), and kept
+      // there for this describe's reads: no tick can select "ready"'s item.
       p.untouched = (await addProject(fx)).id;
       p.ready = (await addProject(fx)).id;
+      await armBarrier(engine, 'scheduler.tick_running', 'pause');
+      await requestTick(engine, p.ready);
+      await reached(fx, 'scheduler.tick_running');
       item.ready = await addWork(engine, p.ready, 'verification');
 
       Object.assign(ctx, { engine, p, item, run });
@@ -324,7 +337,10 @@ describe('M70 the work read', () => {
     const parked = await openDecision(fx, mine, 'blocker', fix);
 
     // Another project with an item of its own: eligible, nothing blocks it.
+    // Objection 095 (D6 K1): the project is paused before its item is made, or
+    // the item's own requested tick would dispatch it.
     const other = (await addProject(fx)).id;
+    await pauseProject(engine, other);
     const theirs = await addWork(engine, other, 'verification');
 
     const rows = Object.fromEntries(workItemsOf(fx.home, mine).map((work) => [work.id, work]));
@@ -375,7 +391,11 @@ describe('M70 the work read', () => {
       "the other project's one item, eligible and unblocked, and none of the first project's",
     );
 
-    // Reading writes nothing.
+    // Reading writes nothing. The first tick of a project in an incarnation
+    // records its host observation (D6 §7.6); the other project's, requested
+    // by its item under K1, is run first, so it cannot land inside the window
+    // (objection 114; SEAM §461). The project is paused: it dispatches nothing.
+    await tick(engine, other, { rounds: 1 });
     const unchanged = quiet(fx);
     for (let round = 0; round < 3; round++) {
       await listWork(engine, mine);
@@ -395,6 +415,10 @@ describe('M70 the gate read', () => {
     const engine = fx.engine;
     const ctx = await nominated(fx);
     const project = ctx.project.id;
+    // Objection 095 (D6 K1): the result recorded below requests a tick, which
+    // would dispatch the project's waiting work between the reads; the project
+    // is paused, so the reads are all that happens.
+    await pauseProject(engine, project);
     const candidate = ctx.candidate.id;
     const k = (await installChecks(engine, project, [check('login', { requirements: ['R1'] })])).id;
     const other = (await addProject(fx)).id;
@@ -651,9 +675,13 @@ describe('M70 NOW: the other causes of refused, and unknown', () => {
   test('an unresolved out-of-band change of the integration branch: NOW is refused, although the observation is a decision waiting for a person, and names the change; once it is reconciled, NOW is not refused', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
+    // Objection 095 (D6 K1): the item's own requested tick would dispatch it
+    // before the branch moves; the project is paused until the move is made.
+    await pauseProject(fx.engine, project.id);
     const item = await addItem(fx, project.id, 'fix');
     fx.scripted.script(item, [roleThat([permittedEdit()])]);
     const stray = commitOnRef(project.repo.path, project.repo.ref, { 'stray.txt': 'moved by hand\n' });
+    await resumeProject(fx.engine, project.id);
     await tick(fx.engine, project.id);
     const [observed] = outOfBand(fx.home, project.id);
     assert.deepEqual([observed?.subject_kind, observed?.found, observed?.decision.status, runsOf(fx.home, item).length], ['ref', stray, 'open', 0], 'the fixture is live: the moved branch is observed, its decision is open, and nothing is dispatched (row M24)');

@@ -44,7 +44,7 @@ import { releaseBarrier, waitFor } from './harness/engine.mjs';
 import { askingForTicks } from './harness/gates.mjs';
 import { PERMITTED_EDIT, addGitProject, addItem, permittedEdit, roleThat } from './harness/gitruns.mjs';
 import { heldGitWrites } from './harness/held-writes.mjs';
-import { assertOperation, assertOperations, eventsOfType, operationDetails, recoveryBarrier, registryOf, revisionsOf } from './harness/journal.mjs';
+import { armBarrier, assertOperation, assertOperations, eventsOfType, operationDetails, recoveryBarrier, registryOf, revisionsOf } from './harness/journal.mjs';
 import { changedPaths, commitsNaming, gitQuiet, parentsOf, refOid, refsContaining, treeOf } from './harness/repos.mjs';
 import { assertRunEnded, leasesOf, requestTick, run as runRow, runsOf, scriptedEngine, stopRun, tick, tickUntil, waitForRun, workItem } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
@@ -71,11 +71,6 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     writes.holdRefUpdate(project.repo.ref);
     await requestTick(fx.engine, project.id);
     const run = await waitForRun(fx.home, item);
-    // A second item of the project, added once the run exists (the scheduler
-    // would dispatch verification work first), to show what is and is not
-    // dispatched meanwhile.
-    const later = await addItem(fx, project.id, 'verification');
-    fx.scripted.script(later, [script.complete()]);
     const opOf = (kind) => operationDetails(fx.home, { project: project.id, run: run.id, journalKind: kind })[0];
     const withEvent = (kind, event) =>
       waitFor(
@@ -95,13 +90,27 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     assert.ok(!ambiguousCommit.events.some((e) => e.kind === 'applied' || e.kind === 'confirmed'), 'nothing recorded the commit as applied');
     assert.deepEqual(commitsNaming(repo, `Surety-Run: ${run.id}`), [], 'the fixture is live: the held write never ran, so no commit names the run');
     assert.deepEqual(writes.heldLog().map((line) => line.split(' ')[1]), ['hash-object'], 'the fixture is live: one write was held, the commit object');
+    // A second item of the project, added once the commit's ambiguity has been
+    // read, to show what is and is not dispatched meanwhile. M5 slice 37 (D6
+    // K1; objection 100; SEAM.md §447): its creation requests a tick, whose
+    // journal step probes the killed write at once; added before the read, it
+    // would have the attempt reconciled before the case could read it
+    // ambiguous. The probe now pauses at the `reconciled` barrier armed above.
+    const later = await addItem(fx, project.id, 'verification');
+    fx.scripted.script(later, [script.complete()]);
     // Nothing is taken for failed or made on the strength of the timer.
+    // M5 slice 37 (D6 K2; objection 100; SEAM.md §447): with no project run
+    // count, `later` may run while the run's operations are the engine's own
+    // and in flight; what the journal forbids is a dispatch while one is
+    // unresolved. So each window is given the number of `later`'s runs when
+    // the ambiguity was read, and no new one may appear until it is resolved.
+    let laterRuns = 0;
     const window = () => {
       const now = runRow(fx.home, run.id);
       assert.notEqual(now.state, 'ended', `the run is not ended while an operation it issued is unresolved (SEAM.md §47): it ended ${now.outcome} / ${now.reason_class} (${now.reason_text})`);
       assert.equal(runsOf(fx.home, item).length, 1, 'no second run of the work was started');
       assert.ok(!['integrated', 'complete', 'eligible', 'parked'].includes(workItem(fx.home, item).status), `the work is neither integrated nor given up (it is ${workItem(fx.home, item).status})`);
-      assert.equal(runsOf(fx.home, later).length, 0, 'nothing else of the project is dispatched while the journal has an unresolved operation');
+      assert.equal(runsOf(fx.home, later).length, laterRuns, 'nothing else of the project is dispatched while the journal has an unresolved operation');
     };
     window();
 
@@ -128,13 +137,23 @@ describe('M15 a git write past its deadline while the engine runs', () => {
 
     // ---- the branch update ---------------------------------------------------------------
     // The integration follows: its compare-and-swap is held, killed at the
-    // deadline, and recorded ambiguous; the branch has not moved.
+    // deadline, and recorded ambiguous; the branch has not moved. M5 slice 37
+    // (D6 K1; objection 100; SEAM.md §447): the commit's finalization
+    // requests a tick, and a tick after the kill would probe the branch update
+    // before the case reads it ambiguous; so the scheduler is held at
+    // `scheduler.tick_running` (§441), in a tick that ran its journal step
+    // while the update was still in flight, until the ambiguity has been read.
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
+    await requestTick(fx.engine, project.id);
+    await reachBarrier(fx, project.id, 'scheduler.tick_running');
     const ambiguousMove = await withEvent('ref_update', 'ambiguous');
+    laterRuns = runsOf(fx.home, later).length;
     assert.deepEqual([ambiguousMove.state, ambiguousMove.status, ambiguousMove.attempts.map((a) => a.status)], ['ambiguous', 'ambiguous', ['ambiguous']], 'the branch update is ambiguous: its one attempt was killed at the deadline');
     assert.deepEqual([ambiguousMove.payload.ref, ambiguousMove.payload.old_oid, ambiguousMove.payload.new_oid], [project.repo.ref, project.base, named[0]], 'its intent: the integration branch, from the base to the commit');
     assert.equal(refOid(repo, project.repo.ref), project.base, 'the fixture is live: the held update never ran, so the branch is where it was');
     assert.deepEqual(writes.heldLog().map((line) => line.split(' ')[1]), ['hash-object', 'update-ref'], 'the fixture is live: the second write held is the branch update; the keep ref went through');
     window();
+    await releaseBarrier(fx.engine, 'scheduler.tick_running');
 
     await reachBarrier(fx, project.id, integrationReconciled);
     const reconciledMove = opOf('ref_update');
@@ -204,18 +223,25 @@ describe('M15 a git write past its deadline while the engine runs', () => {
 
     // A Stop is confirmed. The end is decided: nothing renews the lease
     // (E27 item 5). But the run is not ended while its operation is
-    // unresolved (D1 §4.5 step 4; SEAM.md §47): with no tick, nothing is
-    // reconciled and nothing ends.
+    // unresolved (D1 §4.5 step 4; SEAM.md §47). M5 slice 37 (D6 K1;
+    // objection 100; SEAM.md §447): the Stop's answer requests a tick, whose
+    // journal step may probe at once, so "with no tick, nothing ends" is read
+    // as: sampled throughout three seconds, the run is never seen ended, nor
+    // its work held, while the operation is not yet finalized.
     await stopRun(fx.engine, project.id, run.id);
     const leaseAfterStop = leasesOf(fx.home, run.id).filter((lease) => lease.resource_kind === 'run').map((lease) => [lease.renewed_at, lease.expires_at]);
-    await sleep(3000);
-    const waiting = runRow(fx.home, run.id);
-    assert.deepEqual(
-      [waiting.state === 'ended', opOf().state, workItem(fx.home, item).status === 'held'],
-      [false, 'ambiguous', false],
-      `three seconds after the Stop the run has not ended and the work is not held while the operation is still ambiguous (the run is ${waiting.state}${waiting.state === 'ended' ? `, ${waiting.outcome} / ${waiting.reason_class}` : ''}, the work ${workItem(fx.home, item).status})`,
-    );
-    assert.deepEqual(leasesOf(fx.home, run.id).filter((lease) => lease.resource_kind === 'run').map((lease) => [lease.renewed_at, lease.expires_at]), leaseAfterStop, 'the lease was not renewed once the end was decided');
+    const early = [];
+    const until = performance.now() + 3000;
+    while (performance.now() < until) {
+      const r = runRow(fx.home, run.id);
+      const op = opOf();
+      if (op.state !== 'finalized' && (r.state === 'ended' || workItem(fx.home, item).status === 'held')) early.push({ run: r.state, outcome: r.outcome, op: op.state, work: workItem(fx.home, item).status });
+      await sleep(50);
+    }
+    assert.deepEqual(early, [], 'while the operation is unresolved the run is never ended and the work never held');
+    if (runRow(fx.home, run.id).state !== 'ended') {
+      assert.deepEqual(leasesOf(fx.home, run.id).filter((lease) => lease.resource_kind === 'run').map((lease) => [lease.renewed_at, lease.expires_at]), leaseAfterStop, 'the lease was not renewed once the end was decided');
+    }
 
     // The next tick's journal step probes: applied. The integration is
     // finalized, the work integrated, and then the Stop takes its course.

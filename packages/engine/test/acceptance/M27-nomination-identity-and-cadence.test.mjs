@@ -44,8 +44,8 @@ import {
   revisionsOf,
   workItemsOf,
 } from './harness/journal.mjs';
-import { refOid, refsOf } from './harness/repos.mjs';
-import { requestTick, run as runRow, runsOf, scriptedEngine, tick, workItem } from './harness/runs.mjs';
+import { parentsOf, refOid, refsOf } from './harness/repos.mjs';
+import { requestTick, run as runRow, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -193,15 +193,24 @@ describe('M27 a candidate is immutable, and later source changes land on its suc
     const fx = await scriptedEngine(t);
     const { project, items } = await addStagedProject(fx, { autonomy: 'step', tier: 'T2', stages: 2 });
     fx.scripted.script(items[0], [roleThat([step.write('src/stage-one.js', 'export const stage = 1;\n')])]);
-    fx.scripted.script(items[1], [roleThat([step.write('src/stage-two.js', 'export const stage = 2;\n')])]);
+    // Under K2 the second stage's Builder runs beside the first (objection
+    // 111; SEAM §458): it holds before it writes, and is released once the
+    // first stage's candidate exists, so it integrates after the nomination,
+    // by rebase onto the nominated revision (D1 §7.5).
+    fx.scripted.script(items[1], [roleThatHolds([], [step.write('src/stage-two.js', 'export const stage = 2;\n')])]);
     const firstRun = await runToEnd(fx, project.id, items[0]);
     const one = assertCommitted(fx, firstRun.id, { kind: 'engine_commit', parent: project.base, integrated: true });
     const [first] = await waitForCandidates(fx, project.id);
     const firstMade = assertCandidate(fx, project, first, { seq: 1, revision: one.sha, by: 'engine_cadence', from: null });
 
-    // The source changes: the second stage is built on the nominated revision.
-    const secondRun = await runToEnd(fx, project.id, items[1]);
-    const two = assertCommitted(fx, secondRun.id, { kind: 'engine_commit', parent: one.sha, integrated: true });
+    // The source changes after the nomination: the second stage integrates onto the nominated revision.
+    await runToHold(fx, project.id, items[1]);
+    fx.scripted.release(items[1]);
+    const secondRun = await waitForRun(fx.home, items[1], { state: 'ended' });
+    assert.deepEqual([secondRun.outcome, secondRun.reason_class], ['completed', 'none'], `the second stage's run completes (${secondRun.reason_text})`);
+    const two = { sha: refOid(project.repo.path, project.repo.ref) };
+    assert.deepEqual(parentsOf(project.repo.path, two.sha), [one.sha], 'the second stage is integrated onto the nominated revision');
+    assert.ok(revisionsOf(fx.home, { run: secondRun.id }).some((r) => r.sha === two.sha), 'as a revision of its run');
     const candidates = await waitForCandidates(fx, project.id, 2);
     assert.equal(candidates.length, 2);
     assert.deepEqual(
@@ -255,6 +264,11 @@ describe('M27 a nomination that a crash interrupts is completed by its finalizer
     assert.equal(workItem(fx.home, items[0]).status, 'verifying');
     assert.equal(runRow(fx.home, run.id).state, 'ended');
 
+    // The first ticks after the restart record what they observe of the
+    // verification item (its `work.hold_began` while its decision is open);
+    // under K1 one may come before or after a snapshot taken at once
+    // (objection 114; SEAM §461), so the snapshot is taken after them.
+    await ticks(fx, project.id);
     const receipts = receiptSnapshot(fx.home, project.id);
     await fx.engine.kill();
     await fx.start();

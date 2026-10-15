@@ -17,13 +17,17 @@
 // next restart, whatever its role goes on doing.
 // The clock is the controlled clock; nothing here waits out a real lease.
 
+// M5 slice 37 (D6 K2, C.2; SEAM.md §437): the project run count is removed,
+// so a project's `next` item may now run beside the case's item; the
+// one-run-per-project assertions are narrowed to one run per work item.
+
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, releaseBarrier, waitFor } from './harness/engine.mjs';
 import { CONTRACT } from './harness/fixtures.mjs';
-import { assertOneRunAtATime, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
+import { assertOneRunPerItem, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
   addProject,
   addWork,
@@ -171,7 +175,7 @@ describe('M15 a failed store transaction in the run-end path does not strand the
       withStore(fx.home, (db) => {
         assertWorkHistory(db, item);
         assertWorkHistory(db, next);
-        assertOneRunAtATime(db, project);
+        assertOneRunPerItem(db, project);
         assert.equal(eventsAbout(db, 'run', first.id, 'run.ended').length, 1);
       });
     });
@@ -228,9 +232,10 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     // The launch stalls before the spawn: the run is claimed, its lease is live, and no process exists to supervise.
     const fx = await scriptedEngine(t, { config: { lease_ttl: LEASE_TTL }, barriers: ['launch.before_spawn=pause'] });
     const project = (await addProject(fx)).id;
-    const item = await addWork(fx.engine, project, 'verification');
-    const next = await addWork(fx.engine, project, 'review');
+    // The default script before any item (objection 105: under K1 an item's
+    // creation requests a tick at once).
     fx.scripted.defaultScript(script.complete());
+    const item = await addWork(fx.engine, project, 'verification');
     await requestTick(fx.engine, project);
     await fx.engine.waitUntil('barrier:launch.before_spawn');
     const first = await waitForRun(fx.home, item, { state: 'claimed' });
@@ -257,13 +262,17 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     assertEndedByLeaseExpiry(fx, first.id, item, { launched: false });
     await sleep(700);
     assert.equal(fx.scripted.launches({ run: first.id }).length, 0, 'no role is spawned for a run whose lease expired while its launch waited');
-    // The project goes on with its next item; the held one waits for its Resume.
+    // The project goes on with its next item; the held one waits for its
+    // Resume. The next item is made once the stalled run has ended
+    // (objection 105: made with it, K2 dispatched it beside the stalled run
+    // and the clock's jump past lease_ttl took its lease too).
+    const next = await addWork(fx.engine, project, 'review');
     await tickUntil(fx.engine, project, () => workItem(fx.home, next).status === 'complete', { max: 6, what: 'the next item of the project to be dispatched and to complete' });
     assert.deepEqual([workItem(fx.home, item).status, runsOf(fx.home, item).length], ['held', 1], 'the held work was not dispatched again by itself');
     assert.equal(fx.scripted.launches({ work_item: item }).length, 0);
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 
@@ -311,7 +320,7 @@ describe('M15 the run lease: renewed by the engine, final once expired (review)'
     await assertHeldUntilResume(fx, project, item, first.id);
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 
@@ -473,7 +482,7 @@ describe('M15 once the engine has decided to end a run, nothing renews its lease
     withStore(fx.home, (db) => {
       assertWorkHistory(db, item);
       assertWorkHistory(db, next);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
       assert.equal(eventsAbout(db, 'run', first.id, 'run.ended').length, 1);
     });
   });

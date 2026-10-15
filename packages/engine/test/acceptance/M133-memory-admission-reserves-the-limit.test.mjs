@@ -14,8 +14,18 @@
 // naming `host_reserve_memory`, with no run, although the first domain uses
 // almost none of its M. Under the reading E75 replaces (only the new
 // domain's M against the memory available now), the second is admitted.
-// The single-run setting stays (`max_concurrent_runs` 1 per project, E18):
-// the two domains belong to two projects, with `max_concurrent_domains` 2.
+// The two domains belong to two projects, with `max_concurrent_domains` 2.
+//
+// M5 slice 37 (D6 K2, C.2; B09; reading 12; SEAM.md §437): a role domain is
+// now admitted at its project's effective `role_memory_max`, min(the
+// project's value or its 4 GiB default, `domain_memory_max`), recorded on the
+// domain at admission. The ceiling case is kept by setting both projects'
+// `role_memory_max` to M, the ceiling (a project value equal to the ceiling is
+// valid; the projects' repositories have their primary worktree detached so
+// the engine can move their integration branch for the policy change,
+// objection 090); the case the per-profile maxima add: the same ceiling M, the
+// projects' `role_memory_max` well below it, and the second domain admitted,
+// because each is counted at its own maximum, not at the ceiling.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,9 +33,12 @@ import { describe, test } from 'node:test';
 
 import { waitFor } from './harness/engine.mjs';
 import { listWork } from './harness/reads.mjs';
-import { addProject, addWork, requestTick, runsOf, stopRun, waitForRunState } from './harness/runs.mjs';
+import { addWork, requestTick, runsOf, stopRun, waitForRunState } from './harness/runs.mjs';
+import { addGitProject } from './harness/gitruns.mjs';
+import { changePolicy } from './harness/journal.mjs';
 import { roleHolding, sandboxEngine } from './harness/sandbox/lane.mjs';
 import { script } from './harness/scripted.mjs';
+import { withStore } from './harness/store.mjs';
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
@@ -54,8 +67,10 @@ describe('M133 memory admission reserves every admitted domain\'s configured lim
     const { max, reserve } = sizes(before);
     const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2, domain_memory_max: max, host_reserve_memory: reserve, domain_writable_bytes: 64 * MIB } });
     fx.scripted.defaultScript(script.complete());
-    const a = (await addProject(fx)).id;
-    const b = (await addProject(fx)).id;
+    const a = (await addGitProject(fx)).id;
+    const b = (await addGitProject(fx)).id;
+    // The ceiling case (K2): each project's role maximum is the ceiling M.
+    for (const p of [a, b]) await changePolicy(fx.engine, p, { role_memory_max: max });
 
     // The first domain: admitted, its role held running and idle.
     const first = await roleHolding(fx, a, await addWork(fx.engine, a, 'verification'), { on_term: 'exit' });
@@ -85,5 +100,32 @@ describe('M133 memory admission reserves every admitted domain\'s configured lim
     await waitForRunState(fx.home, first.run.id, 'ended', { timeoutMs: 60_000 });
     await requestTick(fx.engine, b);
     await waitFor(() => runsOf(fx.home, held).length > 0 || undefined, { timeoutMs: 60_000, what: 'the second item to be dispatched once the first domain has ended' });
+  });
+
+  test('the per-profile maxima (K2): the same ceiling, each project\'s role_memory_max well below it; the second domain is admitted, each counted at its own maximum', async (t) => {
+    const before = memAvailable();
+    const { max, reserve } = sizes(before);
+    const role = Math.max(512 * MIB, Math.floor((0.3 * (before - reserve)) / MIB) * MIB);
+    const fx = await sandboxEngine(t, { config: { max_concurrent_domains: 2, domain_memory_max: max, host_reserve_memory: reserve, domain_writable_bytes: 64 * MIB } });
+    fx.scripted.defaultScript(script.complete());
+    const a = (await addGitProject(fx)).id;
+    const b = (await addGitProject(fx)).id;
+    for (const p of [a, b]) await changePolicy(fx.engine, p, { role_memory_max: role });
+
+    const first = await roleHolding(fx, a, await addWork(fx.engine, a, 'verification'), { on_term: 'exit' });
+    const available = memAvailable();
+    const facts = { MemAvailable_now: available, domain_memory_max: max, role_memory_max: role, host_reserve_memory: reserve };
+    assert.ok(2 * role + reserve <= available, `the fixture is live: two domains at role_memory_max plus the reserve fit (${JSON.stringify(facts)})`);
+    assert.ok(2 * max + reserve > available, `and two at the ceiling would not (${JSON.stringify(facts)})`);
+    const domains = (run) => withStore(fx.home, (db) => db.prepare('SELECT "memory_max" FROM "execution_domains" WHERE "run" = ?').all(run));
+    assert.deepEqual(domains(first.run.id).map((d) => d.memory_max), [role], 'the first domain is admitted at its project\'s role_memory_max');
+
+    const second = await addWork(fx.engine, b, 'verification');
+    await requestTick(fx.engine, b);
+    const runs = await waitFor(() => (runsOf(fx.home, second).length > 0 ? runsOf(fx.home, second) : undefined), { timeoutMs: 60_000, what: 'the second domain to be admitted at its own maximum' });
+    assert.deepEqual(domains(runs[0].id).map((d) => d.memory_max), [role], 'the second domain is admitted at its project\'s role_memory_max');
+
+    await stopRun(fx.engine, a, first.run.id);
+    await waitForRunState(fx.home, first.run.id, 'ended', { timeoutMs: 60_000 });
   });
 });

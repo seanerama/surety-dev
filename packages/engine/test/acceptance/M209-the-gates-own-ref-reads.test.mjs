@@ -20,12 +20,13 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { answer, decisionsOfKind, openDecision, reachBarrier } from './harness/decisions.mjs';
-import { releaseBarrier } from './harness/engine.mjs';
+import { releaseBarrier, waitFor } from './harness/engine.mjs';
+import { barrierWaiting } from './harness/session-lane.mjs';
 import { maxEventSeq } from './harness/fixtures.mjs';
 import { PROTECTED_FILES, alphaTarget, askingForTicks, authorizationsOf, capturedProposal, check, installChecks, nominated, passAll, proposalsOf, reasonCodes, reasonSubjects, stageGate } from './harness/gates.mjs';
 import { armBarrier, eventsOfType, outOfBand } from './harness/journal.mjs';
 import { commitOnRef, gitQuiet, holdGit, refOid } from './harness/repos.mjs';
-import { scriptedEngine, tick, workItem } from './harness/runs.mjs';
+import { requestTick, scriptedEngine, tick, workItem } from './harness/runs.mjs';
 
 // A T1 candidate whose one required check has passed, with an Alpha
 // authorization proposed for it. Nothing has been evaluated yet, so nothing
@@ -101,10 +102,19 @@ describe("M209 the gate's own ref reads", () => {
     const { fx, ctx, project, repo } = env;
     const refs = [ctx.project.repo.ref, `refs/surety/cand/${ctx.candidate.seq}`];
 
+    // Under K1 the gate route requests a tick (cause `api`), whose integrity
+    // step would meet the held repository and record it unreadable as D1
+    // §7.6 says (objection 111; SEAM §458). Git is held while a tick waits
+    // at `scheduler.tick_running` (after its prerequisite steps, git then
+    // answering), so no tick's integrity step runs while git does not answer.
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
+    await requestTick(fx.engine, project);
+    await waitFor(() => barrierWaiting(fx, 'scheduler.tick_running'), { what: 'a tick held at scheduler.tick_running' });
     const letGo = holdGit(repo);
     fx.beforeCleanup.push(letGo);
     const held = [await stageGate(fx, ctx), await env.alpha.evaluate()];
     letGo();
+    await releaseBarrier(fx.engine, 'scheduler.tick_running');
 
     for (const [gate, evaluation] of [['stage', held[0]], ['alpha_authorize', held[1]]]) {
       assert.equal(evaluation.outcome, 'not_satisfied', `${gate}: an unread ref is not a pass`);

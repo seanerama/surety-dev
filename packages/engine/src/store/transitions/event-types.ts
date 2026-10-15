@@ -6,6 +6,10 @@ export const EVENT_OWNERS = {
   'engine.started': 'store/transitions/engine.ts',
   'engine.mode_changed': 'store/transitions/engine.ts',
   'engine.tick': 'store/transitions/engine.ts',
+  // D6 K1 (M5 slice 37; SEAM.md §430): one per requesting transition.
+  'scheduler.tick_requested': 'store/transitions/tick-requests.ts',
+  // D6 A.2 (§7.6; N01): the host observed for a project at its start or an engine start.
+  'host.observed': 'plan/pace.ts',
   'engine.quarantine': 'store/transitions/runs.ts',
   'api.act': 'store/transitions/audit.ts',
   'project.created': 'store/transitions/project.ts',
@@ -19,6 +23,11 @@ export const EVENT_OWNERS = {
   'work.integrated': 'store/transitions/work.ts',
   'work.complete': 'store/transitions/work.ts',
   'work.held': 'store/transitions/work.ts',
+  // M5 slice 37 (N01; the driver's ruling Q3; SEAM.md §§427, 431): a hold's
+  // interval, and a stage work item's milestone met.
+  'work.hold_began': 'store/transitions/work.ts',
+  'work.hold_ended': 'store/transitions/work.ts',
+  'work.dependency_met': 'scheduler/milestones.ts',
   'work.resumed': 'store/transitions/work.ts',
   'work.parked': 'store/transitions/work.ts',
   'work.cancelled': 'store/transitions/work.ts',
@@ -32,6 +41,8 @@ export const EVENT_OWNERS = {
   'run.quarantined': 'store/transitions/runs.ts',
   'domain.terminated': 'store/transitions/runs.ts, store/transitions/deploy.ts',
   'domain.quarantined': 'store/transitions/runs.ts',
+  // D6 A.2 (K2; N01; SEAM.md §432): a domain's memory peak, before its termination.
+  'domain.peak_recorded': 'store/transitions/runs.ts',
   'decision.raised': 'store/transitions/decisions.ts',
   'decision.answered': 'store/transitions/decisions.ts',
   'decision.consumed': 'store/transitions/decisions.ts',
@@ -183,7 +194,9 @@ export const EVENT_OWNERS = {
   // D6 §4.5 (M5 slice 36): the rejection keeping its side ref; an
   // obligation resolved; the Verifier's applicability assessment.
   'spec.change_rejected': 'spec/change.ts',
-  'check.obligation_resolved': 'spec/change.ts',
+  'check.obligation_resolved': 'spec/change.ts, plan/deferral.ts',
+  // D6 A.2 (B07; SEAM.md §428): a deferral's obligation recorded.
+  'check.obligation_recorded': 'plan/deferral.ts',
   'spec.assessment_recorded': 'spec/change.ts',
   'deploy.requested_by_policy': 'store/transitions/deploy.ts',
   // D6 §8 (M5 slice 32): the adoption, the confirmations, the conformance

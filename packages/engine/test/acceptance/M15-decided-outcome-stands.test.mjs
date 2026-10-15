@@ -20,13 +20,17 @@
 //     the expiry: the run ends completed.
 // The clock is the controlled clock.
 
+// M5 slice 37 (D6 K2, C.2; SEAM.md §437): the project run count is removed,
+// so a project's `next` item may now run beside the case's item; the
+// one-run-per-project assertions are narrowed to one run per work item.
+
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { armFault, waitFor } from './harness/engine.mjs';
 import { CONTRACT, assertRefused } from './harness/fixtures.mjs';
-import { assertOneRunAtATime, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
+import { assertOneRunPerItem, assertWorkHistory, eventsAbout } from './harness/invariants.mjs';
 import {
   abandonRun,
   addProject,
@@ -77,7 +81,6 @@ describe('M15 a Stop confirmed while a deadline end is being retried does not re
     await tick(fx.engine, project);
     const launch = await fx.scripted.waitForHolding({ work_item: item });
     const first = await waitForRun(fx.home, item, { state: 'executing' });
-    const next = await addWork(fx.engine, project, 'verification');
 
     // The confirmation is raised while the run is under way, before its deadline.
     const stopPath = `/v1/projects/${project}/runs/${first.id}/stop`;
@@ -150,9 +153,14 @@ describe('M15 a Stop confirmed while a deadline end is being retried does not re
     });
     assert.notEqual(getRow(fx.home, 'decisions', decision).status, 'consumed', 'and the confirmation was never consumed');
 
+    // The project's next item, made once the run's end is recorded (objection
+    // 095: made while the run was under way, K1 and K2 would dispatch and end
+    // it beside the run, and its own `run.finalizing` would use up the
+    // unscoped faults armed for the run's).
+    const next = await addWork(fx.engine, project, 'verification');
     await tickUntil(fx.engine, project, () => workItem(fx.home, next).status === 'complete', { max: 6, what: 'the next item of the project to be dispatched and to complete' });
     assert.equal(runsOf(fx.home, item).length, 1);
-    withStore(fx.home, (db) => assertOneRunAtATime(db, project));
+    withStore(fx.home, (db) => assertOneRunPerItem(db, project));
   });
 });
 
@@ -198,7 +206,7 @@ describe('M15 a Stop or Abandon confirmed after a lease has expired, before a ti
     assert.equal((await waitForWork(fx.home, item, 'held')).status, 'held');
     withStore(fx.home, (db) => {
       assert.deepEqual(assertWorkHistory(db, item), ['eligible', 'claimed', 'executing', 'held']);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 
@@ -218,7 +226,7 @@ describe('M15 a Stop or Abandon confirmed after a lease has expired, before a ti
     assert.equal(runsOf(fx.home, item).length, 1, 'and it was not dispatched again');
     withStore(fx.home, (db) => {
       assert.deepEqual(assertWorkHistory(db, item), ['eligible', 'claimed', 'executing', 'eligible']);
-      assertOneRunAtATime(db, project);
+      assertOneRunPerItem(db, project);
     });
   });
 });

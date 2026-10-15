@@ -35,7 +35,7 @@ import { installGatedPlan } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { addWork, pauseProject, resumeProject, runsOf, tickUntil } from './harness/runs.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
-import { step } from './harness/scripted.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { checkProject, governedText } from './harness/checks/fixtures.mjs';
 import { M239, M239_GOVERNED, SEEDED_DEFECT_M3, m239Toolchain } from './harness/real/checks-journey.mjs';
 
@@ -53,6 +53,12 @@ async function dumpedPackage(t) {
   await installGatedPlan(fx.engine, project.id, { requirements: M239.requirements, constraints: M239.constraints, stages: [M239.stageOne] });
   const item = await addWork(fx.engine, project.id, 'check_correction');
   fx.scripted.script(item, [roleThat([step.probe('context_dump')])]);
+  // The plan's stage_build is dispatched beside it under K2 (D6 K2); unscripted,
+  // its launch would hold forever (objection 078's pattern) and no tick would
+  // end. Every launch with no script of its own ends at once (exit 3), so it
+  // and any repair after it end without a candidate: nothing reaches a check
+  // domain (the slice-37 straddle, SEAM §454).
+  fx.scripted.defaultScript(script.crash());
   await resumeProject(fx.engine, project.id);
   await tickUntil(fx.engine, project.id, () => runsOf(fx.home, item)[0]?.state === 'ended', { what: "the check_correction Verifier's run to end" });
   await pauseProject(fx.engine, project.id);

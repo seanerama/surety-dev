@@ -15,7 +15,7 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import type { ReplanPrepared } from '../../plan/bundle.js';
-import { transitionWork, workItemOfRun } from './work.js';
+import { type ChainOrigin, originOfItem, transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
 import { type ApplicabilityEntry, recordAssessments } from '../../spec/change.js';
@@ -65,6 +65,39 @@ export function movingRefs(db: Tx['db'], project: string): Record<string, string
   return out;
 }
 
+// The other managed checkouts a run's snapshot validation compares with
+// their current recorded baselines (D1 §7.3 step 4, §7.6; BS5 rule 17; the
+// driver's ruling on M450, slice 37): the integration worktrees and the
+// retained workspaces of ended sessions. Not this run's own workspace, which
+// its own validation reads; not one owned by another active run, which that
+// run's validator evaluates (under D6 K2 a project's runs write their
+// workspaces side by side). The retained workspaces of ended work-item runs
+// are compared too, at each run's validation (the driver's ruling on M19,
+// slice 37, revoking its addendum; M19 case 9); Sean's ruling keeps them out
+// of the per-tick integrity step only (integrity.ts ENDED_WORK_WORKSPACE).
+// The reads go side by side, bounded (git/snapshot.ts). The baseline is
+// the one recorded now, read when the validation runs: a run that ended
+// meanwhile has its own end's baseline. The registered refs are compared
+// apart (AcceptFacts.registry).
+export function validatorCheckouts(db: Tx['db'], project: string, run: string): AcceptFacts['others'] {
+  return (
+    db
+      .prepare(
+        `SELECT c.*, w."metadata_baseline" FROM "managed_checkouts" c
+         LEFT JOIN "runs" r ON r."id" = c."owner_run" LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
+         WHERE c."project" = ? AND c."released_at" IS NULL
+           AND (c."owner_run" IS NULL OR (c."owner_run" <> ? AND r."state" = 'ended'))
+         ORDER BY c."id"`,
+      )
+      .all(project, run) as { kind: string; path: string; baseline: string; metadata_baseline: string | null }[]
+  ).map((c) => ({
+    kind: c.kind,
+    path: c.path,
+    adminDir: c.metadata_baseline ? ((JSON.parse(c.metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
+    baseline: JSON.parse(c.baseline) as Baseline,
+  }));
+}
+
 export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
   const run = getRun(tx, args.run);
   if (!run) throw notFound('run', args.run);
@@ -86,19 +119,7 @@ export function acceptFacts(tx: Tx, args: { run: string }): AcceptFacts {
     : undefined;
   const ref = integrationRef(p.integration_branch);
   const head = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(run.project, ref) as { expected_oid: string } | undefined;
-  const others = (
-    tx.db
-      .prepare(
-        `SELECT c.*, w."metadata_baseline" FROM "managed_checkouts" c LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
-         WHERE c."project" = ? AND c."released_at" IS NULL AND (c."owner_run" IS NULL OR c."owner_run" <> ?)`,
-      )
-      .all(run.project, run.id) as { kind: string; path: string; baseline: string; metadata_baseline: string | null }[]
-  ).map((c) => ({
-    kind: c.kind,
-    path: c.path,
-    adminDir: c.metadata_baseline ? ((JSON.parse(c.metadata_baseline) as { adminDir?: string }).adminDir ?? null) : null,
-    baseline: JSON.parse(c.baseline) as Baseline,
-  }));
+  const others = validatorCheckouts(tx.db, run.project, run.id);
   const commits = opsOfRun(tx.db, run.id, 'commit_tree').map((o) => {
     const inputs = JSON.parse(o.inputs) as CommitInputs;
     return { id: o.id, state: o.state, status: o.status, sha: inputs.sha, parent: inputs.parent, tree: inputs.tree };
@@ -155,7 +176,7 @@ type Assessments = { entries: ApplicabilityEntry[]; rationales: string[] };
 // its role reported recorded. Capture is not a commit.
 export function captureRunProposal(
   tx: Tx,
-  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[]; adoptedTests?: unknown[] | null; boundaryErrors?: unknown[]; assessments?: Assessments },
+  args: { run: string; base: string; tree: string; diffHash: string; rationale: string | null; requested: ChangeKind; changesRequiredSet: boolean; evidence?: (string | null)[]; adoptedTests?: unknown[] | null; deferredCriteria?: unknown[] | null; boundaryErrors?: unknown[]; assessments?: Assessments },
 ): void {
   const run = getRun(tx, args.run);
   if (!run || run.state !== 'validating') return;
@@ -173,6 +194,7 @@ export function captureRunProposal(
     requested: args.requested,
     changesRequiredSet: args.changesRequiredSet,
     adoptedTests: args.adoptedTests ?? null,
+    deferredCriteria: args.deferredCriteria ?? null,
     boundaryErrors: args.boundaryErrors ?? [],
   });
   recordReport(tx, { run: run.id, evidence: args.evidence });
@@ -346,6 +368,7 @@ export function intendIntegration(
     architect: run.role === 'architect',
     nominate,
     chain: extra.chain,
+    chain_origin: originOfItem(tx.db, item.id),
     fence: true,
   };
   return intendOperation(tx, {
@@ -368,7 +391,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
   const row = tx.db.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
   if (!row) throw notFound('project', args.project);
   if (row.nomination_due === null) return null;
-  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number; presence?: Presence };
+  const due = JSON.parse(row.nomination_due) as { revision: string; by: 'engine_cadence' | 'builder_request'; chain: number; origin?: ChainOrigin | null; presence?: Presence };
   const pending = tx.db
     .prepare(
       `SELECT o."id" FROM "operations" o WHERE o."project" = ? AND o."kind" = 'git_ref_update' AND json_extract(o."finalizer_inputs", '$.purpose') = 'nomination'
@@ -391,6 +414,7 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
     seq,
     by: due.by,
     chain: due.chain,
+    chain_origin: due.origin ?? null,
     ...(due.presence ? { module_presence: due.presence } : {}),
   };
   return intendOperation(tx, {

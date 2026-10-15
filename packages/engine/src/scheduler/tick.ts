@@ -15,8 +15,9 @@
 //   (4. budgets: a project whose day has passed a day limit is not
 //      dispatched; the select step and the claim check it, and a check whose
 //      read fails dispatches nothing of the project.)
-//   8. Select, and 9. dispatch: at most one run per project and
-//      max_concurrent_runs engine-wide; work at its chaining boundary is not
+//   8. Select, and 9. dispatch: every eligible item in priority order, each
+//      the envelope admits (D6 K2: no run count at either scope; one run
+//      per work item); work at its chaining boundary is not
 //      dispatched and gets one decision instead (D1-34); the tick waits for
 //      what a dispatch writes before its spawn, never for the spawn or the run.
 //  Then records whose retention has passed expire, and
@@ -31,14 +32,15 @@
 import type { PhaseStepResult } from '../plan/phase.js';
 import { performance } from 'node:perf_hooks';
 
-import { observeIntegrity } from '../git/integrity.js';
+import { observeIntegrity, registeredRefsMoved } from '../git/integrity.js';
 import { Launcher } from '../invoke/choke.js';
 import type { Journal } from '../journal/driver.js';
 import type { ProjectCandidates } from '../store/reads.js';
 import { expireRecords } from '../records/retention.js';
 import { type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
-import { seamNotifyChannel, seamStepDelay } from '../testing/seam.js';
+import { pausePoint, seamNotifyChannel, seamPrepareError, seamStepDelay } from '../testing/seam.js';
+import { nowMs } from '../clock.js';
 import { type Effects, classifyDue } from '../decisions/effects.js';
 import { deliverNotifications } from '../decisions/notify.js';
 import { publishAuthorized } from '../plan/publish.js';
@@ -72,9 +74,20 @@ async function withinBudget(work: Promise<void>, ms: number): Promise<boolean> {
 
 export class Scheduler {
   private flag = false;
+  // Requests set since the running tick began (D6 K1): what the next tick
+  // coalesces, recorded on its engine.tick.
+  private requests = 0;
   private running = false;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  // No tick of any kind before the scheduler has started, after the lift to
+  // full (D1 §1.4, §16; D2 §7.3; K1: never ahead of D1 §8.1's safety
+  // steps; the slice-37 review's S2). A request made during startup is
+  // coalesced into the first tick after the start.
+  private started = false;
+  // When the last tick began, on the engine's clock: the interval tick falls
+  // due at it plus tick_interval (the driver's ruling Q12, slice 37).
+  private lastTickAt = nowMs();
 
   constructor(
     private readonly rt: Runtime,
@@ -85,8 +98,17 @@ export class Scheduler {
   ) {}
 
   start(): void {
-    this.timer = setInterval(() => this.request(), this.rt.setting('tick_interval') * 1000);
+    this.started = true;
+    this.lastTickAt = nowMs();
+    // `tick_interval` stays the ceiling of idle (K1): a tick falls due on the
+    // engine's clock, polled each second; a clock that steps back only delays
+    // what is due by the step.
+    this.timer = setInterval(() => {
+      if (this.running || this.flag) return;
+      if (nowMs() - this.lastTickAt >= this.rt.setting('tick_interval') * 1000) this.request();
+    }, 1000);
     this.timer.unref();
+    if (this.flag && !this.running && !this.stopped) void this.loop();
   }
 
   stop(): void {
@@ -94,13 +116,17 @@ export class Scheduler {
     if (this.timer) clearInterval(this.timer);
   }
 
-  request(): void {
+  // D1 §1.5's flag, set by the API, the engine's own requests and the
+  // transitions of K1 (`n` requests at once); never a re-entry into a
+  // running tick: the loop below runs one tick after another.
+  request(n = 1): void {
     // The observation job runs off the tick (D4 §6.2; deploy/observe.ts):
     // woken here, never awaited, so a tick held by an effect holds no
     // observation.
     this.rt.deploy?.observer.wake();
     this.flag = true;
-    if (!this.running && !this.stopped) void this.loop();
+    this.requests += Math.max(1, n);
+    if (this.started && !this.running && !this.stopped) void this.loop();
   }
 
   private async loop(): Promise<void> {
@@ -108,7 +134,9 @@ export class Scheduler {
     try {
       while (this.flag && !this.stopped) {
         this.flag = false;
-        await this.tick().catch((err) => log('tick', err));
+        const coalesced = this.requests;
+        this.requests = 0;
+        await this.tick(coalesced).catch((err) => log('tick', err));
       }
     } finally {
       this.running = false;
@@ -118,7 +146,18 @@ export class Scheduler {
   private async step(name: (typeof PREREQUISITES)[number], project: string): Promise<void> {
     await seamStepDelay(name, project);
     if (name === 'recover') {
-      this.ender.retryDue(project);
+      // The recovery's run ends finish before the journal step begins
+      // (D1 §8.1 steps 1 then 2; M440 (d)); one that hangs is waited for at
+      // most half the step's budget, and the project's tick goes on.
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        this.ender.retryDue(project),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, (this.rt.setting('tick_step_budget') * 1000) / 2);
+          timer.unref();
+        }),
+      ]);
+      clearTimeout(timer);
       await this.ender.observeQuarantines(project);
       await this.ender.reconcileExpired(project);
     } else if (name === 'journal') {
@@ -131,26 +170,32 @@ export class Scheduler {
     }
   }
 
-  private readonly observed = new Set<string>();
 
   private async decide(project: string): Promise<void> {
-    // The host as it is at this engine start, once per project (D6 §7.6).
-    if (!this.observed.has(project)) {
-      await this.rt.engine('pace.observe_host', {
-          project,
-          incarnation: this.rt.incarnation,
-          engine_version: ENGINE_VERSION,
-          settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains', 'max_concurrent_runs'] as const).map((k) => [k, this.rt.setting(k)])),
-        }).then(
-        () => this.observed.add(project),
-        (err) => log('host observation', err, { project }),
-      );
-    }
+    // The host as it is at this engine start, once per project and
+    // incarnation (D6 §7.6); its backend entry kept current within it.
+    await this.rt
+      .engine('pace.observe_host', {
+        project,
+        incarnation: this.rt.incarnation,
+        engine_version: ENGINE_VERSION,
+        settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains'] as const).map((k) => [k, this.rt.setting(k)])),
+      })
+      .catch((err) => log('host observation', err, { project }));
     await ensureAncestry(this.rt, project);
     // The repairs failed checks owe (D3 §2.10): reconciled from durable
     // state at every tick, so a failure recorded while its item was not yet
     // verifying is repaired by the next tick at the latest.
     await this.rt.engine('work.reconcile_repairs', { project }).catch((err) => log('check repair', err, { project }));
+    // A deployment completion refused only on spec_changed obligations,
+    // verified again once they resolve (store/transitions/queue.ts).
+    await this.rt.engine('deploy.reverify_resolved', { project }).catch((err) => log('completion re-verification', err, { project }));
+    // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
+    const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
+      log('awaiting sweep', err, { project });
+      return null;
+    });
+    if (swept && swept.unexplained.length > 0) log('awaiting sweep', new Error(`work items awaiting a decision with nothing to ask: ${swept.unexplained.join(', ')}`), { project });
     // The candidates' module presence (D3 §4.1), before Gates and Checks: a
     // registration owed for want of it is made once it is read (L2).
     await ensurePresence(this.rt, project).catch((err) => log('module presence', err, { project }));
@@ -197,39 +242,66 @@ export class Scheduler {
   private async alphaPolicy(project: string): Promise<void> {
     const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
     if (!due) return;
-    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
-    try {
-      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
-    } catch (err) {
-      // Refused at its preparation (the runtime, the artifact): recorded
-      // `not_issued` under its key with the reason, never made again (the
-      // 31b review's S6). Anything else is retried at a later tick.
+    // Refused at its preparation (the runtime, the artifact): recorded
+    // `not_issued` under its key with the reason, never made again (the 31b
+    // review's S6). Any other error is counted on the key's row and the key
+    // prepared again at most `deploy_auto_retries_max` more times, then
+    // `not_issued` `preparation_failed` (the driver's ruling Q4, slice 37):
+    // with ticks requested by events, an unbounded retry would be a hot loop.
+    const failed = async (err: unknown) => {
       if (err instanceof Refusal) {
         await this.rt.engine('deploy.policy_refused', { project, candidate: due.candidate, environment: due.environment, key: due.key, refusal: { code: err.code, reason: err.reason } });
         return;
       }
-      throw err;
+      log('alpha policy preparation', err, { project });
+      await this.rt.engine('deploy.policy_preparation_failed', { project, candidate: due.candidate, environment: due.environment, key: due.key, error: err instanceof Error ? err.message : String(err) });
+    };
+    let prepared: Awaited<ReturnType<typeof prepareDeployment>>;
+    try {
+      prepared = await prepareDeployment(this.rt, project, { candidate: due.candidate, environment: due.environment });
+    } catch (err) {
+      await failed(err);
+      return;
     }
     try {
+      // SEAM.md §433: an unexpected error after the sealing, before the
+      // request's transaction: the preparation's.
+      if (seamPrepareError(project)) {
+        await failed(new Error('an unexpected error in the preparation of the deploy request (injected)'));
+        return;
+      }
       await this.rt.engine('deploy.policy_request', prepared);
     } finally {
       await settleDeployment(this.rt, prepared);
     }
   }
 
-  private async tick(): Promise<void> {
+  private async tick(requests: number): Promise<void> {
     const started = performance.now();
+    this.lastTickAt = nowMs();
+    // The steps this tick ran, in order (engine.tick.payload.steps; D1 §8.1).
+    const steps: string[] = [];
     const tickBudget = this.rt.setting('tick_budget') * 1000;
     const stepBudget = this.rt.setting('tick_step_budget') * 1000;
     const remaining = () => tickBudget - (performance.now() - started);
     const projects = await this.rt.read<string[]>('scheduler.projects');
     const ineligible = new Set<string>();
     for (const name of PREREQUISITES) {
+      steps.push(name);
       for (const project of projects) {
         if (ineligible.has(project)) continue;
         const limit = Math.min(stepBudget, remaining());
         if (limit <= 0 || !(await withinBudget(this.step(name, project), limit))) ineligible.add(project);
       }
+    }
+    // 4. Budgets (D1 §8.1 step 4): a project whose day has passed a day limit
+    // is not dispatched, nor one whose limits could not be read; the claim
+    // checks it again.
+    steps.push('budgets');
+    for (const project of projects) {
+      if (ineligible.has(project)) continue;
+      const over = await this.rt.read<string[]>('scheduler.budgets', { project }).catch(() => null);
+      if (over === null || over.length > 0) ineligible.add(project);
     }
     // The gates, the attention queue, the effects of consumed decisions and
     // the notifications of escalated ones (D1 §8.1 steps 5 to 7). Not
@@ -266,32 +338,68 @@ export class Scheduler {
       log('turn dispatch', err);
       return 0;
     });
-    // One-shots held behind an open session record why (D6 §2.7; N01).
-    await this.rt.engine('session.mark_holds', {}).catch((err) => log('session holds', err));
-    if (remaining() > 0) {
-      const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates', { maxConcurrentRuns: this.rt.setting('max_concurrent_runs') });
-      for (const c of candidates) {
-        if (ineligible.has(c.project) || c.items.length === 0) continue;
-        if (remaining() <= 0) break;
-        for (const item of c.items) {
+    await pausePoint('scheduler.tick_running');
+    steps.push('select');
+    if (remaining() > 0 && this.rt.selectHeld === 0) {
+      const candidates = await this.rt.read<ProjectCandidates[]>('scheduler.candidates');
+      steps.push('dispatch');
+      // D6 K2 (B09): every eligible item in priority order, each admitted
+      // or held by the envelope; no run count caps either scope. The
+      // projects are taken in turn, one item each round, so no project's
+      // queue starves another's under tick_budget (N02).
+      const queues = candidates.filter((c) => !ineligible.has(c.project) && c.items.length > 0).map((c) => ({ c, items: [...c.items] }));
+      // The registered refs read again for each project about to be
+      // dispatched (D1 §8.1, D1-20): a move made after this tick's
+      // integrity step is observed now, and nothing of the project is
+      // dispatched onto it (git/integrity.ts registeredRefsMoved).
+      for (const q of queues) {
+        const moved = await registeredRefsMoved(this.rt, q.c.project).catch(() => 'unknown' as const);
+        if (!moved) continue;
+        q.items = [];
+        ineligible.add(q.c.project);
+        if (moved === 'moved') await observeIntegrity(this.rt, q.c.project).catch((err) => log('integrity recheck', err, { project: q.c.project }));
+      }
+      // Each item claimed in turn, in priority order; what the claimed runs
+      // need before their spawns made side by side, and waited for before
+      // the tick ends (D1 §8.1 step 9: the tick waits for what a dispatch
+      // writes before its spawn, never for the spawn or the run).
+      const preparing: Promise<void>[] = [];
+      while (queues.some((q) => q.items.length > 0) && remaining() > 0) {
+        for (const q of queues) {
+          const item = q.items.shift();
+          if (!item || remaining() <= 0) continue;
           try {
             if (item.boundary) {
               // D1-34: the next step is a decision, asked once.
               await this.rt.engine('scheduler.chain_boundary', { workItem: item.id });
               continue;
             }
-            if (await this.launcher.dispatch(c, item)) dispatched++;
+            // An item the envelope holds now is not offered to the launcher,
+            // whose preflight reads and runs the entry's binary: with every
+            // eligible item selected (K2) and ticks requested by events (K1),
+            // that would be done for every held item at every tick. An item
+            // whose backend the store already refuses goes on, so a refusal
+            // never waits behind a domain (D2 §3.7).
+            if (await this.rt.read<boolean>('scheduler.envelope_holds', { project: q.c.project, workItem: item.id })) continue;
+            const claimed = await this.launcher.claimThenPrepare(q.c, item);
+            if (claimed) {
+              dispatched++;
+              preparing.push(claimed.prepared.catch((err) => log('dispatch', err)));
+            }
           } catch (err) {
             log('dispatch', err);
           }
-          break;
         }
       }
+      await Promise.all(preparing);
+      // Why each item still eligible waits, recorded as intervals by reason
+      // (N01; the driver's ruling Q3): one interval per hold, never one per tick.
+      await this.rt.engine('work.mark_holds', {}).catch((err) => log('work holds', err));
     }
     // Records nothing live refers to expire once their retention has passed
     // (D1 §14.3). Not a prerequisite of dispatch.
     await expireRecords(this.rt).catch((err) => log('record expiry', err));
-    await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched });
+    await this.rt.engine('engine.tick', { incarnation: this.rt.incarnation, dispatched, requests, steps });
   }
 }
 

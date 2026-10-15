@@ -83,7 +83,12 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
   }
 }
 
-export function validatePolicySubmission(body: unknown): Policy {
+// The keys bounded above by the engine's `domain_memory_max` (D6 K2, A.7).
+export const CEILED_KEYS = ['role_memory_max', 'check_memory_max'] as const;
+
+// `ceiling`: the engine's `domain_memory_max` in force, which an explicit
+// per-profile maximum may not exceed (the driver's ruling Q1, slice 37).
+export function validatePolicySubmission(body: unknown, ceiling?: number): Policy {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new Refusal(400, 'invalid_value', 'The policy submission must be a JSON object.', 'Send an object of the keys to change.', {
       field: null,
@@ -118,6 +123,15 @@ export function validatePolicySubmission(body: unknown): Policy {
         { field: key },
       );
     }
+    if (ceiling !== undefined && (CEILED_KEYS as readonly string[]).includes(key) && (value as number) > ceiling) {
+      throw new Refusal(
+        400,
+        'invalid_value',
+        `"${key}" must be from ${spec.min} to the engine's domain_memory_max (${ceiling}).`,
+        `Correct "${key}" and submit again; nothing was changed.`,
+        { field: key, max: ceiling },
+      );
+    }
     out[key] = value as number;
   }
   return out;
@@ -144,7 +158,6 @@ export function effectiveOf(recorded: Record<string, unknown> | null): Policy {
 // deadlines, budgets and caps. Raising one takes the policy_widening route
 // (row M49, slice 5).
 const WIDENING_KEYS = new Set([
-  'max_concurrent_runs',
   'max_chained_roles',
   'preflight_refusals_max',
   'repair_attempts_max',

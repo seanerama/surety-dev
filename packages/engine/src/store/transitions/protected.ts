@@ -5,8 +5,10 @@
 // approved proposal through the journal. The git work (fingerprints, trees,
 // commits) is done on the main thread and handed in.
 
+import { followUpsDue, recordDeferrals, resolveDeferrals } from '../../plan/deferral.js';
+import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { registerPhaseAtApplication } from '../../plan/phase.js';
-import { correctionProposalDecided, resolveByCorrection } from '../../spec/change.js';
+import { correctionProposalDecided, lateObligations, resolveByCorrection } from '../../spec/change.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
@@ -127,6 +129,9 @@ export interface CaptureArgs {
   // D6 §8.3 (B13): the Verifier's adopted tests and the import-boundary
   // refusals found in its tree (adopted projects).
   adoptedTests?: unknown[] | null;
+  // D6 §6.2, B.7: an authoring's deferrals, recorded as obligations when the
+  // proposal is applied.
+  deferredCriteria?: unknown[] | null;
   boundaryErrors?: unknown[];
 }
 
@@ -143,6 +148,7 @@ export function captureProposal(tx: Tx, args: CaptureArgs, label: Record<string,
     )
     .run(id, tx.at, args.project, n, args.proposedBy, args.run, args.base, args.tree, args.diffHash, args.rationale, args.requested, args.changesRequiredSet ? 1 : 0);
   if (args.adoptedTests !== undefined && args.adoptedTests !== null) tx.db.prepare('UPDATE "protected_proposals" SET "adopted_tests" = ? WHERE "id" = ?').run(JSON.stringify(args.adoptedTests), id);
+  if (args.deferredCriteria !== undefined && args.deferredCriteria !== null && args.deferredCriteria.length > 0) tx.db.prepare('UPDATE "protected_proposals" SET "deferred_criteria" = ? WHERE "id" = ?').run(JSON.stringify(args.deferredCriteria), id);
   if (args.boundaryErrors !== undefined && args.boundaryErrors.length > 0) tx.db.prepare('UPDATE "protected_proposals" SET "boundary_errors" = ? WHERE "id" = ?').run(JSON.stringify(args.boundaryErrors), id);
   tx.emit('protected.proposed', { project: args.project, proposal: id, run: args.run }, { ...label, proposed_by: args.proposedBy, requested_change_kind: args.requested, tree: args.tree, ...(args.boundaryErrors && args.boundaryErrors.length > 0 ? { boundary_errors: args.boundaryErrors } : {}) });
   return getProposal(tx, id)!;
@@ -344,19 +350,28 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   // to the Verifier, in the transaction that makes it effective (D3 §2.11).
   routeMissingAtVersion(tx, op.project);
   tx.emit('protected.applied', { project: op.project, proposal: inputs.proposal, version: v.id }, { operation: op.id, previous: previous?.id ?? null, revision: inputs.new_oid });
-  authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // D6 §6.2 (D6-W06): an authoring's deferrals recorded as obligations;
+  // those the version now covers resolved; follow-ups whose prerequisite
+  // has integrated registered, once.
+  recordDeferrals(tx, { project: op.project, proposal: inputs.proposal });
+  resolveDeferrals(tx, { project: op.project, version: v.id });
+  followUpsDue(tx, op.project);
+  const authoringReady = authoringApplied(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // A spec change's correction applied resolves its obligations (D6 §4.5).
   resolveByCorrection(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
+  // A check authored before a change's approval, covering a criterion it
+  // touched, owes its correction (the driver's ruling 2, slice 37).
+  lateObligations(tx, { project: op.project, proposal: inputs.proposal, version: v.id });
   // Its item, waiting for the proposal, completes (the driver's ruling Q13).
   correctionProposalDecided(tx, { proposal: inputs.proposal, applied: true });
-  return { version: v.id };
+  return { version: v.id, ...(authoringReady ? { authoring_ready: true } : {}) };
 }
 
 // D6 §6.2 (B07; SEAM.md §351): the applied protected version that a
 // phase's `check_authoring` proposed makes the phase ready for Builders,
 // never the Verifier's run completing. Readiness is recorded once, on the
 // plan the authoring work names, with the version that made it.
-function authoringApplied(tx: Tx, args: { project: string; proposal: string; version: string }): void {
+function authoringApplied(tx: Tx, args: { project: string; proposal: string; version: string }): boolean {
   const row = tx.db
     .prepare(
       `SELECT w."subject" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
@@ -364,9 +379,14 @@ function authoringApplied(tx: Tx, args: { project: string; proposal: string; ver
     )
     .get(args.proposal) as { subject: string } | undefined;
   const plan = row ? parseJson<{ phase_plan?: string }>(row.subject)?.phase_plan : undefined;
-  if (!plan) return;
+  if (!plan) return false;
   const changed = tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ? AND "authoring_ready_at" IS NULL').run(tx.at, args.version, plan).changes;
-  if (changed > 0) tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: args.version, proposal: args.proposal });
+  if (changed > 0) {
+    tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: args.version, proposal: args.proposal });
+    // The stage work it releases records its milestone met (D6 §6.4).
+    recordMetMilestones(tx, args.project);
+  }
+  return changed > 0;
 }
 
 export function completeIntent(tx: Tx, intent: string): void {

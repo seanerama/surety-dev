@@ -28,10 +28,12 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { assertWorkHistory } from './harness/invariants.mjs';
-import { assertCommitted, assertOperation, assertOperations, operationDetail } from './harness/journal.mjs';
+import { releaseBarrier, waitFor } from './harness/engine.mjs';
+import { armBarrier, assertCommitted, assertOperation, assertOperations, operationDetail } from './harness/journal.mjs';
+import { barrierWaiting } from './harness/session-lane.mjs';
 import { EDITS, ambiguousWorktreeAdd } from './harness/probes.mjs';
 import { addWorktreeByHand, workspaceState } from './harness/repos.mjs';
-import { assertRunEnded, countOf, getRow, resolvedPath, run as runRow, runsOf, tick, tickUntil, waitForRunState, workItem } from './harness/runs.mjs';
+import { assertRunEnded, countOf, getRow, requestTick, resolvedPath, run as runRow, runsOf, tick, tickUntil, waitForRunState, workItem } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 
 const openBlockers = (op) => op.blockers.filter((d) => d.status === 'open');
@@ -86,11 +88,22 @@ describe('M15 an operation that a git deadline left ambiguous', () => {
   test('a late completion launches nothing: a worktree that turns out complete is adopted as the ended run\'s retained workspace, and the work is still repaired by a new run', async (t) => {
     const ctx = await ambiguousWorktreeAdd(t);
     const { fx, project, item, run } = ctx;
+    // Under K1 the run's end requests a tick whose journal step, once git
+    // answers, would reconcile the add absent before the worktree is completed
+    // by hand (objection 113; SEAM §460). A tick is held at
+    // `scheduler.tick_running` (after its journal step, run while git does not
+    // answer, so the operation stays ambiguous), and no other tick runs until
+    // the worktree is complete.
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
     await assertRunGivenUp(ctx);
+    await requestTick(fx.engine, project.id);
+    await waitFor(() => barrierWaiting(fx, 'scheduler.tick_running'), { timeoutMs: 30_000, what: 'a tick held at scheduler.tick_running' });
+    assert.equal(operationDetail(fx.home, ctx.op.id).state, 'ambiguous', 'the fixture is live: the operation is still ambiguous');
     // The command that was killed had in fact done its work: the worktree is there, complete.
     ctx.letGo();
     addWorktreeByHand(ctx.repo, ctx.workspace, project.base);
     assert.equal(workspaceState(ctx.repo, ctx.workspace, project.base), 'complete', 'the fixture is live');
+    await releaseBarrier(fx.engine, 'scheduler.tick_running');
 
     const second = await tickUntil(fx.engine, project.id, () => (runsOf(fx.home, item)[1]?.state === 'ended' ? runsOf(fx.home, item)[1] : undefined), { max: 6, what: 'the repair run to have run' });
     const settled = assertOperation(operationDetail(fx.home, ctx.op.id), 'the reconciled operation');

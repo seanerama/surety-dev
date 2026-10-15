@@ -316,6 +316,10 @@ export class Runtime {
 
   // The check runner (checks/run.ts), set once at startup.
   checks: import('./checks/run.js').CheckRunner | null = null;
+  // While a harness barrier that stands "before anything further is
+  // selected" holds (SEAM.md §428's `check_authoring.applied`), the tick
+  // selects nothing. Zero outside such a wait.
+  selectHeld = 0;
   // The Release Operator (deploy/release-operator.ts), set once at startup.
   deploy: import('./deploy/release-operator.js').ReleaseOperator | null = null;
   // The session driver (sessions/driver.ts), set once at startup.
@@ -336,7 +340,6 @@ export class Runtime {
       | 'tick_step_budget'
       | 'terminate_grace'
       | 'kill_grace'
-      | 'max_concurrent_runs'
       | 'git_deadline'
       | 'lease_ttl'
       | 'domain_memory_max'

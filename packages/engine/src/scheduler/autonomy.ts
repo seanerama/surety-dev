@@ -39,6 +39,24 @@ export function boundaryFalls(db: Database, item: WorkRow): boolean {
   // `stage`: the first stage's Builder starts; every later stage start
   // waits for the owner once a stage's chain has run in this project.
   if (!STAGE_START.includes(item.kind)) return false;
+  // A stage's own repair Builder (its item has run before) is inside the
+  // stage's chain, which runs unattended (the slice-37 review's N1).
+  if (db.prepare('SELECT 1 FROM "runs" WHERE "work_item" = ? LIMIT 1').get(item.id) !== undefined) return false;
+  // A stage that depends on another is that stage's next stage: its
+  // dependency's chain has begun (its Builder ran, for its stage code to be
+  // integrated), whether or not that run has recorded its end. Under D6 K1
+  // and K2 the dependent stage is eligible, and dispatched, as soon as the
+  // integration is finalized, which is before the Builder's run.ended (M436
+  // (b)). Independent stages are neither's next stage (SEAM.md §429).
+  if (item.kind === 'stage_build') {
+    const stage = (JSON.parse(item.subject) as { stage?: string }).stage;
+    const deps = stage ? (db.prepare('SELECT "depends_on" FROM "stages" WHERE "id" = ?').get(stage) as { depends_on: string | null } | undefined) : undefined;
+    const ids = deps?.depends_on ? (JSON.parse(deps.depends_on) as string[]) : [];
+    const begun = ids.some((dep) =>
+      db.prepare(`SELECT 1 FROM "stages" s JOIN "runs" r ON r."work_item" = s."work_item" WHERE s."id" = ? LIMIT 1`).get(dep) !== undefined,
+    );
+    if (begun) return true;
+  }
   const ran = db
     .prepare(
       `SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"

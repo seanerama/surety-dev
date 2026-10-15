@@ -50,7 +50,7 @@ import {
   workItemsOf,
 } from './harness/journal.mjs';
 import { fileAt, refOid } from './harness/repos.mjs';
-import { installPlan, requestTick, run as runRow, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
+import { installPlan, pauseProject, requestTick, resumeProject, run as runRow, runsOf, scriptedEngine, tick, waitForRun, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -95,13 +95,31 @@ function assertPlanRegistered(fx, project, phase, stages) {
   return { plan, stages: rows, items };
 }
 
+// M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): a registered plan's
+// stage work, and a fixture plan's, request a tick that would dispatch them
+// at once, so a case that reads them as registered (planned, eligible, no
+// run) pauses the project once the replan's run is under way: the run goes on
+// to its integration and finalizer (a pause holds back only what would
+// follow, M12), and the plan's work waits. The replan item is made and
+// scripted while the project is paused, so its first launch follows its
+// script. Returns {item, run}, the run holding at `gate`.
+async function replanHeld(fx, project, steps) {
+  await pauseProject(fx.engine, project.id);
+  const item = await addItem(fx, project.id, 'replan');
+  fx.scripted.script(item, [roleThatHolds(steps)]);
+  await resumeProject(fx.engine, project.id);
+  const { run } = await runToHold(fx, project.id, item);
+  await pauseProject(fx.engine, project.id);
+  return { item, run };
+}
+
 describe('M26 a committed Architect plan registers exactly its own stages and work', () => {
   test('the integration of a commit that holds a phase plan registers the plan, one stage row per stage and one stage_build item per stage, and the replan work is complete', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
-    const item = await addItem(fx, project.id, 'replan');
-    fx.scripted.script(item, [roleThat([writePlan(PHASE, STAGES), step.write('.surety/adrs/0002-phase-two.md', '# Why phase two is cut this way\n')])]);
-    const run = await runToEnd(fx, project.id, item);
+    const { item } = await replanHeld(fx, project, [writePlan(PHASE, STAGES), step.write('.surety/adrs/0002-phase-two.md', '# Why phase two is cut this way\n')]);
+    fx.scripted.release(item);
+    const run = await waitForRun(fx.home, item, { state: 'ended' });
     const committed = assertCommitted(fx, run.id, { kind: 'intent', parent: project.base, integrated: true, changes: { [planPath(PHASE)]: 'A', '.surety/adrs/0002-phase-two.md': 'A' } });
     assert.equal(fileAt(project.repo.path, committed.sha, planPath(PHASE)), planText(PHASE, STAGES), 'the plan is in the integrated commit as the Architect wrote it');
 
@@ -129,9 +147,7 @@ describe('M26 a committed Architect plan registers exactly its own stages and wo
   test('the finalizer is delayed while a newer plan is introduced: it registers the committed plan, exactly, and nothing of the newer one', async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
-    const item = await addItem(fx, project.id, 'replan');
-    fx.scripted.script(item, [roleThatHolds([writePlan(PHASE, STAGES)])]);
-    const { run } = await runToHold(fx, project.id, item);
+    const { item, run } = await replanHeld(fx, project, [writePlan(PHASE, STAGES)]);
     // Stop the integration after its effect and its receipt, before the probe and the finalizer.
     const barrier = journalBarrier('ref_update', 'receipt_committed');
     await armBarrier(fx.engine, barrier, 'pause');
@@ -171,10 +187,9 @@ describe('M26 a committed Architect plan registers exactly its own stages and wo
     const barrier = journalBarrier('ref_update', 'probe_confirmed');
     const fx = await scriptedEngine(t, { barriers: [`${barrier}=kill`] });
     const project = await addGitProject(fx);
-    const item = await addItem(fx, project.id, 'replan');
-    fx.scripted.script(item, [roleThat([writePlan(PHASE, STAGES)])]);
+    const { item } = await replanHeld(fx, project, [writePlan(PHASE, STAGES)]);
     const dead = fx.engine;
-    await requestTick(dead, project.id).catch(() => {});
+    fx.scripted.release(item);
     assert.deepEqual(await within(dead.exited, 20_000), { code: null, signal: 'SIGKILL' }, `the engine kills itself at ${barrier}`);
     const [run] = runsOf(fx.home, item);
     const [moving] = operationDetails(fx.home, { run: run.id, journalKind: 'ref_update' });
@@ -237,6 +252,8 @@ describe('M26 a completed Builder stage finalizes against its pinned input', () 
     const { project, plan, items } = await addStagedProject(fx);
     fx.scripted.script(items[0], [roleThatHolds([permittedEdit()])]);
     const { run } = await runToHold(fx, project.id, items[0]);
+    // Objection 100: paused, so the newer plan's work waits (see replanHeld).
+    await pauseProject(fx.engine, project.id);
     const barrier = journalBarrier('ref_update', 'receipt_committed');
     await armBarrier(fx.engine, barrier, 'pause');
     fx.scripted.release(items[0]);

@@ -317,10 +317,25 @@ export function authoringShortfall(db: Db, planId: string, version: string): str
     const at = `${o.scope.kind} ${o.scope.number}`;
     out.push(...missing.criteria.map((c) => `${at}:${c}`), ...missing.kinds.map((k) => `${at}:kind:${k}`), ...missing.areas.map((a) => `${at}:area:${a}`));
   }
+  // The plan's own authoring obligations, across its generations (an early
+  // replacement keeps the phase): another phase's deferral is that phase's
+  // (D6 §6.8; the slice-37 review's M4).
   const owed = db
-    .prepare(`SELECT "criteria" FROM "check_obligations" WHERE "project" = ? AND "resolved_at" IS NULL AND "reason" IN ('deferred_authoring', 'authoring_pending')`)
-    .all(row.project) as { criteria: string }[];
+    .prepare(
+      `SELECT o."criteria" FROM "check_obligations" o JOIN "phase_plans" p ON p."id" = o."phase_plan"
+       WHERE o."project" = ? AND o."resolved_at" IS NULL AND o."reason" IN ('deferred_authoring', 'authoring_pending')
+         AND p."phase_number" = (SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?)`,
+    )
+    .all(row.project, planId) as { criteria: string }[];
   for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).map((c) => `deferred:${c}`));
+  // The owner's build_first binding, shown with what it left owed (the
+  // slice-37 review's N9): its decision, by the plan's readiness.
+  if (out.length > 0) {
+    const bound = db
+      .prepare(`SELECT d."id" FROM "phase_plans" p JOIN "decisions" d ON d."id" = p."authoring_ready_by" WHERE p."id" = ? AND json_extract(d."answer", '$.option') = 'build_first'`)
+      .get(planId) as { id: string } | undefined;
+    if (bound) out.push(`build_first:${bound.id}`);
+  }
   return [...new Set(out)];
 }
 

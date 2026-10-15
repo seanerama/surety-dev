@@ -15,7 +15,7 @@ import { seamHostChecks, seamTemplateVersions } from '../../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from '../../trust/host.js';
 import { canonical, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
-import { engineSettings, projectOptions, roleModel } from './settings.js';
+import { type RoleProfile, defaultProfileMax, effectiveProfileMax, engineSettings, projectOptions, roleModel, roleProfileOf } from './settings.js';
 import { templateOf } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
 
@@ -337,6 +337,9 @@ export interface AttemptInput {
   // `session_entry` it runs alone and qualifies that entry for sessions.
   mode?: 'one_shot_headless' | 'session_headless';
   session_entry?: string | null;
+  // D6-X09 (B09; SEAM.md §432): the role profile the attempt qualifies;
+  // the engine's default under its ceiling when absent.
+  profile?: RoleProfile | null;
 }
 
 // An attempt is written proposed, binding everything before any launch; the
@@ -348,8 +351,8 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
   tx.db
     .prepare(
       `INSERT INTO "qualification_attempts" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "template", "template_version",
-         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "mode", "session_entry")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)`,
+         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "mode", "session_entry", "profile")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)`,
     )
     .run(
       id,
@@ -371,6 +374,7 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
       JSON.stringify(args.spend),
       args.mode ?? 'one_shot_headless',
       args.session_entry ?? null,
+      args.profile === null ? null : JSON.stringify(args.profile ?? roleProfileOf(defaultProfileMax('role'))),
     );
   tx.emit('qualification.proposed', { project: args.fixture_project, qualification_attempt: id }, { ...label, backend: args.backend, version: args.version, model: args.model });
   return getAttempt(tx.db, id)!;
@@ -593,8 +597,8 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
       `INSERT INTO "trust_entries" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "mode", "template", "template_version",
          "model", "auth_mode", "capabilities", "host_id", "host_qualification", "isolation", "boundary", "profile_fingerprint", "egress_hosts", "usage_granularity",
          "usage_semantics", "cost_reporting", "enforceable_boundaries", "result_channel", "session_qualified", "provider_files", "term_to_exit_ms",
-         "qualification_attempt", "evidence", "evidence_fingerprint", "status")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed')`,
+         "qualification_attempt", "evidence", "evidence_fingerprint", "status", "profile")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)`,
     )
     .run(
       id,
@@ -628,6 +632,8 @@ export function writeEntry(tx: Tx, e: EntryInput, label: Record<string, unknown>
       e.qualification_attempt,
       JSON.stringify(e.evidence),
       evidenceFingerprint(tx.db, e),
+      // The role profile its attempt qualified (D6-X09; B09).
+      (attempt as AttemptRow & { profile?: string | null }).profile ?? null,
     );
   tx.emit('trust.proposed', { trust_entry: id, qualification_attempt: attempt.id }, { ...label, backend: e.backend, version: e.version, mode: e.mode });
   return getEntry(tx.db, id)!;
@@ -651,6 +657,11 @@ export function revokeEntry(tx: Tx, entry: EntryRow, reason: string, label: Reco
 }
 
 // ---- revocation on change (D2 §7.3) -----------------------------------------------------------
+
+// Two role profiles alike in every bound (D6-X09).
+export function sameProfile(a: RoleProfile | null, b: RoleProfile): boolean {
+  return a !== null && typeof a === 'object' && a.memory_max === b.memory_max && a.writable_bytes === b.writable_bytes && a.writable_inodes === b.writable_inodes && a.tasks_max === b.tasks_max;
+}
 
 // What has changed of what an entry was qualified with, or null: its host's
 // identity, its adapter's template version, the role profile this host now
@@ -805,10 +816,23 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
       active_models: active.map((e) => e.model),
     });
   }
-  const qualified = args.sessions === true ? ofModel.filter((e) => e.session_qualified === 1) : ofModel;
+  // The role profile is part of the qualification identity (D6 §2.6, §6.4;
+  // B09; D6-X09): an entry serves only the profile it was qualified at, the
+  // project's effective role maximum with the engine's volatile and task
+  // bounds. An entry written with no profile serves none (the driver's
+  // ruling 4, slice 37). A project's setting revokes nothing.
+  const want = roleProfileOf(effectiveProfileMax(db, args.project, 'role'));
+  const ofProfile = ofModel.filter((e) => sameProfile(json<RoleProfile | null>((e as EntryRow & { profile?: string | null }).profile ?? 'null'), want));
+  if (ofProfile.length === 0) {
+    return backendRefused(
+      `No active ${backend} entry of the model ${model ?? '(any)'} on this host is qualified for the ${args.role} role's profile (memory_max ${want.memory_max}, writable ${want.writable_bytes} bytes and ${want.writable_inodes} inodes, ${want.tasks_max} tasks).`,
+      { model_requested: model, profile: want, entry_profiles: ofModel.map((e) => json<RoleProfile | null>((e as EntryRow & { profile?: string | null }).profile ?? 'null')) },
+    );
+  }
+  const qualified = args.sessions === true ? ofProfile.filter((e) => e.session_qualified === 1) : ofProfile;
   // A session needs an entry qualified for sessions (sessions/session.ts
   // says why when none is): the newest of the model's otherwise.
-  const entry = qualified[0] ?? ofModel[0]!;
+  const entry = qualified[0] ?? ofProfile[0]!;
   const boundaries = json<Boundary[]>(entry.enforceable_boundaries);
   if (!boundaries.some((b) => rank(b.boundary) >= 0 && rank(b.boundary) <= rank(required))) {
     return refuse(

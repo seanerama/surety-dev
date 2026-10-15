@@ -1,6 +1,7 @@
 // Read-only queries. Reads never write and never call out of the store.
 
 import { replanFacts } from '../plan/replan-package.js';
+import { activeStages } from '../plan/active.js';
 import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
@@ -56,7 +57,7 @@ export interface ProjectCandidates {
 // Every project with work that could be dispatched now, as far as the store
 // alone can tell. The scheduler's prerequisite steps decide the rest, and the
 // claim transaction checks it all again.
-export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: number }): ProjectCandidates[] {
+export function dispatchCandidates(db: Database): ProjectCandidates[] {
   const projects = db.prepare('SELECT "id", "dev_repo_path", "integration_branch" FROM "projects" ORDER BY rowid, "id"').all() as {
     id: string;
     dev_repo_path: string;
@@ -69,7 +70,7 @@ export function dispatchCandidates(db: Database, args: { maxConcurrentRuns: numb
       const eligible = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id) as WorkRow[];
       const reviewPending = eligible.some(isProposalReview);
       items = eligible
-        .map((item) => ({ item, blocker: dispatchBlocker(db, item, args.maxConcurrentRuns) }))
+        .map((item) => ({ item, blocker: dispatchBlocker(db, item) }))
         .filter(({ blocker }) => blocker === null || blocker === CHAIN_BOUNDARY)
         .sort((a, b) => priorityOf(a.item, reviewPending) - priorityOf(b.item, reviewPending) || a.item.seq - b.item.seq)
         .map(({ item, blocker }) => ({ id: item.id, kind: item.kind, role: ROLE_OF[item.kind]!, boundary: blocker === CHAIN_BOUNDARY }));
@@ -163,7 +164,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   // its approved text, its criteria and its areas (D3 §4.5).
   type IndexedReq = Req & { criteria: string | null; sensitive_areas: string };
   let checkWriting: CheckWritingFacts | null = null;
-  if (item.kind === 'check_correction') {
+  if (item.kind === 'check_correction' || item.kind === 'check_authoring') {
     const all = db
       .prepare('SELECT "id", "key", "text_ref", "assigned_phase", "text", "criteria", "sensitive_areas" FROM "requirements" WHERE "project" = ? ORDER BY "key"')
       .all(item.project) as IndexedReq[];
@@ -340,6 +341,8 @@ export function contextFacts(db: Database, args: { run: string }) {
     check_keys: checkKeys,
     criteria,
     check_writing: checkWriting,
+    // The phase-authoring package (D6 §6.2; N04; SEAM.md §428).
+    authoring: item.kind === 'check_authoring' ? authoringFacts(db, item.project, subjectId('phase_plan'), item) : null,
     resumed,
     // What each environment's current configuration fixes, for a Builder
     // (BS4 §3, the role packages; CD4): never a secret's value.
@@ -370,6 +373,81 @@ export function contextFacts(db: Database, args: { run: string }) {
 // may receive, never a value. An environment with no configuration, or one
 // whose content cannot be read, has its targets and references unknown
 // (null), never none.
+// What a phase's check authoring is given beside the check-writing facts
+// (D6 §6.2; N04): the plan's stages with what they implement and validate,
+// the module map's interfaces and the architecture's text from the plan's
+// approved bundle, and the approved specification's environments.
+export interface AuthoringFacts {
+  phase_plan: { id: string; phase_number: number; generation: number } | null;
+  stages: { number: number; goal: string; modules: string[]; implements: string[]; depends_on: unknown[]; validation: unknown }[];
+  interfaces: { module: string; name: string; kind: string; path: string | null; description: string }[] | null;
+  architecture: string | null;
+  environments: { name: string; fields: Record<string, string> }[] | null;
+  // A deferral's follow-up (D6 §6.2; the slice-37 review's M6): the
+  // obligation it is asked for, with the stages as they stand now; null for
+  // the phase's first authoring.
+  follow_up: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
+}
+function authoringFacts(db: Database, project: string, planId: string | null, item: { trigger_source: string | null; trigger_id: string | null }): AuthoringFacts {
+  const parse = <T>(text: unknown, fallback: T): T => {
+    try {
+      return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  // The plan the work names, followed to its active generation.
+  let id = planId;
+  for (let hops = 0; id !== null && hops < 64; hops++) {
+    const r = db.prepare('SELECT "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(id) as { active: number; replaced_by: string | null } | undefined;
+    if (!r || r.active === 1 || r.replaced_by === null) break;
+    id = r.replaced_by;
+  }
+  const plan = id === null ? undefined : (db.prepare('SELECT "id", "phase_number", "generation", "bundle" FROM "phase_plans" WHERE "id" = ?').get(id) as { id: string; phase_number: number; generation: number; bundle: string | null } | undefined);
+  const keyOf = (r: string): string => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(project, r, r) as { key: string } | undefined)?.key ?? r;
+  const stages = plan
+    ? activeStages<{ number: number; goal: string; modules: string; implements: string; depends_on: string; validation: string }>(db, plan.id).map((s) => ({
+        number: s.number,
+        goal: s.goal,
+        modules: parse<string[]>(s.modules, []),
+        implements: parse<string[]>(s.implements, []).map(keyOf),
+        depends_on: parse<unknown[]>(s.depends_on, []),
+        validation: parse<unknown>(s.validation, null),
+      }))
+    : [];
+  const bundle = plan?.bundle ? (db.prepare('SELECT "artifacts" FROM "plan_bundles" WHERE "id" = ?').get(plan.bundle) as { artifacts: string } | undefined) : undefined;
+  const content = bundle ? parse<{ modules?: { modules?: { name: string; interfaces?: { name: string; kind: string; path?: string; description: string }[] }[] }; architecture_text?: string | null } | null>(bundle.artifacts, null) : null;
+  const interfaces = content?.modules?.modules ? content.modules.modules.flatMap((m) => (m.interfaces ?? []).map((i) => ({ module: m.name, name: i.name, kind: i.kind, path: i.path ?? null, description: i.description }))) : null;
+  // The approved specification's environments (TPL §7), from its semantic
+  // representation; null when it cannot be read.
+  const approved = db.prepare('SELECT "semantic_digest" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { semantic_digest: string } | undefined;
+  const sem = approved ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "project" = ? AND "semantic_digest" = ? AND "readable" = 1 ORDER BY rowid DESC LIMIT 1').get(project, approved.semantic_digest) as { representation: string | null } | undefined) : undefined;
+  const environments = sem?.representation ? (parse<{ environments?: { name: string; fields: Record<string, string> }[] } | null>(sem.representation, null)?.environments ?? null) : null;
+  const obligation =
+    item.trigger_source === 'deferred_authoring' || item.trigger_source === 'authoring_pending'
+      ? (db.prepare('SELECT "id", "criteria", "deferred_reason", "prerequisite" FROM "check_obligations" WHERE "id" = ?').get(item.trigger_id) as
+          | { id: string; criteria: string; deferred_reason: string | null; prerequisite: string | null }
+          | undefined)
+      : undefined;
+  const follow_up = obligation
+    ? {
+        obligation: obligation.id,
+        criteria: parse<string[]>(obligation.criteria, []),
+        reason: obligation.deferred_reason,
+        prerequisite: parse<unknown>(obligation.prerequisite, null),
+        stages: plan ? activeStages<{ number: number; status: string }>(db, plan.id).map((s) => ({ number: s.number, status: s.status })) : [],
+      }
+    : null;
+  return {
+    phase_plan: plan ? { id: plan.id, phase_number: plan.phase_number, generation: plan.generation } : null,
+    stages,
+    interfaces,
+    architecture: content?.architecture_text ?? null,
+    environments,
+    follow_up,
+  };
+}
+
 function checkEnvironments(db: Database, project: string): NonNullable<CheckWritingFacts['environments']> {
   const parse = (text: string): unknown => {
     try {

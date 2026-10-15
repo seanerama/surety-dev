@@ -10,6 +10,7 @@ import { newId } from '../../ids.js';
 import { beforeEventWrite } from '../../testing/seam.js';
 
 import type { EventType } from './event-types.js';
+import { addCommittedTickRequests, recordTickRequests } from './tick-requests.js';
 
 export type { EventType };
 
@@ -76,6 +77,25 @@ export class Tx {
   }
 }
 
+// Checks every transaction runs before its commit, registered by the store
+// worker (store/transitions/awaiting.ts: no item awaits nothing).
+const afterTransition: ((tx: Tx) => void)[] = [];
+export function registerAfterTransition(fn: (tx: Tx) => void): void {
+  if (!afterTransition.includes(fn)) afterTransition.push(fn);
+}
+
 export function transact<T>(db: Database, actor: Actor, fn: (tx: Tx) => T): T {
-  return db.transaction(() => fn(new Tx(db, actor))).immediate();
+  let requested = 0;
+  const value = db
+    .transaction(() => {
+      const tx = new Tx(db, actor);
+      const out = fn(tx);
+      for (const check of afterTransition) check(tx);
+      // D6 K1: the ticks this transition requests, in its own transaction.
+      requested = recordTickRequests(tx);
+      return out;
+    })
+    .immediate();
+  if (requested > 0) addCommittedTickRequests(requested);
+  return value;
 }

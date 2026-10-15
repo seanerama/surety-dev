@@ -98,6 +98,18 @@ export class Effects {
     // Between the consuming transaction and the revalidation (SEAM.md §76).
     if (row.status === 'pending') await pausePoint('intent.recorded');
     row = (await this.rt.read<IntentRow | null>('intent.row', { intent: id }))!;
+    // Every writer of the integration ref holds the project's journal and
+    // its integration lease from its read of the head to its drive (the
+    // slice-37 review's M3); the store-only alpha exception does not.
+    if (row.kind !== 'alpha_exception') {
+      const held = row;
+      await this.journal.withProject(held.project, () => this.dispatch(held), `intent:${held.id}`);
+      return;
+    }
+    await this.dispatch(row);
+  }
+
+  private async dispatch(row: IntentRow): Promise<void> {
     switch (row.kind) {
       case 'protected_application':
         await applyProposal(this.rt, this.journal, row.plan.proposal as string, row.id);
@@ -398,7 +410,16 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     await pausePoint('protected_application.before_revalidation');
     facts = await rt.engine<ApplicationFacts>('protected.application_facts', { proposal });
   }
-  if (facts.pending === null) {
+  if (facts.pending === null) await journal.withProject(project, () => applyHeld(rt, journal, proposal, intent, facts), `proposal:${proposal}`);
+  await rt.services?.journal(project);
+}
+
+// The application from its read of the head to its drive, with the
+// project's journal and its integration lease held (the slice-37 review's
+// M3).
+async function applyHeld(rt: Runtime, journal: Journal, proposal: string, intent: string | null, facts: ApplicationFacts): Promise<void> {
+  const project = facts.project;
+  {
     const read = await readRef(repoContext(facts.repo), facts.ref);
     const head = read.state === 'ok' ? read.oid : null;
     if (head === null) {
@@ -409,8 +430,10 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     // did not put it; a human's intent is judged against what is there.
     if (intent === null && head !== facts.head) return;
     let tree: string | null = facts.proposal.tree_id;
+    let conflict: string | null = null;
     if (head !== facts.proposal.base_revision) {
       const rebased = await rebaseTree(facts.repo, facts.proposal.base_revision, facts.proposal.tree_id, head, rt.scratch);
+      if (rebased !== 'unknown' && rebased.conflict !== null) conflict = String(rebased.conflict);
       tree = rebased === 'unknown' || rebased.conflict !== null ? null : rebased.tree;
     }
     const plain = tree === null ? null : await protectedSetAt(facts.repo, tree);
@@ -421,6 +444,14 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     const set = plain === null || discovery === null ? null : { ...plain, discovery };
     if (tree === null || set === null) {
       log('protected application', new Error(`proposal ${proposal} cannot be applied onto ${head}`), { proposal });
+      // Its changes conflict with the head as it now is: rejected naming
+      // the conflict, never left approved with nothing to decide (the
+      // driver's ruling on M401's T1 run, slice 37). A tree or a protected
+      // set that could not be read is no conflict: a later tick reads again.
+      if (conflict !== null) {
+        await rt.engine('protected.application_conflict', { proposal, intent, head, reason: `its changes do not rebase onto the integration branch as it now is (${conflict})` });
+        return;
+      }
       if (intent) await rt.engine('intent.revalidate', { intent, facts: { head } });
       return;
     }
@@ -476,7 +507,6 @@ export async function applyProposal(rt: Runtime, journal: Journal, proposal: str
     if (!('operation' in made)) return;
     await journal.withProject(project, () => journal.drive(made.operation));
   }
-  await rt.services?.journal(project);
 }
 
 const canonicalRoots = (roots: readonly string[]): string => JSON.stringify([...roots].sort());

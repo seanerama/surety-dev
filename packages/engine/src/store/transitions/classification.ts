@@ -23,6 +23,7 @@ import { refuseOperation, opDetail } from './journal.js';
 import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal } from './protected.js';
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
 import { engineSettings } from './settings.js';
+import { correctionProposalDecided } from '../../spec/change.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -38,6 +39,8 @@ export interface StoredClassification extends Classified {
   // The discovery of the proposal's tree, frozen (D3 §1.4): the new
   // version's checks when it is applied.
   discovery: Discovery;
+  // D6 §6.2 (B07): the existing checks whose input fingerprint moves.
+  fingerprint_changes?: { check: string; from: string; to: string }[];
 }
 
 // The configured setting (A.7), as the store was handed it at open.
@@ -69,8 +72,18 @@ export const discoveryHash = (d: Discovery | null | undefined): string | null =>
 
 function buildClassification(tx: Tx, project: string, effective: string, inputs: ClassifyInputs): StoredClassification {
   const c = classify(inputs.p0, inputs.p1, knownCriteria(tx.db, project));
+  // D6 §6.2 (B07; SEAM.md §428): every existing check whose input
+  // fingerprint the proposal moves, with the fingerprint of its inputs
+  // before and after; [] when none moves. The class is the classifier's.
+  const before = new Map(inputs.p0.discovery.checks.map((x) => [x.key, x]));
+  const fingerprint_changes = inputs.p1.discovery.checks
+    .filter((x) => before.has(x.key))
+    .map((x) => ({ check: x.key, from: sha256(canonical(before.get(x.key)!.input_manifest)), to: sha256(canonical(x.input_manifest)) }))
+    .filter((x) => x.from !== x.to)
+    .sort((a, b) => a.check.localeCompare(b.check));
   return {
     ...c,
+    fingerprint_changes,
     effective_version: effective,
     spec_revision: specRevision(tx.db, project),
     classifier_version: runningClassifierVersion(),
@@ -81,8 +94,8 @@ function buildClassification(tx: Tx, project: string, effective: string, inputs:
 
 function writeClassification(tx: Tx, p: ProposalRow, c: StoredClassification): void {
   tx.db
-    .prepare('UPDATE "protected_proposals" SET "classification" = ?, "affected_checks" = ?, "classified_change_kind" = ? WHERE "id" = ?')
-    .run(JSON.stringify(c), JSON.stringify(c.affected_checks), c.change_kind, p.id);
+    .prepare('UPDATE "protected_proposals" SET "classification" = ?, "affected_checks" = ?, "classified_change_kind" = ?, "fingerprint_changes" = ? WHERE "id" = ?')
+    .run(JSON.stringify(c), JSON.stringify(c.affected_checks), c.change_kind, JSON.stringify((c as { fingerprint_changes?: unknown }).fingerprint_changes ?? []), p.id);
 }
 
 // ---- classification at a tick after the capture (D3 §1.6; SEAM.md §215) --------------------
@@ -358,5 +371,29 @@ export function applicationDiverged(tx: Tx, args: { proposal: string; intent: st
   }
   if (p.approver_authority !== 'reviewer') return false;
   withdrawReviewerApproval(tx, p.id);
+  return true;
+}
+
+// An approved proposal that cannot be applied onto the head as it now is:
+// its changes conflict with what moved the branch (under D6 K2, another
+// run's integration or another application). It is never left approved
+// with nothing to decide (the driver's ruling on M401's T1 run, slice 37):
+// the proposal is rejected naming the conflict, an intent pending for it is
+// invalidated and every open question of it withdrawn, and a correction or
+// authoring item waiting for it takes its repair (a new run from the
+// current head), then parks with its blocker.
+export function applicationConflicts(tx: Tx, args: { proposal: string; intent: string | null; head: string; reason: string }): boolean {
+  const p = getProposal(tx, args.proposal);
+  if (!p || p.status !== 'approved') return false;
+  if (args.intent !== null) {
+    const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(args.intent) as { status: string } | undefined;
+    if (row?.status === 'pending') invalidateIntent(tx, args.intent);
+  }
+  for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open'`).all(p.id) as DecisionRow[]) {
+    invalidateDecision(tx, d, `the proposal cannot be applied onto ${args.head}: ${args.reason}`);
+  }
+  tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
+  tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: null, cause: 'application_conflict', head: args.head, reason: args.reason });
+  correctionProposalDecided(tx, { proposal: p.id, applied: false });
   return true;
 }

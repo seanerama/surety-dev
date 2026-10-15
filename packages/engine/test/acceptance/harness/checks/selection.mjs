@@ -47,6 +47,28 @@ export async function recordExit(engine, execution, exit_status, extra = {}) {
   return answer.check_result;
 }
 
+// A queued execution run to its recorded result, unless the engine cancelled
+// it while the boundary was moving it because its candidate was superseded
+// (D3 §2.5; SEAM.md §§192, 448: under D6 K1 and K2 the next candidate can be
+// nominated while the previous one's executions are still queued; the
+// driver's ruling on objection 101). Then null, the cancellation named in the
+// returned reason. Any other refusal, or a cancellation for any other reason,
+// fails as recordExit does.
+export async function recordExitUnlessSuperseded(fx, execution, exit_status, extra = {}) {
+  try {
+    return await recordExit(fx.engine, execution, exit_status, extra);
+  } catch (err) {
+    const now = executionRow(fx.home, execution);
+    if (now?.status !== 'cancelled') throw err;
+    const cancelled = withStore(fx.home, (db) =>
+      db.prepare(`SELECT "payload" FROM "events" WHERE "type" = 'check.cancelled' AND json_extract("subject", '$.check_execution') = ? ORDER BY "seq" DESC LIMIT 1`).get(execution),
+    );
+    const why = cancelled?.payload ?? '';
+    if (!/superseded by cand_/.test(why)) throw err;
+    return null;
+  }
+}
+
 // ---- the operator route (SEAM.md §180) --------------------------------------------------------
 
 // Register executions of the candidate's required checks (all, or `keys`).

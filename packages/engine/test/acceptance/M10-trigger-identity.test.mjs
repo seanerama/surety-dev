@@ -3,13 +3,13 @@
 // through everything that can happen to it: observed again while it waits,
 // while it runs, after a refused run, after a restart and after it has
 // completed, it creates nothing and raises no error. A new generation is a
-// new item, and it is still subject to the project's holds and to the one
-// run a project may have.
+// new item, and it is still subject to the project's holds; since M5 slice
+// 37 (K2) it runs beside the first generation's run, one run per item.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { assertWorkHistory } from './harness/invariants.mjs';
+import { assertOneRunPerItem, assertWorkHistory } from './harness/invariants.mjs';
 import {
   addProject,
   countOf,
@@ -105,33 +105,41 @@ describe('M10 one trigger identity, one work item', () => {
     assert.equal(workItem(fx.home, item).status, 'complete', 'the first generation is untouched');
   });
 
-  test('a new generation stays subject to the project pause and to the one run a project may have', async (t) => {
+  // M5 slice 37 (D6 K1, K2; objection 100; SEAM.md §447): "the one run a
+  // project may have" was the project run count K2 removes; what stays is one
+  // run per work item. A new generation is a new item, still subject to the
+  // project's pause, and once resumed it runs beside generation 1's run, each
+  // item with its one run. The project is paused while each generation is
+  // observed and scripted (K1: new eligible work requests a tick at once).
+  test('a new generation is a new item, subject to the project pause, and runs beside the first generation\'s run with one run per item', async (t) => {
     const fx = await scriptedEngine(t);
     const project = (await addProject(fx)).id;
     const observe = (generation) => observeTrigger(fx.engine, { project, ...TRIGGER, generation });
+    await pauseProject(fx.engine, project);
     const first = (await observe(1)).workItem;
     fx.scripted.script(first, [script.holdThenComplete('gate')]);
+    await resumeProject(fx.engine, project);
     await tick(fx.engine, project);
     await fx.scripted.waitForHolding({ work_item: first });
 
-    // While generation 1 runs, generation 2 waits for the project's one run.
+    // Paused: a new generation is a new item and is not dispatched.
+    await pauseProject(fx.engine, project);
     const second = (await observe(2)).workItem;
+    assert.notEqual(second, first, 'a new generation is a new work item');
     fx.scripted.script(second, [script.complete()]);
     await tick(fx.engine, project);
-    assert.equal(runsOf(fx.home, second).length, 0, 'no second run in a project that has one');
+    assert.equal(runsOf(fx.home, second).length, 0, 'a paused project dispatches nothing, new generation or not');
     assert.equal(workItem(fx.home, second).status, 'eligible');
 
-    // Paused: the first run finishes, and the new generation is still not dispatched.
-    await pauseProject(fx.engine, project);
-    fx.scripted.release(first);
-    await waitForWork(fx.home, first, 'complete');
-    await tick(fx.engine, project);
-    assert.equal(runsOf(fx.home, second).length, 0, 'a paused project dispatches nothing, new generation or not');
-
+    // Resumed: it runs beside generation 1's run (no project run count, K2).
     await resumeProject(fx.engine, project);
     await tick(fx.engine, project);
     await waitForWork(fx.home, second, 'complete');
-    await waitForIdle(fx.home, project);
+    assert.equal(runsOf(fx.home, first)[0]?.state, 'executing', 'generation 1\'s run is still under way: the new generation ran beside it');
     assert.equal(fx.scripted.launches({ work_item: second }).length, 1);
+    fx.scripted.release(first);
+    await waitForWork(fx.home, first, 'complete');
+    await waitForIdle(fx.home, project);
+    withStore(fx.home, (db) => assertOneRunPerItem(db, project));
   });
 });

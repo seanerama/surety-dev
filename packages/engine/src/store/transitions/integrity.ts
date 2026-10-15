@@ -20,14 +20,25 @@ export interface IntegrityFacts {
   checkouts: (CheckoutRow & { active: boolean; adminDir: string | null; pending: Pending | null })[];
 }
 
-export function integrityFacts(tx: Tx, args: { project: string }): IntegrityFacts {
+// The checkouts an evaluation reads (Sean's ruling, 2026-10-14: "check at
+// startup only"). Every tick: the registered refs, the integration
+// worktrees and the retained workspaces of sessions, which a later turn
+// reuses and a resume reads (D6 §2.4). The retained workspace of an ended
+// work-item run is read by nothing after its run, so it is evaluated at
+// startup integrity (D1 §1.4 step 5, §16.1 step 8; `startup`) and before
+// anything reads it, never at each tick: its cost no longer grows with the
+// project's history. It stays on disk, and what startup finds in it takes
+// the out-of-band route unchanged.
+export const ENDED_WORK_WORKSPACE = `c."kind" = 'run_workspace' AND r."state" = 'ended' AND r."kind" <> 'session'`;
+
+export function integrityFacts(tx: Tx, args: { project: string; startup?: boolean }): IntegrityFacts {
   const p = projectRepoRow(tx, args.project);
   const checkouts = (
     tx.db
       .prepare(
         `SELECT c.*, r."state" AS "run_state", w."metadata_baseline" FROM "managed_checkouts" c
          LEFT JOIN "runs" r ON r."id" = c."owner_run" LEFT JOIN "workspaces" w ON w."run" = c."owner_run" AND w."path" = c."path"
-         WHERE c."project" = ? AND c."released_at" IS NULL ORDER BY c."id"`,
+         WHERE c."project" = ? AND c."released_at" IS NULL${args.startup === true ? '' : ` AND NOT (${ENDED_WORK_WORKSPACE})`} ORDER BY c."id"`,
       )
       .all(args.project) as (CheckoutRow & { run_state: string | null; metadata_baseline: string | null })[]
   ).map(({ run_state, metadata_baseline, ...c }) => ({
@@ -99,13 +110,41 @@ export function recordIntegrity(tx: Tx, report: IntegrityReport): { observed: nu
   markBlockedStale(tx, report.project, ['REF_UNREAD']);
   for (const id of report.released ?? []) releaseCheckouts(tx, { id });
   for (const c of report.added ?? []) addCheckout(tx, { project: report.project, kind: 'integration_worktree', path: c.path, baseline: c.baseline, run: null });
+  // What the engine expects now, in this transaction: a read made against
+  // an expectation that has moved since (an adoption, or the engine's own
+  // journaled move, committed between the read and this record) is stale
+  // and records nothing; the next evaluation reads again (M413 (d)'s
+  // second observation of a move already adopted).
   for (const r of report.refs ?? []) {
+    const now = tx.db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "id" = ?').get(r.registry) as { expected_oid: string } | undefined;
+    if (now !== undefined && now.expected_oid !== r.expected) continue;
     recordObservation(tx, report.project, { subject: 'ref', ref: r.registry, expected: r.expected, found: r.found });
     observed++;
   }
   for (const c of report.checkouts ?? []) {
+    const now = tx.db.prepare('SELECT "baseline" FROM "managed_checkouts" WHERE "id" = ?').get(c.id) as { baseline: string } | undefined;
+    if (now !== undefined && now.baseline !== c.expected) continue;
     recordObservation(tx, report.project, { subject: 'checkout', checkout: c.id, expected: c.expected, found: JSON.stringify(c.found) });
     observed++;
   }
   return { observed };
+}
+
+// The registered refs of a project and where the engine's journal is moving
+// them: what the pre-dispatch recheck reads (git/integrity.ts
+// registeredRefsMoved).
+export interface RegistryFacts {
+  repo: string;
+  registry: { ref: string; expected_oid: string }[];
+  moving: Record<string, string[]>;
+}
+
+export function registryFacts(db: Tx['db'], args: { project: string }): RegistryFacts {
+  const p = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string } | undefined;
+  if (!p) throw new Error(`project ${args.project} is not registered`);
+  return {
+    repo: p.dev_repo_path,
+    registry: db.prepare('SELECT "ref", "expected_oid" FROM "ref_registry" WHERE "project" = ? ORDER BY "id"').all(args.project) as { ref: string; expected_oid: string }[],
+    moving: movingRefs(db, args.project),
+  };
 }

@@ -71,7 +71,10 @@ type Route =
   | { kind: 'stream'; open: (r: Request) => Promise<(res: ServerResponse) => Promise<void>> }
   | { kind: 'refuse'; refusal: Refusal }
   | { kind: 'command'; name: string; args: (body: unknown) => unknown }
-  | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown>; settle?: (prepared: unknown) => Promise<void> };
+  // `lock`: the project whose journal and integration lease the route holds
+  // from its preparation (a read of the head) to the drive of what it
+  // intended (the slice-37 review's M3).
+  | { kind: 'prepared'; name: string; prepare: (body: unknown) => Promise<unknown>; settle?: (prepared: unknown) => Promise<void>; lock?: string };
 
 const MUTATING = (method: string) => method !== 'GET' && method !== 'HEAD';
 
@@ -150,7 +153,6 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   const bodyDeadlineMs = state.config.values.request_body_deadline * 1000;
   const shell = loadShell(opts.shellDir);
   const reader = new EventReader(homePaths(opts.home).store);
-  const maxConcurrentRuns = state.config.values.max_concurrent_runs;
 
   // Reading a body is what earns a `100 Continue`: only a request that has
   // passed the Host and token checks and reached a command that reads its
@@ -249,7 +251,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }
     if (s.length === 2 && s[1] === 'projects' && get) {
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: { maxConcurrentRuns } }) }) };
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: {} }) }) };
     }
     if (s.length === 2 && s[1] === 'events' && method === 'GET') {
       return {
@@ -264,7 +266,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (s.length === 3 && s[1] === 'projects' && get) {
       const project = decodeSegment(s[2]!);
       if (project === null) return null;
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project, maxConcurrentRuns } }) }) };
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project } }) }) };
     }
 
     if (s[1] === 'projects' && s.length >= 4) {
@@ -275,7 +277,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (get) {
           return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
         }
-        if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b) };
+        if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b), lock: project };
       }
       if (rest.length === 1 && rest[0] === 'decisions' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'decisions.open', args: { project } }) }) };
@@ -482,10 +484,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           kind: 'prepared',
           name: 'decision.answer',
           prepare: async (b) => {
-            const body = onlyFields(b, ['option', 'preview_hash', 'note']);
+            // `reason` and `review`: the `build_first` exception's (D6 §6.2;
+            // F §5.1; SEAM.md §428), read by that answer alone.
+            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review']);
             const facts = await answerFacts(runtime(), project, decision);
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, facts, waits };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, facts, waits };
           },
           // A committed answer is answered 200 whatever follows it: a failed
           // effect or publication is logged and carried by the next tick
@@ -890,21 +894,29 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         return refuseAudited(route.refusal);
       case 'command':
       case 'prepared': {
-        let args: unknown;
-        try {
-          args = route.kind === 'command' ? route.args(await body(r)) : await route.prepare(await body(r));
-        } catch (err) {
-          return refuseAudited(err);
-        }
-        try {
-          const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
-          if (route.kind === 'prepared' && route.settle) await route.settle(args);
-          send({ status: result.status, body: result.body });
-          if (result.effects && result.effects.length > 0) state.runtime?.afterCommit(result.effects);
-        } catch (err) {
-          if (route.kind === 'prepared' && route.settle) await route.settle(args).catch(() => {});
-          refuse(err);
-        }
+        const lock = route.kind === 'prepared' ? route.lock : undefined;
+        const rt = state.runtime;
+        const run = async (): Promise<void> => {
+          let args: unknown;
+          try {
+            args = route.kind === 'command' ? route.args(await body(r)) : await route.prepare(await body(r));
+          } catch (err) {
+            return refuseAudited(err);
+          }
+          try {
+            const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
+            if (route.kind === 'prepared' && route.settle) await route.settle(args);
+            // What the route intended, driven before the project's journal is let go.
+            if (lock !== undefined && rt?.services) await rt.services.journal(lock).catch((err) => log('journal', err, { project: lock }));
+            send({ status: result.status, body: result.body });
+            if (result.effects && result.effects.length > 0) state.runtime?.afterCommit(result.effects);
+          } catch (err) {
+            if (route.kind === 'prepared' && route.settle) await route.settle(args).catch(() => {});
+            refuse(err);
+          }
+        };
+        if (lock !== undefined && rt?.journal) await rt.journal.withProject(lock, run, 'route');
+        else await run();
         return;
       }
       case 'stream': {

@@ -28,7 +28,8 @@ import {
   recordSnapshot,
   recordWorkspaceMetadata,
 } from './transitions/accept.js';
-import { integrityFacts, recordIntegrity } from './transitions/integrity.js';
+import { deferralRefsInvalidForRun } from '../plan/deferral.js';
+import { integrityFacts, recordIntegrity, registryFacts } from './transitions/integrity.js';
 import {
   blockOperation,
   finalizeOperation,
@@ -51,6 +52,7 @@ import {
   claimDispatch,
   dispatchStarted,
   domainTerminated,
+  recordPeak,
   endFacts,
   expireRun,
   expiredRunLeases,
@@ -64,8 +66,8 @@ import {
   recordUsage,
   renewLease,
   unendedRuns,
- dispatchEntryProbe } from './transitions/runs.js';
-import { budgetCheck, ledgerView } from './transitions/ledger.js';
+ dispatchEntryProbe, envelopeHoldsDispatch } from './transitions/runs.js';
+import { budgetCheck, exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import {
   chunkReceipt,
   expirableRecords,
@@ -120,6 +122,7 @@ import {
   requestDeployment,
   requestFacts,
   policyRequestDue,
+  policyPreparationFailed,
   policyRequestRefused,
   artifactAdmission,
   artifactPaths,
@@ -162,7 +165,7 @@ import { logsDue, observationLapsed, observationPlan, observationsDue, recordLog
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
-import { applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
+import { applicationConflicts, applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck } from './transitions/findings.js';
@@ -236,6 +239,9 @@ import {
   regrantFacts,
   regrantLease,
 } from './transitions/boundary.js';
+import { markHolds } from '../scheduler/holds.js';
+import { acquireIntegrationLease, releaseIntegrationLease } from './transitions/integration-lease.js';
+import { takeCommittedTickRequests } from './transitions/tick-requests.js';
 import { type EnvelopeSettings, type SelfTestBox, serviceAdmissionHold, setEnvelope, setSelfTestBoxes } from './transitions/envelope.js';
 import {
   admitExecution,
@@ -261,6 +267,7 @@ import {
   requestChecks,
   runnerQualification,
   setCheckRunner,
+  checkProfilesNow,
   treeInUse,
   treeHeld,
   recordLinkLog,
@@ -270,6 +277,20 @@ import {
 import { adoptProject, appliedAdoptedTests, isAdopted, projectRepositories } from '../adopt/records.js';
 import { conformanceFactsRead } from '../adopt/conformance.js';
 import { recordRefusedReplan } from '../plan/bundle.js';
+import { registerAwaiting, settleAwaiting, sweepAwaiting } from './transitions/awaiting.js';
+import { registerAfterTransition } from './transitions/tx.js';
+import { CORRECTION_KIND as AWAIT_CORRECTION_KIND } from './transitions/protected.js';
+import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion, reverifyResolvedCompletions } from './transitions/queue.js';
+import { correctionProposalDecided as awaitProposalDecided } from '../spec/change.js';
+
+// No work item awaits a decision without one it waits on (slice 37).
+registerAwaiting({
+  raiseQuestion: (tx, a) => awaitRaiseQuestion(tx, a as never) as { id: string } | null,
+  correctionKind: (k) => (k === null ? undefined : (AWAIT_CORRECTION_KIND[k] as never)),
+  proposalDecided: (tx, a) => awaitProposalDecided(tx, a),
+  dropBlocker: (tx, item) => awaitDropBlocker(tx, item),
+});
+registerAfterTransition(settleAwaiting);
 
 export interface WorkerData {
   file: string;
@@ -278,7 +299,7 @@ export interface WorkerData {
 }
 
 export type Request = { id: number; op: string; args: unknown };
-export type Reply = ({ id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> }) & { seq?: number | null };
+export type Reply = ({ id: number; ok: true; value: unknown } | { id: number; ok: false; refusal: ReturnType<Refusal['toWire']> }) & { seq?: number | null; tick?: number };
 
 const data = workerData as WorkerData;
 const port = parentPort!;
@@ -418,8 +439,18 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
   'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
-  'scheduler.candidates': (d, a: { maxConcurrentRuns: number }) => dispatchCandidates(d, a),
+  'scheduler.candidates': (d) => dispatchCandidates(d),
   'scheduler.projects': (d) => projectIds(d),
+  'integrity.registry': (d, a: { project: string }) => registryFacts(d, a),
+  // Whether a nomination is due (projects.nomination_due): the tick's
+  // journal step takes the project's integration lease for it only then.
+  'nomination.due_project': (d, a: { project: string }) => (d.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(a.project) as { nomination_due: string | null } | undefined)?.nomination_due != null,
+  'deferral.refs_invalid': (d, a) => deferralRefsInvalidForRun(d, a),
+  'checks.profiles_now': (d) => checkProfilesNow(d),
+  // D1 §8.1 step 4: the project's day limits, read before select (throws on a failed read).
+  // D2 §3.7; K2: whether the envelope holds a role domain of the project now.
+  'scheduler.envelope_holds': (d, a: { project: string; workItem: string }) => envelopeHoldsDispatch(d, a),
+  'scheduler.budgets': (d, a: { project: string }) => exhaustedLimits(d, a.project, { check: true, dispatch: true }),
   'runs.quarantined': (d) => quarantinedRuns(d),
   'runs.expired_leases': (d) => expiredRunLeases(d, nowIso()),
   'run.state': (d, a: { run: string }) => (d.prepare('SELECT "state" FROM "runs" WHERE "id" = ?').get(a.run) as { state: string } | undefined)?.state ?? null,
@@ -586,6 +617,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'run.end_facts': (tx, a: { run: string }) => endFacts(tx, a.run),
   'run.unended': (tx) => unendedRuns(tx),
   'domain.terminated': (tx, a) => domainTerminated(tx, a),
+  'domain.peak': (tx, a) => recordPeak(tx, a),
+  // D1 §7.5; K2 (the driver's ruling 7, slice 37): the project's integration lease.
+  'integration.acquire': (tx, a) => acquireIntegrationLease(tx, a),
+  'integration.release': (tx, a) => releaseIntegrationLease(tx, a),
   'run.quarantine': (tx, a) => quarantineRun(tx, a),
   'run.finish': (tx, a) => finishRun(tx, a),
   'record.register_stream': (tx, a) => registerStream(tx, a),
@@ -601,6 +636,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'gate.evaluate': (tx, a) => evaluateGate(tx, a),
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
+  'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
+  'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),
   'checks.authorize': (tx, a) => authorizeCheckLaunch(tx, a),
@@ -630,6 +667,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
       revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null, inputsVersion: a.inputsVersion }),
     ),
   'protected.application_diverged': (tx, a) => applicationDiverged(tx, a),
+  'protected.application_conflict': (tx, a) => applicationConflicts(tx, a),
   'protected.record_classification': (tx, a) => recordClassification(tx, a),
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),
@@ -729,6 +767,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
+  'deploy.policy_preparation_failed': (tx, a) => policyPreparationFailed(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a
   // time: its reply or failure, its usage, then the session idle.
@@ -741,6 +780,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.open_tx': (tx, a) => openSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'session.resume_tx': (tx, a) => resumeSession(tx, { ...a, incarnation: engineSettings().incarnation! }),
   'session.mark_holds': (tx) => markSessionHolds(tx),
+  // N01 (the driver's ruling Q3; SEAM.md §431): every eligible item's hold as an interval.
+  'work.mark_holds': (tx) => markHolds(tx),
   'session.settle': (tx, a) => settleTurn(tx, a),
   // A turn's admission (D6 §2.2): the owner's entry and the session
   // `turn_running`, in one transaction; its record is attached after.
@@ -870,5 +911,8 @@ port.on('message', (msg: Request) => {
     reply = { id: msg.id, ok: false, refusal: asRefusal(err).toWire() };
   }
   reply.seq = lastSeq();
+  // The ticks the committed transitions requested (D6 K1).
+  const ticks = takeCommittedTickRequests();
+  if (ticks > 0) reply.tick = ticks;
   port.postMessage(reply);
 });

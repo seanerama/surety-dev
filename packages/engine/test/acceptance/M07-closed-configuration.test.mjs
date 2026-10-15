@@ -1,9 +1,12 @@
 // M07 (slice 1). Plan §3.1 M07; D1 §§7.1, 8, 11.1, 11.4, A.8, A.9; build spec
 // §6 correction 20; E18; Review B17. The configuration is closed: unknown or
 // invalid values are refused and have no effect; effective settings and
-// defaults are inspectable and actually used; per-project concurrency stays
-// exactly 1 through M3 while engine-wide concurrency is configurable within
-// its bound; nothing missing or null means unlimited.
+// defaults are inspectable and actually used; nothing missing or null means
+// unlimited. Through M4 per-project concurrency stayed exactly 1 and the
+// engine-wide run count was configurable within its bound; M5 slice 37 (D6
+// K2, A.7; B09; SEAM.md §437) removes both: `max_concurrent_runs` is refused
+// as a setting at either scope (`unknown_field`), and the project gains
+// `role_memory_max` and `check_memory_max`, never above `domain_memory_max`.
 //
 // Engine keys come from $SURETY_HOME/config.json, read before the lock is
 // taken (SEAM.md "Engine configuration"). Ungoverned project keys go through
@@ -159,12 +162,14 @@ describe('M07 engine configuration', () => {
     assert.equal(config.decision_targets.source, 'default', 'a map with no override is not a configured value');
   });
 
-  test('engine-wide run concurrency is bounded', async (t) => {
-    await assertEachRefused(t, 'max_concurrent_runs', [0, 9, -1, 2.5]);
+  // D6 K2: the engine run count is no longer a setting; every value, the
+  // formerly valid 1 to 8 included, is refused naming it.
+  test('the engine run count is refused as a setting (K2), whatever its value', async (t) => {
+    await assertEachRefused(t, 'max_concurrent_runs', [0, 1, 2, 8, 9, -1, 2.5], { code: 'unknown_field' });
   });
 
   test('null never stands for a default or for unlimited', async (t) => {
-    for (const key of ['lease_ttl', 'max_concurrent_runs', 'git_output_cap', 'backup_keep', 'tick_budget']) {
+    for (const key of ['lease_ttl', 'git_output_cap', 'backup_keep', 'tick_budget', 'max_concurrent_domains']) {
       await assertConfigRefused(t, { [key]: null }, { field: key });
     }
   });
@@ -180,7 +185,7 @@ describe('M07 engine configuration', () => {
       api_latency_bound: 500,
       request_body_deadline: 20,
       backup_keep: 7,
-      max_concurrent_runs: 3,
+      max_concurrent_domains: 3,
       git_deadline: 120,
       git_output_cap: 1048576,
       decision_targets: { blocker: 3600, policy_widening: 86400 },
@@ -212,13 +217,14 @@ describe('M07 engine configuration', () => {
     assert.equal((await engine.get('/v1/health')).status, 200);
     assertRefused(await engine.get('/v1/health', { host: `127.0.0.1:${port}` }), 400, 'host_refused', 'default authority');
 
-    // Engine concurrency 3 does not raise a project above 1.
+    // No project run count exists to be raised (D6 K2): the effective policy
+    // has no max_concurrent_runs.
     const repoDir = makeTempDir('m07-repo');
     t.after(() => removeDir(repoDir));
     const project = await installProject(engine, { repoPath: makeRepo(repoDir).path });
     const policy = await engine.get(`/v1/projects/${project}/policy`);
     assert.equal(policy.status, 200, policy.text);
-    assert.equal(policy.body.effective.max_concurrent_runs, 1);
+    assert.equal(policy.body.effective.max_concurrent_runs, undefined, `no project run count (${policy.text})`);
   });
 });
 
@@ -247,7 +253,7 @@ describe('M07 project policy', () => {
     assert.equal(JSON.parse(audits[0].payload).status, 400);
   }
 
-  test('project defaults are inspectable, with concurrency fixed at 1', async (t) => {
+  test('project defaults are inspectable, with no run count and the per-profile maxima (K2)', async (t) => {
     const { engine, project } = await projectFixture(t);
     const res = await engine.get(`/v1/projects/${project}/policy`);
     assert.equal(res.status, 200, res.text);
@@ -255,12 +261,16 @@ describe('M07 project policy', () => {
       // deepEqual since M2 slice 10: two D2 keys default to an empty list (SEAM.md §115).
       assert.deepEqual(res.body.effective[key], CONTRACT.project[key].default, `${key} default`);
     }
-    assert.equal(res.body.effective.max_concurrent_runs, 1);
+    assert.equal(res.body.effective.max_concurrent_runs, undefined, 'no project run count (K2)');
+    assert.equal(res.body.effective.role_memory_max, CONTRACT.project.role_memory_max.default, 'role_memory_max 4 GiB (E140 N1)');
+    assert.equal(res.body.effective.check_memory_max, CONTRACT.project.check_memory_max.default, 'check_memory_max 2 GiB (E140 N1)');
   });
 
-  test('project concurrency other than 1 is refused with no effect', async (t) => {
+  // D6 K2: the project run count is removed; every value, the formerly
+  // accepted 1 included, is refused with no effect.
+  test('a project run count is refused with no effect, whatever its value (K2)', async (t) => {
     const fx = await projectFixture(t);
-    for (const value of [2, 8, 0]) await assertPolicyRefused(fx, { max_concurrent_runs: value }, { field: 'max_concurrent_runs' });
+    for (const value of [1, 2, 8, 0]) await assertPolicyRefused(fx, { max_concurrent_runs: value }, { code: 'unknown_field', field: 'max_concurrent_runs' });
   });
 
   test('unknown project keys are refused', async (t) => {

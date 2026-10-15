@@ -38,7 +38,10 @@ import {
   specSession,
   stagesOfPlan,
   visionSession,
+  ROUTED_KINDS,
+  changeRequests,
 } from './harness/journey/drive.mjs';
+import { getRow } from './harness/runs.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { setEngineConfig, runningClassifier } from './harness/checks/classifier.mjs';
 
@@ -58,14 +61,22 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     await specSession(fx, p.id);
     const arch = await architectSession(fx, p.id, p.repo);
     const ctx = journeyContext(fx, p, { tier: 'T1' });
-    await alphaReady(fx, ctx);
+    // Authoritative: phase 2's authoring tightening is the Reviewer's (SEAM.md
+    // §351); the owner answers the other routed kinds (objection 105; §451).
+    ctx.answerKinds = ROUTED_KINDS.filter((k) => k !== 'check_correction_tightening');
+    // One scripted deploy answer per deployment the journey makes: under
+    // `on_phase_complete` one per completed phase (objection 104, the
+    // driver's ruling 3: under K1 and K2 phase 1's candidate is deployed
+    // first, then superseded by phase 2's, whose deployment is the one
+    // expected; SEAM.md §449).
+    await alphaReady(fx, ctx, { answers: [{ result: 'issued', apply: true }, { result: 'issued', apply: true }] });
     J = { fx, p, ctx, plan: arch.published };
     J.phase1 = await phaseCompleted(fx, ctx, 1);
     J.candidatesAfterPhase1 = candidatesOfProject(fx.home, p.id);
     await nextPhasePublished(fx, ctx, 2);
     J.change = await changeRequest(fx, ctx);
     J.phase2 = await phaseCompleted(fx, ctx, 2, { max: 200 });
-    J.deployed = await alphaDeployed(fx, ctx);
+    J.deployed = await alphaDeployed(fx, ctx, { newest: true });
   });
   after(shared.cleanup);
 
@@ -105,15 +116,32 @@ describe('M401 (m) the T1 variant: autonomous to alpha_deployed with no nominati
     // Sean, 2026-10-12, CR-1 correction counted as a human act (SEAM.md §370):
     // the correction rewrites accept-r2's declared input, which D3 §3.1 makes unclassifiable.
     // Counted from the store (objection 074): a refused post on a superseded generation is no act.
+    // Counted by request (objection 105; SEAM.md §451): the toolchain's
+    // proposal once; CR-1's submission once, and its approval and its check
+    // correction's approvals, each at least once (a decision's generation
+    // re-raised when its impact moved, or a correction's repaired proposal
+    // after an approved one conflicted with the moved head, asks again), all
+    // about CR-1; nothing else, and no tightening answered by a person.
     const acts = buildActs(ctx);
-    assert.deepEqual(
-      acts.map((h) => h.kind).sort(),
-      ['check_correction_unclassifiable', 'check_correction_unclassifiable', 'spec_change', 'spec_change_request'].sort(),
-      `the human acts: the toolchain proposal, CR-1's submission, its approval and its check correction, nothing else (${JSON.stringify(acts)}; posts ${JSON.stringify(ctx.humanActs)})`,
-    );
+    const show = `${JSON.stringify(acts)}; posts ${JSON.stringify(ctx.humanActs)}`;
+    const kinds = new Set(acts.map((h) => h.kind));
+    assert.deepEqual([...kinds].sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts are of these kinds and no other (${show})`);
+    assert.equal(acts.filter((h) => h.kind === 'spec_change_request').length, 1, `CR-1 submitted once (${show})`);
     const corrections = acts.filter((h) => h.kind === 'check_correction_unclassifiable');
-    assert.deepEqual(corrections.map((h) => correctionOrigin(fx.home, h.id)).sort(), ['check_authoring', 'check_correction'], 'one from phase 1\'s check authoring, one from CR-1\'s check correction');
+    const origins = corrections.map((h) => correctionOrigin(fx.home, h.id));
+    assert.equal(origins.filter((o) => o === 'check_authoring').length, 1, `one from phase 1's check authoring, the toolchain (${JSON.stringify(origins)})`);
+    assert.ok(origins.filter((o) => o === 'check_correction').length >= 1 && origins.every((o) => o === 'check_authoring' || o === 'check_correction'), `the rest from CR-1's check correction (${JSON.stringify(origins)})`);
     assert.ok(corrections.every((h) => h.option === 'approve'), 'each answered approve by the owner');
+    const changes = changeRequests(fx.home, ctx.project);
+    assert.equal(changes.length, 1, 'one change request, CR-1');
+    // Every spec_change the owner answered is about CR-1: several are allowed
+    // (a new result that moves the impact asks again, D6 §4.4; the driver's
+    // ruling, slice 37), and exactly one is consumed.
+    const answered = ctx.humanActs.filter((h) => h.kind === 'spec_change' && h.status === 200).map((h) => getRow(fx.home, 'decisions', h.id));
+    assert.ok(answered.length >= 1, `CR-1's change answered by the owner (${show})`);
+    for (const row of answered) assert.equal(row?.subject_id, changes[0].id, `each spec_change answer is about CR-1 (${JSON.stringify(row && { subject_id: row.subject_id, kind: row.kind, status: row.status })})`);
+    assert.equal(acts.filter((x) => x.kind === 'spec_change').length, 1, `exactly one spec_change consumed (${show})`);
+    for (const h of acts.filter((x) => x.kind === 'spec_change')) assert.equal(getRow(fx.home, 'decisions', h.id)?.subject_id, changes[0].id, 'the consumed spec_change is about CR-1');
     assert.ok(planOfPhase(fx.home, ctx.project, 2).some((p) => p.completed_at));
   });
 });

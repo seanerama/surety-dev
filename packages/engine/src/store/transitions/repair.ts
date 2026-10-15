@@ -40,7 +40,7 @@ import { raiseFinding } from './findings.js';
 import { raiseQuestion } from './queue.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
-import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from './work.js';
+import { type ChainOrigin, type WorkRow, getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { REPLAN_OPTION, stageInActiveSet } from '../../plan/replace.js';
 
 type Db = Tx['db'];
@@ -520,8 +520,8 @@ function correctionFor(tx: Tx, project: string, finding: string): string {
 // The `check_correction` work for the Verifier a missing verification or an
 // X2 `correct_check` registers, triggered by the finding (SEAM.md §§231,
 // 232): one per finding, whichever registers it first.
-export function routeCheckCorrection(tx: Tx, project: string, finding: string, chain: number): void {
-  observeTrigger(tx, { project, kind: 'check_correction', trigger_source: 'check_correction', trigger_id: finding, trigger_generation: 1, subject: { finding }, chain }, { finding });
+export function routeCheckCorrection(tx: Tx, project: string, finding: string, chain: number, origin: ChainOrigin | null = null): void {
+  observeTrigger(tx, { project, kind: 'check_correction', trigger_source: 'check_correction', trigger_id: finding, trigger_generation: 1, subject: { finding }, chain, chain_origin: origin }, { finding });
 }
 
 // D3 §2.11's route, in the transaction recording a `fix` disposition: a
@@ -529,10 +529,10 @@ export function routeCheckCorrection(tx: Tx, project: string, finding: string, c
 // acceptance-origin check of the effective version covering it, cannot be
 // verified, and the Verifier is given check_correction work. Chained like
 // the fix (Q8 (a)): at the default max_chained_roles it waits for a person.
-export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'project' | 'check' | 'candidate'> & { criterion?: string | null }, chain: number): void {
+export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'project' | 'check' | 'candidate'> & { criterion?: string | null }, chain: number, origin: ChainOrigin | null = null): void {
   const version = effectiveVersion(tx.db, f.project);
   if (version && findingVerifiable(tx.db, f, version.id)) return;
-  routeCheckCorrection(tx, f.project, f.id, chain);
+  routeCheckCorrection(tx, f.project, f.id, chain, origin);
 }
 
 // Can a finding's named check verify its criterion (D3 §2.11 condition 2,

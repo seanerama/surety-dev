@@ -27,6 +27,8 @@ export class StoreClient {
         seamMessage(msg);
         return;
       }
+      // The ticks committed transitions requested (D6 K1): D1 §1.5's flag.
+      if (typeof msg.tick === 'number' && msg.tick > 0 && this.tickListener) this.tickListener(msg.tick);
       if (typeof msg.seq === 'number' && msg.seq > this.lastSeq) {
         this.lastSeq = msg.seq;
         for (const listener of this.seqListeners) listener(msg.seq);
@@ -44,6 +46,11 @@ export class StoreClient {
     };
     this.worker.on('error', fail);
     this.worker.on('exit', (code) => fail(new Error(`store worker exited with code ${code}`)));
+  }
+
+  private tickListener: ((n: number) => void) | null = null;
+  onTickRequests(listener: (n: number) => void): void {
+    this.tickListener = listener;
   }
 
   onSeq(listener: (seq: number) => void): () => void {

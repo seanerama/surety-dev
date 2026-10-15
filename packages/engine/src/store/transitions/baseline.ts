@@ -431,7 +431,7 @@ export function insertExecutionResult(
   // than an obligation on its check is recorded as history.
   const gen = tx.db
     .prepare(
-      `SELECT x."spec_generation" AS g, (SELECT MAX(o."generation") FROM "check_obligations" o WHERE o."project" = x."project" AND o."key" = x."key") AS o
+      `SELECT x."spec_generation" AS g, (SELECT MAX(o."generation") FROM "check_obligations" o WHERE o."project" = x."project" AND o."key" = x."key" AND o."reason" = 'spec_changed') AS o
        FROM "check_executions" x WHERE x."id" = ?`,
     )
     .get(a.execution) as { g: number | null; o: number | null } | undefined;

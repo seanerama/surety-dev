@@ -13,12 +13,14 @@
 // exhaustion, resume and the races at every settlement step are slice 33's
 // (M415 to M420), which hardens what is built here.
 
+import { notePeakDomains } from '../plan/pace.js';
+import { envelopeHold } from '../store/transitions/envelope.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
 import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.js';
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
-import { engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
+import { attemptProfileMax, effectiveProfileMax, engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend } from '../store/transitions/trust.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../invoke/adapters/templates.js';
@@ -371,6 +373,12 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
       spent,
     });
   }
+  // The turn's domain is admitted through the same envelope and slot cap as
+  // any role domain (D6-S08, K2, B09; the slice-37 review's M2): held, the
+  // turn is refused with the hold, and nothing is written.
+  const turnMax = canaryOf ? attemptProfileMax(tx.db, canaryOf) : effectiveProfileMax(tx.db, run.project, 'role');
+  const held = envelopeHold(tx.db, { kind: 'role', project: run.project, memory: turnMax });
+  if (held !== null) throw new Refusal(409, held.code, held.reason, 'Send the turn again once a domain is free.', { run: run.id, ...held.subject });
   const lease = tx.db.prepare(`SELECT "id", "generation", "closing", "owner_incarnation" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as
     | { id: string; generation: number; closing: number; owner_incarnation: string }
     | undefined;
@@ -410,8 +418,11 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
     .prepare(
       `INSERT INTO "execution_domains" ("id", "created_at", "project", "run", "invocation", "status", "profile", "cgroup_path", "launch_state", "memory_max") VALUES (?, ?, ?, ?, ?, 'allocated', 'role', ?, 'authorizable', ?)`,
     )
-    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, engineSettings().domain_memory_max ?? null);
+    // The project's effective role maximum (D6 §2.7, K2, B09), or the profile
+    // a continuation canary's attempt qualifies.
+    .run(domain, tx.at, run.project, run.id, invocation, cgroupPath, turnMax);
   tx.db.prepare('INSERT INTO "process_ownership" ("id", "created_at", "project", "domain", "invocation", "incarnation") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('proc_'), tx.at, run.project, domain, invocation, args.incarnation);
+  notePeakDomains(tx);
   const deadlineSeconds = policy[`deadline_${run.role}`]!;
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'turn_running', "turn_count" = ?, "deadline_at" = ? WHERE "id" = ?`).run(turn, addSeconds(tx.at, deadlineSeconds), run.id);
   tx.emit('session.turn_started', { project: run.project, run: run.id, invocation }, { turn, idle_generation: run.idle_generation });
@@ -439,7 +450,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
   if (!run || run.kind !== 'session' || run.session_state !== 'turn_running') return null;
   const turn = tx.db.prepare('SELECT "number", "domain" FROM "turns" WHERE "run" = ? AND "invocation" = ?').get(run.id, args.invocation) as { number: number; domain: string } | undefined;
   if (!turn) return null;
-  const d = tx.db.prepare('SELECT "cgroup_path", "status" FROM "execution_domains" WHERE "id" = ?').get(turn.domain) as { cgroup_path: string | null; status: string } | undefined;
+  const d = tx.db.prepare('SELECT "cgroup_path", "status", "memory_max" FROM "execution_domains" WHERE "id" = ?').get(turn.domain) as { cgroup_path: string | null; status: string; memory_max: number | null } | undefined;
   if (!d || d.status !== 'allocated') return null;
   const lease = tx.db.prepare(`SELECT "generation", "renewed_at" FROM "leases" WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).get(run.id) as { generation: number; renewed_at: string } | undefined;
   if (!lease) return null;
@@ -462,6 +473,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
       base_revision: run.base_revision,
       lease_renewed_at: lease.renewed_at,
       cgroup_path: d.cgroup_path,
+      memory_max: d.memory_max,
       profile: 'role',
       backend: a.backend,
       trust_entry: null,
@@ -488,6 +500,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
       base_revision: run.base_revision,
       lease_renewed_at: lease.renewed_at,
       cgroup_path: d.cgroup_path,
+      memory_max: d.memory_max,
       profile: 'role',
       backend: resolved.backend,
       trust_entry: null,
@@ -511,6 +524,7 @@ export function turnClaim(tx: Tx, args: { run: string; invocation: string; scrip
     base_revision: run.base_revision,
     lease_renewed_at: lease.renewed_at,
     cgroup_path: d.cgroup_path,
+    memory_max: d.memory_max,
     profile: 'role',
     backend: resolved.backend,
     trust_entry: resolved.kind === 'entry' ? resolved.entry.id : null,
@@ -686,8 +700,8 @@ function terminalAndCharge(tx: Tx, run: SessionRow, turn: TurnRow, invocation: s
     const terminal = seen.includes('launched') ? (outcome === null ? 'ended' : 'unknown') : seen.includes('dispatch_started') ? 'unknown' : 'refused';
     const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "invocation_status_observations" WHERE "invocation" = ?').get(invocation) as { n: number };
     tx.db
-      .prepare('INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(tx.newId('iso_'), tx.at, run.project, invocation, n, terminal, tx.at, terminal === 'refused' ? null : (exit?.exit_class ?? null), terminal === 'refused' ? null : (exit?.exit_evidence ?? null));
+      .prepare('INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence", "incarnation") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(tx.newId('iso_'), tx.at, run.project, invocation, n, terminal, tx.at, terminal === 'refused' ? null : (exit?.exit_class ?? null), terminal === 'refused' ? null : (exit?.exit_evidence ?? null), engineSettings().incarnation ?? null);
     tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status: terminal, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) });
   }
   const now = (tx.db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY "seq"').all(invocation) as { status: string }[]).map((r) => r.status);
