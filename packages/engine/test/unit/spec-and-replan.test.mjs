@@ -194,6 +194,36 @@ test('the replan package: every file of one generation, the spec by its blob or 
   assert.ok(!unread.some((f) => f.path === 'refusal.json'));
 });
 
+test("an early replacement's package names the kept stages and states the kept-stage rule the plan check applies (the real M443 run's replan)", async () => {
+  const { KEPT_STAGE_RULE } = await import(join(dist, 'plan', 'check.js'));
+  const facts = {
+    repo: '/r',
+    trigger: { source: 'spec_change', id: 'scr_1', generation: 1 },
+    trigger_subject: { replaces: { phase_plan: 'pp_1', generation: 1 }, evidence: null, stale: null, rejected: null },
+    generation: { spec_revision: null, architecture_revision: null, roadmap_revision: null, plan: { id: 'pp_1', phase_number: 1, generation: 1 }, spec_evidence_generation: 2 },
+    spec_text: null,
+    index: [],
+    roadmap: null,
+    module_map: {},
+    completed_plan: null,
+    open_plan: { id: 'pp_1', phase_number: 1, generation: 1, status: 'published', published_at: 'a', completed_at: null, completion_binding: null, stages: [] },
+    phase_evaluation: null,
+    findings: [],
+    deferrals: { findings: [], obligations: [] },
+    objections: [],
+    refusal: null,
+    kept: [
+      { number: 2, implements: ['R3', 'R8'] },
+      { number: 3, implements: ['R10'] },
+    ],
+  };
+  const text = replanPromptText(facts).join('\n');
+  assert.ok(text.includes('Kept stages: stage 2 (implements R3, R8); stage 3 (implements R10).'), text);
+  assert.ok(text.includes(KEPT_STAGE_RULE));
+  assert.ok(text.includes('/surety/context/open-plan.json'));
+  assert.ok(!replanPromptText({ ...facts, kept: [] }).join('\n').includes('Kept stages:'), 'none kept: not stated');
+});
+
 // ---- the slice-34 review's fixes --------------------------------------------------------
 
 test('M1: a criterion moved to another requirement is withdrawn there and added here, never renumbered', () => {
