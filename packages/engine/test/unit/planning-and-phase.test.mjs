@@ -464,3 +464,21 @@ test('the plan check refuses a module path the matcher cannot read: PLAN_MODULE_
   const ok = checkPlan(baseline(), artifacts(GOOD, { modules: { ...MODULES, modules: [{ ...MODULES.modules[0], paths: ['src/api/**'] }, MODULES.modules[1]] } }));
   assert.deepEqual(codes(ok), []);
 });
+
+// ---- the real M443 run's replan: a kept stage whose requirement gained criteria ------------------
+
+test("a kept stage listed unchanged is not charged criteria its requirement gained, so long as another stage validates them; listed changed it is a duplicate; omitted it is valid", () => {
+  const kept3 = stage(3, { implements: ['R2'], validation: { criteria: [], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  const base = baseline({ kept: [{ number: 3, digest: executionInputsDigest(kept3), implements: ['R2'] }] });
+  const s1 = stage(1, { implements: ['R1'], validation: { criteria: ['R1.1', 'R1.2'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  const s4 = stage(4, { implements: ['R2'], validation: { criteria: ['R2.1'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  // Listed unchanged, the new criterion validated by stage 4: passes.
+  assert.deepEqual(codes(checkPlan(base, artifacts([s1, kept3, s4]))), []);
+  // Listed unchanged and validated nowhere else: charged to it, as before.
+  assert.deepEqual(subjects(checkPlan(base, artifacts([s1, kept3])), 'PLAN_CRITERION_UNVALIDATED'), ['stage 3:R2.1']);
+  // Listed with the criterion added (other inputs): a duplicate.
+  const changed = { ...kept3, validation: { ...kept3.validation, criteria: ['R2.1'] } };
+  assert.deepEqual(subjects(checkPlan(base, artifacts([s1, changed])), 'PLAN_DUPLICATE_STAGE'), ['stage 3: kept (integrated) with other inputs']);
+  // Omitted, with stage 4 for the new criterion: passes.
+  assert.deepEqual(codes(checkPlan(base, artifacts([s1, s4]))), []);
+});

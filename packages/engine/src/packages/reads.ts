@@ -271,7 +271,7 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   PLAN_UNKNOWN_ADR: 'a stage cites an ADR that does not exist',
   PLAN_CRITERION_MISMATCH: "a stage validates a criterion that is not one of its requirements' approved criteria",
   PLAN_UNKNOWN_STAGE: 'a stage depends on a stage number the plan does not have',
-  PLAN_DUPLICATE_STAGE: 'two stages share a number',
+  PLAN_DUPLICATE_STAGE: 'two stages share a number, or a kept stage of the plan a replan replaces is listed with inputs other than it was built with',
   PLAN_QUESTION_OPEN: 'a stage implements a requirement an open question blocks',
   PLAN_STALE_BASELINE: 'prepared_against does not name the approved versions this plan is checked against',
   PLAN_CYCLE: 'the stages depend on each other in a cycle',

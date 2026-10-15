@@ -315,7 +315,14 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     const scope = planned('stage', keys, s.modules, { criteria: s.validation.criteria, kinds: s.validation.kinds, areas: s.validation.sensitive_areas });
     const criteria = uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? []));
     obligations.push({ scope: { kind: 'stage', number: s.number }, tier: scope.tier, criteria, kinds: [...scope.kinds], sensitive_areas: scope.categories });
-    unvalidatedCriteria.push(...scope.missing.criteria.map((c) => `stage ${s.number}:${c}`));
+    // A kept stage listed unchanged (KEPT_STAGE_RULE) cannot take criteria
+    // its requirement gained after it was built: they are not charged to it,
+    // but another stage of the plan must validate them (the driver's ruling
+    // on the real M443 run's replan).
+    const k = kept.find((x) => x.number === s.number);
+    const keptUnchanged = k !== undefined && k.digest !== null && k.digest === executionInputsDigest(s);
+    const missing = keptUnchanged ? scope.missing.criteria.filter((c) => !plan.stages.some((t) => t !== s && t.validation.criteria.includes(c))) : scope.missing.criteria;
+    unvalidatedCriteria.push(...missing.map((c) => `stage ${s.number}:${c}`));
     unvalidatedAreas.push(...scope.missing.areas.map((area) => `stage ${s.number}:${area.replace(/^area:/, '')}`));
     missingKinds.push(...scope.missing.kinds.map((k) => `stage ${s.number}:${k.replace(/^kind:/, '')}`));
   }
@@ -394,6 +401,12 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
 export function executionInputsDigest(s: PlanStage): string {
   return sha256(canonical({ number: s.number, goal: s.goal, implements: [...s.implements].sort(), tasks: s.tasks, modules: [...s.modules].sort(), adrs: [...s.adrs].sort(), depends_on: [...s.depends_on].sort(), validation: s.validation, integration_obligations: s.integration_obligations }));
 }
+
+// The kept-stage rule (D6 §5.7; B08), stated to the Architect as this check
+// applies it (plan/replan-package.ts): an integrated or verified stage of
+// the plan a replan replaces is kept as built.
+export const KEPT_STAGE_RULE =
+  "Omitting a kept stage is always valid: it stays as built. Listing one is valid only with exactly the inputs it was built with (number, goal, implements, tasks, modules, adrs, depends_on, validation, integration_obligations); a kept stage listed with any other input is refused (PLAN_DUPLICATE_STAGE). Criteria a kept stage's requirement gained or changed since it was built are planned in a new stage, under a new number, that implements that requirement and validates them.";
 
 export const PLAN_REASONS = [
   'PLAN_UNKNOWN_REQUIREMENT',

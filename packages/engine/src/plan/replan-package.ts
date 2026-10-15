@@ -12,6 +12,8 @@
 // refused.
 
 import { activeStages } from './active.js';
+import { KEPT_STAGE_RULE } from './check.js';
+import { keptOf, replacementOf, subjectWorkOf } from './replace.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import type { Tx } from '../store/transitions/tx.js';
 
@@ -24,6 +26,7 @@ export interface ReplanStage {
   implements: string[];
   modules: string[];
   tasks: unknown;
+  adrs: unknown;
   depends_on: unknown;
   validation: unknown;
   integration_obligations: unknown;
@@ -69,6 +72,10 @@ export interface ReplanFacts {
   deferrals: { findings: Record<string, unknown>[]; obligations: Record<string, unknown>[] };
   objections: Record<string, unknown>[];
   refusal: { run: string; reason_class: string | null; reason_text: string | null; plan_check: { id: string; phase: number | null; reasons: unknown } | null } | null;
+  // An early replacement's kept stages, as the plan check counts them
+  // (plan/replace.ts keptOf; KEPT_STAGE_RULE): number and the requirement
+  // keys each implements. Empty for any other replan.
+  kept?: { number: number; implements: string[] }[];
 }
 
 const json = (text: unknown): unknown => {
@@ -96,6 +103,9 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
     implements: ((json(s.implements) as string[] | null) ?? []).map(keyOf),
     modules: ((json(s.modules) as string[] | null) ?? []).map(nameOf),
     tasks: json(s.tasks),
+    // Every execution input a kept stage is compared by (plan/check.ts
+    // executionInputsDigest), so it can be listed exactly as built.
+    adrs: json(s.adrs),
     depends_on: json(s.depends_on),
     validation: json(s.validation),
     integration_obligations: json(s.integration_obligations),
@@ -194,7 +204,18 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     deferrals: { findings: deferred, obligations },
     objections,
     refusal: last ? { run: last.id, reason_class: last.reason_class, reason_text: last.reason_text, plan_check: check ? { id: check.id, phase: check.phase_number, reasons: json(check.reasons) } : null } : null,
+    kept: keptStagesOf(db, item),
   };
+}
+
+// The kept stages the plan check will count for this replan (the driver's
+// ruling on the real M443 run's replan, E135): from the store, as
+// plan/bundle.ts replacementFacts takes them.
+function keptStagesOf(db: Db, item: { trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null }): { number: number; implements: string[] }[] {
+  if (item.trigger_source === null || item.trigger_id === null || item.trigger_generation === null) return [];
+  const target = replacementOf(db, { trigger_source: item.trigger_source, trigger_id: item.trigger_id, trigger_generation: item.trigger_generation, subject: item.subject ?? '{}', trigger_evidence: item.trigger_evidence ?? null });
+  if (!target) return [];
+  return keptOf(db, target.phase_plan, subjectWorkOf(target)).map((k) => ({ number: k.number, implements: k.implements }));
 }
 
 function subjectFacts(text: string | null): ReplanFacts['trigger_subject'] {
@@ -277,7 +298,14 @@ export function replanPromptText(r: ReplanFacts): string[] {
           '',
           '## An early replacement',
           '',
-          `This replan replaces generation ${r.trigger_subject.replaces.generation} of the open plan (${r.trigger.source}): /surety/context/trigger.json holds the evidence and what became stale. Stages already integrated or verified are kept as they are: list them unchanged or not at all; a stage not yet built is replaced by what you plan.`,
+          `This replan replaces generation ${r.trigger_subject.replaces.generation} of the open plan (${r.trigger.source}): /surety/context/trigger.json holds the evidence and what became stale. Stages already integrated or verified are kept as built; a stage not yet built is replaced by what you plan.`,
+          ...((r.kept ?? []).length > 0
+            ? [
+                '',
+                `Kept stages: ${(r.kept ?? []).map((k) => `stage ${k.number} (implements ${k.implements.join(', ') || 'nothing'})`).join('; ')}. Their inputs as built are in /surety/context/open-plan.json.`,
+                KEPT_STAGE_RULE,
+              ]
+            : []),
         ]
       : []),
     ...(r.trigger_subject?.rejected
