@@ -70,24 +70,35 @@ async function published(t, opts) {
   return { fx, ...(await toConformancePublished(fx, opts)) };
 }
 
-// Ticks after a change; then the checks pass; the reasons of the last stage
-// gate evaluated after the change (by event seq, after `since`), never of one
-// made before it (objection 114; SEAM §461). A source moved after the stage
-// conformed must still be found (D6 §8.1 step 5; B11): when no stage gate is
-// evaluated after the change, the case fails saying so.
+// Ticks after a change; then the checks pass; the stage gates evaluated
+// after the change (by event seq, after `since`) whose own recorded read saw
+// it (`saw(snapshot.conformance)`): objection 116 (SEAM §465), an evaluation
+// whose transaction commits after the change may have read the head before
+// it. A source moved after the stage conformed must still be found (D6 §8.1
+// step 5; B11): when no evaluation that saw the change is made, the case
+// fails saying so (objection 114; SEAM §461). Returns their reasons, each.
 const evaluatedAfter = (fx, ctx, since) => {
   const seqOf = new Map(eventsAbout(fx.home, 'gate.evaluated', ctx.project).map((e) => [e.subject?.evaluation, e.seq]));
   return stageGates(fx.home, ctx.project).filter((e) => (seqOf.get(e.id) ?? 0) > since);
 };
-async function afterChange(fx, ctx, since) {
-  await advance(fx, ctx, () => {
-    const after = evaluatedAfter(fx, ctx, since);
-    return after.length > 0 && gateReasons(after.at(-1)).length > 0 ? true : undefined;
-  }, { what: 'a stage gate with its reasons after the change', max: 20 }).catch(() => null);
-  const last = evaluatedAfter(fx, ctx, since).at(-1);
+const conformanceRead = (e) => {
+  try {
+    return JSON.parse(e.inputs_snapshot ?? '{}')?.conformance ?? null;
+  } catch {
+    return null;
+  }
+};
+async function afterChange(fx, ctx, since, saw) {
+  const seen = () => evaluatedAfter(fx, ctx, since).filter((e) => {
+    const read = conformanceRead(e);
+    return read !== null && saw(read);
+  });
+  await advance(fx, ctx, () => (seen().length > 0 && gateReasons(seen().at(-1)).length > 0 ? true : undefined), { what: 'a stage gate that read the change, with its reasons', max: 20 }).catch(() => null);
+  const found = seen();
   const stage = conformanceStages(fx.home, ctx.project)[0];
-  assert.ok(last, `a stage gate is evaluated after the change (none was: the conformance stage is ${stage?.conformance_state}; a moved source must be found even once the stage has conformed, D6 §8.1 step 5, B11)`);
-  return gateReasons(last);
+  const others = evaluatedAfter(fx, ctx, since).map((e) => conformanceRead(e));
+  assert.ok(found.length > 0, `a stage gate is evaluated after the change that read it (none was: the conformance stage is ${stage?.conformance_state}; evaluations after it read ${JSON.stringify(others)}; a moved source must be found even once the stage has conformed, D6 §8.1 step 5, B11)`);
+  return found.map((e) => gateReasons(e));
 }
 
 // An out-of-band commit on the integration branch, adopted by the owner.
@@ -170,9 +181,10 @@ describe('M413 the conformance stage', () => {
       const { fx, p, ctx } = await published(t);
       await nominated(fx, ctx);
       const since = maxEventSeq(fx.home);
-      await adoptedOutOfBand(fx, p, () => change(p.repo));
-      const reasons = await afterChange(fx, ctx, since);
-      assert.ok(reasons.includes('CONFORMANCE_SOURCE_MOVED'), `${label}: CONFORMANCE_SOURCE_MOVED (${JSON.stringify(reasons)})`);
+      const moved = await adoptedOutOfBand(fx, p, () => change(p.repo));
+      // Every evaluation whose read of the integration head saw the moved commit names it.
+      const each = await afterChange(fx, ctx, since, (read) => read.head === moved);
+      for (const reasons of each) assert.ok(reasons.includes('CONFORMANCE_SOURCE_MOVED'), `${label}: CONFORMANCE_SOURCE_MOVED (${JSON.stringify(each)})`);
       assert.notEqual(conformanceStages(fx.home, p.id)[0].conformance_state, 'conformed', `${label}: not conformed`);
     }
   });
@@ -184,8 +196,9 @@ describe('M413 the conformance stage', () => {
     // FIXTURE TAMPERING (labelled): the binding points at the pushed commit, not A.
     const since = maxEventSeq(fx.home);
     withStore(fx.home, (db) => db.prepare('UPDATE "stages" SET "source_revision" = ? WHERE "id" = ?').run(p.repo.pushed, stage.id), { readonly: false });
-    const reasons = await afterChange(fx, ctx, since);
-    assert.ok(reasons.includes('CONFORMANCE_SOURCE_MOVED'), `the moved binding is found (${JSON.stringify(reasons)})`);
+    // Every evaluation that read the moved binding names it.
+    const each = await afterChange(fx, ctx, since, (read) => read.source_revision === p.repo.pushed);
+    for (const reasons of each) assert.ok(reasons.includes('CONFORMANCE_SOURCE_MOVED'), `the moved binding is found (${JSON.stringify(each)})`);
   });
 
   test('(e) the stage implements the confirmed set of phase 1, not the defect', async (t) => {
