@@ -168,7 +168,7 @@ import { notificationOutcome, notificationSending, notificationsDue } from './tr
 import { applicationConflicts, applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
-import { alphaCheck } from './transitions/findings.js';
+import { alphaCheck, askUndispositioned } from './transitions/findings.js';
 import { contextFacts, mountContext, recordPaths, runCheckKeys } from './reads.js';
 import { reconcileRepairs } from './transitions/repair.js';
 import {
@@ -637,6 +637,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
+  'findings.ask_undispositioned': (tx, a: { project: string }) => askUndispositioned(tx, a),
   'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),

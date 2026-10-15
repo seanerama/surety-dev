@@ -190,6 +190,10 @@ export class Scheduler {
     // A deployment completion refused only on spec_changed obligations,
     // verified again once they resolve (store/transitions/queue.ts).
     await this.rt.engine('deploy.reverify_resolved', { project }).catch((err) => log('completion re-verification', err, { project }));
+    // A finding the Reviewer left with no disposition is asked of the owner
+    // (store/transitions/findings.ts askUndispositioned): an existing one
+    // gets its question at the next tick.
+    await this.rt.engine('findings.ask_undispositioned', { project }).catch((err) => log('undispositioned findings', err, { project }));
     // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
     const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
       log('awaiting sweep', err, { project });
