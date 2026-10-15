@@ -522,8 +522,12 @@ export interface AuthoringFacts {
   // obligation it is asked for, with the stages as they stand now; null for
   // the phase's first authoring.
   follow_up: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
+  // A gap follow-up's (plan/phase.ts registerGapAuthoring): per stage, the
+  // kinds, criteria and areas its gate scope lacks under the effective
+  // version, as registered.
+  gaps?: { stage: number; kinds: string[]; criteria: string[]; areas: string[] }[] | null;
 }
-function authoringFacts(db: Database, project: string, planId: string | null, item: { trigger_source: string | null; trigger_id: string | null }): AuthoringFacts {
+function authoringFacts(db: Database, project: string, planId: string | null, item: { trigger_source: string | null; trigger_id: string | null; trigger_evidence?: string | null }): AuthoringFacts {
   const parse = <T>(text: unknown, fallback: T): T => {
     try {
       return typeof text === 'string' ? (JSON.parse(text) as T) : fallback;
@@ -580,6 +584,7 @@ function authoringFacts(db: Database, project: string, planId: string | null, it
     architecture: content?.architecture_text ?? null,
     environments,
     follow_up,
+    gaps: item.trigger_source === 'authoring_gap' ? (parse<{ gaps?: AuthoringFacts['gaps'] }>(item.trigger_evidence ?? null, {}).gaps ?? null) : null,
   };
 }
 

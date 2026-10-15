@@ -22,7 +22,7 @@
 import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
-import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
+import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, deliveredStageScope, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
 import { coverageMissing } from '../checks/scope.js';
 import type { ScopeObligation } from './check.js';
 import { activeStages, settleReplacements } from './replace.js';
@@ -282,6 +282,68 @@ export function unplannedRequirements(db: Db, planId: string): string[] {
 // covers; and every unresolved deferred or pending authoring obligation.
 // Subjects `stage <n>:<criterion>`, `stage <n>:kind:<k>`, `phase <n>:area:<a>`.
 // A plan with no recorded check (a fixture's) has no planned obligations.
+// What each active stage's gate would lack under a version once delivered
+// (the gate's own one scope rule, evidence.ts deliveredStageScope): the
+// kinds, criteria and areas no check of the version provides for that
+// stage's scope. A plan's planned obligations pool every check of the
+// version (authoringShortfall); a gate reads only the checks of the
+// stage's scope, so an integration check of other requirements does not
+// give a stage its integration kind (the real M443 run's stages 3 and 5).
+export interface StageGap {
+  stage: number;
+  kinds: string[];
+  criteria: string[];
+  areas: string[];
+}
+export function stageScopeGaps(db: Db, planId: string, version: string): StageGap[] {
+  const plan = db.prepare('SELECT "project" FROM "phase_plans" WHERE "id" = ?').get(planId) as { project: string } | undefined;
+  if (!plan) return [];
+  const out: StageGap[] = [];
+  for (const s of activeStages<{ id: string; number: number }>(db, planId)) {
+    const scope = deliveredStageScope(db, { project: plan.project, stage: s.id, version });
+    if (!scope) continue;
+    const gap = {
+      stage: s.number,
+      kinds: scope.missing.kinds.map((k) => k.replace(/^kind:/, '')),
+      criteria: [...scope.missing.criteria],
+      areas: scope.missing.areas.map((a) => a.replace(/^area:/, '')),
+    };
+    if (gap.kinds.length + gap.criteria.length + gap.areas.length > 0) out.push(gap);
+  }
+  return out;
+}
+
+// The backstop (the driver's ruling C on the real M443 run): never a stage
+// gate waiting silently for a check no one will write. When the open plan's
+// stages lack, under the effective version, a kind, criterion or area no
+// check provides, and no check_authoring or check_correction of the project
+// is pending or parked, a check_authoring follow-up for the phase is
+// registered naming the gaps per stage (its package states them). Once per
+// gap set: one the last such follow-up left as it was is not asked again.
+export function registerGapAuthoring(tx: Tx, args: { project: string }): number {
+  const busy = tx.db
+    .prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" IN ('check_authoring', 'check_correction') AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`)
+    .get(args.project);
+  if (busy) return 0;
+  const plan = tx.db
+    .prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid DESC LIMIT 1`)
+    .get(args.project) as { id: string } | undefined;
+  const version = effectiveVersion(tx.db, args.project);
+  if (!plan || !version) return 0;
+  const gaps = stageScopeGaps(tx.db, plan.id, version.id);
+  if (gaps.length === 0) return 0;
+  const last = tx.db
+    .prepare(`SELECT "trigger_evidence", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
+    .get(args.project, plan.id) as { trigger_evidence: string | null; trigger_generation: number } | undefined;
+  if (last && JSON.stringify(parseJson<{ gaps?: unknown }>(last.trigger_evidence)?.gaps ?? null) === JSON.stringify(gaps)) return 0;
+  const made = observeTrigger(
+    tx,
+    { project: args.project, kind: 'check_authoring', trigger_source: 'authoring_gap', trigger_id: plan.id, trigger_generation: (last?.trigger_generation ?? 0) + 1, subject: { phase_plan: plan.id }, chain: 0, trigger_evidence: { gaps } },
+    { gaps },
+  );
+  return made.created ? 1 : 0;
+}
+
 export function authoringShortfall(db: Db, planId: string, version: string): string[] {
   const row = db.prepare('SELECT p."project", p."bundle", p."check", c."obligations" FROM "phase_plans" p LEFT JOIN "plan_checks" c ON c."id" = p."check" WHERE p."id" = ?').get(planId) as
     | { project: string; bundle: string | null; check: string | null; obligations: string | null }
