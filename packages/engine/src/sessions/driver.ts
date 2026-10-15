@@ -22,7 +22,7 @@ import { commitId } from '../journal/effects.js';
 import { type BundleArtifacts, type PlanCheckResult, artifactDiff, checkPlan, specChangeRoute } from '../plan/check.js';
 import type { BaselineFacts, BundleContent } from '../plan/bundle.js';
 import { type Finding, architectFindings, ideaFindings, specFindings } from '../plan/findings.js';
-import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE } from '../plan/schemas.js';
+import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE, planPath } from '../plan/schemas.js';
 import { writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
@@ -566,6 +566,12 @@ export class SessionDriver {
     if (!parsed.modules) findings.push({ code: 'machine_file_invalid', path: MODULES_FILE, subject: { path: MODULES_FILE, field: null }, message: `${MODULES_FILE} is missing or does not parse` });
     if (!parsed.roadmap) findings.push({ code: 'machine_file_invalid', path: ROADMAP_FILE, subject: { path: ROADMAP_FILE, field: null }, message: `${ROADMAP_FILE} is missing or does not parse` });
     if (findings.length > 0) throw planRefused(facts.run, [], findings);
+    // The first architecture is approved with the first phase's plan, as one
+    // prospective bundle (D6 §3.4, reading 2; B02): with no architecture
+    // approved, a close without that plan would publish an architecture no
+    // plan follows, and nothing would ever plan phase 1 (row M442 (b)).
+    const missing = firstPlanMissing(plans, probe);
+    if (missing) throw planRefused(facts.run, [], [missing]);
     if (plans.length > 1) {
       throw new Refusal(409, 'phase_not_next', `Session ${facts.run} proposes plans for phases ${plans.join(', ')}; only the next phase's plan is proposed.`, 'Keep one phase plan, the next phase\'s, and close again.', { run: facts.run, phases: plans, next: probe.phase });
     }
@@ -634,6 +640,16 @@ export class SessionDriver {
     if (check && check.outcome === 'refused') throw planRefused(facts.run, check.reasons, [], bundle, check.needs_spec_change ? facts.project : null);
     return { kind: 'bundle', bundle, withPlan: phase !== null };
   }
+}
+
+// The first architecture is approved with the first phase's plan, as one
+// prospective bundle (D6 §3.4, reading 2; B02): with no architecture
+// approved, a close that proposes no plan is refused (422 plan_refused)
+// naming the plan it lacks; a later Architect session may close without one.
+export function firstPlanMissing(plans: readonly number[], probe: { architecture_revision: string | null; phase: number }): { code: string; path: string; subject: Record<string, unknown>; message: string } | null {
+  if (plans.length > 0 || probe.architecture_revision !== null) return null;
+  const path = planPath(probe.phase);
+  return { code: 'machine_file_invalid', path, subject: { path, field: null }, message: `${path} is missing: the first architecture is approved with the first phase's plan, in one bundle` };
 }
 
 // `specChange`: the project whose plan named a requirement the specification

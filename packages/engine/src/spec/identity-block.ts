@@ -8,8 +8,8 @@ import { SENSITIVE_AREAS } from '../checks/schema.js';
 
 export const IDENTITY_KEYS = ['name', 'one_line', 'users', 'non_goals', 'success_measures', 'sensitive_areas', 'tier_recommendation', 'environments'] as const;
 export type IdentityKey = (typeof IDENTITY_KEYS)[number];
-const LIST_KEYS: readonly IdentityKey[] = ['users', 'non_goals', 'success_measures', 'environments'];
-const TIERS = ['T1', 'T2', 'T3', 'unsure'];
+export const IDENTITY_LIST_KEYS: readonly IdentityKey[] = ['users', 'non_goals', 'success_measures', 'environments'];
+export const IDENTITY_TIERS = ['T1', 'T2', 'T3', 'unsure'];
 
 export interface IdentityBlock {
   name: string;
@@ -147,8 +147,8 @@ export function parseIdentityBlock(text: string): IdentityResult {
   for (const a of areas) if (!SENSITIVE_AREAS.includes(a)) findings.push({ key: 'sensitive_areas', why: `"${a}" is not a sensitive area of the closed list` });
   if (new Set(areas).size !== areas.length) findings.push({ key: 'sensitive_areas', why: 'a sensitive area is repeated' });
   const tier = str('tier_recommendation');
-  if (values.has('tier_recommendation') && !TIERS.includes(tier)) findings.push({ key: 'tier_recommendation', why: `"${tier}" is not T1, T2, T3 or unsure` });
-  for (const key of LIST_KEYS) {
+  if (values.has('tier_recommendation') && !IDENTITY_TIERS.includes(tier)) findings.push({ key: 'tier_recommendation', why: `"${tier}" is not T1, T2, T3 or unsure` });
+  for (const key of IDENTITY_LIST_KEYS) {
     const v = values.get(key);
     if (v !== undefined && typeof v === 'string') findings.push({ key, why: `"${key}" must be a list` });
   }

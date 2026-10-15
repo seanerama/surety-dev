@@ -19,7 +19,7 @@ import { ensureModules, ensureRequirements } from '../store/transitions/baseline
 import { illegal, notFound } from '../store/transitions/common.js';
 import { markStale } from '../store/transitions/evidence.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
+import { SPEC_BLOCKING_CODES, type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 import { afterChange, applyConfirmations, isAdopted, recordClaims } from '../adopt/records.js';
 import { canonical } from '../store/transitions/common.js';
 import { blockerOf, specFinding } from '../plan/findings.js';
@@ -60,33 +60,7 @@ export function recordSemantics(tx: Tx, args: { project: string; run: string | n
 // B.2's forms, the index's agreement with section 4 (a requirement or a
 // criterion in one and not the other), criterion-or-mark, the closed areas
 // and the tier, duplicates, and any part that could not be read.
-const BLOCKING_CODES = new Set([
-  'index_invalid',
-  'index_missing',
-  'section_missing',
-  'no_criteria_no_mark',
-  'header_missing',
-  'header_invalid',
-  'index_subsection_mismatch',
-  'criterion_mismatch',
-  'area_unknown',
-  'areas_missing',
-  // K10 (SEAM.md §380): a claim naming a requirement the specification lacks.
-  'claims_requirement_unknown',
-  // Slice 34 (D6 §3.2, B04; M421 (f)): a duplicate or contradictory
-  // representation, and one part of which could not be read (a statement, a
-  // criterion, a question, the module or claims table): what is unread is
-  // unknown, never registered as none.
-  'duplicate_requirement',
-  'duplicate_criterion',
-  'criterion_malformed',
-  'no_statement',
-  'question_malformed',
-  'module_table_invalid',
-  'claims_table_invalid',
-  // The review's N3 (d): a question naming a key the specification lacks.
-  'question_unknown_key',
-]);
+const BLOCKING_CODES = new Set(SPEC_BLOCKING_CODES);
 
 // The findings of a parsed specification that block its approval (S1 of
 // the 31b review: a spec change is refused on them at acceptance).

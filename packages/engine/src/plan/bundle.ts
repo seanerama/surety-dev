@@ -629,6 +629,31 @@ export function recordRefusedReplan(tx: Tx, args: { project: string; run: string
   return { plan_check: id, requests: requestsFromReplan(tx, { project: args.project, run: args.run, requests: args.requests }) };
 }
 
+// What a session's phase plan must name in `prepared_against` (D6 §3.3,
+// §5.3 clause 2; the check's PLAN_STALE_BASELINE): the approved
+// specification's version, the versions the bundle will allocate and the
+// head the session started from; the roadmap keeps its version unless the
+// session changes roadmap.json. Taken from the facts the check compares
+// with (bundleBaselineFacts), never computed apart.
+export interface PreparedAgainstFacts {
+  spec_version: number;
+  architecture_version: number;
+  roadmap_version: number;
+  roadmap_version_if_changed: number;
+  revision: string;
+}
+export function preparedAgainstFacts(db: Db, project: string, head: string): PreparedAgainstFacts {
+  const unchanged = bundleBaselineFacts(db, { project, head, withPlan: true });
+  const road = db.prepare('SELECT "version" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number } | undefined;
+  return {
+    spec_version: unchanged.baseline.spec_version,
+    architecture_version: unchanged.versions.architecture,
+    roadmap_version: unchanged.versions.roadmap,
+    roadmap_version_if_changed: (road?.version ?? 0) + 1,
+    revision: head,
+  };
+}
+
 // ---- a replan's plan (D6 §5.6, §5.4, §5.5; B03; SEAM.md §352) --------------------------
 
 // What a replan's plan is checked against: the approved baseline as it is,

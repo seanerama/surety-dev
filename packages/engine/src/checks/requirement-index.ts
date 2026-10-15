@@ -24,9 +24,21 @@ export type IndexResult = { ok: true; rows: IndexRow[] } | { ok: false; row: num
 
 const KEY = /^R[1-9][0-9]*$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
-const HEADER = ['key', 'title', 'phase', 'sensitive areas', 'criteria'];
-const ORIGIN_HEADER = 'origin';
-const ORIGINS = ['intended', 'observed'];
+// The cells' syntax, as parseRequirementIndex reads it (the Spec Writer's
+// package states it: src/packages/reads.ts, spec_writer.index_cells).
+export const INDEX_KEY = KEY;
+export const INDEX_CRITERION = CRITERION;
+export const INDEX_PHASE = /^[1-9][0-9]*$/;
+export const INDEX_SEPARATOR_CELL = /^:?-{3,}:?$/;
+export const INDEX_LIST_SEPARATOR = ',';
+export const INDEX_NONE = 'none';
+// The columns as the template writes them (the Spec Writer's package states
+// these, src/packages/reads.ts); compared case-insensitively.
+export const INDEX_COLUMNS = ['Key', 'Title', 'Phase', 'Sensitive areas', 'Criteria'] as const;
+export const INDEX_ORIGIN_COLUMN = 'Origin';
+export const ORIGINS = ['intended', 'observed'] as const;
+const HEADER: string[] = INDEX_COLUMNS.map((c) => c.toLowerCase());
+const ORIGIN_HEADER = INDEX_ORIGIN_COLUMN.toLowerCase();
 
 const cells = (line: string): string[] | null => {
   const t = line.trim();
@@ -39,7 +51,7 @@ const cells = (line: string): string[] | null => {
 
 const list = (cell: string): string[] =>
   cell
-    .split(',')
+    .split(INDEX_LIST_SEPARATOR)
     .map((x) => x.trim())
     .filter((x) => x.length > 0);
 
@@ -58,7 +70,7 @@ export function parseRequirementIndex(text: string): IndexResult {
     return refuse(0, lines[0]!, 'the header is not | Key | Title | Phase | Sensitive areas | Criteria | (with an optional sixth column Origin)');
   }
   const sep = cells(lines[1]!);
-  if (sep === null || sep.length !== width || sep.some((c) => !/^:?-{3,}:?$/.test(c))) return refuse(0, lines[1]!, 'the separator row is missing');
+  if (sep === null || sep.length !== width || sep.some((c) => !INDEX_SEPARATOR_CELL.test(c))) return refuse(0, lines[1]!, 'the separator row is missing');
   const rows: IndexRow[] = [];
   const keys = new Set<string>();
   const criteria = new Set<string>();
@@ -69,17 +81,17 @@ export function parseRequirementIndex(text: string): IndexResult {
     if (c === null || c.length !== width) return refuse(row, line, `the row does not have ${width === 6 ? 'six' : 'five'} cells`);
     const [key, title, phase, areasCell, criteriaCell] = c as [string, string, string, string, string];
     const originCell = width === 6 ? c[5]!.toLowerCase() : 'intended';
-    if (!ORIGINS.includes(originCell)) return refuse(row, line, `"${c[5]}" is not an origin (intended or observed)`);
+    if (!(ORIGINS as readonly string[]).includes(originCell)) return refuse(row, line, `"${c[5]}" is not an origin (intended or observed)`);
     if (!KEY.test(key)) return refuse(row, line, `"${key}" is not a requirement key R<n>`);
     if (keys.has(key)) return refuse(row, line, `the requirement ${key} is listed twice`);
     if (title.length === 0) return refuse(row, line, 'the title is empty');
     let ph: number | null = null;
     if (phase.length > 0) {
-      if (!/^[1-9][0-9]*$/.test(phase)) return refuse(row, line, `"${phase}" is not a phase number`);
+      if (!INDEX_PHASE.test(phase)) return refuse(row, line, `"${phase}" is not a phase number`);
       ph = Number(phase);
     }
-    const areas = areasCell.toLowerCase() === 'none' ? [] : list(areasCell);
-    if (areas.length === 0 && areasCell.toLowerCase() !== 'none') return refuse(row, line, 'the sensitive areas are empty: write none');
+    const areas = areasCell.toLowerCase() === INDEX_NONE ? [] : list(areasCell);
+    if (areas.length === 0 && areasCell.toLowerCase() !== INDEX_NONE) return refuse(row, line, 'the sensitive areas are empty: write none');
     for (const a of areas) if (!SENSITIVE_AREAS.includes(a)) return refuse(row, line, `"${a}" is not a sensitive area`);
     if (new Set(areas).size !== areas.length) return refuse(row, line, 'a sensitive area is repeated');
     const crit = list(criteriaCell);

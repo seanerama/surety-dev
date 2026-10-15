@@ -14,7 +14,8 @@ import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
 import { deployTimeoutMs, parseDeploy } from './deploy/deploy-command.js';
-import { configureHarness, setHarnessSwitches, setProbeOverrides, setRealLane } from './testing/seam.js';
+import { paceLines, parsePace, parseSession, settledText, turnOf } from './sessions/session-command.js';
+import { configureHarness, setHarnessSwitches, setPackageOmit, setProbeOverrides, setRealLane } from './testing/seam.js';
 
 function usage(message: string): never {
   process.stderr.write(`surety ${ENGINE_VERSION}: ${message}\n`);
@@ -55,6 +56,12 @@ if (command === 'project') {
 if (command === 'spec') {
   await specCommand(args);
 }
+if (command === 'session') {
+  await sessionCommand(args);
+}
+if (command === 'pace') {
+  await paceCommand(args);
+}
 if (command !== 'serve') {
   usage(command === undefined ? 'no command given' : `"${command}" is not implemented in this revision`);
 }
@@ -91,6 +98,7 @@ const adapterVersionValues: string[] = [];
 let serviceProfileVariantValue: string | null = null;
 const hostFactUnreadValues: string[] = [];
 let profileMaximaValue: string | null = null;
+const packageOmitValues: string[] = [];
 const harnessOnly: string[] = [];
 // The provider keys by reference (invoke/keys.ts; SEAM.md §160), accepted
 // with or without --harness; and the test mode for the real lane (SEAM.md
@@ -148,7 +156,8 @@ for (let i = 0; i < args.length; i++) {
     flag === '--harness-adapter-version' ||
     flag === '--harness-service-profile-variant' ||
     flag === '--harness-host-fact-unread' ||
-    flag === '--harness-profile-maxima'
+    flag === '--harness-profile-maxima' ||
+    flag === '--harness-package-omit'
   ) {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -223,6 +232,9 @@ for (let i = 0; i < args.length; i++) {
     } else if (flag === '--harness-profile-maxima') {
       // SEAM.md §427: every role (or check) domain of this start admitted at this maximum.
       profileMaximaValue = value;
+    } else if (flag === '--harness-package-omit') {
+      // Row M442 (b): a package element left out of every role package.
+      packageOmitValues.push(value);
     } else if (flag === '--harness-home-fstype') {
       // Replaces the detection of the home's filesystem, not the judgement
       // (SEAM.md §88).
@@ -242,6 +254,8 @@ const harnessProblem = configureHarness(harness, barrierValues, scriptedDir, pro
 if (harnessProblem !== null) usage(harnessProblem);
 const overrideProblem = harness ? setProbeOverrides(probeOverrideValues) : null;
 if (overrideProblem !== null) usage(overrideProblem);
+const omitProblem = harness ? setPackageOmit(packageOmitValues) : null;
+if (omitProblem !== null) usage(omitProblem);
 const switchProblem = setHarnessSwitches({
   templateVersions: templateVersionValues,
   hostId: hostIdValue,
@@ -615,4 +629,110 @@ async function qualifyCommand(argv: string[]): Promise<never> {
     );
     process.exit(1);
   }
+}
+
+// The engine could not be asked: a refusal on standard error, exit 1.
+function unreachable(err: unknown): never {
+  process.stderr.write(
+    `${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`,
+  );
+  process.exit(1);
+}
+
+// A function declaration, so that the commands dispatched at the top of
+// this module can call it before this point is reached.
+function shownBody(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text));
+  } catch {
+    return text.trim().replace(/\n/g, ' ');
+  }
+}
+
+// `surety session …` (BS5 §3; src/sessions/session-command.ts).
+async function sessionCommand(argv: string[]): Promise<never> {
+  const parsed = parseSession(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  let answer: { status: number; text: string };
+  try {
+    answer = await sendEnv(home, parsed.request);
+  } catch (err) {
+    unreachable(err);
+  }
+  if (answer.status < 200 || answer.status >= 300) {
+    process.stderr.write(`${answer.status} ${shownBody(answer.text)}\n`);
+    process.exit(1);
+  }
+  if (parsed.waitMs === null) {
+    process.stdout.write(`${shownBody(answer.text)}\n`);
+    process.exit(0);
+  }
+  // `say`: the turn admitted, wait for it to settle and show the reply.
+  let admitted: { run?: unknown; turn?: unknown };
+  try {
+    admitted = JSON.parse(answer.text) as { run?: unknown; turn?: unknown };
+  } catch {
+    admitted = {};
+  }
+  if (typeof admitted.turn !== 'number') {
+    process.stdout.write(`${shownBody(answer.text)}\n`);
+    process.stderr.write('The engine did not say which turn it admitted; read it with surety session show.\n');
+    process.exit(1);
+  }
+  process.stderr.write(`Turn ${admitted.turn} admitted; waiting for the role's reply.\n`);
+  const show = { method: 'GET' as const, path: `/v1/projects/${encodeURIComponent(parsed.project)}/sessions/${encodeURIComponent(parsed.run!)}`, body: null };
+  const until = performance.now() + parsed.waitMs;
+  for (;;) {
+    try {
+      const view = await sendEnv(home, show);
+      if (view.status >= 200 && view.status < 300) {
+        const t = turnOf(JSON.parse(view.text), admitted.turn);
+        if (t && t.state !== 'running') {
+          const out = settledText(t);
+          (out.ok ? process.stdout : process.stderr).write(`${out.text}\n`);
+          process.exit(out.ok ? 0 : 1);
+        }
+      }
+    } catch {
+      // the engine between answers: asked again below
+    }
+    if (performance.now() > until) {
+      process.stderr.write(`Turn ${admitted.turn} has not settled in the time waited; it may still be running. Read it with: surety session show ${parsed.run} --project ${parsed.project}\n`);
+      process.exit(1);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+// `surety pace [--json]` (D6 §7.6): the pace read, as JSON or as one line per figure.
+async function paceCommand(argv: string[]): Promise<never> {
+  const parsed = parsePace(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  let answer: { status: number; text: string };
+  try {
+    answer = await sendEnv(home, parsed.request);
+  } catch (err) {
+    unreachable(err);
+  }
+  if (answer.status < 200 || answer.status >= 300) {
+    process.stderr.write(`${answer.status} ${shownBody(answer.text)}\n`);
+    process.exit(1);
+  }
+  if (parsed.json) {
+    process.stdout.write(`${answer.text.trim()}\n`);
+    process.exit(0);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(answer.text);
+  } catch {
+    process.stderr.write('The pace read did not parse as JSON.\n');
+    process.exit(1);
+  }
+  process.stdout.write(`${paceLines(value).join('\n')}\n`);
+  process.exit(0);
 }

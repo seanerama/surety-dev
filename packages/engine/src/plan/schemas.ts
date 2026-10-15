@@ -23,7 +23,32 @@ const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const ADR_KEY = /^ADR-[0-9]{3,}$/;
 // B.5 `kinds: [CheckKind]`: every kind of F §5.7 (D3 A.2), the floor's included.
 const CHECK_KINDS = new Set(KINDS);
-const INTERFACE_KINDS = ['http', 'cli', 'module', 'file', 'event'];
+export const INTERFACE_KINDS = ['http', 'cli', 'module', 'file', 'event'];
+
+// Each closed schema's fields as the parsers below take them, exported so
+// that the Architect's package states exactly these (src/packages/reads.ts;
+// E135; M442). `required` ⊆ `fields`.
+export const B3 = {
+  file: { fields: ['version', 'modules', 'mapping_from_spec'], required: ['version', 'modules', 'mapping_from_spec'] },
+  module: { fields: ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements'], required: ['name', 'paths', 'sensitive_areas', 'interfaces'] },
+  interface: { fields: ['name', 'kind', 'path', 'description'], required: ['name', 'kind', 'description'] },
+  mapping: { fields: ['spec_module', 'to'], required: ['spec_module', 'to'] },
+} as const;
+export const B4 = {
+  file: { fields: ['version', 'architecture_version', 'phases', 'moved_requirements'], required: ['version', 'architecture_version', 'phases'] },
+  phase: { fields: ['number', 'goal', 'modules', 'requirement_ids', 'depends_on'], required: ['number', 'goal', 'modules', 'requirement_ids', 'depends_on'] },
+  moved: { fields: ['key', 'from', 'to'], required: ['key', 'from', 'to'] },
+} as const;
+export const B5 = {
+  file: { fields: ['phase', 'prepared_against', 'stages', 'conformance', 'roadmap_revision', 'notes'], required: ['phase', 'prepared_against', 'stages', 'conformance'] },
+  prepared_against: { fields: ['spec_version', 'architecture_version', 'roadmap_version', 'revision'], required: ['spec_version', 'architecture_version', 'roadmap_version', 'revision'] },
+  stage: {
+    fields: ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations', 'conformance'],
+    required: ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations'],
+  },
+  validation: { fields: ['criteria', 'kinds', 'sensitive_areas'], required: ['criteria', 'kinds', 'sensitive_areas'] },
+  conformance_values: ['within_baseline', 'uncertain'],
+} as const;
 
 function parseJsonObject(file: string, text: string): Parsed<Record<string, unknown>> {
   let value: unknown;
@@ -78,7 +103,7 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
   const p = parseJsonObject(file, text);
   if (!p.ok) return p;
   const o = p.value;
-  const c = closed(file, '', o, ['version', 'modules', 'mapping_from_spec'], ['version', 'modules', 'mapping_from_spec']);
+  const c = closed(file, '', o, B3.file.fields, B3.file.required);
   if (c) return { ok: false, finding: c };
   if (o.version !== 1) return refuse(file, 'version', 'must be 1');
   if (!Array.isArray(o.modules)) return refuse(file, 'modules', 'must be an array');
@@ -89,7 +114,7 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
     // one; SEAM.md §381: a dropped classification names the module).
     const at = isObj(m) && typeof m.name === 'string' && m.name !== '' ? `modules[${i}] (${m.name})` : `modules[${i}]`;
     if (!isObj(m)) return refuse(file, at, 'must be an object');
-    const cm = closed(file, at, m, ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements'], ['name', 'paths', 'sensitive_areas', 'interfaces']);
+    const cm = closed(file, at, m, B3.module.fields, B3.module.required);
     if (cm) return { ok: false, finding: cm };
     if (typeof m.name !== 'string' || m.name === '') return refuse(file, `${at}.name`, 'must be a non-empty string');
     if (names.has(m.name)) return refuse(file, `${at}.name`, `the module ${m.name} is listed twice`);
@@ -107,7 +132,7 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
     for (const [j, f] of m.interfaces.entries()) {
       const fat = `${at}.interfaces[${j}]`;
       if (!isObj(f)) return refuse(file, fat, 'must be an object');
-      const cf = closed(file, fat, f, ['name', 'kind', 'path', 'description'], ['name', 'kind', 'description']);
+      const cf = closed(file, fat, f, B3.interface.fields, B3.interface.required);
       if (cf) return { ok: false, finding: cf };
       if (typeof f.name !== 'string' || f.name === '') return refuse(file, `${fat}.name`, 'must be a non-empty string');
       if (typeof f.kind !== 'string' || !INTERFACE_KINDS.includes(f.kind)) return refuse(file, `${fat}.kind`, `must be one of ${INTERFACE_KINDS.join(', ')}`);
@@ -129,7 +154,7 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
   for (const [i, e] of o.mapping_from_spec.entries()) {
     const at = `mapping_from_spec[${i}]`;
     if (!isObj(e)) return refuse(file, at, 'must be an object');
-    const ce = closed(file, at, e, ['spec_module', 'to'], ['spec_module', 'to']);
+    const ce = closed(file, at, e, B3.mapping.fields, B3.mapping.required);
     if (ce) return { ok: false, finding: ce };
     if (typeof e.spec_module !== 'string' || e.spec_module === '') return refuse(file, `${at}.spec_module`, 'must be a non-empty string');
     if (!strings(e.to)) return refuse(file, `${at}.to`, 'must be an array of module names');
@@ -163,7 +188,7 @@ export function parseRoadmap(text: string, file = ROADMAP_FILE): Parsed<Roadmap>
   const p = parseJsonObject(file, text);
   if (!p.ok) return p;
   const o = p.value;
-  const c = closed(file, '', o, ['version', 'architecture_version', 'phases', 'moved_requirements'], ['version', 'architecture_version', 'phases']);
+  const c = closed(file, '', o, B4.file.fields, B4.file.required);
   if (c) return { ok: false, finding: c };
   if (!posInt(o.version)) return refuse(file, 'version', 'must be a positive integer');
   if (!posInt(o.architecture_version)) return refuse(file, 'architecture_version', 'must be a positive integer');
@@ -173,7 +198,7 @@ export function parseRoadmap(text: string, file = ROADMAP_FILE): Parsed<Roadmap>
   for (const [i, ph] of o.phases.entries()) {
     const at = `phases[${i}]`;
     if (!isObj(ph)) return refuse(file, at, 'must be an object');
-    const cp = closed(file, at, ph, ['number', 'goal', 'modules', 'requirement_ids', 'depends_on'], ['number', 'goal', 'modules', 'requirement_ids', 'depends_on']);
+    const cp = closed(file, at, ph, B4.phase.fields, B4.phase.required);
     if (cp) return { ok: false, finding: cp };
     if (!posInt(ph.number)) return refuse(file, `${at}.number`, 'must be a positive integer');
     if (numbers.has(ph.number)) return refuse(file, `${at}.number`, `phase ${ph.number} is listed twice`);
@@ -192,7 +217,7 @@ export function parseRoadmap(text: string, file = ROADMAP_FILE): Parsed<Roadmap>
     for (const [i, m] of o.moved_requirements.entries()) {
       const at = `moved_requirements[${i}]`;
       if (!isObj(m)) return refuse(file, at, 'must be an object');
-      const cm = closed(file, at, m, ['key', 'from', 'to'], ['key', 'from', 'to']);
+      const cm = closed(file, at, m, B4.moved.fields, B4.moved.required);
       if (cm) return { ok: false, finding: cm };
       if (typeof m.key !== 'string' || !KEY.test(m.key)) return refuse(file, `${at}.key`, 'must be a requirement key');
       if ((m.from !== null && !posInt(m.from)) || !posInt(m.to)) return refuse(file, `${at}.from`, 'from must be a phase number or null, and to a phase number');
@@ -227,17 +252,17 @@ export interface PhasePlanFile {
 }
 
 export const PLAN_FILE = /^\.surety\/phases\/phase-([1-9][0-9]*)\.json$/;
-export const planPath = (phase: number): string => `.surety/phases/phase-${phase}.json`;
+export const planPath = (phase: number | '<n>'): string => `.surety/phases/phase-${phase}.json`;
 
 export function parsePhasePlan(text: string, file: string, phase: number): Parsed<PhasePlanFile> {
   const p = parseJsonObject(file, text);
   if (!p.ok) return p;
   const o = p.value;
-  const c = closed(file, '', o, ['phase', 'prepared_against', 'stages', 'conformance', 'roadmap_revision', 'notes'], ['phase', 'prepared_against', 'stages', 'conformance']);
+  const c = closed(file, '', o, B5.file.fields, B5.file.required);
   if (c) return { ok: false, finding: c };
   if (o.phase !== phase) return refuse(file, 'phase', `does not say it is phase ${phase}`);
   if (!isObj(o.prepared_against)) return refuse(file, 'prepared_against', 'must be an object');
-  const cpa = closed(file, 'prepared_against', o.prepared_against, ['spec_version', 'architecture_version', 'roadmap_version', 'revision'], ['spec_version', 'architecture_version', 'roadmap_version', 'revision']);
+  const cpa = closed(file, 'prepared_against', o.prepared_against, B5.prepared_against.fields, B5.prepared_against.required);
   if (cpa) return { ok: false, finding: cpa };
   const pa = o.prepared_against;
   if (!posInt(pa.spec_version) || !posInt(pa.architecture_version) || !posInt(pa.roadmap_version)) return refuse(file, 'prepared_against', 'the versions must be positive integers');
@@ -249,13 +274,7 @@ export function parsePhasePlan(text: string, file: string, phase: number): Parse
   for (const [i, s] of o.stages.entries()) {
     const at = `stages[${i}]`;
     if (!isObj(s)) return refuse(file, at, 'must be an object');
-    const cs = closed(
-      file,
-      at,
-      s,
-      ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations', 'conformance'],
-      ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations'],
-    );
+    const cs = closed(file, at, s, B5.stage.fields, B5.stage.required);
     if (cs) return { ok: false, finding: cs };
     if (!posInt(s.number)) return refuse(file, `${at}.number`, 'must be a positive integer');
     if (typeof s.goal !== 'string' || s.goal.trim() === '') return refuse(file, `${at}.goal`, 'must be a non-empty string');
@@ -267,7 +286,7 @@ export function parsePhasePlan(text: string, file: string, phase: number): Parse
     for (const k of s.adrs) if (!ADR_KEY.test(k)) return refuse(file, `${at}.adrs`, `"${k}" is not an ADR key ADR-<nnn>`);
     if (!Array.isArray(s.depends_on) || !s.depends_on.every(posInt)) return refuse(file, `${at}.depends_on`, 'must be an array of stage numbers');
     if (!isObj(s.validation)) return refuse(file, `${at}.validation`, 'must be an object');
-    const cv = closed(file, `${at}.validation`, s.validation, ['criteria', 'kinds', 'sensitive_areas'], ['criteria', 'kinds', 'sensitive_areas']);
+    const cv = closed(file, `${at}.validation`, s.validation, B5.validation.fields, B5.validation.required);
     if (cv) return { ok: false, finding: cv };
     const v = s.validation;
     if (!strings(v.criteria)) return refuse(file, `${at}.validation.criteria`, 'must be an array of criteria');
@@ -322,7 +341,10 @@ export interface AdrFrontMatter {
 }
 
 export const ADR_FILE = /^\.surety\/adrs\/(ADR-[0-9]{3,})\.md$/;
-const ADR_STATUSES = ['proposed', 'accepted', 'superseded'];
+export const adrPath = (key: string): string => `.surety/adrs/${key}.md`;
+export const ADR_STATUSES = ['proposed', 'accepted', 'superseded'];
+export const ADR_FIELDS = { fields: ['key', 'status', 'supersedes', 'reconstructed'], required: ['key', 'status'] } as const;
+export const ADR_HEADINGS = ['Context', 'Decision', 'Consequences'] as const;
 
 // `---` front matter with `key`, `status` and optional `supersedes`; the
 // headings Context, Decision and Consequences in the body.
@@ -336,7 +358,7 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
     if (line.trim() === '') continue;
     const m = /^([a-z_]+):\s*(.*)$/.exec(line);
     if (!m) return refuse(file, null, `the front matter line "${line.trim()}" is not a field`);
-    if (!['key', 'status', 'supersedes', 'reconstructed'].includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
+    if (!(ADR_FIELDS.fields as readonly string[]).includes(m[1]!)) return refuse(file, m[1]!, `"${m[1]}" is not a field of an ADR's front matter`);
     fields.set(m[1]!, m[2]!.trim().replace(/^["']|["']$/g, ''));
   }
   const key = fields.get('key');
@@ -350,7 +372,7 @@ export function parseAdr(text: string, file: string): Parsed<AdrFrontMatter> {
   const reconstructed = fields.get('reconstructed');
   if (reconstructed !== undefined && reconstructed !== 'true' && reconstructed !== 'false') return refuse(file, 'reconstructed', `"${reconstructed}" is not true or false`);
   const body = lines.slice(end + 1).join('\n');
-  for (const heading of ['Context', 'Decision', 'Consequences']) {
+  for (const heading of ADR_HEADINGS) {
     if (!new RegExp(`^#{1,3}\\s+${heading}\\b`, 'm').test(body)) return refuse(file, null, `has no ${heading} heading`);
   }
   return { ok: true, value: { key, status: status as AdrFrontMatter['status'], ...(supersedes !== undefined ? { supersedes } : {}), ...(reconstructed !== undefined ? { reconstructed: reconstructed === 'true' } : {}) } };

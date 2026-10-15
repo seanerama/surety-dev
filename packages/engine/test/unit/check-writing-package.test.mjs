@@ -124,6 +124,11 @@ function packageOf(t, db, run) {
   return { facts, manifest, read, prompt: read('prompt.md'), told, dir };
 }
 
+// The package's `surety-reads` blocks, by element (row M442): what the
+// elements state is stated there only.
+const readsBlocks = (prompt) => Object.fromEntries([...prompt.matchAll(/^```json surety-reads ([a-z_.]+)\n([\s\S]*?)\n```$/gm)].map((m) => [m[1], JSON.parse(m[2])]));
+const ELEMENT_MEMBERS = ['kind', 'covers', 'gate_kinds', 'requires', 'secrets'];
+
 // The JSON block of the prompt's example.
 const exampleIn = (prompt) => {
   const m = /```json\n([\s\S]*?)\n```/.exec(prompt);
@@ -179,12 +184,18 @@ test("a check_correction Verifier's package: the roots, the definitions director
   assert.match(prompt, /- R3: not in the requirement index/);
   for (const r of ['R1', 'R2', 'R3', 'R10']) assert.ok(manifest.files.some((f) => f.path === `requirements/${r}.md` && f.kind === 'requirement'), `requirements/${r}.md`);
   assert.ok(read('requirements/R2.md').includes('A session older than 30 minutes is rejected.'));
-  for (const m of Object.keys(DEFINITION_REFERENCE)) assert.ok(prompt.includes(`\`"${m}"\``), `the member "${m}"`);
-  assert.ok(prompt.includes('"criteria"'));
-  assert.match(prompt, /tier is T1: every scope requires .*`acceptance`, `smoke`\./);
+  const blocks = readsBlocks(prompt);
+  for (const m of Object.keys(DEFINITION_REFERENCE)) {
+    if (ELEMENT_MEMBERS.includes(m)) assert.ok(!prompt.includes(`- \`"${m}"\` (`), `the member "${m}" is not restated in prose`);
+    else assert.ok(prompt.includes(`- \`"${m}"\` (`), `the member "${m}"`);
+  }
+  assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'], 'the correction package states the check elements');
+  assert.equal(blocks['verifier.kinds'].member, 'kind');
+  assert.equal(blocks['verifier.covers'].criteria, 'criteria');
+  assert.deepEqual(blocks['verifier.gate_kinds_floor'], { tier: 'T1', floor: ['acceptance', 'smoke'], gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.ok(!/tier is T1: every scope requires/.test(prompt), 'the floor is not restated in prose');
   assert.match(prompt, /module `payments` raises a scope that includes it to T2, .*`integration`, `security_lint`/);
   assert.match(prompt, /sensitivity_floor.*`authentication`, `payments_financial_data`/);
-  assert.match(prompt, /the engine evaluates `stage`, `alpha_authorize`/);
   assert.match(prompt, /no checks in its effective protected version/);
   assert.match(prompt, /`proposal`/);
   const ex = exampleIn(prompt);
@@ -215,7 +226,7 @@ test('unknown governed values are said to be unknown, never taken as the default
     const { prompt } = packageOf(t, db, 'run_cc');
     assert.match(prompt, /could not be read/);
     assert.ok(!prompt.includes('.surety/checks/defs/'), 'no default definitions directory stated as fact');
-    assert.ok(!prompt.includes('```json'), 'no example');
+    assert.ok(!/```json\n/.test(prompt), 'no example');
   }
 });
 
@@ -385,10 +396,8 @@ function environment(db, { id, name, content }) {
 
 test('the gate kinds the package says the engine evaluates are the gates it computes; alpha_complete is no longer "not evaluated"', (t) => {
   assert.deepEqual([...EVALUATED_GATE_KINDS], [...COMPUTED_GATES]);
-  const { prompt } = packageOf(t, store(t), 'run_cc');
-  assert.match(prompt, /the engine evaluates `stage`, `alpha_authorize` and `alpha_complete`\./);
-  const notEvaluated = /The others \(([^)]*)\) are accepted but not evaluated/.exec(prompt);
-  assert.ok(notEvaluated && !notEvaluated[1].includes('alpha_complete'), notEvaluated?.[1]);
+  const blocks = readsBlocks(packageOf(t, store(t), 'run_cc').prompt);
+  assert.deepEqual([...blocks['verifier.gate_kinds_floor'].gate_kinds, blocks['verifier.post_deploy'].gate_kind], [...COMPUTED_GATES], 'the gates the blocks name are those the engine computes');
 });
 
 test('the variables a check is given are named by one rule, the runner\'s', () => {
@@ -401,26 +410,28 @@ test("a check_correction Verifier in a project with an environment: the kinds, t
   const db = store(t);
   environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, secrets: { REF_SECRET: 'deploy/ref_secret' }, check_secrets: ['deploy/probe_key'] } });
   const { prompt, facts, told } = packageOf(t, db, 'run_cc');
-  assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'] }]);
-  for (const s of ['`post_deploy_behavior`', '`post_deploy_identity`', '`"requires": ["environment", "artifact_digest"]`', '`"gate_kinds": ["alpha_complete"]`', '`SURETY_TARGET_<NAME>`', 'environment_unbound', '`SURETY_SECRET_<NAME>`']) {
-    assert.ok(prompt.includes(s), s);
-  }
-  assert.ok(prompt.includes('- The `alpha_complete` gate needs at least one required `post_deploy_behavior` check'), 'the one sentence');
-  // The slice-30 review, minors 1 to 3: why no `covers`, no `egress`, and how the check is required.
-  assert.match(prompt, /Give it no `covers`: on these kinds discovery refuses it \(`covers_not_allowed`\)/);
+  assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'], runtime: null }]);
+  const blocks = readsBlocks(prompt);
+  assert.deepEqual(blocks['verifier.post_deploy'], { kinds: ['post_deploy_behavior', 'post_deploy_identity'], gate_kind: 'alpha_complete', required: 'post_deploy_behavior', variable: 'SURETY_TARGET_<NAME>', environments: [{ name: 'alpha', targets: ['app'] }] });
+  assert.deepEqual(blocks['verifier.requires'], { member: 'requires', values: ['environment', 'artifact_digest'], kinds: ['post_deploy_behavior', 'post_deploy_identity'] });
+  assert.deepEqual(blocks['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/probe_key'], variables: [{ ref: 'deploy/probe_key', variable: 'SURETY_SECRET_PROBE_KEY' }] }]);
+  assert.deepEqual(blocks['verifier.target_variables'].environments, [{ name: 'alpha', targets: [{ name: 'app', variable: 'SURETY_TARGET_APP' }] }]);
+  assert.equal(blocks['verifier.target_variables'].value_form, 'http://127.0.0.1:<port>');
+  assert.ok(blocks['verifier.covers'].refused_on.includes('post_deploy_behavior'));
+  assert.ok(prompt.includes('environment_unbound'));
+  // The slice-30 review, minors 1 to 3: no `egress`, and how the check is required (prose no element states).
   assert.match(prompt, /Name no `egress` on it, so that it reaches its environment's targets and nothing else\./);
-  assert.match(prompt, /The `post_deploy_behavior` check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them/);
+  assert.match(prompt, /That check must be required: when the governed file lists `required_checks`, only the checks named there are required, so its key must be among them/);
   const governedDef = parseGoverned(JSON.stringify(GOVERNED)).governed;
   for (const extra of [{ covers: { criteria: ['R1.1'] } }]) {
     const def = { schema: 1, key: 'op', kind: 'post_deploy_behavior', command: ['node', '.surety/checks/op.mjs'], timeout_s: 5, gate_kinds: ['alpha_complete'], requires: ['environment'], inputs: ['.surety/checks/op.mjs'], ...extra };
     const parsed = parseDefinition('.surety/checks/defs/op.json', 'op', JSON.stringify(def), governedDef, [{ path: '.surety/checks/op.mjs', type: 'blob', mode: '100644', oid: '0'.repeat(40) }]);
     assert.ok(parsed.errors.some((e) => e.code === 'covers_not_allowed'), 'as the package says, covers is refused on a post-deploy kind');
   }
-  assert.ok(prompt.includes('- Environment `alpha`: target `app`, reached as `SURETY_TARGET_APP`; its checks may receive `deploy/probe_key` (as `SURETY_SECRET_PROBE_KEY`).'));
   assert.ok(!told.includes('deploy/ref_secret'), "the service's own secret is not the checks'");
   assert.ok(!told.includes('4000'), 'nor its port');
-  const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
-  const post = blocks.find((b) => b.kind === 'post_deploy_behavior');
+  const examples = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
+  const post = examples.find((b) => b.kind === "post_deploy_behavior");
   assert.deepEqual([post.gate_kinds, post.requires, post.covers], [['alpha_complete'], ['environment', 'artifact_digest'], undefined]);
   const governed = parseGoverned(JSON.stringify(GOVERNED)).governed;
   assert.deepEqual(parseDefinition(`.surety/checks/defs/${post.key}.json`, post.key, JSON.stringify(post), governed, [{ path: post.inputs[0], type: 'blob', mode: '100644', oid: '0'.repeat(40) }]).errors, []);
@@ -431,50 +442,38 @@ test('no environment, an environment with no configuration, an unreadable one, u
   const none = packageOf(t, store(t), 'run_cc');
   assert.deepEqual(none.facts.check_writing.environments, []);
   assert.match(none.prompt, /No environment is configured for this project yet, so the target's name is unknown: write no environment-bound check, and say so in your summary\./);
-  assert.ok(none.prompt.includes('`alpha_complete` gate needs at least one required `post_deploy_behavior` check'), 'the rules are always given');
+  assert.deepEqual(readsBlocks(none.prompt)['verifier.post_deploy'].environments, [], 'the rules are always given, with no environment');
   const db = store(t);
   environment(db, { id: 'env_u', name: 'unconfigured' });
   environment(db, { id: 'env_b', name: 'broken', content: 'not json' });
   environment(db, { id: 'env_s', name: 'odd', content: { targets: ['app'], check_secrets: 'deploy/x' } });
   const some = packageOf(t, db, 'run_cc');
   assert.deepEqual(some.facts.check_writing.environments, [
-    { name: 'broken', targets: null, check_secrets: null },
-    { name: 'odd', targets: ['app'], check_secrets: null },
-    { name: 'unconfigured', targets: null, check_secrets: null },
+    { name: 'broken', targets: null, check_secrets: null, runtime: null },
+    { name: 'odd', targets: ['app'], check_secrets: null, runtime: null },
+    { name: 'unconfigured', targets: null, check_secrets: null, runtime: null },
   ]);
   assert.match(some.prompt, /- Environment `broken`: it has no configuration this package could read, so its targets are unknown; write no environment-bound check for it/);
   assert.match(some.prompt, /- Environment `unconfigured`: it has no configuration/);
-  assert.match(some.prompt, /- Environment `odd`: target `app`, reached as `SURETY_TARGET_APP`; which secrets its checks may receive could not be read, so name none\./);
+  assert.deepEqual(readsBlocks(some.prompt)['verifier.secrets'].environments.find((e) => e.name === 'odd'), { name: 'odd', check_secrets: null, variables: null }, 'unread secrets are null, never none');
   for (const facts of [undefined, null]) assert.match(deploymentChecksText({ environments: facts }).join('\n'), /could not be read here, so their target names are unknown: write no environment-bound check/);
 });
 
 // Sean's real run of M342 (E135): the Verifier wrote its smoke check with
 // `gate_kinds: ["stage"]` only, and the deployment request was refused,
 // `alpha_authorize` not satisfied, `ACCEPTANCE_SCOPE_INCOMPLETE` with subject
-// `kind:smoke`. The package said that every scope requires each floor kind,
-// never that the floor is applied per gate kind over the checks listing it.
-const { authorizeFloorText } = await import(join(dist, 'checks', 'guide.js'));
+// `kind:smoke`. The floor is now the element `verifier.gate_kinds_floor`
+// (row M442), stated there only, from the engine's own KIND_INVENTORY.
 const { KIND_INVENTORY } = await import(join(dist, 'checks', 'scope.js'));
 
-test("the package says that alpha_authorize applies the tier's kind floor to the checks listing it, names the T1 floor, and gives a smoke check's gate kinds in full, in both the gate-kinds and the deployment sections", (t) => {
+test("the package states the tier's kind floor at stage and alpha_authorize as one element, from the engine's floor; an unknown tier's floor is null, never T1's", async (t) => {
   const db = store(t);
   environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, check_secrets: [] } });
   const { prompt } = packageOf(t, db, 'run_cc');
-  const sentence =
-    'The tier\'s kind floor is applied at each of `stage` and `alpha_authorize` separately, over the checks listing that gate kind in their `gate_kinds`. ' +
-    '`alpha_authorize`, the gate a deployment request evaluates, therefore needs at T1, at least one required acceptance-origin check of each of the kinds `acceptance`, `smoke`, each listing `alpha_authorize` in its `gate_kinds`; ' +
-    'a check of a floor kind listing only `stage` supplies its kind to no deployment, and the request is refused with `ACCEPTANCE_SCOPE_INCOMPLETE` naming the kind missing (`kind:smoke`). ' +
-    'So a `smoke` check lists `"gate_kinds": ["stage", "alpha_authorize"]`, and so does every other check of a floor kind.';
-  assert.equal(prompt.split(sentence).length - 1, 2, 'said once under the gate kinds and once under the deployment checks');
-  const gateKinds = prompt.indexOf('- Gate kinds: the engine evaluates');
-  assert.ok(gateKinds > 0 && prompt.indexOf(`- ${sentence}`, gateKinds) > gateKinds, 'the bullet follows the gate-kinds bullet');
-  assert.ok(prompt.includes(`- A deployment request is refused unless \`alpha_authorize\` is satisfied, and that gate also applies the tier's kind floor to the checks listing it. ${sentence}`), 'the deployment section');
-  // The text is built from the engine's own floor: T2's kinds at T2, every tier's when the tier is unknown.
-  assert.match(authorizeFloorText('T2'), /at T2, at least one required acceptance-origin check of each of the kinds `acceptance`, `smoke`, `integration`, `security_lint`, each listing `alpha_authorize`/);
-  const unknown = authorizeFloorText('T9');
-  for (const tier of Object.keys(KIND_INVENTORY)) assert.ok(unknown.includes(`${tier}: ${KIND_INVENTORY[tier].map((k) => `\`${k}\``).join(', ')}`), `${tier}'s floor when the tier is unknown`);
-  assert.ok(!unknown.includes('at T1,'), 'an unknown tier is not read as T1');
-  assert.ok(authorizeFloorText(undefined).includes('T3: `acceptance`, `smoke`, `integration`, `security_lint`, `property`, `failure_recovery`'));
-  // The slice-30 section without a tier still states the rule, over every tier.
-  assert.match(deploymentChecksText({ environments: [] }).join('\n'), /alpha_authorize.*kind floor.*T1: `acceptance`, `smoke`; T2:/);
+  const floor = readsBlocks(prompt)['verifier.gate_kinds_floor'];
+  assert.deepEqual(floor, { tier: 'T1', floor: KIND_INVENTORY.T1, gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.match(prompt, /ACCEPTANCE_SCOPE_INCOMPLETE/, 'the gloss names what a missing listing is refused with');
+  assert.equal(prompt.split('"gate_kinds"').length - 1 >= 1, true);
+  const { verifierElements } = await import(join(dist, 'packages', 'reads.js'));
+  assert.deepEqual(verifierElements({ governed: null, tier: 'T9', modules: [], requirements: [], stages: [] }, { authoring: false, retrofit: false })['verifier.gate_kinds_floor'].data, { tier: 'T9', floor: null, gate_kinds: ['stage', 'alpha_authorize'] });
 });

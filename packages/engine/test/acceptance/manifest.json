@@ -460,6 +460,13 @@
       "M451-the-qualified-profile-on-a-real-domain.test.mjs",
       "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
       "M437-a-run-validated-after-another-runs-integration.test.mjs"
+    ],
+    "38": [
+      "M442-the-role-packages-state-what-the-engine-reads.test.mjs",
+      "M442-the-rehearsal-plays-from-the-package.test.mjs",
+      "M442-the-rehearsal-with-the-packages-whole.test.mjs",
+      "M445-the-m5-report.test.mjs",
+      "M446-hands-on-script.test.mjs"
     ]
   },
   "sandbox": [
@@ -581,6 +588,8 @@
     "M140-real-backend-journey.test.mjs",
     "M239-the-real-check-journey.test.mjs",
     "M342-the-real-deployment-journey.test.mjs",
-    "M420-the-continuation-canary-on-the-real-backend.test.mjs"
+    "M420-the-continuation-canary-on-the-real-backend.test.mjs",
+    "M443-the-real-journey-from-an-idea-to-alpha.test.mjs",
+    "M444-the-real-retrofit-journey.test.mjs"
   ]
 }

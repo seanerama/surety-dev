@@ -59,6 +59,8 @@
 //           {"canary": {"mode": "obey" | "wrong_result" | "finish_early" | "say_denied" | "forge_reports" | "result_only" | "forget"}}
 //                                                           M2 slice 13 part 2 (SEAM.md §149): a qualification
 //                                                           canary's role, following /surety/context/canary.json
+//           {"package_fake": {}}                           M5 slice 38 (SEAM.md §455): the package-driven fake
+//                                                           plays the role from its context package
 //           {"stdout": "<raw text written as is>"}
 //           {"stdout_fill": {"bytes": <n>}}                 n bytes of filler, no line ending
 //           {"stdout_b64": "<base64>"}                      those bytes written as is: a write can end inside a multibyte character
@@ -113,6 +115,7 @@
 // process group.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
@@ -2031,6 +2034,24 @@ async function runSteps(steps, ctx) {
       log('review_auto', { proposal: proposal?.id ?? null, scope: value.signoffs ? value.signoffs[0].scope : null });
       if (outDirPresent()) writeResultFile(value);
       emit({ type: 'result', result: value });
+    } else if (step.package_fake !== undefined) {
+      // M5 slice 38 (SEAM.md §455; row M442 (b), (c)): the package-driven
+      // rehearsal fake (package-fakes.cjs, copied beside this program with
+      // rehearsal-content.json) plays the role from the package it was given.
+      // Its reads (every `surety-reads` block it found), what it wrote and its
+      // result are logged as a `package_fake` entry.
+      let played = null;
+      try {
+        const fakes = createRequire(import.meta.url)(join(dirname(fileURLToPath(import.meta.url)), 'package-fakes.cjs'));
+        const content = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'rehearsal-content.json'), 'utf8'));
+        played = fakes.play({ context: contextDir, workspace: process.cwd(), content });
+      } catch (err) {
+        log('package_fake', { error: String(err?.stack ?? err) });
+        await finish(97);
+      }
+      log('package_fake', { role: played.role, kind: played.kind, blocks: played.blocks, written: played.written, result: played.result });
+      if (outDirPresent()) writeResultFile(played.result);
+      emit({ type: 'result', result: played.result });
     } else if (step.result !== undefined) {
       // In a sandbox: the file first, then the terminal success event.
       if (outDirPresent()) writeResultFile(step.result);

@@ -14,6 +14,7 @@
 // (M415 to M420), which hardens what is built here.
 
 import { notePeakDomains } from '../plan/pace.js';
+import { preparedAgainstFacts } from '../plan/bundle.js';
 import { envelopeHold } from '../store/transitions/envelope.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
@@ -1158,7 +1159,7 @@ export function sessionExists(db: Tx['db'], project: string, run: string): boole
 // What a turn's package is built from (sessions/package.ts): the transcript
 // so far with each entry's text, and the last save's notes.
 export function sessionContextFacts(db: Tx['db'], run: string): import('./package.js').SessionContextFacts | null {
-  const r = db.prepare(`SELECT "id", "project", "role", "turn_count" FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(run) as { id: string; project: string; role: SessionRole; turn_count: number } | undefined;
+  const r = db.prepare(`SELECT "id", "project", "role", "turn_count", "base_revision", "current_base" FROM "runs" WHERE "id" = ? AND "kind" = 'session'`).get(run) as { id: string; project: string; role: SessionRole; turn_count: number; base_revision: string; current_base: string | null } | undefined;
   if (!r) return null;
   const notes = saveNotesOf(db, run);
   return {
@@ -1171,7 +1172,18 @@ export function sessionContextFacts(db: Tx['db'], run: string): import('./packag
     findings: notes.findings ?? [],
     approved: approvedInputs(db, r.project, r.role),
     retrofit: retrofitOf(db, r.project),
+    // The head the bundle is checked against is the session's base (the
+    // Architect's close: sessions/driver.ts bundle()).
+    ...(r.role === 'architect' ? { prepared_against: preparedOf(db, r.project, r.base_revision) } : {}),
   };
+}
+
+function preparedOf(db: Tx['db'], project: string, head: string): import('../plan/bundle.js').PreparedAgainstFacts | null {
+  try {
+    return preparedAgainstFacts(db, project, head);
+  } catch {
+    return null;
+  }
 }
 
 // D6 §8.2: an adopted project's sessions are in retrofit mode.

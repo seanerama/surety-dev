@@ -51,16 +51,33 @@ export const SENSITIVE_AREAS = [
   'data_migrations_destructive',
   'irreversible_external_actions',
 ];
+// Each area's name, as the templates give it (TPL §4; IBT), for the
+// packages that state the closed list (src/packages/reads.ts).
+export const SENSITIVE_AREA_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  authentication: 'authentication',
+  authorization: 'authorization',
+  payments_financial_data: 'payments and financial data',
+  personal_data: 'personal data',
+  secrets_credentials: 'secrets and credential handling',
+  data_migrations_destructive: 'data migrations and destructive data operations',
+  irreversible_external_actions: 'irreversible external actions',
+});
 // Kinds an acceptance-origin check covers criteria with (D3 §1.3).
 export const COVERING_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
 export const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];
+// A definition's `requires` values (D4 §5.1).
+export const REQUIRES_VALUES = ['environment', 'artifact_digest'] as const;
 export const SYSTEM_DIRS = ['/usr', '/bin', '/lib', '/lib64'];
 // The variables the engine sets in a check's environment (D3 §2.3); a
 // definition or the governed env may name none of them, nor any SURETY_ one.
 export const ENGINE_VARIABLES = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'CI', 'HTTPS_PROXY'];
 
 export const KEY_FORM = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+export const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+// The governed file's members and runner_config.direct's, as parseGoverned
+// takes them (the phase-authoring package states them: src/packages/reads.ts).
+export const GOVERNED_MEMBERS = ['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks'] as const;
+export const DIRECT_RUNNER_MEMBERS = ['read_paths', 'path', 'env', 'egress_allow', 'timeout_max_s'] as const;
 const VARIABLE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -262,7 +279,7 @@ export function parseGoverned(text: string | null): GovernedResult {
   const v = scanned.value;
   const limits = checkLimits();
   for (const key of Object.keys(v)) {
-    if (!['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks'].includes(key)) e.at(`/${escapePointer(key)}`, 'unknown_field');
+    if (!(GOVERNED_MEMBERS as readonly string[]).includes(key)) e.at(`/${escapePointer(key)}`, 'unknown_field');
   }
   // protected_paths
   if (v.protected_paths !== undefined) {
@@ -305,7 +322,7 @@ export function parseGoverned(text: string | null): GovernedResult {
         if (!isObject(d)) e.at('/runner_config/direct', 'invalid_value');
         else {
           const out = g.runner_config.direct;
-          for (const k of Object.keys(d)) if (!['read_paths', 'path', 'env', 'egress_allow', 'timeout_max_s'].includes(k)) e.at(`/runner_config/direct/${escapePointer(k)}`, 'unknown_field');
+          for (const k of Object.keys(d)) if (!(DIRECT_RUNNER_MEMBERS as readonly string[]).includes(k)) e.at(`/runner_config/direct/${escapePointer(k)}`, 'unknown_field');
           const paths = (member: 'read_paths' | 'path') => {
             const x = d[member];
             if (x === undefined) return;
@@ -632,7 +649,7 @@ export function parseDefinition(file: string, stem: string, text: string, govern
     if (!Array.isArray(v.requires)) e.at('/requires', 'invalid_value');
     else
       v.requires.forEach((x, n) => {
-        if (x !== 'environment' && x !== 'artifact_digest') e.at(`/requires/${n}`, 'invalid_value');
+        if (!(REQUIRES_VALUES as readonly unknown[]).includes(x)) e.at(`/requires/${n}`, 'invalid_value');
         else if (requires.includes(x)) e.at(`/requires/${n}`, 'duplicate_entry');
         else requires.push(x);
       });

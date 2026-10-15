@@ -12,6 +12,7 @@ import { waitFor } from './engine.mjs';
 import { isAlive, procStartTime, signalPid } from './proc.mjs';
 
 const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'scripted', 'child.mjs');
+const PACKAGE_FAKES = join(dirname(fileURLToPath(import.meta.url)), 'standin', 'package-fakes.cjs');
 
 // The slice-2 structured result (SEAM.md §13): exactly these two fields.
 export const VALID_RESULT = Object.freeze({ status: 'completed', summary: 'scripted role finished' });
@@ -54,6 +55,8 @@ export const step = {
   // /surety/out/result.json and then the line is sent: the line is the
   // terminal success event, the file is the result.
   result: (value = VALID_RESULT) => ({ result: value }),
+  // M5 slice 38 (SEAM.md §455): the package-driven fake plays the role (Scripted.packageFakes first).
+  packageFake: () => ({ package_fake: {} }),
   // M2 slice 13 (SEAM.md §143): the result file without the event, and the
   // event without the file.
   resultFile: (value = VALID_RESULT) => ({ result_file: value }),
@@ -271,6 +274,22 @@ export class Scripted {
   // array by that kind's launch ordinal. Written as given (not wrapped).
   kindScript(kind, value) {
     this.#writeJson(join(this.dir, 'scripts', `kind-${kind}.json`), value);
+  }
+
+  // M5 slice 38 (SEAM.md §455): the package-driven fakes beside the role
+  // program, and the rehearsal's content they write from.
+  packageFakes(content) {
+    copyFileSync(PACKAGE_FAKES, join(this.dir, 'package-fakes.cjs'));
+    this.#writeJson(join(this.dir, 'rehearsal-content.json'), content);
+  }
+
+  // The `package_fake` entries the roles logged, in order (optionally for one run or kind).
+  fakePlays(filter = {}) {
+    const launches = new Map(this.launches().map((l) => [l.invocation, l]));
+    return this.log()
+      .filter((e) => e.event === 'package_fake')
+      .map((e) => ({ ...e, launch: launches.get(e.invocation) ?? null }))
+      .filter((e) => Object.entries(filter).every(([k, v]) => (k === 'run' || k === 'work_kind' ? e.launch?.[k] === v : e[k] === v)));
   }
 
   // Every launch that has no script of its own follows this one.

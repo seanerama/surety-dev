@@ -106,6 +106,36 @@ export interface SemanticFinding {
   why: string;
 }
 
+// The finding codes that block the approval of a specification (D6 §3.4;
+// spec/approval.ts reads them; the Spec Writer's package states them).
+export const SPEC_BLOCKING_CODES: readonly string[] = Object.freeze([
+  'index_invalid',
+  'index_missing',
+  'section_missing',
+  'no_criteria_no_mark',
+  'header_missing',
+  'header_invalid',
+  'index_subsection_mismatch',
+  'criterion_mismatch',
+  'area_unknown',
+  'areas_missing',
+  // K10 (SEAM.md §380): a claim naming a requirement the specification lacks.
+  'claims_requirement_unknown',
+  // Slice 34 (D6 §3.2, B04; M421 (f)): a duplicate or contradictory
+  // representation, and one part of which could not be read (a statement, a
+  // criterion, a question, the module or claims table): what is unread is
+  // unknown, never registered as none.
+  'duplicate_requirement',
+  'duplicate_criterion',
+  'criterion_malformed',
+  'no_statement',
+  'question_malformed',
+  'module_table_invalid',
+  'claims_table_invalid',
+  // The review's N3 (d): a question naming a key the specification lacks.
+  'question_unknown_key',
+]);
+
 export interface SemanticResult {
   // false when the representation is not readable as a specification at all.
   readable: boolean;
@@ -116,6 +146,28 @@ export interface SemanticResult {
 
 const KEY = /^R[1-9][0-9]*$/;
 const CRITERION = /^(R[1-9][0-9]*\.[1-9][0-9]*)\b\s*(.*)$/;
+
+// B.2's syntax as the parser below reads it, exported so that the Spec
+// Writer's package states exactly these forms (src/packages/reads.ts; E135;
+// M442): the header fields with their values, the marks, the sections read
+// and the tables' columns.
+export const SPEC_FILE = '.surety/spec/spec.md';
+export const SPEC_HEADER_FIELDS = ['Spec version', 'Status', 'Tier', 'Owner'] as const;
+export const SPEC_STATUS_VALUES = ['draft', 'approved'] as const;
+export const SPEC_TIERS = ['T1', 'T2', 'T3'] as const;
+export const SPEC_MARKS = { human_test: '**Human test.**', descriptive: '**Descriptive.**' } as const;
+export const SPEC_AREAS_LABEL = '**Sensitive areas:**';
+export const SPEC_SECTIONS = { requirements: 4, index: 5, modules: 6, environments: 7, questions: 10, change_log: 11, claims: 12 } as const;
+export const MODULE_TABLE_COLUMNS = ['Module', 'Paths', 'Sensitive areas'] as const;
+export const CLAIMS_COLUMNS = ['Source', 'Claim', 'Observed', 'Requirement'] as const;
+// TPL §7's environment fields. The parser reads every `- **<Field>:** value`
+// line of an environment's subsection (parseEnvironments) and checks no name;
+// these are the fields the template gives and D4's configuration is written
+// from, stated to the Spec Writer here in one place.
+export const ENVIRONMENT_FIELDS = ['Purpose', 'Verified means', 'Target', 'Runtime and start command', 'Port', 'Excluded from the artifact', 'Required post-deploy behaviour check', 'Stable arguments'] as const;
+// D6 A.2 ImpactKind: what a specification change does to a requirement, as
+// spec/change.ts computes it and the Spec Writer's change result claims it.
+export const IMPACT_KINDS = ['added', 'withdrawn', 'text_changed', 'criteria_added', 'criteria_removed', 'criteria_changed', 'areas_changed'] as const;
 const H2 = /^##\s+(\d+)\.\s+(.*)$/;
 const REQ_HEADING = /^###\s+(R[1-9][0-9]*)(?:\.\s*(.*))?\s*$/;
 const ENV_HEADING = /^###\s+(.+?)\s*$/;
@@ -171,15 +223,16 @@ function parseHeader(text: string, findings: SemanticFinding[]): SpecRepresentat
     // The template's bracketed guidance is not a value.
     return m[1]!.replace(/\*\[.*?\]\*/g, '').trim();
   };
-  const version = field('Spec version');
-  const status = field('Status');
-  const tier = field('Tier');
-  const owner = field('Owner');
+  const [VERSION, STATUS, TIER, OWNER] = SPEC_HEADER_FIELDS;
+  const version = field(VERSION);
+  const status = field(STATUS);
+  const tier = field(TIER);
+  const owner = field(OWNER);
   for (const [name, v] of [
-    ['Spec version', version],
-    ['Status', status],
-    ['Tier', tier],
-    ['Owner', owner],
+    [VERSION, version],
+    [STATUS, status],
+    [TIER, tier],
+    [OWNER, owner],
   ] as const) {
     if (v === null) findings.push({ where: 'header', code: 'header_missing', why: `the header field **${name}:** is missing` });
   }
@@ -289,7 +342,7 @@ function parseModules(lines: string[] | undefined, findings: SemanticFinding[]):
   const table = firstTable(lines);
   if (!table) return [];
   const header = cells(table[0]!)!;
-  if (header.length !== 3 || header[0]!.toLowerCase() !== 'module' || header[1]!.toLowerCase() !== 'paths' || header[2]!.toLowerCase() !== 'sensitive areas') {
+  if (header.length !== MODULE_TABLE_COLUMNS.length || MODULE_TABLE_COLUMNS.some((c, i) => header[i]!.toLowerCase() !== c.toLowerCase())) {
     findings.push({ where: 'modules', code: 'module_table_invalid', why: 'the module table is not | Module | Paths | Sensitive areas |' });
     return [];
   }
@@ -368,7 +421,7 @@ function parseClaims(lines: string[] | undefined, findings: SemanticFinding[]): 
   const table = firstTable(lines);
   if (!table) return [];
   const header = cells(table[0]!)!.map((h) => h.toLowerCase());
-  if (header.length !== 4 || header[0] !== 'source' || header[1] !== 'claim' || header[2] !== 'observed' || header[3] !== 'requirement') {
+  if (header.length !== CLAIMS_COLUMNS.length || CLAIMS_COLUMNS.some((c, i) => header[i] !== c.toLowerCase())) {
     findings.push({ where: 'claims', code: 'claims_table_invalid', why: 'the claims table is not | Source | Claim | Observed | Requirement |' });
     return [];
   }
@@ -416,8 +469,8 @@ export function parseSpecification(text: string): SemanticResult {
   const findings: SemanticFinding[] = [];
   const header = parseHeader(text, findings);
   const secs = sections(text);
-  const s4 = secs.get(4);
-  const s5 = secs.get(5);
+  const s4 = secs.get(SPEC_SECTIONS.requirements);
+  const s5 = secs.get(SPEC_SECTIONS.index);
   if (!s4 && !s5) return { readable: false, representation: null, findings: [{ where: 'index', code: 'section_missing', why: 'the specification has neither section 4 (Requirements) nor section 5 (Requirement index)' }], digest: null };
   if (!s4) findings.push({ where: 'index', code: 'section_missing', why: 'section 4 (Requirements) is missing' });
   const requirements = parseRequirements(s4 ?? [], findings);
@@ -456,7 +509,7 @@ export function parseSpecification(text: string): SemanticResult {
     for (const c of inBody) if (!inIndex.has(c)) findings.push({ where: row.key, code: 'criterion_mismatch', why: `the criterion ${c} is under ${row.key} in section 4 and not in the index` });
   }
   for (const req of requirements) if (!index.some((r) => r.key === req.key) && index.length > 0) findings.push({ where: req.key, code: 'index_subsection_mismatch', why: `${req.key} has a section 4 subsection and no index row` });
-  const questions = parseQuestions(secs.get(10), findings);
+  const questions = parseQuestions(secs.get(SPEC_SECTIONS.questions), findings);
   for (const q of questions) {
     for (const key of q.blocks) {
       const req = byKey.get(key);
@@ -466,9 +519,9 @@ export function parseSpecification(text: string): SemanticResult {
       else findings.push({ where: q.id, code: 'question_unknown_key', why: `the question ${q.id} names ${key}, which is no requirement of this specification` });
     }
   }
-  const modules = parseModules(secs.get(6), findings);
-  const environments = parseEnvironments(secs.get(7));
-  const claims = parseClaims(secs.get(12), findings);
+  const modules = parseModules(secs.get(SPEC_SECTIONS.modules), findings);
+  const environments = parseEnvironments(secs.get(SPEC_SECTIONS.environments));
+  const claims = parseClaims(secs.get(SPEC_SECTIONS.claims), findings);
   // A claim recorded against a requirement the specification lacks (K10;
   // SEAM.md §380): the row is named, and approval is blocked.
   claims.forEach((c, i) => {

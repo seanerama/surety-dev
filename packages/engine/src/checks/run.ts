@@ -50,7 +50,7 @@ import { LINK_SOCKET, buildCheckPlan, inputMountConflict, inputOverlayOverlong, 
 import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
 import { PROJECT_POLICY } from '../config/schema.js';
-import { checkSecretVariable, targetVariable } from './variables.js';
+import { checkSecretVariable, targetValue, targetVariable } from './variables.js';
 
 let tools: ResolvedTools | null = null;
 
@@ -649,7 +649,7 @@ export class Supervisor implements DomainHolder {
     await this.engine('domain.plan', { domain: a.domain, fingerprint, mounts: entries, record });
     // The environment, constructed, never inherited (D3 §2.3).
     const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
-    if (this.link && a.link) for (const t of a.link.targets) env[targetVariable(t)] = `http://127.0.0.1:${a.link.port}`;
+    if (this.link && a.link) for (const t of a.link.targets) env[targetVariable(t)] = targetValue(a.link.port);
     Object.assign(env, this.secretEnv);
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],

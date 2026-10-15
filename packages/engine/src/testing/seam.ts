@@ -19,6 +19,7 @@
 // offset, so both threads take the same time.
 
 import { SELF_TEST_CASES } from '../checks/selftest-cases.js';
+import { ELEMENT_IDS, elementListing } from '../packages/elements.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../deploy/qualify-cases.js';
 import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
@@ -862,6 +863,21 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
     handler: async () => ({ status, body: await run(await hooks.body()) }),
   });
   const storeOp = (op: string, args: unknown) => hooks.store().call(op, args);
+  // Row M442 (b): the package elements, and those omitted from every
+  // package written from now on.
+  if (s.length === 1 && s[0] === 'package-elements' && get) {
+    return { restricted: false, handler: async () => ({ status: 200, body: { elements: elementListing(), omitted: [...packageOmit].sort() } }) };
+  }
+  if (s.length === 1 && s[0] === 'package-omit' && post) {
+    return route(200, async (body) => {
+      const elements = isObject(body) && Object.keys(body).every((k) => k === 'elements') ? body.elements : undefined;
+      if (!Array.isArray(elements)) throw new Refusal(400, 'invalid_value', '"elements" must be an array of package element ids.', 'Send {"elements": [<id>, ...]}; [] omits nothing.', { field: 'elements' });
+      const bad = unknownElements(elements);
+      if (bad.length > 0) throw new Refusal(400, 'invalid_value', `Not a package element: ${bad.join(', ')}.`, 'Name ids GET /v1/harness/package-elements lists.', { field: 'elements', unknown: bad, known: ELEMENT_IDS });
+      packageOmit = new Set(elements as string[]);
+      return { omitted: [...packageOmit].sort() };
+    });
+  }
   if (s.length === 1 && s[0] === 'barriers' && get) {
     return { restricted: true, handler: async () => ({ status: 200, body: { barriers: listBarriers() } }) };
   }
@@ -1432,6 +1448,27 @@ export function setProbeOverrides(values: string[]): string | null {
 export function seamProbeOverrides(): Record<string, ProbeOverride> {
   return init.harness ? { ...probeOverrides } : {};
 }
+
+// ---- the role packages' omitted elements (main thread; row M442 (b)) ------------------
+
+// A package element left out of every package written from now on: its
+// section in the prompt, its fenced `surety-reads` block, any result field
+// it adds to the result schema and its id in the manifest's `reads`
+// (src/packages/reads.ts). Harness mode only; outside it nothing is
+// omitted. Set at start by `--harness-package-omit <id>` (repeatable) and
+// replaced at run time by POST /v1/harness/package-omit.
+let packageOmit = new Set<string>();
+
+const unknownElements = (values: unknown[]): string[] => values.filter((v) => typeof v !== 'string' || !(ELEMENT_IDS as readonly string[]).includes(v)).map(String);
+
+export function setPackageOmit(values: string[]): string | null {
+  const bad = unknownElements(values);
+  if (bad.length > 0) return `--harness-package-omit takes a package element (${ELEMENT_IDS.join(', ')}), not ${bad.join(', ')}`;
+  packageOmit = new Set(values);
+  return null;
+}
+
+export const seamPackageOmitted = (id: string): boolean => init.harness && packageOmit.has(id);
 
 // GET /v1/engine reports whether the engine is in harness mode.
 export function seamDescribe<T extends object>(info: T): T & { harness: boolean } {

@@ -17,6 +17,8 @@ import type { WorkRow } from './transitions/work.js';
 import type { CheckWritingFacts } from '../checks/guide.js';
 import type { Governed } from '../checks/schema.js';
 import { openObligationsOf } from '../spec/change.js';
+import { isAdopted } from '../adopt/records.js';
+import type { BuilderStageFacts } from '../packages/reads.js';
 
 // The project's effective ungoverned policy: the revision the engine
 // recorded over the schema defaults, or the defaults with revision null.
@@ -130,7 +132,7 @@ export function contextFacts(db: Database, args: { run: string }) {
   type Req = { id: string; key: string; text_ref: string; assigned_phase: number | null; text: string | null };
   let requirements: Req[] = [];
   let adrs: { id: string; key: string; text: string }[] = [];
-  let modules: { id: string; name: string; paths: unknown }[] = [];
+  let modules: { id: string; name: string; paths: unknown; interfaces?: unknown[] }[] = [];
   let plan: Record<string, unknown> | null = null;
   if (stage) {
     const ids = [...new Set([...parse<string[]>(stage.requirement_ids, []), ...parse<string[]>(stage.implements, [])])];
@@ -142,13 +144,55 @@ export function contextFacts(db: Database, args: { run: string }) {
       .map((key) => db.prepare(`SELECT "id", "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' AND "key" = ?`).get(item.project, key) as { id: string; key: string; text: string } | undefined)
       .filter((a): a is { id: string; key: string; text: string } => a !== undefined);
     const names = parse<string[]>(stage.modules, []);
+    // A published plan's stage names its modules by id (plan/bundle.ts
+    // moduleIds); a fixture's by name.
     modules = names
-      .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND "name" = ?').get(item.project, name) as { id: string; name: string; paths: string } | undefined)
+      .map((name) => db.prepare('SELECT "id", "name", "paths" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(item.project, name, name) as { id: string; name: string; paths: string } | undefined)
       .filter((m): m is { id: string; name: string; paths: string } => m !== undefined)
       .map((m) => ({ id: m.id, name: m.name, paths: parse<unknown>(m.paths, []) }));
     const p = db.prepare('SELECT "id", "phase_number", "git_path", "prepared_against_revision" FROM "phase_plans" WHERE "id" = ?').get(stage.phase_plan) as Record<string, unknown> | undefined;
     plan = p ?? null;
   }
+  // What a stage's Builder is told of its stage (row M442; B.5; D6 §6.4):
+  // its tasks, what it implements, its integration obligations, the stages
+  // it depends on and the module map's interfaces of their modules, read
+  // from the active generation's approved bundle. The interfaces are null
+  // when the map cannot be read: unknown, never none.
+  let builderStage: BuilderStageFacts | null = null;
+  const moduleMap = stage ? bundleModules(db, String(stage.phase_plan)) : null;
+  if (stage && run.role === 'builder') {
+    const keyOf = (r: string): string => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
+    // The stage row holds its dependencies by stage id (registerPlan); a
+    // number is taken as it is.
+    const dependsOn = parse<unknown[]>(stage.depends_on, [])
+      .map((d) => (typeof d === 'number' ? d : typeof d === 'string' ? ((db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined)?.number ?? null) : null))
+      .filter((n): n is number => typeof n === 'number');
+    const siblings = activeStages<{ number: number; modules: string }>(db, activePlanOf(db, String(stage.phase_plan)));
+    // A stage row names its modules by id (plan/bundle.ts) or, in a
+    // fixture, by name: each resolved to its name in the module map.
+    const moduleName = (m: string): string => (db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(item.project, m, m) as { name: string } | undefined)?.name ?? m;
+    const depModules = dependsOn.flatMap((n) => {
+      const sib = siblings.find((x) => x.number === n);
+      return sib ? parse<string[]>(sib.modules, []).map((m) => ({ stage: n, module: moduleName(m) })) : [];
+    });
+    builderStage = {
+      number: Number(stage.number),
+      goal: String(stage.goal),
+      tasks: parse<string[]>(stage.tasks, []),
+      implements: parse<string[]>(stage.implements, []).map(keyOf),
+      integration_obligations: parse<string[]>(stage.integration_obligations, []),
+      depends_on: dependsOn,
+      dependency_interfaces:
+        moduleMap === null
+          ? null
+          : depModules.flatMap(({ stage: n, module }) =>
+              (moduleMap.find((m) => m.name === module)?.interfaces ?? []).map((i) => ({ stage: n, module, name: i.name, kind: i.kind, path: i.path ?? null, description: i.description })),
+            ),
+    };
+  }
+  // Each module's interfaces as the approved module map gives them (B.3),
+  // beside its paths; absent when the map cannot be read.
+  if (moduleMap !== null) modules = modules.map((m) => ({ ...m, interfaces: (moduleMap.find((x) => x.name === m.name)?.interfaces ?? []).map((i) => ({ name: i.name, kind: i.kind, path: i.path ?? null, description: i.description })) }));
   // Work that builds no stage of a plan (a fix naming no stage, a replan, an
   // assessment): every approved requirement and every ADR, by the approved
   // bindings the baseline texts carry, never a checkpoint's file in the
@@ -341,6 +385,9 @@ export function contextFacts(db: Database, args: { run: string }) {
     check_keys: checkKeys,
     criteria,
     check_writing: checkWriting,
+    // Whether the project was adopted (D6 §8): the retrofit packages.
+    adopted: isAdopted(db, item.project),
+    builder_stage: builderStage,
     // The phase-authoring package (D6 §6.2; N04; SEAM.md §428).
     authoring: item.kind === 'check_authoring' ? authoringFacts(db, item.project, subjectId('phase_plan'), item) : null,
     resumed,
@@ -365,6 +412,35 @@ export function contextFacts(db: Database, args: { run: string }) {
           })
         : null,
   };
+}
+
+// The active generation of a plan (D6 §5.7): followed through replaced_by.
+function activePlanOf(db: Database, planId: string): string {
+  let id = planId;
+  for (let hops = 0; hops < 64; hops++) {
+    const r = db.prepare('SELECT "active", "replaced_by" FROM "phase_plans" WHERE "id" = ?').get(id) as { active: number; replaced_by: string | null } | undefined;
+    if (!r || r.active === 1 || r.replaced_by === null) break;
+    id = r.replaced_by;
+  }
+  return id;
+}
+
+// The module map of a plan's approved bundle (its active generation's, else
+// its own), or null when none can be read.
+type BundleModule = { name: string; interfaces?: { name: string; kind: string; path?: string; description: string }[] };
+function bundleModules(db: Database, planId: string): BundleModule[] | null {
+  for (const id of [...new Set([activePlanOf(db, planId), planId])]) {
+    const plan = db.prepare('SELECT "bundle" FROM "phase_plans" WHERE "id" = ?').get(id) as { bundle: string | null } | undefined;
+    const bundle = plan?.bundle ? (db.prepare('SELECT "artifacts" FROM "plan_bundles" WHERE "id" = ?').get(plan.bundle) as { artifacts: string } | undefined) : undefined;
+    if (!bundle) continue;
+    try {
+      const modules = (JSON.parse(bundle.artifacts) as { modules?: { modules?: BundleModule[] } } | null)?.modules?.modules;
+      if (Array.isArray(modules)) return modules;
+    } catch {
+      // unreadable: try the next, else unknown
+    }
+  }
+  return null;
 }
 
 // The project's environments as the Verifier of check_correction work is
@@ -456,15 +532,29 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
       return null;
     }
   };
-  const rows = db
-    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name"`)
+  const all = db
+    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name", e.rowid`)
     .all(project) as { name: string; content: string | null }[];
+  // An environment is one thing by name (the driver's ruling, slice 38):
+  // stated once, from the owner's configuration where a row of the name has
+  // one; a store that holds two rows of a name (written before the ruling)
+  // is merged here, never listed twice.
+  const rows: { name: string; content: string | null }[] = [];
+  for (const r of all) {
+    const seen = rows.find((x) => x.name === r.name);
+    if (!seen) rows.push({ ...r });
+    else if (seen.content === null && r.content !== null) seen.content = r.content;
+  }
   return rows.map((r) => {
     const c = r.content === null ? null : parse(r.content);
     const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]).slice() : null);
-    if (c === null || typeof c !== 'object' || Array.isArray(c)) return { name: r.name, targets: null, check_secrets: null };
+    if (c === null || typeof c !== 'object' || Array.isArray(c)) return { name: r.name, targets: null, check_secrets: null, runtime: null };
     const content = c as Record<string, unknown>;
-    return { name: r.name, targets: strings(content.targets), check_secrets: content.check_secrets === undefined ? [] : strings(content.check_secrets) };
+    // The runtime the owner's configuration pins (D4 §3.2): a toolchain the
+    // phase's authoring may name (src/packages/reads.ts, verifier.toolchain).
+    const rt = content.runtime as { path?: unknown; sha256?: unknown } | undefined;
+    const runtime = rt && typeof rt.path === 'string' ? { path: rt.path, sha256: typeof rt.sha256 === 'string' ? rt.sha256 : null } : null;
+    return { name: r.name, targets: strings(content.targets), check_secrets: content.check_secrets === undefined ? [] : strings(content.check_secrets), runtime };
   });
 }
 

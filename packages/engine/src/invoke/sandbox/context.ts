@@ -21,10 +21,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Claim } from '../../store/transitions/runs.js';
-import { AUTHORING_RESULT_FIELDS, type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, phaseAuthoringText } from '../../checks/guide.js';
+import { type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, phaseAuthoringText } from '../../checks/guide.js';
 import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
+import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -43,7 +44,8 @@ export type ContextFacts = {
   requirements: { id: string; key: string; text_ref: string; assigned_phase: number | null; text?: string | null }[];
   adrs?: { id: string; key: string; text: string }[];
   constraints?: { id: string; key: string; text: string }[];
-  modules: { id: string; name: string; paths: unknown }[];
+  // `interfaces`: the module map's (B.3), absent when it could not be read.
+  modules: { id: string; name: string; paths: unknown; interfaces?: unknown[] }[];
   phase_plan: Record<string, unknown> | null;
   candidate: { id: string; revision: string; acceptance_content_hash: string | null } | null;
   review?: {
@@ -68,6 +70,11 @@ export type ContextFacts = {
   // For check_authoring work: the phase-authoring package (D6 §6.2; N04).
   authoring?: PhaseAuthoringFacts | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
+  // Whether the project was adopted (D6 §8): its packages' retrofit variants.
+  adopted?: boolean;
+  // For a stage's Builder: what the package states of its stage (row M442;
+  // src/packages/reads.ts).
+  builder_stage?: BuilderStageFacts | null;
   // For a Builder: what each environment's current configuration fixes.
   environments?: { name: string; adapter: string | null; runtime: string | null; start: string[]; port: number | null; exclude: string[] }[] | null;
 };
@@ -96,6 +103,31 @@ export function environmentText(envs: NonNullable<ContextFacts['environments']>)
     'The service must not change its process title or its arguments: do not set process.title and do not rewrite process.argv. The engine identifies the running service by the arguments it was started with, and a changed title or argument fails its verification.',
     '',
   ].join('\n');
+}
+
+// What the package states of what the engine reads from this run's product
+// (row M442; src/packages/reads.ts): the role package by the run's role and
+// work, its elements less any the test seam omits. A qualification attempt
+// states none.
+export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt' | 'base_revision'>, facts: ContextFacts | null): { pkg: PackageName | null; elements: ReadsElement[] } {
+  if (claim.attempt || facts === null) return { pkg: null, elements: [] };
+  const retrofit = facts.adopted === true;
+  const pick = (pkg: PackageName, built: Parameters<typeof statedElements>[1]) => ({ pkg, elements: statedElements(pkg, built) });
+  if (claim.role === 'verifier' && claim.work_kind === 'check_authoring' && facts.authoring) {
+    return pick(retrofit ? 'verifier_authoring_retrofit' : 'verifier_authoring', verifierElements(facts.check_writing ?? null, { authoring: true, retrofit }));
+  }
+  if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', verifierElements(facts.check_writing, { authoring: false, retrofit }));
+  if (claim.role === 'architect' && facts.replan) {
+    // A replan's plan names the approved versions and the head it started
+    // from (plan/bundle.ts replanBaseline): from its package's generation.
+    const g = facts.replan.generation;
+    const prepared = g.spec_revision && g.architecture_revision && g.roadmap_revision ? { spec_version: g.spec_revision.version, architecture_version: g.architecture_revision.version, roadmap_version: g.roadmap_revision.version, revision: claim.base_revision } : null;
+    return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit, prepared_against: prepared, kind: 'replan' }));
+  }
+  if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
+  if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', specElements({ retrofit }));
+  if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));
+  return { pkg: null, elements: [] };
 }
 
 export type FindingFacts = {
@@ -203,6 +235,8 @@ const ROLE_TASK: Record<string, string> = {
   verifier: 'Verify the work below against its requirements, and report findings.',
   reviewer: 'Review the candidate named below at the acceptance content hash it names, and report findings.',
   architect: 'Plan or replan the work below.',
+  // D6 §4.3: the Spec Writer's one-shot on a specification change.
+  spec_writer: "Write the specification change the owner's request asks for (/surety/context/change_request.json) into .surety/spec/spec.md, keeping every key the approved specification gives. You may not approve it.",
 };
 
 // The result's schema, per role (D2 §1.3; SEAM.md §68): every field the
@@ -537,7 +571,7 @@ export function writeContextPackage(
   // The facts for check_correction work, or null when the store could not
   // give them: then the task says so, and points to no section.
   const writing = correcting ? (facts?.check_writing ?? null) : null;
-  const writingText = writing ? checkWritingText(writing, checkList) : [];
+  const writingText = writing ? checkWritingText(writing, checkList, { authoring: claim.work_kind === 'check_authoring' }) : [];
   // A repair run (D3 §2.10): the checks that failed on the item's current
   // candidate, each with its output in /surety/context/check-outputs/.
   const failedChecks = claim.check_outputs ?? [];
@@ -553,6 +587,7 @@ export function writeContextPackage(
           'Fix the code, not the checks: they are protected. If a check contradicts the requirement or the interface, report it in your result\'s `objections`.',
         ]
       : [];
+  const reads = contextReads(claim, facts);
   const prompt = [
     `# Your task (${role})`,
     '',
@@ -582,9 +617,10 @@ export function writeContextPackage(
           '## The phase',
           '',
           `Phase ${facts.phase.phase_plan.phase_number} (plan ${facts.phase.phase_plan.id}, generation ${facts.phase.phase_plan.generation}) on candidate ${facts.phase.candidate}: its \`phase\` gate evaluation is ${facts.phase.evaluation ? `${facts.phase.evaluation.outcome} (${facts.phase.evaluation.id})` : 'not recorded'}. /surety/context/phase.json holds the evaluation with every check's state and the phase's findings.`,
-          'Read them, raise any finding, and sign the phase off in `signoffs` with scope `phase` if you find it complete. A sign-off binds this candidate\'s acceptance content, the protected version, the specification and this plan generation.',
+          'Read them and raise any finding.',
         ]
       : []),
+    ...readsText(reads.elements),
     '',
     ...(claim.attempt ? (opts.canary ? canaryPromptText(opts.canary) : ['', '## A qualification canary', '', 'Follow /surety/context/canary.json exactly: it says what to do and what result to write.']) : []),
     'Read /surety/context/manifest.json for every file this package holds, and /surety/context/instructions.md first.',
@@ -610,8 +646,17 @@ export function writeContextPackage(
   const base = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
   // A replan's result (Appendix B.7): the plan it wrote and its declaration.
   // A phase authoring's result (B.7; N04): its governed changes and deferrals.
-  const authored = authoring ? { ...base, title: "The Verifier's phase authoring result, written to /surety/out/result.json", properties: { ...(base.properties as Record<string, unknown>), ...AUTHORING_RESULT_FIELDS } } : base;
-  const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings } } : base;
+  // A phase authoring's result (B.7; N04): the fields its package's stated
+  // elements add (governed changes, deferrals and, in retrofit, adopted
+  // tests), so an element the test seam omits leaves its fields out too.
+  // The fields the package's stated elements add (a phase authoring's
+  // governed changes, deferrals and adopted tests; a phase sign-off; a spec
+  // change's claimed changes; a retrofit replan's requests): an element the
+  // test seam omits leaves its fields out too (row M442).
+  const added = readsResultFields(reads.elements);
+  const withAdded = { ...base, properties: { ...(base.properties as Record<string, unknown>), ...added } };
+  const authored = authoring ? { ...withAdded, title: "The Verifier's phase authoring result, written to /surety/out/result.json" } : withAdded;
+  const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings, ...added } } : base;
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : authored, null, 2)}\n`);
   if (authoring) put('authoring.json', 'instructions', authoring.phase_plan?.id ?? null, `${JSON.stringify(authoring, null, 2)}\n`);
   if (review) {
@@ -666,7 +711,7 @@ export function writeContextPackage(
   for (const c of facts?.constraints ?? []) put(`constraints/${safeName(c.key)}.md`, 'constraint', c.id, `# ${c.key}\n\n${c.text}\n`);
   if (role === 'builder' && facts?.environments && facts.environments.length > 0) put('environments.md', 'instructions', null, environmentText(facts.environments));
   if (facts?.phase_plan) put('phase-plan.json', 'phase_plan', String(facts.phase_plan.id ?? '') || null, `${JSON.stringify(facts.phase_plan, null, 2)}\n`);
-  for (const m of facts?.modules ?? []) put(`interfaces/${safeName(m.name)}.json`, 'interface', m.id, `${JSON.stringify({ module: m.name, paths: m.paths }, null, 2)}\n`);
+  for (const m of facts?.modules ?? []) put(`interfaces/${safeName(m.name)}.json`, 'interface', m.id, `${JSON.stringify({ module: m.name, paths: m.paths, ...(m.interfaces !== undefined ? { interfaces: m.interfaces } : {}) }, null, 2)}\n`);
   if (facts?.candidate && facts.candidate.acceptance_content_hash) put('acceptance-content-hash.txt', 'acceptance_content_hash', facts.candidate.id, `${facts.candidate.acceptance_content_hash}\n`);
   if (facts?.resumed) {
     // Rebuilt from the prior run's records (D1 §15.3), one file per record.
@@ -691,5 +736,5 @@ export function writeContextPackage(
     chmodSync(join(dir, 'probe'), 0o555);
     files.push({ path: 'probe', kind: 'instructions', source: null, sha256: createHash('sha256').update(readFileSync(join(dir, 'probe'))).digest('hex') });
   }
-  writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: claim.work_item, run: claim.run, role, kind: claim.work_kind, files }, null, 2)}\n`);
+  writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: claim.work_item, run: claim.run, role, kind: claim.work_kind, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
 }
