@@ -24,8 +24,23 @@ export function liftToFull(tx: Tx, incarnation: string): void {
   tx.emit('engine.mode_changed', { incarnation }, { from: 'restricted', to: 'full' });
 }
 
-export function schedulerStarted(tx: Tx, incarnation: string): void {
-  tx.emit('engine.started', { incarnation }, {});
+// The scheduler starts (D1 §1.4 step 7). The engine's rules are an input of
+// every gate evaluation (D1 §9.5, "evaluations that used something that
+// changed are stale"; the driver's ruling on the real M443 run's restart):
+// an engine started anew may evaluate by other rules, so every evaluation
+// not satisfied ('not_satisfied', the one other outcome the schema allows)
+// and not already stale, of any gate kind in every project, is marked stale
+// here, in this transaction, and computed again when due. Staleness is not
+// invalidation; a satisfied evaluation is untouched, so a completed stage,
+// phase or Alpha gate never reopens. engine.started carries the count.
+export function schedulerStarted(tx: Tx, incarnation: string): { stale_gate_evaluations: number } {
+  const stale = staleUnsatisfiedAtStart(tx);
+  tx.emit('engine.started', { incarnation }, { stale_gate_evaluations: stale });
+  return { stale_gate_evaluations: stale };
+}
+
+export function staleUnsatisfiedAtStart(tx: Tx): number {
+  return tx.db.prepare(`UPDATE "gate_evaluations" SET "stale" = 1 WHERE "outcome" <> 'satisfied' AND "stale" = 0`).run().changes;
 }
 
 // The heartbeat that ends every tick (D1 §8.1 step 10), written after
