@@ -12,7 +12,7 @@
 // as computed uncertainty, never a refusal; an early replacement's kept
 // stages (D6 §5.7; B08).
 
-import { TIER_RANK, type Tier, computeScope } from '../checks/scope.js';
+import { TIER_RANK, type Tier, computeScope, modulePathOk } from '../checks/scope.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';
 import { canonical, sha256 } from '../store/transitions/common.js';
 
@@ -222,6 +222,12 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   }
   add('PLAN_UNKNOWN_REQUIREMENT', unknownReq);
   add('PLAN_UNKNOWN_MODULE', unknownModule);
+  // Every module path in the form the matcher reads (checks/scope.ts): one
+  // it cannot read leaves the module's presence unread for good, and every
+  // registration of the project owed (the real M443 run's `dir/**`, before
+  // it was read as the directory). Refused here, so the session's close
+  // fails loudly instead of the build stalling.
+  add('PLAN_MODULE_PATH_INVALID', a.modules.modules.flatMap((m) => m.paths.filter((p) => !modulePathOk(p)).map((p) => `${m.name}:${p}`)));
   add('PLAN_UNKNOWN_ADR', unknownAdr);
   add('PLAN_CRITERION_MISMATCH', criterionMismatch);
   add('PLAN_UNKNOWN_STAGE', unknownStage);
@@ -407,6 +413,7 @@ export const PLAN_REASONS = [
   'PLAN_KIND_MISSING',
   'PLAN_DESCRIPTIVE_MODULE_TOUCHED',
   'PLAN_CONFORMANCE_MISPLACED',
+  'PLAN_MODULE_PATH_INVALID',
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;

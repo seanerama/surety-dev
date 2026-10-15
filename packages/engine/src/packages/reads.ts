@@ -26,7 +26,7 @@ import { SECRET_NAME_RULE, SECRET_PREFIX, TARGET_NAME_RULE, TARGET_PREFIX, check
 import { dirname } from 'node:path';
 
 import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, CRITERION, DEPLOY_SECRET_REFERENCE, DIRECT_RUNNER_MEMBERS, GATE_KINDS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
-import { KIND_INVENTORY, SCOPE_KINDS, type Tier } from '../checks/scope.js';
+import { KIND_INVENTORY, MODULE_PATH, MODULE_PATH_FORM, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS } from '../plan/check.js';
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE, adrPath, planPath } from '../plan/schemas.js';
 import type { PreparedAgainstFacts } from '../plan/bundle.js';
@@ -117,8 +117,8 @@ export function specElements(opts: { retrofit: boolean }): Built {
     },
     'spec_writer.module_table': {
       id: 'spec_writer.module_table',
-      gloss: "Section 6's table, in exactly these columns.",
-      data: { section: section(SPEC_SECTIONS.modules, 'Modules and protected paths'), columns: [...MODULE_TABLE_COLUMNS] },
+      gloss: "Section 6's table, in exactly these columns; each path of the Paths column in the module path form.",
+      data: { section: section(SPEC_SECTIONS.modules, 'Modules and protected paths'), columns: [...MODULE_TABLE_COLUMNS], paths: { form: MODULE_PATH_FORM, pattern: MODULE_PATH.source } },
     },
     'spec_writer.environment_fields': {
       id: 'spec_writer.environment_fields',
@@ -209,9 +209,13 @@ const keys = { type: 'array', items: { type: 'string', pattern: KEY_PATTERN } };
 const areas = { type: 'array', items: { enum: [...SENSITIVE_AREAS] } };
 
 const INTERFACE_SCHEMA = closedObject(B3.interface, { name: nonEmpty, kind: { enum: [...INTERFACE_KINDS] }, path: str, description: str });
+// A module path in the one form the engine's matcher reads (checks/scope.ts
+// MODULE_PATH): a module whose paths it cannot read has a presence that is
+// never read, and the build stalls on it (the real M443 run's `dir/**`).
+const MODULE_PATHS = { type: 'array', items: { type: 'string', pattern: MODULE_PATH.source, description: MODULE_PATH_FORM } };
 const MODULE_SCHEMA = closedObject(B3.module, {
   name: nonEmpty,
-  paths: strings,
+  paths: MODULE_PATHS,
   sensitive_areas: areas,
   tier_override: { enum: ['T1', 'T2', 'T3'] },
   interfaces: { type: 'array', items: INTERFACE_SCHEMA },
@@ -279,6 +283,7 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   PLAN_KIND_MISSING: "a stage's validation.kinds lacks a kind its tier requires",
   PLAN_DESCRIPTIVE_MODULE_TOUCHED: 'scoped mode: a stage touches a module holding a descriptive requirement with no approved criteria',
   PLAN_CONFORMANCE_MISPLACED: "conformance: true outside the adopted project's first phase, or on a stage with tasks",
+  PLAN_MODULE_PATH_INVALID: `a module of the module map has a path not in the module path form (${MODULE_PATH_FORM})`,
 };
 const RETROFIT_REASONS: readonly string[] = ['PLAN_DESCRIPTIVE_MODULE_TOUCHED', 'PLAN_CONFORMANCE_MISPLACED'];
 
