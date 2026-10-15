@@ -88,7 +88,8 @@ const stagesOfPhase = (home, project, phase) =>
 async function upTo(ctx, last) {
   const steps = [
     ['m5_attempt_sonnet', () => m5Attempts(ctx, 'M443')],
-    ['m5_activation', () => m5Activation(ctx, 'M443', tallyContent())],
+    // The fake's content is the rehearsal's alone; the paid run's entries are real.
+    ['m5_activation', () => m5Activation(ctx, 'M443', ctx.rehearsal ? tallyContent() : null)],
     ['m5a_create', () => m5aCreate(ctx)],
     ['m5a_vision', () => m5aVision(ctx)],
     ['m5a_spec', () => m5aSpec(ctx)],

@@ -68,7 +68,7 @@ Each run directory is marked a rehearsal's or a real run's when it is made (`sta
 
 Then M444, the same with its own confirmation, `'I accept the M5 real retrofit journey (M444) on my Claude subscription, about 3 USD as estimated, capped at 2000000 tokens a run and 20 USD a day'`, and its file.
 
-Optional: `SURETY_REAL_IDEA_FILE=<your brief>` (M443's idea; without it the reference brief of `harness/journey/reference.mjs`, labelled); `SURETY_REAL_VISION=run` (a Vision session; skipped and recorded by default); `SURETY_REAL_CHANGE_FILE=<your change request>` (without it the reference CR-1).
+Optional: `SURETY_REAL_IDEA_FILE=<your brief>` (M443's idea; without it the reference brief of `harness/journey/reference.mjs`, labelled). With your brief, nothing of the reference reaches the project: it is named `m5-real-<slug>` from the `name:` of the brief's ```` ```yaml surety-identity ```` block (`m5-real-idea` without one), its repository `repos/<slug>` starts from a README `# <name>`, and there is no reference change. `SURETY_REAL_VISION=run` (a Vision session; skipped and recorded by default); `SURETY_REAL_CHANGE_FILE=<your change request>` (with your own brief, without it you write the change in `<run dir>/change-request.md` before your command; with the reference brief, without it the reference CR-1).
 
 **Why not `run-tests.mjs --lane real`:** it runs every `real` file, M2's, M3's and M4's paid ones included. Each file run alone keeps every guard: it refuses before starting anything without the run directory, the token's reference (a 0600 file), the pinned binary and its own confirmation.
 
