@@ -360,6 +360,9 @@ export function contextFacts(db: Database, args: { run: string }) {
   // slice-36 review's S3): what the Verifier still has to resolve.
   const changeRequest = changeRequestRow && item.kind === 'check_correction' ? { ...changeRequestRow, open_obligations: openObligationsOf(db, String(changeRequestRow.id)) } : changeRequestRow;
   return {
+    // A check authoring's or correction's repair after its proposal was
+    // rejected (M443): what the engine found wrong with it.
+    rejected_proposal: item.kind === 'check_authoring' || item.kind === 'check_correction' ? rejectedProposalFacts(db, item.id, String(run.id)) : null,
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,
     // The phase Verifier's (D6 §5.8; M429 (a)): the phase evaluation and
@@ -415,6 +418,62 @@ export function contextFacts(db: Database, args: { run: string }) {
 }
 
 // The active generation of a plan (D6 §5.7): followed through replaced_by.
+// The latest proposal an earlier run of this work item captured, when it
+// was rejected: its id, the owner's note or the conflict's reason, and each
+// discovery error of its classification (protected_proposals.classification
+// elements `{reason: 'discovery_error', path}`) with its code as discovery
+// recorded it (the stored discovery's errors; an index error, at
+// `#/covers/criteria/<n>`, is criterion_unknown, schema.criterionErrors).
+// A code the stored classification does not give is null: unknown.
+export interface RejectedProposalFacts {
+  proposal: string;
+  note: string | null;
+  errors: { path: string; code: string | null }[];
+}
+export function rejectedProposalFacts(db: Database, workItem: string, run: string): RejectedProposalFacts | null {
+  const p = db
+    .prepare(
+      `SELECT p."id", p."status", p."classification" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run"
+       WHERE r."work_item" = ? AND r."id" <> ? ORDER BY r."seq" DESC, p.rowid DESC LIMIT 1`,
+    )
+    .get(workItem, run) as { id: string; status: string; classification: string | null } | undefined;
+  if (!p || p.status !== 'rejected') return null;
+  let c: { elements?: { reason?: unknown; path?: unknown }[]; discovery?: { errors?: { path?: unknown; code?: unknown }[] } } | null = null;
+  try {
+    c = p.classification ? JSON.parse(p.classification) : null;
+  } catch {
+    c = null;
+  }
+  const recorded = (c?.discovery?.errors ?? []).filter((e) => typeof e?.path === 'string' && typeof e?.code === 'string') as { path: string; code: string }[];
+  const paths = Array.isArray(c?.elements) ? c.elements.filter((e) => e?.reason === 'discovery_error' && typeof e.path === 'string').map((e) => e.path as string) : recorded.map((e) => e.path);
+  const errors: RejectedProposalFacts['errors'] = [];
+  for (const path of [...new Set(paths)]) {
+    const codes = recorded.filter((e) => e.path === path).map((e) => e.code);
+    if (codes.length === 0) errors.push({ path, code: /#\/covers\/criteria\/[0-9]+$/.test(path) ? 'criterion_unknown' : null });
+    else for (const code of [...new Set(codes)]) errors.push({ path, code });
+  }
+  const decided = db
+    .prepare(`SELECT "answer" FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'consumed' ORDER BY rowid DESC LIMIT 1`)
+    .get(p.id) as { answer: string | null } | undefined;
+  let note: string | null = null;
+  try {
+    const a = decided?.answer ? (JSON.parse(decided.answer) as { option?: unknown; note?: unknown }) : null;
+    if (a && a.option !== 'approve' && typeof a.note === 'string' && a.note.length > 0) note = a.note;
+  } catch {
+    note = null;
+  }
+  if (note === null) {
+    const ev = db.prepare(`SELECT "payload" AS "detail" FROM "events" WHERE "type" = 'protected.rejected' AND json_extract("subject", '$.proposal') = ? ORDER BY "seq" DESC LIMIT 1`).get(p.id) as { detail: string | null } | undefined;
+    try {
+      const d = ev?.detail ? (JSON.parse(ev.detail) as { reason?: unknown }) : null;
+      if (typeof d?.reason === 'string') note = d.reason;
+    } catch {
+      note = null;
+    }
+  }
+  return { proposal: p.id, note, errors };
+}
+
 function activePlanOf(db: Database, planId: string): string {
   let id = planId;
   for (let hops = 0; hops < 64; hops++) {

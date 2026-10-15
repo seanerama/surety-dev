@@ -79,10 +79,10 @@ export const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 export const GOVERNED_MEMBERS = ['protected_paths', 'check_discovery', 'check_commands', 'runner_config', 'result_collection', 'required_checks'] as const;
 export const DIRECT_RUNNER_MEMBERS = ['read_paths', 'path', 'env', 'egress_allow', 'timeout_max_s'] as const;
 const VARIABLE = /^[A-Z_][A-Z0-9_]{0,63}$/;
-const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
+export const CRITERION = /^R[1-9][0-9]*\.[1-9][0-9]*$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 // A deployment secret reference (D4 §§3.2, 7.1; deploy/config.ts).
-const DEPLOY_SECRET_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
+export const DEPLOY_SECRET_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
 const HOST = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]{1,5})?$/;
 
 export interface Governed {

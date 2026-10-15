@@ -171,7 +171,15 @@ test('the correction package states the six check elements and no governed chang
   assert.equal(c.manifest.package, 'verifier_correction');
   assert.deepEqual(Object.keys(c.reads), [...PACKAGE_ELEMENTS.verifier_correction]);
   assert.equal(c.schema.properties.governed_changes, undefined);
-  assert.deepEqual(c.reads['verifier.gate_kinds_floor'], { tier: 'T1', floor: KIND_INVENTORY.T1, gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.deepEqual(c.reads['verifier.gate_kinds_floor'], {
+    tier: 'T1',
+    floor: KIND_INVENTORY.T1,
+    gate_kinds: ['stage', 'alpha_authorize'],
+    member: 'gate_kinds',
+    allowed: ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'],
+    non_empty: true,
+    no_repeats: true,
+  });
   assert.deepEqual(c.reads['verifier.post_deploy'].environments, [{ name: 'alpha', targets: ['app'] }]);
   assert.deepEqual(c.reads['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/ref'], variables: [{ ref: 'deploy/ref', variable: 'SURETY_SECRET_REF' }] }]);
   assert.deepEqual(c.reads['verifier.covers'].refused_on, ['smoke', 'security_lint', 'post_deploy_identity', 'post_deploy_behavior']);
@@ -443,4 +451,90 @@ test('the first Architect close without the first phase plan is refused, naming 
   });
   assert.equal(firstPlanMissing([1], { architecture_revision: null, phase: 1 }), null, 'the first bundle with its plan');
   assert.equal(firstPlanMissing([], { architecture_revision: 'arch_1', phase: 2 }), null, 'a later session on an approved architecture');
+});
+
+// M443's real run: a Verifier wrote acceptance-origin `integration` checks
+// with no criterion, refused at `#/covers`, a rule verifier.covers did not
+// state (E135's kind); and its repair was told only that its proposal was
+// rejected, so it repeated the mistake.
+const { parseDefinition, COVERING_KINDS, GATE_KINDS } = await import(join(dist, 'checks', 'schema.js'));
+
+test('verifier.covers states the converse rule: an acceptance-origin check of a criteria kind names at least one criterion; a developer-origin check carries no covers; each as the parser enforces it', (t) => {
+  const c = oneShot(t, 'verifier', 'check_correction', { check_writing: writing });
+  const cv = c.reads['verifier.covers'];
+  assert.equal(cv.must_cover_one, true);
+  assert.deepEqual(cv.must_cover_one_on, { origin: 'acceptance', kinds: [...COVERING_KINDS] });
+  assert.equal(cv.origin_default, 'acceptance');
+  assert.match(cv.developer_origin, /covers nothing, counts toward no criterion or tier kind/);
+  assert.deepEqual(cv.members, ['criteria', 'sensitive_areas']);
+  assert.deepEqual(cv.sensitivity_floor.areas, [...SENSITIVE_AREAS]);
+  assert.equal(cv.sensitivity_floor.origin, 'acceptance');
+  assert.match(c.prompt, /must name at least one criterion/);
+  const entries = [{ path: '.surety/checks/t.mjs', type: 'blob', mode: '100644', oid: 'a'.repeat(40) }];
+  const parse = (d) => parseDefinition('.surety/checks/definitions/c.json', 'c', JSON.stringify({ schema: 1, key: 'c', command: ['node', '.surety/checks/t.mjs'], timeout_s: 60, gate_kinds: ['stage'], ...d }), GOVERNED, entries).errors.map((e) => `${e.path.split('#')[1]} ${e.code}`);
+  for (const kind of cv.must_cover_one_on.kinds) {
+    assert.deepEqual(parse({ kind }), ['/covers invalid_value'], `${kind}: acceptance-origin (the default) with no criterion is refused`);
+    assert.deepEqual(parse({ kind, origin: 'acceptance', covers: { criteria: [] } }), ['/covers invalid_value']);
+    assert.deepEqual(parse({ kind, covers: { criteria: ['R1.1'] } }), [], `${kind}: one criterion is enough`);
+    assert.deepEqual(parse({ kind, origin: 'developer' }), [], `${kind}: developer-origin with no covers is accepted`);
+    assert.deepEqual(parse({ kind, origin: 'developer', covers: { criteria: ['R1.1'] } }), ['/covers covers_not_allowed'], 'a developer check carries no covers');
+  }
+  assert.deepEqual(parse({ kind: 'sensitivity_floor', origin: 'developer' }), ['/covers invalid_value'], 'sensitivity_floor is never developer-origin');
+  assert.deepEqual(parse({ kind: 'sensitivity_floor', covers: { sensitive_areas: [cv.sensitivity_floor.areas[0]] } }), []);
+  assert.deepEqual(parse({ kind: 'acceptance', covers: { criteria: ['R1.1', 'R1.1'] } }), ['/covers/criteria/1 duplicate_entry'], 'no repeats');
+  assert.deepEqual(parse({ kind: 'acceptance', covers: { criteria: ['R1.1'], x: 1 } }), ['/covers/x unknown_field'], 'covers is closed');
+  // The other members the elements alone state (guide.ts: kind, covers,
+  // gate_kinds, requires, secrets): their refusals, as stated.
+  const gk = c.reads['verifier.gate_kinds_floor'];
+  assert.deepEqual(gk.allowed, [...GATE_KINDS]);
+  assert.deepEqual(parse({ kind: 'smoke', gate_kinds: [] }), ['/gate_kinds invalid_value']);
+  assert.deepEqual(parse({ kind: 'smoke', gate_kinds: ['stage', 'stage'] }), ['/gate_kinds/1 duplicate_entry']);
+  assert.equal(c.reads['verifier.requires'].no_repeats, true);
+  const sc = c.reads['verifier.secrets'];
+  assert.ok(new RegExp(sc.reference_pattern).test('deploy/ref') && !new RegExp(sc.reference_pattern).test('deploy/Ref'));
+  assert.deepEqual(sc.only_with, { requires: 'environment' });
+  assert.deepEqual(parse({ kind: 'smoke', secrets: ['deploy/ref'] }), ['/secrets invalid_value']);
+});
+
+test("a check writer's repair after its proposal was rejected is told the proposal's discovery errors, each with its code, and the reason it was rejected", (t) => {
+  const db = plainStore(t);
+  const run = (sql, ...a) => db.prepare(sql).run(...a);
+  run(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wrk_a', ?, 'prj_1', 1, 'check_authoring', '{}', 'executing', 'x', 'x', 1, 1, 0, 0, 0)`, AT);
+  const runRow = (id, seq) => run(`INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined) VALUES (?, ?, 'prj_1', ?, 'wrk_a', 'verifier', 'one_shot', 'executing', 'scripted', '1', 's', ?, ?, 0)`, id, AT, seq, 'c'.repeat(40), AT);
+  runRow('run_1', 1);
+  runRow('run_2', 2);
+  const file = '.surety/checks/definitions/journey.json';
+  const classification = {
+    change_kind: 'unclassifiable',
+    elements: [
+      { reason: 'discovery_error', path: `${file}#/covers` },
+      { reason: 'discovery_error', path: `${file}#/covers/criteria/0` },
+      { reason: 'discovery_error', path: '.surety/checks/definitions/other.json#/kind' },
+    ],
+    discovery: { governed: GOVERNED, checks: [], errors: [{ path: `${file}#/covers`, code: 'invalid_value' }] },
+  };
+  run(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, run, base_revision, tree_id, diff_hash, requested_change_kind, status, classification) VALUES ('pp_x', ?, 'prj_1', 1, 'verifier_run', 'run_1', ?, 't', 'd', 'initial', 'rejected', ?)`, AT, 'c'.repeat(40), JSON.stringify(classification));
+  run(`INSERT INTO events (id, created_at, seq, at, type, subject, actor_kind, payload, tx) VALUES ('ev_1', ?, 1, ?, 'protected.rejected', ?, 'engine', ?, 'tx_1')`, AT, AT, JSON.stringify({ project: 'prj_1', proposal: 'pp_x' }), JSON.stringify({ decision: null, cause: 'application_conflict', reason: 'the head moved' }));
+  const facts = contextFacts(db, { run: 'run_2' });
+  assert.deepEqual(facts.rejected_proposal, {
+    proposal: 'pp_x',
+    note: 'the head moved',
+    errors: [
+      { path: `${file}#/covers`, code: 'invalid_value' },
+      { path: `${file}#/covers/criteria/0`, code: 'criterion_unknown' },
+      { path: '.surety/checks/definitions/other.json#/kind', code: null },
+    ],
+  });
+  assert.equal(contextFacts(db, { run: 'run_1' }).rejected_proposal, null, 'the first run has no earlier proposal');
+  const out = scratch(t);
+  writeContextPackage(out, { run: 'run_2', role: 'verifier', work_item: 'wrk_a', work_kind: 'check_correction', base_revision: 'c'.repeat(40), attempt: null, check_outputs: [] }, { ...facts, check_writing: writing }, { probe: false });
+  const prompt = read(out, 'prompt.md');
+  assert.match(prompt, /## Your last proposal was rejected/);
+  assert.match(prompt, /Proposal pp_x was rejected: "the head moved"\./);
+  assert.ok(prompt.includes(`- \`${file}#/covers\`: invalid_value`));
+  assert.ok(prompt.includes(`- \`${file}#/covers/criteria/0\`: criterion_unknown`));
+  assert.ok(prompt.includes('- `.surety/checks/definitions/other.json#/kind`: code unknown'));
+  // Applied, or not rejected: nothing is said.
+  run(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'pp_x'`);
+  assert.equal(contextFacts(db, { run: 'run_2' }).rejected_proposal, null);
 });
