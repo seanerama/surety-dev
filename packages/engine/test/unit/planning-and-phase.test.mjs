@@ -425,3 +425,42 @@ test('N3: a published plan whose planned obligations are absent or unreadable is
   db.prepare(`UPDATE phase_plans SET "check" = 'pchk_1' WHERE id = ?`).run(first.plan.id);
   assert.match(authoringShortfall(db, first.plan.id, 'pv_x')[0], /planned obligations unknown \(unreadable\)/);
 });
+
+// ---- module paths: the form the presence matcher reads (the real M443 run) ---------------------
+
+const { presentModules, modulePathOk, MODULE_PATH } = await import(join(dist, 'checks', 'scope.js'));
+
+// The mechanica tree at candidate 3 (51cf48b), the paths that decide presence.
+const MECHANICA_TREE = [
+  '.surety/architecture/modules.json',
+  'public/app/labs/common.mjs',
+  'public/app/main.mjs',
+  'public/index.html',
+  'public/physics/constants.mjs',
+  'public/physics/friction.mjs',
+  'public/physics/integrate.mjs',
+  'server.mjs',
+];
+const MECHANICA_MODULES = [
+  { id: 'physics', paths: ['public/physics/**'] },
+  { id: 'server', paths: ['server.mjs'] },
+  { id: 'page', paths: ['public/index.html', 'public/app/**'] },
+];
+
+test('the mechanica module set: a trailing /** is the directory it names, so physics, page and server are present; absent is read as absent; any other glob stays unread', () => {
+  assert.deepEqual(presentModules(MECHANICA_TREE, MECHANICA_MODULES).sort(), ['page', 'physics', 'server']);
+  assert.deepEqual(presentModules(['server.mjs', 'public/physicsish.mjs'], MECHANICA_MODULES), ['server'], 'a dir/** module with no path under the directory is absent, read; not a prefix of a sibling name');
+  assert.equal(presentModules(['server.mjs'], [{ id: 'gl', paths: ['public/*.mjs'] }]), null, 'another glob: unread, never absent');
+  for (const ok of ['server.mjs', 'public/physics/', 'public/physics/**', '.surety/checks/']) assert.equal(modulePathOk(ok), true, ok);
+  for (const bad of ['public/*.mjs', 'dir/**/x', '**', '/abs', 'a//b', './a', 'a/..', 'a[1]']) assert.equal(modulePathOk(bad), false, bad);
+  assert.equal(new RegExp(MODULE_PATH.source, 'u').test('public/app/**'), true, 'the pattern the packages state reads under a JSON Schema validator (u flag)');
+});
+
+test('the plan check refuses a module path the matcher cannot read: PLAN_MODULE_PATH_INVALID, naming module and path; dir/** passes', () => {
+  const globbed = { ...MODULES, modules: [{ ...MODULES.modules[0], paths: ['src/api/**', 'src/*.js'] }, MODULES.modules[1]] };
+  const r = checkPlan(baseline(), artifacts(GOOD, { modules: globbed }));
+  assert.deepEqual(subjects(r, 'PLAN_MODULE_PATH_INVALID'), ['api:src/*.js']);
+  assert.equal(r.outcome === 'passed', false);
+  const ok = checkPlan(baseline(), artifacts(GOOD, { modules: { ...MODULES, modules: [{ ...MODULES.modules[0], paths: ['src/api/**'] }, MODULES.modules[1]] } }));
+  assert.deepEqual(codes(ok), []);
+});

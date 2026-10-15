@@ -273,14 +273,15 @@ test('minor 4: a developer-origin floor is in the set and supplies no area', () 
   assert.deepEqual(s.missing.areas, ['area:personal_data']);
 });
 
-test('minor 3: module paths the matcher cannot interpret are refused by modulePathOk and read as unread, never absent', async () => {
+test('minor 3: module paths the matcher cannot interpret are refused by modulePathOk and read as unread, never absent; a trailing /** is the directory it names (the real M443 run)', async () => {
   const { modulePathOk } = await import(join(dist, 'checks', 'scope.js'));
-  for (const ok of ['src/', 'src', 'src/auth/', 'README.md', '.surety/x/', 'a b/c']) assert.equal(modulePathOk(ok), true, ok);
-  for (const bad of ['', '.', './src', 'src/**', 'src/*.js', '/abs', '..', 'a/../b', 'a//b', 'a/./b', 'a\\b', '//', '/']) assert.equal(modulePathOk(bad), false, JSON.stringify(bad));
+  for (const ok of ['src/', 'src', 'src/auth/', 'README.md', '.surety/x/', 'a b/c', 'src/**']) assert.equal(modulePathOk(ok), true, ok);
+  for (const bad of ['', '.', './src', 'src/**/x', '**', 'src/*.js', '/abs', '..', 'a/../b', 'a//b', 'a/./b', 'a\\b', '//', '/']) assert.equal(modulePathOk(bad), false, JSON.stringify(bad));
   assert.equal(inModule('src/a.js', ['.']), false);
   assert.equal(presentModules(['src/a.js'], [{ id: 'a', paths: ['.'] }]), null, 'unread, not absent');
-  assert.equal(presentModules(['src/a.js'], [{ id: 'a', paths: ['web/', 'src/**'] }]), null);
-  assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: ['src/', 'src/**'] }]), ['a'], 'present through an interpretable path');
+  assert.equal(presentModules(['src/a.js'], [{ id: 'a', paths: ['web/', 'src/*.js'] }]), null);
+  assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: ['src/', 'src/*.js'] }]), ['a'], 'present through an interpretable path');
+  assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: ['web/', 'src/**'] }]), ['a'], 'src/** is src/: present');
   assert.deepEqual(presentModules(['src/a.js'], [{ id: 'a', paths: [] }]), [], 'no path: absent, known');
 });
 
@@ -288,7 +289,7 @@ test('minor 3: the plan fixture refuses an uninterpretable module path with 400 
   const { parsePlanBody } = await import(join(dist, 'testing', 'fixtures.js'));
   const body = (paths) => ({ project: 'p', stages: [{ number: 1, goal: 'g' }], modules: [{ name: 'ok', paths: ['src/'] }, { name: 'm', paths }] });
   assert.doesNotThrow(() => parsePlanBody(body(['billing/'])));
-  for (const bad of ['.', './src', 'src/**', '/abs/x', '../x', 'a/../b']) {
+  for (const bad of ['.', './src', 'src/**/x', '/abs/x', '../x', 'a/../b']) {
     assert.throws(
       () => parsePlanBody(body([bad])),
       (e) => e.status === 400 && e.code === 'invalid_value' && e.subject?.field === 'modules[1].paths',

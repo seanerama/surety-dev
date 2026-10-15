@@ -239,21 +239,31 @@ export const sameSignoff = (a: Signoff, b: Signoff): boolean => a.role === b.rol
 // Whether a module path is one the matcher can interpret (SEAM.md §222;
 // slice 20 review, minor 3): a path of the tree relative to its root, a file
 // or a directory (a trailing `/`), with no empty, `.` or `..` component, not
-// absolute, and no glob or escape character. The plan fixture refuses any
-// other path; the matcher reads one as unread, never as absent.
+// absolute, and no glob or escape character, except that a trailing `/**`
+// names the directory it ends (`dir/**` is `dir/`; the real M443 run's
+// Architect wrote `public/physics/**`). The plan check refuses any other
+// path (PLAN_MODULE_PATH_INVALID); the matcher reads one as unread, never as
+// absent. MODULE_PATH is the form, stated to the Architect and the Spec
+// Writer from this one expression (packages/reads.ts).
+const COMPONENT = String.raw`(?!\.{1,2}(?:/|$))[^/*?\[\]\\\u0000]+`;
+export const MODULE_PATH = new RegExp(String.raw`^${COMPONENT}(?:/${COMPONENT})*(?:/|/\*\*)?$`);
+export const MODULE_PATH_FORM =
+  'a path of the tree relative to its root: a file ("server.mjs"), or a directory ending "/" ("public/physics/"); "dir/**" is read as the directory "dir/"; no other glob or escape character (* ? [ ] \\), no leading "/", no empty, "." or ".." component';
+
 export function modulePathOk(p: string): boolean {
-  if (typeof p !== 'string' || p.length === 0 || p.startsWith('/')) return false;
-  if (/[*?[\]\\\0]/.test(p)) return false;
-  const parts = (p.endsWith('/') ? p.slice(0, -1) : p).split('/');
-  return parts.every((x) => x.length > 0 && x !== '.' && x !== '..');
+  return typeof p === 'string' && MODULE_PATH.test(p);
 }
+
+// A module path as the matcher takes it: `dir/**` is the directory `dir/`.
+const asDirectory = (p: string): string => (p.endsWith('/**') ? p.slice(0, -2) : p);
 
 // Whether a tracked path lies in a module (SEAM.md §224): it is one of the
 // module's paths, or under one taken as a directory. Only interpretable
 // paths are matched (modulePathOk).
 export function inModule(path: string, paths: readonly string[]): boolean {
-  return paths.some((p) => {
-    if (!modulePathOk(p)) return false;
+  return paths.some((raw) => {
+    if (!modulePathOk(raw)) return false;
+    const p = asDirectory(raw);
     if (path === p) return true;
     const dir = p.endsWith('/') ? p : `${p}/`;
     return path.startsWith(dir);
