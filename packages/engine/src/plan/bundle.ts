@@ -673,7 +673,7 @@ export interface ReplanBaseline {
   descriptive_keys: string[];
   // An early replan's (D6 §5.7; B08): the generation it replaces, that
   // plan's phase, and its kept stages; null for any other replan.
-  replacement: (Replaces & { phase: number; kept: { number: number; digest: string | null; implements: string[] }[] }) | null;
+  replacement: (Replaces & { phase: number; kept: { number: number; digest: string | null; implements: string[]; validated: string[] }[] }) | null;
 }
 
 export function replanBaseline(db: Db, args: { project: string; head: string; work_item?: string; digests?: [number, string][] }): ReplanBaseline {

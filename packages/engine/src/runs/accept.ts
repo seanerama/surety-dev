@@ -31,7 +31,7 @@ import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute } from '../plan/check.js';
+import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute, touchedCriteria } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
@@ -503,7 +503,7 @@ export class Acceptor {
       // changed one the architecture it is published with.
       roadmap_architecture_version: roadmapChanging ? architectureVersion : (b.baseline.roadmap_architecture_version ?? b.baseline.architecture_version),
     };
-    const check = checkPlan(replacement ? { ...against, kept: replacement.kept } : against, artifacts);
+    const check = checkPlan(replacement ? { ...against, kept: replacement.kept, touched: touchedCriteria(replacement.stale) } : against, artifacts);
     const report = facts.result?.report as Record<string, unknown> | undefined;
     const declared = Object.fromEntries(['conformance', 'adrs_changed', 'roadmap_revision', 'notes'].filter((k) => report?.[k] !== undefined).map((k) => [k, report![k]]));
     // The Architect's findings (B.7, as D3 X2): recorded with the run, a
