@@ -9,7 +9,7 @@ import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
 import { type FindingRow, findingApplies } from './gates.js';
 import { reviewerApprove } from './classification.js';
-import { blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
+import { OWED_SCOPE, blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
@@ -313,6 +313,10 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   // A Reviewer's approval of a tightening is a recommendation (K8, E13).
   if (role === 'reviewer' && report.proposal_approval) reviewerApprove(tx, { proposal: report.proposal_approval.proposal, run: run.id });
 
+  // What the Reviewer left with no disposition is the owner's to decide, in
+  // this transaction: never a gate held by a finding nothing will act on.
+  if (role === 'reviewer' && item.kind === 'review' && item.trigger_source === 'verification') askUndispositioned(tx, { project, reviewing: true });
+
   // A Reviewer's Alpha exception proposals (D2 §5 C1): each is refused before
   // anything is raised, or becomes a finding_disposition question with the
   // option alpha_exception, its containment argument retained as claimed
@@ -352,6 +356,43 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     }
     tx.db.prepare('UPDATE "runs" SET "alpha_exception_outcomes" = ? WHERE "id" = ?').run(JSON.stringify(outcomes), run.id);
   }
+}
+
+// Never a silent stall (the driver's ruling on the real M443 run): an open
+// finding with no disposition, no proposed disposition and no question
+// about it, once the engine's review of its candidate has reported and left
+// it with none, is put to the owner as a finding_disposition question
+// (scope disposition_owed). A Builder's objection takes the conflict route
+// instead (repair.ts); a finding the owner has already answered a question
+// about is as the owner left it. `reviewing`: in that review's own report
+// transaction, every such finding of the project is owed.
+// Returns the questions raised.
+export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: boolean }): number {
+  const rows = tx.db
+    .prepare(
+      `SELECT f.*,
+         EXISTS (SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+           WHERE w."project" = f."project" AND w."kind" = 'review' AND w."trigger_source" = 'verification' AND w."trigger_id" = f."candidate"
+             AND r."state" = 'ended' AND r."outcome" = 'completed' AND r."finished_at" IS NOT NULL AND r."finished_at" >= f."created_at") AS "reviewed_after"
+       FROM "findings" f WHERE f."project" = ? AND f."status" = 'open' AND f."disposition" IS NULL AND f."proposed_disposition" IS NULL
+         AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."subject_type" = 'finding' AND d."subject_id" = f."id" AND d."status" = 'open')
+         -- The owner has answered a question about it (a rejected proposal,
+         -- M50): the finding is as the owner left it, never asked again.
+         AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'finding_disposition' AND d."subject_id" = f."id" AND d."status" = 'consumed')
+       ORDER BY f."seq"`,
+    )
+    .all(args.project) as (FindingRow & { source_role: string | null; reviewed_after: number })[];
+  let n = 0;
+  for (const f of rows) {
+    if (isObjection(f)) continue;
+    // Owed: the engine's review of the finding's candidate (the one review
+    // E36 item 3 queues) is reporting now, or has reported since the
+    // finding was raised, and left it with none: no other review of that
+    // content will come to disposition it.
+    if (!(args.reviewing === true || f.reviewed_after === 1)) continue;
+    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
+  }
+  return n;
 }
 
 // The scope of the finding_disposition question an Alpha exception

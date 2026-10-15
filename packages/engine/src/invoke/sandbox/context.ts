@@ -26,6 +26,7 @@ import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
 import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
+import { CHANGE_SPEC_CATEGORIES, DISPOSITIONS } from '../../runs/report.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -249,6 +250,9 @@ const ROLE_TASK: Record<string, string> = {
 // from any role but the Reviewer makes the result invalid.
 const SEVERITY = { enum: ['critical', 'high', 'medium', 'low'] };
 const FINDING_ID = { type: 'string', pattern: '^fnd_', description: 'A finding id, as listed in /surety/context/findings.json.' };
+// What happens to a finding left with no disposition (store/transitions/
+// findings.ts askUndispositioned; the driver's ruling on the real M443 run).
+const OWED_TEXT = `A finding you raise in this result's \`findings\` has no id yet, so it cannot be named here. Every finding left with no disposition (one you raise, or a listed one you do not name) is put to the human owner, who chooses fix or accept, or for a ${CHANGE_SPEC_CATEGORIES.join(' or ')} finding a specification change; say in its message what the fix or the change would be.`;
 const FIELDS: Record<string, Record<string, unknown>> = {
   status: { const: 'completed' },
   summary: { type: 'string', description: 'What you did, in a few sentences.' },
@@ -337,13 +341,13 @@ const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
   dispositions: {
     type: 'array',
     description:
-      'What is to be done about each open finding listed in /surety/context/findings.json. fix: the engine registers fix work for it. defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides.',
+      `What is to be done about each open finding listed in /surety/context/findings.json, one entry per finding, named by its id: ${DISPOSITIONS.join(', ')}. fix: the engine registers fix work for it. defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides. ${OWED_TEXT}`,
     items: {
       type: 'object',
       required: ['finding', 'disposition'],
       properties: {
         finding: FINDING_ID,
-        disposition: { enum: ['fix', 'defer', 'accept'] },
+        disposition: { enum: [...DISPOSITIONS] },
         linked_issue: { type: 'string' },
         defer_target: { type: 'string', format: 'date-time' },
         target: { enum: ['plan'], description: 'With fix, on a contract_conflict finding you raised: the conflict is with the phase plan, not the code. The engine asks the Architect to replan the open phase instead of registering fix work, and the replacement resolves the finding.' },
@@ -497,14 +501,14 @@ export function writeContextPackage(
           ? [
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
-              'Give every open finding a disposition in your result\'s `dispositions`: `fix` registers fix work for it; without a disposition the finding stays open and nothing is done about it. Record new findings in `findings`, and your sign-offs in `signoffs`.',
+              `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it. Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
               "A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both.",
               '',
               ...checkList,
             ]
           : [
               '',
-              "Record what you find in your result's `findings`; name a listed finding by its id.",
+              "Record what you find in your result's `findings`; name a listed finding by its id. The Reviewer dispositions each finding you raise; one the Reviewer leaves with none is put to the human owner.",
               "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks), and in its `criterion` the criterion of the requirement index it breaks (R<n>.<m>, as listed with each check below). Without both, a fix of the finding can never be shown, and the finding stays open. If no check covers that criterion, report the finding anyway: the engine asks for the check to be corrected.",
               '',
               ...checkList,

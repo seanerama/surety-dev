@@ -10,6 +10,12 @@ import { adoptedTestsValid } from '../adopt/boundary.js';
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'];
 const CHANGE_KINDS = ['tightening', 'loosening', 'unclassifiable'];
+// A Reviewer's dispositions (F §6.2): the forms the engine reads (FORMS below).
+export const DISPOSITIONS = ['fix', 'defer', 'accept'] as const;
+// What the owner is offered for a finding left with no disposition
+// (store/transitions/queue.ts DISPOSITION_OWED): fix, accept, and for these
+// categories a specification change.
+export const CHANGE_SPEC_CATEGORIES = ['requirement_conflict', 'contract_conflict'] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isString = (v: unknown): v is string => typeof v === 'string';
@@ -37,7 +43,7 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
       v,
       (d) =>
         isString(d.finding) &&
-        ['fix', 'defer', 'accept'].includes(d.disposition as string) &&
+        (DISPOSITIONS as readonly string[]).includes(d.disposition as string) &&
         optString(d.linked_issue) &&
         (d.defer_target === undefined || isTime(d.defer_target)) &&
         // B12 (SEAM.md §382): the remediation a `fix` proposes.

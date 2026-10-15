@@ -51,7 +51,8 @@ import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, t
 import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
-import { correctionOpenKeys, correctionProposalDecided, requestsFromFindings, specChangeKind } from '../../spec/change.js';
+import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
+import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 
@@ -1139,10 +1140,58 @@ export function applyAlphaException(tx: Tx, args: { intent: string }): boolean {
   return true;
 }
 
-// finding_disposition asks two questions about a finding: a disposition a
-// Reviewer proposed beyond its authority, and (scope alpha_exception) an
-// Alpha exception (D2 §5 C1).
-const byScope = (d: Pick<Subject, 'scope'>): KindSpec => (d.scope === ALPHA_SCOPE ? ALPHA_EXCEPTION : DISPOSITION_PROPOSED);
+// A finding no one has dispositioned, after a Reviewer's report (the driver's
+// ruling on the real M443 run's silent stall): the owner is asked what is
+// to be done, never left with a gate held by a finding nothing will act on.
+// fix registers fix work; accept lets the gates go on; for a conflict with
+// the requirements or a contract, change_spec makes a specification change
+// request from the finding (the owner then approves its proposal) and
+// accepts the finding meanwhile.
+export const OWED_SCOPE = 'disposition_owed';
+const DISPOSITION_OWED: KindSpec = {
+  preview(tx, d) {
+    const f = findingRow(tx.db, d.subject_id);
+    if (!f || f.status !== 'open' || f.disposition !== null || f.proposed_disposition !== null) return null;
+    const conflict = (CHANGE_SPEC_CATEGORIES as readonly string[]).includes(f.category);
+    return {
+      manifest: dispositionManifest(tx, f),
+      options: [
+        { key: 'fix', label: 'Fix', consequence: 'The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code.', effect: { finding: f.id, disposition: 'fix' } },
+        ...(conflict
+          ? [
+              {
+                key: 'change_spec',
+                label: 'Change the specification',
+                consequence:
+                  'A specification change request is made from the finding (its message as the request), and the finding is accepted meanwhile so it no longer holds the gates; you approve the change\'s proposal when it is ready.',
+                effect: { finding: f.id, register: 'spec_change', disposition: 'accept' },
+              },
+            ]
+          : []),
+        { key: 'accept', label: 'Accept', consequence: 'The finding is dispositioned accept by the human owner: it stays recorded and no longer holds the gates. Nothing is changed.', effect: { finding: f.id, disposition: 'accept' } },
+      ],
+      question: `Finding ${f.id} (${f.category}, ${f.effective_severity}${f.criterion ? `, criterion ${f.criterion}` : ''}) has no disposition, and it holds the gates of the candidates it applies to: ${(f as FindingRow & { message: string }).message} Fix it${conflict ? ', change the specification' : ''}, or accept it.`,
+    };
+  },
+  manifest: (tx, d) => dispositionManifest(tx, findingRow(tx.db, d.subject_id)!),
+  reraise: true,
+  answer(tx, d, option, note) {
+    const f = findingRow(tx.db, d.subject_id)!;
+    consumeDecision(tx, d, option, note);
+    const binding = findingBinding(tx, f);
+    const disposition = option === 'fix' ? 'fix' : 'accept';
+    recordApproval(tx, d, { consequence: `finding ${f.id} dispositioned ${disposition}${option === 'change_spec' ? ' with a specification change requested' : ''}`, subjectType: 'finding', subjectId: f.id, contentHash: binding.acceptance_content_hash });
+    if (option === 'change_spec') requestFromFinding(tx, { project: f.project, finding: f.id, decision: d.id });
+    recordDisposition(tx, f, { disposition, authority: 'human', by: tx.actor.actor_kind, linked_issue: null, defer_target: null });
+    return consumed(d, [{ kind: 'tick' }]);
+  },
+};
+
+// finding_disposition asks three questions about a finding: a disposition a
+// Reviewer proposed beyond its authority, (scope alpha_exception) an Alpha
+// exception (D2 §5 C1), and (scope disposition_owed) a disposition no one
+// gave.
+const byScope = (d: Pick<Subject, 'scope'>): KindSpec => (d.scope === ALPHA_SCOPE ? ALPHA_EXCEPTION : d.scope === OWED_SCOPE ? DISPOSITION_OWED : DISPOSITION_PROPOSED);
 const DISPOSITION: KindSpec = {
   preview: (tx, d, facts) => byScope(d).preview(tx, d, facts),
   manifest: (tx, d, facts) => byScope(d).manifest(tx, d, facts),
