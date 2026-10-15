@@ -741,31 +741,45 @@ const registered = (fx, project) => pollUntil(() => one(fx.home, `SELECT "id" FR
 
 // ==== M443: idea to Alpha ======================================================================
 
-const tallyName = 'm5-real-tally';
+// The project's name: from the idea's identity block (`name:` in its
+// ```yaml surety-identity block), or `idea` when it names none. Sean's own
+// idea (SURETY_REAL_IDEA_FILE) never carries the reference brief's name.
+export function ideaName(text) {
+  const lines = String(text).split('\n');
+  const open = lines.findIndex((l) => /^```yaml\s+surety-identity\s*$/.test(l));
+  const close = open < 0 ? -1 : lines.findIndex((l, i) => i > open && /^```\s*$/.test(l));
+  const line = open < 0 || close < 0 ? null : lines.slice(open + 1, close).find((l) => /^name:/.test(l));
+  const raw = line ? line.slice('name:'.length).trim().replace(/^(["'])(.*)\1$/, '$2').trim() : '';
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+  return slug ? { name: raw, slug } : { name: 'idea', slug: 'idea' };
+}
 
 export async function m5aCreate(ctx) {
   const projects = [];
   return step(ctx, 'm5a_create', () =>
     onEngine(ctx, 'M443 m5a_create', { projects }, async (fx) => {
-      const repo = join(ctx.runDir, 'repos', 'tally');
+      // The idea: Sean's own brief if he gives one (SURETY_REAL_IDEA_FILE), else the reference brief (labelled).
+      // Nothing of the reference brief (its name, repository or README) reaches a project made from Sean's idea.
+      const ideaFile = process.env.SURETY_REAL_IDEA_FILE;
+      const idea = ideaFile ? readFileSync(ideaFile, 'utf8') : IDEA_BRIEF;
+      const { name: title, slug } = ideaFile ? ideaName(idea) : { name: 'Tally', slug: 'tally' };
+      const projectName = `m5-real-${slug}`;
+      const repo = join(ctx.runDir, 'repos', slug);
       if (!existsSync(join(repo, '.git'))) {
         mkdirSync(repo, { recursive: true });
         execFileSync('git', ['init', '-q', '-b', 'main', repo]);
-        writeFileSync(join(repo, 'README.md'), '# Tally\n');
+        writeFileSync(join(repo, 'README.md'), `# ${title}\n`);
         execFileSync('git', ['-C', repo, 'add', '-A']);
-        execFileSync('git', ['-C', repo, '-c', 'user.name=Sean', '-c', 'user.email=sean@example.invalid', 'commit', '-q', '-m', 'the repository Tally starts from']);
+        execFileSync('git', ['-C', repo, '-c', 'user.name=Sean', '-c', 'user.email=sean@example.invalid', 'commit', '-q', '-m', 'the repository the project starts from']);
         execFileSync('git', ['-C', repo, 'checkout', '-q', '--detach']);
       }
-      // The idea: Sean's own brief if he gives one (SURETY_REAL_IDEA_FILE), else the reference brief (labelled).
-      const ideaFile = process.env.SURETY_REAL_IDEA_FILE;
-      const idea = ideaFile ? readFileSync(ideaFile, 'utf8') : IDEA_BRIEF;
-      const res = await fx.engine.post('/v1/projects', { name: tallyName, tier: 'T2', dev_repo_path: repo, integration_branch: 'main', idea });
+      const res = await fx.engine.post('/v1/projects', { name: projectName, tier: 'T2', dev_repo_path: repo, integration_branch: 'main', idea });
       if (res.status !== 201) notEstablished('m5a_create', 'the project was not created', { status: res.status, text: res.text });
       const project = res.body.project?.id ?? res.body.id;
       projects.push(project);
       await registered(fx, project);
       const policy = await projectPolicy(ctx, 'M443', fx, project, { dayUsd: JOURNEY_BUDGET.M443_day_usd, phase_size: { min: 1, max: 5 }, widen: { alpha_deploy: 'on_phase_complete' } });
-      const out = { project, repo, idea_from: ideaFile ? `Sean's ${ideaFile}` : 'the reference brief (harness/journey/reference.mjs IDEA_BRIEF)', policy } ;
+      const out = { project, name: projectName, repo, idea_from: ideaFile ? `Sean's ${ideaFile}` : 'the reference brief (harness/journey/reference.mjs IDEA_BRIEF)', policy } ;
       observe(ctx, 'M443', 'create', out);
       return out;
     }),
@@ -827,7 +841,7 @@ export async function m5aSpec(ctx) {
   return step(ctx, 'm5a_spec', async () => {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_spec', { projects: [project], resume: project }, async (fx) => {
-      const s = await sessionStep(ctx, fx, project, 'spec_writer', { what: 'the specification', words: ownerSays('Write the specification from the accepted idea, at the standard tier, two phases.', 'rehearsal-owner', tallyBrief()), expect: ['spec_approval'], done: () => specVersions(fx.home, project)[0] });
+      const s = await sessionStep(ctx, fx, project, 'spec_writer', { what: 'the specification', words: ctx.rehearsal ? ownerSays('Write the specification from the accepted idea, at the standard tier, two phases.', 'rehearsal-owner', tallyBrief()) : null, expect: ['spec_approval'], done: () => specVersions(fx.home, project)[0] });
       const out = { ...s, spec: specVersions(fx.home, project) };
       observe(ctx, 'M443', 'spec', out);
       return out;
@@ -841,7 +855,7 @@ export async function m5aArchitecture(ctx) {
     return onEngine(ctx, 'M443 m5a_architecture', { projects: [project], resume: project }, async (fx) => {
       // Alpha configured before the plan can publish (its authoring may be dispatched at once).
       const alpha = await alphaOnce(ctx, 'M443', fx, project);
-      const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture and the first plan', words: ownerSays('Design it from the approved specification and plan phase 1.', 'rehearsal-architecture', TALLY_ARCHITECTURE), expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
+      const s = await sessionStep(ctx, fx, project, 'architect', { what: 'the architecture and the first plan', words: ctx.rehearsal ? ownerSays('Design it from the approved specification and plan phase 1.', 'rehearsal-architecture', TALLY_ARCHITECTURE) : null, expect: ['architecture_approval', 'plan_approval'], done: () => { const p = activePlanOf(fx.home, project, 1); return p?.published_at ? p : undefined; } });
       const out = { ...s, setup: alpha, plan: { id: s.value.id, generation: s.value.generation } };
       observe(ctx, 'M443', 'architecture', out);
       return out;
@@ -871,8 +885,14 @@ export async function m5aChange(ctx) {
     const { project } = stepValue(ctx, 'm5a_create');
     return onEngine(ctx, 'M443 m5a_change', { projects: [project], resume: project }, async (fx) => {
       const file = join(ctx.runDir, 'change-request.md');
-      if (!existsSync(file)) writeFileSync(file, process.env.SURETY_REAL_CHANGE_FILE ? readFileSync(process.env.SURETY_REAL_CHANGE_FILE, 'utf8') : TALLY_CHANGE_TEXT);
-      const cli = seanTypes(ctx, fx.home, ['spec', 'change-request', '--project', project, '--file', file], `the specification change (write your own in ${file} first, or keep the reference CR-1 there)`);
+      // The reference CR-1 only for the reference brief (and the rehearsal); with Sean's own idea
+      // the change is his: SURETY_REAL_CHANGE_FILE, or the file he writes before his command.
+      const own = Boolean(process.env.SURETY_REAL_IDEA_FILE) && !ctx.rehearsal;
+      if (!existsSync(file)) {
+        if (process.env.SURETY_REAL_CHANGE_FILE) writeFileSync(file, readFileSync(process.env.SURETY_REAL_CHANGE_FILE, 'utf8'));
+        else if (!own) writeFileSync(file, TALLY_CHANGE_TEXT);
+      }
+      const cli = seanTypes(ctx, fx.home, ['spec', 'change-request', '--project', project, '--file', file], existsSync(file) ? `the specification change (in ${file}; edit it first if you like)` : `the specification change (write it in ${file} first)`);
       const d = await drive(
         ctx,
         fx,
