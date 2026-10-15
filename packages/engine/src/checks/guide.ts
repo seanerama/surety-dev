@@ -361,6 +361,8 @@ export interface PhaseAuthoringFacts {
   architecture: string | null;
   environments: { name: string; fields: Record<string, string> }[] | null;
   follow_up?: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
+  // A gap follow-up's: per stage, what its gate scope lacks.
+  gaps?: { stage: number; kinds: string[]; criteria: string[]; areas: string[] }[] | null;
 }
 
 // The authoring result's own fields (B.7), beside the Verifier's: its
@@ -397,6 +399,21 @@ export const AUTHORING_RESULT_FIELDS: Record<string, Record<string, unknown>> = 
 
 export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
   const out: string[] = ['', "## The phase's check authoring", ''];
+  // A gap follow-up (the driver's ruling C on the real M443 run): the
+  // stages' gates lack checks no one was asked to write.
+  if (a.gaps && a.gaps.length > 0) {
+    out.push(
+      `You author the protected checks that ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'} still lacks. Each stage's gate takes only the checks of its own scope (the requirements it implements and its modules), and for these stages the applied checks do not provide what the gate needs: a check of each kind named, covering the stage's requirements, and a check covering each criterion named. Write them against the code as it is; the other checks of the phase are already applied.`,
+      '',
+      '### What each stage lacks',
+      '',
+      '```json',
+      JSON.stringify(a.gaps, null, 2),
+      '```',
+    );
+    out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation`:', '', '```json', JSON.stringify(a.stages, null, 2), '```');
+    return out;
+  }
   // A deferral's follow-up (the slice-37 review's M6): what it is asked for,
   // and the stages as they stand, not the first authoring's account.
   if (a.follow_up) {

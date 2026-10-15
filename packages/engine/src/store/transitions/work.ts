@@ -6,7 +6,7 @@
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
 import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
-import { authoringShortfall } from '../../plan/phase.js';
+import { authoringShortfall, stageScopeGaps } from '../../plan/phase.js';
 import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
@@ -544,7 +544,10 @@ export function registerPlan(
   let inherited = false;
   if (publication && replaces) {
     const effective = effectiveVersion(tx.db, args.project);
-    if (effective && authoringShortfall(tx.db, plan, effective.id).length === 0) {
+    // Ready as published only when the stages' own gate scopes are met too
+    // (stageScopeGaps; the real M443 run's replacement inherited readiness
+    // with stage 5 lacking its integration kind).
+    if (effective && authoringShortfall(tx.db, plan, effective.id).length === 0 && stageScopeGaps(tx.db, plan, effective.id).length === 0) {
       tx.db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ?, "authoring_ready_by" = ? WHERE "id" = ?').run(tx.at, effective.id, plan);
       tx.emit('phase.authoring_ready', { project: args.project, phase_plan: plan }, { protected_version: effective.id, inherited_from: replaces.phase_plan });
       inherited = true;

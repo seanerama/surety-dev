@@ -194,6 +194,10 @@ export class Scheduler {
     // (store/transitions/findings.ts askUndispositioned): an existing one
     // gets its question at the next tick.
     await this.rt.engine('findings.ask_undispositioned', { project }).catch((err) => log('undispositioned findings', err, { project }));
+    // A stage gate never waits for a check no one will write: a gap of the
+    // open plan's stage scopes gets a check_authoring follow-up (plan/phase.ts
+    // registerGapAuthoring).
+    await this.rt.engine('plan.gap_authoring', { project }).catch((err) => log('gap authoring', err, { project }));
     // No item stays awaiting a decision it has lost (store/transitions/awaiting.ts).
     const swept = await this.rt.engine<{ settled: number; unexplained: string[] }>('work.sweep_awaiting', { project }).catch((err) => {
       log('awaiting sweep', err, { project });

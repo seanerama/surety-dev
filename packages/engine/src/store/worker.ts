@@ -204,7 +204,7 @@ import { applicationFacts as specApplicationFacts, beginApplication as beginSpec
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
 import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
-import { phaseStep } from '../plan/phase.js';
+import { phaseStep, registerGapAuthoring } from '../plan/phase.js';
 import {
   attemptTarget,
   attemptUsage,
@@ -637,6 +637,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'gate.observe_refs': (tx, a) => observeGateRefs(tx, a),
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
+  'plan.gap_authoring': (tx, a: { project: string }) => registerGapAuthoring(tx, a),
   'findings.ask_undispositioned': (tx, a: { project: string }) => askUndispositioned(tx, a),
   'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
