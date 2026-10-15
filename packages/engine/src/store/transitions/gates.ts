@@ -889,7 +889,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (conformance && superseded === null) {
     const failed = scope.required.some((c) => states[c.id] === 'failed');
     const blockedBy = reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED' || r.code === 'FINDING_BLOCKING' || r.code === 'FINDING_UNSATISFIED') || failed;
-    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id });
+    conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id, sourceMoved: reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED') });
   }
   if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
   if (kind === 'alpha_complete') {

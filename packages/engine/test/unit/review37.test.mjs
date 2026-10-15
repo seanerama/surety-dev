@@ -476,7 +476,7 @@ test("(3), replacing (B): a proposed change's question records how many executio
 
 const { dueConformanceGates, conformanceAfterEvaluation } = await import(join(dist, 'adopt', 'conformance.js'));
 
-test('a conformance gate, conformed or not, is due again when the integration head the engine expects or its source binding moves; never while they stand; a conformed stage whose source moved is no longer conformed', (t) => {
+test("a conformance gate, conformed or not, is due again when an out-of-band move of the integration branch is adopted or its binding moves, never on the engine's own moves; a conformed stage loses its conformance only to a moved source", (t) => {
   const h = store(t);
   h.plan('plan_1', 1);
   h.stage('stage_c', 'plan_1', 1, 'verified');
@@ -493,14 +493,19 @@ test('a conformance gate, conformed or not, is due again when the integration he
       JSON.stringify({ conformance: snap }),
     );
   const candidate = h.db.prepare(`SELECT * FROM candidates WHERE id = 'cand_1'`).get();
-  evaluated({ expected: 'H', head: 'H', source_revision: 'A', source_digest: 'dA' });
+  const adopt = () => transact(h.db, ENGINE_ACTOR, (tx) => tx.emit('repo.reconciled', { project: 'prj_1', out_of_band_change: 'oob_1' }, { disposition: 'adopt', ref: 'refs/heads/main', adopted: 'R' }));
+  evaluated({ expected: 'H', head: 'H', adopted: 0, source_revision: 'A', source_digest: 'dA' });
   assert.deepEqual(dueConformanceGates(h.db, candidate), [], 'conformed, nothing moved: not due');
-  h.run(`UPDATE ref_registry SET expected_oid = 'R' WHERE id = 'ref_main'`);
-  assert.deepEqual(dueConformanceGates(h.db, candidate), ['stage_c'], 'the expected head moved (an adopted commit): due again');
-  evaluated({ expected: 'R', head: 'R', source_revision: 'A', source_digest: 'dA' });
+  h.run(`UPDATE ref_registry SET expected_oid = 'E' WHERE id = 'ref_main'`);
+  assert.deepEqual(dueConformanceGates(h.db, candidate), [], "the engine's own journaled move (a record, a later phase's integration): not due (M408 (e))");
+  adopt();
+  assert.deepEqual(dueConformanceGates(h.db, candidate), ['stage_c'], 'an adopted out-of-band move: due again');
+  evaluated({ expected: 'R', head: 'R', adopted: 1, source_revision: 'A', source_digest: 'dA' });
   assert.deepEqual(dueConformanceGates(h.db, candidate), [], 'evaluated on it: not due');
   h.run(`UPDATE stages SET source_revision = 'P' WHERE id = 'stage_c'`);
   assert.deepEqual(dueConformanceGates(h.db, candidate), ['stage_c'], 'the binding moved: due again');
-  transact(h.db, ENGINE_ACTOR, (tx) => conformanceAfterEvaluation(tx, { stage: 'stage_c', satisfied: false, blocked: true, evaluation: 'gate_x' }));
-  assert.equal(h.db.prepare(`SELECT conformance_state FROM stages WHERE id = 'stage_c'`).get().conformance_state, 'blocked', 'its conformance no longer holds');
+  transact(h.db, ENGINE_ACTOR, (tx) => conformanceAfterEvaluation(tx, { stage: 'stage_c', satisfied: false, blocked: true, evaluation: 'gate_y', sourceMoved: false }));
+  assert.equal(h.db.prepare(`SELECT conformance_state FROM stages WHERE id = 'stage_c'`).get().conformance_state, 'conformed', 'a check not yet run again takes nothing away');
+  transact(h.db, ENGINE_ACTOR, (tx) => conformanceAfterEvaluation(tx, { stage: 'stage_c', satisfied: false, blocked: true, evaluation: 'gate_x', sourceMoved: true }));
+  assert.equal(h.db.prepare(`SELECT conformance_state FROM stages WHERE id = 'stage_c'`).get().conformance_state, 'blocked', 'its source moved: its conformance no longer holds');
 });
