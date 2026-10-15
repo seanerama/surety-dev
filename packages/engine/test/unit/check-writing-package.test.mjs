@@ -192,7 +192,7 @@ test("a check_correction Verifier's package: the roots, the definitions director
   assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'], 'the correction package states the check elements');
   assert.equal(blocks['verifier.kinds'].member, 'kind');
   assert.equal(blocks['verifier.covers'].criteria, 'criteria');
-  assert.deepEqual(blocks['verifier.gate_kinds_floor'], { tier: 'T1', floor: ['acceptance', 'smoke'], gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.deepEqual(blocks['verifier.gate_kinds_floor'], { tier: 'T1', floor: ['acceptance', 'smoke'], gate_kinds: ['stage', 'alpha_authorize'], member: 'gate_kinds', allowed: ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'], non_empty: true, no_repeats: true });
   assert.ok(!/tier is T1: every scope requires/.test(prompt), 'the floor is not restated in prose');
   assert.match(prompt, /module `payments` raises a scope that includes it to T2, .*`integration`, `security_lint`/);
   assert.match(prompt, /sensitivity_floor.*`authentication`, `payments_financial_data`/);
@@ -413,7 +413,7 @@ test("a check_correction Verifier in a project with an environment: the kinds, t
   assert.deepEqual(facts.check_writing.environments, [{ name: 'alpha', targets: ['app'], check_secrets: ['deploy/probe_key'], runtime: null }]);
   const blocks = readsBlocks(prompt);
   assert.deepEqual(blocks['verifier.post_deploy'], { kinds: ['post_deploy_behavior', 'post_deploy_identity'], gate_kind: 'alpha_complete', required: 'post_deploy_behavior', variable: 'SURETY_TARGET_<NAME>', environments: [{ name: 'alpha', targets: ['app'] }] });
-  assert.deepEqual(blocks['verifier.requires'], { member: 'requires', values: ['environment', 'artifact_digest'], kinds: ['post_deploy_behavior', 'post_deploy_identity'] });
+  assert.deepEqual(blocks['verifier.requires'], { member: 'requires', values: ['environment', 'artifact_digest'], kinds: ['post_deploy_behavior', 'post_deploy_identity'], no_repeats: true });
   assert.deepEqual(blocks['verifier.secrets'].environments, [{ name: 'alpha', check_secrets: ['deploy/probe_key'], variables: [{ ref: 'deploy/probe_key', variable: 'SURETY_SECRET_PROBE_KEY' }] }]);
   assert.deepEqual(blocks['verifier.target_variables'].environments, [{ name: 'alpha', targets: [{ name: 'app', variable: 'SURETY_TARGET_APP' }] }]);
   assert.equal(blocks['verifier.target_variables'].value_form, 'http://127.0.0.1:<port>');
@@ -471,9 +471,9 @@ test("the package states the tier's kind floor at stage and alpha_authorize as o
   environment(db, { id: 'env_a', name: 'alpha', content: { adapter: 'local_service', targets: ['app'], port: 4000, check_secrets: [] } });
   const { prompt } = packageOf(t, db, 'run_cc');
   const floor = readsBlocks(prompt)['verifier.gate_kinds_floor'];
-  assert.deepEqual(floor, { tier: 'T1', floor: KIND_INVENTORY.T1, gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.deepEqual(floor, { tier: 'T1', floor: KIND_INVENTORY.T1, gate_kinds: ['stage', 'alpha_authorize'], member: 'gate_kinds', allowed: ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'], non_empty: true, no_repeats: true });
   assert.match(prompt, /ACCEPTANCE_SCOPE_INCOMPLETE/, 'the gloss names what a missing listing is refused with');
   assert.equal(prompt.split('"gate_kinds"').length - 1 >= 1, true);
   const { verifierElements } = await import(join(dist, 'packages', 'reads.js'));
-  assert.deepEqual(verifierElements({ governed: null, tier: 'T9', modules: [], requirements: [], stages: [] }, { authoring: false, retrofit: false })['verifier.gate_kinds_floor'].data, { tier: 'T9', floor: null, gate_kinds: ['stage', 'alpha_authorize'] });
+  assert.deepEqual(verifierElements({ governed: null, tier: 'T9', modules: [], requirements: [], stages: [] }, { authoring: false, retrofit: false })['verifier.gate_kinds_floor'].data, { tier: 'T9', floor: null, gate_kinds: ['stage', 'alpha_authorize'], member: 'gate_kinds', allowed: ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'], non_empty: true, no_repeats: true });
 });

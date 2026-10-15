@@ -69,6 +69,9 @@ export type ContextFacts = {
   check_writing?: CheckWritingFacts | null;
   // For check_authoring work: the phase-authoring package (D6 §6.2; N04).
   authoring?: PhaseAuthoringFacts | null;
+  // For check_authoring and check_correction work after its last proposal
+  // was rejected (M443): the proposal, the note, its discovery errors.
+  rejected_proposal?: { proposal: string; note: string | null; errors: { path: string; code: string | null }[] } | null;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
   // Whether the project was adopted (D6 §8): its packages' retrofit variants.
   adopted?: boolean;
@@ -572,6 +575,23 @@ export function writeContextPackage(
   // give them: then the task says so, and points to no section.
   const writing = correcting ? (facts?.check_writing ?? null) : null;
   const writingText = writing ? checkWritingText(writing, checkList, { authoring: claim.work_kind === 'check_authoring' }) : [];
+  // A check writer's repair after its proposal was rejected (M443): what
+  // the engine found wrong with it, so the repair does not repeat it.
+  const rejected = correcting ? (facts?.rejected_proposal ?? null) : null;
+  const rejectedText = rejected
+    ? [
+        '',
+        '## Your last proposal was rejected',
+        '',
+        `Proposal ${rejected.proposal} was rejected${rejected.note ? `: "${rejected.note}"` : ''}.`,
+        ...(rejected.errors.length > 0
+          ? [
+              'The engine found these errors in its definitions (file#pointer: code); correct each, against the sections on what the engine reads:',
+              ...rejected.errors.map((x) => `- \`${x.path}\`: ${x.code ?? 'code unknown'}`),
+            ]
+          : ['The engine recorded no discovery error in it.']),
+      ]
+    : [];
   // A repair run (D3 §2.10): the checks that failed on the item's current
   // candidate, each with its output in /surety/context/check-outputs/.
   const failedChecks = claim.check_outputs ?? [];
@@ -609,6 +629,7 @@ export function writeContextPackage(
     ...routedText,
     ...writingText,
     ...(authoring ? phaseAuthoringText(authoring) : []),
+    ...rejectedText,
     ...repairText,
     ...(facts?.replan ? replanPromptText(facts.replan) : []),
     ...(facts?.phase

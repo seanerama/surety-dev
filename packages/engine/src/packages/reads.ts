@@ -25,7 +25,7 @@ import { INDEX_COLUMNS, INDEX_CRITERION, INDEX_KEY, INDEX_LIST_SEPARATOR, INDEX_
 import { SECRET_NAME_RULE, SECRET_PREFIX, TARGET_NAME_RULE, TARGET_PREFIX, checkSecretVariable, targetValue, targetVariable } from '../checks/variables.js';
 import { dirname } from 'node:path';
 
-import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, DIRECT_RUNNER_MEMBERS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
+import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, CRITERION, DEPLOY_SECRET_REFERENCE, DIRECT_RUNNER_MEMBERS, GATE_KINDS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
 import { KIND_INVENTORY, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS } from '../plan/check.js';
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE, adrPath, planPath } from '../plan/schemas.js';
@@ -79,7 +79,7 @@ export function readsResultFields(elements: readonly ReadsElement[]): Record<str
 export const readsIds = (elements: readonly ReadsElement[]): string[] => elements.map((e) => e.id);
 
 const KEY_PATTERN = '^R[1-9][0-9]*$';
-const CRITERION_PATTERN = '^R[1-9][0-9]*\\.[1-9][0-9]*$';
+const CRITERION_PATTERN = CRITERION.source;
 const ADR_KEY_PATTERN = '^ADR-[0-9]{3,}$';
 const section = (n: number, title: string): string => `## ${n}. ${title}`;
 
@@ -369,23 +369,40 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
     },
     'verifier.gate_kinds_floor': {
       id: 'verifier.gate_kinds_floor',
-      gloss: `Every scope needs a required acceptance-origin check of each floor kind listing that gate: list ${ROUTE_SCOPES.join(' and ')} in \`gate_kinds\` on each, or the deployment request is refused ACCEPTANCE_SCOPE_INCOMPLETE.`,
-      data: { tier: f?.tier ?? null, floor: tier ? [...KIND_INVENTORY[tier]] : null, gate_kinds: [...ROUTE_SCOPES] },
+      gloss: `Every scope needs a required acceptance-origin check of each floor kind listing that gate: list ${ROUTE_SCOPES.join(' and ')} in \`gate_kinds\` on each, or the deployment request is refused ACCEPTANCE_SCOPE_INCOMPLETE. \`gate_kinds\` is a non-empty list, no repeats, of the values in \`allowed\`.`,
+      // The parser's own (schema.ts parseDefinition): an empty or absent
+      // list, a value not of GATE_KINDS, or a repeat is refused.
+      data: { tier: f?.tier ?? null, floor: tier ? [...KIND_INVENTORY[tier]] : null, gate_kinds: [...ROUTE_SCOPES], member: 'gate_kinds', allowed: [...GATE_KINDS], non_empty: true, no_repeats: true },
     },
     'verifier.requires': {
       id: 'verifier.requires',
       gloss: 'A definition of a post-deploy kind requires the environment and the artifact digest; no other kind takes `requires`.',
-      data: { member: 'requires', values: [...REQUIRES_VALUES], kinds: [...POST_DEPLOY_ORDER] },
+      data: { member: 'requires', values: [...REQUIRES_VALUES], kinds: [...POST_DEPLOY_ORDER], no_repeats: true },
     },
     'verifier.covers': {
       id: 'verifier.covers',
-      gloss: 'Every criterion needs a required acceptance-origin check of a criteria kind naming it in `covers.criteria`; `covers.sensitive_areas` only on sensitivity_floor.',
+      gloss:
+        'Every criterion needs a required acceptance-origin check of a criteria kind naming it in `covers.criteria`; and every acceptance-origin check of a criteria kind (origin defaults to acceptance) must name at least one criterion: a check meant to cover none is `origin: developer`, which carries no `covers` and counts toward no criterion or tier kind. `covers.sensitive_areas`, at least one, only and always on sensitivity_floor, which is never developer-origin.',
+      // Each rule as parseDefinition (schema.ts) and criterionErrors enforce
+      // it: an acceptance-origin check of a COVERING_KINDS kind with no
+      // criterion is refused `/covers` invalid_value; a `covers` member on a
+      // developer-origin check is refused covers_not_allowed, so a
+      // sensitivity_floor check, which needs its areas, is never one.
       data: {
         member: 'covers',
         criteria: 'criteria',
         sensitive_areas: 'sensitive_areas',
+        members: ['criteria', 'sensitive_areas'],
         criteria_kinds: [...COVERING_KINDS],
         refused_on: CHECK_KINDS.filter((k) => !COVERING_KINDS.includes(k) && k !== 'sensitivity_floor'),
+        criterion_pattern: CRITERION.source,
+        criteria_known: 'each a criterion of the approved requirement index',
+        origin_default: 'acceptance',
+        must_cover_one: true,
+        must_cover_one_on: { origin: 'acceptance', kinds: [...COVERING_KINDS] },
+        developer_origin: 'covers nothing, counts toward no criterion or tier kind; it carries no covers member',
+        sensitivity_floor: { member: 'sensitive_areas', must_name_one: true, areas: [...SENSITIVE_AREAS], origin: 'acceptance' },
+        no_repeats: true,
       },
     },
     'verifier.secrets': {
@@ -394,6 +411,9 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
       data: {
         member: 'secrets',
         reference: 'deploy/<name>',
+        reference_pattern: DEPLOY_SECRET_REFERENCE.source,
+        only_with: { requires: 'environment' },
+        no_repeats: true,
         variable: `${SECRET_PREFIX}<NAME>`,
         name_rule: SECRET_NAME_RULE,
         environments: envs === null ? null : envs.map((e) => ({ name: e.name, check_secrets: e.check_secrets, variables: e.check_secrets === null ? null : e.check_secrets.map((ref) => ({ ref, variable: checkSecretVariable(ref) })) })),
