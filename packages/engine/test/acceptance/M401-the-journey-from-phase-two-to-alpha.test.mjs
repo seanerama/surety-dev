@@ -243,7 +243,21 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     const acts = humanActsOf(fx.home, J.ctx.project, { sinceSeq: J.switched.seq });
     const show = `${JSON.stringify(acts)}; posts ${JSON.stringify(J.ctx.humanActs)}`;
     assert.deepEqual([...new Set(acts.map((h) => h.kind))].sort(), ['check_correction_unclassifiable', 'spec_change', 'spec_change_request'], `the human acts on the project lane: CR-1's submission, its approval and its check correction (${show})`);
-    assert.deepEqual([acts.filter((h) => h.kind === 'spec_change_request').length, acts.filter((h) => h.kind === 'spec_change').length], [1, 1], `CR-1 submitted once and its change consumed once (${show})`);
+    assert.equal(acts.filter((h) => h.kind === 'spec_change_request').length, 1, `CR-1 submitted once (${show})`);
+    // The driver's ruling (SEAM §464): an approval whose effect is invalidated
+    // before it applies (EFFECT_PRECONDITION_CHANGED, a new result moving the
+    // impact, D6 §4.4) is asked again, and the owner answers again. Every
+    // spec_change answered is about CR-1; the change is applied exactly once
+    // (one application done, one spec.change_approved, version 2 once); and
+    // every consumed answer but the one applied had its effect invalidated.
+    const answeredChanges = acts.filter((h) => h.kind === 'spec_change');
+    assert.ok(answeredChanges.length >= 1, `CR-1's change answered (${show})`);
+    for (const h of answeredChanges) assert.equal(withStore(fx.home, (db) => db.prepare('SELECT "subject_id" FROM "decisions" WHERE "id" = ?').get(h.id))?.subject_id, J.change.request.id, `each spec_change answered is about CR-1 (${h.id})`);
+    const applications = withStore(fx.home, (db) => db.prepare(`SELECT "id", "decision", "status", "invalidated_reason" FROM "effect_intents" WHERE "kind" = 'spec_change_application' AND "decision" IN (${answeredChanges.map(() => '?').join(', ')}) ORDER BY rowid`).all(...answeredChanges.map((h) => h.id)));
+    assert.equal(applications.filter((x) => x.status === 'done').length, 1, `the change applied exactly once (${JSON.stringify(applications)})`);
+    assert.deepEqual(applications.filter((x) => x.status !== 'done').map((x) => [x.status, x.invalidated_reason]), Array(answeredChanges.length - 1).fill(['invalidated', 'EFFECT_PRECONDITION_CHANGED']), `every other answer's effect invalidated before it applied (${JSON.stringify(applications)})`);
+    assert.equal(eventsAbout(fx.home, 'spec.change_approved', p.id).filter((e) => e.subject?.spec_change_request === J.change.request.id).length, 1, 'one spec.change_approved for CR-1');
+    assert.equal(specRevisions(fx.home, p.id).filter((r) => r.version === 2).length, 1, 'version 2 once');
     const owned = acts.filter((h) => h.kind === 'check_correction_unclassifiable');
     const origins = owned.map((h) => correctionOrigin(fx.home, h.id));
     assert.ok(origins.includes('check_correction') && origins.every((o) => o === 'check_correction' || o === 'check_authoring') && origins.filter((o) => o === 'check_authoring').length <= 1, `the unclassifiable decisions: CR-1's check correction, and at most phase 2's authoring (${JSON.stringify(origins)})`);
