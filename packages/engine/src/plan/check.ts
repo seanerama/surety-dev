@@ -57,7 +57,11 @@ export interface BundleBaseline {
   // execution-inputs digest and the requirement keys they implement. Each
   // is a stage of the plan whether the file lists it or not; listed with
   // other inputs it is a second stage under its number.
-  kept?: { number: number; digest: string | null; implements: string[] }[];
+  kept?: { number: number; digest: string | null; implements: string[]; validated?: string[] }[];
+  // The criteria the replacement's trigger touched (a specification
+  // change's changed or gained criteria): a kept stage's validation does
+  // not settle them (KEPT_STAGE_RULE).
+  touched?: string[];
   // The approved artifacts, for the computed diff (B03): null for a first
   // bundle, which has none.
   approved: { modules: ModuleMap; roadmap: Roadmap; adrs: Record<string, string>; architecture_text: string | null } | null;
@@ -195,6 +199,12 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   const stageNumbers = plan.stages.map((s) => s.number);
   const kept = baseline.kept ?? [];
   const keptNumbers = kept.map((k) => k.number);
+  const touchedSet = new Set(baseline.touched ?? []);
+  // The kept stages that stand as built: omitted, or listed exactly.
+  const keptStanding = kept.filter((k) => {
+    const listed = plan.stages.find((st) => st.number === k.number);
+    return listed === undefined || (k.digest !== null && k.digest === executionInputsDigest(listed));
+  });
   const phase = a.roadmap.phases.find((p) => p.number === plan.phase);
 
   // 1. References.
@@ -321,7 +331,13 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     // on the real M443 run's replan).
     const k = kept.find((x) => x.number === s.number);
     const keptUnchanged = k !== undefined && k.digest !== null && k.digest === executionInputsDigest(s);
-    const missing = keptUnchanged ? scope.missing.criteria.filter((c) => !plan.stages.some((t) => t !== s && t.validation.criteria.includes(c))) : scope.missing.criteria;
+    // And (the driver's ruling on the retry): a criterion a kept stage
+    // (omitted, or listed exactly) validated as built, and the trigger did
+    // not touch, stays that stage's, and counts as validated: a new stage
+    // implementing the same requirement validates only what was gained or
+    // changed.
+    const settled = (c: string) => !touchedSet.has(c) && keptStanding.some((x) => x.number !== s.number && (x.validated ?? []).includes(c));
+    const missing = (keptUnchanged ? scope.missing.criteria.filter((c) => !plan.stages.some((t) => t !== s && t.validation.criteria.includes(c))) : scope.missing.criteria).filter((c) => !settled(c));
     unvalidatedCriteria.push(...missing.map((c) => `stage ${s.number}:${c}`));
     unvalidatedAreas.push(...scope.missing.areas.map((area) => `stage ${s.number}:${area.replace(/^area:/, '')}`));
     missingKinds.push(...scope.missing.kinds.map((k) => `stage ${s.number}:${k.replace(/^kind:/, '')}`));
@@ -402,11 +418,17 @@ export function executionInputsDigest(s: PlanStage): string {
   return sha256(canonical({ number: s.number, goal: s.goal, implements: [...s.implements].sort(), tasks: s.tasks, modules: [...s.modules].sort(), adrs: [...s.adrs].sort(), depends_on: [...s.depends_on].sort(), validation: s.validation, integration_obligations: s.integration_obligations }));
 }
 
+// The criteria a replacement's trigger touched (its `stale`, as
+// `criterion:<id>`): those a kept stage's validation no longer settles.
+export function touchedCriteria(stale: unknown): string[] {
+  return Array.isArray(stale) ? stale.filter((x): x is string => typeof x === 'string' && x.startsWith('criterion:')).map((x) => x.slice('criterion:'.length)) : [];
+}
+
 // The kept-stage rule (D6 §5.7; B08), stated to the Architect as this check
 // applies it (plan/replan-package.ts): an integrated or verified stage of
 // the plan a replan replaces is kept as built.
 export const KEPT_STAGE_RULE =
-  "Omitting a kept stage is always valid: it stays as built. Listing one is valid only with exactly the inputs it was built with (number, goal, implements, tasks, modules, adrs, depends_on, validation, integration_obligations); a kept stage listed with any other input is refused (PLAN_DUPLICATE_STAGE). Criteria a kept stage's requirement gained or changed since it was built are planned in a new stage, under a new number, that implements that requirement and validates them.";
+  "Omitting a kept stage is always valid: it stays as built. Listing one is valid only with exactly the inputs it was built with (number, goal, implements, tasks, modules, adrs, depends_on, validation, integration_obligations); a kept stage listed with any other input is refused (PLAN_DUPLICATE_STAGE). Criteria a kept stage's requirement gained or changed since it was built are planned in a new stage, under a new number, that implements that requirement and validates only those gained or changed criteria; the requirement's other criteria stay validated by the kept stage.";
 
 export const PLAN_REASONS = [
   'PLAN_UNKNOWN_REQUIREMENT',

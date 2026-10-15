@@ -111,12 +111,19 @@ function isKept(s: StageRow, subjectWork: string | null): boolean {
 
 // The kept stages of a plan, for the check (BundleBaseline.kept): numbers,
 // digests and the requirement keys they implement.
-export function keptOf(db: Db, plan: string, subjectWork: string | null = null): { number: number; digest: string | null; implements: string[] }[] {
+// `validated`: the criteria its validation named when it was built.
+export function keptOf(db: Db, plan: string, subjectWork: string | null = null): { number: number; digest: string | null; implements: string[]; validated: string[] }[] {
   const keyOf = (r: string) => (db.prepare('SELECT "key" FROM "requirements" WHERE "id" = ?').get(r) as { key: string } | undefined)?.key ?? r;
   return stagesOf(db, plan)
     .filter((s) => isKept(s, subjectWork))
-    .map((s) => ({ number: s.number, digest: s.execution_inputs_digest, implements: (parseJson<string[]>(s.implements) ?? []).map(keyOf) }));
+    .map((s) => ({
+      number: s.number,
+      digest: s.execution_inputs_digest,
+      implements: (parseJson<string[]>(s.implements) ?? []).map(keyOf),
+      validated: parseJson<{ criteria?: string[] }>((s as StageRow & { validation?: string | null }).validation ?? null)?.criteria ?? [],
+    }));
 }
+
 
 export type StageClass = 'kept' | 'retained' | 'superseded' | 'cancelled';
 

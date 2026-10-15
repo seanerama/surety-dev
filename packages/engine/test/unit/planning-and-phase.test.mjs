@@ -482,3 +482,25 @@ test("a kept stage listed unchanged is not charged criteria its requirement gain
   // Omitted, with stage 4 for the new criterion: passes.
   assert.deepEqual(codes(checkPlan(base, artifacts([s1, s4]))), []);
 });
+
+test('the retry case: kept stage 2 implements R8 and validated R8.1 to R8.5; R8.4 changed; a new stage 4 implementing R8 that validates only R8.4 passes; R8.4 unvalidated is charged; untouched criteria stay the kept stage\'s', () => {
+  const R8 = { key: 'R8', criteria: ['R8.1', 'R8.2', 'R8.3', 'R8.4', 'R8.5'], sensitive_areas: [], withdrawn: false, blocked_by_questions: [] };
+  const kept2 = stage(2, { implements: ['R8'], validation: { criteria: ['R8.1', 'R8.2', 'R8.3', 'R8.4', 'R8.5'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  const base = baseline({
+    requirements: [...baseline().requirements, R8],
+    kept: [{ number: 2, digest: executionInputsDigest(kept2), implements: ['R8'], validated: kept2.validation.criteria }],
+    touched: ['R8.4'],
+  });
+  const roadmapWith = (a) => ({ ...a, roadmap: { ...a.roadmap, phases: [{ ...a.roadmap.phases[0], requirement_ids: [...a.roadmap.phases[0].requirement_ids, 'R8'] }] } });
+  const s1 = GOOD[0];
+  const s3 = stage(3, { implements: ['R2'], validation: { criteria: ['R2.1'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  const s4 = (criteria) => stage(4, { implements: ['R8'], validation: { criteria, kinds: ['acceptance', 'smoke'], sensitive_areas: [] } });
+  // Omitted kept stage 2; stage 4 validates R8.4 only.
+  assert.deepEqual(codes(checkPlan(base, roadmapWith(artifacts([s1, s3, s4(['R8.4'])])))), []);
+  // Listed exactly, the same.
+  assert.deepEqual(codes(checkPlan(base, roadmapWith(artifacts([s1, kept2, s3, s4(['R8.4'])])))), []);
+  // The touched criterion validated by no new stage: charged (to the kept stage listed exactly, and to stage 4).
+  assert.deepEqual(subjects(checkPlan(base, roadmapWith(artifacts([s1, s3, s4(['R8.1'])]))), 'PLAN_CRITERION_UNVALIDATED'), ['stage 4:R8.4']);
+  // With no trigger touching it, nothing of R8 is owed again.
+  assert.deepEqual(codes(checkPlan({ ...base, touched: [] }, roadmapWith(artifacts([s1, s3, s4([])])))), []);
+});
