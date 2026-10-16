@@ -440,7 +440,7 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
     '',
     'Write checks only for the criteria this phase owes, the ones its stages validate. A criterion of a later phase (an interface of the module map no stage of this plan creates, say) is authored with that phase: write no check for it here and do not list it in deferred_criteria.',
     '',
-    'A later phase adds checks under new declared inputs; a check whose inputs cover the whole protected tree changes with any addition, and the classifier says so.',
+    'A later phase adds checks under new declared inputs; a check whose inputs name a directory, or cover the whole protected tree, changes with any addition under it, and the classifier then sends the addition to the owner. Declare each check\'s `inputs` file by file: its program and the shared helpers it imports.',
   );
   out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation` (the criteria, kinds and areas its checks must cover):', '', '```json', JSON.stringify(a.stages, null, 2), '```');
   out.push('', "### The module map's interfaces", '');

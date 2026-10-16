@@ -489,7 +489,7 @@ export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = O
   requires: { required: 'default `[]`', form: `\`environment\` or \`artifact_digest\`, only on ${quoted(POST_DEPLOY)}; leave it out otherwise.` },
   inputs: {
     required: 'default: every file under the protected roots but the governed file',
-    form: 'the protected paths the check reads: files, or directories ending `/`, under a protected root, regular files only, never the governed file. Only these protected files are present when the check runs, so list every protected file the command needs, its own program included.',
+    form: 'the protected paths the check reads: files, or directories ending `/`, under a protected root, regular files only, never the governed file. Only these protected files are present when the check runs, so list every protected file the command needs, its own program included. List them file by file (its program and each shared helper it imports), never a directory: a directory input changes whenever a file is added under it, so a later proposal that only adds a check there changes this check\'s inputs and goes to the owner instead of being a tightening.',
   },
   egress: { required: 'default `[]`', form: 'hosts the check may reach, a subset of the governed `runner_config.direct.egress_allow`; none by default, and then the check has no network.' },
   secrets: {

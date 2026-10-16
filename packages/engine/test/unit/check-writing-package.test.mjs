@@ -321,6 +321,21 @@ test('the runner_class reference says discovery accepts container and remote and
   assert.deepEqual(parsed.errors, [], 'as the reference says, discovery accepts it');
 });
 
+// Real loop run 5: a directory input made every later addition of a check
+// change every existing check's input manifest (D3 §3.1, unclassifiable).
+test('the inputs reference says to list files one by one, never a directory, and why; the first authoring is told the same', async (t) => {
+  assert.match(DEFINITION_REFERENCE.inputs.form, /file by file \(its program and each shared helper it imports\), never a directory/);
+  assert.match(DEFINITION_REFERENCE.inputs.form, /a directory input changes whenever a file is added under it/);
+  assert.match(DEFINITION_REFERENCE.inputs.form, /goes to the owner instead of being a tightening/);
+  const db = store(t);
+  const { prompt } = packageOf(t, db, 'run_cc');
+  assert.ok(prompt.includes('- `"inputs"` (') && prompt.includes('never a directory: a directory input changes'), 'the correction package carries it');
+  const { phaseAuthoringText } = await import(join(dist, 'checks', 'guide.js'));
+  const text = phaseAuthoringText({ phase_plan: { id: 'plan_1', phase_number: 1, generation: 1 }, stages: [], interfaces: [], architecture: 'a', environments: [] }).join('\n');
+  assert.match(text, /inputs name a directory, or cover the whole protected tree, changes with any addition under it, and the classifier then sends the addition to the owner/);
+  assert.match(text, /Declare each check's `inputs` file by file: its program and the shared helpers it imports\./);
+});
+
 // Minor 7: no facts, no pointer to a section that is not there.
 test('check_correction work with no check facts: the task says they could not be read and points to no section', (t) => {
   const db = store(t);
