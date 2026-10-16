@@ -89,7 +89,7 @@ test('(b) a finding naming no candidate is owed at once, even on a reviewed tier
   s.finding('fnd_b', { role: 'verifier', scope: 'project', candidate: null });
   assert.equal(sweep(s.db), 1);
   const [d] = owed(s.db, 'fnd_b');
-  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['fix', 'change_spec', 'accept'], 'the existing options, change_spec for a conflict');
+  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['change_spec', 'lower_and_accept'], 'a High conflict naming no check: change_spec, or lower and accept (owed-blocking.test.mjs)');
   assert.equal(sweep(s.db), 0, 'asked once');
 });
 

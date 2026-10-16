@@ -9,7 +9,7 @@ import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
 import { type FindingRow, findingApplies } from './gates.js';
 import { reviewerApprove } from './classification.js';
-import { OWED_SCOPE, blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
+import { OWED_SCOPE, blocksAnyGate, reaskOwed, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
@@ -392,6 +392,23 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
   for (const f of rows) {
     if (isObjection(f)) continue;
     if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(f))) continue;
+    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
+  }
+  // Recovery (the driver's ruling 5 on the real M444 run; queue.ts
+  // reaskOwed): a finding the human accepted through the earlier owed
+  // question while its severity blocks, with no other route open (no open
+  // question about it, no proposed severity change), is asked once more
+  // through the corrected question.
+  const accepted = tx.db
+    .prepare(
+      `SELECT f.* FROM "findings" f WHERE f."project" = ? AND f."status" = 'dispositioned' AND f."disposition" = 'accept' AND f."disposition_authority" = 'human'
+         AND f."effective_severity" IN ('critical', 'high') AND f."proposed_severity_change" IS NULL
+         AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."subject_type" = 'finding' AND d."subject_id" = f."id" AND d."status" = 'open')
+       ORDER BY f."seq"`,
+    )
+    .all(args.project) as FindingRow[];
+  for (const f of accepted) {
+    if (!reaskOwed(tx.db, f)) continue;
     if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
   }
   return n;

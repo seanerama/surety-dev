@@ -89,14 +89,14 @@ function store(t) {
 
 const owed = (db, id) => db.prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' AND subject_id = ? AND scope = 'disposition_owed'`).all(id);
 
-test("a Reviewer's undispositioned finding is put to the owner in its report's transaction: fix, change_spec (a requirement_conflict) or accept; change_spec requests the change and accepts the finding", (t) => {
+test("a Reviewer's undispositioned finding is put to the owner in its report's transaction: change_spec (a requirement_conflict) or accept (Medium: accept releases the gates; no fix, since it names no check); change_spec requests the change and accepts the finding", (t) => {
   const s = store(t);
   s.runOf('run_r', 'reviewer', 'validating', null);
   s.finding('fnd_1', 'reviewer', 'run_r');
   assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1', reviewing: true })), 1);
   const [d] = owed(s.db, 'fnd_1');
   assert.equal(d?.status, 'open', 'one open question');
-  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['fix', 'change_spec', 'accept']);
+  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['change_spec', 'accept']);
   assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' })), 0, 'asked once: the sweep raises no second question');
   transact(s.db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'change_spec', preview_hash: d.preview_hash, note: null }));
   const f = s.db.prepare(`SELECT status, disposition, disposition_authority FROM findings WHERE id = 'fnd_1'`).get();
@@ -104,7 +104,7 @@ test("a Reviewer's undispositioned finding is put to the owner in its report's t
   assert.equal(s.db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = 'spec_change'`).get().n, 1, 'the specification change asked for (no approved spec here: its spec_change item is recorded)');
 });
 
-test("the sweep: a Verifier's finding is not asked while the engine's review may come (another review run counts for nothing); once that review has reported after it and left it with none, it is; fix registers fix work", (t) => {
+test("the sweep: a Verifier's finding is not asked while the engine's review may come (another review run counts for nothing); once that review has reported after it and left it with none, it is; naming no check, it is offered no fix", (t) => {
   const s = store(t);
   s.runOf('run_v', 'verifier', 'ended', AT);
   s.finding('fnd_2', 'verifier', 'run_v', 'defect');
@@ -116,9 +116,9 @@ test("the sweep: a Verifier's finding is not asked while the engine's review may
   s.reviewItem('run_r2', 'verification');
   assert.equal(transact(s.db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' })), 1);
   const [d] = owed(s.db, 'fnd_2');
-  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['fix', 'accept'], 'no change_spec for a defect');
-  transact(s.db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'fix', preview_hash: d.preview_hash, note: null }));
-  assert.equal(s.db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = 'fix'`).get().n, 1, 'fix work registered');
+  assert.deepEqual(JSON.parse(d.options).map((o) => o.key), ['accept'], 'no change_spec for a defect, no fix without a check that can verify it (owed-blocking.test.mjs has fix)');
+  transact(s.db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'accept', preview_hash: d.preview_hash, note: null }));
+  assert.equal(s.db.prepare(`SELECT disposition FROM findings WHERE id = 'fnd_2'`).get().disposition, 'accept');
 });
 
 test("the Reviewer's result schema states the dispositions from the parser's own list and the owner's route for a finding left with none", () => {
