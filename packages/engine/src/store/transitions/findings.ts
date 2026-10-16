@@ -15,6 +15,7 @@ import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
 import { isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
+import { alphaSignoffsUnsigned } from './alpha-review.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -227,6 +228,17 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       tx.emit('signoff.recorded', { project, candidate: candidate.id, signoff: id, run: run.id }, { scope: s.scope, module: s.module ?? null });
     }
     if ((report.signoffs ?? []).length > 0) markStale(tx, { candidate: candidate.id });
+    // A review asked for the Alpha deployment's sign-off (alpha-review.ts;
+    // real loop run 5) whose Reviewer signed none of what it was asked and
+    // raised nothing: the deployment cannot be authorized and no engine role
+    // will sign, so the work parks behind a blocker the owner sees (retry to
+    // ask again), never a silent stall. Findings it raised take their own
+    // route (askUndispositioned below).
+    const unsigned = item.kind === 'review' ? alphaSignoffsUnsigned(tx.db, { workItem: item.id, candidate: candidate.id, reviewed: reviewed ?? contentHash(tx.db, project, candidate) }) : null;
+    const raisedAny = tx.db.prepare('SELECT 1 FROM "findings" WHERE "source_run" = ? LIMIT 1').get(run.id) !== undefined;
+    if (unsigned !== null && unsigned.length > 0 && !raisedAny && item.status === 'executing') {
+      parkWork(tx, item, 'review_signoff_missing', { run: run.id, unsigned });
+    }
   }
 
   if (role === 'reviewer') {

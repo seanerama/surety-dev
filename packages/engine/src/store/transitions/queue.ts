@@ -538,6 +538,7 @@ function lastRefusalText(db: Tx['db'], item: string): string {
 export const PARK_TEXT: Record<string, string> = {
   repair_attempts_max: 'every permitted repair attempt failed',
   phase_signoff_missing: "its Verifier's run reported no phase sign-off, so the phase cannot complete; retry to ask again",
+  review_signoff_missing: "its Reviewer's run, asked for the sign-off the Alpha deployment needs (alpha_authorize: SIGNOFF_MISSING), signed none of it and raised no finding, so the deployment cannot be authorized; retry to ask again",
   preflight_refusals_max: 'its runs were refused before launch as often as policy allows',
   deadline: 'its run passed its deadline',
   no_progress_max: 'its repairs left the same rejected result as often as policy allows',
