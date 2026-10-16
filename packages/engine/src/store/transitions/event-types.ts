@@ -94,6 +94,8 @@ export const EVENT_OWNERS = {
   'finding.dispositioned': 'store/transitions/queue.ts',
   'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
+  // The driver's ruling on loop run 1: a finding's check its own proposal did not bring into effect.
+  'finding.check_unbound': 'store/transitions/protected.ts',
   'assessment.proposed': 'store/transitions/findings.ts',
   'assessment.assessed': 'store/transitions/findings.ts',
   'assessment.approved': 'store/transitions/queue.ts',

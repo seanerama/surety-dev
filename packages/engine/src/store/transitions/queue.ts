@@ -41,7 +41,7 @@ import { BLOCKING_SEVERITIES, type FindingRow, blocks, findingApplies } from './
 import { intendOperation, opDetail } from './journal.js';
 import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCompletionFacts, requestVerification, rolloutPartialPreview } from './deploy.js';
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
-import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, withdrawApproval } from './protected.js';
+import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, settleProposalFindings, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
@@ -1571,6 +1571,7 @@ function correctionSpec(changeKind: 'tightening' | 'loosening' | 'unclassifiable
       if (option !== 'approve') {
         tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
         tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: d.id });
+        settleProposalFindings(tx, p.id);
         // A specification change's correction item waiting for it takes its
         // repair, then parks (the driver's ruling Q13).
         correctionProposalDecided(tx, { proposal: p.id, applied: false });

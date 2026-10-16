@@ -25,7 +25,7 @@ import { gitOk, repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
 import { ACCEPTED_KINDS } from '../runs/accept.js';
-import { fieldAllowed, parseReport } from '../runs/report.js';
+import { fieldAllowed, parseReport, proposesChecks } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
@@ -170,11 +170,16 @@ export interface DispatchTarget {
 // protected version (the review of b72b9cc, F1; SEAM.md §74): the key the
 // fix loop resolves the finding by. The reason a result fails it, naming
 // the unknown key (bounded), or null. `keys` null: the project has no
-// effective version, so no key can be named.
-export function unknownCheck(result: RunResult, keys: readonly string[] | null, criteria: readonly string[] | null = null): string | null {
+// effective version, so no key can be named. `proposes`: a Verifier's
+// result that carries a protected proposal (the driver's ruling on loop
+// run 1): a finding may name a check that proposal adds, which collection
+// cannot see; any key outside the version is judged at acceptance against
+// the proposal's tree (runs/accept.ts), never taken unjudged.
+export function unknownCheck(result: RunResult, keys: readonly string[] | null, criteria: readonly string[] | null = null, proposes = false): string | null {
   for (const f of result.report?.findings ?? []) {
     if (f.check === undefined || f.check === null) continue;
     if (keys !== null && keys.includes(f.check)) continue;
+    if (proposes) continue;
     const named = JSON.stringify(String(f.check).slice(0, 80));
     return keys === null
       ? `a finding names the check ${named}, but the project has no effective protected version, so no check can be named`
@@ -1358,7 +1363,7 @@ export class Launcher {
       if (value !== null && namesReference(value)) {
         const read = await this.rt.read<{ keys: string[] | null; criteria: string[] | null }>('run.check_keys', { run: claim.run }).catch(() => undefined);
         // Checks that cannot be read judge no key: the result is not taken.
-        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, read.keys, read.criteria);
+        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(value, read.keys, read.criteria, proposesChecks(claim.role, value));
         if (unknown !== null) {
           handle.invalidDetail = redactText(unknown);
           value = null;
@@ -1639,7 +1644,7 @@ export class Launcher {
       if (result !== null && namesReference(result)) {
         const read = await this.rt.read<{ keys: string[] | null; criteria: string[] | null }>('run.check_keys', { run }).catch(() => undefined);
         // Checks that cannot be read judge no key: the result is not taken.
-        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, read.keys, read.criteria);
+        const unknown = read === undefined ? "the project's checks could not be read to judge the finding's check" : unknownCheck(result, read.keys, read.criteria, proposesChecks(handle.claim.role, result));
         if (unknown !== null) {
           handle.invalidDetail = redactText(unknown);
           result = null;

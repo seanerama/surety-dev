@@ -20,7 +20,7 @@ import { canonical, sha256 } from './common.js';
 import { type DecisionKind, type DecisionRow, invalidateDecision } from './decisions.js';
 import { observeTrigger } from './work.js';
 import { refuseOperation, opDetail } from './journal.js';
-import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal } from './protected.js';
+import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal, settleProposalFindings } from './protected.js';
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
 import { engineSettings } from './settings.js';
 import { correctionProposalDecided } from '../../spec/change.js';
@@ -394,6 +394,7 @@ export function applicationConflicts(tx: Tx, args: { proposal: string; intent: s
   }
   tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
   tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: null, cause: 'application_conflict', head: args.head, reason: args.reason });
+  settleProposalFindings(tx, p.id);
   correctionProposalDecided(tx, { proposal: p.id, applied: false });
   return true;
 }
