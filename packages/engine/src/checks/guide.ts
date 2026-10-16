@@ -378,7 +378,7 @@ export const AUTHORING_RESULT_FIELDS: Record<string, Record<string, unknown>> = 
   deferred_criteria: {
     type: 'array',
     description:
-      'A criterion whose check you cannot write yet, because the interface it exercises does not exist: its reason and its prerequisite, a stage of this plan by number or an interface of the module map by name. The engine records an obligation for each and asks for its checks again, once, when the prerequisite integrates; until they exist and pass, the phase and deployment gates name it (AUTHORING_INCOMPLETE).',
+      'A criterion of this phase (one its stages validate) whose check you cannot write yet, because the interface it exercises does not exist: its reason and its prerequisite, a stage of this plan by number or an interface of the module map by name. A criterion this phase does not owe is never deferred: its checks are authored with the phase that owes it, and a result deferring it is refused. The engine records an obligation for each and asks for its checks again, once, when the prerequisite integrates; until they exist and pass, the phase and deployment gates name it (AUTHORING_INCOMPLETE).',
     items: {
       type: 'object',
       required: ['criterion', 'reason', 'prerequisite'],
@@ -434,6 +434,8 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
   }
   out.push(
     `You author the protected checks of ${a.phase_plan ? `phase ${a.phase_plan.phase_number} (plan ${a.phase_plan.id}, generation ${a.phase_plan.generation})` : 'the phase'} before any of its stages is built: a definition and a program for every criterion its stages validate, the kinds of each stage's tier, the areas of the sensitivity floor, and, in the first phase, the post-deploy checks of the environments below. No Builder of the phase runs until your checks are applied (authoring readiness), so write them against the interfaces the stages will create, named below.`,
+    '',
+    'Write checks only for the criteria this phase owes, the ones its stages validate. A criterion of a later phase (an interface of the module map no stage of this plan creates, say) is authored with that phase: write no check for it here and do not list it in deferred_criteria.',
     '',
     'A later phase adds checks under new declared inputs; a check whose inputs cover the whole protected tree changes with any addition, and the classifier says so.',
   );

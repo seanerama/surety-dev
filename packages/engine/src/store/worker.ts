@@ -28,7 +28,7 @@ import {
   recordSnapshot,
   recordWorkspaceMetadata,
 } from './transitions/accept.js';
-import { deferralRefsInvalidForRun } from '../plan/deferral.js';
+import { deferralRefsInvalidForRun, resolveUnowedDeferrals } from '../plan/deferral.js';
 import { integrityFacts, recordIntegrity, registryFacts } from './transitions/integrity.js';
 import {
   blockOperation,
@@ -638,6 +638,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
   'plan.gap_authoring': (tx, a: { project: string }) => registerGapAuthoring(tx, a),
+  'deferral.resolve_unowed': (tx, a: { project: string }) => resolveUnowedDeferrals(tx, a.project),
   'findings.ask_undispositioned': (tx, a: { project: string }) => askUndispositioned(tx, a),
   'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),

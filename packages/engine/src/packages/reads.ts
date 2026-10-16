@@ -449,7 +449,7 @@ export function verifierElements(f: CheckWritingFacts | null, opts: { authoring:
         fields: ['governed_changes', 'deferred_criteria', ...(opts.retrofit ? ['adopted_tests'] : [])],
         no_execution_authority: NO_EXECUTION_AUTHORITY,
         check_commands: "The governed file's check_commands names the toolchain your programs run under. The first phase's authoring names it, declared in governed_changes; such a change is unclassifiable and goes to the owner under every authority, one decision per project.",
-        deferred_criteria: "A criterion whose check cannot be written yet, because the interface it exercises does not exist, is listed in deferred_criteria with your reason and its prerequisite (a stage of this plan by number, or an interface of the module map by name), never written as a check that cannot pass. The engine asks for it again, once, when the prerequisite integrates; nothing of its coverage is waived meanwhile.",
+        deferred_criteria: "A criterion of this phase (one its stages validate) whose check cannot be written yet, because the interface it exercises does not exist, is listed in deferred_criteria with your reason and its prerequisite (a stage of this plan by number, or an interface of the module map by name), never written as a check that cannot pass. The engine asks for it again, once, when the prerequisite integrates; nothing of its coverage is waived meanwhile. A criterion this phase does not owe is neither written nor deferred here: its checks are authored with the phase that owes it, and a deferral of it is refused.",
       },
       result_fields: { governed_changes: AUTHORING_RESULT_FIELDS.governed_changes!, deferred_criteria: AUTHORING_RESULT_FIELDS.deferred_criteria! },
     };

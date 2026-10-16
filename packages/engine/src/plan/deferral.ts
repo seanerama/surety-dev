@@ -14,9 +14,10 @@
 import type { Database } from 'better-sqlite3';
 
 import { activeStages } from './active.js';
+import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import { checksOfVersion } from '../store/transitions/evidence.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { observeTrigger } from '../store/transitions/work.js';
+import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 
 type Db = Database;
 
@@ -43,6 +44,26 @@ function activePlanOf(db: Db, plan: string): string {
     id = row.replaced_by;
   }
   return id;
+}
+
+// The criteria a phase plan owes (D6 §6.2: the authoring writes checks for
+// "every criterion the plan's stages validate"): its planned obligations'
+// criteria, every scope, with the criteria its active stages' `validation`
+// names. Null when not known: a plan published by no check (a fixture's)
+// records no planned obligations, and an absent or unreadable check is
+// unknown, never none, so nothing is refused or dropped on it.
+export function criteriaOwed(db: Db, plan: string): Set<string> | null {
+  const row = db.prepare('SELECT p."bundle", c."obligations" FROM "phase_plans" p LEFT JOIN "plan_checks" c ON c."id" = p."check" WHERE p."id" = ?').get(plan) as { bundle: string | null; obligations: string | null } | undefined;
+  if (!row || row.bundle === null) return null;
+  const planned = parse<unknown>(row.obligations, null);
+  if (!Array.isArray(planned)) return null;
+  const owed = new Set<string>();
+  for (const o of planned as { criteria?: unknown }[]) for (const c of Array.isArray(o?.criteria) ? o.criteria : []) if (typeof c === 'string') owed.add(c);
+  for (const st of activeStages<{ validation: string | null }>(db, plan)) {
+    const v = parse<{ criteria?: unknown }>(st.validation, {}).criteria;
+    for (const c of Array.isArray(v) ? v : []) if (typeof c === 'string') owed.add(c);
+  }
+  return owed;
 }
 
 // The owner's `build_first` (D6 §6.2; F §5.1; the slice-37 review's M8):
@@ -96,33 +117,49 @@ export function recordDeferrals(tx: Tx, args: { project: string; proposal: strin
 }
 
 // Whether a deferral's prerequisite has integrated code: its stage (by
-// number) of the plan's active generation, or a stage of the module that
-// holds its interface (the plan's bundle's module map), integrated, and
-// neither cancelled nor parked (the stage-code milestone's rule, D6 §6.4;
-// the slice-37 review's N10).
+// number) of the plan's active generation integrated, or, for an interface,
+// every active stage of the plan whose modules hold it (the plan's bundle's
+// module map) integrated, at least one; each neither cancelled nor parked
+// (the stage-code milestone's rule, D6 §6.4; the slice-37 review's N10).
+// The engine cannot tell which of a module's stages writes an interface, so
+// one stage of the module integrated is not enough (found by the real loop
+// run 1: an interface of a module the phase's first stage touched).
 function prerequisiteMet(db: Db, plan: string | null, pre: Deferral['prerequisite']): boolean {
   if (plan === null) return false;
   const active = activePlanOf(db, plan);
-  const stages = activeStages<{ number: number; status: string; modules: string; parked_at: string | null; cancelled_at: string | null }>(db, active).filter(
-    (s) => (s.status === 'integrated' || s.status === 'verified') && s.parked_at === null && s.cancelled_at === null,
-  );
-  if (pre.stage !== undefined) return stages.some((s) => s.number === pre.stage);
+  const all = activeStages<{ number: number; status: string; modules: string; parked_at: string | null; cancelled_at: string | null }>(db, active).filter((s) => s.cancelled_at === null);
+  const integrated = (s: (typeof all)[number]) => (s.status === 'integrated' || s.status === 'verified') && s.parked_at === null;
+  if (pre.stage !== undefined) return all.some((s) => s.number === pre.stage && integrated(s));
   if (pre.interface === undefined) return false;
   const bundle = db.prepare('SELECT b."artifacts" FROM "phase_plans" p JOIN "plan_bundles" b ON b."id" = p."bundle" WHERE p."id" = ?').get(active) as { artifacts: string } | undefined;
   const modules = parse<{ modules?: { modules?: { name: string; interfaces?: { name: string }[] }[] } }>(bundle?.artifacts ?? null, {}).modules?.modules ?? [];
   const holders = modules.filter((m) => (m.interfaces ?? []).some((i) => i.name === pre.interface)).map((m) => m.name);
   if (holders.length === 0) return false;
   const ids = holders.flatMap((name) => (db.prepare('SELECT "id" FROM "modules" WHERE "name" = ? AND "project" = (SELECT "project" FROM "phase_plans" WHERE "id" = ?)').all(name, active) as { id: string }[]).map((m) => m.id));
-  return stages.some((s) => parse<string[]>(s.modules, []).some((m) => holders.includes(m) || ids.includes(m)));
+  const holding = all.filter((s) => parse<string[]>(s.modules, []).some((m) => holders.includes(m) || ids.includes(m)));
+  return holding.length > 0 && holding.every(integrated);
 }
 
-// Why a deferral's prerequisite names nothing of the plan (the slice-37
-// review's M5), or null: a stage number the plan's active generation does
-// not have, or an interface no module of its bundle's module map holds.
+// Why a deferral is not one this plan's authoring may make, or null: a
+// criterion the phase does not owe (its checks are authored with the phase
+// that owes it; found by the real loop run 1, a phase-1 authoring deferring
+// phase 2's criteria), a stage number the plan's active generation does not
+// have, or an interface no module of its bundle's module map holds (the
+// slice-37 review's M5).
 export function deferralRefsInvalid(db: Db, plan: string | null, deferrals: Deferral[]): string | null {
   if (deferrals.length === 0) return null;
   if (plan === null) return 'deferred_criteria names prerequisites, and the authoring names no plan';
   const active = activePlanOf(db, plan);
+  const owed = criteriaOwed(db, active);
+  if (owed !== null) {
+    const foreign = [...new Set(deferrals.map((d) => d.criterion).filter((c) => !owed.has(c)))];
+    if (foreign.length > 0) {
+      const phase = (db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(active) as { phase_number: number } | undefined)?.phase_number;
+      const which = phase === undefined ? 'this phase' : `phase ${phase}`;
+      const many = foreign.length > 1;
+      return `the deferral${many ? 's' : ''} of ${foreign.join(', ')} name${many ? '' : 's'} ${many ? 'criteria' : 'a criterion'} ${which} does not owe (it owes ${[...owed].sort().join(', ') || 'none'}); a criterion's checks are authored with the phase that owes it: leave ${many ? 'them' : 'it'} out of deferred_criteria and write no check for ${many ? 'them' : 'it'} in ${which}`;
+    }
+  }
   const numbers = new Set(activeStages<{ number: number }>(db, active).map((s) => s.number));
   const bundle = db.prepare('SELECT b."artifacts" FROM "phase_plans" p JOIN "plan_bundles" b ON b."id" = p."bundle" WHERE p."id" = ?').get(active) as { artifacts: string } | undefined;
   const interfaces = new Set(
@@ -135,6 +172,39 @@ export function deferralRefsInvalid(db: Db, plan: string | null, deferrals: Defe
   return null;
 }
 
+// A deferral recorded for a criterion its phase does not owe (a store from
+// before the scope rule above, or a plan replaced since): resolved, with
+// `check.obligation_resolved` (how `not_owed_by_phase`), so it holds no
+// gate and dispatches no follow-up; its follow-up not yet running is
+// cancelled with its open questions. Its checks are the owing phase's.
+export function resolveUnowedDeferrals(tx: Tx, project: string): number {
+  const rows = tx.db
+    .prepare(`SELECT "id", "criteria", "phase_plan", "follow_up" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'deferred_authoring' AND "resolved_at" IS NULL AND "phase_plan" IS NOT NULL ORDER BY rowid`)
+    .all(project) as { id: string; criteria: string; phase_plan: string; follow_up: string | null }[];
+  let n = 0;
+  for (const o of rows) {
+    const active = activePlanOf(tx.db, o.phase_plan);
+    const owed = criteriaOwed(tx.db, active);
+    const criteria = parse<string[]>(o.criteria, []);
+    if (owed === null || criteria.length === 0 || criteria.some((c) => owed.has(c))) continue;
+    if (tx.db.prepare('UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL').run(active, tx.at, o.id).changes === 0) continue;
+    tx.emit('check.obligation_resolved', { project, check_obligation: o.id }, { resolved_by: active, how: 'not_owed_by_phase', criteria, phase_plan: active });
+    const f = parse<{ trigger_source?: string; trigger_id?: string }>(o.follow_up, {});
+    const items = tx.db
+      .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = ? AND "trigger_id" = ? AND "status" IN ('eligible', 'held', 'parked', 'awaiting_decision')`)
+      .all(project, f.trigger_source ?? 'deferred_authoring', f.trigger_id ?? o.id) as { id: string }[];
+    for (const w of items) {
+      const item = getWorkItem(tx, w.id);
+      if (!item) continue;
+      transitionWork(tx, item, 'cancelled', { blocker: null }, { cause: 'not_owed_by_phase', check_obligation: o.id });
+      const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
+      for (const d of open) invalidateDecision(tx, d, `the deferral it followed up names criteria phase plan ${active} does not owe (${criteria.join(', ')})`);
+    }
+    n++;
+  }
+  return n;
+}
+
 // The same, for the authoring run's plan (its work item's subject).
 export function deferralRefsInvalidForRun(db: Db, args: { run: string; deferrals: Deferral[] }): string | null {
   const row = db.prepare('SELECT w."subject" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(args.run) as { subject: string } | undefined;
@@ -144,6 +214,8 @@ export function deferralRefsInvalidForRun(db: Db, args: { run: string; deferrals
 // Every unresolved deferral whose prerequisite has integrated: its
 // follow-up `check_authoring`, once (the trigger identity).
 export function followUpsDue(tx: Tx, project: string): number {
+  // A deferral its phase does not owe is resolved first, never followed up.
+  resolveUnowedDeferrals(tx, project);
   let made = 0;
   // `authoring_pending` (M8): once every active stage of the plan has
   // integrated (and none is parked), the authoring is asked again, once.

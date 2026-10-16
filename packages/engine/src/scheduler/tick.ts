@@ -194,6 +194,11 @@ export class Scheduler {
     // (store/transitions/findings.ts askUndispositioned): an existing one
     // gets its question at the next tick.
     await this.rt.engine('findings.ask_undispositioned', { project }).catch((err) => log('undispositioned findings', err, { project }));
+    // A deferral recorded for a criterion its phase does not owe is resolved
+    // and its idle follow-up cancelled (plan/deferral.ts
+    // resolveUnowedDeferrals): a store from before the scope rule finishes
+    // its phase at the first tick after a restart.
+    await this.rt.engine('deferral.resolve_unowed', { project }).catch((err) => log('unowed deferrals', err, { project }));
     // A stage gate never waits for a check no one will write: a gap of the
     // open plan's stage scopes gets a check_authoring follow-up (plan/phase.ts
     // registerGapAuthoring).
