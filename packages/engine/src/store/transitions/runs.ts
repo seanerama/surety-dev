@@ -1188,6 +1188,20 @@ export function finishRun(
   return { ended: true };
 }
 
+// How many earlier runs of the work item (not `run`) ended on a rebase
+// conflict with a moved integration branch (E152 item 4): the item is sent
+// back to its Builder for one, once.
+export function rebaseReturns(db: Tx['db'], item: string, run: string): number {
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM "runs" WHERE "work_item" = ? AND "id" <> ? AND "reason_class" = 'integration_conflict'
+           AND json_valid("reason_detail") AND json_extract("reason_detail", '$.conflict') = 'rebase'`,
+      )
+      .get(item, run) as { n: number }
+  ).n;
+}
+
 // What a run's outcome does to its work item (D1 §4.3, §8.4; SEAM.md §§15,
 // 16, 28–30, 40, 47). Only an item the run still owns is moved, and only by
 // its latest run. What the journal still has in hand is the journal's: work
@@ -1265,7 +1279,19 @@ function workAfterRun(tx: Tx, run: RunRow): void {
         }
       }
       if (run.reason_class === 'integration_conflict') {
-        const detail = run.reason_detail ? (JSON.parse(run.reason_detail) as { park?: string; worktree?: string }) : {};
+        const detail = run.reason_detail ? (JSON.parse(run.reason_detail) as { park?: string; worktree?: string; conflict?: string; head?: string; files?: string[] }) : {};
+        // D1 §7.5 and D1-19 as amended (E152 item 4): a Builder's changes
+        // that no longer apply to the moved integration branch (a rebase
+        // conflict, not a compare-and-swap failure) send the item back to
+        // its Builder once, on the new head (no checkpoint to continue
+        // from), within repair_attempts_max; its context names the files
+        // and the head (store/reads.ts rebaseConflictFacts). A second such
+        // conflict of the item, a spent budget, or a compare-and-swap
+        // failure parks it, as before.
+        if (detail.conflict === 'rebase' && run.role === 'builder' && rebaseReturns(tx.db, item.id, run.id) === 0 && item.repair_attempts < policy.repair_attempts_max!) {
+          transitionWork(tx, item, 'eligible', { repair_due: 1, continue_from: null }, { ...cause, cause: 'rebase_conflict', head: detail.head ?? null, files: detail.files ?? [] });
+          return;
+        }
         parkWork(tx, item, detail.park ?? 'integration_conflict', cause, {}, detail.worktree);
         return;
       }

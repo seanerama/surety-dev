@@ -14,31 +14,44 @@ import { diffTrees, listTree } from './repo.js';
 
 const ZERO = '0000000000000000000000000000000000000000';
 
-export async function rebaseTree(repo: string, base: string, commit: string, head: string, scratch: string): Promise<{ tree: string; conflict: null } | { tree: null; conflict: string } | 'unknown'> {
+// A conflict names its first path (`conflict`) and every conflicting path
+// (`files`, E152 item 4: the Builder sent back is told each of them).
+export async function rebaseTree(
+  repo: string,
+  base: string,
+  commit: string,
+  head: string,
+  scratch: string,
+): Promise<{ tree: string; conflict: null } | { tree: null; conflict: string; files: string[] } | 'unknown'> {
   const ctx = repoContext(repo);
   const changes = await diffTrees(ctx, base, commit);
   const atHead = await listTree(ctx, head);
   if (changes === null || atHead === null) return 'unknown';
   const records: string[] = [];
+  const conflicts: string[] = [];
   for (const c of changes) {
     const theirs = atHead.get(c.path);
     const wasThere = c.oldMode !== '000000';
     const unchangedAtHead = wasThere ? theirs !== undefined && theirs.mode === c.oldMode && theirs.oid === c.oldOid : theirs === undefined;
     const sameAsOurs = c.status === 'D' ? theirs === undefined : theirs !== undefined && theirs.mode === c.newMode && theirs.oid === c.newOid;
     if (sameAsOurs) continue;
-    if (!unchangedAtHead) return { tree: null, conflict: c.path };
+    if (!unchangedAtHead) {
+      conflicts.push(c.path);
+      continue;
+    }
     records.push(c.status === 'D' ? `0 ${ZERO}\t${c.path}` : `${c.newMode} ${c.newOid}\t${c.path}`);
   }
+  if (conflicts.length > 0) return { tree: null, conflict: conflicts[0]!, files: conflicts };
   const index = join(scratch, `rebase-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
     if ((await gitOk(ctx, ['read-tree', head], { env })) === null) return 'unknown';
     if (records.length > 0) {
       const applied = await gitOk(ctx, ['update-index', '-z', '--index-info'], { env, input: `${records.join('\0')}\0` });
-      if (applied === null) return { tree: null, conflict: changes[0]!.path };
+      if (applied === null) return { tree: null, conflict: changes[0]!.path, files: [changes[0]!.path] };
     }
     const tree = (await gitOk(ctx, ['write-tree'], { env }))?.trim() ?? '';
-    if (!SHA.test(tree)) return { tree: null, conflict: changes[0]?.path ?? '(the tree)' };
+    if (!SHA.test(tree)) return { tree: null, conflict: changes[0]?.path ?? '(the tree)', files: [changes[0]?.path ?? '(the tree)'] };
     return { tree, conflict: null };
   } finally {
     rmSync(index, { force: true });

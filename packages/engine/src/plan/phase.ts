@@ -29,6 +29,7 @@ import { criteriaOwed } from './deferral.js';
 import { activeStages, settleReplacements } from './replace.js';
 import { registerExecutions } from '../store/transitions/checks.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
+import { correctionOpen } from '../store/transitions/repair.js';
 import { integrationRef, registryRow, projectRepoRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
@@ -254,7 +255,9 @@ export function heldForFindings(db: Db, item: string): 'waiting' | 'settled' | n
       (f.status === 'open' && f.disposition === null) ||
       (f.status === 'dispositioned' &&
         f.disposition === 'fix' &&
-        db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(f.project, f.id) !== undefined),
+        (db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(f.project, f.id) !== undefined ||
+          // The owner's correct_check (E152 item 3): its correction open.
+          correctionOpen(db, f.project, f.id))),
   );
   return waiting ? 'waiting' : 'settled';
 }

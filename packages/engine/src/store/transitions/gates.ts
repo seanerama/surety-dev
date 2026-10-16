@@ -26,7 +26,7 @@ import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
-import { verifiesCriterion } from './repair.js';
+import { findingVerifiable, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 
@@ -720,17 +720,28 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // candidate's scopes (the union candidateContent gives, as registration
   // uses it), so the gate of each scope sees the finding resolved.
   const requiredByKey = new Map(candidateContent(db, args.project, candidate, scope.effective.id).checks.map((c) => [c.key, c]));
+  // E152 item 3 (D3 §2.11 as amended): a finding naming no criterion is
+  // verified by its named check when that check covers no criterion and is
+  // required in the scope evaluated here (a phase-only check at the phase
+  // gate).
+  const inScopeByKey = new Map(scope.required.map((c) => [c.key, c]));
   for (const f of findings) {
     // F2 (c), L8: a fix is resolved by this evaluation only through its
     // named check, being a required acceptance-origin check of the scope
-    // covering the finding's criterion, passed here by an execution
-    // registered after the disposition (its number above the watermark),
-    // with its evidence intact.
+    // covering the finding's criterion (or, naming none, covering none and
+    // required in this scope), passed here by an execution registered after
+    // the disposition (its number above the watermark), with its evidence
+    // intact.
     if (f.disposition === 'fix') {
-      const named = f.check !== null ? requiredByKey.get(f.check) : undefined;
       const criterion = f.criterion ?? null;
-      if (!verifiesCriterion(named, criterion)) missingVerifications.push({ finding: f.id, criterion, check: f.check });
-      else if (superseded === null && !refUnread) {
+      const byCheck = criterion === null && f.check !== null;
+      const named = f.check === null ? undefined : byCheck ? inScopeByKey.get(f.check) : requiredByKey.get(f.check);
+      const verifies = byCheck ? verifiesByCheck(named) : verifiesCriterion(named, criterion);
+      if (!verifies) {
+        // A check that verifies it in another scope of the candidate (a
+        // phase-only check at a stage gate) is no missing verification.
+        if (!(byCheck && findingVerifiable(db, f, scope.effective.id))) missingVerifications.push({ finding: f.id, criterion, check: f.check });
+      } else if (superseded === null && !refUnread) {
         const s = selected[named!.id] ?? checkState(db, args.project, named!, scope);
         if (s.state === 'passed' && s.decider && s.decider.execution_seq > (f.disposition_seq ?? 0) && intact(s.decider)) {
           resolving.push({ finding: f, result: s.decider.id });
