@@ -252,7 +252,7 @@ const SEVERITY = { enum: ['critical', 'high', 'medium', 'low'] };
 const FINDING_ID = { type: 'string', pattern: '^fnd_', description: 'A finding id, as listed in /surety/context/findings.json.' };
 // What happens to a finding left with no disposition (store/transitions/
 // findings.ts askUndispositioned; the driver's ruling on the real M443 run).
-const OWED_TEXT = `A finding you raise in this result's \`findings\` has no id yet, so it cannot be named here. Every finding left with no disposition (one you raise, or a listed one you do not name) is put to the human owner, who chooses fix or accept, or for a ${CHANGE_SPEC_CATEGORIES.join(' or ')} finding a specification change; say in its message what the fix or the change would be.`;
+const OWED_TEXT = `A finding you raise in this result's \`findings\` has no id yet, so it cannot be named here. Every finding left with no disposition (one you raise, or a listed one you do not name) is put to the human owner, who chooses fix (offered only when the finding names a \`check\` and \`criterion\` that can verify it), accept (a High or Critical finding is lowered to medium first, since it holds the gates at its severity whatever its disposition), or for a ${CHANGE_SPEC_CATEGORIES.join(' or ')} finding a specification change; say in its message what the fix or the change would be.`;
 const FIELDS: Record<string, Record<string, unknown>> = {
   status: { const: 'completed' },
   summary: { type: 'string', description: 'What you did, in a few sentences.' },

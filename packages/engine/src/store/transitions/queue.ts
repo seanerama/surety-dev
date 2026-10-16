@@ -37,7 +37,7 @@ import {
   stale,
 } from './decisions.js';
 import { contentHash, getCandidate, markStale, predecessors, requiredSet } from './evidence.js';
-import { type FindingRow, blocks, findingApplies } from './gates.js';
+import { BLOCKING_SEVERITIES, type FindingRow, blocks, findingApplies } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCompletionFacts, requestVerification, rolloutPartialPreview } from './deploy.js';
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
@@ -48,7 +48,7 @@ import { engineSettings, policyRevision, projectEffective } from './settings.js'
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
-import { answerConflict, conflictPreview, routeMissingVerification } from './repair.js';
+import { answerConflict, conflictPreview, findingVerifiable, routeMissingVerification } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
 import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
@@ -1143,46 +1143,118 @@ export function applyAlphaException(tx: Tx, args: { intent: string }): boolean {
 // A finding no one has dispositioned, after a Reviewer's report (the driver's
 // ruling on the real M443 run's silent stall): the owner is asked what is
 // to be done, never left with a gate held by a finding nothing will act on.
-// fix registers fix work; accept lets the gates go on; for a conflict with
-// the requirements or a contract, change_spec makes a specification change
-// request from the finding (the owner then approves its proposal) and
-// accepts the finding meanwhile.
+// Every consequence is what the gate then does (the driver's ruling on the
+// real M444 run, under D1 §9.4 and D2 C2): accept is offered only where it
+// releases the gates, a severity that does not block; a blocking (High or
+// Critical) finding is offered lower_and_accept instead, the human lowering
+// its effective severity to medium (severity_history: authority human, this
+// decision) and accepting it. fix is offered only when the finding names a
+// check and criterion that can verify it (repair.ts findingVerifiable, the
+// condition verifiesCriterion gives). For a conflict with the requirements
+// or a contract, change_spec makes a specification change request from the
+// finding and accepts it meanwhile, lowering it first as lower_and_accept
+// does where it blocks.
 export const OWED_SCOPE = 'disposition_owed';
+export const LOWER_AND_ACCEPT = 'lower_and_accept';
+// The severity lower_and_accept sets: the highest out of the blocking range.
+const LOWERED_TO = 'medium';
+
+// Recovery (the driver's ruling 5 on the real M444 run): a finding the human
+// accepted through the earlier owed question, which said accept releases the
+// gates, while its severity blocks. Narrowest: dispositioned accept with the
+// human's authority; its severity High or Critical; its latest consumed owed
+// question (scope disposition_owed) of the earlier form (no
+// lower_and_accept option) answered accept; no owed question of the
+// corrected form ever consumed. It is asked once more, through the
+// corrected question.
+export function reaskOwed(db: Db, f: FindingRow): boolean {
+  if (f.status !== 'dispositioned' || f.disposition !== 'accept' || f.disposition_authority !== 'human') return false;
+  if (!BLOCKING_SEVERITIES.includes(f.effective_severity)) return false;
+  const asked = db
+    .prepare(`SELECT "options", "answer" FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_id" = ? AND "scope" = ? AND "status" = 'consumed' ORDER BY rowid`)
+    .all(f.id, OWED_SCOPE) as { options: string; answer: string | null }[];
+  const corrected = (o: string): boolean => (parseJson<{ key: string }[]>(o) ?? []).some((x) => x.key === LOWER_AND_ACCEPT);
+  if (asked.length === 0 || asked.some((a) => corrected(a.options))) return false;
+  return parseJson<{ option?: string }>(asked[asked.length - 1]!.answer)?.option === 'accept';
+}
+
+// The choices as one sentence: "Fix it, or accept it."
+const sentence = (xs: (string | null)[]): string => {
+  const t = xs.filter((x): x is string => x !== null).join(', or ');
+  return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
+};
+
 const DISPOSITION_OWED: KindSpec = {
   preview(tx, d) {
     const f = findingRow(tx.db, d.subject_id);
-    if (!f || f.status !== 'open' || f.disposition !== null || f.proposed_disposition !== null) return null;
+    if (!f) return null;
+    const undispositioned = f.status === 'open' && f.disposition === null && f.proposed_disposition === null;
+    const reask = !undispositioned && reaskOwed(tx.db, f);
+    if (!undispositioned && !reask) return null;
     const conflict = (CHANGE_SPEC_CATEGORIES as readonly string[]).includes(f.category);
+    const blocking = BLOCKING_SEVERITIES.includes(f.effective_severity);
+    const version = effectiveVersion(tx.db, f.project);
+    // Unknown is not verifiable: with no effective version, no fix is offered.
+    const verifiable = version !== undefined && findingVerifiable(tx.db, f, version.id);
+    const lowered = `its severity is lowered from ${f.effective_severity} to ${LOWERED_TO} by the human owner (recorded in its severity history with your authority and this decision)`;
     return {
       manifest: dispositionManifest(tx, f),
       options: [
-        { key: 'fix', label: 'Fix', consequence: 'The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code.', effect: { finding: f.id, disposition: 'fix' } },
+        ...(verifiable
+          ? [
+              {
+                key: 'fix',
+                label: 'Fix',
+                consequence: `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
+                effect: { finding: f.id, disposition: 'fix' },
+              },
+            ]
+          : []),
         ...(conflict
           ? [
               {
                 key: 'change_spec',
                 label: 'Change the specification',
-                consequence:
-                  'A specification change request is made from the finding (its message as the request), and the finding is accepted meanwhile so it no longer holds the gates; you approve the change\'s proposal when it is ready.',
-                effect: { finding: f.id, register: 'spec_change', disposition: 'accept' },
+                consequence: blocking
+                  ? `A specification change request is made from the finding (its message as the request); meanwhile ${lowered} and it is accepted, so it no longer holds the gates; you approve the change's proposal when it is ready.`
+                  : "A specification change request is made from the finding (its message as the request), and the finding is accepted meanwhile so it no longer holds the gates; you approve the change's proposal when it is ready.",
+                effect: { finding: f.id, register: 'spec_change', ...(blocking ? { lower_to: LOWERED_TO } : {}), disposition: 'accept' },
               },
             ]
           : []),
-        { key: 'accept', label: 'Accept', consequence: 'The finding is dispositioned accept by the human owner: it stays recorded and no longer holds the gates. Nothing is changed.', effect: { finding: f.id, disposition: 'accept' } },
+        blocking
+          ? {
+              key: LOWER_AND_ACCEPT,
+              label: 'Lower and accept',
+              consequence: `${lowered[0]!.toUpperCase()}${lowered.slice(1)}, and it is dispositioned accept by the human owner: it stays recorded and no longer holds the gates. Nothing is changed in the code.`,
+              effect: { finding: f.id, lower_to: LOWERED_TO, disposition: 'accept' },
+            }
+          : { key: 'accept', label: 'Accept', consequence: 'The finding is dispositioned accept by the human owner: it stays recorded and no longer holds the gates. Nothing is changed.', effect: { finding: f.id, disposition: 'accept' } },
       ],
-      question: `Finding ${f.id} (${f.category}, ${f.effective_severity}${f.criterion ? `, criterion ${f.criterion}` : ''}) has no disposition, and it holds the gates of the candidates it applies to: ${(f as FindingRow & { message: string }).message} Fix it${conflict ? ', change the specification' : ''}, or accept it.`,
+      question: `Finding ${f.id} (${f.category}, ${f.effective_severity}${f.criterion ? `, criterion ${f.criterion}` : ''}) ${
+        reask ? `was accepted, but at severity ${f.effective_severity} an accepted finding still holds the gates` : 'has no disposition, and it holds the gates of the candidates it applies to'
+      }: ${(f as FindingRow & { message: string }).message} ${sentence([verifiable ? 'fix it' : null, conflict ? 'change the specification' : null, blocking ? `lower it to ${LOWERED_TO} and accept it` : 'accept it'])}`,
     };
   },
   manifest: (tx, d) => dispositionManifest(tx, findingRow(tx.db, d.subject_id)!),
   reraise: true,
   answer(tx, d, option, note) {
-    const f = findingRow(tx.db, d.subject_id)!;
+    const asked = findingRow(tx.db, d.subject_id)!;
     consumeDecision(tx, d, option, note);
-    const binding = findingBinding(tx, f);
+    const binding = findingBinding(tx, asked);
     const disposition = option === 'fix' ? 'fix' : 'accept';
-    recordApproval(tx, d, { consequence: `finding ${f.id} dispositioned ${disposition}${option === 'change_spec' ? ' with a specification change requested' : ''}`, subjectType: 'finding', subjectId: f.id, contentHash: binding.acceptance_content_hash });
-    if (option === 'change_spec') requestFromFinding(tx, { project: f.project, finding: f.id, decision: d.id });
-    recordDisposition(tx, f, { disposition, authority: 'human', by: tx.actor.actor_kind, linked_issue: null, defer_target: null });
+    // lower_and_accept, and change_spec where the finding blocks: the
+    // human's lowering first (D1 §9.4; D2 C2), then the disposition.
+    const lower = option !== 'fix' && BLOCKING_SEVERITIES.includes(asked.effective_severity) && (option === LOWER_AND_ACCEPT || option === 'change_spec');
+    recordApproval(tx, d, {
+      consequence: `finding ${asked.id}${lower ? ` lowered from ${asked.effective_severity} to ${LOWERED_TO} and` : ''} dispositioned ${disposition}${option === 'change_spec' ? ' with a specification change requested' : ''}`,
+      subjectType: 'finding',
+      subjectId: asked.id,
+      contentHash: binding.acceptance_content_hash,
+    });
+    if (lower) changeSeverity(tx, asked, { to: LOWERED_TO, actor: tx.actor.actor_kind, authority: 'human', decision: d.id });
+    if (option === 'change_spec') requestFromFinding(tx, { project: asked.project, finding: asked.id, decision: d.id });
+    recordDisposition(tx, findingRow(tx.db, asked.id)!, { disposition, authority: 'human', by: tx.actor.actor_kind, linked_issue: null, defer_target: null });
     return consumed(d, [{ kind: 'tick' }]);
   },
 };
@@ -1284,9 +1356,10 @@ function registerFixWork(tx: Tx, f: FindingRow, by: string): void {
 }
 
 // A severity change is applied and recorded (D1 §9.4; F §6.3).
-export function changeSeverity(tx: Tx, f: FindingRow, args: { to: string; actor: string; authority: string }): void {
+export function changeSeverity(tx: Tx, f: FindingRow, args: { to: string; actor: string; authority: string; decision?: string }): void {
   const history = JSON.parse(f.severity_history) as unknown[];
-  history.push({ actor: args.actor, authority: args.authority, from: f.effective_severity, to: args.to, at: tx.at });
+  // The decision the human lowered it by, where one did (the owed question's lower_and_accept).
+  history.push({ actor: args.actor, authority: args.authority, from: f.effective_severity, to: args.to, at: tx.at, ...(args.decision ? { decision: args.decision } : {}) });
   tx.db.prepare('UPDATE "findings" SET "effective_severity" = ?, "severity_history" = ? WHERE "id" = ?').run(args.to, JSON.stringify(history), f.id);
   tx.emit('finding.severity_changed', { project: f.project, finding: f.id }, { from: f.effective_severity, to: args.to, authority: args.authority });
   markStale(tx, { project: f.project });
