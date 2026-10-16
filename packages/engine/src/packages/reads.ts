@@ -27,7 +27,7 @@ import { dirname } from 'node:path';
 
 import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, CRITERION, DEPLOY_SECRET_REFERENCE, DIRECT_RUNNER_MEMBERS, GATE_KINDS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
 import { KIND_INVENTORY, MODULE_PATH, MODULE_PATH_FORM, SCOPE_KINDS, type Tier } from '../checks/scope.js';
-import { PLAN_REASONS } from '../plan/check.js';
+import { PLAN_REASONS, STAGE_VALIDATION_REPLAN_EXCEPTIONS, STAGE_VALIDATION_RULE } from '../plan/check.js';
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE, adrPath, planPath } from '../plan/schemas.js';
 import type { PreparedAgainstFacts } from '../plan/bundle.js';
 import { QUESTION_BLOCKER_CODES } from '../spec/keys.js';
@@ -278,8 +278,9 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   PLAN_MODULE_OUTSIDE_PHASE: "a stage touches a module the roadmap's phase does not list",
   PLAN_REQUIREMENT_UNPLANNED: 'a requirement the roadmap assigns to this phase is implemented by no stage',
   PLAN_DEPENDENCY_INCOMPLETE: 'the phase depends on a phase that is not complete',
-  PLAN_CRITERION_UNVALIDATED: "a criterion of an implemented requirement is in no stage's validation.criteria",
-  PLAN_AREA_UNVALIDATED: "a sensitive area of an implemented requirement or a touched module is in no stage's validation.sensitive_areas",
+  PLAN_CRITERION_UNVALIDATED:
+    "a stage implements a requirement and one of that requirement's criteria is not in that stage's own validation.criteria (each stage implementing a requirement lists all its criteria, even when other stages implement it too; a replan's kept-stage exceptions aside)",
+  PLAN_AREA_UNVALIDATED: "a sensitive area of a requirement a stage implements, or of a module it touches, is not in that stage's own validation.sensitive_areas",
   PLAN_KIND_MISSING: "a stage's validation.kinds lacks a kind its tier requires",
   PLAN_DESCRIPTIVE_MODULE_TOUCHED: 'scoped mode: a stage touches a module holding a descriptive requirement with no approved criteria',
   PLAN_CONFORMANCE_MISPLACED: "conformance: true outside the adopted project's first phase, or on a stage with tasks",
@@ -299,8 +300,9 @@ export function architectElements(opts: { retrofit: boolean; prepared_against?: 
     },
     'architect.plan_reasons': {
       id: 'architect.plan_reasons',
-      gloss: 'The engine checks every plan against the approved specification, architecture and roadmap; each reason refuses it.',
+      gloss: "The engine checks every plan against the approved specification, architecture and roadmap; each reason refuses it. stage_validation is the rule each stage's validation is checked by.",
       data: {
+        stage_validation: (opts.kind ?? 'session') === 'replan' ? `${STAGE_VALIDATION_RULE} ${STAGE_VALIDATION_REPLAN_EXCEPTIONS}` : STAGE_VALIDATION_RULE,
         reasons: PLAN_REASONS.filter((code) => opts.retrofit || !RETROFIT_REASONS.includes(code)).map((code) => ({ code, rule: PLAN_REASON_RULES[code] })),
         kinds_by_tier: Object.fromEntries((Object.keys(KIND_INVENTORY) as Tier[]).map((t) => [t, [...KIND_INVENTORY[t]]])),
       },

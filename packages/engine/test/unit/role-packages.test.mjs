@@ -25,7 +25,8 @@ const { writeContextPackage } = await import(join(dist, 'invoke', 'sandbox', 'co
 const { PACKAGE_ELEMENTS, ELEMENT_IDS, elementListing } = await import(join(dist, 'packages', 'elements.js'));
 const { parseSpecification } = await import(join(dist, 'spec', 'semantics.js'));
 const { parseModuleMap, parseRoadmap, parsePhasePlan, parseAdr, B5 } = await import(join(dist, 'plan', 'schemas.js'));
-const { PLAN_REASONS } = await import(join(dist, 'plan', 'check.js'));
+const PLAN_RULES = await import(join(dist, 'plan', 'check.js'));
+const { PLAN_REASONS } = PLAN_RULES;
 const { defaultGoverned, SENSITIVE_AREAS } = await import(join(dist, 'checks', 'schema.js'));
 const { KIND_INVENTORY } = await import(join(dist, 'checks', 'scope.js'));
 const { configureHarness, setPackageOmit } = await import(join(dist, 'testing', 'seam.js'));
@@ -537,4 +538,25 @@ test("a check writer's repair after its proposal was rejected is told the propos
   // Applied, or not rejected: nothing is said.
   run(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'pp_x'`);
   assert.equal(contextFacts(db, { run: 'run_2' }).rejected_proposal, null);
+});
+
+test("the Architect's session and replan packages state the per-stage validation rule as the plan check applies it, before any plan: a stage validates every criterion of every requirement it implements, a split requirement in full by each stage; the replan's exceptions in the replan only", (t) => {
+  const { STAGE_VALIDATION_RULE, STAGE_VALIDATION_REPLAN_EXCEPTIONS } = PLAN_RULES;
+  const s = session(t, 'architect');
+  const sb = s.reads['architect.plan_reasons'];
+  assert.equal(sb.stage_validation, STAGE_VALIDATION_RULE);
+  assert.match(sb.stage_validation, /every criterion of every requirement a stage implements is in that stage's validation\.criteria/);
+  assert.match(sb.stage_validation, /A requirement implemented by several stages is validated in full by each of them/);
+  assert.ok(!sb.stage_validation.includes('kept stage'), "a session's plan has no kept stages");
+  const rule = (b, code) => b.reasons.find((r) => r.code === code).rule;
+  assert.match(rule(sb, 'PLAN_CRITERION_UNVALIDATED'), /not in that stage's own validation\.criteria/);
+  assert.ok(!/in no stage's/.test(rule(sb, 'PLAN_CRITERION_UNVALIDATED')), 'never the across-stages reading');
+  assert.match(rule(sb, 'PLAN_AREA_UNVALIDATED'), /not in that stage's own validation\.sensitive_areas/);
+  const replan = { completed_plan: null, open_plan: null, generation: { spec_revision: null, architecture_revision: null, roadmap_revision: null, plan: null, spec_evidence_generation: null }, trigger: {}, trigger_subject: {}, refusal: null };
+  const r = oneShot(t, 'architect', 'replan', { replan });
+  const rb = r.reads['architect.plan_reasons'];
+  assert.equal(rb.stage_validation, `${STAGE_VALIDATION_RULE} ${STAGE_VALIDATION_REPLAN_EXCEPTIONS}`);
+  assert.match(rb.stage_validation, /a kept stage listed unchanged is not charged a criterion its requirement gained after it was built/);
+  assert.match(rb.stage_validation, /stays validated by that stage/);
+  assert.equal(rule(rb, 'PLAN_CRITERION_UNVALIDATED'), rule(sb, 'PLAN_CRITERION_UNVALIDATED'));
 });
