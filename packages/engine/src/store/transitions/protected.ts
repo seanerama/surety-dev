@@ -62,6 +62,12 @@ export interface ProposalRow {
   approved_at: string | null;
   resulting_version: string | null;
   changes_required_set: number;
+  // The tree the proposal was classified from (the driver's ruling on loop
+  // run 1, option (ii); checks/classify-inputs.ts classifiedTree): its own
+  // tree, or its changes rebased onto the effective revision it was
+  // classified against. NULL for a proposal classified before migration
+  // 0030 or by a fixture: its own tree is the one.
+  classified_tree?: string | null;
 }
 
 export interface ProtectedSet {

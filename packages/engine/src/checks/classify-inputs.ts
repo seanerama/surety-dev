@@ -10,6 +10,8 @@
 // it stands when it commits.
 
 import { repoContext } from '../git/exec.js';
+import { rebaseTree } from '../git/rebase.js';
+import { isAncestor } from '../git/repo.js';
 import { protectedManifest } from '../protected/set.js';
 import type { ClassifySide } from './classify.js';
 import { discover } from './discovery.js';
@@ -33,4 +35,29 @@ export async function classificationInputs(repo: string, effectiveRevision: stri
   const e1 = await protectedManifest(ctx, proposalTree, roots);
   if (e1 === null) return null;
   return { p0: { discovery: d0, entries: e0 }, p1: { discovery: d1, entries: e1 } };
+}
+
+// The tree a proposal is classified from (the driver's ruling on loop run 1,
+// M444 #19 and L1-2, option (ii)). A proposal is the change from its base to
+// its tree. Where its base holds the effective version (the effective
+// revision is the base or an ancestor of it), that is its own tree. Where
+// it does not (another proposal was applied after its base was taken), its
+// own changes are rebased three-way onto the effective revision
+// (git/rebase.ts, the application's own rebase): classified on its own
+// tree, it would read as removing what the other added. A path the
+// effective version changed another way is a conflict: the proposal is
+// refused for repair. null: git could not answer, and nothing is decided.
+export async function classifiedTree(
+  repo: string,
+  proposal: { base_revision: string; tree_id: string },
+  effectiveRevision: string,
+  scratch: string,
+): Promise<{ tree: string } | { conflict: string } | null> {
+  if (proposal.base_revision === effectiveRevision) return { tree: proposal.tree_id };
+  const holds = await isAncestor(repoContext(repo), effectiveRevision, proposal.base_revision);
+  if (holds === null) return null;
+  if (holds) return { tree: proposal.tree_id };
+  const rebased = await rebaseTree(repo, proposal.base_revision, proposal.tree_id, effectiveRevision, scratch);
+  if (rebased === 'unknown') return null;
+  return rebased.conflict !== null ? { conflict: rebased.conflict } : { tree: rebased.tree };
 }

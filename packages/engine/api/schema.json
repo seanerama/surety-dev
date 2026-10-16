@@ -4051,6 +4051,9 @@
         },
         "deferred_criteria": {
           "required": false
+        },
+        "classified_tree": {
+          "required": false
         }
       }
     },
