@@ -26,7 +26,7 @@ import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
-import { findingVerifiable, verifiesByCheck, verifiesCriterion } from './repair.js';
+import { findingVerifiable, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 
@@ -725,6 +725,16 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // required in the scope evaluated here (a phase-only check at the phase
   // gate).
   const inScopeByKey = new Map(scope.required.map((c) => [c.key, c]));
+  // A finding whose verifying check is required in another scope of the
+  // candidate and not in this one (a check an earlier phase's stages
+  // required, read at a later phase's stage gate) is resolved here by that
+  // check's pass all the same, as S2 reads condition 2 (the gate of each
+  // scope sees the finding resolved): otherwise nothing would ever resolve
+  // it and every later gate would stall on it (real loop run 6). The pool
+  // is the candidate's scopes together and its phase scopes, the
+  // definitions of the effective version; read only when needed.
+  let wider: CheckRow[] | null = null;
+  const widerPool = (): CheckRow[] => (wider ??= [...requiredByKey.values(), ...phaseScopeChecks(db, args.project, candidate, scope.effective.id)]);
   for (const f of findings) {
     // F2 (c), L8: a fix is resolved by this evaluation only through its
     // named check, being a required acceptance-origin check of the scope
@@ -735,8 +745,15 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     if (f.disposition === 'fix') {
       const criterion = f.criterion ?? null;
       const byCheck = criterion === null && f.check !== null;
-      const named = f.check === null ? undefined : byCheck ? inScopeByKey.get(f.check) : requiredByKey.get(f.check);
-      const verifies = byCheck ? verifiesByCheck(named) : verifiesCriterion(named, criterion);
+      let named = f.check === null ? undefined : byCheck ? inScopeByKey.get(f.check) : requiredByKey.get(f.check);
+      let verifies = byCheck ? verifiesByCheck(named) : verifiesCriterion(named, criterion);
+      if (!verifies && f.check !== null && (byCheck || criterion !== null)) {
+        const other = widerPool().find((c) => c.key === f.check && (byCheck ? verifiesByCheck(c) : verifiesCriterion(c, criterion)));
+        if (other !== undefined) {
+          named = other;
+          verifies = true;
+        }
+      }
       if (!verifies) {
         // A check that verifies it in another scope of the candidate (a
         // phase-only check at a stage gate) is no missing verification.

@@ -661,7 +661,7 @@ export function verifiesByCheck(c: CheckRow | undefined): boolean {
 
 // The checks of the `phase` scope of each active phase plan of the project
 // on the candidate (D6 §5.8): the phase-only checks and the regression set.
-function phaseScopeChecks(db: Db, project: string, candidate: CandidateRow, version: string): CheckRow[] {
+export function phaseScopeChecks(db: Db, project: string, candidate: CandidateRow, version: string): CheckRow[] {
   const plans = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY rowid`).all(project) as { id: string }[];
   return plans.flatMap((p) => requiredSet(db, { project, candidate, kind: 'phase', stage: null, version, phasePlan: p.id }).required);
 }
