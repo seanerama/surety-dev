@@ -27,6 +27,7 @@ import { effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
+import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay } from './alpha-review.js';
 import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
@@ -748,6 +749,9 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     .get(args.project) as { completion_binding: string } | undefined;
   const candidate = parseJson<{ candidate?: string }>(plan?.completion_binding ?? null)?.candidate;
   if (!candidate || !getCandidate(db, candidate)) return null;
+  // Nor while the candidate's review is under way or waits for its owner
+  // (real loop run 5): the sign-off it brings is what the request reads.
+  if (reviewUnderWay(db, args.project, candidate)) return null;
   const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", rowid`).all(args.project) as EnvRow[];
   for (const env of envs) {
     const config = currentConfig(db, env);
@@ -935,7 +939,18 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // (under D6 K2 another run's integration is often in flight; a
     // not_issued here would end the policy's deployment for good).
     const reasons = (evaluation.reasons as { code: string; subjects?: string[] }[] | undefined) ?? [];
-    const settling = reasons.length > 0 && reasons.every((r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(tx.db, candidate.id, r)));
+    const settles = (r: { code: string; subjects?: string[] }): boolean => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(tx.db, candidate.id, r));
+    // The tier's Reviewer sign-off (D3 §4.1; real loop run 5): when it is the
+    // only thing missing, the engine's Reviewer is asked for it, once per
+    // candidate and content (alpha-review.ts); while it is under way, or is
+    // still to be asked once the rest settles, it settles like *_PENDING.
+    const signoff = reasons.some((r) => r.code === 'SIGNOFF_MISSING') && reasons.every((r) => r.code === 'SIGNOFF_MISSING' || settles(r));
+    const review: AlphaReviewState = !signoff
+      ? 'none'
+      : reasons.every((r) => r.code === 'SIGNOFF_MISSING')
+        ? queueAlphaReview(tx, candidate, evaluation.id)
+        : alphaReviewState(tx.db, args.project, evaluation.id);
+    const settling = reasons.length > 0 && reasons.every((r) => settles(r) || (r.code === 'SIGNOFF_MISSING' && (review === 'coming' || review === 'due')));
     if (requestedBy === 'policy' && settling) {
       return {
         status: 409,
@@ -953,7 +968,10 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
       body: {
         code: 'authorization_not_issued',
         reason: `The ${env.name} deployment of candidate ${candidate.id} is not authorized: alpha_authorize is not satisfied.`,
-        what_to_do: 'Read the reasons, satisfy them, and request the deployment again.',
+        what_to_do:
+          review === 'coming'
+            ? "The candidate's review, which the missing sign-off needs, is queued: request the deployment again once its Reviewer has signed off."
+            : 'Read the reasons, satisfy them, and request the deployment again.',
         subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
       },
     };
