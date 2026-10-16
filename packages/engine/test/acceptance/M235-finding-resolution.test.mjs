@@ -30,6 +30,14 @@
 // missing verification is named and routed only when no scope of the
 // finding's candidate requires the named check as an acceptance-origin
 // check covering the criterion. The S2 case has its own two-stage project.
+//
+// E152 item 3 (Sean, 2026-10-16; D3 §2.11 amended; SEAM.md §470): a finding
+// that names no criterion, whose named check covers no criterion and is
+// required in the evaluated scope, is resolved by `fix` when that check
+// passes after the disposition; the owner may ask for a check to be
+// corrected (`correct_check`) without a conflict finding. Case (g). Case
+// (c)'s finding with no criterion names `login`, which covers R1.1, so it
+// stays as it was.
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
@@ -318,6 +326,48 @@ describe('M235 finding resolution', () => {
     await tick(fx.engine, p.id);
     await stageGate(fx, ctx);
     for (const f of [none, uncovered]) assert.equal(workFor(fx.home, p.id, 'check_correction', f.id).length, 1, 'still one each, after ticks, a restart and another evaluation');
+  });
+
+  // E152 item 3 (Sean, 2026-10-16; D3 §2.11 amended): a finding that names no criterion, whose named
+  // check covers no criterion and is required in the evaluated scope (a phase-only, smoke, static or
+  // lint check), is resolved by `fix` when that check passes after the disposition; and the owner may
+  // ask for a check to be corrected (`correct_check`) without a conflict finding. Found by loop 3: a
+  // phase-only static check failed on a comment, and nothing could resolve it (SEAM.md §470).
+  test("(g) E152 item 3: a finding naming no criterion and the failing check `smoke`, which covers no criterion and is required in the stage's scope, is put to the owner with `fix` and `correct_check` offered; dispositioned fix, it routes no check_correction and is resolved when `smoke` passes by an execution registered after the disposition", async (t) => {
+    // M235's project with `repair_attempts_max` 0 pinned with the step pin before the plan
+    // (objection 030; SEAM.md §§234, 363): the failing smoke parks the stage's work (Q2)
+    // instead of launching a repair that would supersede the candidate or hold the project.
+    const fx = await scriptedEngine(t);
+    const p = await repairProject(fx, { defs: DEFS, governed: { required_checks: REQUIRED }, index: INDEX, policy: { autonomy: 'step', repair_attempts_max: 0 } });
+    const { candidate: c1, reg } = await buildAndNominate(fx, p, { keys: REQUIRED });
+    const ctx = { project: p, stage: p.stages[0].id, candidate: c1 };
+    const ids = checkIds(fx.home, p.id);
+    const failed = await recordExit(fx.engine, reg.smoke.id, 1, { output: 'smoke failed: a banned word in a comment\n' });
+    const [found] = await raiseFindings(fx, p.id, c1.id, [finding('M235-g: the smoke check fails on the candidate', { check: 'smoke' })], { kind: 'verification' });
+    assert.equal(findingRow(fx.home, found.id).criterion, null, 'the fixture is live: the finding names no criterion');
+    const before = await stageGate(fx, ctx);
+    assert.equal(before.check_states[ids.smoke], 'failed', `the fixture is live: smoke, required and covering no criterion, failed on the candidate (result ${failed.id})`);
+
+    // T1 queues no review, so the finding is owed to the owner (SEAM.md §466).
+    const owed = await openDecision(fx, p.id, 'finding_disposition', found.id, { max: 6 });
+    assert.equal(owed.scope, 'disposition_owed', 'the owner is asked the owed question');
+    const offered = owed.options.map((o) => o.key);
+    assert.ok(offered.includes('fix'), `fix is offered: smoke can now show the finding fixed (offered ${JSON.stringify(offered)})`);
+    assert.ok(offered.includes('correct_check'), `correct_check is offered without a conflict finding (offered ${JSON.stringify(offered)})`);
+
+    await consume(fx, p.id, owed, 'fix');
+    const row = findingRow(fx.home, found.id);
+    assert.deepEqual([row.status, row.disposition], ['dispositioned', 'fix'], 'the owner dispositioned it fix');
+    assert.deepEqual(workFor(fx.home, p.id, 'check_correction', found.id), [], 'a finding its criterion-less required check can show fixed routes no check_correction');
+
+    const { smoke } = await passFresh(fx, p.id, c1.id, ['smoke']);
+    assert.ok(withResult(fx, smoke.id).execution_seq > findingRow(fx.home, found.id).disposition_seq, 'the fixture is live: the pass was registered after the disposition');
+    const resolving = await stageGate(fx, ctx);
+    assert.equal(resolving.check_states[ids.smoke], 'passed', 'the fixture is live: smoke passed');
+    const after = findingRow(fx.home, found.id);
+    assert.equal(after.status, 'resolved', `the finding is resolved (reasons ${JSON.stringify(resolving.reasons)})`);
+    assert.deepEqual(after.resolution_verification, { evaluation: resolving.id, check_result: smoke.id }, "by that evaluation and smoke's result");
+    assert.deepEqual(missingFor(resolving, found.id), [], 'no missing verification is named for it');
   });
 
   test('(d) the resolving execution invalidated: the finding reopens', async (t) => {
