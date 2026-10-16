@@ -179,10 +179,17 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
       // generation on the same candidate has its own Verifier (the review's M2).
       const verificationKey = `${candidate.id}:${plan.id}`;
       const last = tx.db
-        .prepare(`SELECT "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' AND "trigger_source" = 'phase' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
-        .get(args.project, verificationKey) as { status: string; trigger_generation: number } | undefined;
-      // A Verifier who signed nothing is not asked again by the engine.
-      const stale = signoffs.length > 0 && last !== undefined && (last.status === 'complete' || last.status === 'cancelled');
+        .prepare(`SELECT "id", "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' AND "trigger_source" = 'phase' AND "trigger_id" = ? ORDER BY "trigger_generation" DESC LIMIT 1`)
+        .get(args.project, verificationKey) as { id: string; status: string; trigger_generation: number } | undefined;
+      // A Verifier who signed nothing is not asked again by the engine,
+      // unless its own findings were why (store/transitions/findings.ts
+      // recordReport; the driver's ruling on real loop run 3): then it is
+      // asked again once each is settled, never while one waits for the
+      // owner or for its fix work (a fix's integration nominates a new
+      // candidate, whose phase verification is its own).
+      const held = last !== undefined && last.status === 'complete' ? heldForFindings(tx.db, last.id) : null;
+      if (held === 'waiting') return NONE;
+      const stale = held === 'settled' || (signoffs.length > 0 && last !== undefined && (last.status === 'complete' || last.status === 'cancelled'));
       const generation = !last ? 1 : stale ? last.trigger_generation + 1 : last.trigger_generation;
       // Registered once the phase evaluation is recorded, satisfied or not
       // (§5.8: "when the phase checks have run"; the driver's ruling 3): the
@@ -230,6 +237,26 @@ function replanAfter(tx: Tx, project: string, plan: string, phase: number): stri
   if (!phases.some((p) => p.number > phase)) return null;
   if (tx.db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'phase_complete' AND "trigger_id" = ?`).get(project, plan)) return null;
   return observeTrigger(tx, { project, kind: 'replan', trigger_source: 'phase_complete', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, {}).work_item.id;
+}
+
+// A completed phase_verification whose Verifier signed nothing and raised
+// findings (findings.ts recordReport): 'waiting' while one of them is open
+// with no disposition, or dispositioned fix with its fix work still to
+// finish; 'settled' once none is; null for any other phase verification
+// (one that signed, or raised nothing).
+export function heldForFindings(db: Db, item: string): 'waiting' | 'settled' | null {
+  const runs = `SELECT "id" FROM "runs" WHERE "work_item" = ?`;
+  if (db.prepare(`SELECT 1 FROM "signoffs" WHERE "scope" = 'phase' AND "run" IN (${runs}) LIMIT 1`).get(item) !== undefined) return null;
+  const findings = db.prepare(`SELECT "id", "project", "status", "disposition" FROM "findings" WHERE "source_run" IN (${runs})`).all(item) as { id: string; project: string; status: string; disposition: string | null }[];
+  if (findings.length === 0) return null;
+  const waiting = findings.some(
+    (f) =>
+      (f.status === 'open' && f.disposition === null) ||
+      (f.status === 'dispositioned' &&
+        f.disposition === 'fix' &&
+        db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(f.project, f.id) !== undefined),
+  );
+  return waiting ? 'waiting' : 'settled';
 }
 
 // The Alpha barrier (D6 §8.1 step 6; B11; D6-R10): the conformance phase of
