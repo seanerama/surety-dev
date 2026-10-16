@@ -200,8 +200,72 @@ export function recordHostQualification(tx: Tx, args: HostQualificationInput, la
       active ? null : tx.at,
       reason,
     );
-  if (active) tx.emit('host.qualified', { host_qualification: id }, { ...label, mechanism_fingerprint: args.mechanism_fingerprint, incarnation: args.incarnation });
+  // D2 §4.1: an active entry qualified under another mechanism needs
+  // requalification. Each found so at this start is recorded with the
+  // qualification that makes it so (real loop run 4: a package upgrade
+  // changed the mechanism mid-run); dispatch to it is refused, and the work
+  // it refuses held, until an entry of this mechanism is active.
+  if (active) {
+    const stale = staleEntries(tx.db, { host_id: args.host_id, mechanism_fingerprint: args.mechanism_fingerprint });
+    tx.emit('host.qualified', { host_qualification: id }, { ...label, mechanism_fingerprint: args.mechanism_fingerprint, incarnation: args.incarnation, requalification_required: stale });
+  }
   return getHostRow(tx.db, id)!;
+}
+
+// The active entries of this host qualified under a host qualification whose
+// mechanism fingerprint is not `now`'s (D2 §4.1: "an incompatible mechanism
+// ... requires requalification"), each with what the owner's requalification
+// names. An entry with no host qualification of record (the kernel lane's
+// fixtures) is not judged.
+export function staleEntries(db: Db, now: { host_id: string; mechanism_fingerprint: string }) {
+  const rows = db.prepare(`SELECT * FROM "trust_entries" WHERE "status" = 'active' AND "host_id" = ? AND "host_qualification" IS NOT NULL ORDER BY rowid, "id"`).all(now.host_id) as EntryRow[];
+  return rows.flatMap((e) => {
+    const then = getHostRow(db, e.host_qualification!);
+    if (then && then.mechanism_fingerprint === now.mechanism_fingerprint) return [];
+    return [{ trust_entry: e.id, backend: e.backend, model: e.model, auth_mode: e.auth_mode, entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null, command: requalifyCommand(db, e) }];
+  });
+}
+
+// The exact `surety qualify` command that asks for an attempt with what the
+// entry was qualified with (D2 §7.2): its backend, mode, model,
+// authentication mode, egress list and its attempt's canary deadlines; and
+// what the command has no flag for (a role profile other than the default,
+// a continuation canary's deadline), named for POST /v1/trust/qualify. It
+// proposes the attempt only: nothing runs before the owner's
+// qualification_approval (Q7), and the entry it writes is active only by
+// the owner's trust_activation.
+export function requalifyCommand(db: Db, e: EntryRow): string {
+  const attempt = getAttempt(db, e.qualification_attempt);
+  const deadlines = (() => {
+    try {
+      return JSON.parse(attempt?.canary_deadlines ?? '{}') as Record<string, number>;
+    } catch {
+      return {};
+    }
+  })();
+  const egress = (() => {
+    try {
+      return JSON.parse(e.egress_hosts) as string[];
+    } catch {
+      return [];
+    }
+  })();
+  const mode = e.session_qualified === 1 ? 'session_headless' : 'one_shot_headless';
+  const parts = ['surety', 'qualify', e.backend, '--mode', mode, '--model', e.model, '--auth-mode', e.auth_mode];
+  for (const h of egress) parts.push('--egress', h);
+  for (const k of ['positive', 'cancellation', 'containment']) if (Number.isSafeInteger(deadlines[k])) parts.push('--canary-deadline', `${k}=${deadlines[k]}`);
+  const extra: string[] = [];
+  const profile = (() => {
+    try {
+      return JSON.parse((e as EntryRow & { profile?: string | null }).profile ?? 'null') as RoleProfile | null;
+    } catch {
+      return null;
+    }
+  })();
+  if (profile !== null && profile.memory_max !== defaultProfileMax('role')) extra.push(`"role_memory_max": ${profile.memory_max}`);
+  if (mode === 'session_headless' && Number.isSafeInteger(deadlines.continuation)) extra.push(`"canary_deadlines": {"continuation": ${deadlines.continuation}}`);
+  const command = parts.join(' ');
+  return extra.length === 0 ? command : `${command} (the command has no flag for ${extra.join(' and ')}: send them to POST /v1/trust/qualify with the same fields)`;
 }
 
 export interface CheckResult {
@@ -857,9 +921,14 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
     // entry's own row is historical and normally lapsed.
     const then = getHostRow(db, entry.host_qualification);
     if (!then || then.mechanism_fingerprint !== host.mechanism_fingerprint) {
-      return backendRefused(
-        `${backend}'s entry was qualified under a host qualification whose mechanism fingerprint (${then?.mechanism_fingerprint ?? 'unknown'}) is not the current one's (${host.mechanism_fingerprint}): it needs requalification.`,
-        { trust_entry: entry.id, requalification_required: true, entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null, current_mechanism_fingerprint: host.mechanism_fingerprint },
+      // Not cleared by retrying (real loop run 4): the reason names the
+      // entry and its model, and what to do is the exact command.
+      const command = requalifyCommand(db, entry);
+      return refuse(
+        'backend_refused',
+        `${backend}'s entry ${entry.id} for the model ${entry.model} was qualified under a host qualification whose mechanism fingerprint (${then?.mechanism_fingerprint ?? 'unknown'}) is not the current one's (${host.mechanism_fingerprint}): the host's mechanism changed, and the entry needs requalification on this host.`,
+        `Requalify it: ${command}; then approve the attempt's qualification_approval and, once its canaries pass, the new entry's trust_activation. Or name another backend for the ${args.role} role.`,
+        { backend, role: args.role, mode, trust_entry: entry.id, requalification_required: true, entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null, current_mechanism_fingerprint: host.mechanism_fingerprint, requalify: command },
       );
     }
   }

@@ -15,7 +15,7 @@ import { exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
-import { dispatchBlocker } from './transitions/runs.js';
+import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
 import { envelopeHold } from './transitions/envelope.js';
 import { deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { readLogs } from './transitions/observe.js';
@@ -600,6 +600,12 @@ function blockerOf(db: Db, item: WorkRow) {
   return { reason: typeof cause === 'string' ? cause : (decision?.kind ?? null), raised_at: decision?.raised_at ?? null, decision: decisionId, options };
 }
 
+function requalificationBlocker(db: Db, w: WorkRow) {
+  const hold = requalificationHold(db, w);
+  if (hold === null) return null;
+  return { reason: 'requalification_required', trust_entry: hold.trust_entry, run: hold.run, what_to_do: hold.what_to_do, decision: null, options: null };
+}
+
 // GET /v1/projects/:p/work (SEAM.md §98): every work item of the project,
 // whatever its status, in `seq` order, with the stored columns and what
 // holds it when something does.
@@ -619,7 +625,9 @@ export function readWork(db: Db, args: { project: string }) {
       trigger_id: w.trigger_id,
       trigger_generation: w.trigger_generation,
       chain: w.chain,
-      blocker: blockerOf(db, w),
+      // Held on a requalification once its question is acknowledged (D2
+      // §4.1; real loop run 4): still shown, with what releases it.
+      blocker: blockerOf(db, w) ?? requalificationBlocker(db, w),
       // An eligible item held by the resource envelope (D2 §3.7, A.7): it
       // stays eligible, and this says why it is not dispatched now.
       // A deploy waiting for its service's admission (D4 §4.7, A.2) shows
