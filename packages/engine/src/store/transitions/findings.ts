@@ -7,7 +7,7 @@
 
 import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
-import { type FindingRow, findingApplies } from './gates.js';
+import { type FindingRow, findingApplies, tierQueuesReview } from './gates.js';
 import { reviewerApprove } from './classification.js';
 import { OWED_SCOPE, blocksAnyGate, reaskOwed, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
@@ -200,9 +200,16 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     }
     // No phase sign-off: the work parks behind a blocker the owner sees (the
     // coordinator's ruling on the 31b review), never re-asked by the engine.
+    // Unless the run's own findings explain it (the driver's ruling on real
+    // loop run 3): each is owed to the owner now (noReviewComes (e)), the
+    // work completes with no blocker of its own, and the phase asks its
+    // Verifier again once they are settled (plan/phase.ts phaseStep).
     const signed = plan !== undefined && (report.signoffs ?? []).some((x) => x.scope === 'phase');
     // (A refused sign-off is not a missing one: the work completes, ruling 6.)
-    if (!signed && item.status === 'executing') parkWork(tx, item, 'phase_signoff_missing', { run: run.id });
+    if (!signed && item.status === 'executing') {
+      if (raisedOpenFindings(tx.db, run.id)) askUndispositioned(tx, { project });
+      else parkWork(tx, item, 'phase_signoff_missing', { run: run.id });
+    }
   }
 
   if (role === 'reviewer' && candidate) {
@@ -365,14 +372,14 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
 // will come to disposition it: the engine's review of its candidate has
 // reported and left it with none, or this is that review's report
 // (`reviewing`: every such finding of the project is owed); it names no
-// candidate; or its source is not a role whose findings a review
-// dispositions (a Verifier's or a Reviewer's). A T1 candidate's Verifier
-// finding still waits for a review the engine does not queue at T1: the
-// driver's intended rule for it is held by an objection to M105 (Verifier
-// to rule; docs/acceptance/objections/). A Builder's objection takes the
-// conflict route instead (repair.ts); a finding the owner has already
-// answered a question about is as the owner left it. Returns the questions
-// raised.
+// candidate; its source is not a role whose findings a review dispositions
+// (a Verifier's or a Reviewer's); its candidate's tier queues no engine
+// review (gates.ts tierQueuesReview, the rule queueReview applies); it was
+// raised by a phase verification; or its candidate's review has reported
+// and no other is to come (noReviewComes). A
+// Builder's objection takes the conflict route instead (repair.ts); a
+// finding the owner has already answered a question about is as the owner
+// left it. Returns the questions raised.
 export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: boolean }): number {
   const rows = tx.db
     .prepare(
@@ -389,9 +396,11 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
     )
     .all(args.project) as (FindingRow & { source_role: string | null; reviewed_after: number })[];
   let n = 0;
+  const version = effectiveVersion(tx.db, args.project)?.id ?? null;
+  const reviewed = new Map<string, boolean | null>();
   for (const f of rows) {
     if (isObjection(f)) continue;
-    if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(f))) continue;
+    if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(tx.db, f, version, reviewed))) continue;
     if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
   }
   // Recovery (the driver's ruling 5 on the real M444 run; queue.ts
@@ -420,9 +429,48 @@ const REVIEWED_SOURCES: readonly (string | null)[] = ['verifier', 'reviewer'];
 
 // No review will come to disposition the finding (the driver's ruling on the
 // real M444 run): (b) it names no candidate; (c) its source is not a role
-// whose findings a review dispositions.
-function noReviewComes(f: FindingRow & { source_role: string | null }): boolean {
-  return f.candidate === null || !REVIEWED_SOURCES.includes(f.source_role);
+// whose findings a review dispositions; (d) its candidate's tier queues no
+// engine review under the effective version and no review work item of the
+// candidate exists, in any state (objection 117 upheld, SEAM.md §466: the
+// engine makes a candidate's review only by queueReview, so in production
+// this is the tier alone; a review already put on the candidate keeps M42's
+// and M50's meaning); (e) it was raised by a phase verification (D6 §5.8:
+// the phase's Verifier runs once its stages are verified, their reviews
+// done, and no review is queued for what it finds; D6-F02: "its findings
+// disposition as any"); (f) its candidate's review has already reported: a
+// review work item of the candidate is complete and none is still to come,
+// so no later review sees the finding (the driver's ruling on real loop run
+// 3: a phase Verifier's finding on a reviewed candidate held the phase with
+// no question about it). Unknown is not "none": with no effective version
+// or no candidate row the tier is unread, and the finding waits under (d)
+// as before. `cache` holds each candidate's (d) and (f) answer for one sweep.
+function noReviewComes(db: Tx['db'], f: FindingRow & { source_role: string | null }, version: string | null, cache: Map<string, boolean | null>): boolean {
+  if (f.candidate === null) return true;
+  if (!REVIEWED_SOURCES.includes(f.source_role)) return true;
+  if (fromPhaseVerification(db, f.source_run)) return true;
+  if (!cache.has(f.candidate)) {
+    const c = getCandidate(db, f.candidate);
+    const reviews = db
+      .prepare(`SELECT "status", "trigger_source", "trigger_id" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.candidate') = ?`)
+      .all(f.project, f.candidate) as { status: string; trigger_source: string; trigger_id: string }[];
+    // The engine's own review (queueReview: trigger (verification, <candidate>)), as for reviewed_after.
+    const reported =
+      reviews.some((r) => r.status === 'complete' && r.trigger_source === 'verification' && r.trigger_id === f.candidate) && reviews.every((r) => r.status === 'complete' || r.status === 'cancelled');
+    cache.set(f.candidate, reported ? false : c && version !== null ? reviews.length > 0 || tierQueuesReview(db, c, version) : null);
+  }
+  return cache.get(f.candidate) === false;
+}
+
+// Did the run raise a finding still open, its disposition owed (a
+// Verifier's are never objections)?
+function raisedOpenFindings(db: Tx['db'], run: string): boolean {
+  return db.prepare(`SELECT 1 FROM "findings" WHERE "source_run" = ? AND "status" = 'open' AND "disposition" IS NULL LIMIT 1`).get(run) !== undefined;
+}
+
+// Was the finding raised by a phase_verification run (D6 §5.8)?
+function fromPhaseVerification(db: Tx['db'], run: string | null): boolean {
+  if (run === null) return false;
+  return db.prepare(`SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'phase_verification'`).get(run) !== undefined;
 }
 
 // The scope of the finding_disposition question an Alpha exception
