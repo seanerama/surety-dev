@@ -436,7 +436,8 @@
       "M434-an-unassigned-requirement.test.mjs",
       "M422-the-latest-save-by-insertion-not-wall-time.test.mjs",
       "M433-a-failed-correction-and-a-partial-one.test.mjs",
-      "M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change.test.mjs"
+      "M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change.test.mjs",
+      "M433-a-change-after-the-final-phase-schedules-a-replan.test.mjs"
     ],
     "37": [
       "M435-check-authoring-and-readiness.test.mjs",
