@@ -7,7 +7,14 @@
 // behind HEAD, the engine rebases in a scratch worktree, re-runs §7.3
 // validation on the rebased tree, and journals that commit instead. A CAS
 // failure is integration_conflict: the run ends failed and the item parks; no
-// agent resolves it"); D1-19; E25 item 3; SEAM.md §§30, 43.
+// agent resolves it"); D1-19; E25 item 3; SEAM.md §§30, 43, 470.
+//
+// E152 item 4 (Sean, 2026-10-16) amends D1 §7.5 and D1-19: a rebase whose
+// changes no longer apply to a moved integration branch (not a
+// compare-and-swap failure) sends the item back to its Builder once on the
+// new head, the conflict named in its context, within repair_attempts_max;
+// it parks only when that budget is spent or the compare-and-swap failure
+// persists.
 //
 // Integration is a compare-and-swap of the integration branch. The branch can
 // have moved since the run's base was taken, in two ways that differ:
@@ -17,7 +24,10 @@
 //     adopted). The run's base is then behind the head. The run's changes are
 //     rebased onto the head; if they apply, the rebased tree is validated and
 //     committed on the head, and that commit is the one swapped in. If they
-//     do not, nothing is integrated and the work parks: no role is asked to
+//     do not, nothing of that run is integrated and the work goes back to
+//     its Builder once, on the new head, with the conflict named in its
+//     context, counted against repair_attempts_max (E152 item 4). Only when
+//     that budget is spent does the work park, with no role asked to
 //     resolve it.
 //   - between the journaled intent and the swap, behind the engine's back.
 //     The swap then fails, as a compare-and-swap must: the unexpected head is
@@ -41,6 +51,7 @@ import { armBarrier, assertCommitted, assertOperation, assertOperations, assertO
 import { changedPaths, commitOnRef, evidenceProgram, fileAt, gitQuiet, isAncestor, parentsOf, readEvidence, refOid, trailersOf, treeOf } from './harness/repos.mjs';
 import { answerDecision, decisionsAbout, run as runRow, runsOf, scriptedEngine, tick, waitForRun, waitForWork, workItem } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
+import { packageOf } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 
 const ticks = async (fx, project, n = 2) => {
@@ -55,9 +66,8 @@ function movedBranchObserved(fx, project, found) {
   return observed[0];
 }
 
-// The run failed with an integration conflict, nothing of it is on the
-// branch, and its work is parked for a person: no role was asked to resolve it.
-async function assertConflictParked(fx, project, item, runId, { branchAt, expected }) {
+// The run failed with an integration conflict and nothing of it is on the branch.
+async function assertConflictFailed(fx, project, runId, { branchAt, expected }) {
   const run = runRow(fx.home, runId);
   assert.deepEqual([run.state, run.outcome, run.reason_class], ['ended', 'failed', 'integration_conflict'], `the run ends failed with an integration conflict (${run.reason_text})`);
   assert.ok(typeof run.reason_text === 'string' && run.reason_text.length > 0, 'and says why');
@@ -65,8 +75,25 @@ async function assertConflictParked(fx, project, item, runId, { branchAt, expect
   assert.equal(refOid(project.repo.path, project.repo.ref), branchAt, 'the integration branch is where it was: nothing of the run is on it');
   assert.equal(registryOf(fx.home, project.id)[project.repo.ref].expected_oid, expected, 'the registry expects what it expected');
   assert.deepEqual(operationsOf(fx.home, { run: runId, journalKind: 'ref_update' }).filter((op) => op.status === 'succeeded'), [], 'no ref update of the run succeeded');
+  return run;
+}
+
+// The context package a run's role dumped names the integration conflict on
+// `path`: one file of it names the path and says it conflicts or does not
+// apply (E152 item 4: "the conflict named in its context"). The wording is
+// the engine's; the path and the fact are what is pinned (SEAM.md §470).
+const CONFLICT_WORDS = /conflict|do(?:es)? not apply|no longer appl/i;
+const namesConflict = (pkg, path) => Object.values(pkg ?? {}).some((text) => typeof text === 'string' && text.includes(path) && CONFLICT_WORDS.test(text));
+
+// The run failed with an integration conflict, nothing of it is on the
+// branch, and its work is parked for a person: no role was asked to resolve
+// it. Under E152 item 4 a rebase conflict parks only at the end of the repair
+// budget, so its cause may be named as the conflict or as the budget
+// (`reasons`; SEAM.md §470). A compare-and-swap failure parks as the conflict.
+async function assertConflictParked(fx, project, item, runId, { branchAt, expected, reasons = ['integration_conflict'] }) {
+  await assertConflictFailed(fx, project, runId, { branchAt, expected });
   const parked = await waitForWork(fx.home, item, 'parked');
-  assert.equal(JSON.parse(parked.blocker).reason, 'integration_conflict', 'the work is parked with its cause');
+  assert.ok(reasons.includes(JSON.parse(parked.blocker).reason), `the work is parked with its cause, one of ${reasons.join(', ')} (${parked.blocker})`);
   const [decision] = decisionsAbout(fx.home, item, 'blocker').filter((d) => d.status === 'open');
   assert.ok(decision && decision.question.length > 0, 'an open blocker names the work item and says what happened');
   withStore(fx.home, (db) => assertWorkHistory(db, item));
@@ -128,34 +155,98 @@ describe('M28 the integration branch moved while the run was under way', () => {
     assertOperations(fx.home, { project: project.id });
   });
 
-  test('moved to an adopted commit that changes the same file another way: the rebase conflicts, nothing is integrated, the work parks, and no role is launched to resolve it; a person lets the work run again from the new head', async (t) => {
+  test("moved to an adopted commit that changes the same file another way: the rebase conflicts, nothing of the run is integrated, and the work goes back to its Builder once, on the new head, the conflict named in its context; that repair is integrated on the head (E152 item 4)", async (t) => {
     const fx = await scriptedEngine(t);
     const project = await addGitProject(fx);
     const repo = project.repo.path;
     const item = await addItem(fx, project.id, 'fix');
-    fx.scripted.script(item, [roleThatHolds([permittedEdit()]), roleThat([step.write('src/other.js', 'export const other = 1;\n')])]);
-    const { run } = await runToHold(fx, project.id, item);
+    const REPAIRED = 'export const answer = 49;\n';
+    fx.scripted.script(item, [
+      roleThatHolds([step.probe('context_dump'), permittedEdit()]),
+      roleThatHolds([step.probe('context_dump')], [step.write(PERMITTED_EDIT.path, REPAIRED)]),
+    ]);
+    const { run, launch } = await runToHold(fx, project.id, item);
+    assert.ok(packageOf(fx, run.id), 'the fixture is live: the first role dumped its context package');
+    assert.equal(namesConflict(packageOf(fx, run.id), PERMITTED_EDIT.path), false, "the fixture is live: the first run's context names no conflict on the path");
 
     // Someone else commits another version of the same file to the branch; a person adopts it.
     const theirs = commitOnRef(repo, project.repo.ref, { [PERMITTED_EDIT.path]: 'export const answer = 7;\n' }, { message: 'a commit that conflicts with the run' });
     await ticks(fx, project.id);
     await answerDecision(fx.engine, project.id, movedBranchObserved(fx, project, theirs).decision.id, 'adopt');
     await waitFor(() => registryOf(fx.home, project.id)[project.repo.ref].expected_oid === theirs, { what: 'the adopted commit to be the expected one' });
-    const before = { launches: fx.scripted.launches().length, work: workItemsOf(fx.home, project.id).length };
+    const work = workItemsOf(fx.home, project.id).length;
 
-    fx.scripted.release(item);
+    // The first run's hold is released by its invocation, so the repair's own hold stands.
+    fx.scripted.release(launch.invocation);
     await waitForRun(fx.home, item, { state: 'ended' });
-    const decision = await assertConflictParked(fx, project, item, run.id, { branchAt: theirs, expected: theirs });
-    assert.equal(fileAt(repo, refOid(repo, project.repo.ref), PERMITTED_EDIT.path), 'export const answer = 7;\n', 'the adopted version of the file is untouched');
+
+    // The work goes back to its Builder once, on the new head: a second run of the same item, not new work.
+    const { run: repair, launch: repairLaunch } = await runToHold(fx, project.id, item, { index: 1 });
+    await assertConflictFailed(fx, project, run.id, { branchAt: theirs, expected: theirs });
+    assert.equal(fileAt(repo, refOid(repo, project.repo.ref), PERMITTED_EDIT.path), 'export const answer = 7;\n', 'the adopted version of the file is untouched by the conflicting run');
+    assert.equal(repair.base_revision, theirs, 'the repair starts from the moved head');
+    assert.equal(repairLaunch.work_item, item, "it is the item's own Builder, sent back");
+    assert.equal(workItemsOf(fx.home, project.id).length, work, 'no work was created to resolve the conflict');
+    assert.equal(workItem(fx.home, item).repair_attempts, 1, 'the send-back is counted against repair_attempts_max');
+    assert.deepEqual(decisionsAbout(fx.home, item, 'blocker'), [], 'the work did not park: no blocker');
+    const pkg = packageOf(fx, repair.id);
+    assert.ok(namesConflict(pkg, PERMITTED_EDIT.path), `the conflict on ${PERMITTED_EDIT.path} is named in the repair's context (files: ${JSON.stringify(Object.keys(pkg ?? {}))}; prompt: ${JSON.stringify(pkg?.['prompt.md'] ?? null)})`);
+
+    // The repair, made on the head, is integrated on it.
+    fx.scripted.release(repairLaunch.invocation);
+    const ended = await waitForRun(fx.home, item, { index: 1, state: 'ended' });
+    assertCommitted(fx, ended.id, { kind: 'engine_commit', parent: theirs, integrated: true, changes: { [PERMITTED_EDIT.path]: 'M' } });
+    assert.equal(fileAt(repo, refOid(repo, project.repo.ref), PERMITTED_EDIT.path), REPAIRED, "the branch holds the repair's version");
+    assert.equal(fx.scripted.launches({ work_item: item }).length, 2, 'one launch and one repair');
+    assert.ok(!withStore(fx.home, (db) => assertWorkHistory(db, item)).includes('parked'), 'the work never parked');
+    assertOperations(fx.home, { project: project.id });
+  });
+
+  test('the repair after a rebase conflict conflicts again with a second adopted move: the budget (repair_attempts_max 1) is spent, nothing is integrated, the work parks, and no role is launched to resolve it; a person lets the work run again from the new head (E152 item 4)', async (t) => {
+    const fx = await scriptedEngine(t);
+    const project = await addGitProject(fx);
+    const repo = project.repo.path;
+    await changePolicy(fx.engine, project.id, { repair_attempts_max: 1 });
+    const item = await addItem(fx, project.id, 'fix');
+    fx.scripted.script(item, [
+      roleThatHolds([permittedEdit()]),
+      roleThatHolds([], [step.write(PERMITTED_EDIT.path, 'export const answer = 49;\n')]),
+      roleThat([step.write('src/other.js', 'export const other = 1;\n')]),
+    ]);
+    const { run, launch } = await runToHold(fx, project.id, item);
+
+    // A commit to the same file, made by someone else and adopted by a person.
+    const adopt = async (content, message) => {
+      const at = commitOnRef(repo, project.repo.ref, { [PERMITTED_EDIT.path]: content }, { message });
+      await ticks(fx, project.id);
+      await answerDecision(fx.engine, project.id, movedBranchObserved(fx, project, at).decision.id, 'adopt');
+      await waitFor(() => registryOf(fx.home, project.id)[project.repo.ref].expected_oid === at, { what: 'the adopted commit to be the expected one' });
+      return at;
+    };
+    const first = await adopt('export const answer = 7;\n', 'a commit that conflicts with the run');
+    fx.scripted.release(launch.invocation);
+    await waitForRun(fx.home, item, { state: 'ended' });
+    const { run: repair, launch: repairLaunch } = await runToHold(fx, project.id, item, { index: 1 });
+    await assertConflictFailed(fx, project, run.id, { branchAt: first, expected: first });
+    assert.equal(repair.base_revision, first, 'the fixture is live: the repair starts from the first moved head');
+
+    // The branch moves again under the repair, in the same file.
+    const second = await adopt('export const answer = 8;\n', 'a second commit that conflicts with the repair');
+    const work = workItemsOf(fx.home, project.id).length;
+    fx.scripted.release(repairLaunch.invocation);
+    await waitForRun(fx.home, item, { index: 1, state: 'ended' });
+    const decision = await assertConflictParked(fx, project, item, repair.id, { branchAt: second, expected: second, reasons: ['integration_conflict', 'repair_attempts_max'] });
+    assert.equal(fileAt(repo, refOid(repo, project.repo.ref), PERMITTED_EDIT.path), 'export const answer = 8;\n', 'the adopted version of the file is untouched');
+    assert.equal(workItem(fx.home, item).repair_attempts, 1, 'one send-back, the whole budget');
     await ticks(fx, project.id);
-    assert.deepEqual({ launches: fx.scripted.launches().length, work: workItemsOf(fx.home, project.id).length }, before, 'no role was launched and no work created to resolve the conflict');
-    assert.equal(runsOf(fx.home, item).length, 1);
+    assert.deepEqual({ launches: fx.scripted.launches({ work_item: item }).length, work: workItemsOf(fx.home, project.id).length }, { launches: 2, work }, 'no role was launched and no work created past the budget');
+    assert.equal(runsOf(fx.home, item).length, 2);
 
     // The continuation: a person answers the blocker, and the work runs again from the head.
     await answerDecision(fx.engine, project.id, decision.id, 'retry');
-    const second = await runToEnd(fx, project.id, item, { index: 1 });
-    assert.equal(second.base_revision, theirs, 'the next run starts from the adopted head');
-    assertCommitted(fx, second.id, { kind: 'engine_commit', parent: theirs, integrated: true, changes: { 'src/other.js': 'A' } });
+    const third = await runToEnd(fx, project.id, item, { index: 2 });
+    assert.equal(third.base_revision, second, 'the next run starts from the adopted head');
+    assertCommitted(fx, third.id, { kind: 'engine_commit', parent: second, integrated: true, changes: { 'src/other.js': 'A' } });
   });
 
   test('moved between the journaled intent and the swap: the compare-and-swap fails, the unexpected head is not overwritten, the operation is failed, the registry is not told, and the move is observed out of band', async (t) => {
@@ -219,7 +310,8 @@ describe('M28 the integration branch moved while the run was under way', () => {
     rmSync(evidence);
 
     const item = await addItem(fx, project.id, 'fix');
-    fx.scripted.script(item, [roleThatHolds([step.write('notes.txt', ours)])]);
+    // A conflict sends the work back to its Builder on the head (E152 item 4): the repair writes both changes.
+    fx.scripted.script(item, [roleThatHolds([step.write('notes.txt', ours)]), roleThat([step.write('notes.txt', 'line one, by someone else\nline two\nline three, by the role\n')])]);
     const { run } = await runToHold(fx, project.id, item);
     const theirs = commitOnRef(repo, project.repo.ref, { 'notes.txt': theirsText }, { message: 'another change to the same file' });
     await ticks(fx, project.id);
@@ -233,13 +325,18 @@ describe('M28 the integration branch moved while the run was under way', () => {
     // changes integrated, or a conflict. A repository that needs its merge
     // driver is not supported in M1, like one that needs a filter (E29 item 1).
     const ended = runRow(fx.home, run.id);
-    const tip = refOid(repo, project.repo.ref);
     if (ended.outcome === 'completed') {
+      const tip = refOid(repo, project.repo.ref);
       assert.deepEqual(parentsOf(repo, tip), [theirs]);
       assert.equal(fileAt(repo, tip, 'notes.txt'), 'line one, by someone else\nline two\nline three, by the role\n', 'both changes are in the integrated file');
     } else {
-      assert.deepEqual([ended.outcome, ended.reason_class, tip], ['failed', 'integration_conflict', theirs], 'or the rebase is a conflict, and nothing moved');
-      assert.equal(workItem(fx.home, item).status, 'parked');
+      assert.deepEqual([ended.outcome, ended.reason_class], ['failed', 'integration_conflict'], 'or the rebase is a conflict');
+      assert.deepEqual(operationsOf(fx.home, { run: run.id, journalKind: 'ref_update' }).filter((op) => op.status === 'succeeded'), [], 'and nothing of the run moved the branch');
+      // E152 item 4: the work goes back to its Builder on the head, not to a person.
+      const repair = await waitForRun(fx.home, item, { index: 1, state: 'ended' });
+      assert.equal(repair.base_revision, theirs, 'the repair starts from the moved head');
+      assert.ok(!withStore(fx.home, (db) => assertWorkHistory(db, item)).includes('parked'), 'the work did not park');
+      assert.equal(readEvidence(evidence), null, `the repair's integration ran the repository's merge driver:\n${readEvidence(evidence)}`);
     }
   });
 });
