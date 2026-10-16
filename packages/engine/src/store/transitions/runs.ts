@@ -438,10 +438,59 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     )
     .get(item.project, item.id);
   if (holding) return 'held by an open decision';
+  // Refused for requalification (D2 §4.1; real loop run 4): retrying cannot
+  // clear it, so the item is not dispatched again until an entry this
+  // host's mechanism qualifies is active for its role.
+  const stale = requalificationHold(db, item);
+  if (stale !== null) return `waits for the requalification of trust entry ${stale.trust_entry}`;
   // D1 §8.1 step 8, D1-34, as D6 K3 reads it: the autonomy profile decides
   // where the boundary falls; max_chained_roles bounds inherited chain depth.
   if (boundaryFalls(db, item)) return CHAIN_BOUNDARY;
   return null;
+}
+
+// What holds an eligible item on a requalification (D2 §4.1; real loop run
+// 4), or null: its latest run was refused because the entry its role
+// resolved to was qualified under another mechanism, and its role resolves
+// so still. An active entry of the current mechanism releases it; so does
+// any other resolution (another backend named, the entry revoked), which
+// the next dispatch then meets as it is.
+export interface RequalificationHold {
+  trust_entry: string;
+  run: string;
+  reason: string;
+  what_to_do: string;
+  requalify: string | null;
+}
+export function requalificationHold(db: Tx['db'], item: Pick<WorkRow, 'id' | 'project' | 'kind' | 'status'>): RequalificationHold | null {
+  if (item.status !== 'eligible') return null;
+  const role = ROLE_OF[item.kind];
+  if (!role) return null;
+  const last = db.prepare('SELECT "id", "outcome", "reason_detail" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item.id) as
+    | { id: string; outcome: string | null; reason_detail: string | null }
+    | undefined;
+  if (!last || last.outcome !== 'refused' || last.reason_detail === null) return null;
+  if (!refusalOf(last.reason_detail)?.subject?.requalification_required) return null;
+  const now = resolveBackend(db, { project: item.project, role, scripted: 'any-scripted-version' });
+  if (now.kind !== 'refused' || now.subject.requalification_required !== true || typeof now.subject.trust_entry !== 'string') return null;
+  return { trust_entry: now.subject.trust_entry, run: last.id, reason: now.reason, what_to_do: now.what_to_do, requalify: typeof now.subject.requalify === 'string' ? now.subject.requalify : null };
+}
+
+// A refused run's refusal form (D1 §15.1; the run's `reason_detail`).
+export function refusalOf(detail: string | null): { code?: string; reason?: string; what_to_do?: string; subject?: Record<string, unknown> } | null {
+  if (detail === null) return null;
+  try {
+    const v = JSON.parse(detail) as unknown;
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as { code?: string; reason?: string; what_to_do?: string; subject?: Record<string, unknown> }) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The eligible items of a project held on the requalification of `entry`.
+export function heldOnRequalification(db: Tx['db'], project: string, entry: string): string[] {
+  const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(project) as WorkRow[];
+  return items.filter((w) => requalificationHold(db, w)?.trust_entry === entry).map((w) => w.id);
 }
 
 // Why a milestone is unmet (D6 §6.4), or null.
@@ -1323,7 +1372,16 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     case 'refused': {
       const refusals = item.preflight_refusals + 1;
       if (refusals >= policy.preflight_refusals_max!) parkWork(tx, item, 'preflight_refusals_max', cause, { preflight_refusals: refusals });
-      else transitionWork(tx, item, 'eligible', { preflight_refusals: refusals }, cause);
+      else {
+        transitionWork(tx, item, 'eligible', { preflight_refusals: refusals }, cause);
+        // A refusal for requalification (D2 §4.1) is not cleared by
+        // retrying: the item is held on it (dispatchBlocker), not refused
+        // again into a park, and the owner is asked, once per project and
+        // entry, to requalify the entry; the hold is released when an
+        // entry of this host's mechanism is active (real loop run 4).
+        const held = requalificationHold(tx.db, getWorkItem(tx, item.id)!);
+        if (held !== null) raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'trust_entry', subjectId: held.trust_entry });
+      }
       return;
     }
     case 'timed_out':

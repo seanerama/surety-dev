@@ -43,10 +43,10 @@ import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCom
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, settleProposalFindings, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
-import { getRun } from './runs.js';
+import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
-import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
+import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, correctionFor, findingVerifiable, routeMissingVerification, settleConflicts } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
@@ -220,7 +220,9 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
       const what =
         blocker.reason === 'integration_branch_checked_out'
           ? `its integration was refused: the integration branch is checked out in the worktree ${blocker.worktree ?? '(unknown)'}, which the engine does not own. Switch that worktree to another branch, or detach it, then retry`
-          : (PARK_TEXT[blocker.reason] ?? blocker.reason);
+          : blocker.reason === 'preflight_refusals_max'
+            ? `${PARK_TEXT.preflight_refusals_max}${lastRefusalText(tx.db, item.id)}`
+            : (PARK_TEXT[blocker.reason] ?? blocker.reason);
       return {
         // The continuation an answer allows (SEAM.md §105): the status a retry
         // resumes the item to, and the revision its next run starts from as
@@ -344,6 +346,47 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
       };
     }
     return null;
+  }
+  // An entry that needs requalification (D2 §4.1; real loop run 4): the
+  // project's work its refusal holds, and what the owner does. Only the
+  // owner can start a qualification (D2 §7.2, Q7: a paid canary runs only by
+  // the operator's explicit command and approval), so the question names the
+  // command; acknowledging it establishes nothing. It no longer stands, and
+  // the work is released, once an entry of this host's mechanism is active.
+  if (d.subject_type === 'trust_entry') {
+    if (d.project === null) return null;
+    const held = heldOnRequalification(tx.db, d.project, d.subject_id);
+    const e = getEntry(tx.db, d.subject_id);
+    if (held.length === 0 || !e) return null;
+    const hold = requalificationHold(tx.db, getWorkItem(tx, held[0]!)!)!;
+    const host = currentHostQualification(tx.db);
+    const then = e.host_qualification === null ? undefined : getHostRow(tx.db, e.host_qualification);
+    return {
+      manifest: {
+        trust_entry: e.id,
+        subject_status: e.status,
+        cause: 'requalification_required',
+        quarantined: false,
+        evidence: BLOCKER_EVIDENCE,
+        continuation: null,
+        work_items: held,
+        host_qualification: host?.id ?? null,
+        entry_mechanism_fingerprint: then?.mechanism_fingerprint ?? null,
+        current_mechanism_fingerprint: host?.mechanism_fingerprint ?? null,
+      },
+      options: [
+        {
+          key: 'acknowledge',
+          label: 'Acknowledge',
+          consequence: 'Records that you have seen this. It establishes nothing: the work stays held until an entry qualified on this host as it is now is active for its role.',
+          effect: { record: 'acknowledgement' },
+        },
+      ],
+      question:
+        `${hold.reason} Work held until then: ${held.join(', ')} (each refused once before launch; none is dispatched again while the refusal stands). ` +
+        `Requalify it: ${hold.requalify ?? `surety qualify ${e.backend} --mode one_shot_headless --model ${e.model}`}; then approve the attempt's qualification_approval and, once its canaries pass, the new entry's trust_activation, and the held work is dispatched.`,
+      blockedWorkItems: held,
+    };
   }
   if (d.subject_type === 'run') {
     const run = getRun(tx, d.subject_id);
@@ -478,6 +521,18 @@ function replanRefusal(tx: Tx, item: string): string {
   if (reasons.length > 0) return ` (the plan check refused it: ${reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`).join('; ')})`;
   const run = tx.db.prepare('SELECT "reason_text" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { reason_text: string | null } | undefined;
   return run?.reason_text ? ` (its last run: ${run.reason_text})` : '';
+}
+
+// The last refusal of a parked item's runs, as its blocker's question names
+// it (real loop run 4): the code, the reason and what to do that the
+// refusal recorded, so the owner sees what retrying would meet.
+function lastRefusalText(db: Tx['db'], item: string): string {
+  const run = db.prepare(`SELECT "id", "reason_detail" FROM "runs" WHERE "work_item" = ? AND "outcome" = 'refused' ORDER BY "seq" DESC LIMIT 1`).get(item) as { id: string; reason_detail: string | null } | undefined;
+  if (!run) return '';
+  const r = refusalOf(run.reason_detail);
+  if (r === null || typeof r.reason !== 'string') return ` (its last refusal, run ${run.id}, recorded no reason)`;
+  const what = typeof r.what_to_do === 'string' ? ` ${r.what_to_do}` : '';
+  return ` (its last refusal, run ${run.id}: ${r.code ?? 'refused'}: ${r.reason.replace(/\.$/, '')}.${what.replace(/\.$/, '')})`;
 }
 
 export const PARK_TEXT: Record<string, string> = {
