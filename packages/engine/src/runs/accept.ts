@@ -39,7 +39,7 @@ import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
 import { architectFindings } from '../plan/findings.js';
 import { rebaseTree } from '../git/rebase.js';
-import { type MetadataBaseline, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
+import { type MetadataBaseline, type Violation, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal, Settled } from '../journal/driver.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
@@ -67,6 +67,11 @@ export const SIDE_REF_KINDS = ['spec_change'];
 export const ACCEPTED_KINDS = [...INTEGRATING_KINDS, ...REPORTING_KINDS, ...SIDE_REF_KINDS];
 
 const failed = (reason: RunEnd['reason'], text: string, detail?: Record<string, unknown>): RunEnd => ({ outcome: 'failed', reason, reasonText: text, ...(detail ? { detail } : {}) });
+// A validation's refusal, with every path the role may not change kept on
+// the run's detail, so that the repair is told to leave each unchanged
+// (store/reads.ts diffViolationFacts; real Inkwell run: a fix Builder
+// refused for an ADR edit four times running, its repairs told nothing).
+const violated = (v: Violation, prefix = ''): RunEnd => failed(v.klass, `${prefix}${v.text}`, v.paths && v.paths.length > 0 ? { paths: v.paths } : undefined);
 
 // An operation the run issued whose effect git has not been made to tell
 // (its command killed at the deadline, or its probe blocked): the run is
@@ -241,7 +246,7 @@ export class Acceptor {
     // 3. Validation, unless the run's commit is already journaled.
     if (facts.commits.length === 0) {
       const diff = await validateDiff(repo, base, tree, role, facts.caps, facts.roots);
-      if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
+      if (diff.violation) return violated(diff.violation);
       await pausePoint('snapshot.before_validate_outside');
       const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
       if (outside) return failed(outside.klass, outside.text);
@@ -312,7 +317,7 @@ export class Acceptor {
             });
           }
           const check = await validateDiff(repo, head, rebased.tree, role, facts.caps, facts.roots);
-          if (check.violation) return failed(check.violation.klass, `the rebased result: ${check.violation.text}`);
+          if (check.violation) return violated(check.violation, 'the rebased result: ');
           const again = facts.commits.find((c) => c.parent === head && c.tree === rebased.tree);
           if (again && again.state === 'finalized') target = again;
           else {
@@ -325,7 +330,7 @@ export class Acceptor {
         const targetTree = await treeOf(ctx, target.sha);
         if (headTree === null || targetTree === null) return failed('infra_error', 'the integration could not be prepared: the repository could not be read');
         const plans = await validateDiff(repo, head, targetTree, role, { files: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER, fileBytes: Number.MAX_SAFE_INTEGER }, facts.roots);
-        if (plans.violation) return failed(plans.violation.klass, plans.violation.text);
+        if (plans.violation) return violated(plans.violation);
         // A replan's plan in Appendix B.5's form (D6 §5.6): checked against
         // the bundle now, on the main thread; its finalizer publishes it as its
         // routing says. A plan in D1 §7.8's form registers as built.
@@ -581,7 +586,7 @@ export class Acceptor {
     const repo = facts.project.repo;
     const run = facts.run.id;
     const diff = await validateDiff(repo, base, tree, facts.run.role, facts.caps, facts.roots);
-    if (diff.violation) return failed(diff.violation.klass, diff.violation.text);
+    if (diff.violation) return violated(diff.violation);
     const ws = facts.workspace!;
     await pausePoint('snapshot.before_validate_outside');
     const outside = await validateOutside({ repo, path: ws.path, metadata, registry: facts.registry, moving: facts.moving, others: facts.others, scratch: this.rt.scratch, refFacts: () => this.rt.read<{ registry: { ref: string; expected_oid: string }[]; moving: Record<string, string[]> }>('integrity.registry', { project: facts.run.project }) });
