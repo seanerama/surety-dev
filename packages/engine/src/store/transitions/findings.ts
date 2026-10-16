@@ -358,15 +358,21 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   }
 }
 
-// Never a silent stall (the driver's ruling on the real M443 run): an open
-// finding with no disposition, no proposed disposition and no question
-// about it, once the engine's review of its candidate has reported and left
-// it with none, is put to the owner as a finding_disposition question
-// (scope disposition_owed). A Builder's objection takes the conflict route
-// instead (repair.ts); a finding the owner has already answered a question
-// about is as the owner left it. `reviewing`: in that review's own report
-// transaction, every such finding of the project is owed.
-// Returns the questions raised.
+// Never a silent stall (the driver's ruling on the real M443 run, widened on
+// the real M444 run): an open finding with no disposition, no proposed
+// disposition and no question about it is put to the owner as a
+// finding_disposition question (scope disposition_owed) whenever no review
+// will come to disposition it: the engine's review of its candidate has
+// reported and left it with none, or this is that review's report
+// (`reviewing`: every such finding of the project is owed); it names no
+// candidate; or its source is not a role whose findings a review
+// dispositions (a Verifier's or a Reviewer's). A T1 candidate's Verifier
+// finding still waits for a review the engine does not queue at T1: the
+// driver's intended rule for it is held by an objection to M105 (Verifier
+// to rule; docs/acceptance/objections/). A Builder's objection takes the
+// conflict route instead (repair.ts); a finding the owner has already
+// answered a question about is as the owner left it. Returns the questions
+// raised.
 export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: boolean }): number {
   const rows = tx.db
     .prepare(
@@ -385,14 +391,21 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
   let n = 0;
   for (const f of rows) {
     if (isObjection(f)) continue;
-    // Owed: the engine's review of the finding's candidate (the one review
-    // E36 item 3 queues) is reporting now, or has reported since the
-    // finding was raised, and left it with none: no other review of that
-    // content will come to disposition it.
-    if (!(args.reviewing === true || f.reviewed_after === 1)) continue;
+    if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(f))) continue;
     if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
   }
   return n;
+}
+
+// The roles whose findings the engine's review dispositions (F §6.2): a
+// Verifier's, reported before the review, and a Reviewer's own.
+const REVIEWED_SOURCES: readonly (string | null)[] = ['verifier', 'reviewer'];
+
+// No review will come to disposition the finding (the driver's ruling on the
+// real M444 run): (b) it names no candidate; (c) its source is not a role
+// whose findings a review dispositions.
+function noReviewComes(f: FindingRow & { source_role: string | null }): boolean {
+  return f.candidate === null || !REVIEWED_SOURCES.includes(f.source_role);
 }
 
 // The scope of the finding_disposition question an Alpha exception
