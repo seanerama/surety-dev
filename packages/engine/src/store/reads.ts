@@ -18,6 +18,7 @@ import type { CheckWritingFacts } from '../checks/guide.js';
 import type { Governed } from '../checks/schema.js';
 import { openObligationsOf } from '../spec/change.js';
 import { isAdopted } from '../adopt/records.js';
+import { type DeploymentGapEvidence, deploymentEvidenceOf } from './transitions/alpha-gap.js';
 import type { BuilderStageFacts } from '../packages/reads.js';
 
 // The project's effective ungoverned policy: the revision the engine
@@ -574,6 +575,15 @@ export interface AuthoringFacts {
   // kinds, criteria and areas its gate scope lacks under the effective
   // version, as registered.
   gaps?: { stage: number; kinds: string[]; criteria: string[]; areas: string[] }[] | null;
+  // A deployment gap's follow-up (store/transitions/alpha-gap.ts): the
+  // gate, the environment with its targets' variables and what its scope
+  // lacks, as registered; null otherwise.
+  deployment?: DeploymentGapEvidence | null;
+  // Whether the effective protected version holds a required
+  // `post_deploy_behavior` check listing `alpha_complete` (D4 §5.1, J4): the
+  // deployment gate is refused without one. null when no version is
+  // effective.
+  behavior_check?: boolean | null;
 }
 function authoringFacts(db: Database, project: string, planId: string | null, item: { trigger_source: string | null; trigger_id: string | null; trigger_evidence?: string | null }): AuthoringFacts {
   const parse = <T>(text: unknown, fallback: T): T => {
@@ -633,7 +643,15 @@ function authoringFacts(db: Database, project: string, planId: string | null, it
     environments,
     follow_up,
     gaps: item.trigger_source === 'authoring_gap' ? (parse<{ gaps?: AuthoringFacts['gaps'] }>(item.trigger_evidence ?? null, {}).gaps ?? null) : null,
+    deployment: item.trigger_source === 'authoring_gap' ? deploymentEvidenceOf(item.trigger_evidence ?? null) : null,
+    behavior_check: behaviorCheckApplied(db, project),
   };
+}
+
+function behaviorCheckApplied(db: Database, project: string): boolean | null {
+  const v = effectiveVersion(db, project);
+  if (!v) return null;
+  return checksOfVersion(db, v.id).some((c) => c.required === 1 && c.kind === 'post_deploy_behavior' && gateKindsOf(c).includes('alpha_complete'));
 }
 
 function checkEnvironments(db: Database, project: string): NonNullable<CheckWritingFacts['environments']> {

@@ -366,6 +366,33 @@ export interface PhaseAuthoringFacts {
   follow_up?: { obligation: string; criteria: string[]; reason: string | null; prerequisite: unknown; stages: { number: number; status: string }[] } | null;
   // A gap follow-up's: per stage, what its gate scope lacks.
   gaps?: { stage: number; kinds: string[]; criteria: string[]; areas: string[] }[] | null;
+  // A deployment gap's follow-up (store/transitions/alpha-gap.ts): what the
+  // Alpha deployment's gate lacks, for which environment.
+  deployment?: {
+    gate: string;
+    evaluation: string;
+    candidate: string;
+    environment: string;
+    targets: { name: string; variable: string }[] | null;
+    missing: { kinds: string[]; criteria: string[]; areas: string[] };
+  } | null;
+  // Whether a required `post_deploy_behavior` check is applied (null: no
+  // version is effective).
+  behavior_check?: boolean | null;
+}
+
+// What a required `post_deploy_behavior` check is (D4 §5.1, J4), for an
+// environment and its targets' variables.
+function behaviorCheckText(environment: string | null, targets?: { name: string; variable: string }[] | null): string {
+  const reach =
+    targets === undefined
+      ? "through its target's variable"
+      : targets === null
+      ? "through its target's variable (`verifier.target_variables`; this environment's targets could not be read here, say so in your summary)"
+      : targets.length === 0
+        ? 'through its target\'s variable (`verifier.target_variables`; this environment names no target)'
+        : `through ${targets.map((t) => `\`${t.variable}\` (target \`${t.name}\`)`).join(', ')}`;
+  return `A required check of kind \`post_deploy_behavior\`${environment ? ` for environment \`${environment}\`` : ''}: \`gate_kinds\` [\`${DEPLOYMENT_GATE}\`] only, \`requires\` [\`environment\`, \`artifact_digest\`], no \`covers\`; it exercises a user operation the requirements specify against the running service, reaching it ${reach}. Without it the deployment gate \`alpha_authorize\` is refused ACCEPTANCE_SCOPE_INCOMPLETE \`kind:post_deploy_behavior\` and nothing is deployed.`;
 }
 
 // The authoring result's own fields (B.7), beside the Verifier's: its
@@ -402,6 +429,24 @@ export const AUTHORING_RESULT_FIELDS: Record<string, Record<string, unknown>> = 
 
 export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
   const out: string[] = ['', "## The phase's check authoring", ''];
+  // A deployment gap's follow-up (real visual run 2): the Alpha deployment
+  // gate lacks checks no one wrote.
+  if (a.deployment) {
+    const d = a.deployment;
+    const m = d.missing;
+    out.push(
+      `You author the protected checks the Alpha deployment of candidate ${d.candidate} to environment \`${d.environment}\` still lacks. Its gate (\`${d.gate}\`, evaluation ${d.evaluation}) is refused ACCEPTANCE_SCOPE_INCOMPLETE: no applied check provides what is named below. The stages are built and the other checks are applied; write only what is missing, against the code and the service as they are. Once your proposal is applied the engine requests the deployment again.`,
+      '',
+      '### What the deployment gate lacks',
+      '',
+    );
+    for (const k of m.kinds) out.push(k === 'post_deploy_behavior' ? `- ${behaviorCheckText(d.environment, d.targets)}` : `- A required check of kind \`${k}\` listing \`alpha_authorize\` in its \`gate_kinds\`.`);
+    for (const c of m.criteria) out.push(`- A required check covering criterion ${c}, listing \`alpha_authorize\` in its \`gate_kinds\`.`);
+    for (const ar of m.areas) out.push(`- A required \`sensitivity_floor\` check of area \`${ar}\`, listing \`alpha_authorize\` in its \`gate_kinds\`.`);
+    out.push('', '```json', JSON.stringify(m, null, 2), '```');
+    out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation`:', '', '```json', JSON.stringify(a.stages, null, 2), '```');
+    return out;
+  }
   // A gap follow-up (the driver's ruling C on the real M443 run): the
   // stages' gates lack checks no one was asked to write.
   if (a.gaps && a.gaps.length > 0) {
@@ -442,6 +487,17 @@ export function phaseAuthoringText(a: PhaseAuthoringFacts): string[] {
     '',
     'A later phase adds checks under new declared inputs; a check whose inputs name a directory, or cover the whole protected tree, changes with any addition under it, and the classifier then sends the addition to the owner. Declare each check\'s `inputs` file by file: its program and the shared helpers it imports.',
   );
+  // The deployment's own check (D4 §5.1, J4; real visual run 2, whose two
+  // phases' authoring wrote none): stated as an obligation of this proposal
+  // while no required one is applied.
+  if (a.behavior_check !== true && (a.phase_plan === null || a.phase_plan.phase_number === 1 || a.behavior_check === false)) {
+    out.push(
+      '',
+      "### The deployment's check",
+      '',
+      `${a.behavior_check === null ? 'Whether a required `post_deploy_behavior` check is applied is not known here.' : 'No required `post_deploy_behavior` check is applied yet.'} Write one in this proposal for each environment below: ${behaviorCheckText(null)} \`verifier.post_deploy\` and \`verifier.target_variables\` state its form and each target's variable.`,
+    );
+  }
   out.push('', "### The plan's stages", '', 'Each stage, with the requirements it `implements` and its `validation` (the criteria, kinds and areas its checks must cover):', '', '```json', JSON.stringify(a.stages, null, 2), '```');
   out.push('', "### The module map's interfaces", '');
   if (a.interfaces === null) out.push("The module map of the plan's approved bundle could not be read, so its interfaces are unknown here; say so in your summary.");

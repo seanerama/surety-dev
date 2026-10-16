@@ -28,6 +28,7 @@ import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
 import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay } from './alpha-review.js';
+import { type AlphaGapState, gapAuthoringUnderWay, gapReason, queueAlphaGapAuthoring, reopenableRefusal } from './alpha-gap.js';
 import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
@@ -752,6 +753,9 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
   // Nor while the candidate's review is under way or waits for its owner
   // (real loop run 5): the sign-off it brings is what the request reads.
   if (reviewUnderWay(db, args.project, candidate)) return null;
+  // Nor while the checks its gate lacks are being authored (real visual run
+  // 2; alpha-gap.ts): the applied check is what the request reads.
+  if (gapAuthoringUnderWay(db, args.project)) return null;
   const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", rowid`).all(args.project) as EnvRow[];
   for (const env of envs) {
     const config = currentConfig(db, env);
@@ -759,12 +763,19 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     if (qualificationFor(db, env) === undefined) continue;
     const key = requestKey(db, { project: args.project, candidate, config: config.id });
     const existing = requestOfKey(db, args.project, key);
-    if (existing && !preparing(existing)) continue;
+    if (existing && !preparing(existing) && !reopened(db, existing, candidate)) continue;
     const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
     if (all.some((a) => pending(db, a))) continue;
     return { candidate, environment: env.name, key };
   }
   return null;
+}
+
+// A policy request refused only on a gap of the deployment scope a
+// Verifier's check closes is made again under its key (alpha-gap.ts
+// reopenableRefusal): before that gap was asked for, and once after.
+function reopened(db: Db, row: RequestRow, candidate: string): boolean {
+  return reopenableRefusal(db, { ...(row as RequestRow & { reason: string | null }), candidate }, (r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(db, candidate, r)));
 }
 
 // A policy refusal reason a specification change leaves while its
@@ -883,7 +894,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
     const existing = requestOfKey(tx.db, args.project, key);
-    if (existing && !preparing(existing)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    if (existing && !preparing(existing) && !reopened(tx.db, existing, candidate.id)) return { status: 200, body: { request: null, skipped: 'requested' } };
     // Re-prepared under its key after an unexpected error: one more preparation counted.
     if (existing) tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?').run(existing.id);
     if (pendingRow) return { status: 200, body: { request: null, skipped: 'pending' } };
@@ -944,13 +955,27 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // only thing missing, the engine's Reviewer is asked for it, once per
     // candidate and content (alpha-review.ts); while it is under way, or is
     // still to be asked once the rest settles, it settles like *_PENDING.
+    // A kind, criterion or area of the deployment scope no applied check
+    // provides, the completion's `post_deploy_behavior` check included (J4;
+    // real visual run 2): when nothing else lasting holds the request, a
+    // Verifier is asked for the checks, once per gap and plan
+    // (alpha-gap.ts); while that authoring is under way the gap settles like
+    // *_PENDING, and the sign-off with it (the authoring's applied version
+    // changes the content a sign-off binds).
+    const gapped = (r: { code: string; subjects?: string[] }): boolean => gapReason(tx.db, args.project, r);
+    const gap: AlphaGapState =
+      reasons.some(gapped) && reasons.every((r) => gapped(r) || r.code === 'SIGNOFF_MISSING' || settles(r))
+        ? queueAlphaGapAuthoring(tx, candidate, evaluation.id, { name: env.name, targets: targetsOf(config) })
+        : 'none';
     const signoff = reasons.some((r) => r.code === 'SIGNOFF_MISSING') && reasons.every((r) => r.code === 'SIGNOFF_MISSING' || settles(r));
     const review: AlphaReviewState = !signoff
       ? 'none'
       : reasons.every((r) => r.code === 'SIGNOFF_MISSING')
         ? queueAlphaReview(tx, candidate, evaluation.id)
         : alphaReviewState(tx.db, args.project, evaluation.id);
-    const settling = reasons.length > 0 && reasons.every((r) => settles(r) || (r.code === 'SIGNOFF_MISSING' && (review === 'coming' || review === 'due')));
+    const settling =
+      reasons.length > 0 &&
+      reasons.every((r) => settles(r) || (gapped(r) && gap === 'coming') || (r.code === 'SIGNOFF_MISSING' && (review === 'coming' || review === 'due' || gap === 'coming')));
     if (requestedBy === 'policy' && settling) {
       return {
         status: 409,
@@ -969,9 +994,11 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
         code: 'authorization_not_issued',
         reason: `The ${env.name} deployment of candidate ${candidate.id} is not authorized: alpha_authorize is not satisfied.`,
         what_to_do:
-          review === 'coming'
-            ? "The candidate's review, which the missing sign-off needs, is queued: request the deployment again once its Reviewer has signed off."
-            : 'Read the reasons, satisfy them, and request the deployment again.',
+          gap === 'coming'
+            ? "The checks the deployment scope lacks are being authored (a check_authoring of the project): request the deployment again once its proposal is applied."
+            : review === 'coming'
+              ? "The candidate's review, which the missing sign-off needs, is queued: request the deployment again once its Reviewer has signed off."
+              : 'Read the reasons, satisfy them, and request the deployment again.',
         subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
       },
     };
