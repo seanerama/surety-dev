@@ -376,24 +376,6 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
       item.project,
     );
     if (writer > 0) return 'depends on a protected-path writer running';
-    // Nor while another writer's proposal is on its way to application (the
-    // driver's ruling on M444 #19 and loop run 1 L1-2, option (i)): captured,
-    // classified (a tightening) or approved and not yet applied. A run
-    // started meanwhile takes the same base, and its proposal, classified
-    // against the version the first one's application makes, reads as
-    // removing what the first added (a loosening). The next writer starts
-    // from the head the decided proposal leaves. The item's own proposal
-    // does not hold it. A proposal awaiting the owner's answer
-    // (awaiting_human: a loosening or an unclassifiable change) holds
-    // nothing: the owner orders it, as for a specification change above
-    // (and M228, M53 capture a second correction beside one).
-    const proposing = live(
-      `SELECT COUNT(*) AS n FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item"
-       WHERE p."project" = ? AND p."status" IN ('captured', 'classified', 'approved') AND w."kind" IN ('check_correction', 'check_authoring') AND w."id" <> ?`,
-      item.project,
-      item.id,
-    );
-    if (proposing > 0) return 'depends on a protected proposal not yet applied';
     const review = live(
       `SELECT COUNT(*) AS n FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.proposal') IS NOT NULL
          AND "status" IN ('eligible', 'claimed', 'executing')`,
