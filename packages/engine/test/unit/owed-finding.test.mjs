@@ -4,10 +4,10 @@
 // only after a review of the finding's candidate. Now a finding is owed to
 // the owner (finding_disposition, scope disposition_owed) whenever no review
 // will come: (b) it names no candidate, (c) its source is not a Verifier or
-// a Reviewer, (d) its candidate's tier queues no engine review (the rule
-// queueReview applies). A Verifier's or Reviewer's finding on a reviewed
-// tier still waits for its review. Against a scratch store, foreign keys
-// off, the rows the minimum each read needs.
+// a Reviewer. A Verifier's or Reviewer's finding on a candidate still waits
+// for its review; (d), a T1 candidate's, waits on objection 117 (M105).
+// Against a scratch store, foreign keys off, the rows the minimum each read
+// needs.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,7 +24,6 @@ const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { askUndispositioned } = await import(join(dist, 'store', 'transitions', 'findings.js'));
-const { tierQueuesReview } = await import(join(dist, 'store', 'transitions', 'gates.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });
 const AT = '2026-10-16T00:00:00.000Z';
@@ -84,7 +83,6 @@ function store(t, { tier, effective = true }) {
 
 const sweep = (db) => transact(db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' }));
 const owed = (db, id) => db.prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' AND subject_id = ? AND scope = 'disposition_owed' AND status = 'open'`).all(id);
-const cand = (db) => db.prepare(`SELECT * FROM candidates WHERE id = 'cand_1'`).get();
 
 test('(b) a finding naming no candidate is owed at once, even on a reviewed tier and from a Verifier', (t) => {
   const s = store(t, { tier: 'T2' });
@@ -104,20 +102,11 @@ test("(b)+(c) the real M444 shape: an Architect replan's project-scope contract_
 
 test("(c) a finding whose source is not a Verifier or a Reviewer is owed at once, though it names a reviewed tier's candidate; an engine-origin one (no role) too", (t) => {
   const s = store(t, { tier: 'T2' });
-  assert.equal(tierQueuesReview(s.db, cand(s.db), 'pv_1'), true, 'T2 queues the review');
   s.finding('fnd_c1', { role: 'architect' });
   s.finding('fnd_c2', { role: 'spec_writer' });
   s.finding('fnd_c3', { role: null, category: 'security' });
   assert.equal(sweep(s.db), 3);
   for (const id of ['fnd_c1', 'fnd_c2', 'fnd_c3']) assert.equal(owed(s.db, id).length, 1, id);
-});
-
-test("(d) a Verifier's candidate finding in a tier that queues no engine review (T1) is owed at once", (t) => {
-  const s = store(t, { tier: 'T1' });
-  assert.equal(tierQueuesReview(s.db, cand(s.db), 'pv_1'), false, 'T1 queues no review');
-  s.finding('fnd_d', { role: 'verifier', category: 'defect' });
-  assert.equal(sweep(s.db), 1);
-  assert.deepEqual(JSON.parse(owed(s.db, 'fnd_d')[0].options).map((o) => o.key), ['fix', 'accept']);
 });
 
 test("a candidate-scoped Reviewer's or Verifier's finding on a reviewed tier is NOT asked before its review reports", (t) => {
@@ -126,26 +115,4 @@ test("a candidate-scoped Reviewer's or Verifier's finding on a reviewed tier is 
   s.finding('fnd_v', { role: 'verifier', category: 'defect' });
   assert.equal(sweep(s.db), 0);
   assert.equal(owed(s.db, 'fnd_r').length + owed(s.db, 'fnd_v').length, 0);
-});
-
-test('unknown is not "no review": with no effective version the tier is unread, and a T1 Verifier finding waits', (t) => {
-  const s = store(t, { tier: 'T1', effective: false });
-  s.finding('fnd_u', { role: 'verifier', category: 'defect' });
-  assert.equal(sweep(s.db), 0);
-});
-
-test("(d) narrowed: a T1 candidate a review work item was already put on (any state, any trigger) is one a review comes to; its Reviewer's finding waits", (t) => {
-  const s = store(t, { tier: 'T1' });
-  s.db
-    .prepare(
-      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
-       VALUES ('wi_rev', ?, 'prj_1', 99, 'review', '{"candidate":"cand_1"}', 'complete', 'test', 'x', 1, 0, 0, 0, 0)`,
-    )
-    .run(AT);
-  s.finding('fnd_n', { role: 'reviewer', category: 'defect' });
-  assert.equal(sweep(s.db), 0);
-  // (b) is untouched by it: a finding naming no candidate is still owed.
-  s.finding('fnd_nb', { role: 'verifier', scope: 'project', candidate: null });
-  assert.equal(sweep(s.db), 1);
-  assert.equal(owed(s.db, 'fnd_nb').length, 1);
 });

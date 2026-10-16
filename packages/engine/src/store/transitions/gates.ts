@@ -965,14 +965,6 @@ export function reviewGeneration(db: Db, project: string, candidate: string, con
   return signed.length > 0 && !signed.some((x) => x.hash === contentHash) ? latest.trigger_generation + 1 : latest.trigger_generation;
 }
 
-// Whether the candidate's tier queues the engine's review (E36 item 3):
-// T2 or T3, the highest across its scopes under the version. The one rule
-// queueReview applies, and what the owed-disposition sweep reads for "no
-// review will come" (store/transitions/findings.ts askUndispositioned).
-export function tierQueuesReview(db: Db, candidate: CandidateRow, version: string): boolean {
-  return TIER_RANK[candidateContent(db, candidate.project, candidate, version).tier]! >= 2;
-}
-
 // The engine queues the review a tier requires (E36 item 3; E38; SEAM.md
 // §70): at T2 and T3, once the candidate's verification work is complete and
 // every check its stage scope requires has passed. One per candidate; it is
@@ -981,7 +973,7 @@ export function tierQueuesReview(db: Db, candidate: CandidateRow, version: strin
 // present at Alpha still queues the sign-off Alpha needs (slice 20 review,
 // minor 6; D3 §4.1).
 function queueReview(tx: Tx, candidate: CandidateRow, scope: Scope, states: Record<string, CheckState>): void {
-  if (!tierQueuesReview(tx.db, candidate, scope.effective.id)) return;
+  if (TIER_RANK[candidateContent(tx.db, candidate.project, candidate, scope.effective.id).tier]! < 2) return;
   if (scope.required.length === 0 || scope.required.some((c) => states[c.id] !== 'passed')) return;
   const verification = verificationOf(tx.db, candidate.id);
   if (!verification || verification.status !== 'complete') return;

@@ -7,7 +7,7 @@
 
 import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
-import { type FindingRow, findingApplies, tierQueuesReview } from './gates.js';
+import { type FindingRow, findingApplies } from './gates.js';
 import { reviewerApprove } from './classification.js';
 import { OWED_SCOPE, blocksAnyGate, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
 import { getRun, parkWork } from './runs.js';
@@ -365,12 +365,14 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
 // will come to disposition it: the engine's review of its candidate has
 // reported and left it with none, or this is that review's report
 // (`reviewing`: every such finding of the project is owed); it names no
-// candidate; its source is not a role whose findings a review dispositions
-// (a Verifier's or a Reviewer's); or its candidate's tier queues no engine
-// review (gates.ts tierQueuesReview, the rule queueReview applies). A
-// Builder's objection takes the conflict route instead (repair.ts); a
-// finding the owner has already answered a question about is as the owner
-// left it. Returns the questions raised.
+// candidate; or its source is not a role whose findings a review
+// dispositions (a Verifier's or a Reviewer's). A T1 candidate's Verifier
+// finding still waits for a review the engine does not queue at T1: the
+// driver's intended rule for it is held by an objection to M105 (Verifier
+// to rule; docs/acceptance/objections/). A Builder's objection takes the
+// conflict route instead (repair.ts); a finding the owner has already
+// answered a question about is as the owner left it. Returns the questions
+// raised.
 export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: boolean }): number {
   const rows = tx.db
     .prepare(
@@ -387,11 +389,9 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
     )
     .all(args.project) as (FindingRow & { source_role: string | null; reviewed_after: number })[];
   let n = 0;
-  const version = effectiveVersion(tx.db, args.project)?.id ?? null;
-  const reviewed = new Map<string, boolean | null>();
   for (const f of rows) {
     if (isObjection(f)) continue;
-    if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(tx.db, f, version, reviewed))) continue;
+    if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(f))) continue;
     if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
   }
   return n;
@@ -403,23 +403,9 @@ const REVIEWED_SOURCES: readonly (string | null)[] = ['verifier', 'reviewer'];
 
 // No review will come to disposition the finding (the driver's ruling on the
 // real M444 run): (b) it names no candidate; (c) its source is not a role
-// whose findings a review dispositions; (d) its candidate's tier queues no
-// engine review under the effective version and no review work item of the
-// candidate exists, in any state (the driver's acceptance of the narrowing:
-// the engine makes a candidate's review only by queueReview, so in
-// production this is the tier alone; a review already put on the candidate
-// keeps M42's and M50's meaning). Unknown is not "none": with no effective
-// version or no candidate row the tier is unread, and the finding waits as
-// before. `cache` holds each candidate's answer for one sweep.
-function noReviewComes(db: Tx['db'], f: FindingRow & { source_role: string | null }, version: string | null, cache: Map<string, boolean | null>): boolean {
-  if (f.candidate === null) return true;
-  if (!REVIEWED_SOURCES.includes(f.source_role)) return true;
-  if (!cache.has(f.candidate)) {
-    const c = getCandidate(db, f.candidate);
-    const reviewItem = db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.candidate') = ? LIMIT 1`).get(f.project, f.candidate) !== undefined;
-    cache.set(f.candidate, c && version !== null ? reviewItem || tierQueuesReview(db, c, version) : null);
-  }
-  return cache.get(f.candidate) === false;
+// whose findings a review dispositions.
+function noReviewComes(f: FindingRow & { source_role: string | null }): boolean {
+  return f.candidate === null || !REVIEWED_SOURCES.includes(f.source_role);
 }
 
 // The scope of the finding_disposition question an Alpha exception
