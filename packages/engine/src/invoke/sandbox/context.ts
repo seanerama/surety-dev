@@ -76,6 +76,9 @@ export type ContextFacts = {
   // For a Builder sent back after a rebase conflict with the moved
   // integration branch (E152 item 4): the files and the head.
   rebase_conflict?: { run: string; head: string | null; files: string[] } | null;
+  // For a Builder whose last run's diff was refused for a path a Builder may
+  // not change (D1 §7.3 step 1): the refusal and the paths.
+  diff_violation?: { run: string; text: string | null; paths: string[] } | null;
   // For check_correction work the owner asked for on a finding's
   // finding_disposition question (`correct_check`, E152 item 3).
   owner_correct_check?: boolean;
@@ -240,6 +243,15 @@ const PROHIBITIONS = [
   'Write your structured result as JSON to /surety/out/result.json before you exit.',
 ];
 
+// What a Builder may change (F §4.1; D1 §7.3 step 1; src/git/snapshot.ts
+// pathRule): code, never `.surety/`. Real Inkwell run: a fix Builder, told
+// by the finding that the ADR still said the old status, edited the ADR and
+// the architecture beside its code, and every run was refused whole.
+export const BUILDER_SCOPE_TEXT = [
+  'Change the code only. Nothing under `.surety/` is yours to change: the specification, the architecture, the ADRs, the module map, the roadmap, the phase plans, the protected checks, the policy and the project file. A run that changes any of it is refused whole (`diff_violation`) and nothing of it is kept, the code with it.',
+  "Where the architecture's or an ADR's text disagrees with an approved specification change, revising it is the Architect's, not yours: the engine routes it. Leave that text as it is, make the code meet the approved specification, and mention the disagreement in your summary if you saw one.",
+];
+
 const ROLE_TASK: Record<string, string> = {
   builder: 'Build what the stage below asks for, within the requirements it names.',
   verifier: 'Verify the work below against its requirements, and report findings.',
@@ -277,6 +289,13 @@ export const CATEGORY_TEXT: Readonly<Record<string, string>> = {
   security: '`security`: a security weakness in the code; name its area in `sensitive_area` when it has one. It is fixed like a defect.',
   hygiene: '`hygiene`: a problem of upkeep rather than of behaviour, such as a change outside the work or something left behind. It is fixed like a defect.',
 };
+// What a fix is (F §4.1; D6 §4.5, §4.7): a Builder changes code, never
+// `.surety/`. Real Inkwell run: a Verifier's defect asked that the ADR be
+// "updated alongside" the code; the fix Builder did, and was refused whole
+// four times. Text that disagrees with an approved specification change is
+// the Architect's, through the change's replan or an architecture revision.
+export const FIX_IS_CODE_TEXT =
+  "A `defect`, `security` or `hygiene` finding is fixed in the code, by a Builder, who may change nothing under `.surety/` (the specification, the architecture, the ADRs, the module map, the roadmap, the phase plans, the checks): a fix that does is refused whole. Do not ask in such a finding's message for a change there. Where the architecture's or an ADR's text disagrees with an approved specification change, that is the Architect's to revise (the engine routes a specification change's replan), not a Builder's: leave it out of the finding's message and mention it in your summary.";
 const CONFLICT_ROUTE_TEXT =
   "A conflict naming a check that fails on the work does not go to the Builder's repair: the engine holds the work for the human owner, who chooses to correct the check, change the specification, retry or cancel. Left with no disposition, a conflict is put to the owner with a specification change offered.";
 const FINDING_CATEGORY_LIST = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'];
@@ -297,7 +316,7 @@ const FIELDS: Record<string, Record<string, unknown>> = {
           description: `What kind of finding it is. ${FINDING_CATEGORY_LIST.map((c) => CATEGORY_TEXT[c]).join(' ')} ${CONFLICT_ROUTE_TEXT} ${DEFECT_NOT_CONFLICT}`,
         },
         severity: SEVERITY,
-        message: { type: 'string', description: 'What is wrong and where, so a Builder can fix it.' },
+        message: { type: 'string', description: `What is wrong and where, so a Builder can fix it. ${FIX_IS_CODE_TEXT}` },
         scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
         sensitive_area: { type: 'string' },
         check: {
@@ -549,6 +568,7 @@ export function writeContextPackage(
               '',
               `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it. Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
               "A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both.",
+              FIX_IS_CODE_TEXT,
               '',
               ...checkList,
             ]
@@ -556,6 +576,7 @@ export function writeContextPackage(
               '',
               "Record what you find in your result's `findings`; name a listed finding by its id. The Reviewer dispositions each finding you raise; one the Reviewer leaves with none is put to the human owner.",
               "Name in each finding's `check` the key of the project's check whose passing shows it fixed (the check that covers the requirement it breaks), and in its `criterion` the criterion of the requirement index it breaks (R<n>.<m>, as listed with each check below). Without both, a fix of the finding can never be shown, and the finding stays open. If no check covers that criterion, report the finding anyway: the engine asks for the check to be corrected.",
+              FIX_IS_CODE_TEXT,
               '',
               ...checkList,
             ]),
@@ -581,6 +602,8 @@ export function writeContextPackage(
         fix.check
           ? `It is resolved when the check \`${fix.check}\` passes on the candidate after your change: make it pass by fixing the code. The check is protected: do not change it.`
           : 'It names no check: describe in your summary what shows it fixed.',
+        '',
+        "Fix it in the code. If its message also asks for a change under `.surety/` (an ADR, the architecture, the specification, a plan or a check), that part is not yours: leave it unchanged, as the section on what you may change below says, and mention it in your summary.",
         ...(checkList.length > 0 ? ['', ...checkList] : []),
       ]
     : [];
@@ -676,6 +699,27 @@ export function writeContextPackage(
         `Nothing of that run was integrated. This run starts from the new head (base revision ${claim.base_revision}): read what changed in those files there, and make your work again on top of it. The engine sends the work back once for such a conflict; another parks it for the owner.`,
       ]
     : [];
+  // A Builder's repair after its last run's diff was refused for a path a
+  // Builder may not change (D1 §7.3 step 1): the refusal and each path, to
+  // leave unchanged, so that the repair does not repeat it.
+  const violation = role === 'builder' && !claim.attempt ? (facts?.diff_violation ?? null) : null;
+  const violationText = violation
+    ? [
+        '',
+        '## Your last run was refused',
+        '',
+        `Your last run (${violation.run}) was refused whole, and nothing of it was kept: ${violation.text ?? 'the engine did not record why'}.`,
+        ...(violation.paths.length > 0
+          ? [
+              'It changed these paths, which a Builder may not change:',
+              ...violation.paths.map((p) => `- \`${p}\``),
+              '',
+              'Leave each of them unchanged in this run (as it is at the base revision), and make the code change again: a run that changes any of them is refused whole again.',
+            ]
+          : ['Do not repeat what it names: a run that does is refused whole again.']),
+      ]
+    : [];
+  const builderScope = role === 'builder' && !claim.attempt ? ['', '## What you may change', '', ...BUILDER_SCOPE_TEXT] : [];
   const reads = contextReads(claim, facts);
   const prompt = [
     `# Your task (${role})`,
@@ -701,6 +745,8 @@ export function writeContextPackage(
     ...rejectedText,
     ...repairText,
     ...rebaseText,
+    ...violationText,
+    ...builderScope,
     ...(facts?.replan ? replanPromptText(facts.replan) : []),
     ...(facts?.phase
       ? [
@@ -726,6 +772,7 @@ export function writeContextPackage(
       '# Instructions',
       '',
       ...PROHIBITIONS.map((p) => `- ${p}`),
+      ...(role === 'builder' && !claim.attempt ? ['- Change the code only: nothing under `.surety/` is a Builder\'s to change (see "What you may change" in the prompt).'] : []),
       '',
       'The result must follow /surety/context/result-schema.json: the engine reads those fields and no other.',
       '',

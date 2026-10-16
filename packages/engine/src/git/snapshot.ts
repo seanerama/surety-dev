@@ -88,6 +88,10 @@ export interface Violation {
   text: string;
   // The path the refusal names, where it names one.
   path?: string;
+  // Where the refusal is the role's paths: every changed path the role may
+  // not change, in the diff's order (`path` is the first). A repair is told
+  // to leave them unchanged (store/reads.ts diffViolationFacts).
+  paths?: string[];
 }
 
 export interface Caps {
@@ -208,9 +212,11 @@ export async function validateDiff(repo: string, base: string, tree: string, rol
   if (entries === null) return unknown('the snapshot tree');
   const reject = (text: string, path?: string): DiffResult => ({ violation: { klass: 'diff_violation' as const, text, ...(path !== undefined ? { path } : {}) }, plans: [], changes });
 
-  for (const c of changes) {
-    const rule = pathRule(role, c.path, roots);
-    if (rule) return reject(`the run changed ${c.path}: ${rule}`, c.path);
+  const refused = changes.map((c) => ({ path: c.path, rule: pathRule(role, c.path, roots) })).filter((r): r is { path: string; rule: string } => r.rule !== null);
+  if (refused.length > 0) {
+    const first = refused[0]!;
+    const r = reject(`the run changed ${first.path}: ${first.rule}`, first.path);
+    return { ...r, violation: { ...r.violation!, paths: refused.map((x) => x.path) } };
   }
   const added = changes.filter((c) => c.status !== 'D');
   // The targets of the tree's symbolic links, which a link may lead through.

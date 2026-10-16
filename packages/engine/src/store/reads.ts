@@ -367,6 +367,9 @@ export function contextFacts(db: Database, args: { run: string }) {
     // integration branch (D1 §7.5 as amended, E152 item 4): the files and
     // the head it moved to.
     rebase_conflict: run.role === 'builder' ? rebaseConflictFacts(db, item.id, String(run.id)) : null,
+    // A Builder's repair after its last run's diff was refused for a path a
+    // Builder may not change: the paths, to leave unchanged.
+    diff_violation: run.role === 'builder' ? diffViolationFacts(db, item.id, String(run.id)) : null,
     // A correction the owner asked for (E152 item 3): the finding's check
     // judged over-broad on the owner's finding_disposition question.
     owner_correct_check: item.kind === 'check_correction' && finding ? ownerAskedCorrection(db, finding.id) : false,
@@ -450,6 +453,36 @@ export function rebaseConflictFacts(db: Database, workItem: string, run: string)
     head: typeof detail.head === 'string' ? detail.head : null,
     files: Array.isArray(detail.files) ? detail.files.filter((f): f is string => typeof f === 'string') : [],
   };
+}
+
+// The run before `run` of the work item, when its diff was refused for a
+// path its role may not change (D1 §7.3 step 1, `diff_violation`): what the
+// repair is told, so that it does not repeat it (real Inkwell run: a fix
+// Builder edited an ADR beside its code four runs running). `paths`: the
+// run's detail, or, for a run recorded before the detail was kept, the one
+// path its refusal names; empty when neither can be read. null otherwise.
+export interface DiffViolationFacts {
+  run: string;
+  text: string | null;
+  paths: string[];
+}
+export function diffViolationFacts(db: Database, workItem: string, run: string): DiffViolationFacts | null {
+  const prior = db
+    .prepare(`SELECT "id", "reason_class", "reason_text", "reason_detail" FROM "runs" WHERE "work_item" = ? AND "id" <> ? AND "state" = 'ended' ORDER BY "seq" DESC LIMIT 1`)
+    .get(workItem, run) as { id: string; reason_class: string | null; reason_text: string | null; reason_detail: string | null } | undefined;
+  if (!prior || prior.reason_class !== 'diff_violation') return null;
+  let paths: string[] = [];
+  try {
+    const detail = prior.reason_detail ? (JSON.parse(prior.reason_detail) as { paths?: unknown }) : null;
+    if (detail && Array.isArray(detail.paths)) paths = detail.paths.filter((p): p is string => typeof p === 'string');
+  } catch {
+    paths = [];
+  }
+  if (paths.length === 0 && prior.reason_text) {
+    const named = /^(?:the rebased result: )?the run changed (.+?): /.exec(prior.reason_text);
+    if (named) paths = [named[1]!];
+  }
+  return { run: prior.id, text: prior.reason_text, paths };
 }
 
 // Did the owner answer a finding_disposition question about the finding
