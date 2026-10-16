@@ -13,9 +13,11 @@
 //      heldForFindings) until each finding is settled, the fix's work done,
 //      then asks its Verifier again;
 //   3. a missing sign-off with no finding parks as before (M429 (c), M442 (c)).
-// fix is offered only where D3 §2.11 lets a check verify the finding (a
-// criterion and a required acceptance-origin check covering it), so the
-// loop-run-3 finding is offered accept, not fix: see the report.
+// fix is offered where D3 §2.11 lets a check verify the finding: a
+// criterion and a required acceptance-origin check covering it, or (E152
+// item 3) no criterion and a required check covering none, as page-static;
+// correct_check is offered whenever it names a check (E152 item 3). The
+// whole loop-3 sequence is in e152-check-route-and-rebase.test.mjs.
 // Against a scratch store, foreign keys off, the rows the minimum each read
 // needs.
 
@@ -122,7 +124,7 @@ const blockers = (db) => db.prepare(`SELECT * FROM decisions WHERE kind = 'block
 // The run ends and its work completes, as the run-end protocol does.
 const complete = (s) => s.run(`UPDATE work_items SET status = 'complete' WHERE id = 'wi_pv'`);
 
-test('the loop-run-3 shape: no sign-off, a no-criterion hygiene finding naming page-static: no park, the finding owed at once (accept; no fix, D3 §2.11), the phase waits for it and then asks again', (t) => {
+test('the loop-run-3 shape: no sign-off, a no-criterion hygiene finding naming page-static: no park, the finding owed at once (fix, correct_check, accept: E152 item 3), the phase waits for it and then asks again', (t) => {
   const s = store(t);
   s.phaseVerifier({ findings: [LOOP3], signoffs: [] });
   const [f] = reported(s.db);
@@ -132,19 +134,19 @@ test('the loop-run-3 shape: no sign-off, a no-criterion hygiene finding naming p
   assert.deepEqual(blockers(s.db), [], 'no retry/cancel question');
   const [d] = owedOpen(s.db, f.id);
   assert.ok(d, 'the finding is put to the owner in the same transaction');
-  assert.deepEqual(keys(d), ['accept'], 'low, and no check can verify a finding naming no criterion (D3 §2.11 condition 1): accept only');
+  assert.deepEqual(keys(d), ['fix', 'correct_check', 'accept'], 'low; page-static covers no criterion and is required in the phase scope: fix (E152 item 3); it names a check: correct_check');
   complete(s);
   assert.equal(heldForFindings(s.db, 'wi_pv'), 'waiting', 'the phase waits on the owner, without asking its Verifier again');
   answer(s.db, d, 'accept');
   assert.equal(heldForFindings(s.db, 'wi_pv'), 'settled', 'answered: the phase asks its Verifier again (next generation)');
 });
 
-test('a finding a check can verify: fix offered; fix registers fix work, and the phase waits for it', (t) => {
+test('a finding a check can verify: fix (and correct_check) offered; fix registers fix work, and the phase waits for it', (t) => {
   const s = store(t);
   s.phaseVerifier({ findings: [VERIFIABLE], signoffs: [] });
   const [f] = reported(s.db);
   const [d] = owedOpen(s.db, f.id);
-  assert.deepEqual(keys(d), ['fix', 'accept']);
+  assert.deepEqual(keys(d), ['fix', 'correct_check', 'accept']);
   complete(s);
   answer(s.db, d, 'fix');
   const fixes = s.db.prepare(`SELECT * FROM work_items WHERE kind = 'fix' AND json_extract(subject, '$.finding') = ?`).all(f.id);

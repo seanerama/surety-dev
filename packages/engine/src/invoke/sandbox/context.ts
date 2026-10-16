@@ -73,6 +73,12 @@ export type ContextFacts = {
   // For check_authoring and check_correction work after its last proposal
   // was rejected (M443): the proposal, the note, its discovery errors.
   rejected_proposal?: { proposal: string; note: string | null; errors: { path: string; code: string | null }[] } | null;
+  // For a Builder sent back after a rebase conflict with the moved
+  // integration branch (E152 item 4): the files and the head.
+  rebase_conflict?: { run: string; head: string | null; files: string[] } | null;
+  // For check_correction work the owner asked for on a finding's
+  // finding_disposition question (`correct_check`, E152 item 3).
+  owner_correct_check?: boolean;
   resumed: { run: string; outcome: unknown; reason_class: unknown; summary: unknown; records: { id: string; kind: string; path: string | null }[] } | null;
   // Whether the project was adopted (D6 §8): its packages' retrofit variants.
   adopted?: boolean;
@@ -595,7 +601,12 @@ export function writeContextPackage(
         // and a `fix` disposition whose finding cannot be verified (D3 §2.11):
         // it names no criterion, no check, or a check that is not a required
         // acceptance check covering its criterion.
-        ...(routed.source_role === 'builder' && (routed.category === 'requirement_conflict' || routed.category === 'contract_conflict')
+        ...(facts?.owner_correct_check === true && routed.check !== null
+          ? [
+              // E152 item 3: the owner's `correct_check` on the finding.
+              `The owner judged the check \`${routed.check}\` over-broad: it fails on what the requirements allow. Correct it so that it judges only what the requirements' approved texts say, and keep everything it rightly judges. It stays in force until your corrected version is approved; the finding is resolved when the corrected check passes.`,
+            ]
+          : routed.source_role === 'builder' && (routed.category === 'requirement_conflict' || routed.category === 'contract_conflict')
           ? [
               `It is a Builder's objection that ${routed.check ? `the check \`${routed.check}\`` : 'a check'} contradicts the requirement or the interface its work names${routed.criterion ? ` (criterion ${routed.criterion})` : ''}; the owner chose to have the check corrected. Read the objection against the requirement's approved text, and correct the check if it is wrong.`,
             ]
@@ -651,6 +662,20 @@ export function writeContextPackage(
           'Fix the code, not the checks: they are protected. If a check contradicts the requirement or the interface, report it in your result\'s `objections`; if the check agrees with them and your code does not, the code is wrong: fix it.',
         ]
       : [];
+  // A Builder sent back after a rebase conflict (D1 §7.5 as amended, E152
+  // item 4): what moved and which files no longer applied.
+  const rebase = role === 'builder' ? (facts?.rebase_conflict ?? null) : null;
+  const rebaseText = rebase
+    ? [
+        '',
+        '## Your last run could not be integrated',
+        '',
+        `While your last run (${rebase.run}) was under way the integration branch moved${rebase.head ? ` to ${rebase.head}` : ''}, and its changes to these files no longer applied to it:`,
+        ...(rebase.files.length > 0 ? rebase.files.map((f) => `- \`${f}\``) : ['- (the engine did not record which)']),
+        '',
+        `Nothing of that run was integrated. This run starts from the new head (base revision ${claim.base_revision}): read what changed in those files there, and make your work again on top of it. The engine sends the work back once for such a conflict; another parks it for the owner.`,
+      ]
+    : [];
   const reads = contextReads(claim, facts);
   const prompt = [
     `# Your task (${role})`,
@@ -675,6 +700,7 @@ export function writeContextPackage(
     ...(authoring ? phaseAuthoringText(authoring) : []),
     ...rejectedText,
     ...repairText,
+    ...rebaseText,
     ...(facts?.replan ? replanPromptText(facts.replan) : []),
     ...(facts?.phase
       ? [
@@ -755,6 +781,7 @@ export function writeContextPackage(
   if (facts?.change_request) put('change_request.json', 'instructions', String(facts.change_request.id), `${JSON.stringify(facts.change_request, null, 2)}\n`);
   if (facts?.proposal) put('proposal.json', 'instructions', String(facts.proposal.id), `${JSON.stringify(facts.proposal, null, 2)}\n`);
   if (fix) put('finding.json', 'instructions', fix.id, `${JSON.stringify(fix, null, 2)}\n`);
+  if (rebase) put('rebase-conflict.json', 'instructions', rebase.run, `${JSON.stringify(rebase, null, 2)}\n`);
   if (routed) put('finding.json', 'instructions', routed.id, `${JSON.stringify(routed, null, 2)}\n`);
   // Each failed repair check's output record, whole (SEAM.md §229): the
   // record's text, or a note that it could not be read.

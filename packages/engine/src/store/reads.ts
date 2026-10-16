@@ -363,6 +363,13 @@ export function contextFacts(db: Database, args: { run: string }) {
     // A check authoring's or correction's repair after its proposal was
     // rejected (M443): what the engine found wrong with it.
     rejected_proposal: item.kind === 'check_authoring' || item.kind === 'check_correction' ? rejectedProposalFacts(db, item.id, String(run.id)) : null,
+    // A Builder sent back after its changes no longer applied to the moved
+    // integration branch (D1 §7.5 as amended, E152 item 4): the files and
+    // the head it moved to.
+    rebase_conflict: run.role === 'builder' ? rebaseConflictFacts(db, item.id, String(run.id)) : null,
+    // A correction the owner asked for (E152 item 3): the finding's check
+    // judged over-broad on the owner's finding_disposition question.
+    owner_correct_check: item.kind === 'check_correction' && finding ? ownerAskedCorrection(db, finding.id) : false,
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,
     // The phase Verifier's (D6 §5.8; M429 (a)): the phase evaluation and
@@ -415,6 +422,47 @@ export function contextFacts(db: Database, args: { run: string }) {
           })
         : null,
   };
+}
+
+// The run before `run` of the work item, when it ended on a rebase conflict
+// with the moved integration branch (E152 item 4): what the Builder sent
+// back is told. null otherwise.
+export interface RebaseConflictFacts {
+  run: string;
+  head: string | null;
+  files: string[];
+}
+export function rebaseConflictFacts(db: Database, workItem: string, run: string): RebaseConflictFacts | null {
+  const prior = db
+    .prepare(`SELECT "id", "reason_class", "reason_detail" FROM "runs" WHERE "work_item" = ? AND "id" <> ? AND "state" = 'ended' ORDER BY "seq" DESC LIMIT 1`)
+    .get(workItem, run) as { id: string; reason_class: string | null; reason_detail: string | null } | undefined;
+  if (!prior || prior.reason_class !== 'integration_conflict') return null;
+  type Detail = { conflict?: unknown; head?: unknown; files?: unknown };
+  let detail: Detail | null;
+  try {
+    detail = prior.reason_detail ? (JSON.parse(prior.reason_detail) as Detail) : null;
+  } catch {
+    detail = null;
+  }
+  if (detail === null || detail.conflict !== 'rebase') return null;
+  return {
+    run: prior.id,
+    head: typeof detail.head === 'string' ? detail.head : null,
+    files: Array.isArray(detail.files) ? detail.files.filter((f): f is string => typeof f === 'string') : [],
+  };
+}
+
+// Did the owner answer a finding_disposition question about the finding
+// `correct_check` (E152 item 3)?
+export function ownerAskedCorrection(db: Database, finding: string): boolean {
+  const rows = db.prepare(`SELECT "answer" FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_id" = ? AND "status" = 'consumed'`).all(finding) as { answer: string | null }[];
+  return rows.some((r) => {
+    try {
+      return (JSON.parse(r.answer ?? 'null') as { option?: unknown } | null)?.option === 'correct_check';
+    } catch {
+      return false;
+    }
+  });
 }
 
 // The active generation of a plan (D6 §5.7): followed through replaced_by.

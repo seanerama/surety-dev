@@ -48,7 +48,7 @@ import { engineSettings, policyRevision, projectEffective } from './settings.js'
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
-import { answerConflict, conflictPreview, findingVerifiable, routeMissingVerification, settleConflicts } from './repair.js';
+import { answerConflict, conflictPreview, correctionFor, findingVerifiable, routeMissingVerification, settleConflicts } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
 import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
@@ -490,7 +490,8 @@ export const PARK_TEXT: Record<string, string> = {
   budget_day_unknown_tokens: "the project's tokens of unknown cost today passed their limit (budget_day_unknown_tokens), and its run was stopped",
   budget_day_verified_usd: "the project's verified cost today passed its limit (budget_day_verified_usd), and its run was stopped",
   budget_unreadable: 'its budget could not be read, and its run was stopped rather than run on without one',
-  integration_conflict: 'its result could not be integrated: the integration branch moved, and the change does not apply to it, or the compare-and-swap failed. No role resolves it',
+  integration_conflict:
+    "its result could not be integrated: the compare-and-swap of the integration branch failed, or the branch moved and the change does not apply to it after its Builder was already sent back once on a moved branch, or with its repair attempts spent. No role resolves it",
 };
 
 const BLOCKER: KindSpec = {
@@ -1148,14 +1149,21 @@ export function applyAlphaException(tx: Tx, args: { intent: string }): boolean {
 // releases the gates, a severity that does not block; a blocking (High or
 // Critical) finding is offered lower_and_accept instead, the human lowering
 // its effective severity to medium (severity_history: authority human, this
-// decision) and accepting it. fix is offered only when the finding names a
-// check and criterion that can verify it (repair.ts findingVerifiable, the
-// condition verifiesCriterion gives). For a conflict with the requirements
+// decision) and accepting it. fix is offered only when the finding's named
+// check can verify it (repair.ts findingVerifiable: a check covering its
+// criterion, or, naming no criterion, a required check covering none, E152
+// item 3). correct_check is offered whenever the finding names a check (E152
+// item 3): the check judged over-broad, the Verifier's correction registered
+// as the conflict route's, the finding dispositioned fix with no fix work
+// and resolved when the corrected check passes. For a conflict with the requirements
 // or a contract, change_spec makes a specification change request from the
 // finding and accepts it meanwhile, lowering it first as lower_and_accept
 // does where it blocks.
 export const OWED_SCOPE = 'disposition_owed';
 export const LOWER_AND_ACCEPT = 'lower_and_accept';
+// E152 item 3 (D3 §2.11 as amended): the owner asks for the finding's check
+// to be corrected, as an over-broad check, without a conflict finding.
+export const CORRECT_CHECK = 'correct_check';
 // The severity lower_and_accept sets: the highest out of the blocking range.
 const LOWERED_TO = 'medium';
 
@@ -1210,6 +1218,18 @@ const DISPOSITION_OWED: KindSpec = {
               },
             ]
           : []),
+        // E152 item 3: the check it names judged over-broad, without a
+        // conflict finding; the conflict route's correction (repair.ts).
+        ...(f.check !== null
+          ? [
+              {
+                key: CORRECT_CHECK,
+                label: 'Correct the check',
+                consequence: `The check ${f.check} is judged over-broad: the Verifier is given check_correction work for it, and the check stays in force until a corrected version is approved. The finding is dispositioned fix by the human owner, with no fix work: it holds the gates until the corrected check passes, which resolves it. Nothing is changed in the code.`,
+                effect: { finding: f.id, register: 'check_correction', disposition: 'fix' },
+              },
+            ]
+          : []),
         ...(conflict
           ? [
               {
@@ -1233,7 +1253,12 @@ const DISPOSITION_OWED: KindSpec = {
       ],
       question: `Finding ${f.id} (${f.category}, ${f.effective_severity}${f.criterion ? `, criterion ${f.criterion}` : ''}) ${
         reask ? `was accepted, but at severity ${f.effective_severity} an accepted finding still holds the gates` : 'has no disposition, and it holds the gates of the candidates it applies to'
-      }: ${(f as FindingRow & { message: string }).message} ${sentence([verifiable ? 'fix it' : null, conflict ? 'change the specification' : null, blocking ? `lower it to ${LOWERED_TO} and accept it` : 'accept it'])}`,
+      }: ${(f as FindingRow & { message: string }).message} ${sentence([
+        verifiable ? 'fix it' : null,
+        f.check !== null ? `have its check ${f.check} corrected` : null,
+        conflict ? 'change the specification' : null,
+        blocking ? `lower it to ${LOWERED_TO} and accept it` : 'accept it',
+      ])}`,
     };
   },
   manifest: (tx, d) => dispositionManifest(tx, findingRow(tx.db, d.subject_id)!),
@@ -1242,19 +1267,20 @@ const DISPOSITION_OWED: KindSpec = {
     const asked = findingRow(tx.db, d.subject_id)!;
     consumeDecision(tx, d, option, note);
     const binding = findingBinding(tx, asked);
-    const disposition = option === 'fix' ? 'fix' : 'accept';
+    const correct = option === CORRECT_CHECK;
+    const disposition = option === 'fix' || correct ? 'fix' : 'accept';
     // lower_and_accept, and change_spec where the finding blocks: the
     // human's lowering first (D1 §9.4; D2 C2), then the disposition.
-    const lower = option !== 'fix' && BLOCKING_SEVERITIES.includes(asked.effective_severity) && (option === LOWER_AND_ACCEPT || option === 'change_spec');
+    const lower = disposition !== 'fix' && BLOCKING_SEVERITIES.includes(asked.effective_severity) && (option === LOWER_AND_ACCEPT || option === 'change_spec');
     recordApproval(tx, d, {
-      consequence: `finding ${asked.id}${lower ? ` lowered from ${asked.effective_severity} to ${LOWERED_TO} and` : ''} dispositioned ${disposition}${option === 'change_spec' ? ' with a specification change requested' : ''}`,
+      consequence: `finding ${asked.id}${lower ? ` lowered from ${asked.effective_severity} to ${LOWERED_TO} and` : ''} dispositioned ${disposition}${option === 'change_spec' ? ' with a specification change requested' : ''}${correct ? ` with its check ${asked.check} to be corrected` : ''}`,
       subjectType: 'finding',
       subjectId: asked.id,
       contentHash: binding.acceptance_content_hash,
     });
     if (lower) changeSeverity(tx, asked, { to: LOWERED_TO, actor: tx.actor.actor_kind, authority: 'human', decision: d.id });
     if (option === 'change_spec') requestFromFinding(tx, { project: asked.project, finding: asked.id, decision: d.id });
-    recordDisposition(tx, findingRow(tx.db, asked.id)!, { disposition, authority: 'human', by: tx.actor.actor_kind, linked_issue: null, defer_target: null });
+    recordDisposition(tx, findingRow(tx.db, asked.id)!, { disposition, authority: 'human', by: tx.actor.actor_kind, linked_issue: null, defer_target: null, ...(correct ? { correction: true } : {}) });
     return consumed(d, [{ kind: 'tick' }]);
   },
 };
@@ -1278,7 +1304,18 @@ const ALPHA_SCOPE = 'alpha_exception';
 export function recordDisposition(
   tx: Tx,
   f: FindingRow,
-  args: { disposition: 'fix' | 'defer' | 'accept'; authority: 'reviewer' | 'human'; by: string; linked_issue: string | null; defer_target: string | null; remediation?: string | null; target?: 'plan' },
+  args: {
+    disposition: 'fix' | 'defer' | 'accept';
+    authority: 'reviewer' | 'human';
+    by: string;
+    linked_issue: string | null;
+    defer_target: string | null;
+    remediation?: string | null;
+    target?: 'plan';
+    // E152 item 3: the owner's correct_check, a `fix` remedied by the
+    // Verifier's correction of the finding's check, not by fix work.
+    correction?: boolean;
+  },
 ): void {
   // The watermark from the project's one sequence, registrations included
   // (L7; T06), never from the highest result recorded.
@@ -1291,7 +1328,18 @@ export function recordDisposition(
     .run(args.disposition, args.authority, args.by, tx.at, n, args.linked_issue, args.defer_target, f.id);
   // The proposed remediation a `fix` carries (B12; SEAM.md §382).
   if (args.remediation !== undefined && args.remediation !== null) tx.db.prepare('UPDATE "findings" SET "remediation" = ? WHERE "id" = ?').run(args.remediation, f.id);
-  tx.emit('finding.dispositioned', { project: f.project, finding: f.id }, { disposition: args.disposition, authority: args.authority });
+  tx.emit('finding.dispositioned', { project: f.project, finding: f.id }, { disposition: args.disposition, authority: args.authority, ...(args.correction === true ? { correct_check: true } : {}) });
+  // The owner's correct_check (E152 item 3; D3 §5 X2's correction): the
+  // Verifier's check_correction work, not chained (the owner's answer made
+  // it); no fix work. The check stays in force until a corrected version is
+  // approved; the gate resolves the finding when the check passes after
+  // this disposition (gates.ts).
+  if (args.disposition === 'fix' && args.correction === true) {
+    correctionFor(tx, f.project, f.id);
+    settleConflicts(tx, f, args.disposition);
+    markStale(tx, { project: f.project });
+    return;
+  }
   // In the conformance phase of an adopted project a `fix` records the
   // unresolved finding and its proposed remediation, and nothing else: no
   // fix work, no source change before conformance (B12; reading 10; E142

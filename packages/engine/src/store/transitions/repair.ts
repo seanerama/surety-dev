@@ -25,9 +25,11 @@
 //   and a `fix` is not dispatched while the stage is being sent back for
 //   its finding's check at its finding's candidate (`repairUnderway`).
 // - What can verify a finding (D3 §2.11): its named check, a required
-//   acceptance-origin check covering its criterion. A `fix` disposition of a
-//   finding no such check can verify routes `check_correction` work to the
-//   Verifier, triggered by the finding (Q8 (a)).
+//   acceptance-origin check covering its criterion; or, for a finding naming
+//   no criterion, a required acceptance-origin check covering none (E152
+//   item 3: a phase-only, smoke, static or lint check). A `fix` disposition
+//   of a finding no such check can verify routes `check_correction` work to
+//   the Verifier, triggered by the finding (Q8 (a)).
 //
 // Not built here, by design (slice 21, approved):
 // - the X2 blocker from `executing` or `integrating` (D3 A.5 lists those
@@ -614,9 +616,10 @@ export function verifiesCriterion(c: CheckRow | undefined, criterion: string | n
 }
 
 // The check_correction work of a `correct_check` answer (not chained: the
-// person's answer made it): the finding's open correction if there is one,
-// else the next generation of its trigger.
-function correctionFor(tx: Tx, project: string, finding: string): string {
+// person's answer made it), on an X2 blocker or on the owner's
+// finding_disposition question (E152 item 3): the finding's open
+// correction if there is one, else the next generation of its trigger.
+export function correctionFor(tx: Tx, project: string, finding: string): string {
   const open = tx.db
     .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'check_correction' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" DESC LIMIT 1`)
     .get(project, finding) as { id: string } | undefined;
@@ -645,17 +648,49 @@ export function routeMissingVerification(tx: Tx, f: Pick<FindingRow, 'id' | 'pro
   routeCheckCorrection(tx, f.project, f.id, chain, origin);
 }
 
-// Can a finding's named check verify its criterion (D3 §2.11 condition 2,
-// as Sean ruled on S2, 2026-10-08)? It must be a required acceptance-origin
-// check covering the criterion in one of the finding's candidate's scopes:
-// the union candidateContent gives, as registration uses it. A finding with
-// no candidate (project scope) has no candidate's scopes to read: the
-// version's own required mark is its rule (not pinned).
+// D3 §2.11 as amended (E152 item 3, Sean 2026-10-16): a finding naming no
+// criterion is verified by its named check alone when that check covers no
+// criterion (a phase-only, smoke, static or lint check): a required
+// acceptance-origin check whose covers.criteria is empty. `required` here is
+// the version's mark; the gate also asks that the check be in the required
+// set of the scope it evaluates.
+export function verifiesByCheck(c: CheckRow | undefined): boolean {
+  if (!c || c.required !== 1 || (c.origin ?? 'acceptance') !== 'acceptance') return false;
+  return (parseJson<string[]>(c.criteria ?? '[]') ?? []).length === 0;
+}
+
+// The checks of the `phase` scope of each active phase plan of the project
+// on the candidate (D6 §5.8): the phase-only checks and the regression set.
+function phaseScopeChecks(db: Db, project: string, candidate: CandidateRow, version: string): CheckRow[] {
+  const plans = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY rowid`).all(project) as { id: string }[];
+  return plans.flatMap((p) => requiredSet(db, { project, candidate, kind: 'phase', stage: null, version, phasePlan: p.id }).required);
+}
+
+// Can a finding's named check verify it? With a criterion (D3 §2.11
+// condition 2, as Sean ruled on S2, 2026-10-08): a required acceptance-origin
+// check covering the criterion in one of the finding's candidate's scopes,
+// the union candidateContent gives, as registration uses it. With none (E152
+// item 3): a required acceptance-origin check covering no criterion in one
+// of those scopes or in a phase scope of the candidate (a phase-only check).
+// A finding with no candidate (project scope) has no candidate's scopes to
+// read: the version's own required mark is its rule (not pinned).
 export function findingVerifiable(db: Db, f: Pick<FindingRow, 'project' | 'check' | 'candidate'> & { criterion?: string | null }, version: string): boolean {
-  if (f.check === null || (f.criterion ?? null) === null) return false;
+  if (f.check === null) return false;
   const candidate = f.candidate ? getCandidate(db, f.candidate) : undefined;
   const pool = candidate ? candidateContent(db, f.project, candidate, version).checks : checksOfVersion(db, version);
-  return verifiesCriterion(pool.find((c) => c.key === f.check), f.criterion ?? null);
+  if ((f.criterion ?? null) !== null) return verifiesCriterion(pool.find((c) => c.key === f.check), f.criterion ?? null);
+  const phase = candidate ? phaseScopeChecks(db, f.project, candidate, version) : [];
+  return [...pool, ...phase].some((c) => c.key === f.check && verifiesByCheck(c));
+}
+
+// Is a correction registered for the finding still open (E152 item 3): its
+// check_correction work not ended, or a protected proposal its runs
+// captured not yet applied or rejected?
+export function correctionOpen(db: Db, project: string, finding: string): boolean {
+  const ids = (
+    db.prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'check_correction' AND "trigger_id" = ?`).all(project, finding) as { id: string }[]
+  ).map((r) => r.id);
+  return ids.length > 0 && correctionOutcome(db, ids) === 'open';
 }
 
 // The same route when a new protected version becomes effective (D3 §2.11):

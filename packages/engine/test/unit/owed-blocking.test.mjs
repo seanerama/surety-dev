@@ -105,9 +105,9 @@ test('1-3: the options by severity and verifiability; every consequence is what 
   assert.deepEqual(keys(med), ['accept'], 'Medium: accept releases the gates');
   assert.match(JSON.parse(med.options)[0].consequence_text, /no longer holds the gates/);
   const [fixable] = owedOpen(s.db, 'fnd_fixable');
-  assert.deepEqual(keys(fixable), ['fix', 'lower_and_accept'], 'a check and criterion that can verify it: fix');
+  assert.deepEqual(keys(fixable), ['fix', 'correct_check', 'lower_and_accept'], 'a check and criterion that can verify it: fix; it names a check: correct_check (E152 item 3)');
   assert.match(JSON.parse(fixable.options)[0].consequence_text, /holds the gates until its check login passes after the fix/);
-  assert.deepEqual(keys(owedOpen(s.db, 'fnd_wrong')[0]), ['lower_and_accept'], 'a check that does not cover its criterion: no fix');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_wrong')[0]), ['correct_check', 'lower_and_accept'], 'a check that does not cover its criterion: no fix; correct_check, since it names a check (E152 item 3)');
 });
 
 test('1: lower_and_accept lowers to medium with the human authority and the decision, accepts, and the gate releases it; Critical too, and change_spec on a blocking conflict', (t) => {

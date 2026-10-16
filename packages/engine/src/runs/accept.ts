@@ -300,7 +300,16 @@ export class Acceptor {
           const rebased = await rebaseTree(repo, base, target.sha, head, this.rt.scratch);
           if (rebased === 'unknown') return failed('infra_error', 'the run could not be rebased onto the integration branch: the repository could not be read');
           if (rebased.conflict !== null) {
-            return failed('integration_conflict', `the integration branch moved to ${head}, and the run's changes to ${rebased.conflict} do not apply to it`, { park: 'integration_conflict' });
+            // A textual conflict with the moved branch, not a compare-and-swap
+            // failure (D1 §7.5, D1-19 as amended by E152 item 4): the run's
+            // end sends the item back to its Builder once on the new head,
+            // naming the files and the head (store/transitions/runs.ts).
+            return failed('integration_conflict', `the integration branch moved to ${head}, and the run's changes to ${rebased.files.join(', ')} do not apply to it`, {
+              park: 'integration_conflict',
+              conflict: 'rebase',
+              head,
+              files: rebased.files,
+            });
           }
           const check = await validateDiff(repo, head, rebased.tree, role, facts.caps, facts.roots);
           if (check.violation) return failed(check.violation.klass, `the rebased result: ${check.violation.text}`);
@@ -358,7 +367,7 @@ export class Acceptor {
           return failed('integration_conflict', `the integration was refused: ${String(detail.text)}`, { park: 'integration_branch_checked_out', worktree: detail.worktree });
         }
         if (detail?.reason === 'closing') return null;
-        return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict' });
+        return failed('integration_conflict', `the compare-and-swap of the integration branch failed: ${String(detail?.text ?? 'the branch moved')}`, { park: 'integration_conflict', conflict: 'compare_and_swap' });
       }
       if (state !== 'finalized') return { wait: integration.id };
       // 7. A nomination that is due, still under the lease: each
