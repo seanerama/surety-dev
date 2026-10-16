@@ -41,3 +41,21 @@ Once a Verifier has ruled, the Builder adds (d): owed when the candidate's tier 
 - gates.ts queueReview: "The engine queues the review a tier requires (E36 item 3; E38; SEAM.md §70): at T2 and T3".
 - checks/scope.ts signoffsOf: "T2 a Reviewer's at candidate scope; T3 also one per scope module".
 - The driver's ruling on the real M443 run (a7c1470): never a silent stall.
+
+## Ruling (Verifier, 2026-10-16, on `verify/m5-objections-117-120` from main a44a9c3)
+
+**Upheld; SEAM §466.**
+
+- **(d) is right by design.** The engine queues a candidate's review only at a tier that requires a Reviewer's sign-off (E36 item 3; SEAM §70: "At T1, which requires no sign-off, none is registered"). At T1 no review will come, so an open, undispositioned finding on a T1 candidate is owed to the owner at once.
+- **What "no review will come" means here** (as the driver accepted it):
+  - the candidate's tier under the effective version queues no review (the tier rule of `queueReview`, not its check-state conditions); and
+  - no `review` work item of the candidate exists, in any state.
+  - With the tier unread, the finding waits.
+- The Builder may now build (d).
+- **M105 changed, by the second remedy.** Every read is now of the proposal's own decisions, scope `alpha_exception`.
+  - Where the row says no decision ((b), (c), S1 A), the case requires no `alpha_exception` decision, and no decision about the finding of any scope except `disposition_owed`.
+  - The owed question is neither required nor counted, so M105 holds whether or not (d) is built.
+- **The first remedy (T2) was not taken**, for two reasons:
+  - M105's successor candidate is a fixture fix nominated on its Builder's request, which T2 refuses (SEAM §42).
+  - At T2 the engine's own verification and review items would run beside the fixture's.
+- **M42 and M50 are not changed.** Their Reviewer fixtures' `review` work items are on the candidate before the sweep reads the findings, so under this reading no owed question is raised.

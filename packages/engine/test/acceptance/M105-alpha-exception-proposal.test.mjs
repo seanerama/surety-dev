@@ -31,11 +31,19 @@
 // reviewed; a granted exception lifts the block only while the content is
 // the one it was granted on (SEAM.md §119). Case (e)'s first step is
 // changed with it: after the content change the question is withdrawn.
+//
+// Objection 117 (SEAM §466): at T1 the engine queues no review (E36 item 3),
+// so an open finding with no disposition is owed to the owner, who is asked
+// about it in a finding_disposition of its own scope (`disposition_owed`), as
+// soon as it is raised. This row is the Reviewer's proposal: every read here
+// is of the decisions of scope `alpha_exception`, the proposal's; a decision
+// of any other scope about these findings may only be the owed question,
+// which no proposal raises and this row does not count.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { CODES, answer, assertStaleAnswer, consume, decision, decisionsOn, intentsOf, nextGeneration, openDecision, reject, untilKilled } from './harness/decisions.mjs';
+import { CODES, answer, approvalsOf, assertPreview, assertStaleAnswer, consume, decision, decisionsOn, intentsOf, reject, untilKilled } from './harness/decisions.mjs';
 import { alphaTarget, check, checkResult, finding, installChecks, nominated, passAll, postResult, raiseFindings, reasonSubjects, review, roleRun, scopeOf, stageGate, successor } from './harness/gates.mjs';
 import { changePolicy } from './harness/journal.mjs';
 import { permittedEdit, roleThatHolds, runToHold } from './harness/gitruns.mjs';
@@ -48,6 +56,9 @@ import { withStore } from './harness/store.mjs';
 
 const KIND = 'finding_disposition';
 const OPTION = 'alpha_exception';
+// The scopes of a finding_disposition (objection 117): the proposal's, and the owner's owed question.
+const SCOPE = 'alpha_exception';
+const OWED = 'disposition_owed';
 const CHECK_OUTPUT = 'login check: 200 OK, the importer rejected nothing\n';
 const ARGUMENT = 'The alpha target reads the fixture database only; src/app.js never reaches a production record.';
 const PURPOSE = 'Exercise the import path with real-shaped data before the fix lands.';
@@ -87,6 +98,52 @@ async function reviewed(t) {
   return { fx, ctx, project, k, high, medium, sensitive, elsewhere, other, outputRecord, proposal, propose };
 }
 
+// The proposal's decisions about a finding (scope alpha_exception), oldest generation first.
+const proposalDecisions = (fx, findingId) => decisionsOn(fx.home, KIND, findingId).filter((row) => row.scope === SCOPE);
+
+// No decision about the finding but the owner's owed question (objection 117): the proposal raised nothing.
+function assertNothingRaised(fx, findingId, what) {
+  assert.deepEqual(proposalDecisions(fx, findingId).map((row) => row.id), [], what);
+  const other = decisionsOn(fx.home, KIND, findingId).filter((row) => row.scope !== SCOPE && row.scope !== OWED);
+  assert.deepEqual(other.map((row) => [row.id, row.scope]), [], `${what}: no finding_disposition but the owner's owed question is about ${findingId}`);
+}
+
+// The one open proposal decision about a finding, ticking until the engine
+// has raised it; its preview checked against the contract (as openDecision).
+async function openProposal(fx, project, findingId, { max = 4 } = {}) {
+  const found = await tickUntil(
+    fx.engine,
+    project,
+    () => {
+      const open = proposalDecisions(fx, findingId).filter((row) => row.status === 'open');
+      return open.length > 0 ? open : undefined;
+    },
+    { max, what: `an open ${KIND} decision of scope ${SCOPE} about ${findingId}` },
+  );
+  assert.equal(found.length, 1, `one open ${KIND} decision of scope ${SCOPE} about ${findingId}, not ${found.length}`);
+  return assertPreview(found[0]);
+}
+
+// The proposal decision invalidated and its next generation raised (as
+// nextGeneration, D1 §4.6), read within the proposal's scope.
+async function nextProposal(fx, project, previewed, { changed, max = 4 }) {
+  const next = await tickUntil(
+    fx.engine,
+    project,
+    () => {
+      const open = proposalDecisions(fx, previewed.subject_id).filter((row) => row.status === 'open' && row.id !== previewed.id);
+      return decision(fx.home, previewed.id).status === 'invalidated' && open.length === 1 ? open[0] : undefined;
+    },
+    { max, what: `the ${SCOPE} decision to be invalidated and its next generation raised` },
+  );
+  assertPreview(next);
+  assert.equal(next.semantic_generation, previewed.semantic_generation + 1, 'the next generation follows the one that was invalidated');
+  assert.notEqual(next.preview_hash, previewed.preview_hash, 'a changed dependency is a changed preview');
+  for (const key of [changed].flat()) assert.notDeepEqual(next.manifest[key], previewed.manifest[key], `the manifests differ in "${key}", the dependency that changed`);
+  assert.equal(approvalsOf(fx.home, next.id).length, 0, 'the next generation starts with no approval');
+  return next;
+}
+
 const exceptionOf = (fx, findingId) => JSON.parse(finding(fx.home, findingId).alpha_exception ?? 'null');
 
 // The candidate's acceptance content hash as the stage gate computes it now (SEAM.md §70).
@@ -96,12 +153,12 @@ const contentNow = async (fx, ctx) => scopeOf(fx.home, await stageGate(fx, ctx))
 // within four ticks the decision is `invalidated`, and after three more no
 // finding_disposition about the finding is open and none was raised anew.
 async function assertWithdrawn(fx, project, previewed, findingId) {
-  const count = decisionsOn(fx.home, KIND, findingId).length;
+  const count = proposalDecisions(fx, findingId).length;
   await tickUntil(fx.engine, project, () => decision(fx.home, previewed.id).status === 'invalidated', { what: `the ${previewed.kind} decision to be invalidated` });
   for (let i = 0; i < 3; i++) await tick(fx.engine, project);
-  const open = decisionsOn(fx.home, KIND, findingId).filter((row) => row.status === 'open');
+  const open = proposalDecisions(fx, findingId).filter((row) => row.status === 'open');
   assert.deepEqual(open.map((row) => row.id), [], 'no exception is asked about on content the Reviewer did not review');
-  assert.equal(decisionsOn(fx.home, KIND, findingId).length, count, 'no decision was raised in place of the withdrawn one');
+  assert.equal(proposalDecisions(fx, findingId).length, count, 'no decision was raised in place of the withdrawn one');
 }
 
 describe('M105 the Alpha exception proposal', () => {
@@ -122,7 +179,7 @@ describe('M105 the Alpha exception proposal', () => {
     const byRecord = content.references.find((reference) => reference.record === outputRecord);
     assert.deepEqual([byRecord?.content, byRecord?.sha256], [CHECK_OUTPUT, recordRow(fx.home, outputRecord).sha256], 'the record reference is resolved to the record\'s bytes and their hash');
 
-    const previewed = await openDecision(fx, project, KIND, high.id);
+    const previewed = await openProposal(fx, project, high.id);
     assert.deepEqual(previewed.options.map((option) => option.key).sort(), [OPTION, 'reject'], 'the decision offers the exception and its refusal');
     const m = previewed.manifest;
     assert.deepEqual(
@@ -139,7 +196,7 @@ describe('M105 the Alpha exception proposal', () => {
     const { fx, project, medium, sensitive, elsewhere, proposal, propose } = await reviewed(t);
     const { run } = await propose([proposal(medium.id), proposal(sensitive.id), proposal(elsewhere.id)]);
     assert.deepEqual([run.outcome, run.reason_class], ['completed', 'none']);
-    for (const id of [medium.id, sensitive.id, elsewhere.id]) assert.deepEqual(decisionsOn(fx.home, KIND, id), [], `no finding_disposition was raised about ${id}`);
+    for (const id of [medium.id, sensitive.id, elsewhere.id]) assertNothingRaised(fx, id, `no finding_disposition was raised about ${id} by the proposal`);
     assert.deepEqual(recordsOf(fx.home, project, 'containment_evidence'), [], 'no containment_evidence record was published');
     const shown = await readRun(fx.engine, project, run.id);
     const outcomes = Object.fromEntries((shown.alpha_exception_proposals ?? []).map((item) => [item.finding, [item.outcome, item.reason]]));
@@ -154,14 +211,14 @@ describe('M105 the Alpha exception proposal', () => {
     assert.deepEqual([builder.run.outcome, builder.run.reason_class], ['failed', 'invalid_result'], 'a Builder\'s result carrying the field is invalid');
     const verifier = await roleRun(fx, project, 'verification', { subject: { candidate: ctx.candidate.id }, result: { alpha_exception_proposals: [proposal(high.id)] } });
     assert.deepEqual([verifier.run.outcome, verifier.run.reason_class], ['failed', 'invalid_result'], 'a Verifier\'s result carrying the field is invalid');
-    assert.deepEqual(decisionsOn(fx.home, KIND, high.id), [], 'neither raised a decision');
+    assertNothingRaised(fx, high.id, 'neither raised a decision');
     assert.deepEqual(recordsOf(fx.home, project, 'containment_evidence'), [], 'and neither published evidence');
   });
 
   test('(d) the human approves: the exception is written on the finding, bound to the candidate\'s acceptance content hash; the Alpha gate no longer blocks on it, and a non-passed required check still blocks', async (t) => {
     const { fx, ctx, project, k, high, medium, sensitive, proposal, propose } = await reviewed(t);
     await propose([proposal(high.id)]);
-    const previewed = await openDecision(fx, project, KIND, high.id);
+    const previewed = await openProposal(fx, project, high.id);
     const before = await (await alphaTarget(fx, ctx)).evaluate();
     assert.ok(reasonSubjects(before, 'FINDING_BLOCKING').includes(high.id), 'the fixture is live: before the answer the High finding blocks Alpha');
 
@@ -184,7 +241,7 @@ describe('M105 the Alpha exception proposal', () => {
   test('(e) a change to what the manifest binds: the acceptance content before the answer (the question is withdrawn), the finding\'s status before the answer, and the sensitive area between the answer and the effect; each stales it with no write', async (t) => {
     const { fx, ctx, project, high, proposal, propose } = await reviewed(t);
     await propose([proposal(high.id)]);
-    const first = await openDecision(fx, project, KIND, high.id);
+    const first = await openProposal(fx, project, high.id);
     assert.equal(first.manifest.acceptance_content_hash, await contentNow(fx, ctx), 'the fixture is live: the preview binds the content the Reviewer reviewed, which is the content in force');
 
     // 1. The candidate's acceptance content changes: another check covers
@@ -197,7 +254,7 @@ describe('M105 the Alpha exception proposal', () => {
     assert.ok(reasonSubjects(await (await alphaTarget(fx, ctx)).evaluate(), 'FINDING_BLOCKING').includes(high.id), 'the finding blocks Alpha under the new content');
     // The Reviewer reviews the new content and proposes again: a new question, bound to it.
     await propose([proposal(high.id)]);
-    const second = await openDecision(fx, project, KIND, high.id);
+    const second = await openProposal(fx, project, high.id);
     assert.deepEqual([second.id !== first.id, second.manifest.acceptance_content_hash, second.manifest.proposed_disposition], [true, await contentNow(fx, ctx), OPTION], 'the new proposal is bound to the content now in force');
 
     // 2. The finding's status changes: a Reviewer dispositions it fix (E43).
@@ -206,7 +263,7 @@ describe('M105 the Alpha exception proposal', () => {
     assert.equal(finding(fx.home, high.id).status, 'dispositioned', 'the fixture is live: the finding changed');
     await assertStaleAnswer(fx, project, second, OPTION);
     assert.equal(exceptionOf(fx, high.id), null);
-    const third = await nextGeneration(fx, project, second, { changed: 'finding_status' });
+    const third = await nextProposal(fx, project, second, { changed: 'finding_status' });
     assert.deepEqual([third.manifest.finding_status, third.manifest.acceptance_content_hash], ['dispositioned', second.manifest.acceptance_content_hash]);
 
     // 3. After the answer and before the effect the finding turns out to be
@@ -228,7 +285,7 @@ describe('M105 the Alpha exception proposal', () => {
   test('(f) reject: nothing is written and the finding still blocks Alpha', async (t) => {
     const { fx, ctx, project, high, proposal, propose } = await reviewed(t);
     await propose([proposal(high.id)]);
-    const previewed = await openDecision(fx, project, KIND, high.id);
+    const previewed = await openProposal(fx, project, high.id);
     await reject(fx, project, previewed);
     assert.equal(exceptionOf(fx, high.id), null, 'no exception is recorded');
     const evaluation = await (await alphaTarget(fx, ctx)).evaluate();
@@ -252,7 +309,7 @@ describe('M105 the Alpha exception proposal', () => {
     fx.scripted.release(item);
     const ended = await waitForRunState(fx.home, run.id, 'ended', { timeoutMs: 60_000 });
     assert.deepEqual([ended.outcome, ended.reason_class], ['completed', 'none'], 'a refused proposal is not an invalid result: the run completes');
-    assert.deepEqual(decisionsOn(fx.home, KIND, high.id), [], 'no finding_disposition was raised: the Reviewer reviewed content that is no longer in force');
+    assertNothingRaised(fx, high.id, 'no finding_disposition was raised: the Reviewer reviewed content that is no longer in force');
     assert.deepEqual(recordsOf(fx.home, project, 'containment_evidence'), [], 'no containment evidence was published');
     const shown = await readRun(fx.engine, project, run.id);
     assert.deepEqual((shown.alpha_exception_proposals ?? []).map((entry) => [entry.finding, entry.outcome, entry.reason, entry.decision]), [[high.id, 'refused', 'content_changed', null]], 'the run read says why');
@@ -262,7 +319,7 @@ describe('M105 the Alpha exception proposal', () => {
     // B. The Reviewer reviews the content now in force and proposes again;
     // the human grants the exception; then the content changes once more.
     await propose([proposal(high.id)]);
-    const previewed = await openDecision(fx, project, KIND, high.id);
+    const previewed = await openProposal(fx, project, high.id);
     assert.equal(previewed.manifest.acceptance_content_hash, current, 'the fixture is live: the new proposal is bound to the content the Reviewer reviewed, now in force');
     await consume(fx, project, previewed, OPTION);
     await tickUntil(fx.engine, project, () => intentsOf(fx.home, previewed.id).find((row) => row.status === 'done'), { what: "the exception's effect to be done" });

@@ -27,12 +27,13 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { CONTRACT } from './harness/fixtures.mjs';
-import { builderScript, evaluationsOfKind, phaseCompleted, planChecks, planOfPhase, readPlan, specRevisions, stagesOfPlan } from './harness/journey/drive.mjs';
+import { builderScript, evaluationsOfKind, planChecks, planOfPhase, readPlan, specRevisions, stagesOfPlan } from './harness/journey/drive.mjs';
 import { ADR_001 } from './harness/journey/reference.mjs';
 import { UNKNOWN_KEY, replanDumpedAndHeld, replanRuns, replanUnknownRequirement, untilReplanHolds } from './harness/journey/replan34.mjs';
 import { journeyProject } from './harness/journey/review31b.mjs';
 import { fileAt, refOid } from './harness/repos.mjs';
-import { advanceClockInSteps, decisionsAbout, tick, tickUntil } from './harness/runs.mjs';
+import { advanceClockInSteps, decisionsAbout, pauseProject, resumeProject, tick, tickUntil } from './harness/runs.mjs';
+import { step } from './harness/scripted.mjs';
 import { closeSession, openSession, packageOf, say, scriptTurns, turnThatSays } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 
@@ -96,8 +97,17 @@ describe('M424 the replan one-shot and its repairs', () => {
 
   test('(c) a refused plan fails invalid_result naming the reason; (d) one repair with the reasons in its package, then a blocker offering retry and cancel and naming the session route; (e) a restart replenishes nothing; a manual re-entry revives nothing', async (t) => {
     const { fx, p, ctx } = await journeyProject(t);
-    fx.scripted.kindScript('replan', [replanUnknownRequirement(), replanUnknownRequirement({ dump: true }), replanUnknownRequirement(), replanUnknownRequirement()]);
-    await phaseCompleted(fx, ctx, 1);
+    // The first replan holds (heartbeating) before it writes, so the restart
+    // can be placed between its refusal and the repair (objection 120; SEAM
+    // §469): under K1 the refused run's end requests the tick that dispatches
+    // the repair, so the project is paused before the run is released, and
+    // dispatches nothing until it is resumed after the restart (D1 §8.4).
+    const held = replanUnknownRequirement();
+    fx.scripted.kindScript('replan', [{ ...held, steps: [step.hold('gate', { heartbeat_ms: 250 }), ...held.steps] }, replanUnknownRequirement({ dump: true }), replanUnknownRequirement(), replanUnknownRequirement()]);
+    await untilReplanHolds(fx, ctx);
+    assert.ok(planOfPhase(fx.home, p.id, 1).some((x) => (x.active === 1 || x.active === true) && x.completed_at), 'the fixture is live: phase 1 completed before the replan');
+    await pauseProject(fx.engine, p.id);
+    fx.scripted.release('all');
     // (c) the first run refused.
     const first = await tickUntil(fx.engine, p.id, () => replanRuns(fx.home, p.id).find((r) => r.state === 'ended'), { max: 6, what: 'the first replan run to end' });
     assert.deepEqual([first.outcome, first.reason_class], ['failed', 'invalid_result'], `the refused plan fails the run (${first.reason_text})`);
@@ -105,9 +115,11 @@ describe('M424 the replan one-shot and its repairs', () => {
     assert.ok((first.reason_text ?? '').includes(UNKNOWN_KEY), `and its subject ${UNKNOWN_KEY}`);
     const refusedCheck = planChecks(fx.home, p.id).find((c) => c.outcome === 'refused' && JSON.stringify(c.reasons).includes('PLAN_UNKNOWN_REQUIREMENT'));
     assert.ok(refusedCheck, `a plan_checks row records the refusal (${JSON.stringify(planChecks(fx.home, p.id).map((c) => [c.outcome, c.reasons]))})`);
+    assert.equal(replanRuns(fx.home, p.id).length, 1, 'the fixture is live: the repair is not yet dispatched (the project is paused)');
     // (e) a restart between the refusal and the repair.
     await fx.engine.kill();
     await fx.start();
+    await resumeProject(fx.engine, p.id);
     // (d) the repair, refused again, then the blocker.
     const item = replanRuns(fx.home, p.id)[0].work_item;
     const blocker = await tickUntil(fx.engine, p.id, () => decisionsAbout(fx.home, item, 'blocker').find((d) => d.status === 'open'), { max: 12, what: 'the blocker on the replan work' });
