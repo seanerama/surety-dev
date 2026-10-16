@@ -62,6 +62,12 @@ export interface ProposalRow {
   approved_at: string | null;
   resulting_version: string | null;
   changes_required_set: number;
+  // The tree the proposal was classified from (the driver's ruling on loop
+  // run 1, option (ii); checks/classify-inputs.ts classifiedTree): its own
+  // tree, or its changes rebased onto the effective revision it was
+  // classified against. NULL for a proposal classified before migration
+  // 0030 or by a fixture: its own tree is the one.
+  classified_tree?: string | null;
 }
 
 export interface ProtectedSet {
@@ -333,6 +339,7 @@ export function finalizeApplication(tx: Tx, op: { id: string; project: string },
   if (previous && previous.id !== v.id) tx.db.prepare('UPDATE "protected_versions" SET "superseded_by" = ? WHERE "id" = ?').run(v.id, previous.id);
   tx.db.prepare('UPDATE "protected_versions" SET "authorized" = 1, "effective_from" = ?, "applied_by_operation" = ? WHERE "id" = ?').run(tx.at, op.id, v.id);
   tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'applied', "resulting_version" = ? WHERE "id" = ?`).run(v.id, inputs.proposal);
+  settleProposalFindings(tx, inputs.proposal);
   // The evidence that depended on the old version (SEAM.md §72).
   if (previous) {
     const results = (tx.db.prepare('SELECT "id" FROM "check_results" WHERE "project" = ? AND "protected_version" = ? AND "invalidated_at" IS NULL').all(op.project, previous.id) as { id: string }[]).map((r) => r.id);
@@ -466,4 +473,26 @@ export function versionSource(db: Db, version: string): { repo: string; roots: s
 export function recordLegacyFingerprint(tx: Tx, args: { version: string; fingerprint: string }): { protected_version: { id: string; fingerprint: string } } {
   tx.db.prepare(`UPDATE "protected_versions" SET "fingerprint" = ?, "fingerprint_scheme" = 'pairs' WHERE "id" = ?`).run(args.fingerprint, args.version);
   return { protected_version: { id: args.version, fingerprint: args.fingerprint } };
+}
+
+// A finding of a Verifier's run that names a check its own proposal adds
+// (the driver's ruling on loop run 1; runs/accept.ts proposedCheckRefusal):
+// once the proposal is decided, the reference is bound to the version then
+// in effect, the applied one, or the effective one when the proposal is
+// rejected. A check that version does not have leaves the finding standing
+// with check null, recorded by finding.check_unbound; it is never dropped.
+export function settleProposalFindings(tx: Tx, proposal: string): void {
+  const p = tx.db.prepare('SELECT "id", "project", "run", "status", "resulting_version" FROM "protected_proposals" WHERE "id" = ?').get(proposal) as
+    | { id: string; project: string; run: string | null; status: string; resulting_version: string | null }
+    | undefined;
+  if (!p || p.run === null || (p.status !== 'applied' && p.status !== 'rejected')) return;
+  const version = p.status === 'applied' ? p.resulting_version : (effectiveVersion(tx.db, p.project)?.id ?? null);
+  const keys = new Set(version === null ? [] : (tx.db.prepare('SELECT "key" FROM "checks" WHERE "protected_version" = ?').all(version) as { key: string }[]).map((c) => c.key));
+  const named = tx.db.prepare('SELECT "id", "check" FROM "findings" WHERE "project" = ? AND "source_run" = ? AND "check" IS NOT NULL ORDER BY "seq"').all(p.project, p.run) as { id: string; check: string }[];
+  for (const f of named) {
+    if (keys.has(f.check)) continue;
+    tx.db.prepare('UPDATE "findings" SET "check" = NULL WHERE "id" = ?').run(f.id);
+    tx.emit('finding.check_unbound', { project: p.project, finding: f.id }, { check: f.check, proposal: p.id, cause: p.status === 'applied' ? 'not_in_applied_version' : 'proposal_rejected', version });
+  }
+  if (named.some((f) => !keys.has(f.check))) markStale(tx, { project: p.project });
 }

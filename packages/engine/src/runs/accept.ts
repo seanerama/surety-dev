@@ -33,6 +33,8 @@ import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js
 import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
 import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute, touchedCriteria } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
+import { discover } from '../checks/discovery.js';
+import { proposedCheckRefusal, proposesChecks } from './report.js';
 import { blockingFindings } from '../spec/approval.js';
 import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
 import { architectFindings } from '../plan/findings.js';
@@ -585,6 +587,14 @@ export class Acceptor {
     const assessed = await this.correctionAssessments(facts, diff.changes.length);
     if ('outcome' in assessed) return assessed;
     const assessments = assessed.assessments;
+    // A finding may name a check its own proposal adds (the driver's ruling
+    // on loop run 1; invoke/choke.ts proposesChecks): judged here, against
+    // the tree the proposal is captured from. A key that is neither the
+    // effective version's nor a check of that tree refuses the result, as at
+    // collection. The reference is bound when the proposal is decided
+    // (store/transitions/protected.ts settleProposalFindings).
+    const unknown = await this.proposedCheckRefusal(facts, repo, tree, diff.changes.length);
+    if (unknown !== null) return failed('invalid_result', unknown);
     if (diff.changes.length === 0) {
       await this.recordReport(facts, assessments);
       return { outcome: 'completed', reason: 'none' };
@@ -641,6 +651,18 @@ export class Acceptor {
       ...(assessments ? { assessments } : {}),
     });
     return { outcome: 'completed', reason: 'none' };
+  }
+
+  private async proposedCheckRefusal(facts: AcceptFacts, repo: string, tree: string, changes: number): Promise<string | null> {
+    const result = facts.result;
+    if (!result || !proposesChecks(facts.run.role, result)) return null;
+    const named = [...new Set((result.report?.findings ?? []).map((f) => f.check).filter((c): c is string => typeof c === 'string'))];
+    if (named.length === 0) return null;
+    const read = await this.rt.read<{ keys: string[] | null }>('run.check_keys', { run: facts.run.id });
+    if (named.every((k) => (read.keys ?? []).includes(k))) return null;
+    // The proposal's checks are read only when a key needs them.
+    const proposed = changes === 0 ? [] : ((await discover(repo, tree))?.checks.map((c) => c.key) ?? null);
+    return proposedCheckRefusal({ named, existing: read.keys ?? [], proposed, changes });
   }
 
   private async correctionAssessments(facts: AcceptFacts, changes: number): Promise<RunEnd | { assessments: { entries: ApplicabilityEntry[]; rationales: string[] } | null }> {

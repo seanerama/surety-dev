@@ -165,7 +165,7 @@ import { logsDue, observationLapsed, observationPlan, observationsDue, recordLog
 import { type CheckRow, requiredSet } from './transitions/evidence.js';
 import { beginAdopt, beginStash, beginWidening, effectsDue, intentRow, revalidate, stashFacts, stashKept, stashed } from './transitions/intents.js';
 import { notificationOutcome, notificationSending, notificationsDue } from './transitions/notify.js';
-import { applicationConflicts, applicationDiverged, operationApplication, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
+import { applicationConflicts, applicationDiverged, classificationConflicts, operationApplication, pendingReclassification, reclassifyProposal, recordClassification, revalidateApplication, revalidateOperation, unclassifiedProposals } from './transitions/classification.js';
 import { applicationFacts, beginApplication, fingerprintsToRecompute, recordRecomputedFingerprint } from './transitions/protected.js';
 import { answerBatch, applyAlphaException, decisionSubjectRead, reviewDecisions } from './transitions/queue.js';
 import { alphaCheck, askUndispositioned } from './transitions/findings.js';
@@ -373,6 +373,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'candidate.executions': (d, a) => readCandidateExecutions(d, a),
   'protected.proposal_discovery': (d, a: { proposal: string }) => proposalDiscovery(d, a.proposal),
   'protected.unclassified': (d, a: { project: string }) => unclassifiedProposals(d, a),
+  'protected.pending_reclassification': (d, a: { project: string }) => pendingReclassification(d, a),
   'protected.operation_application': (d, a: { operation: string }) => operationApplication(d, a),
   'checks.tree_in_use': (d, a) => treeInUse(d, a),
   'checks.tree_held': (d, a) => treeHeld(d, a),
@@ -666,11 +667,13 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // Reviewer's, revalidated in the transaction that begins the application.
   'protected.begin_application': (tx, a) =>
     beginApplication(tx, a, (t: Tx) =>
-      revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null, inputsVersion: a.inputsVersion }),
+      revalidateApplication(t, { proposal: a.proposal, intent: a.intent ?? null, head: a.facts?.head, inputs: a.inputs ?? null, inputsVersion: a.inputsVersion, inputsTree: a.inputsTree }),
     ),
   'protected.application_diverged': (tx, a) => applicationDiverged(tx, a),
   'protected.application_conflict': (tx, a) => applicationConflicts(tx, a),
   'protected.record_classification': (tx, a) => recordClassification(tx, a),
+  'protected.reclassify': (tx, a) => reclassifyProposal(tx, a),
+  'protected.classification_conflict': (tx, a) => classificationConflicts(tx, a),
   'protected.revalidate_operation': (tx, a) => revalidateOperation(tx, a),
   'intent.revalidate': (tx, a) => revalidate(tx, a),
   'policy.begin_widening': (tx, a) => beginWidening(tx, a),

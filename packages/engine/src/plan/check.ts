@@ -430,6 +430,16 @@ export function touchedCriteria(stale: unknown): string[] {
 export const KEPT_STAGE_RULE =
   "Omitting a kept stage is always valid: it stays as built. Listing one is valid only with exactly the inputs it was built with (number, goal, implements, tasks, modules, adrs, depends_on, validation, integration_obligations); a kept stage listed with any other input is refused (PLAN_DUPLICATE_STAGE). Criteria a kept stage's requirement gained or changed since it was built are planned in a new stage, under a new number, that implements that requirement and validates only those gained or changed criteria; the requirement's other criteria stay validated by the kept stage.";
 
+// The per-stage validation rule (the driver's ruling on the real M443 run
+// and loop run 1: two stages split R12 and validated its criteria between
+// them, and were refused), stated to the Architect as step 4 above applies
+// it: each stage's gate scope is built from its own implements, so its own
+// validation must cover them. The replan exceptions (criteria only) follow.
+export const STAGE_VALIDATION_RULE =
+  "Each stage validates what it implements, in its own validation: every criterion of every requirement a stage implements is in that stage's validation.criteria, and every sensitive area of those requirements and of the modules it touches is in that stage's validation.sensitive_areas. A requirement implemented by several stages is validated in full by each of them: every one of those stages lists all of the requirement's criteria; another stage's validation never counts for it.";
+export const STAGE_VALIDATION_REPLAN_EXCEPTIONS =
+  "In a replan, two exceptions, for criteria only: a kept stage listed unchanged is not charged a criterion its requirement gained after it was built (another stage of the plan validates it, as the kept-stage rule says); and a criterion a kept stage validated as built, which this replan's trigger did not touch, stays validated by that stage, so a new stage implementing the same requirement need list only the gained or changed criteria.";
+
 export const PLAN_REASONS = [
   'PLAN_UNKNOWN_REQUIREMENT',
   'PLAN_UNKNOWN_MODULE',

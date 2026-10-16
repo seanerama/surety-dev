@@ -777,6 +777,7 @@
       "finding.dispositioned",
       "finding.resolved",
       "finding.reopened",
+      "finding.check_unbound",
       "assessment.proposed",
       "assessment.assessed",
       "assessment.approved",
@@ -4050,6 +4051,9 @@
         },
         "deferred_criteria": {
           "required": false
+        },
+        "classified_tree": {
+          "required": false
         }
       }
     },
@@ -6518,6 +6522,9 @@
       "owner": "store/transitions/gates.ts, store/transitions/work.ts"
     },
     "finding.reopened": {
+      "owner": "store/transitions/protected.ts"
+    },
+    "finding.check_unbound": {
       "owner": "store/transitions/protected.ts"
     },
     "assessment.proposed": {

@@ -186,3 +186,22 @@ export function parseReport(result: Record<string, unknown>): Report | null {
   }
   return report as Report;
 }
+
+// A Verifier's result carrying a protected proposal (the driver's ruling on
+// loop run 1): its findings may name a check the proposal adds, judged at
+// acceptance against the proposal's tree (runs/accept.ts), not at collection.
+export const proposesChecks = (role: string, r: { report?: { proposal?: unknown } }): boolean => role === 'verifier' && r.report?.proposal !== undefined && r.report.proposal !== null;
+
+// The judgement at acceptance (runs/accept.ts): each key a finding names is
+// a check of the effective version or one the proposal's tree defines;
+// `proposed` null: the proposal's checks could not be read, so no key
+// outside the version is taken. The reason refusing the result, or null.
+export function proposedCheckRefusal(args: { named: readonly string[]; existing: readonly string[]; proposed: readonly string[] | null; changes: number }): string | null {
+  const outside = args.named.filter((k) => !args.existing.includes(k));
+  if (outside.length === 0) return null;
+  const name = (k: string) => JSON.stringify(k.slice(0, 80));
+  if (args.changes === 0) return `a finding names the check ${name(outside[0]!)}, which is not a check of the project, and this result changes no check that could add it`;
+  if (args.proposed === null) return `a finding names the check ${name(outside[0]!)}, and the checks of this result's proposal could not be read to judge it`;
+  const unknown = outside.find((k) => !args.proposed!.includes(k));
+  return unknown === undefined ? null : `a finding names the check ${name(unknown)}, which is neither a check of the project nor one this result's proposal adds`;
+}

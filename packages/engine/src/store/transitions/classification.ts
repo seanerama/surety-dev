@@ -20,7 +20,7 @@ import { canonical, sha256 } from './common.js';
 import { type DecisionKind, type DecisionRow, invalidateDecision } from './decisions.js';
 import { observeTrigger } from './work.js';
 import { refuseOperation, opDetail } from './journal.js';
-import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal } from './protected.js';
+import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, getProposal, settleProposalFindings } from './protected.js';
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
 import { engineSettings } from './settings.js';
 import { correctionProposalDecided } from '../../spec/change.js';
@@ -105,6 +105,8 @@ export interface Unclassified {
   repo: string;
   effective: string;
   revision: string;
+  // The proposal's base and own tree: what classifiedTree rebases.
+  base: string;
   tree: string;
 }
 
@@ -117,11 +119,35 @@ export function unclassifiedProposals(db: Db, args: { project: string }): Unclas
   if (!effective || effective.authorized_revision === null) return [];
   const rows = db
     .prepare(
-      `SELECT p."id", p."tree_id", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project"
+      `SELECT p."id", p."base_revision", p."tree_id", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project"
        WHERE p."project" = ? AND p."status" = 'captured' AND p."classified_change_kind" IS NULL ORDER BY p."seq"`,
     )
-    .all(args.project) as { id: string; tree_id: string; dev_repo_path: string }[];
-  return rows.map((r) => ({ proposal: r.id, repo: r.dev_repo_path, effective: effective.id, revision: effective.authorized_revision!, tree: r.tree_id }));
+    .all(args.project) as { id: string; base_revision: string; tree_id: string; dev_repo_path: string }[];
+  return rows.map((r) => ({ proposal: r.id, repo: r.dev_repo_path, effective: effective.id, revision: effective.authorized_revision!, base: r.base_revision, tree: r.tree_id }));
+}
+
+// The project's pending proposals the engine classified at an effective
+// version that is no longer the effective one (the driver's ruling on loop
+// run 1, item 3): another proposal was applied while they waited for their
+// decision. Each is classified again, on its changes rebased onto the
+// effective revision (reclassifyProposal). An approved proposal is the
+// application's revalidation's (revalidateApplication); a fixture's class
+// stands (the driver's ruling 1).
+export function pendingReclassification(db: Db, args: { project: string }): Unclassified[] {
+  const effective = effectiveVersion(db, args.project);
+  if (!effective || effective.authorized_revision === null) return [];
+  const rows = db
+    .prepare(
+      `SELECT p."id", p."base_revision", p."tree_id", p."classification", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project"
+       WHERE p."project" = ? AND p."status" IN ('classified', 'awaiting_human') ORDER BY p."seq"`,
+    )
+    .all(args.project) as { id: string; base_revision: string; tree_id: string; classification: string | null; dev_repo_path: string }[];
+  return rows
+    .filter((r) => {
+      const json = r.classification === null ? null : (JSON.parse(r.classification) as Record<string, unknown>);
+      return engineClassified(json) && json!.effective_version !== effective.id;
+    })
+    .map((r) => ({ proposal: r.id, repo: r.dev_repo_path, effective: effective.id, revision: effective.authorized_revision!, base: r.base_revision, tree: r.tree_id }));
 }
 
 // The engine's classification of a captured proposal: recorded, routed as
@@ -135,14 +161,14 @@ export function unclassifiedProposals(db: Db, args: { project: string }): Unclas
 // is not classified again when the effective version or the running
 // classifier changes; its stored class stands until the revalidation at the
 // application, which reads both again.
-export function recordClassification(tx: Tx, args: { proposal: string; effective: string; inputs: ClassifyInputs }): { proposal: string; change_kind: ClassifiedKind } | null {
+export function recordClassification(tx: Tx, args: { proposal: string; effective: string; inputs: ClassifyInputs; tree?: string }): { proposal: string; change_kind: ClassifiedKind } | null {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'captured' || p.classified_change_kind !== null) return null;
   if (effectiveVersion(tx.db, p.project)?.id !== args.effective) return null;
   const c = buildClassification(tx, p.project, args.effective, args.inputs);
   const status = c.change_kind === 'tightening' ? 'classified' : 'awaiting_human';
   writeClassification(tx, p, c);
-  tx.db.prepare('UPDATE "protected_proposals" SET "status" = ? WHERE "id" = ?').run(status, p.id);
+  tx.db.prepare('UPDATE "protected_proposals" SET "status" = ?, "classified_tree" = ? WHERE "id" = ?').run(status, args.tree ?? null, p.id);
   tx.emit('protected.classified', { project: p.project, proposal: p.id }, { change_kind: c.change_kind, from: p.status, to: status, classifier_version: c.classifier_version });
   raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
   // Under `authoritative` (D3 §3.3; D6 §6.2; SEAM.md §351) a tightening is
@@ -153,6 +179,52 @@ export function recordClassification(tx: Tx, args: { proposal: string; effective
     observeTrigger(tx, { project: p.project, kind: 'review', trigger_source: 'protected_proposal', trigger_id: p.id, trigger_generation: 1, subject: { proposal: p.id }, chain: 0 }, {});
   }
   return { proposal: p.id, change_kind: c.change_kind };
+}
+
+// Classified again (the driver's ruling on loop run 1, item 3): the
+// effective protected version moved past a pending proposal's
+// classification while it waited for its decision. Its changes, rebased onto
+// the new effective revision (checks/classify-inputs.ts classifiedTree), are
+// classified as at capture; the question of its old class is invalidated
+// and the question of its class now is raised, a new generation bound to
+// the new classification. Only while the inputs were read at the version
+// still in effect and the proposal is still pending with the class it had.
+export function reclassifyProposal(tx: Tx, args: { proposal: string; effective: string; inputs: ClassifyInputs; tree: string }): { proposal: string; change_kind: ClassifiedKind } | null {
+  const p = getProposal(tx, args.proposal);
+  if (!p || (p.status !== 'classified' && p.status !== 'awaiting_human')) return null;
+  if (effectiveVersion(tx.db, p.project)?.id !== args.effective) return null;
+  const json = classificationJson(tx.db, p.id);
+  if (!engineClassified(json) || json!.effective_version === args.effective) return null;
+  const c = buildClassification(tx, p.project, args.effective, args.inputs);
+  const status = c.change_kind === 'tightening' ? 'classified' : 'awaiting_human';
+  writeClassification(tx, p, c);
+  tx.db.prepare('UPDATE "protected_proposals" SET "status" = ?, "classified_tree" = ? WHERE "id" = ?').run(status, args.tree, p.id);
+  tx.emit('protected.classified', { project: p.project, proposal: p.id }, { change_kind: c.change_kind, from: p.status, to: status, classifier_version: c.classifier_version, reclassified: true, effective_version: args.effective });
+  const kinds = Object.values(CORRECTION_KIND);
+  for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open'`).all(p.id) as DecisionRow[]) {
+    if (kinds.includes(d.kind)) invalidateDecision(tx, d, `the effective protected version moved to ${args.effective}: the proposal is classified again`);
+  }
+  raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
+  return { proposal: p.id, change_kind: c.change_kind };
+}
+
+// A proposal whose changes do not rebase onto the effective revision (the
+// driver's ruling on loop run 1): a path the effective version changed
+// another way. Before its approval, it is refused for repair as an
+// application conflict is: rejected naming the conflict, every open
+// question of it withdrawn, and the item that made it takes its repair (a
+// new run from the current head).
+export function classificationConflicts(tx: Tx, args: { proposal: string; revision: string; reason: string }): boolean {
+  const p = getProposal(tx, args.proposal);
+  if (!p || (p.status !== 'captured' && p.status !== 'classified' && p.status !== 'awaiting_human')) return false;
+  for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open'`).all(p.id) as DecisionRow[]) {
+    invalidateDecision(tx, d, `the proposal does not rebase onto the effective protected version at ${args.revision}: ${args.reason}`);
+  }
+  tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
+  tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: null, cause: 'rebase_conflict', revision: args.revision, reason: args.reason });
+  settleProposalFindings(tx, p.id);
+  correctionProposalDecided(tx, { proposal: p.id, applied: false });
+  return true;
 }
 
 // ---- a Reviewer's approval (E13; D3 §3.3; Q5; SEAM.md §§121, 218) -------------------------------
@@ -235,12 +307,14 @@ function judge(tx: Tx, p: ProposalRow, intent: string | null, read: Read | null)
 // What was read again is kept, so the next generation of the human's
 // question shows it: the engine's classification replaced whole; under a
 // fixture's class, its discovery only.
-function keepFresh(tx: Tx, p: ProposalRow, fresh: StoredClassification | null): void {
+function keepFresh(tx: Tx, p: ProposalRow, fresh: StoredClassification | null, tree?: string): void {
   // Read at another effective version: not kept (M2).
   if (fresh === null) return;
   const json = classificationJson(tx.db, p.id);
-  if (engineClassified(json)) writeClassification(tx, p, fresh);
-  else tx.db.prepare('UPDATE "protected_proposals" SET "classification" = ? WHERE "id" = ?').run(JSON.stringify({ ...(json ?? {}), discovery: fresh.discovery }), p.id);
+  if (engineClassified(json)) {
+    writeClassification(tx, p, fresh);
+    if (tree !== undefined) tx.db.prepare('UPDATE "protected_proposals" SET "classified_tree" = ? WHERE "id" = ?').run(tree, p.id);
+  } else tx.db.prepare('UPDATE "protected_proposals" SET "classification" = ? WHERE "id" = ?').run(JSON.stringify({ ...(json ?? {}), discovery: fresh.discovery }), p.id);
 }
 
 // Does the application's binding still hold? The human's binding is its
@@ -281,7 +355,7 @@ export function withdrawReviewerApproval(tx: Tx, proposal: string): void {
 // question open. Returns whether the application may begin.
 export function revalidateApplication(
   tx: Tx,
-  args: { proposal: string; intent: string | null; head?: string | null; inputs?: ClassifyInputs | null; inputsVersion?: string },
+  args: { proposal: string; intent: string | null; head?: string | null; inputs?: ClassifyInputs | null; inputsVersion?: string; inputsTree?: string },
 ): boolean {
   const p = getProposal(tx, args.proposal);
   if (!p || p.status !== 'approved') return false;
@@ -292,7 +366,7 @@ export function revalidateApplication(
   const read = freshFacts(tx, p, args.inputs, args.inputsVersion, args.head);
   const verdict = judge(tx, p, args.intent, read);
   if (verdict !== 'changed') return verdict === 'holds';
-  keepFresh(tx, p, read!.fresh);
+  keepFresh(tx, p, read!.fresh, args.inputsTree);
   if (args.intent !== null) invalidateIntent(tx, args.intent);
   else withdrawReviewerApproval(tx, p.id);
   return false;
@@ -305,7 +379,7 @@ export function revalidateApplication(
 // withdraws what it was for (queue.effectFailed: the intended version
 // removed, the intent invalidated or the Reviewer's approval withdrawn).
 // Returns whether the operation may go on.
-export function revalidateOperation(tx: Tx, args: { operation: string; inputs: ClassifyInputs | null; inputsVersion?: string; incarnation: string }): boolean {
+export function revalidateOperation(tx: Tx, args: { operation: string; inputs: ClassifyInputs | null; inputsVersion?: string; inputsTree?: string; incarnation: string }): boolean {
   const op = opDetail(tx, args.operation);
   if (op.state === 'failed' || op.state === 'finalized') return true;
   const inputs = op.inputs as { purpose?: string; proposal?: string; intent?: string | null };
@@ -328,7 +402,7 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
   const read = freshFacts(tx, p, args.inputs, args.inputsVersion, undefined);
   const verdict = judge(tx, p, intent, read);
   if (verdict !== 'changed') return verdict === 'holds';
-  keepFresh(tx, p, read!.fresh);
+  keepFresh(tx, p, read!.fresh, args.inputsTree);
   refuseOperation(tx, {
     operation: op.id,
     detail: { reason: 'precondition_changed', text: "the protected application's binding changed before its replay: EFFECT_PRECONDITION_CHANGED" },
@@ -338,17 +412,17 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
 }
 
 // What the main thread reads to revalidate an operation's application.
-export function operationApplication(db: Db, args: { operation: string }): { proposal: string; repo: string; effective: string | null; revision: string | null; tree: string } | null {
+export function operationApplication(db: Db, args: { operation: string }): { proposal: string; repo: string; effective: string | null; revision: string | null; base: string; tree: string } | null {
   const row = db.prepare('SELECT "finalizer_inputs" FROM "operations" WHERE "id" = ?').get(args.operation) as { finalizer_inputs: string } | undefined;
   if (!row) return null;
   const inputs = JSON.parse(row.finalizer_inputs) as { purpose?: string; proposal?: string };
   if (inputs.purpose !== 'protected' || !inputs.proposal) return null;
-  const p = db.prepare('SELECT p."tree_id", p."project", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project" WHERE p."id" = ?').get(inputs.proposal) as
-    | { tree_id: string; project: string; dev_repo_path: string }
+  const p = db.prepare('SELECT p."base_revision", p."tree_id", p."project", r."dev_repo_path" FROM "protected_proposals" p JOIN "projects" r ON r."id" = p."project" WHERE p."id" = ?').get(inputs.proposal) as
+    | { base_revision: string; tree_id: string; project: string; dev_repo_path: string }
     | undefined;
   if (!p) return null;
   const eff = effectiveVersion(db, p.project);
-  return { proposal: inputs.proposal, repo: p.dev_repo_path, effective: eff?.id ?? null, revision: eff?.authorized_revision ?? null, tree: p.tree_id };
+  return { proposal: inputs.proposal, repo: p.dev_repo_path, effective: eff?.id ?? null, revision: eff?.authorized_revision ?? null, base: p.base_revision, tree: p.tree_id };
 }
 
 // The tree an application commits is the proposal's changes rebased onto
@@ -394,6 +468,7 @@ export function applicationConflicts(tx: Tx, args: { proposal: string; intent: s
   }
   tx.db.prepare(`UPDATE "protected_proposals" SET "status" = 'rejected' WHERE "id" = ?`).run(p.id);
   tx.emit('protected.rejected', { project: p.project, proposal: p.id }, { decision: null, cause: 'application_conflict', head: args.head, reason: args.reason });
+  settleProposalFindings(tx, p.id);
   correctionProposalDecided(tx, { proposal: p.id, applied: false });
   return true;
 }

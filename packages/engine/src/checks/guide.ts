@@ -214,6 +214,9 @@ export function checkWritingText(f: CheckWritingFacts, checkList: readonly strin
   const out: string[] = ['', "## Writing the project's checks", ''];
   out.push(
     "Your work is the project's protected checks: write or correct them so that every criterion of the requirements below is shown met by a check the engine runs. The engine discovers the checks from the files you leave under the protected roots, the change is classified and decided on, and once it is applied the engine runs the checks on every candidate. A gate is satisfied only on their results.",
+    '',
+    // The driver's ruling on loop run 1 (runs/accept.ts proposedCheckRefusal).
+    "A finding you report may name, in `check`, a check this result's proposal adds: the reference is bound when the proposal is applied; if the proposal is rejected, or the applied version does not have that check, the finding stands with no check. A key that is neither a check of the project nor one your proposal adds makes the result invalid.",
   );
   if (g === null) {
     out.push(

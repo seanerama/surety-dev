@@ -395,19 +395,32 @@ const ROLE_FIELDS: Record<string, Record<string, Record<string, unknown>>> = {
   reviewer: { findings: FIELDS.findings!, ...REVIEWER_FIELDS },
 };
 
+// What a check-writing Verifier's finding may name (the driver's ruling on
+// loop run 1): a check of the effective version, or one this result's
+// protected proposal adds, bound when the proposal is decided.
+export const PROPOSED_CHECK_TEXT = (keys: readonly string[]): string =>
+  `It names a check of the project (${keys.length > 0 ? keys.join(', ') : 'it has none'}), or a check your protected proposal in this result adds: a finding may name the check the same result proposes. The reference is bound when the proposal is applied; if the proposal is rejected, or the applied version does not have that check, the finding stands with no check (it is never dropped). Any other key makes the result invalid.`;
+
 // `checkKeys` (the review of b72b9cc, F1): the keys a finding's `check` may
 // name, the effective protected version's; given, `check` is an enum of
 // them, and with none (no checks, or none readable) it is left out. The
 // same for `criteria`, the registered index's (D3 §2.11), and a finding's
 // `criterion`; and for a Builder's objections, whose `check` and
 // `criterion` take the same enums.
-export function resultSchema(role: string, checkKeys?: readonly string[], criteria?: readonly string[]): Record<string, unknown> {
+// `proposes` (the driver's ruling on loop run 1): a check-writing Verifier,
+// whose result may carry a protected proposal; a finding's `check` may name
+// a check that proposal adds, so it is no enum: the keys are stated with the
+// rule (invoke/choke.ts unknownCheck, runs/accept.ts proposedCheckRefusal).
+export function resultSchema(role: string, checkKeys?: readonly string[], criteria?: readonly string[], opts: { proposes?: boolean } = {}): Record<string, unknown> {
   const fields: Record<string, Record<string, unknown>> = { ...(ROLE_FIELDS[role] ?? {}) };
   const narrow = (field: string) => {
     if (!fields[field]) return;
     const items = (fields[field].items ?? {}) as { properties?: Record<string, unknown> };
     const props: Record<string, unknown> = { ...(items.properties ?? {}) };
-    if (checkKeys !== undefined) {
+    if (checkKeys !== undefined && field === 'findings' && opts.proposes === true) {
+      const check = props.check as Record<string, unknown>;
+      props.check = { ...check, description: `${String(check.description)} ${PROPOSED_CHECK_TEXT(checkKeys)}` };
+    } else if (checkKeys !== undefined) {
       if (checkKeys.length > 0) props.check = { ...(props.check as Record<string, unknown>), enum: [...checkKeys] };
       else if (field === 'findings') delete props.check;
     }
@@ -668,7 +681,8 @@ export function writeContextPackage(
   const reports = role === 'verifier' || role === 'reviewer';
   const keys = facts?.checks && reports ? (facts.checks_known === false ? [] : [...new Set(facts.checks.map((c) => c.key))].sort()) : role === 'builder' && facts?.check_keys ? facts.check_keys : undefined;
   const criteria = (reports || role === 'builder') && facts && facts.criteria !== undefined ? (facts.criteria ?? []) : undefined;
-  const base = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria);
+  const proposes = role === 'verifier' && (claim.work_kind === 'check_authoring' || claim.work_kind === 'check_correction');
+  const base = claim.attempt ? canaryResultSchema(String(opts.canary?.kind ?? claim.attempt.kind)) : resultSchema(role, keys, criteria, { proposes });
   // A replan's result (Appendix B.7): the plan it wrote and its declaration.
   // A phase authoring's result (B.7; N04): its governed changes and deferrals.
   // A phase authoring's result (B.7; N04): the fields its package's stated
