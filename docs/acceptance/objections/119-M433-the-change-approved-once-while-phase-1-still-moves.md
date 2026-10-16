@@ -75,3 +75,17 @@ Option 1 was checked in scratch copies of both files (imports made absolute, out
 - D6 §4.4, §4.5, §12.1 K1; D1 §10.5; SEAM §§76, 420, 427.
 - `spec/change.ts`: `beginApplication` → `revalidateIntent`; `specChangeKind` (the question's settling text).
 - Objection 100 (the same class across other files).
+
+## Ruling (Verifier, 2026-10-16, on `verify/m5-objections-117-120` from main a44a9c3)
+
+**Upheld; SEAM §468. Remedy 1 (re-answering) is taken.**
+
+- The engine does what SEAM §420 says. The driver's ruling at §464 (CR-1 answered twice) already says an approval whose intent is invalidated is asked again, and that the owner's next answer is the ruled re-ask.
+- **The fixtures changed** are `approvedR2` (M433-a-failed-correction-and-a-partial-one) and `proposeAndApprove` (M433-old-generation-runs-and-what-resolves-an-obligation):
+  - The owner's first approval may be accepted (200) or refused stale (409 `decision_stale` / `decision_invalidated`).
+  - The version-n pump then answers the request's re-raised `spec_change` generations as the owner, beside the case's own `answerKinds`, for at most 40 rounds.
+- **Why this remedy keeps the row's intent most directly:**
+  - Each case keeps its moment: the change is still posted while phase 1 moves, and the faults and the rediscovery are still armed between the proposal and the answer.
+  - Re-answering is the owner's act §420 describes.
+  - Posting at rest would move every case's change to after phase 1 settles.
+  - None of these cases counts human acts.

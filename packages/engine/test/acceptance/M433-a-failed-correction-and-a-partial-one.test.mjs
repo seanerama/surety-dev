@@ -23,7 +23,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, decision } from './harness/decisions.mjs';
+import { CODES, answer, decision } from './harness/decisions.mjs';
+import { assertRefused } from './harness/fixtures.mjs';
 import { armFault, clearFaults } from './harness/engine.mjs';
 import { tick } from './harness/runs.mjs';
 import { roleThat } from './harness/gitruns.mjs';
@@ -71,6 +72,18 @@ function assertOneAssessment(home, project, item) {
   assert.equal(end['accept-r2'].resolved_by, effectiveVersion(home, project).id, 'accept-r2 resolved by the applied correction');
 }
 
+// The owner approves the change, and approves it again whenever it is asked
+// again (objection 119; SEAM §§420, 464, 468): phase 1's listed stage work and
+// checks still move after the proposal, and under K1 their results land
+// between the answer and the effect, so the approval's intent is invalidated
+// (`EFFECT_PRECONDITION_CHANGED`) and the next generation is raised; or the
+// decision is already stale when the first answer arrives (409). The pump
+// after it answers each re-raised `spec_change` generation as the owner.
+async function approveAsAsked(fx, ctx, id) {
+  const res = await answer(fx.engine, ctx.project, decision(fx.home, id), 'approve');
+  if (res.status !== 200) assertRefused(res, 409, [CODES.stale, CODES.invalidated], 'the owner\'s first approval, asked again before it arrived');
+}
+
 // The change rewording R2.1 and R2.2 (accept-r2 and integration listed),
 // approved; `beforeAnswer` runs between the proposal and the answer.
 async function approvedR2(fx, ctx, { beforeAnswer } = {}) {
@@ -80,8 +93,8 @@ async function approvedR2(fx, ctx, { beforeAnswer } = {}) {
   const out = await untilProposedOrFailed(fx, ctx, res.body.request.id, ctx.holdOpts);
   assert.ok(out.decision, `the change is proposed (${out.request.status} ${out.request.failure ?? ''})`);
   if (beforeAnswer) await beforeAnswer();
-  assert.equal((await answer(fx.engine, ctx.project, decision(fx.home, out.decision.id), 'approve')).status, 200, 'the owner approves it');
-  await pumpHolding(fx, ctx, () => specRevisions(fx.home, ctx.project).find((r) => r.version === 2), { what: 'version 2', max: 20, ...ctx.holdOpts });
+  await approveAsAsked(fx, ctx, out.decision.id);
+  await pumpHolding(fx, ctx, () => specRevisions(fx.home, ctx.project).find((r) => r.version === 2), { what: 'version 2', max: 40, ...ctx.holdOpts, answerKinds: [...(ctx.holdOpts?.answerKinds ?? []), 'spec_change'] });
   const listed = Object.keys(obligations(fx.home, ctx.project)).sort();
   assert.deepEqual(listed, ['accept-r2', 'integration'], 'the fixture is live: obligations on accept-r2 and integration');
   const item = workOf(fx.home, ctx.project, 'check_correction').find((w) => JSON.stringify(w.subject ?? {}).includes(out.request.id));

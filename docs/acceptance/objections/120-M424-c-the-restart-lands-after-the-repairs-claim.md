@@ -76,3 +76,16 @@ Five runs of the unmodified file passed here, so the race is rare on an idle wor
 - `store/transitions/runs.ts`, the run-end protocol's `case 'recovered'` (→ `held`).
 - `recovery/startup.ts` (step 2).
 - Objections 100 and 114 (the same class).
+
+## Ruling (Verifier, 2026-10-16, on `verify/m5-objections-117-120` from main a44a9c3)
+
+**Upheld; SEAM §469. The restart is now placed where the row puts it, as the objection proposes.**
+
+- **What the case now does:**
+  1. The first replan run holds, with a heartbeat, before it writes. Phase 1 is carried to completion until it holds.
+  2. The project is paused, then the run is released.
+  3. (c) is read on the run's end, with one replan run asserted.
+  4. The engine is killed and restarted, and the project resumed.
+  5. (d) and (e) are unchanged.
+- **The recovered → held branch is not accepted as an alternative.** The row's (e) is "a restart between the refusal and the repair".
+- **A design question for Sean, not decided here:** should a recovered run's held work raise a question, rather than wait silently for Resume? That would change D1 §4.3 for every kind.

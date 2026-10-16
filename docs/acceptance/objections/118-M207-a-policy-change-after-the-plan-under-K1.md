@@ -63,3 +63,11 @@ A narrower window stays in every `discoveredProject` + `nominateStage` case: the
 
 - D6 §12.1 K1; SEAM §§363, 430; objection 030; objection 100 (the same class across other files).
 - `store/transitions/tick-requests.ts` `requestOf` (`work.created … to: eligible` → `work_eligible`).
+
+## Ruling (Verifier, 2026-10-16, on `verify/m5-objections-117-120` from main a44a9c3)
+
+**Upheld; SEAM §467.**
+
+- The engine does what K1 says, and SEAM §363's "every pin before the plan" applies.
+- **M207 (c):** `repair_attempts_max: 0` is now pinned together with `autonomy: step`, in the one `policy` change `discoveredProject` makes before the plan. The separate `changePolicy` after the plan is removed.
+- **The narrower window is left as it is.** That is the plan's tick dispatching the Builder before `nominateStage` writes its script. No run has been seen to lose it.

@@ -31,7 +31,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, decision, decisionsOn } from './harness/decisions.mjs';
+import { CODES, answer, decision, decisionsOn } from './harness/decisions.mjs';
+import { assertRefused } from './harness/fixtures.mjs';
 import { drive, entryOf, operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { executionRow } from './harness/checks/fixtures.mjs';
 import { effectiveVersion, evaluate } from './harness/gates.mjs';
@@ -65,6 +66,18 @@ const R2_1_ONLY = specText({
   changeLog: [{ version: 2, date: '2026-10-13', change: 'R2.1 names the content type', by: 'Sean' }],
 });
 
+// The owner approves the change, and approves it again whenever it is asked
+// again (objection 119; SEAM §§420, 464, 468): phase 1's listed stage work and
+// checks still move after the proposal, and under K1 their results land
+// between the answer and the effect, so the approval's intent is invalidated
+// (`EFFECT_PRECONDITION_CHANGED`) and the next generation is raised; or the
+// decision is already stale when the first answer arrives (409). The pump
+// after it answers each re-raised `spec_change` generation as the owner.
+async function approveAsAsked(fx, ctx, id) {
+  const res = await answer(fx.engine, ctx.project, decision(fx.home, id), 'approve');
+  if (res.status !== 200) assertRefused(res, 409, [CODES.stale, CODES.invalidated], 'the owner\'s first approval, asked again before it arrived');
+}
+
 async function proposeAndApprove(fx, ctx, spec, changes, version, { beforeAnswer } = {}) {
   fx.scripted.kindScript('spec_change', changeScript(spec, changes));
   const res = await fx.engine.post(`/v1/projects/${ctx.project}/spec/change-requests`, { text: 'The owner\'s change.' });
@@ -72,8 +85,8 @@ async function proposeAndApprove(fx, ctx, spec, changes, version, { beforeAnswer
   const out = await untilProposedOrFailed(fx, ctx, res.body.request.id, ctx.holdOpts);
   assert.ok(out.decision, `the change is proposed (${out.request.status} ${out.request.failure ?? ''})`);
   if (beforeAnswer) await beforeAnswer();
-  assert.equal((await answer(fx.engine, ctx.project, decision(fx.home, out.decision.id), 'approve')).status, 200, 'the owner approves it');
-  await pumpHolding(fx, ctx, () => specRevisions(fx.home, ctx.project).find((r) => r.version === version), { what: `version ${version}`, max: 20, ...ctx.holdOpts });
+  await approveAsAsked(fx, ctx, out.decision.id);
+  await pumpHolding(fx, ctx, () => specRevisions(fx.home, ctx.project).find((r) => r.version === version), { what: `version ${version}`, max: 40, ...ctx.holdOpts, answerKinds: [...(ctx.holdOpts?.answerKinds ?? []), 'spec_change'] });
   return out.request;
 }
 
