@@ -97,6 +97,21 @@ export function alphaReviewState(db: Db, project: string, evaluation: string): A
   return 'due';
 }
 
+// Did the evaluation's SIGNOFF_MISSING only wait (real visual run 2's
+// re-request)? The sign-off has been given since; or its review is under
+// way, or still to be asked; or the review asked on this very evaluation has
+// ended, read once after (a request made on it again evaluates anew, so the
+// newer evaluation is what is read next: never a loop).
+export function signoffWaited(db: Db, project: string, evaluation: string): boolean {
+  const m = missingSignoffs(db, evaluation);
+  if (m === null) return false;
+  if (m.missing.length === 0) return true;
+  const state = alphaReviewState(db, project, evaluation);
+  if (state === 'coming' || state === 'due') return true;
+  if (state !== 'asked') return false;
+  return reviewsOf(db, project, m.candidate).some((r) => TERMINAL.includes(r.status) && alphaEvidenceOf(r.trigger_evidence)?.evaluation === evaluation);
+}
+
 // Ask the engine's Reviewer for the sign-offs the evaluation found missing,
 // when they are due: the next generation of the candidate's review trigger,
 // unchained (the deployment request is a fresh trigger, as a phase

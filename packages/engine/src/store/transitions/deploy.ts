@@ -27,9 +27,9 @@ import { effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
-import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay } from './alpha-review.js';
+import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay, signoffWaited } from './alpha-review.js';
 import { type AlphaGapState, gapAuthoringUnderWay, gapReason, queueAlphaGapAuthoring, reopenableRefusal } from './alpha-gap.js';
-import { cancelExecution, refuseUnsupervised, registerExecutions } from './checks.js';
+import { cancelExecution, readDue, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
 import { effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
@@ -756,6 +756,9 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
   // Nor while the checks its gate lacks are being authored (real visual run
   // 2; alpha-gap.ts): the applied check is what the request reads.
   if (gapAuthoringUnderWay(db, args.project)) return null;
+  // Nor while the checks its latest alpha_authorize found not passed are
+  // still to run on it (real visual run 2): their results are what it reads.
+  if (authorizeChecksComing(db, args.project, candidate)) return null;
   const envs = db.prepare(`SELECT * FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "current_config" IS NOT NULL ORDER BY "name", rowid`).all(args.project) as EnvRow[];
   for (const env of envs) {
     const config = currentConfig(db, env);
@@ -771,35 +774,127 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
   return null;
 }
 
-// A policy request refused only on a gap of the deployment scope a
-// Verifier's check closes is made again under its key (alpha-gap.ts
-// reopenableRefusal): before that gap was asked for, and once after.
+// A policy request recorded `not_issued` is made again under its key when
+// what refused it only waited: a gap of the deployment scope a Verifier's
+// check closes (alpha-gap.ts reopenableRefusal), before that gap was asked
+// for and once after; or, read from the candidate's latest
+// `alpha_authorize` evaluation, reasons that were all settling when it was
+// made (real visual run 2: the request made again once the gap's authoring
+// was applied evaluated CHECK_NOT_PASSED on the new version's checks, then
+// queued on the candidate, with SIGNOFF_MISSING; it recorded no outcome, the
+// key kept the `not_issued` of the gap's refusal, and nothing read the newer
+// evaluation: a silent stall).
 function reopened(db: Db, row: RequestRow, candidate: string): boolean {
-  return reopenableRefusal(db, { ...(row as RequestRow & { reason: string | null }), candidate }, (r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(db, candidate, r)));
+  const args = { ...(row as RequestRow & { reason: string | null }), candidate };
+  if (reopenableRefusal(db, args, (r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(db, candidate, r)))) return true;
+  return reopenableWait(db, args);
 }
 
-// A policy refusal reason a specification change leaves while its
-// evidence is made again (the driver's ruling on M401's T1 stall, slice
-// 37): EVIDENCE_GENERATION_STALE, and CHECK_NOT_PASSED on checks with no
-// current result for the candidate because the change invalidated it
-// (`spec_changed`) or its correction's version superseded it. Asked again
-// at the next tick, like *_PENDING.
-export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }): boolean {
+// The candidate's latest `alpha_authorize` evaluation.
+function latestAuthorize(db: Db, project: string, candidate: string): { id: string; created_at: string; reasons: { code: string; subjects?: string[] }[] } | null {
+  const row = db.prepare(`SELECT "id", "created_at", "reasons" FROM "gate_evaluations" WHERE "project" = ? AND "candidate" = ? AND "gate_kind" = 'alpha_authorize' ORDER BY rowid DESC LIMIT 1`).get(project, candidate) as
+    | { id: string; created_at: string; reasons: string }
+    | undefined;
+  return row ? { ...row, reasons: parseJson<{ code: string; subjects?: string[] }[]>(row.reasons) ?? [] } : null;
+}
+
+// A policy row `not_issued` (no preparation refusal) whose candidate's
+// latest `alpha_authorize` evaluation names no gap of the deployment scope
+// and only reasons the policy waits on, judged as at that evaluation:
+// *_PENDING, EVIDENCE_GENERATION_STALE, CHECK_NOT_PASSED on checks whose
+// result was still to come on the candidate (or invalidated by a change),
+// SIGNOFF_MISSING whose review was under way, still to be asked, has signed
+// since, or was asked on that evaluation and has ended. At least one is a
+// check's or the sign-off's. A request made again evaluates anew: refused
+// on anything lasting, it records `not_issued` on that evaluation, which then
+// reads as lasting, so the key is never a loop. A row recorded on such an
+// evaluation before this route existed is made again once.
+function reopenableWait(db: Db, args: { project: string; candidate: string; requested_by: string; outcome: string; reason: string | null }): boolean {
+  if (args.requested_by !== 'policy' || args.outcome !== 'not_issued' || args.reason !== null) return false;
+  const ev = latestAuthorize(db, args.project, args.candidate);
+  if (ev === null || ev.reasons.length === 0) return false;
+  if (ev.reasons.some((r) => gapReason(db, args.project, r))) return false;
+  if (!ev.reasons.some((r) => r.code === 'CHECK_NOT_PASSED' || r.code === 'SIGNOFF_MISSING')) return false;
+  return ev.reasons.every(
+    (r) =>
+      typeof r.code === 'string' &&
+      (r.code.endsWith('_PENDING') || settlingAfterChange(db, args.candidate, r, ev.created_at) || (r.code === 'SIGNOFF_MISSING' && signoffWaited(db, args.project, ev.id))),
+  );
+}
+
+// Execution statuses a check's result is still to come from (D3 A.5): not
+// terminal, and not held by a quarantine (which ends as `interrupted`).
+const RESULT_COMING = ['queued', 'materializing', 'running', 'collecting'];
+
+// Is the check's result still to come on the candidate: an execution of it
+// registered and not ended (now, or as at `at`: registered by then, and
+// ended after it or not yet), or, now, the candidate owed its registration
+// (L2; a mark this engine cannot read waits for nothing)? A failed result is
+// not coming: the request reads it as lasting.
+function resultComing(db: Db, candidate: string, check: string, at?: string): boolean {
+  const rows = db
+    .prepare(
+      `SELECT x."created_at", x."status", x."finished_at", r."created_at" AS "result_at" FROM "check_executions" x LEFT JOIN "check_results" r ON r."id" = x."result" WHERE x."candidate" = ? AND x."check" = ?`,
+    )
+    .all(candidate, check) as { created_at: string; status: string; finished_at: string | null; result_at: string | null }[];
+  if (at === undefined) {
+    if (rows.some((x) => RESULT_COMING.includes(x.status))) return true;
+    const due = readDue((db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate) as { checks_due: string | null } | undefined)?.checks_due);
+    return due !== null && !due.unknown && due.owed.length > 0;
+  }
+  return rows.some((x) => {
+    if (x.created_at > at) return false;
+    if (RESULT_COMING.includes(x.status)) return true;
+    // Ended in the evaluation's millisecond: read as after it (made again
+    // once, the newer evaluation then reads the result as it is).
+    const ended = x.finished_at ?? x.result_at;
+    return ended !== null && ended >= at;
+  });
+}
+
+// Were the check's results on the candidate invalidated by a specification
+// change (`spec_changed`), or superseded by the protected version its
+// correction or an authoring applied (`protected_version_superseded`), the
+// check registered again under it, with no current result of any version
+// (M401's T1 store, 17195cf..42c58ba)? As at `at` when given: the results
+// and invalidations recorded by then.
+function invalidatedByChange(db: Db, candidate: string, check: string, at?: string): boolean {
+  const key = (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(check) as { key: string } | undefined)?.key;
+  if (key === undefined) return false;
+  const rows = (
+    db
+      .prepare(`SELECT x."created_at", x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
+      .all(candidate, key) as { created_at: string; invalidated_at: string | null; invalidated_reason: string | null }[]
+  )
+    .filter((x) => at === undefined || x.created_at <= at)
+    .map((x) => (at !== undefined && x.invalidated_at !== null && x.invalidated_at > at ? { ...x, invalidated_at: null } : x));
+  return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed' || x.invalidated_reason === 'protected_version_superseded');
+}
+
+// A policy refusal reason that settles (the driver's ruling on M401's T1
+// stall, slice 37; real visual run 2): EVIDENCE_GENERATION_STALE, and
+// CHECK_NOT_PASSED on checks each of which has no current result for the
+// candidate because a change invalidated it, or whose result is still to
+// come (an execution queued or running, the registration owed): a new
+// protected version's checks registered on the candidate, before they ran.
+// A failed result never settles. Asked again once they end, like
+// *_PENDING. Judged as at `at` when given (a recorded refusal read again).
+export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }, at?: string): boolean {
   if (r.code === 'EVIDENCE_GENERATION_STALE') return true;
   if (r.code !== 'CHECK_NOT_PASSED') return false;
   const subjects = r.subjects ?? [];
   if (subjects.length === 0) return false;
-  return subjects.every((check) => {
-    const key = (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(check) as { key: string } | undefined)?.key;
-    if (key === undefined) return false;
-    const rows = db
-      .prepare(`SELECT x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
-      .all(candidate, key) as { invalidated_at: string | null; invalidated_reason: string | null }[];
-    // Invalidated by the change itself (`spec_changed`), or superseded by the
-    // protected version its correction applied (`protected_version_superseded`),
-    // the checks registered again under it (M401's T1 store, 17195cf..42c58ba).
-    return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed' || x.invalidated_reason === 'protected_version_superseded');
-  });
+  return subjects.every((check) => invalidatedByChange(db, candidate, check, at) || resultComing(db, candidate, check, at));
+}
+
+// Are the checks the candidate's latest `alpha_authorize` found not passed
+// still running on it (real visual run 2)? The policy requests nothing
+// meanwhile: their results are what the request reads, and each request
+// seals an artifact.
+function authorizeChecksComing(db: Db, project: string, candidate: string): boolean {
+  const ev = latestAuthorize(db, project, candidate);
+  if (ev === null) return false;
+  return ev.reasons.some((r) => r.code === 'CHECK_NOT_PASSED' && (r.subjects ?? []).some((check) => resultComing(db, candidate, check)));
 }
 
 // What the request needs the main thread to read first.

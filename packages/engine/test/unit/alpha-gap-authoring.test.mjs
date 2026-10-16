@@ -32,6 +32,9 @@ const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 's
 const { recordCheckResult } = await import(join(dist, 'store', 'transitions', 'baseline.js'));
 const { evaluateGate } = await import(join(dist, 'store', 'transitions', 'gates.js'));
 const { requestDeployment, policyRequestDue, recordAdapterQualification } = await import(join(dist, 'store', 'transitions', 'deploy.js'));
+const { recordReport } = await import(join(dist, 'store', 'transitions', 'findings.js'));
+const { contentHash } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
+const { nextExecutionSeq } = await import(join(dist, 'store', 'transitions', 'checks.js'));
 const { phaseAuthoringText } = await import(join(dist, 'checks', 'guide.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });
@@ -304,4 +307,161 @@ test("the owner's request refused on the gap queues the authoring and says so; a
   assert.match(phaseAuthoringText({ ...base, behavior_check: false }).join('\n'), /### The deployment's check[\s\S]*No required `post_deploy_behavior` check is applied yet/);
   assert.match(phaseAuthoringText({ ...base, phase_plan: { ...base.phase_plan, phase_number: 2 }, behavior_check: false }).join('\n'), /### The deployment's check/, 'a later phase while none is applied');
   assert.doesNotMatch(phaseAuthoringText({ ...base, phase_plan: { ...base.phase_plan, phase_number: 2 }, behavior_check: true }).join('\n'), /### The deployment's check/);
+});
+
+// ---- the request made again after the gap's authoring (real visual run 2,
+// second stall): the applied version's checks registered on the candidate,
+// queued, when the policy asks again.
+
+// The authoring's proposal applied as protected_application registers it:
+// version 3 (the behaviour check, and `extra`, a check of a key no version
+// had before) supersedes 2, the earlier results invalidated
+// (`protected_version_superseded`), every workspace check of version 3
+// registered on the candidate and queued.
+function applyQueued(db, authoring) {
+  db.prepare(`UPDATE protected_versions SET superseded_by = 'pv_3' WHERE id = 'pv_2'`).run();
+  const added = [...CHECKS, ['extra', 'integration', '[]', '[]', '["alpha_authorize"]'], ['behaves', 'post_deploy_behavior', '[]', '[]', '["alpha_complete"]']];
+  version(db, 'pv_3', 3, 'fp3', added);
+  db.prepare(`UPDATE check_results SET invalidated_at = ?, invalidated_reason = 'protected_version_superseded' WHERE invalidated_at IS NULL`).run(new Date().toISOString());
+  const executions = [];
+  transact(db, ENGINE_ACTOR, (tx) => {
+    for (const [key] of added.slice(0, 5)) {
+      const id = `cx_${key}`;
+      tx.db
+        .prepare(
+          `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+           VALUES (?, ?, 'prj_1', ?, ?, 'cand_1', ?, 'pv_3', 'direct', ?, ?, ?, 'queued', ?)`,
+        )
+        .run(id, tx.at, `chk_${key}_pv_3`, key, A, nextExecutionSeq(tx, 'prj_1'), JSON.stringify({ source: 'protected_application', id: 'prop_1', generation: 1 }), `pa:${key}`, tx.at);
+      executions.push({ id, check: `chk_${key}_pv_3` });
+    }
+  });
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(authoring.id);
+  return executions;
+}
+
+// The executions end: each result recorded, the execution `recorded`.
+function runQueued(db, executions, exit_status = 0) {
+  for (const x of executions) {
+    const { check_result } = post3(db, x.check, exit_status);
+    db.prepare(`UPDATE check_executions SET status = 'recorded', result = ?, finished_at = ? WHERE id = ?`).run(check_result.id, new Date().toISOString(), x.id);
+  }
+}
+const post3 = (db, chk, exit_status) => transact(db, ENGINE_ACTOR, (tx) => recordCheckResult(tx, { project: 'prj_1', check: chk, candidate: 'cand_1', exit_status, protected_version: 'pv_3' }, {}));
+
+// The Reviewer's run on the review, signing what it was asked for.
+function reviewerSigns(db, review) {
+  db.prepare(`UPDATE work_items SET status = 'executing' WHERE id = ?`).run(review.id);
+  const hash = contentHash(db, 'prj_1', db.prepare(`SELECT * FROM candidates WHERE id = 'cand_1'`).get());
+  const id = `run_${review.id}`;
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, result_value, content_hash)
+     VALUES (?, ?, 'prj_1', ?, ?, 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, ?, ?)`,
+  ).run(id, AT, ++seq, review.id, A, AT, JSON.stringify({ report: { signoffs: [{ scope: 'candidate' }] } }), hash);
+  transact(db, ENGINE_ACTOR, (tx) => recordReport(tx, { run: id }));
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ? AND status = 'executing'`).run(review.id);
+}
+
+// The key's request recorded not_issued on the gap before the route existed
+// (visual run 2's dreq_01M532QT...), the route then taken.
+function gapRowThenAuthoring(db) {
+  const due = policyRequestDue(db, { project: 'prj_1' });
+  request(db);
+  db.prepare(`DELETE FROM work_items WHERE kind = 'check_authoring'`).run();
+  const auth = db.prepare('SELECT id FROM deployment_authorizations').get();
+  db.prepare(
+    `INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, authorization, work_item, outcome, reason) VALUES ('dreq_1', ?, 'prj_1', ?, 'policy', 'cand_1', 'env_1', ?, NULL, 'not_issued', NULL)`,
+  ).run(AT, due.key, auth.id);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1');
+  request(db);
+  const [authoring] = authorings(db);
+  assert.ok(authoring);
+  return authoring;
+}
+
+test("visual run 2's second stall: the request made again after the authoring evaluates the new version's checks queued with SIGNOFF_MISSING; it records nothing, waits for them, is made again, queues the review, and is issued on the sign-off", (t) => {
+  const db = store(t);
+  const authoring = gapRowThenAuthoring(db);
+  const executions = applyQueued(db, authoring);
+
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'the authoring has ended: made again once after it');
+  const waiting = request3(db);
+  const ev = latestAuthorize(db);
+  const reasons = JSON.parse(ev.reasons);
+  assert.deepEqual(
+    reasons.map((r) => r.code),
+    ['CHECK_NOT_PASSED', 'SIGNOFF_MISSING'],
+    `the new version's checks have not run on the candidate: ${ev.reasons}`,
+  );
+  assert.ok(reasons[0].subjects.includes('chk_extra_pv_3'), 'a check of a key no earlier version had is among them');
+  assert.equal(waiting.status, 409);
+  assert.match(waiting.body.reason, /the policy requests it again/, 'settling: no outcome recorded');
+  assert.deepEqual(requests(db).map((r) => [r.id, r.outcome]), [['dreq_1', 'not_issued']], 'the row is as it was');
+  assert.deepEqual(reviews(db), [], 'no review while the checks are still to run');
+
+  // While they are queued the policy requests nothing (each request seals an
+  // artifact).
+  assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'the policy waits for the checks');
+
+  runQueued(db, executions);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'the checks have run: the request is made again');
+  const signoff = request3(db);
+  assert.deepEqual(JSON.parse(latestAuthorize(db).reasons), [{ code: 'SIGNOFF_MISSING', subjects: ['cand_1'] }], 'the sign-off on the new content alone');
+  assert.equal(signoff.status, 409);
+  assert.match(signoff.body.reason, /the policy requests it again/);
+  const [review] = reviews(db);
+  assert.ok(review, 'the review is queued (alpha-review.ts)');
+  assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'the policy waits for the review');
+
+  reviewerSigns(db, review);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'signed: the request is made again');
+  const issued = request3(db);
+  assert.equal(issued.status, 201, JSON.stringify(issued.body));
+  assert.equal(latestAuthorize(db).outcome, 'satisfied');
+  assert.equal(issued.body.authorization.status, 'issued');
+  assert.ok(issued.body.work_item, 'deploy work is created');
+  assert.deepEqual(requests(db).map((r) => [r.id, r.requested_by, r.outcome]), [['dreq_1', 'policy', 'pending']], "the key's one row, its outcome now the deployment's");
+  assert.equal(reviews(db).length, 1);
+  assert.equal(authorings(db).length, 1);
+});
+
+test("a row recorded not_issued on that wait (visual run 2's store at the stall) is made again once; a queued check that then fails records not_issued and the key stands", async (t) => {
+  const db = store(t);
+  const authoring = gapRowThenAuthoring(db);
+  const executions = applyQueued(db, authoring);
+  request3(db);
+  const waited = latestAuthorize(db);
+  assert.deepEqual(JSON.parse(waited.reasons).map((r) => r.code), ['CHECK_NOT_PASSED', 'SIGNOFF_MISSING']);
+  // The store as visual run 2 stalled: the key's row the not_issued of the
+  // gap's refusal, the newer evaluation recorded nowhere.
+  assert.deepEqual(requests(db).map((r) => r.outcome), ['not_issued']);
+
+  // The checks end, one of them failed.
+  runQueued(db, executions.slice(0, 1), 1);
+  runQueued(db, executions.slice(1));
+  // The next evaluation is a later millisecond than the results (as a tick's is).
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'the refusal only waited: made again once');
+  const refused = request3(db);
+  assert.equal(refused.status, 409);
+  const after = JSON.parse(latestAuthorize(db).reasons);
+  assert.deepEqual(after.find((r) => r.code === 'CHECK_NOT_PASSED')?.subjects, [executions[0].check], 'the failed check');
+  assert.match(refused.body.reason, /is not authorized: alpha_authorize is not satisfied/, 'a failed result is lasting: recorded');
+  assert.deepEqual(requests(db).map((r) => r.outcome), ['not_issued']);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'the key stands: no loop');
+  assert.deepEqual(reviews(db), [], 'no review for a candidate a failed check refuses');
+});
+
+test('a fresh policy request whose gate names checks of a new key still queued on the candidate records no outcome (it is not taken as lasting)', (t) => {
+  const db = store(t);
+  request(db);
+  const [authoring] = authorings(db);
+  const executions = applyQueued(db, authoring);
+  const waiting = request3(db);
+  assert.equal(waiting.status, 409);
+  assert.match(waiting.body.reason, /the policy requests it again/);
+  assert.deepEqual(requests(db), [], 'no outcome under its key');
+  assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'waits while they are queued');
+  runQueued(db, executions);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1');
 });
