@@ -26,7 +26,7 @@ import { boundaryFalls } from '../../scheduler/autonomy.js';
 import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
-import { checkOutputsFor, reconcileRepairs, recordObjections } from './repair.js';
+import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -406,6 +406,13 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
+  // One Builder per failure (real loop run 3, L3-1): a fix waits while the
+  // stage's own Builder is being sent back for its finding's check at its
+  // finding's candidate (repair.ts).
+  if (item.kind === 'fix') {
+    const repairing = repairUnderway(db, item);
+    if (repairing !== null) return `depends on the repair of ${repairing}, sent back for the same failed check`;
+  }
   // A stage an early replacement superseded is never dispatched again (D6
   // §5.7; the review's N2): its work is settled by the phase step.
   if (item.kind === 'stage_build') {
