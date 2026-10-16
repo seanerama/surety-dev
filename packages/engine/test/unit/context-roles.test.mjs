@@ -198,6 +198,37 @@ test("each role's result schema names the fields the engine reads from that role
   assert.deepEqual(d.properties.disposition.enum, ['fix', 'defer', 'accept']);
 });
 
+// Real loop run 3: a Verifier filed a signature that broke the
+// architecture's interface (a code defect) as contract_conflict, and the
+// conflict route put it to the owner instead of the Builder's repair. Every
+// category a role may file is described, with the rule that code wrong
+// against a requirement or the architecture, where the check agrees, is a
+// defect.
+test("each finding and objection category is described in the result schema, and code the check rightly fails is a defect, not a conflict", () => {
+  const rule = /When the code disagrees with a requirement or with the architecture .* and the check agrees with them, that is a `defect`, not a conflict/;
+  for (const role of ['verifier', 'reviewer']) {
+    for (const keys of [undefined, ['acc'], []]) {
+      const findings = resultSchema(role, keys, keys).properties.findings;
+      const category = findings.items.properties.category;
+      assert.deepEqual(category.enum, ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'], `${role}: the enum is unchanged`);
+      assert.equal(typeof category.description, 'string', `${role}: the category has a description`);
+      for (const c of category.enum) assert.ok(category.description.includes(`\`${c}\`:`), `${role}: the description says what ${c} means`);
+      assert.match(category.description, /`contract_conflict`:[^`]*architecture's contract \(its interfaces, module map or ADRs\)[^`]*not the code/);
+      assert.match(category.description, /`requirement_conflict`:[^`]*requirement of the approved specification[^`]*not the code/);
+      assert.match(category.description, /`defect`:[^`]*A Builder fixes it/);
+      assert.match(category.description, /correct the check, change the specification, retry or cancel/);
+      assert.match(category.description, rule);
+      assert.match(findings.description, rule, `${role}: the findings field states the rule too`);
+    }
+  }
+  const objections = resultSchema('builder', ['acc'], ['R1.1']).properties.objections;
+  const oc = objections.items.properties.category;
+  assert.deepEqual(oc.enum, ['contract_conflict', 'requirement_conflict']);
+  for (const c of oc.enum) assert.ok(oc.description.includes(`\`${c}\`:`), `the objection's category says what ${c} means`);
+  assert.match(oc.description, rule);
+  assert.match(objections.description, /that is no objection: fix the code/);
+});
+
 test("the Reviewer's package: the diff, the findings by id, the review facts, its own schema, every file in the manifest under a known kind", (t) => {
   const db = store(t);
   const facts = contextFacts(db, { run: 'run_rev' });

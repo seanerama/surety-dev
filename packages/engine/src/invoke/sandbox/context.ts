@@ -253,6 +253,27 @@ const FINDING_ID = { type: 'string', pattern: '^fnd_', description: 'A finding i
 // What happens to a finding left with no disposition (store/transitions/
 // findings.ts askUndispositioned; the driver's ruling on the real M443 run).
 const OWED_TEXT = `A finding you raise in this result's \`findings\` has no id yet, so it cannot be named here. Every finding left with no disposition (one you raise, or a listed one you do not name) is put to the human owner, who chooses fix (offered only when the finding names a \`check\` and \`criterion\` that can verify it), accept (a High or Critical finding is lowered to medium first, since it holds the gates at its severity whatever its disposition), or for a ${CHANGE_SPEC_CATEGORIES.join(' or ')} finding a specification change; say in its message what the fix or the change would be.`;
+// What each finding category means and where the engine routes it (D3 §5
+// X2 and §2.10; F §5.3; D6 §5.4 and §5.7; D1 §4.3). Real loop run 3: a
+// Verifier filed a function whose signature broke the architecture's
+// interface, a code defect, as contract_conflict, and the conflict route put
+// it to the owner instead of the Builder's repair; the bare enum said
+// nothing of the difference.
+const DEFECT_NOT_CONFLICT =
+  'When the code disagrees with a requirement or with the architecture (its interfaces or ADRs) and the check agrees with them, that is a `defect`, not a conflict: the code is wrong, and a Builder fixes it.';
+export const CATEGORY_TEXT: Readonly<Record<string, string>> = {
+  defect:
+    "`defect`: the code is wrong against a requirement of the approved specification, the architecture's interfaces or ADRs, or a check. A Builder fixes it: fix work, or the repair of the work whose check failed (the normal route).",
+  requirement_conflict:
+    '`requirement_conflict`: a protected check, or the work, contradicts a requirement of the approved specification, or the specification has no criterion for the defect. The check or the requirement is wrong, not the code (if the requirement is wrong, it becomes a specification change).',
+  contract_conflict:
+    "`contract_conflict`: a protected check, or the phase plan, contradicts the architecture's contract (its interfaces, module map or ADRs). The check or the plan is wrong, not the code.",
+  security: '`security`: a security weakness in the code; name its area in `sensitive_area` when it has one. It is fixed like a defect.',
+  hygiene: '`hygiene`: a problem of upkeep rather than of behaviour, such as a change outside the work or something left behind. It is fixed like a defect.',
+};
+const CONFLICT_ROUTE_TEXT =
+  "A conflict naming a check that fails on the work does not go to the Builder's repair: the engine holds the work for the human owner, who chooses to correct the check, change the specification, retry or cancel. Left with no disposition, a conflict is put to the owner with a specification change offered.";
+const FINDING_CATEGORY_LIST = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'];
 const FIELDS: Record<string, Record<string, unknown>> = {
   status: { const: 'completed' },
   summary: { type: 'string', description: 'What you did, in a few sentences.' },
@@ -260,12 +281,15 @@ const FIELDS: Record<string, Record<string, unknown>> = {
   nominate: { type: 'boolean', description: 'true asks the engine to nominate the result as a candidate (honoured at tier T1 only; otherwise the engine nominates on its own cadence).' },
   findings: {
     type: 'array',
-    description: 'Each defect or conflict you found in the candidate. The engine records each as an open finding of the candidate. Do not repeat a finding already listed in /surety/context/findings.json; change its severity instead.',
+    description: `Each defect or conflict you found in the candidate. The engine records each as an open finding of the candidate. Do not repeat a finding already listed in /surety/context/findings.json; change its severity instead. ${DEFECT_NOT_CONFLICT}`,
     items: {
       type: 'object',
       required: ['category', 'severity', 'message'],
       properties: {
-        category: { enum: ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] },
+        category: {
+          enum: [...FINDING_CATEGORY_LIST],
+          description: `What kind of finding it is. ${FINDING_CATEGORY_LIST.map((c) => CATEGORY_TEXT[c]).join(' ')} ${CONFLICT_ROUTE_TEXT} ${DEFECT_NOT_CONFLICT}`,
+        },
         severity: SEVERITY,
         message: { type: 'string', description: 'What is wrong and where, so a Builder can fix it.' },
         scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
@@ -285,14 +309,17 @@ const FIELDS: Record<string, Record<string, unknown>> = {
   objections: {
     type: 'array',
     description:
-      'Only when a protected check contradicts the requirement or the interface the work names: your objection to it. The check stays in force; if it fails, the engine does not send you back but asks the human owner to correct the check, change the spec, retry or cancel.',
+      'Only when a protected check contradicts the requirement or the interface the work names: your objection to it. The check stays in force; if it fails, the engine does not send you back but asks the human owner to correct the check, change the spec, retry or cancel. When your code disagrees with the requirement or the interface and the check agrees with them, that is no objection: fix the code.',
     items: {
       type: 'object',
       required: ['check', 'category', 'message'],
       properties: {
         check: { type: 'string', description: 'The key of the check you object to.' },
         criterion: { type: 'string', description: 'The criterion of the requirement index the conflict is about, if one.' },
-        category: { enum: ['contract_conflict', 'requirement_conflict'] },
+        category: {
+          enum: ['contract_conflict', 'requirement_conflict'],
+          description: `What the check contradicts. ${CATEGORY_TEXT.requirement_conflict} ${CATEGORY_TEXT.contract_conflict} ${DEFECT_NOT_CONFLICT}`,
+        },
         message: { type: 'string', description: 'What contradicts what, and where.' },
       },
     },
@@ -621,7 +648,7 @@ export function writeContextPackage(
           'Your last candidate failed these protected checks, and the engine sent the work back to you once to make them pass:',
           ...failedChecks.map((o) => `- \`${o.key}\`: its output is in /surety/context/check-outputs/${safeName(o.key)}.txt${o.output === null ? ' (it left no output record)' : ''}.`),
           '',
-          'Fix the code, not the checks: they are protected. If a check contradicts the requirement or the interface, report it in your result\'s `objections`.',
+          'Fix the code, not the checks: they are protected. If a check contradicts the requirement or the interface, report it in your result\'s `objections`; if the check agrees with them and your code does not, the code is wrong: fix it.',
         ]
       : [];
   const reads = contextReads(claim, facts);
