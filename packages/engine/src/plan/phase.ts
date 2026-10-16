@@ -25,6 +25,7 @@ import { parseJson } from '../store/transitions/common.js';
 import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, deliveredStageScope, getCandidate, markStale, requiredSet } from '../store/transitions/evidence.js';
 import { coverageMissing } from '../checks/scope.js';
 import type { ScopeObligation } from './check.js';
+import { criteriaOwed } from './deferral.js';
 import { activeStages, settleReplacements } from './replace.js';
 import { registerExecutions } from '../store/transitions/checks.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
@@ -404,7 +405,11 @@ export function authoringShortfall(db: Db, planId: string, version: string): str
          AND p."phase_number" = (SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?)`,
     )
     .all(row.project, planId) as { criteria: string }[];
-  for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).map((c) => `deferred:${c}`));
+  // A deferral of a criterion this plan does not owe is the owing phase's
+  // and holds nothing here (plan/deferral.ts resolveUnowedDeferrals resolves
+  // it at the next tick); an unknown owed set drops nothing.
+  const owes = criteriaOwed(db, planId);
+  for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).filter((c) => owes === null || owes.has(c)).map((c) => `deferred:${c}`));
   // The owner's build_first binding, shown with what it left owed (the
   // slice-37 review's N9): its decision, by the plan's readiness.
   if (out.length > 0) {
