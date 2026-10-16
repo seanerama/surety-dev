@@ -137,14 +137,15 @@ test('unknown is not "no review": with no effective version the tier is unread, 
   assert.equal(sweep(s.db), 0);
 });
 
+// A review item is the engine's (queueReview's trigger (verification, <candidate>)).
 let itemSeq = 90;
 const item = (s, id, kind, status, subject = { candidate: 'cand_1' }) =>
   s.db
     .prepare(
       `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
-       VALUES (?, ?, 'prj_1', ?, ?, ?, ?, 'test', ?, 1, 0, 0, 0, 0)`,
+       VALUES (?, ?, 'prj_1', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
     )
-    .run(id, AT, ++itemSeq, kind, JSON.stringify(subject), status, id);
+    .run(id, AT, ++itemSeq, kind, JSON.stringify(subject), status, kind === 'review' ? 'verification' : 'test', kind === 'review' ? 'cand_1' : id, itemSeq);
 
 test("(d) narrowed: a T1 candidate a review work item is on, still to report (M42's and M50's shape), is one a review comes to; its Reviewer's finding waits", (t) => {
   const s = store(t, { tier: 'T1' });

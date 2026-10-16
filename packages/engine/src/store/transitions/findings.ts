@@ -450,8 +450,12 @@ function noReviewComes(db: Tx['db'], f: FindingRow & { source_role: string | nul
   if (fromPhaseVerification(db, f.source_run)) return true;
   if (!cache.has(f.candidate)) {
     const c = getCandidate(db, f.candidate);
-    const reviews = db.prepare(`SELECT "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.candidate') = ?`).all(f.project, f.candidate) as { status: string }[];
-    const reported = reviews.some((r) => r.status === 'complete') && reviews.every((r) => r.status === 'complete' || r.status === 'cancelled');
+    const reviews = db
+      .prepare(`SELECT "status", "trigger_source", "trigger_id" FROM "work_items" WHERE "project" = ? AND "kind" = 'review' AND json_extract("subject", '$.candidate') = ?`)
+      .all(f.project, f.candidate) as { status: string; trigger_source: string; trigger_id: string }[];
+    // The engine's own review (queueReview: trigger (verification, <candidate>)), as for reviewed_after.
+    const reported =
+      reviews.some((r) => r.status === 'complete' && r.trigger_source === 'verification' && r.trigger_id === f.candidate) && reviews.every((r) => r.status === 'complete' || r.status === 'cancelled');
     cache.set(f.candidate, reported ? false : c && version !== null ? reviews.length > 0 || tierQueuesReview(db, c, version) : null);
   }
   return cache.get(f.candidate) === false;

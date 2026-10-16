@@ -84,16 +84,17 @@ function store(t) {
   const item = (id, kind, subject, status = 'executing') =>
     run(
       `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
-       VALUES (?, ?, 'prj_1', ?, ?, ?, ?, 'test', ?, 1, 0, 0, 0, 0)`,
+       VALUES (?, ?, 'prj_1', ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, 0)`,
       id,
       AT,
       ++seq,
       kind,
       JSON.stringify(subject),
       status,
-      id,
+      kind === 'review' ? 'verification' : 'test',
+      kind === 'review' ? 'cand_1' : id,
     );
-  // The candidate's stage review, reported (T2).
+  // The candidate's stage review (the engine's), reported (T2).
   item('wi_review', 'review', { candidate: 'cand_1' }, 'complete');
   // The phase Verifier's run, its result the report given.
   const phaseVerifier = (report) => {
