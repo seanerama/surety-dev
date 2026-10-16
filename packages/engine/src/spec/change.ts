@@ -29,6 +29,7 @@ import { canonical, illegal, notFound, parseJson, sha256 } from '../store/transi
 import type { CommandResult } from '../store/transitions/control.js';
 import { consumeDecision } from '../store/transitions/decisions.js';
 import { checksOfVersion, markStale } from '../store/transitions/evidence.js';
+import { resultState } from '../store/transitions/deploy.js';
 import { intendCommit } from '../store/transitions/accept.js';
 import { intendOperation, type IntentResult } from '../store/transitions/journal.js';
 import { completeIntent, effectiveVersion, invalidateResults } from '../store/transitions/protected.js';
@@ -965,6 +966,122 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   tx.emit('spec.change_approved', { project: op.project, spec_change_request: r.id }, { spec_revision: made.spec_revision, version: made.version, generation, obligations: impact.checks.obligations.length, results: impact.evidence.results.length, operation: op.id });
   markStale(tx, { project: op.project });
   return { request: r.id, spec_revision: made.spec_revision };
+}
+
+// ---- a change after the final phase (E153 item 1; D6 §4.5 amended) --------------------------
+
+// Whether every phase of the approved roadmap is complete, with no open plan
+// (published and not complete). False with no roadmap or an empty one.
+export function everyPhaseComplete(db: Db, project: string): boolean {
+  const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
+  const phases = (parseJson<{ number: number }[]>(road?.phases ?? null) ?? []).map((p) => p.number);
+  if (phases.length === 0) return false;
+  const open = db.prepare(`SELECT 1 FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'published' AND "completed_at" IS NULL LIMIT 1`).get(project);
+  if (open) return false;
+  const done = new Set(
+    (db.prepare(`SELECT "phase_number" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" = 'completed' AND "completed_at" IS NOT NULL`).all(project) as { phase_number: number }[]).map((r) => r.phase_number),
+  );
+  return phases.every((n) => done.has(n));
+}
+
+// What a request's corrected checks say on the last candidate, once its
+// obligations are resolved: 'failing' when one of them failed there (an
+// implementation obligation no stage has met), 'passing' when every one
+// passed, null while any is unresolved, unrecorded or not established
+// (unknown is a value: never read as passing or failing).
+export type DeliveryVerdict = { verdict: 'failing' | 'passing'; candidate: string; results: { key: string; result: string; state: 'passed' | 'failed' }[] };
+export function deliveryVerdict(db: Db, project: string, request: string): DeliveryVerdict | null {
+  const obligations = db.prepare(`SELECT "key", "resolved_by", "resolved_at" FROM "check_obligations" WHERE "project" = ? AND "request" = ? AND "reason" = 'spec_changed'`).all(project, request) as {
+    key: string;
+    resolved_by: string | null;
+    resolved_at: string | null;
+  }[];
+  if (obligations.length === 0 || obligations.some((o) => o.resolved_at === null || o.resolved_by === null)) return null;
+  const last = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
+  if (!last) return null;
+  // Fresh evidence (D6 §4.5): a result under the protected version the
+  // correction made effective, or the one effective now.
+  const versions = uniq([...obligations.map((o) => o.resolved_by!), ...(effectiveVersion(db, project) ? [effectiveVersion(db, project)!.id] : [])]);
+  const results: DeliveryVerdict['results'] = [];
+  for (const key of uniq(obligations.map((o) => o.key)).sort()) {
+    const r = db
+      .prepare(
+        `SELECT r."id", r."execution_established", r."signaled", r."deadline_hit", r."orphans", r."exit_status" FROM "check_results" r JOIN "checks" c ON c."id" = r."check"
+         WHERE r."project" = ? AND r."candidate" = ? AND c."key" = ? AND r."invalidated_at" IS NULL AND r."protected_version" IN (SELECT value FROM json_each(?))
+         ORDER BY r."execution_seq" DESC LIMIT 1`,
+      )
+      .get(project, last.id, key, JSON.stringify(versions)) as { id: string; execution_established: number; signaled: number; deadline_hit: number; orphans: number | null; exit_status: number | null } | undefined;
+    if (!r) return null;
+    const state = resultState(r);
+    if (state === 'skipped') return null;
+    results.push({ key, result: r.id, state });
+  }
+  return { verdict: results.some((r) => r.state === 'failed') ? 'failing' : 'passing', candidate: last.id, results };
+}
+
+// E153 item 1: an approved change that leaves an implementation obligation
+// when every phase of the roadmap is complete schedules one Architect replan
+// (D6 §5.6's one-shot), whose delivery phase follows D6 §5. The obligation
+// is read from evidence, never from the impact alone: the change's corrected
+// checks, its obligations resolved by the correction, recorded failing on
+// the last candidate. The engine waits for those results; a change whose
+// corrected checks pass there, or a change with no obligation (text only),
+// registers nothing (E153 (d)). One per change request (the trigger's
+// identity, `spec_change` and the request, as the early replan's): a tick
+// or a restart registers none again (E153 (a)). Completed phases are not
+// reopened (E153 (b)). Only a change approved after the last phase
+// completed is considered: one approved while a phase was open was that
+// phase's to meet (§4.5's replan or the phase gate's regression set).
+export function registerDeliveryReplans(tx: Tx, args: { project: string }): string[] {
+  const db = tx.db;
+  if (!everyPhaseComplete(db, args.project)) return [];
+  // A replan already under way proposes the next phase; a second waits for
+  // it (its delivery may meet this change's checks too).
+  if (db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(args.project)) return [];
+  const lastCompletion = (db.prepare(`SELECT MAX("seq") AS s FROM "events" WHERE "type" = 'baseline.phase_complete' AND json_extract("subject", '$.project') = ?`).get(args.project) as { s: number | null }).s ?? 0;
+  const requests = db
+    .prepare(
+      `SELECT r."id", r."seq", r."impact", r."approved_revision", r."impact_value" FROM "spec_change_requests" r
+       WHERE r."project" = ? AND r."status" = 'approved'
+         AND EXISTS (SELECT 1 FROM "check_obligations" o WHERE o."request" = r."id" AND o."reason" = 'spec_changed')
+         AND NOT EXISTS (SELECT 1 FROM "work_items" w WHERE w."project" = r."project" AND w."kind" = 'replan' AND w."trigger_source" = 'spec_change' AND w."trigger_id" = r."id")
+         AND EXISTS (SELECT 1 FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id" AND e."seq" > ?)
+       ORDER BY r."seq"`,
+    )
+    .all(args.project, lastCompletion) as { id: string; seq: number; impact: string | null; approved_revision: string | null; impact_value: string | null }[];
+  const made: string[] = [];
+  for (const r of requests) {
+    const verdict = deliveryVerdict(db, args.project, r.id);
+    if (!verdict || verdict.verdict !== 'failing') continue;
+    const impact = parseJson<Impact>(r.impact_value);
+    const failing = verdict.results.filter((x) => x.state === 'failed');
+    const stale = impact
+      ? [
+          ...impact.requirements.map((q) => `requirement:${q.key}`),
+          ...uniq([...impact.affected_criteria, ...impact.removed_criteria, ...impact.added_criteria]).map((c) => `criterion:${c}`),
+          ...failing.map((x) => `check:${x.key}`),
+        ]
+      : failing.map((x) => `check:${x.key}`);
+    const evidence = { request: r.id, impact: r.impact ?? null, spec_revision: r.approved_revision };
+    const work = observeTrigger(
+      tx,
+      {
+        project: args.project,
+        kind: 'replan',
+        trigger_source: 'spec_change',
+        trigger_id: r.id,
+        trigger_generation: 1,
+        subject: { request: r.id },
+        trigger_evidence: { evidence, stale, delivery: { every_phase_complete: true, candidate: verdict.candidate, failing: failing.map((x) => ({ key: x.key, result: x.result })) } },
+        chain: 0,
+      },
+      { spec_change_request: r.id, delivery: { candidate: verdict.candidate, failing: failing.map((x) => x.key) } },
+    );
+    if (!work.created) continue;
+    made.push(work.work_item.id);
+  }
+  if (made.length > 0) markStale(tx, { project: args.project });
+  return made;
 }
 
 // ---- obligations (D6 §4.5) ------------------------------------------------------------------

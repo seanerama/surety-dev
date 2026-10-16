@@ -223,6 +223,10 @@ export class Scheduler {
     // The phase (D6 §5.8): its checks registered, its gate evaluated on the
     // facts read here, its completion; once per tick.
     await this.phase(project).catch((err) => log('phase', err, { project }));
+    // E153 item 1: an approved change left with an implementation obligation
+    // after every phase is complete schedules one replan (spec/change.ts
+    // registerDeliveryReplans), from durable state at every tick.
+    await this.rt.engine('spec.delivery_replans', { project }).catch((err) => log('delivery replan', err, { project }));
     // `alpha_deploy: on_phase_complete` (D6 §6.8; SEAM.md §354): the request
     // a completed phase owes, made through requestDeployment's own path.
     await this.alphaPolicy(project).catch((err) => log('alpha policy', err, { project }));

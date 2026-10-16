@@ -223,8 +223,20 @@ export function approvedAdrs(db: Db, project: string, archBlobs: string): Record
 // failed there (a regression observed) or not passed there (not run,
 // pending or stale: unknown, never "no regression"). With no candidate or
 // no effective version the reading is unknown too.
+//
+// A check a specification change approved after the phase's completion owes
+// a correction for (a `spec_changed` obligation of a change approved as a
+// later spec version than the completion binding's) is not read against the
+// phase (E153 item 1, the driver's ruling, 2026-10-16): the phase stays
+// complete for a dependency, its failure there being what the change's
+// delivery phase is to fix, and its history is not reopened. A regression
+// with no such change still blocks the clause (D6 §5.8).
 export function phasesNotHeld(db: Db, project: string): Record<number, string[]> {
-  const plans = db.prepare(`SELECT "id", "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as { id: string; phase_number: number }[];
+  const plans = db.prepare(`SELECT "id", "phase_number", "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as {
+    id: string;
+    phase_number: number;
+    completion_binding: string | null;
+  }[];
   if (plans.length === 0) return {};
   const newest = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
   const candidate = newest ? getCandidate(db, newest.id) : undefined;
@@ -236,8 +248,10 @@ export function phasesNotHeld(db: Db, project: string): Record<number, string[]>
       continue;
     }
     const set = requiredSet(db, { project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
+    const changed = changedSinceCompletion(db, project, plan.completion_binding);
     const lacking: string[] = [];
     for (const c of set.required) {
+      if (changed.has(c.key)) continue;
       const state = checkState(db, project, c, { candidate, effective, environment: null, artifact: null }).state;
       if (state === 'failed') lacking.push(`failed: ${c.key} on ${candidate.id}`);
       else if (state !== 'passed') lacking.push(`unknown: ${c.key} ${state} on ${candidate.id}`);
@@ -245,6 +259,29 @@ export function phasesNotHeld(db: Db, project: string): Record<number, string[]>
     if (lacking.length > 0) out[plan.phase_number] = lacking;
   }
   return out;
+}
+
+// The check keys a specification change approved after a phase's completion
+// owes a correction for: the `spec_changed` obligations (resolved or not) of
+// requests approved as a spec version later than the completion binding's.
+// A binding with no readable spec revision names none (the conservative
+// reading: the clause rereads every check).
+function changedSinceCompletion(db: Db, project: string, binding: string | null): Set<string> {
+  let revision: string | null = null;
+  try {
+    revision = binding ? ((JSON.parse(binding) as { spec_revision?: string | null }).spec_revision ?? null) : null;
+  } catch {
+    revision = null;
+  }
+  const bound = revision ? (db.prepare('SELECT "version" FROM "spec_revisions" WHERE "id" = ?').get(revision) as { version: number } | undefined) : undefined;
+  if (!bound) return new Set();
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT o."key" FROM "check_obligations" o JOIN "spec_change_requests" r ON r."id" = o."request" JOIN "spec_revisions" s ON s."id" = r."approved_revision"
+       WHERE o."project" = ? AND o."reason" = 'spec_changed' AND o."key" IS NOT NULL AND r."status" = 'approved' AND s."version" > ?`,
+    )
+    .all(project, bound.version) as { key: string }[];
+  return new Set(rows.map((r) => r.key));
 }
 
 // ---- the record of a close (D6 §3.4) -----------------------------------------------------
