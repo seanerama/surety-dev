@@ -630,3 +630,129 @@ test("S2: a check in none of the candidate's scopes still names a missing verifi
   assert.equal(status(db, 'f_out'), 'dispositioned');
   assert.deepEqual(e.missing_verifications, [{ finding: 'f_out', criterion: 'R2.1', check: 'acc2' }]);
 });
+
+// ---- real loop run 3, L3-1: a conflict settled by its disposition; one Builder per failure ----
+
+const { dispatchBlocker } = await import(join(dist, 'store', 'transitions', 'runs.js'));
+const disposition = (db, id, d, authority = 'reviewer') =>
+  transact(db, ENGINE_ACTOR, (tx) =>
+    recordDisposition(tx, tx.db.prepare('SELECT * FROM findings WHERE id = ?').get(id), { disposition: d, authority, by: authority === 'reviewer' ? 'run_b' : 'human', linked_issue: null, defer_target: null }),
+  );
+// The fix integrated: its candidate, on a lineage started from candidate 1,
+// holds the stage's work by ancestry (E43) and supersedes candidate 1.
+function fixCandidate(db, fix) {
+  db.prepare(`INSERT INTO lineages (id, created_at, project, branch, started_from_candidate, open) VALUES ('lin_2', ?, 'prj_1', 'main', 'cand_1', 0)`).run(AT);
+  db.prepare(
+    `INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, nominated_protected_version, progress, held_work)
+     VALUES ('cand_2', ?, 'prj_1', 2, ?, 'lin_2', ?, 'builder_request', 'pv_1', 'developing', ?)`,
+  ).run(AT, B, AT, JSON.stringify([fix]));
+  db.prepare(`INSERT INTO revision_ancestry (id, created_at, project, ancestor, descendant, is_ancestor) VALUES ('anc_2', ?, 'prj_1', ?, ?, 1)`).run(AT, A, B);
+  db.prepare(`UPDATE candidates SET superseded_by = 'cand_2' WHERE id = 'cand_1'`).run();
+  db.prepare(`UPDATE work_items SET status = 'verifying' WHERE id = ?`).run(fix);
+  assert.equal(repair.currentCandidate(db, { id: 'wi_1', project: 'prj_1', kind: 'stage_build' }).id, 'cand_2', "the fixture is live: the stage's current candidate is the fix's");
+}
+const fixOf = (db, finding) => db.prepare(`SELECT * FROM work_items WHERE kind = 'fix' AND json_extract(subject, '$.finding') = ?`).get(finding);
+
+test("L3-1: a Verifier's conflict finding the X2 blocker names, dispositioned fix by the Reviewer, withdraws the blocker; the stage waits for the fix, and no retry can send a second Builder", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'contract_conflict' });
+  post(db, 'chk_acc', 'cand_1', 1);
+  const d = openBlocker(db);
+  assert.equal(item(db).status, 'awaiting_decision', 'the fixture is live: the X2 blocker is raised');
+  disposition(db, 'fnd_x', 'fix');
+  const fix = fixOf(db, 'fnd_x');
+  assert.ok(fix, 'the fix work the disposition made');
+  const withdrawn = db.prepare('SELECT status, invalidated_reason FROM decisions WHERE id = ?').get(d.id);
+  assert.equal(withdrawn.status, 'invalidated', "the blocker's question is withdrawn");
+  assert.match(withdrawn.invalidated_reason, /settled by its disposition: fnd_x dispositioned fix/);
+  assert.equal(openBlocker(db), undefined, 'no blocker question is open about the item');
+  let row = item(db);
+  assert.deepEqual([row.status, row.blocker, row.repair_attempts, row.check_repair, row.check_conflict.answer], ['verifying', null, 0, null, 'dispositioned'], 'the item waits in verifying: no repair while the fix is under way');
+  assert.throws(
+    () => transact(db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option: 'retry', preview_hash: d.preview_hash, note: null })),
+    (e) => e.code === 'decision_invalidated',
+    "the owner's retry of the withdrawn question is refused",
+  );
+  reconcile(db);
+  assert.deepEqual([item(db).status, item(db).repair_attempts], ['verifying', 0], 'a later reconciliation takes no repair either');
+  // The fix integrates: its candidate holds the stage by ancestry, and the check passes there.
+  fixCandidate(db, fix.id);
+  post(db, 'chk_acc', 'cand_2', 0);
+  row = item(db);
+  assert.deepEqual([row.status, row.repair_attempts], ['verifying', 0], 'judged at the fix candidate: nothing failed, nothing sent back');
+});
+
+test("L3-1: the stage held by the fix is judged at its candidate once the fix has ended; a fix failing again is the fix's repair, not a second Builder", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'contract_conflict' });
+  post(db, 'chk_acc', 'cand_1', 1);
+  disposition(db, 'fnd_x', 'fix');
+  const fix = fixOf(db, 'fnd_x');
+  fixCandidate(db, fix.id);
+  post(db, 'chk_acc', 'cand_2', 1);
+  assert.deepEqual([item(db, fix.id).status, item(db, fix.id).repair_attempts], ['eligible', 1], "the fix's named check failed on its candidate: the fix is sent back");
+  assert.deepEqual([item(db).status, item(db).repair_attempts], ['verifying', 0], 'the stage waits: the fix is its repair');
+  // The fix is cancelled: the stage's failure is its own again, and takes its one repair at the current candidate.
+  db.prepare(`UPDATE work_items SET status = 'cancelled' WHERE id = ?`).run(fix.id);
+  reconcile(db);
+  const row = item(db);
+  assert.deepEqual([row.status, row.repair_attempts, row.check_repair.candidate, row.check_repair.checks], ['eligible', 1, 'cand_2', ['acc']]);
+});
+
+test("L3-1: dispositioned accept or defer, the conflict is settled and the failure is the Builder's: one repair", (t) => {
+  for (const d of ['accept', 'defer']) {
+    const db = store(t);
+    objection(db, { role: 'reviewer', candidate: 'cand_1', category: 'requirement_conflict' });
+    post(db, 'chk_acc', 'cand_1', 1);
+    const q = openBlocker(db);
+    disposition(db, 'fnd_x', d, 'human');
+    assert.equal(db.prepare('SELECT status FROM decisions WHERE id = ?').get(q.id).status, 'invalidated', d);
+    const row = item(db);
+    assert.deepEqual([row.status, row.repair_attempts, row.check_conflict.answer, fixOf(db, 'fnd_x')], ['eligible', 1, 'dispositioned', undefined], d);
+  }
+});
+
+test("L3-1: a blocker naming two conflicts stays while one of them is undispositioned; a Builder's objection is never settled by a disposition", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'contract_conflict' });
+  db.prepare(
+    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, source_run, source_role, category, message, "check", criterion, proposed_severity, effective_severity, status)
+     VALUES ('fnd_y', ?, 'prj_1', 2, 'candidate', 'prj_1', 'cand_1', 'run_b', 'verifier', 'requirement_conflict', 'second', 'acc', 'R1.1', 'medium', 'medium', 'open')`,
+  ).run(AT);
+  post(db, 'chk_acc', 'cand_1', 1);
+  assert.deepEqual(item(db).blocker.findings, ['fnd_x', 'fnd_y']);
+  const q = openBlocker(db);
+  disposition(db, 'fnd_x', 'accept', 'human');
+  assert.deepEqual([item(db).status, db.prepare('SELECT status FROM decisions WHERE id = ?').get(q.id).status], ['awaiting_decision', 'open'], 'fnd_y still stands');
+  disposition(db, 'fnd_y', 'defer', 'human');
+  assert.deepEqual([item(db).status, item(db).repair_attempts], ['eligible', 1], 'both settled: withdrawn, and the one repair taken');
+
+  const db2 = store(t);
+  objection(db2);
+  post(db2, 'chk_acc', 'cand_1', 1);
+  const q2 = openBlocker(db2);
+  transact(db2, ENGINE_ACTOR, (tx) => repair.settleConflicts(tx, tx.db.prepare(`SELECT * FROM findings WHERE id = 'fnd_x'`).get(), 'fix'));
+  assert.deepEqual([item(db2).status, db2.prepare('SELECT status FROM decisions WHERE id = ?').get(q2.id).status], ['awaiting_decision', 'open'], "a Builder's objection stays the person's");
+});
+
+test("L3-1, the other order: a fix is not dispatched while the stage is being sent back for its finding's check at its finding's candidate", (t) => {
+  const db = store(t);
+  // The owner answered retry first: the stage was sent back for acc at candidate 1.
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'contract_conflict' });
+  post(db, 'chk_acc', 'cand_1', 1);
+  answer(db, 'retry');
+  assert.deepEqual([item(db).status, item(db).check_repair.checks], ['eligible', ['acc']], 'the fixture is live: the stage is sent back for acc');
+  // Then the Reviewer dispositions the same finding fix.
+  disposition(db, 'fnd_x', 'fix');
+  const fix = fixOf(db, 'fnd_x');
+  db.prepare(`UPDATE work_items SET status = 'eligible', chain = 0 WHERE id = ?`).run(fix.id);
+  assert.equal(repair.repairUnderway(db, fixOf(db, 'fnd_x')), 'wi_1');
+  assert.match(dispatchBlocker(db, fixOf(db, 'fnd_x'), { check: false }) ?? '', /^depends on the repair of wi_1/, 'the fix waits, held, for the stage repair');
+  // A finding naming another check, or the repair having integrated, holds nothing.
+  db.prepare(`UPDATE findings SET "check" = 'smoke' WHERE id = 'fnd_x'`).run();
+  assert.equal(repair.repairUnderway(db, fixOf(db, 'fnd_x')), null, 'another check');
+  db.prepare(`UPDATE findings SET "check" = 'acc' WHERE id = 'fnd_x'`).run();
+  db.prepare(`UPDATE work_items SET status = 'verifying' WHERE id = 'wi_1'`).run();
+  assert.equal(repair.repairUnderway(db, fixOf(db, 'fnd_x')), null, 'the repair integrated');
+  assert.doesNotMatch(dispatchBlocker(db, fixOf(db, 'fnd_x'), { check: false }) ?? '', /repair of wi_1/);
+});

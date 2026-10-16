@@ -48,7 +48,7 @@ import { engineSettings, policyRevision, projectEffective } from './settings.js'
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, entryManifest, getAttempt, getEntry } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
-import { answerConflict, conflictPreview, findingVerifiable, routeMissingVerification } from './repair.js';
+import { answerConflict, conflictPreview, findingVerifiable, routeMissingVerification, settleConflicts } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
 import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
@@ -1324,6 +1324,11 @@ export function recordDisposition(
     const run = tx.db.prepare('SELECT "chain" FROM "runs" WHERE "id" = ?').get(args.by) as { chain: number } | undefined;
     routeMissingVerification(tx, f, Math.max(run?.chain ?? 1, 1), originOfRun(tx.db, args.by));
   }
+  // A conflict finding an X2 blocker names, now dispositioned, settles that
+  // conflict claim (L3-1): the blocker is withdrawn and the item follows the
+  // disposition (repair.ts). Not for the conformance or plan-targeted `fix`
+  // above, which make no fix work: the blocker stays the person's.
+  settleConflicts(tx, f, args.disposition);
   markStale(tx, { project: f.project });
 }
 

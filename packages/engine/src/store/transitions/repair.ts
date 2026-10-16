@@ -13,6 +13,17 @@
 //   repair: the item awaits the person's answer, `correct_check`,
 //   `change_spec`, `retry` or `cancel`. No answer changes a check state, a
 //   check or the spec.
+// - A conflict settled by its disposition (real loop run 3, L3-1): a
+//   Verifier's or Reviewer's conflict finding an open X2 blocker names,
+//   dispositioned `fix`, `accept` or `defer` by a Reviewer or the person,
+//   settles the conflict claim; once every finding the blocker names is
+//   settled, its question is withdrawn and the item follows the disposition
+//   (`settleConflicts`).
+// - One Builder per failure (L3-1): a stage's own repair waits while open
+//   `fix` work for a finding naming the failed check, raised on a candidate
+//   holding the stage, is under way (the fix is the repair; `fixUnderway`),
+//   and a `fix` is not dispatched while the stage is being sent back for
+//   its finding's check at its finding's candidate (`repairUnderway`).
 // - What can verify a finding (D3 §2.11): its named check, a required
 //   acceptance-origin check covering its criterion. A `fix` disposition of a
 //   finding no such check can verify routes `check_correction` work to the
@@ -32,6 +43,7 @@ import { requestsFromFindings } from '../../spec/change.js';
 import { requirementKeyOf } from '../../checks/schema.js';
 import { canonical, parseJson, sha256 } from './common.js';
 import type { Effect } from './control.js';
+import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { type CandidateRow, type CheckRow, candidateContent, checksOfVersion, deliveredStageScope, getCandidate, heldByAncestry, requiredSet } from './evidence.js';
 import { type FindingRow, checkState } from './gates.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
@@ -53,6 +65,9 @@ const REPAIRABLE: readonly string[] = ['stage_build', 'fix'];
 interface CheckRepair {
   candidate: string;
   generation: number;
+  // The keys of the repair checks failed when it was taken (absent on a
+  // repair recorded before they were kept).
+  checks?: string[];
   at: string;
 }
 
@@ -66,8 +81,10 @@ interface CheckConflict {
   candidate: string;
   version: string;
   // The person's answer; 'corrected' once a correct_check's correction
-  // ended with a version applied (the hold is over).
-  answer: (typeof X2_OPTIONS)[number] | 'corrected' | null;
+  // ended with a version applied (the hold is over); 'dispositioned' when
+  // the blocker was withdrawn because every finding it named was
+  // dispositioned (settleConflicts).
+  answer: (typeof X2_OPTIONS)[number] | 'corrected' | 'dispositioned' | null;
   // The check_correction work a `correct_check` answer registered.
   corrections?: string[];
   at: string;
@@ -207,6 +224,10 @@ export function reconcileRepair(tx: Tx, itemId: string): void {
   const generation = item.trigger_generation;
   const taken = parseJson<CheckRepair>((item as WorkRow & { check_repair?: string | null }).check_repair ?? null);
   if (taken && taken.candidate === view.candidate.id && taken.generation === generation) return;
+  // The fix under way is the repair (L3-1): nothing is taken, and no
+  // conflict raised, until it has ended; the stage is then judged at its
+  // current candidate, the fix's once it integrated.
+  if (fixUnderway(tx.db, item, view) !== null) return;
 
   const pending = pendingConflicts(tx.db, item, view);
   if (pending.length > 0) {
@@ -228,7 +249,7 @@ export function reconcileRepair(tx: Tx, itemId: string): void {
   if (heldByChangeSpec(conflict, view)) return;
 
   const checks = view.failed.map((f) => f.check.id);
-  const repair = JSON.stringify({ candidate: view.candidate.id, generation, at: tx.at } satisfies CheckRepair);
+  const repair = JSON.stringify({ candidate: view.candidate.id, generation, checks: view.failed.map((f) => f.check.key), at: tx.at } satisfies CheckRepair);
   const policy = projectPolicy(tx.db, item.project);
   const cause = { cause: 'check_failed', candidate: view.candidate.id, checks };
   const key = progressKey(tx.db, view);
@@ -297,6 +318,60 @@ function correctionOutcome(db: Db, corrections: string[]): 'open' | 'applied' | 
 // version changes).
 function heldByChangeSpec(c: CheckConflict | null, view: RepairView): boolean {
   return c !== null && c.answer === 'change_spec' && c.candidate === view.candidate.id && c.version === view.version.id;
+}
+
+// ---- one Builder per failure (real loop run 3, L3-1) ----------------------------------
+
+// Open `fix` work (not complete or cancelled) for a finding that names one
+// of a stage_build's failed repair checks and was raised on a candidate
+// holding the stage's work (itself or by ancestry): the fix's id, or null.
+// Only a stage_build waits: a fix's own repair is never held, so two items
+// never wait on each other.
+function fixUnderway(db: Db, item: WorkRow, view: RepairView): string | null {
+  if (item.kind !== 'stage_build') return null;
+  const keys = view.failed.map((f) => f.check.key);
+  if (keys.length === 0) return null;
+  const rows = db
+    .prepare(
+      `SELECT w."id", f."candidate" FROM "work_items" w JOIN "findings" f ON f."id" = json_extract(w."subject", '$.finding')
+       WHERE w."project" = ? AND w."kind" = 'fix' AND w."status" NOT IN ('complete', 'cancelled') AND f."candidate" IS NOT NULL
+         AND f."check" IN (SELECT value FROM json_each(?)) ORDER BY w."seq"`,
+    )
+    .all(item.project, JSON.stringify(keys)) as { id: string; candidate: string }[];
+  for (const r of rows) {
+    const c = getCandidate(db, r.candidate);
+    if (c && heldByAncestry(db, c).includes(item.id)) return r.id;
+  }
+  return null;
+}
+
+// The other way: a `fix` waits (held, not failed) while a stage_build whose
+// work its finding's candidate holds is being sent back for the finding's
+// check at that candidate (its repair taken there and not yet integrated or
+// ended). A repair recorded without its checks counts as one for every
+// check: unknown is not "another failure". The stage_build's id, or null.
+export function repairUnderway(db: Db, item: Pick<WorkRow, 'project' | 'kind' | 'subject'>): string | null {
+  if (item.kind !== 'fix') return null;
+  const finding = parseJson<{ finding?: string }>(item.subject)?.finding;
+  if (!finding) return null;
+  const f = db.prepare('SELECT "check", "candidate" FROM "findings" WHERE "id" = ? AND "project" = ?').get(finding, item.project) as { check: string | null; candidate: string | null } | undefined;
+  if (!f?.check || !f.candidate) return null;
+  const c = getCandidate(db, f.candidate);
+  if (!c) return null;
+  const held = new Set(heldByAncestry(db, c));
+  const rows = db
+    .prepare(
+      `SELECT "id", "check_repair" FROM "work_items" WHERE "project" = ? AND "kind" = 'stage_build' AND "check_repair" IS NOT NULL
+         AND "status" IN ('eligible', 'held', 'claimed', 'executing', 'integrating') ORDER BY "seq"`,
+    )
+    .all(item.project) as { id: string; check_repair: string }[];
+  for (const r of rows) {
+    if (!held.has(r.id)) continue;
+    const taken = parseJson<CheckRepair>(r.check_repair);
+    if (!taken || taken.candidate !== f.candidate) continue;
+    if (taken.checks === undefined || taken.checks.includes(f.check)) return r.id;
+  }
+  return null;
 }
 
 // ---- conflicts (D3 §5 X2) ------------------------------------------------------------
@@ -408,6 +483,41 @@ export function answerConflict(tx: Tx, item: WorkRow, option: string, decision: 
   const now = transitionWork(tx, item, item.continuation ?? 'verifying', { blocker: null }, cause);
   if (option === 'retry') reconcileRepair(tx, now.id);
   return [{ kind: 'tick' }];
+}
+
+// A conflict claim settled by a disposition (L3-1), in the transaction that
+// records it: every item awaiting an unanswered X2 blocker that names the
+// finding, once each finding the blocker names is dispositioned or
+// resolved, has the blocker's question withdrawn (invalidated, the reason
+// recorded), returns to the status it left with `check_conflict.answer`
+// 'dispositioned', and is reconciled there: after `accept` or `defer` the
+// failure is the Builder's and takes its one repair; after `fix` the stage
+// waits for the fix work (`fixUnderway`). A Builder's objection is never
+// dispositioned (isObjection), so a blocker naming one stays the person's.
+export function settleConflicts(tx: Tx, f: Pick<FindingRow, 'id' | 'project' | 'category'> & { source_role?: string | null }, disposition: string): void {
+  if (!CONFLICT_CATEGORIES.includes(f.category) || isObjection({ source_role: f.source_role ?? null, category: f.category })) return;
+  const items = tx.db
+    .prepare(
+      `SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'awaiting_decision' AND json_extract("blocker", '$.reason') = 'check_conflict'
+         AND json_extract("blocker", '$.replan') IS NULL AND EXISTS (SELECT 1 FROM json_each(json_extract("blocker", '$.findings')) WHERE value = ?) ORDER BY "seq"`,
+    )
+    .all(f.project, f.id) as WorkRow[];
+  for (const item of items) {
+    const blocker = parseJson<{ findings?: string[] }>(item.blocker) ?? {};
+    const named = blocker.findings ?? [];
+    const settled = named.every((id) => {
+      const row = tx.db.prepare('SELECT "status", "disposition" FROM "findings" WHERE "id" = ?').get(id) as { status: string; disposition: string | null } | undefined;
+      return row !== undefined && (row.disposition !== null || row.status === 'resolved');
+    });
+    if (!settled) continue;
+    const reason = `the conflict was settled by its disposition: ${f.id} dispositioned ${disposition}`;
+    const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(item.id) as DecisionRow[];
+    for (const d of open) invalidateDecision(tx, d, reason, { finding: f.id, disposition });
+    const prior = parseJson<CheckConflict>((item as WorkRow & { check_conflict?: string | null }).check_conflict ?? null);
+    if (prior) tx.db.prepare('UPDATE "work_items" SET "check_conflict" = ? WHERE "id" = ?').run(JSON.stringify({ ...prior, answer: 'dispositioned', at: tx.at }), item.id);
+    const now = transitionWork(tx, item, item.continuation ?? 'verifying', { blocker: null }, { cause: 'conflict_dispositioned', findings: named, finding: f.id, disposition });
+    reconcileRepair(tx, now.id);
+  }
 }
 
 // ---- objections (D3 §5 X2, A.3) ------------------------------------------------------
