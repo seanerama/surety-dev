@@ -200,7 +200,7 @@ import {
 import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
-import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, requestSpecChange } from '../spec/change.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
 import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
@@ -639,6 +639,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'work.reconcile_repairs': (tx, a: { project: string }) => reconcileRepairs(tx, a.project),
   'work.sweep_awaiting': (tx, a: { project: string }) => sweepAwaiting(tx, a),
   'plan.gap_authoring': (tx, a: { project: string }) => registerGapAuthoring(tx, a),
+  'spec.delivery_replans': (tx, a: { project: string }) => registerDeliveryReplans(tx, a),
   'deferral.resolve_unowed': (tx, a: { project: string }) => resolveUnowedDeferrals(tx, a.project),
   'findings.ask_undispositioned': (tx, a: { project: string }) => askUndispositioned(tx, a),
   'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
