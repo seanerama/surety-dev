@@ -50,6 +50,7 @@ import { designReview, driveReview, reviewJson, REVIEW_FILE } from './harness/de
 import {
   answerWith,
   batchOf,
+  builderScript,
   cli,
   designEvents,
   designScripts,
@@ -127,13 +128,36 @@ describe('M539 (a), (b), (d), (e) the design figures after a design journey on t
     const ctx = journeyContext(fx, p, { lane: 'kernel' });
     ctx.answerKinds = [...KERNEL_KINDS];
     await qualifyByFixture(fx.engine);
-    // The API stage builds while the UI stages are held.
-    await pump(fx, ctx, () => (fx.scripted.launches({ work_item: stageWork(fx.home, p.id, 1)?.id }).length > 0 ? true : undefined), { what: 'the API stage dispatched while the UI stages are held', max: 40 });
+    // The API stage builds while the UI stages are held. Its first build
+    // holds until the Designer session is open and its first turn settled,
+    // so a one-shot certainly runs beside the session (G12; objection 203).
+    const api = stageWork(fx.home, p.id, 1);
+    assert.ok(api, 'the API stage\'s work item');
+    const build = builderScript(1);
+    fx.scripted.script(api.id, [{ steps: [step.hold('gate', { heartbeat_ms: 250 }), ...build.steps] }, builderScript(1), builderScript(1)]);
+    const dispatched = pump(fx, ctx, () => (fx.scripted.launches({ work_item: api.id }).length > 0 ? true : undefined), { what: 'the API stage dispatched while the UI stages are held', max: 40 });
+    // The pump is awaited below, after the release; until then a failure of it ends the wait for the hold.
+    let seenHeld = false;
+    const ended = dispatched.then(() => {
+      if (!seenHeld) throw new Error('the API stage\'s first build was not seen held before the pump returned');
+    });
+    ended.catch(() => {});
+    await Promise.race([fx.scripted.waitForHolding({ work_item: api.id }, 'gate', { timeoutMs: 120_000 }).then(() => (seenHeld = true)), ended]);
     // One Designer session: a turn that records its usage and writes the design; saved; a preview of the checkpoint; closed.
     const run = await openDesigner(fx, p.id);
     const write = turnThatWrites(validDesign(p), { reply: 'The design is written.', done: true });
     scriptTurns(fx, run.id, [{ steps: [step.usage(USAGE), ...write.steps] }]);
-    await sayAndSettle(fx, p.id, run.id, 'Draw Pantry for the web and Android.');
+    // The turn waits for the project's runs to end, the held build among them: it
+    // is awaited after the release, which comes once the session has started
+    // (its run's started_at, set when its first turn launches).
+    const turn = sayAndSettle(fx, p.id, run.id, 'Draw Pantry for the web and Android.');
+    const turnFailed = turn.then(() => undefined);
+    turnFailed.catch(() => {});
+    await Promise.race([waitFor(() => one(fx.home, 'SELECT "started_at" FROM "runs" WHERE "id" = ?', run.id)?.started_at ?? undefined, { timeoutMs: 60_000, what: 'the Designer session to start' }), turnFailed]);
+    // The session has started: the held build is released and ends beside it.
+    fx.scripted.release(api.id, 'gate');
+    await turn;
+    await dispatched;
     J.save = await postSaveRaw(fx, p.id, run.id);
     J.preview = await previewOnKernel(fx, p.id, { revision: 'checkpoint' });
     const closed = await fx.engine.post(`/v1/projects/${p.id}/sessions/${run.id}/close`, {});
@@ -342,7 +366,8 @@ describe('M539 (c) a review with no evidence: its evidence by provenance unknown
     const d = await designedPantry(fx, { name: 'pantry-m539-review' });
     await pump(fx, d.ctx, () => candidatesOfProject(fx.home, d.p.id).at(-1), { what: 'a candidate of the built stages', max: 120 });
     await waitForIdle(fx.home, d.p.id);
-    const res = designReview(fx, d.p.id, { target: 'android', build: 'pantry 3.0 (60)', observedOn: 'device' });
+    // No --observed-on: it says where evidence was seen, and this review carries none (objection 200).
+    const res = designReview(fx, d.p.id, { target: 'android', build: 'pantry 3.0 (60)' });
     assert.equal(res.status, 0, `surety design review with no evidence exits 0 (${res.stdout.slice(0, 400)} ${res.stderr.slice(0, 400)})`);
     const review = res.body?.review?.id ?? res.body?.review;
     const screens = [{ target: 'android', key: 'S2', verdict: 'matches', observed_on: 'device', evidence: [], deltas: [] }];

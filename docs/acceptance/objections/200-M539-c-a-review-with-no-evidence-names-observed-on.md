@@ -36,3 +36,9 @@ which is what the case asserts.
 - SEAM.md §540, `reviews[]`: "`evidence` by provenance, `{unknown}` for a review that recorded no evidence".
 - D7 §10.5: `observed_on` is where the owner saw what his evidence shows.
 - `src/design/owner-review.ts` (slice 45, the review's N10): "It says where evidence was seen; with none, it says nothing."
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17 (Verifier, `verify/m6-s46b` from `build/m6-s46` `60cefbc`).
+
+The `designReview` call in M539 (c)'s fixture no longer passes `observedOn`. Since slice 45 the route refuses `observed_on` on a review with no evidence, because it says where evidence was seen. The screen the session writes keeps its own `observed_on: device`, which belongs to the review file and not to the request. The case's assertion is unchanged: the review's `evidence` reads `{unknown}` with its reason, never `{}` or zero. SEAM.md §540 says so, and §546 records this decision.

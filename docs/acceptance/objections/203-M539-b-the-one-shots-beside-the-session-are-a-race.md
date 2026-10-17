@@ -33,3 +33,13 @@ The verification ended 62 ms before the session was created. In the failing runs
 - SEAM.md §540, `designer_sessions[]`: "`one_shots_beside` (one-shot runs of the project overlapping the session)".
 - D7 §3.1, G12 (a Designer session opens beside one-shot runs); M532.
 - BS6 §4 (the split gate; "a failure is rerun alone before it is called real").
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17 (Verifier, `verify/m6-s46b` from `build/m6-s46` `60cefbc`). **The overlap is made certain by a held build.**
+
+- The API stage's first Builder launch now holds (`step.hold('gate', {heartbeat_ms: 250})`), and the pump that dispatches it keeps running in the background.
+- Once the build is seen held, the Designer session opens and its first turn is posted. As soon as the session's run has a `started_at`, the build is released by its work item, and then the turn and the pump are awaited.
+- So the build was created before the session ended and finished after it started. `beside > 0` holds by construction, and the case still compares the read's `one_shots_beside` with the store's count.
+
+M539 passed 11 of 11 in each of three runs alone on `60cefbc` (`TMPDIR=/tmp/v46b`). SEAM.md §540 says so, and §546 records this decision.

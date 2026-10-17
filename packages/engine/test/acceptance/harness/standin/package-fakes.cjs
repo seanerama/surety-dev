@@ -237,12 +237,27 @@ var SURETY_PACKAGE_FAKES = (function () {
       return hit ? hit.tier : word;
     };
     const L = [`# ${o.project}`, ''];
+    const tg = R['spec_writer.targets'];
+    // A requirement's surface mark in the element's form, from the owner's `ui (<targets>)` (or `ui`).
+    const surfaceLine = (surface) => {
+      if (!tg || !tg.surface || typeof surface !== 'string') return null;
+      const m = /^\s*ui\s*(?:\(([^)]*)\))?\s*$/.exec(surface);
+      if (!m) return null;
+      const ts = m[1] ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : [];
+      return ts.length > 0 && tg.surface.with_targets ? String(tg.surface.with_targets).replace('<targets>', ts.join(tg.surface.separator ?? ', ')) : tg.surface.mark;
+    };
     const header = R['spec_writer.header_fields'];
     if (header && Array.isArray(header.fields)) {
       for (const f of header.fields) {
         const n = String(f.name ?? '');
         const value = /version/i.test(n) ? String(o.spec_version ?? 1) : /status/i.test(n) ? (f.value ?? 'draft') : /tier/i.test(n) ? tierOf(o.tier) : /owner/i.test(n) ? o.owner : '';
         L.push(`${f.line} ${value}`);
+      }
+      // The product's targets and the cross-platform line, from `spec_writer.targets` alone
+      // (objection 202); told nothing of the element, neither is written.
+      if (tg && tg.targets && Array.isArray(o.targets) && o.targets.length > 0) {
+        L.push(`${tg.targets.line} ${o.targets.filter((t) => !Array.isArray(tg.targets.values) || tg.targets.values.includes(t)).join(tg.targets.separator ?? ', ')}`);
+        if (o.cross_platform && tg.cross_platform) L.push(`${tg.cross_platform.line} ${tg.cross_platform.value}`);
       }
       L.push('');
     }
@@ -252,7 +267,8 @@ var SURETY_PACKAGE_FAKES = (function () {
     const marks = R['spec_writer.marks'];
     for (const r of o.requirements ?? []) {
       if (form) {
-        L.push(String(form.heading).replace('R<n>', r.key).replace('<title>', r.title), '', r.statement, '', `**Rationale.** ${r.rationale ?? 'The owner asked for it.'}`, '', `${form.sensitive_areas} ${areas(r.areas)}`, '');
+        const surface = surfaceLine(r.surface);
+        L.push(String(form.heading).replace('R<n>', r.key).replace('<title>', r.title), '', r.statement, '', ...(surface ? [surface, ''] : []), `**Rationale.** ${r.rationale ?? 'The owner asked for it.'}`, '', `${form.sensitive_areas} ${areas(r.areas)}`, '');
         if ((r.criteria ?? []).length > 0) {
           L.push('**Acceptance criteria**', '');
           for (const c of r.criteria) L.push(String(form.criterion).replace('R<n>.<m>', c.id).replace('<text>', c.text));
@@ -448,7 +464,102 @@ var SURETY_PACKAGE_FAKES = (function () {
 
   // ---- the Spec Writer's change (B.7) ------------------------------------------------------
 
+  // A design batch's change (`spec_writer.design_change`; D7 §7.1, §7.3;
+  // objection 202), written from the package alone: each design criterion
+  // under its requirement at the next free id, its text exactly as given;
+  // each human test a new requirement at the next free key, with the
+  // surface mark and the human-test mark, at its phase in the index; the
+  // version raised. The forms are the package's (`spec_writer.requirement_form`,
+  // `spec_writer.index_columns`, `spec_writer.index_cells`,
+  // `spec_writer.sensitive_areas`, `spec_writer.change_result`).
+  function designChangeRun(pkg, ws, dc) {
+    const R = pkg.reads;
+    const text = ws.read('.surety/spec/spec.md');
+    if (text === null) throw new Error('rehearsal fake: the design change found no specification at .surety/spec/spec.md');
+    const form = R['spec_writer.requirement_form'];
+    const idx = R['spec_writer.index_columns'];
+    const cells = R['spec_writer.index_cells'];
+    const sep = cells && typeof cells.list_separator === 'string' ? cells.list_separator : ', ';
+    const areaList = R['spec_writer.sensitive_areas'];
+    const none = areaList && areaList.none ? areaList.none : 'none';
+    const crit = dc.criterion || {};
+    const ht = dc.human_test || {};
+    const lines = text.split('\n');
+    const reqHead = (key) => lines.findIndex((l) => new RegExp(`^### ${key}\\b`).test(l));
+    const sectionEnd = (from) => {
+      for (let i = from + 1; i < lines.length; i++) if (/^#{2,3} /.test(lines[i])) return i;
+      return lines.length;
+    };
+    const keys = () => lines.map((l) => /^### R(\d+)\b/.exec(l)).filter(Boolean).map((m) => Number(m[1]));
+    const changes = [];
+    const added = {};
+    for (const c of dc.criteria || []) {
+      const key = c.requirement;
+      if (typeof key !== 'string' || !/^R\d+$/.test(key)) throw new Error(`rehearsal fake: a design criterion under ${JSON.stringify(key)} (a requirement of its own is not played)`);
+      const at = reqHead(key);
+      if (at < 0) throw new Error(`rehearsal fake: the specification has no requirement ${key} for a design criterion`);
+      const end = sectionEnd(at);
+      const mine = new RegExp(`^- ${key}\\.(\\d+) `);
+      let last = -1;
+      let top = 0;
+      for (let i = at; i < end; i++) {
+        const m = mine.exec(lines[i]);
+        if (m) {
+          last = i;
+          top = Math.max(top, Number(m[1]));
+        }
+      }
+      if (last < 0) throw new Error(`rehearsal fake: requirement ${key} has no criteria list to add to`);
+      const id = `${key}.${top + 1}`;
+      lines.splice(last + 1, 0, form && form.criterion ? String(form.criterion).replace('R<n>.<m>', id).replace('<text>', c.text) : `- ${id} ${c.text}`);
+      (added[key] ??= []).push(id);
+      const kind = crit.change_kind ?? 'criteria_added';
+      if (!changes.some((x) => x.key === key && x.kind === kind)) changes.push({ key, kind, reason: 'the approved design\'s criteria' });
+    }
+    const indexAt = () => (idx && idx.section ? lines.findIndex((l) => l.trim() === String(idx.section).trim()) : -1);
+    const newRows = [];
+    for (const h of dc.human_tests || []) {
+      const key = `R${Math.max(0, ...keys()) + 1}`;
+      const title = `The ${h.target} UI matches the approved design`;
+      const at = indexAt();
+      if (at < 0) throw new Error('rehearsal fake: the specification has no requirement index to place a human test before');
+      const heading = form && form.heading ? String(form.heading).replace('R<n>', key).replace('<title>', title) : `### ${key}. ${title}`;
+      const block = [heading, '', `A person judges the ${h.target} UI against the approved design.`, '', String(ht.surface ?? '').replace('<target>', h.target), '', '**Rationale.** The approved design.', '', `${form && form.sensitive_areas ? form.sensitive_areas : '**Sensitive areas:**'} ${none}`, '', ht.mark ?? '**Human test.**', '', h.text, ''];
+      lines.splice(at, 0, ...block);
+      newRows.push({ key, title, phase: h.phase === null || h.phase === undefined ? '' : String(h.phase) });
+      changes.push({ key, kind: ht.change_kind ?? 'added', reason: `the ${h.target} human test of the approved design` });
+    }
+    // The index: each criterion added to its row's Criteria cell; a row per human test.
+    if (idx && Array.isArray(idx.columns)) {
+      const at = indexAt();
+      let end = at + 1;
+      while (end < lines.length && !/^## /.test(lines[end])) end++;
+      const cellsOf = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+      const ci = idx.columns.indexOf('Criteria');
+      let lastRow = -1;
+      for (let i = at + 1; i < end; i++) {
+        if (!lines[i].trim().startsWith('|')) continue;
+        lastRow = i;
+        const cs = cellsOf(lines[i]);
+        if (ci >= 0 && added[cs[0]]) {
+          cs[ci] = [...cs[ci].split(sep.trim()).map((x) => x.trim()).filter(Boolean), ...added[cs[0]]].join(sep);
+          lines[i] = `| ${cs.join(' | ')} |`;
+        }
+      }
+      if (lastRow < 0) throw new Error('rehearsal fake: the requirement index has no rows');
+      lines.splice(lastRow + 1, 0, ...newRows.map((r) => `| ${idx.columns.map((c) => ({ Key: r.key, Title: r.title, Phase: r.phase, 'Sensitive areas': none, Criteria: '', Origin: idx.default_origin ?? '' })[c] ?? '').join(' | ')} |`));
+    }
+    ws.write('.surety/spec/spec.md', lines.join('\n').replace(/^(\*\*Spec version:\*\*)\s*(\d+)/m, (_, a, n) => `${a} ${Number(n) + 1}`));
+    const cr = R['spec_writer.change_result'];
+    const kinds = cr && cr.item && Array.isArray(cr.item.kind) ? cr.item.kind : [];
+    const listed = cr ? changes.filter((c) => kinds.includes(c.kind)) : [];
+    return shapeResult(pkg, { summary: 'the approved design written into the specification', ...(cr ? { [cr.field]: listed } : {}) });
+  }
+
   function specChangeRun(pkg, ws) {
+    // A design batch's change, played from the element that states it (objection 202).
+    const dc = pkg.reads['spec_writer.design_change'];
+    if (dc && dc.source === 'design') return designChangeRun(pkg, ws, dc);
     const req = parse(pkg.files['change_request.json'], {}) ?? {};
     const change = taggedBlock(req.text ?? req.request_text ?? '', 'rehearsal-change') ?? taggedBlock(pkg.prompt, 'rehearsal-change');
     let text = ws.read('.surety/spec/spec.md');
@@ -500,11 +611,19 @@ var SURETY_PACKAGE_FAKES = (function () {
   }
 
   // The program a definition names: one the governed values already name,
-  // else the toolchain's runtime this run writes in.
+  // else the toolchain's runtime this run writes in, else (a package that
+  // states no toolchain: the correction's, M442) the first of the programs
+  // `verifier.design_catalogue`'s `command` states (objection 201). Its
+  // `programs` null is unknown: no program is named, and discovery refuses
+  // the definition where the engine reads it.
   function programOf(R, governed) {
     const t = R['verifier.toolchain'];
     const named = t && t.current && t.current.check_commands ? Object.keys(t.current.check_commands) : [];
-    return named[0] ?? (governed ? governed.program : null);
+    if (named[0] !== undefined) return named[0];
+    if (governed) return governed.program;
+    const dc = R['verifier.design_catalogue'];
+    const programs = dc && dc.command && Array.isArray(dc.command.programs) ? dc.command.programs.filter((x) => typeof x === 'string' && x.length > 0) : [];
+    return programs[0] ?? null;
   }
 
   const had0 = (ws, dir) => ws.list(dir).some((n) => n.endsWith('.json'));

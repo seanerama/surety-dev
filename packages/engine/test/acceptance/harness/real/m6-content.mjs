@@ -185,7 +185,7 @@ const SERVER = (text) => {
 // Verifier's fake fills from `verifier.design_catalogue` (SEAM.md §539:
 // {{criterion}}, {{paths}} space-separated, {{path0}}, {{slot}},
 // {{variant}}) and runs with node directly. A failure exits non-zero.
-const DESIGN_CHECKS = Object.freeze({
+export const DESIGN_CHECKS = Object.freeze({
   tokens_only: `// {{criterion}}: tokens_only (D7 §7.2) on {{paths}}
 import { readFileSync } from 'node:fs';
 const paths = '{{paths}}'.split(' ').filter(Boolean);
@@ -223,6 +223,8 @@ const designCriteria = (v) => [
   { target: 'web', kind: 'asset_parity', paths: [WEB_LOGO_PATH], slot: 'logo', variant: 'full' },
   ...(v.modules.includes('mobile') ? [{ target: 'android', kind: 'asset_parity', paths: [ANDROID_LOGO_PATH], slot: 'logo', variant: 'full' }] : []),
 ];
+// The criteria of a variant (M6-hands-on.sh plays the whole Pantry, M535's; objection 202).
+export const designCriteriaOf = (row) => designCriteria(variantOf(row));
 
 // The rehearsal's CONTENT for `row` (SEAM.md §455's form, with the design
 // additions of §539: `design` the Designer's, `design_checks` by kind,

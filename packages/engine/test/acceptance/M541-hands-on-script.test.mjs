@@ -113,7 +113,7 @@ describe('M541 the M6 hands-on script: its form and its guards (nothing is run)'
     assert.ok(!/\bclaude\b/.test(src), 'no claude binary is named outside comments');
     assert.ok(!/SURETY_REAL_|setup-token|subscription_token|api_key|paid\(\)/.test(src), 'no credential, no real-lane switch, no paid step');
     assert.match(src, /serve --harness --harness-scripted "\$SCRIPTED" --harness-host-checks run --harness-runner-self-test run --harness-deploy-adapter real/, 'scripted roles in the test mode, with the host checks, the runner self-test and the real adapter');
-    assert.match(src, /s\.packageFakes\(designerContent\(/, 'the package-driven fakes beside the role program, with the Designer\'s content');
+    assert.match(src, /s\.packageFakes\(\{ design: designerContent\(\{ name: ref\.PROJECT_NAME, criteria: designCriteriaOf\("M535"\) \}\), design_checks: DESIGN_CHECKS \}\)/, 'the package-driven fakes beside the role program, with the Designer\'s content at `design` and the checks\' programs (objection 202)');
     assert.match(src, /put\(`run-\$\{rest\[0\]\}`, \[FAKE, FAKE, FAKE/, 'the Designer\'s turns play the package-driven fake');
     assert.match(src, /const FAKE = \{ steps: \[\{ package_fake: \{\} \}\] \}/, 'the fake step');
     assert.match(src, /omit '\["designer\.conventions"\]'[\s\S]*omit '\[\]'/, 'the refusal by an omitted element, cleared after');
