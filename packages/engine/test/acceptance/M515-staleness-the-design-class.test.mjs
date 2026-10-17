@@ -30,6 +30,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { definitionText } from './harness/checks/fixtures.mjs';
+import { waitFor } from './harness/engine.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { phaseCompleted, planOfPhase, pump, stagesOfPlan } from './harness/journey/drive.mjs';
 import { step } from './harness/scripted.mjs';
@@ -37,7 +38,7 @@ import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { MODULES_JSON } from './harness/design/reference.mjs';
 import { answerWith, assertNoSilentHold, designEvents, inventoryOf, manifestOf, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, variantSpec } from './harness/design/drive.mjs';
 import { KERNEL_KINDS, approveBatch, designModel, untilBatch } from './harness/design/check41.mjs';
-import { assetAdd, assetsSubmit, openApproval, pngOf } from './harness/design/assets43.mjs';
+import { assetAdd, assetFixes, assetsSubmit, openApproval, passiveSvg } from './harness/design/assets43.mjs';
 import {
   FOUR,
   PHASE_TWO_STAGES,
@@ -130,15 +131,24 @@ describe('M515 staleness: the design class', () => {
   test('(e) an asset-only revision stales nothing; (b) an architecture revision leaving the inventory unchanged stales nothing; add-item\'s request changed: S3 and S4 stale, S1 and S2 current', async (t) => {
     const { fx, p, ctx, rev } = await fourDesigned(t, 'pantry-shape');
     // (e)
-    const added = assetAdd(fx, p.id, 'favicon', 'default', 'favicon.png', pngOf(48, 48));
+    // The owner's file in the variant's declared format: the placeholder favicon is declared SVG (objection 182).
+    const added = assetAdd(fx, p.id, 'favicon', 'default', 'owner-favicon.svg', Buffer.from(passiveSvg(48, 48, 'P')));
     assert.equal(added.status, 0, `the owner's favicon added (${added.stdout} ${added.stderr})`);
+    // Counted from here: the first approval moved no effective version (its placeholders were already effective), so it emitted none.
+    const assetsApprovedBefore = designEvents(fx.home, 'design.assets_approved', p.id).length;
     const submitted = assetsSubmit(fx, p.id);
     assert.equal(submitted.status, 0, `surety design assets submit (${submitted.stdout} ${submitted.stderr})`);
     const approval = await pump(fx, ctx, () => openApproval(fx.home, p.id) ?? undefined, { what: 'the asset-only approval', max: 10 });
     assert.equal((await answerWith(fx, p.id, approval, 'approve')).status, 200, 'approved');
-    await pump(fx, ctx, () => (designEvents(fx.home, 'design.assets_approved', p.id).length >= 2 ? true : undefined), { what: 'the asset-only approval\'s effect', max: 10 });
+    // The approval's asset_updated fix (the favicon an integrated stage carried; SEAM.md §510), read from the store with no
+    // tick and scripted before its dispatch: its Builder places the favicon and binds it, as M527 (d)'s.
+    const fixes = await waitFor(() => (assetFixes(fx.home, p.id).length > 0 ? assetFixes(fx.home, p.id) : undefined), { what: 'the asset_updated work registered' });
+    for (const w of fixes) fx.scripted.script(w.id, [0, 1, 2].map(() => FAVICON_FIX));
+    await pump(fx, ctx, () => (designEvents(fx.home, 'design.assets_approved', p.id).length > assetsApprovedBefore ? true : undefined), { what: 'the asset-only approval\'s effect', max: 10 });
     allCurrent(fx, p, '(e) after an asset-only revision');
     assert.deepEqual(staleEvents(fx.home, p.id), [], '(e) no design.stale');
+    // That fix integrated before the Architect sessions below: none opens beside a one-shot run (E147 item 4).
+    await pump(fx, ctx, () => (assetFixes(fx.home, p.id).every((w) => w.status === 'complete') ? true : undefined), { what: 'the asset_updated fix integrated', max: 60 });
     // (b) a revision leaving the inventory as it was.
     await waitForIdle(fx.home, p.id);
     const digest = inventoryOf(p).inventory_digest;
@@ -153,8 +163,11 @@ describe('M515 staleness: the design class', () => {
       add.request = { ...add.request, properties: { ...add.request.properties, note: { type: 'string', maxLength: 80 } } };
     });
     await laterArchitect(fx, p.id, { '.surety/architecture/modules.json': modules, '.surety/architecture/architecture.md': architectureMd('An item may carry a note.') });
-    await pump(fx, ctx, () => (inventoryOf(p).inventory_digest !== digest && staleKeys(fx.home, rev.id).length > 0 ? true : undefined), { what: 'the inventory re-derived and the screens using add-item stale', max: 20 });
-    assert.deepEqual(staleKeys(fx.home, rev.id), ['S3', 'S4'], `the screens using add-item stale and no other (${JSON.stringify(screenStatus(fx.home, rev.id))})`);
+    // The screens are the current revision's: (e)'s asset-only revision superseded the first.
+    const current = currentRevision(fx.home, p.id);
+    assert.notEqual(current.id, rev.id, 'the fixture is live: the asset-only revision is current');
+    await pump(fx, ctx, () => (inventoryOf(p).inventory_digest !== digest && staleKeys(fx.home, current.id).length > 0 ? true : undefined), { what: 'the inventory re-derived and the screens using add-item stale', max: 20 });
+    assert.deepEqual(staleKeys(fx.home, current.id), ['S3', 'S4'], `the screens using add-item stale and no other (${JSON.stringify(screenStatus(fx.home, current.id))})`);
     const due = openDesignDue(fx.home, p.id);
     assert.deepEqual(pairsOfDue(due), ['S3/web', 'S4/android'], `design_due revise naming them (${JSON.stringify(due?.evidence)})`);
     assertNoSilentHold(fx.home, p.id, '(b)');
@@ -271,6 +284,8 @@ describe('M515 staleness: the design class', () => {
 // The R3 change's correction (objection 181): an acceptance check of R3.1,
 // the criterion the change affects, read from mobile/App.js; a tightening.
 const R3_LIST_TEST = '.surety/checks/tests/mobile-list.test.mjs';
+// (e)'s asset_updated fix Builder: the effective favicon from its package, placed and bound (as M527 (d)).
+const FAVICON_FIX = roleThat([step.copyContext('design/assets/favicon/default.svg', 'web/favicon.svg')], { asset_bindings: [{ slot: 'favicon', variant: 'default', target: 'web', path: 'web/favicon.svg', form: 'copy' }] });
 const R3_CORRECTION = roleThat([
   step.write(R3_LIST_TEST, `import assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nimport { test } from 'node:test';\n\ntest('R3.1: the app module renders its list from react-native', () => {\n  assert.match(readFileSync('mobile/App.js', 'utf8'), /import \\{[^}]*FlatList[^}]*\\} from 'react-native'/);\n});\n`),
   step.write('.surety/checks/defs/accept-r3-list.json', definitionText('accept-r3-list', { inputs: [R3_LIST_TEST], kind: 'acceptance', command: ['node', '--test', R3_LIST_TEST], timeout_s: 120, gate_kinds: ['stage', 'alpha_authorize'], covers: { criteria: ['R3.1'] } })),
