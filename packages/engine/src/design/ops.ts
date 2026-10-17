@@ -21,7 +21,7 @@ import { designPackageFacts } from './package.js';
 import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
 import { ownerReviewFacts, ownerReviewOfRun, releaseEvidenceRecords } from './owner-review.js';
-import { reviewPackageFacts } from './review-package.js';
+import { designerReadsFacts, reviewPackageFacts } from './review-package.js';
 import { noteAlphaReview, notObservedScreens, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
 import { bindingsView } from './asset-bindings.js';
@@ -81,6 +81,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.review_target': (d, a: { project: string; run?: string }) => reviewTarget(d, a),
   'design.not_observed': (d, a: { project: string }) => notObservedScreens(d, a),
   'design.review_package_facts': (d, a: { run: string }) => reviewPackageFacts(d, a),
+  'design.designer_reads': (d, a: { run: string }) => designerReadsFacts(d, a),
   'design.roadmap_assignment': (d, a: { request: string }) => roadmapAssignment(d, a),
   'design.run_facts': (d, a: { run: string }) => {
     const r = d.prepare('SELECT "project", "role", "session_notes" FROM "runs" WHERE "id" = ?').get(a.run) as { project: string; role: string; session_notes: string | null } | undefined;

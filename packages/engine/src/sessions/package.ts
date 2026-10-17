@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import type { Claim } from '../store/transitions/runs.js';
 import { canaryPromptText } from '../trust/canaries.js';
 import { type PackageName, type ReadsElement, architectElements, readsIds, readsText, specElements, statedElements } from '../packages/reads.js';
+import { designerTurnResultSchema } from '../packages/design-reads.js';
 
 // The role's artifact as the session's workspace holds it before the turn
 // (D6 §2.2: "the current state of the role's artifact"), read by the main
@@ -73,6 +74,8 @@ const TASK: Record<string, string> = {
   vision: 'You are the Vision role in a conversation with the project owner. Help the owner clarify the idea, then rewrite `.surety/idea.md` into the project identity: the idea brief\'s sections, closing with one fenced block whose info string is `yaml surety-identity` holding exactly the keys name, one_line, users, non_goals, success_measures, sensitive_areas, tier_recommendation and environments.',
   spec_writer:
     'You are the Spec Writer role in a conversation with the project owner. Turn the accepted idea record into `.surety/spec/spec.md`, in exactly the forms the engine reads (below). You may not approve your own specification.',
+  designer:
+    "You are the Designer role in a conversation with the project owner. From the interface inventory, draw the design of the product's user interface under `.surety/design/` (design.json, tokens.json, flows.json, screens.json, navigation.json, criteria.json, the mockups and the asset manifest), in exactly the forms the engine reads (below). The inventory and its fixtures are the engine's: read them, never change them. You may not approve your own design.",
   architect:
     'You are the Architect role in a conversation with the project owner. From the approved specification write the architecture (`.surety/architecture/architecture.md`, prose), the module map, the ADRs, the roadmap and the next phase\'s plan, in exactly the forms the engine reads (below). You may not approve your own proposals.',
 };
@@ -120,8 +123,9 @@ export function writeSessionPackage(
   texts: Map<string, string | null> = new Map(),
   artifact: ArtifactState | null = null,
   canary: Record<string, unknown> | null = null,
-  // A review-mode Designer session's design files (D7 §10.2; design/package.ts).
-  design: { files: { path: string; content: Buffer }[]; prompt: string[] } | null = null,
+  // A Designer session's design files and what its package states of what
+  // the engine reads (D7 §3.4, §10.2; design/package.ts).
+  design: { files: { path: string; content: Buffer }[]; prompt: string[]; reads?: { pkg: PackageName; elements: ReadsElement[] } } | null = null,
 ): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: string; source: string | null; sha256: string }[] = [];
@@ -131,7 +135,7 @@ export function writeSessionPackage(
     files.push({ path, kind, source: null, sha256: createHash('sha256').update(content).digest('hex') });
   };
   const last = facts.transcript === null ? undefined : facts.transcript.filter((e) => e.speaker === 'owner').at(-1);
-  const reads = canary ? { pkg: null, elements: [] } : sessionReads(facts);
+  const reads: { pkg: PackageName | null; elements: ReadsElement[] } = canary ? { pkg: null, elements: [] } : (design?.reads ?? sessionReads(facts));
   put(
     'prompt.md',
     'prompt',
@@ -198,6 +202,7 @@ export function writeSessionPackage(
     writeFileSync(join(dir, f.path), f.content);
     files.push({ path: f.path, kind: 'design', source: null, sha256: createHash('sha256').update(f.content).digest('hex') });
   }
-  put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
+  // A Designer's turn result carries its findings (B.12).
+  put('result-schema.json', 'result_schema', `${JSON.stringify(facts.role === 'designer' ? designerTurnResultSchema(TURN_RESULT_SCHEMA) : TURN_RESULT_SCHEMA, null, 2)}\n`);
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
 }

@@ -59,7 +59,7 @@ export const UI_TECHNOLOGIES = ['html_css', 'three_js', 'streamlit', 'react_nati
 export const FORM_FACTORS = ['phone', 'tablet'] as const;
 const MOBILE_TARGETS = ['android', 'ios'];
 const PERMISSION_TARGETS = ['android', 'ios', 'macos'];
-const TARGET_NAMES = ['web', 'android', 'ios', 'macos', 'windows', 'linux'];
+export const TARGET_NAMES = ['web', 'android', 'ios', 'macos', 'windows', 'linux'];
 
 // ---- B.8 the shape language ------------------------------------------------------------
 

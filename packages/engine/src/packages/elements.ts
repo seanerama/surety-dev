@@ -20,6 +20,19 @@ const SPEC_FORMS = [
 ] as const;
 const ARCHITECT = ['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing', 'architect.prepared_against'] as const;
 const VERIFIER = ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'] as const;
+// The Designer's (D7 §3.4; E151; M537): what the design check and the
+// approval read of the design tree.
+const DESIGNER = [
+  'designer.inventory',
+  'designer.schemas',
+  'designer.check_reasons',
+  'designer.conventions',
+  'designer.criterion_catalogue',
+  'designer.mockup_kinds',
+  'designer.selection_floor',
+  'designer.external_urls',
+  'designer.layouts',
+] as const;
 
 export const PACKAGE_ELEMENTS = Object.freeze({
   // The Spec Writer's session, and its retrofit variant.
@@ -36,13 +49,19 @@ export const PACKAGE_ELEMENTS = Object.freeze({
   replan_retrofit: [...ARCHITECT, 'architect.spec_change_requests'] as const,
   // The Verifier: the correction package (D3's), the phase-authoring
   // package (N04) and its retrofit variant (B13).
-  verifier_correction: [...VERIFIER] as const,
-  verifier_authoring: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain'] as const,
-  verifier_authoring_retrofit: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain', 'verifier.adoption_rule'] as const,
+  // Each carries the design criteria's catalogue (D7 §8.4; M537 (a2)).
+  verifier_correction: [...VERIFIER, 'verifier.design_catalogue'] as const,
+  verifier_authoring: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain', 'verifier.design_catalogue'] as const,
+  verifier_authoring_retrofit: [...VERIFIER, 'verifier.authoring_result', 'verifier.toolchain', 'verifier.adoption_rule', 'verifier.design_catalogue'] as const,
   // The phase's verification (D6 §5.8): its sign-off.
   phase_verification: ['verifier.phase_signoff'] as const,
   // The Builder of a stage.
   builder: ['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces'] as const,
+  // The Designer's session (D7 §3.4), its review mode (§10.2, §10.5) and
+  // its retrofit mode (§12).
+  designer: [...DESIGNER] as const,
+  designer_review: [...DESIGNER, 'designer.review'] as const,
+  designer_retrofit: [...DESIGNER, 'designer.retrofit'] as const,
 } satisfies Record<string, readonly string[]>);
 
 export type PackageName = keyof typeof PACKAGE_ELEMENTS;
@@ -85,6 +104,18 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'builder.implements': 'The requirements this stage implements',
   'builder.integration_obligations': 'Integration obligations',
   'builder.dependency_interfaces': 'The interfaces of the stages you depend on',
+  'verifier.design_catalogue': "The design criteria and the checks that read them",
+  'designer.inventory': 'The interface inventory your design is drawn against',
+  'designer.schemas': "The design tree's files (B.8 to B.16)",
+  'designer.check_reasons': 'What the design check refuses, and why',
+  'designer.conventions': "Each target's conventions",
+  'designer.criterion_catalogue': 'The design criteria the engine can check',
+  'designer.mockup_kinds': 'Mockups, by what each target can preview',
+  'designer.selection_floor': 'The selection: its defaults and its floor',
+  'designer.external_urls': 'External URLs in a mockup',
+  'designer.layouts': "Each target's layouts",
+  'designer.review': 'Review mode: what you are given and what you write',
+  'designer.retrofit': 'Retrofit mode: the design as the code shows it',
 });
 
 export const ELEMENT_IDS: readonly ElementId[] = Object.freeze(Object.keys(ELEMENT_TITLES) as ElementId[]);

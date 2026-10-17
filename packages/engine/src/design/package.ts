@@ -27,6 +27,8 @@ import { recordsDir } from '../records/files.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeRelative, isSlug } from './paths.js';
+import { type PackageName, type ReadsElement, statedElements } from '../packages/reads.js';
+import { type DesignerReadsFacts, designerElements, designerRetrofitElement, designerReviewElement } from '../packages/design-reads.js';
 
 export interface DesignPackageFacts {
   // The approved design revision's commit and the files the package reads of it.
@@ -47,6 +49,9 @@ export interface DesignPackageFacts {
 export interface DesignPackage {
   files: { path: string; content: Buffer }[];
   prompt: string[];
+  // A Designer session's: what its package states of what the engine reads
+  // (src/packages/design-reads.ts; M537).
+  reads?: { pkg: PackageName; elements: ReadsElement[] };
 }
 
 const BUILDER_DESIGN_TEXT = [
@@ -176,8 +181,9 @@ async function readRecordBytes(rt: Runtime, record: string): Promise<Buffer | nu
 }
 
 // The design files of a review-mode or retrofit-mode Designer session's
-// package (D7 §3.4, §10.2, §10.5, §12; SEAM.md §§489, 523, 528).
-async function reviewPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage | null> {
+// package (D7 §3.4, §10.2, §10.5, §12; SEAM.md §§489, 523, 528), with the
+// element its mode adds (M537 (a3), (a4)).
+async function reviewPackage(rt: Runtime, project: string, run: string): Promise<(DesignPackage & { mode: 'review' | 'retrofit'; built: ReturnType<typeof designerReviewElement> }) | null> {
   const f = await rt.read<ReviewPackageFacts | null>('design.review_package_facts', { run });
   if (!f) return null;
   const json = (v: unknown) => Buffer.from(`${JSON.stringify(v, null, 2)}\n`);
@@ -196,6 +202,7 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
   }
   // The UI source, read-only: every file under the ui modules' paths.
   const omitted: string[] = [];
+  const included: string[] = [];
   if (f.source) {
     const ctx = repoContext(f.repo);
     const tree = await treeOf(ctx, f.source.revision);
@@ -213,12 +220,13 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
       total += b.length;
       count += 1;
       files.push({ path: `design/source/${e.path}`, content: b });
+      included.push(e.path);
     }
   }
   const left = omitted.length > 0 ? ['', `Left out of design/source/ (past the package's bounds): ${omitted.length} file(s), the first ${omitted.slice(0, 20).join(', ')}.`] : [];
   if (f.mode === 'retrofit') {
     prompt.push('', ...RETROFIT_TEXT, ...left);
-    return { files, prompt };
+    return { files, prompt, mode: 'retrofit', built: designerRetrofitElement(included) };
   }
   files.push({ path: 'design/check-results.json', content: json(f.check_results) });
   if (f.review.owner) {
@@ -238,7 +246,9 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     }
     files.push({ path: 'design/evidence.json', content: json({ evidence: listed }) });
     prompt.push('', '## The review', '', ...OWNER_REVIEW_TEXT, ...left);
-    return { files, prompt };
+    const build_ref = typeof f.review.subject.build_ref === 'string' ? f.review.subject.build_ref : null;
+    const owner = { build_ref, evidence: listed.map((e) => ({ id: String(e.id), name: (e.name as string | null) ?? null, format: (e.format as string | null) ?? null, observed_on: (e.observed_on as string | null) ?? null, ...(typeof e.file === 'string' ? { file: e.file } : {}) })) };
+    return { files, prompt, mode: 'review', built: designerReviewElement({ owner, observations: [] }) };
   }
   const o = await observationsFor(rt, project, run);
   files.push({ path: 'design/observations.json', content: json({ observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) }) });
@@ -248,13 +258,23 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     if (bytes) files.push({ path: `design/observations/${ob.evidence}`, content: bytes });
   }
   prompt.push('', '## The review', '', ...REVIEW_TEXT, ...left);
-  return { files, prompt };
+  return { files, prompt, mode: 'review', built: designerReviewElement({ owner: null, observations: o.observations as unknown as Record<string, unknown>[] }) };
+}
+
+// A Designer session's package (D7 §3.4; E151; M537): the elements every
+// mode states, and the files and element its review or retrofit mode adds.
+async function designerPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage> {
+  const facts = await rt.read<DesignerReadsFacts | null>('design.designer_reads', { run });
+  const mode = await reviewPackage(rt, project, run);
+  const pkg: PackageName = mode?.mode === 'review' ? 'designer_review' : mode?.mode === 'retrofit' ? 'designer_retrofit' : 'designer';
+  const elements = statedElements(pkg, { ...designerElements(facts), ...(mode?.built ?? {}) });
+  return { files: mode?.files ?? [], prompt: mode?.prompt ?? [], reads: { pkg, elements } };
 }
 
 // The package's design files, read from git (main thread).
 export async function designPackageFor(rt: Runtime, run: string): Promise<DesignPackage | null> {
   const who = await rt.read<{ project: string; role: string; mode: string | null } | null>('design.run_facts', { run });
-  if (who?.role === 'designer') return reviewPackage(rt, who.project, run);
+  if (who?.role === 'designer') return designerPackage(rt, who.project, run);
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
   // What this package carries of the effective set, recorded for the

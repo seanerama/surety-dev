@@ -12,6 +12,9 @@ import { parseJson } from '../store/transitions/common.js';
 import { approvedModuleMap } from './policy.js';
 import { boundSubjectOfRun } from './review.js';
 import { ownerReviewOfRun } from './owner-review.js';
+import { currentInventory } from './store.js';
+import { projectEffective } from '../store/transitions/settings.js';
+import type { DesignCatalogueFacts, DesignerReadsFacts } from '../packages/design-reads.js';
 
 type Db = Database.Database;
 
@@ -93,4 +96,59 @@ export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackage
     check_results: { candidate: named?.id ?? null, results },
     evidence,
   };
+}
+
+// What every Designer session's package states of the project (D7 §3.4;
+// M537; src/packages/design-reads.ts): the current inventory as recorded,
+// and the policy values its elements name. null for a run that is not a
+// Designer's.
+export function designerReadsFacts(db: Db, args: { run: string }): DesignerReadsFacts | null {
+  const run = db.prepare('SELECT "project", "role" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; role: string } | undefined;
+  if (!run || run.role !== 'designer') return null;
+  const inv = currentInventory(db, run.project);
+  const options = projectEffective(db, run.project) as Record<string, unknown>;
+  const nums = (v: unknown): number[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'number') ? (v as number[]) : null);
+  const strs = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null);
+  const digest = (db.prepare('SELECT "design_inventory_digest" AS d FROM "projects" WHERE "id" = ?').get(run.project) as { d: string | null } | undefined)?.d ?? null;
+  return {
+    inventory: inv?.inventory ?? null,
+    inventory_digest: digest ?? inv?.inventory.inventory_digest ?? null,
+    // The defaults are the inventory derivation's (policy.ts inventoryInputs).
+    widths: nums(options.design_widths) ?? [360, 720, 1280],
+    orientations: strs(options.design_orientations) ?? ['portrait', 'landscape'],
+    allowlist: strs(options.design_external_urls) ?? [],
+  };
+}
+
+// The design criteria a Verifier's authoring and correction packages state
+// (D7 §7.2, §8.4; M537 (a2)): each criterion of the latest approved design's
+// criteria.json, by its specification id (matched by its text under its
+// requirement, as the Builder's package matches it), with its targets'
+// technologies and the implemented paths it names. [] when no design is
+// approved.
+export function designCatalogueFacts(db: Db, project: string): DesignCatalogueFacts {
+  const rev = db
+    .prepare(`SELECT "content" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`)
+    .get(project) as { content: string | null } | undefined;
+  const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[] } }>(rev?.content ?? null);
+  const inv = currentInventory(db, project)?.inventory ?? null;
+  const techOf = (t: string): string | null => inv?.targets.find((x) => x.target === t)?.ui_technology ?? null;
+  const out: DesignCatalogueFacts['criteria'] = [];
+  for (const c of content?.criteria?.criteria ?? []) {
+    const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, String(c.requirement ?? '')) as { criteria_text: string | null } | undefined;
+    const match = (parseJson<{ id: string; text: string }[]>(row?.criteria_text ?? null) ?? []).find((t) => t.text.trim() === String(c.text ?? '').trim());
+    if (!match) continue;
+    const targets = Array.isArray(c.targets) ? (c.targets as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+    const technologies = [...new Set(targets.map(techOf).filter((x): x is string => x !== null))];
+    out.push({
+      id: match.id,
+      kind: String(c.kind),
+      targets,
+      ...(technologies.length > 0 ? { technologies } : {}),
+      paths: Array.isArray(c.paths) ? (c.paths as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+      ...(typeof c.slot === 'string' ? { slot: c.slot } : {}),
+      ...(typeof c.variant === 'string' ? { variant: c.variant } : {}),
+    });
+  }
+  return { criteria: out };
 }
