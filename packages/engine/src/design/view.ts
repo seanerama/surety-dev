@@ -13,7 +13,7 @@ import { currentInventory } from './store.js';
 import { designDueState, heldStages } from './readiness.js';
 import { assetsRequired } from './release-hook.js';
 import { unboundAssets } from './asset-bindings.js';
-import { deferredBatches } from './approval.js';
+import { deferredBatches, effectiveSetNow } from './approval.js';
 import { stalePlatforms } from './stale.js';
 import { mappedCriteria } from './criterion-map.js';
 import { humanTestEvidence, reviewsView } from './review.js';
@@ -34,7 +34,7 @@ export function designView(db: Database.Database, args: { project: string }): Re
   const inertReason = policy === 'off' ? 'design is off for this project' : map !== null && !hasUi ? 'the module map has no ui module: there is nothing to design, and no design is shown as complete' : null;
   const inv = currentInventory(db, args.project);
   const revisions = (
-    db.prepare('SELECT "id", "version", "status", "scope", "current_against_spec", "ready_at", "approved_at", "assignments", "origin" FROM "design_revisions" WHERE "project" = ? ORDER BY rowid').all(args.project) as {
+    db.prepare('SELECT "id", "version", "status", "scope", "current_against_spec", "ready_at", "approved_at", "assignments", "origin", "effective_assets", "effective_assets_digest" FROM "design_revisions" WHERE "project" = ? ORDER BY rowid').all(args.project) as {
       id: string;
       version: number;
       status: string;
@@ -44,8 +44,23 @@ export function designView(db: Database.Database, args: { project: string }): Re
       approved_at: string | null;
       assignments: string | null;
       origin: string;
+      effective_assets: string | null;
+      effective_assets_digest: string | null;
     }[]
-  ).map((r) => ({ id: r.id, version: r.version, status: r.status, scope: r.scope, origin: r.origin, current_against_spec: r.current_against_spec, ready_at: r.ready_at, approved_at: r.approved_at }));
+  ).map((r) => ({
+    id: r.id,
+    version: r.version,
+    status: r.status,
+    scope: r.scope,
+    origin: r.origin,
+    current_against_spec: r.current_against_spec,
+    ready_at: r.ready_at,
+    approved_at: r.approved_at,
+    // The effective asset set its approval recorded (E162 item 4), null for
+    // a revision not approved (or approved before the set was recorded).
+    effective_assets: parseJson<unknown[]>(r.effective_assets),
+    effective_assets_digest: r.effective_assets_digest,
+  }));
   const effective = db.prepare('SELECT "slot", "kind", "variant", "slot_version", "source", "digest", "format" FROM "design_effective_assets" WHERE "project" = ? ORDER BY "slot", "variant"').all(args.project);
   // The design's human tests: one per target of the approved design's change.
   const approved = db.prepare(`SELECT "id", "assignments" FROM "design_revisions" WHERE "project" = ? AND "assignments" IS NOT NULL AND "status" IN ('approved', 'approved_without_criteria', 'superseded') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
@@ -81,6 +96,11 @@ export function designView(db: Database.Database, args: { project: string }): Re
     inventory: inv?.inventory ?? null,
     revisions,
     effective_assets: effective,
+    // The current set's digest, computed as an approval records it: equal to
+    // the in-force revision's `effective_assets_digest` unless a derivation
+    // has added a placeholder since (a target added). Null with no inventory:
+    // no slot is known yet, which is not an empty set.
+    effective_assets_digest: inv ? effectiveSetNow(db, args.project).digest : null,
     unbound: unboundAssets(db, args.project),
     assets_required,
     human_tests,
