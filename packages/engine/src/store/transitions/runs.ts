@@ -5,7 +5,7 @@
 // that between transitions and hands each result to the next one.
 
 import { notePeakDomains } from '../../plan/pace.js';
-import { type PendingPrerequisite, pendingPrerequisites, replanTarget } from '../../plan/bundle.js';
+import { IN_FLIGHT, type PendingPrerequisite, pendingPrerequisites, replanTarget } from '../../plan/bundle.js';
 import { PREREQUISITES_PENDING } from '../../plan/check.js';
 import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
@@ -243,10 +243,31 @@ export { PREREQUISITES_PENDING };
 // A replan's prerequisite results still to come (plan/bundle.ts
 // pendingPrerequisites), for the phase the item plans; null for any other
 // item or when nothing is pending.
+// A run of the item that ended held on its prerequisite results (the
+// run-end fallback, below) holds the item until every execution it named
+// has left the in-flight set, whatever the approved roadmap reads: the
+// commit it ran on may have named a dependency the roadmap does not, and
+// dispatching again at once would pay for a run that ends held again (the
+// review's finding 1).
 export function replanPendingPrerequisites(db: Tx['db'], item: Pick<WorkRow, 'id' | 'project' | 'kind'>): PendingPrerequisite[] | null {
   if (item.kind !== 'replan') return null;
   const target = replanTarget(db, item);
-  return target === null ? null : pendingPrerequisites(db, item.project, target.depends_on);
+  const pending = [...((target === null ? null : pendingPrerequisites(db, item.project, target.depends_on)) ?? [])];
+  const last = db.prepare(`SELECT "reason_detail" FROM "runs" WHERE "work_item" = ? AND "state" = 'ended' ORDER BY "seq" DESC LIMIT 1`).get(item.id) as { reason_detail: string | null } | undefined;
+  let held: { hold?: string; pending?: PendingPrerequisite[] } = {};
+  try {
+    held = last?.reason_detail ? (JSON.parse(last.reason_detail) as typeof held) : {};
+  } catch {
+    held = {};
+  }
+  if (held.hold === 'prerequisite_results' && Array.isArray(held.pending)) {
+    for (const p of held.pending) {
+      if (pending.some((x) => x.execution === p.execution)) continue;
+      const x = db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(p.execution) as { status: string } | undefined;
+      if (x && IN_FLIGHT.includes(x.status)) pending.push({ ...p, status: x.status });
+    }
+  }
+  return pending.length > 0 ? pending : null;
 }
 
 export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean } = {}): string | null {

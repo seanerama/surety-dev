@@ -35,6 +35,7 @@ const { readWork, readProject } = await import(join(dist, 'store', 'projections.
 const { retireSupersededVerifications } = await import(join(dist, 'plan', 'phase.js'));
 const { checkAnswer } = await import(join(dist, 'store', 'transitions', 'decisions.js'));
 const { recordReport } = await import(join(dist, 'store', 'transitions', 'findings.js'));
+const { answerQueued } = await import(join(dist, 'store', 'transitions', 'queue.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });
 
@@ -342,6 +343,8 @@ test('M545 (b): an eligible phase verification of a superseded candidate is not 
 
 // ---- M546 ------------------------------------------------------------------------------------
 
+const HUMAN = { actor_kind: 'human', actor_id: null, request_id: null };
+
 function reviewed(t) {
   const { db } = phased(t);
   item(db, 'wi_rev', 'review', { candidate: 'cand_2' }, 'executing');
@@ -350,41 +353,120 @@ function reviewed(t) {
      VALUES ('fnd_1', ?, 'prj_1', 1, 'candidate', 'cand_2', 'cand_2', NULL, 'verifier', 'defect', 'm', 'medium', 'medium', 'open')`,
   ).run(AT);
   let n = 0;
-  const review = (dispositions) => {
+  const review = (dispositions, severity_changes = []) => {
     const id = `run_rev_${++n}`;
     db.prepare(
       `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, result_value)
        VALUES (?, ?, 'prj_1', ?, 'wi_rev', 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, ?)`,
-    ).run(id, AT, ++seq, A, AT, JSON.stringify({ report: { dispositions } }));
+    ).run(id, AT, ++seq, A, AT, JSON.stringify({ report: { dispositions, severity_changes } }));
     transact(db, ENGINE_ACTOR, (tx) => recordReport(tx, { run: id }));
     return id;
   };
   const questions = () => db.prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' AND subject_id = 'fnd_1' ORDER BY rowid`).all();
   const finding = () => db.prepare(`SELECT * FROM findings WHERE id = 'fnd_1'`).get();
-  return { db, review, questions, finding };
+  // The owner's accept as production records it: a Reviewer's proposal
+  // raises the question, and the owner approves it.
+  const ownerAccepts = () => {
+    review([{ finding: 'fnd_1', disposition: 'accept' }]);
+    const q = questions().find((d) => d.status === 'open');
+    transact(db, HUMAN, (tx) => answerQueued(tx, { project: 'prj_1', decision: q.id, option: 'approve', preview_hash: q.preview_hash, note: null }));
+    assert.deepEqual([finding().status, finding().disposition, finding().disposition_authority], ['dispositioned', 'accept', 'human'], 'the fixture: the owner accepted');
+    return q.id;
+  };
+  const standing = () => db.prepare(`SELECT * FROM events WHERE type = 'finding.proposal_standing' ORDER BY seq`).all();
+  return { db, review, questions, finding, ownerAccepts, standing };
 }
 
-test("M546 (a): a Reviewer's accept on a finding the owner accepted raises no question; it is recorded against the owner's standing answer", (t) => {
-  const { db, review, questions, finding } = reviewed(t);
-  db.prepare(`UPDATE findings SET status = 'dispositioned', disposition = 'accept', disposition_authority = 'human', disposition_by = 'human', disposition_at = ? WHERE id = 'fnd_1'`).run(AT);
+test("M546 (a), the review's finding 5: a Reviewer's accept on a finding the owner accepted raises no question; it names the decision that recorded the owner's answer, not a later one", (t) => {
+  const { db, review, questions, finding, ownerAccepts, standing } = reviewed(t);
+  const approved = ownerAccepts();
+  // A later consumed finding_disposition decision of another scope about the
+  // same finding: not the one the answer stands on.
+  db.prepare(
+    `INSERT INTO decisions (id, created_at, project, seq, kind, subject_type, subject_id, semantic_generation, scope, question, options, dependency_manifest, transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status, answer, consumed_at)
+     VALUES ('dec_later', ?, 'prj_1', 999, 'finding_disposition', 'finding', 'fnd_1', 1, 'alpha_exception', 'q', '[]', '{}', 1, 'h', '[]', '[]', ?, 'consumed', '{"option":"reject"}', ?)`,
+  ).run(AT, AT, AT);
+  const asked = questions().length;
   const run = review([{ finding: 'fnd_1', disposition: 'accept' }]);
-  assert.deepEqual(questions(), [], 'no finding_disposition question');
+  assert.equal(questions().length, asked, 'no finding_disposition question');
   assert.deepEqual([finding().status, finding().disposition, finding().disposition_authority, finding().proposed_disposition], ['dispositioned', 'accept', 'human', null]);
-  const ev = db.prepare(`SELECT * FROM events WHERE type = 'finding.proposal_standing'`).get();
+  const [ev] = standing();
   assert.equal(JSON.parse(ev.subject).run, run);
   const payload = JSON.parse(ev.payload);
   assert.equal(payload.disposition, 'accept');
-  assert.equal(payload.decision, null, 'the fixture set the answer in the store: no decision gave it');
-  assert.deepEqual([payload.standing_answer.disposition, payload.standing_answer.authority], ['accept', 'human']);
+  assert.equal(payload.decision, approved, 'the decision that recorded the standing answer');
 });
 
-test('M546 (b), (c): another disposition than the owner\'s, or one on a finding with none, is asked as built', (t) => {
-  const { db, review, questions } = reviewed(t);
+test("M546, the review's finding 4: a severity the same report changes is a change since the owner's answer: asked", (t) => {
+  const { review, questions, finding, ownerAccepts, standing } = reviewed(t);
+  ownerAccepts();
+  const before = questions().length;
+  review([{ finding: 'fnd_1', disposition: 'accept' }], [{ finding: 'fnd_1', to: 'high' }]);
+  assert.equal(finding().effective_severity, 'high');
+  assert.equal(questions().length, before + 1, 'asked');
+  assert.equal(standing().length, 0);
+});
+
+test("M546, the review's finding 4: a severity raised after the owner's answer by an earlier report: asked", (t) => {
+  const { review, questions, finding, ownerAccepts, standing } = reviewed(t);
+  ownerAccepts();
+  review([], [{ finding: 'fnd_1', to: 'high' }]);
+  assert.equal(finding().effective_severity, 'high');
+  const before = questions().length;
   review([{ finding: 'fnd_1', disposition: 'accept' }]);
-  assert.equal(questions().length, 1, '(c) no disposition: the owner is asked');
-  db.prepare(`UPDATE decisions SET status = 'consumed' WHERE kind = 'finding_disposition'`).run();
-  db.prepare(`UPDATE findings SET status = 'dispositioned', disposition = 'defer', disposition_authority = 'human', disposition_by = 'human', disposition_at = ?, proposed_disposition = NULL WHERE id = 'fnd_1'`).run(AT);
-  review([{ finding: 'fnd_1', disposition: 'accept' }]);
-  assert.equal(questions().length, 2, '(b) another disposition: asked');
-  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'finding.proposal_standing'`).get().n, 0);
+  assert.equal(questions().length, before + 1, 'asked');
+  assert.equal(standing().length, 0);
+});
+
+test("M546 (b), (c): another disposition than the owner's, or one on a finding with none, is asked as built; a disposition no recorded answer gave stands on nothing", (t) => {
+  const { db, review, questions, ownerAccepts, standing } = reviewed(t);
+  ownerAccepts();
+  const before = questions().length;
+  review([{ finding: 'fnd_1', disposition: 'defer', linked_issue: 'x', defer_target: '2099-01-01T00:00:00.000Z' }]);
+  assert.equal(questions().length, before + 1, '(b) another disposition: asked');
+  assert.equal(standing().length, 0);
+  db.prepare(
+    `INSERT INTO findings (id, created_at, project, seq, scope, subject_id, candidate, source_run, source_role, category, message, proposed_severity, effective_severity, status, disposition, disposition_authority, disposition_by, disposition_at)
+     VALUES ('fnd_2', ?, 'prj_1', 2, 'candidate', 'cand_2', 'cand_2', NULL, 'verifier', 'defect', 'm', 'medium', 'medium', 'dispositioned', 'accept', 'human', 'human', ?)`,
+  ).run(AT, AT);
+  review([{ finding: 'fnd_2', disposition: 'accept' }]);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'finding_disposition' AND subject_id = 'fnd_2'`).get().n, 1, 'set in the store with no recorded answer: asked');
+});
+
+// ---- the review's findings 1 and 2 (M543) ----------------------------------------------------
+
+test("M543, the review's finding 2: a quarantined prerequisite execution counts as in flight", (t) => {
+  const { db, replan, register } = phased(t);
+  const [x] = register();
+  db.prepare(`UPDATE check_executions SET status = 'quarantined' WHERE id = ?`).run(x.id);
+  assert.deepEqual(pendingPrerequisites(db, 'prj_1', [1])?.map((p) => [p.execution, p.status]), [[x.id, 'quarantined']]);
+  assert.ok(dispatchBlocker(db, replan(), { check: false })?.startsWith(PREREQUISITES_PENDING));
+});
+
+test("M543, the review's finding 1: a replan whose last run ended held stays held on the executions it named while they are in flight, whatever the approved roadmap reads", (t) => {
+  const { db, replan, register, result } = phased(t);
+  // The approved roadmap names no dependency of phase 2: the check before
+  // dispatch alone would find nothing pending.
+  db.prepare(`UPDATE roadmap_revisions SET phases = ?`).run(
+    JSON.stringify([
+      { number: 1, goal: 'g1', modules: [], requirement_ids: ['R1'], depends_on: [] },
+      { number: 2, goal: 'g2', modules: [], requirement_ids: [], depends_on: [] },
+    ]),
+  );
+  const [x] = register();
+  assert.equal(dispatchBlocker(db, replan(), { check: false }), null, 'the roadmap alone holds nothing');
+  // The run's commit named phase 1: it ended held on the execution.
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, outcome, reason_class, reason_detail)
+     VALUES ('run_held', ?, 'prj_1', ?, 'wi_replan', 'architect', 'one_shot', 'ended', 'scripted', '1', 'm', ?, ?, 0, 'failed', 'invalid_result', ?)`,
+  ).run(AT, ++seq, A, AT, JSON.stringify({ hold: 'prerequisite_results', pending: [{ phase: 1, key: 'acc', candidate: 'cand_2', execution: x.id, status: 'queued' }] }));
+  const blocker = dispatchBlocker(db, replan(), { check: false });
+  assert.ok(blocker?.startsWith(PREREQUISITES_PENDING), `held on the run's own pending list (${blocker})`);
+  transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
+  assert.equal(replan().held, 'prerequisite_results');
+  assert.equal(JSON.parse(replan().held_intervals)[0].pending[0].execution, x.id);
+  // Recorded: the execution leaves the in-flight set and the hold ends.
+  result(0);
+  db.prepare(`UPDATE check_executions SET status = 'recorded' WHERE id = ?`).run(x.id);
+  assert.equal(dispatchBlocker(db, replan(), { check: false }), null, 'released once the execution it named is recorded');
 });

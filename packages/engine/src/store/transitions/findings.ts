@@ -266,7 +266,11 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // proposal of the disposition the owner's own standing answer gave
       // asks nothing again. It is recorded against that answer; the
       // finding's disposition is unchanged.
-      const standing = standingOwnerAnswer(tx.db, f, d);
+      // A severity this same report changes (processed after the
+      // dispositions, below) is a change since the owner's answer too: the
+      // proposal does not stand on it (the review's finding 4).
+      const severityChanging = (report.severity_changes ?? []).some((c) => c.finding === f.id && c.to !== f.effective_severity);
+      const standing = severityChanging ? null : standingOwnerAnswer(tx.db, f, d);
       if (standing !== null) {
         tx.emit('finding.proposal_standing', { project, finding: f.id, run: run.id }, { disposition: d.disposition, decision: standing.decision, standing_answer: standing });
         continue;
@@ -506,9 +510,27 @@ function standingOwnerAnswer(
   const row = f as FindingRow & { disposition_authority?: string | null; disposition_by?: string | null; disposition_at?: string | null; linked_issue?: string | null; defer_target?: string | null };
   if (row.status !== 'dispositioned' || row.disposition !== d.disposition || row.disposition_authority !== 'human') return null;
   if (d.disposition === 'defer' && ((row.defer_target ?? null) !== (d.defer_target ?? null) || (row.linked_issue ?? null) !== (d.linked_issue ?? null))) return null;
-  // The owner's decision that gave it: the latest consumed question about
-  // the finding, by insertion.
-  const decision = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_type" = 'finding' AND "subject_id" = ? AND "status" = 'consumed' ORDER BY rowid DESC LIMIT 1`).get(f.id) as { id: string } | undefined;
+  // The answer as it was recorded: the latest `finding.dispositioned` of the
+  // finding, by insertion (never by a wall-clock column).
+  const recorded = db
+    .prepare(`SELECT "seq", "tx" FROM "events" WHERE "type" = 'finding.dispositioned' AND json_extract("subject", '$.finding') = ? ORDER BY "seq" DESC LIMIT 1`)
+    .get(f.id) as { seq: number; tx: string } | undefined;
+  if (!recorded) return null;
+  // Its severity changed since the answer: the owner answered about another
+  // finding than the one now proposed on, and is asked again (the review's
+  // finding 4).
+  if (db.prepare(`SELECT 1 FROM "events" WHERE "type" = 'finding.severity_changed' AND json_extract("subject", '$.finding') = ? AND "seq" > ? LIMIT 1`).get(f.id, recorded.seq)) return null;
+  // The owner's decision that recorded it: the finding_disposition question
+  // about this finding consumed in the same transaction (the review's
+  // finding 5); null when the answer was recorded by no decision.
+  const decision = db
+    .prepare(
+      `SELECT json_extract(e."subject", '$.decision') AS "id" FROM "events" e
+       WHERE e."tx" = ? AND e."type" = 'decision.consumed' AND json_extract(e."payload", '$.kind') = 'finding_disposition'
+         AND json_extract(e."subject", '$.subject_type') = 'finding' AND json_extract(e."subject", '$.subject_id') = ?
+       ORDER BY e."seq" DESC LIMIT 1`,
+    )
+    .get(recorded.tx, f.id) as { id: string | null } | undefined;
   return { disposition: row.disposition, authority: 'human', by: row.disposition_by ?? null, at: row.disposition_at ?? null, decision: decision?.id ?? null };
 }
 

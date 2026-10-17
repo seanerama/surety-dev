@@ -251,7 +251,9 @@ export interface PhaseLack {
   execution: { id: string; status: string } | null;
   why?: string;
 }
-export const IN_FLIGHT: readonly string[] = ['queued', 'materializing', 'running', 'collecting'];
+// A quarantined execution counts too (the review's finding 2), as the spec
+// change's hold counts it: its result is not yet settled.
+export const IN_FLIGHT: readonly string[] = ['queued', 'materializing', 'running', 'quarantined', 'collecting'];
 
 export function phaseLacking(db: Db, project: string): Record<number, PhaseLack[]> {
   const plans = db.prepare(`SELECT "id", "phase_number", "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as {
