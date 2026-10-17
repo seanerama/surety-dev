@@ -1,8 +1,6 @@
 # Surety M5 acceptance report
 
-**Status:** final, with two facts still running when it was written and left as the only placeholders: the gate on `main` at `a92ceb6` (section 10) and the exhaustion lane at `a92ceb6` (section 12). **M5 is not yet accepted:** acceptance is Sean's decision (BS5 §1), and two of its conditions, `npm test` on `main` and the exhaust file on `mini-hp01`, have no result at the final revision yet. Every other fact below is taken from a record named beside it. A fact no record holds is said to be not run or unknown, never filled. The two real runs passed on one run directory at engine `5bf01a4`, 2026-10-16: **M443, idea to Alpha, 7 of 7; M444, the retrofit, 8 of 8** (sections 14, 15). Their records are copied to `docs/acceptance/reports/M5-real-lane/2026-10-16/`, searched first for the subscription token by its file, the value never read into this report or shown: no hit (section 17). **Every human act of both runs was made by the driver, not by Sean**, under Sean's standing instruction ("answer all the questions and approve gates"), each recorded with those words in `observed/driver-acts.jsonl` (section 17). The last complete gate, at `5bf01a4`, had 5 failed tests (section 10).
-
-**Written by:** the Verifier of M5's report, 2026-10-16, on branch `verify/m5-report` from `main` at `a92ceb6` (the skeleton of slice 38 had 89 placeholders). **Sources, read only:** the run directory `/home/smahoney/s5-final` (its store read with `better-sqlite3` `{readonly: true}`, no engine started on it); the earlier run directories `~/surety-m5-real-20261015`, `~/surety-m5-real-20261015b`, `~/s5-loop1` to `~/s5-loop8`, `~/s5-vis1`, `~/s5-vis2`, `~/s5-ink1`, `~/s5-ink2` (their stores, the same way); the driver's findings file (`driver-scratch/m443-real-findings.md`, outside the repository); the gate logs on `mini-hp01` (`~/gate-logs/m5final-5bf01a4-*`, over SSH); the errata E136 to E153; `COVERAGE.md`; `git log` of `main`. **For:** Sean, before his acceptance decision, his hands-on run (M446) and his revocation of the token; and Astra. **Form:** the M4 report's (`M4-report.md`), with BS5 §13's contents; what M5 does not claim is `M5-not-claimed.md`, in `M4-not-claimed.md`'s form. It decides nothing.
+**Status:** final, with one fact still running when it was written and left as the only placeholder: the fix of `M66-backup-and-restore`'s fixture on `mini-hp01`'s git (section 10). **M5 is not yet accepted:** acceptance is Sean's decision (BS5 §1). The gate at the final engine `a92ceb6` on `mini-hp01`: 393 files, 2,113 passed, 5 failed; M445 (b) by design, three passing alone three times each, and M66 failing at a fixture step on `mini-hp01`'s git 2.55.0 (section 10). The exhaustion lane at `a92ceb6`: 15 of 15 (section 12). **The final confirming gate**, at the final `main` after M66's fix and this report, is recorded in erratum E154, not here: this report cannot record a gate that runs on it. Every other fact below is taken from a record named beside it. A fact no record holds is said to be not run or unknown, never filled. The two real runs passed on one run directory at engine `5bf01a4`, 2026-10-16: **M443, idea to Alpha, 7 of 7; M444, the retrofit, 8 of 8** (sections 14, 15). Their records are copied to `docs/acceptance/reports/M5-real-lane/2026-10-16/`, searched first for the subscription token by its file, the value never read into this report or shown: no hit (section 17). **Every human act of both runs was made by the driver, not by Sean**, under Sean's standing instruction ("answer all the questions and approve gates"), each recorded with those words in `observed/driver-acts.jsonl` (section 17). **Written by:** the Verifier of M5's report, 2026-10-16 and 17 (UTC), on branch `verify/m5-report` from `main` at `a92ceb6`, rebased onto `main` at `93cdfb3` (the skeleton of slice 38 had 89 placeholders); the gate's and exhaustion lane's results at `a92ceb6`, the reruns alone and the corrected act log are the driver's, relayed on 2026-10-17 and checked against the logs on `mini-hp01` where a log holds them. **Sources, read only:** the run directory `/home/smahoney/s5-final` (its store read with `better-sqlite3` `{readonly: true}`, no engine started on it); the earlier run directories `~/surety-m5-real-20261015`, `~/surety-m5-real-20261015b`, `~/s5-loop1` to `~/s5-loop8`, `~/s5-vis1`, `~/s5-vis2`, `~/s5-ink1`, `~/s5-ink2` (their stores, the same way); the driver's findings file (`driver-scratch/m443-real-findings.md`, outside the repository); the gate logs on `mini-hp01` (`~/gate-logs/m5final-5bf01a4-*`, over SSH); the errata E136 to E153; `COVERAGE.md`; `git log` of `main`. **For:** Sean, before his acceptance decision, his hands-on run (M446) and his revocation of the token; and Astra. **Form:** the M4 report's (`M4-report.md`), with BS5 §13's contents; what M5 does not claim is `M5-not-claimed.md`, in `M4-not-claimed.md`'s form. It decides nothing.
 
 The sources it cites: the **build specification** (`docs/spec/M5-build-spec.md`, cited BS5); the **acceptance plan** (`docs/acceptance/sdlc-M5-acceptance-plan.md`, rows M401 to M453); **D6** (`docs/design/sdlc-design-D6-idea-to-alpha.md`, draft 3); the **errata** (E-numbers, `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, "SEAM §n"); the **objections** 057 to 120 (`docs/acceptance/objections/`). The real lane's records are at `docs/acceptance/reports/M5-real-lane/2026-10-16/` (BS5 §12): `state.json`, `observed/` (each journey's record, each project's pace read and the driver's act log), the two runner logs (added with `git add -f`, since `.gitignore` keeps `*.log` out) and the five sessions' transcript records under `transcripts/`.
 
@@ -14,8 +12,8 @@ M5 is idea to Alpha (E136): D6 §1's and §8's two journeys on this WSL2 host, o
 
 | Condition | Where it stands | Section |
 |---|---|---|
-| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every row M401 to M453 with executable tests and none skipped, M1 to M4 kept passing, C.2 migrated | **not established.** The last complete gate, at `5bf01a4` on `mini-hp01` (split, three workers): unit 798 of 798 in 106 files; acceptance 392 files, 2,105 passed, **5 failed** (M15 run-end, M440 storm (e1) and (e5), M401 phase two to Alpha (h), M445 (b)), none skipped. The gate at the final revision `a92ceb6` was still running. | 10 |
-| The exhaustion-lane file of M438 passed on `mini-hp01` | passed at `2fe51ee` (E150 item 5: 15 of 15 in 5 files, M438's role-domain file among them, 0 units); at the final revision `a92ceb6` still running | 12 |
+| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every row M401 to M453 with executable tests and none skipped, M1 to M4 kept passing, C.2 migrated | **not yet established.** The gate at the final engine `a92ceb6` on `mini-hp01` (split, three workers): unit 802 of 802 in 107 files; acceptance 393 files, 2,113 passed, **5 failed**, none skipped: M445 (b) by design; M29, M430, M450 each passing alone three times; **M66 failing at its fixture step on `mini-hp01`'s git**, its fix in progress. The final confirming gate is E154's. | 10 |
+| The exhaustion-lane file of M438 passed on `mini-hp01` | **passed at `a92ceb6`: 15 of 15 in 5 files**, units 0 | 12 |
 | M443 and M444 passed under Sean's command, each after its rehearsal, records and pace reads retained | **M443 7 of 7, M444 8 of 8**, at `5bf01a4`, after rehearsal 29 on the same revision (M443 7 of 7, M444 8 of 8, the driver's account). "Under Sean's command": the runs were started and every human act made by the driver under Sean's standing instruction (section 17); whether that meets the condition is Sean's to say. Records and pace reads retained. | 13 to 17 |
 | The report written; the hands-on run if Sean chooses it | this report; no record of Sean's hands-on run (M446's file passed at `5bf01a4`, 7 of 7) | 25 |
 
@@ -27,11 +25,13 @@ M5 is idea to Alpha (E136): D6 §1's and §8's two journeys on this WSL2 host, o
 | The rehearsal before them (rehearsal 29) | `5bf01a4` | the driver's account; its logs are in the driver's scratchpad, not retained here |
 | The last complete gate | `5bf01a4` | `mini-hp01:~/gate-logs/m5final-5bf01a4-*` (start 21:52:27 UTC, unit done 21:56:10, acceptance done 22:56:21) |
 | The final engine on `main` | `a92ceb6` (E153: a specification change after the final phase schedules one replan; `src/spec/change.ts`, `src/plan/bundle.ts`, `src/scheduler/tick.ts`, `src/store/worker.ts`; acceptance file `M433-a-change-after-the-final-phase-schedules-a-replan`, unit file `e153-delivery-replan`; no migration, no contract change) | `git diff --stat 5bf01a4 a92ceb6` |
-| The gate and exhaustion lane at the final revision | `a92ceb6` | sections 10, 12 |
+| The gate and exhaustion lane at the final engine | `a92ceb6` (gate start 23:27:50 UTC, unit done 23:31:40, acceptance done 2026-10-17 00:32:47) | `mini-hp01:~/gate-logs/m5final-a92ceb6-*`; sections 10, 12 |
+| M401 (h)'s test fix | `93cdfb3` (`verify/m5-m401h-flake` at `a4a0d56`: a third ordering the engine legitimately produces; (k) the clock-step ruling; SEAM §472, 10 of 10 alone, 6 of 6 under load); tests only, no engine change | `git log` |
+| The final confirming gate | the final `main`, after M66's fixture fix and this report | erratum E154, not this report |
 | Migrations | `0001` to `0030` (`0030_classified_tree.sql`, E152 item 2), the same at both revisions | `packages/engine/migrations/` |
 | The contract | `packages/engine/test/acceptance/contract/config.json` and `api/schema.json` as at `a92ceb6`, unchanged since `5bf01a4` | `git diff` |
 | D6 | draft 3, `1e7267b` | E142 item 1 |
-| This report | `verify/m5-report` from `a92ceb6` | this branch |
+| This report | `verify/m5-report` from `a92ceb6`, rebased onto `93cdfb3` | this branch |
 
 The engine's own version string, as `host_observations.engine_version` records it, is `0.0.0` (the package's version), not a revision: the revision of a run is the runner's header, not the store. The real runs did not run on `a92ceb6`; nothing of E153 is claimed from them.
 
@@ -102,79 +102,79 @@ D6 draft 3 approved to build in E142 (`1e7267b`: Astra's B01 to B14 and N01 to N
 
 ## 8. Every Appendix C statement, its row and its result
 
-Every one of D6 Appendix C's 67 statements, its principal row (plan §4.1) and its result. **The results are the last complete gate's, at `5bf01a4`** on `mini-hp01` (`m5final-5bf01a4-acc.log`, per file `pass=` and the `FAILED` list), and the real lane's for M443 and M444. A row's result is the sum over its files; no failed test of the gate was rerun alone at `5bf01a4` in any record I found. The result at the final revision `a92ceb6` is section 10's.
+Every one of D6 Appendix C's 67 statements, its principal row (plan §4.1) and its result. **The results are the gate's at the final engine `a92ceb6`** on `mini-hp01` (`m5final-a92ceb6-acc.log`, per file `pass=` and the `FAILED` list), with the reruns alone the driver made there, and the real lane's for M443 and M444; where the gate at `5bf01a4` differed, its result follows. A row's result is the sum over its files. No statement's row failed at `a92ceb6` except in the split gate, and each such case passed alone three times; M66, the one failure not passing alone, is an M1 row and maps no D6 statement.
 
 | Statement | Row | Result |
 |---|---|---|
-| D6-S01 session-is-a-run | M415 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-S02 turn-is-an-invocation | M415 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-S03 transcript-durable | M416 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-S04 save-validates | M417 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-S05 close-raises | M403 | passed at `5bf01a4`: 5 files, 16 tests, none failed |
-| D6-S06 idle-timeout | M418 | passed at `5bf01a4`: 1 file, 11 tests, none failed |
-| D6-S07 resume-from-records | M418 | passed at `5bf01a4`: 1 file, 11 tests, none failed |
-| D6-S08 session-exclusive | M419 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-S09 continuation-canary | M420 | passed at `5bf01a4`: 2 files, 12 tests, none failed; its real part, the continuation canary on Claude Code 2.1.300, passed in M443 (a) (§4) |
-| D6-S10 turn-settlement | M447 | passed at `5bf01a4`: 2 files, 10 tests, none failed |
-| D6-V01 idea-record | M402 | passed at `5bf01a4`: 1 file, 9 tests, none failed |
-| D6-W01 spec-parse-at-save | M421 | passed at `5bf01a4`: 1 file, 17 tests, none failed |
-| D6-W02 spec-approval-floor | M422 | passed at `5bf01a4`: 2 files, 16 tests, none failed |
-| D6-W03 spec-writer-prohibitions | M423 | passed at `5bf01a4`: 1 file, 12 tests, none failed |
-| D6-A01 architect-products | M404 | passed at `5bf01a4`: 1 file, 9 tests, none failed |
-| D6-A02 approval-batched | M403 | passed at `5bf01a4`: 5 files, 16 tests, none failed |
-| D6-A03 architect-prohibitions | M423 | passed at `5bf01a4`: 1 file, 12 tests, none failed |
-| D6-A04 replan-one-shot | M424 | passed at `5bf01a4`: 3 files, 8 tests, none failed |
-| D6-A05 replan-refused-repairs | M424 | passed at `5bf01a4`: 3 files, 8 tests, none failed |
-| D6-A06 prospective-bundle | M448 | passed at `5bf01a4`: 1 file, 8 tests, none failed |
-| D6-P01 plan-references | M425 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-P02 plan-approvals | M425 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-P03 plan-dependencies | M426 | passed at `5bf01a4`: 2 files, 9 tests, none failed |
-| D6-P04 plan-validation | M426 | passed at `5bf01a4`: 2 files, 9 tests, none failed |
-| D6-P05 plan-routing | M427 | passed at `5bf01a4`: 2 files, 3 tests, none failed |
-| D6-P06 plan-registered-atomically | M405 | passed at `5bf01a4`: 1 file, 6 tests, none failed |
-| D6-P07 plan-open-question | M449 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-C01 change-request-work | M431 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-C02 proposed-diff-side-ref | M431 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-C03 impact-exact | M432 | passed at `5bf01a4`: 3 files, 9 tests, none failed |
-| D6-C04 change-approval | M433 | passed at `5bf01a4`: 3 files, 9 tests, none failed; at `a92ceb6` the row gains E153's file (§10) |
-| D6-C05 change-invalidates | M433 | passed at `5bf01a4`: 3 files, 9 tests, none failed; at `a92ceb6` the row gains E153's file (§10) |
-| D6-C06 unassigned-requirement | M434 | passed at `5bf01a4`: 1 file, 1 tests, none failed |
-| D6-W04 check-authoring | M435 | passed at `5bf01a4`: 2 files, 8 tests, none failed |
-| D6-W05 spec-semantic-representation | M449 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-W06 deferred-authoring-and-exception | M450 | passed at `5bf01a4`: 1 file, 3 tests, none failed |
-| D6-X01 autonomy-step | M436 | passed at `5bf01a4`: 3 files, 14 tests, none failed |
-| D6-X02 autonomy-stage | M436 | passed at `5bf01a4`: 3 files, 14 tests, none failed |
-| D6-X03 autonomy-phase | M436 | passed at `5bf01a4`: 3 files, 14 tests, none failed |
-| D6-X04 stage-order | M437 | passed at `5bf01a4`: 3 files, 10 tests, none failed |
-| D6-X05 pipelining | M437 | passed at `5bf01a4`: 3 files, 10 tests, none failed |
-| D6-X06 concurrency-envelope | M438 | passed at `5bf01a4`: 2 files, 8 tests, none failed; its exhaust file (M438 (h)) is §12's |
-| D6-X07 event-driven-tick | M440 | **not all passed** at `5bf01a4`: 2 files, 14 tests passed, 2 failed (`M440-a-storm-of-completions` (e1); `M440-a-storm-of-completions` (e5); §10) |
-| D6-X08 memory-peak-recorded | M439 | passed at `5bf01a4`: 1 file, 3 tests, none failed |
-| D6-X09 profile-qualification-identity | M451 | passed at `5bf01a4`: 2 files, 5 tests, none failed |
-| D6-F01 phase-gate | M428 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-F02 phase-verification-work | M429 | passed at `5bf01a4`: 3 files, 6 tests, none failed |
-| D6-F03 phase-complete-effects | M406 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-F04 early-replan | M430 | passed at `5bf01a4`: 4 files, 13 tests, none failed |
-| D6-D01 alpha-policy | M407 | passed at `5bf01a4`: 4 files, 11 tests, none failed |
-| D6-D02 alpha-whole-set | M407 | passed at `5bf01a4`: 4 files, 11 tests, none failed |
-| D6-M01 pace-read | M441 | passed at `5bf01a4`: 3 files, 18 tests, none failed |
-| D6-M02 pace-human-wait | M441 | passed at `5bf01a4`: 3 files, 18 tests, none failed |
-| D6-R01 adopt-records | M409 | passed at `5bf01a4`: 2 files, 9 tests, none failed |
-| D6-R02 index-origin | M410 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-R03 requirement-confirm | M411 | passed at `5bf01a4`: 2 files, 6 tests, none failed |
-| D6-R04 retrofit-session-paths | M412 | passed at `5bf01a4`: 1 file, 3 tests, none failed |
-| D6-R05 conformance-stage | M413 | passed at `5bf01a4`: 3 files, 12 tests, none failed |
-| D6-R06 conformance-fix-blocks | M413 | passed at `5bf01a4`: 3 files, 12 tests, none failed |
-| D6-R07 existing-tests-not-evidence | M414 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-R08 scoped-descriptive | M414 | passed at `5bf01a4`: 2 files, 7 tests, none failed |
-| D6-R09 retrofit-mode-rules | M452 | passed at `5bf01a4`: 1 file, 4 tests, none failed |
-| D6-R10 conformance-alpha-barrier | M453 | passed at `5bf01a4`: 1 file, 5 tests, none failed |
-| D6-J01 journey | M401 | **not all passed** at `5bf01a4`: 9 files, 21 tests passed, 1 failed (`M401-the-journey-from-phase-two-to-alpha` (h); §10); its T1 variant (case (m)) is `M401-the-t1-variant-on-the-scripted-backend`, 3 of 3 |
+| D6-S01 session-is-a-run | M415 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-S02 turn-is-an-invocation | M415 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-S03 transcript-durable | M416 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-S04 save-validates | M417 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-S05 close-raises | M403 | passed at `a92ceb6`: 5 files, 16 tests |
+| D6-S06 idle-timeout | M418 | passed at `a92ceb6`: 1 file, 11 tests |
+| D6-S07 resume-from-records | M418 | passed at `a92ceb6`: 1 file, 11 tests |
+| D6-S08 session-exclusive | M419 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-S09 continuation-canary | M420 | passed at `a92ceb6`: 2 files, 12 tests; its real part, the continuation canary on Claude Code 2.1.300, passed in M443 (a) (§4) |
+| D6-S10 turn-settlement | M447 | passed at `a92ceb6`: 2 files, 10 tests |
+| D6-V01 idea-record | M402 | passed at `a92ceb6`: 1 file, 9 tests |
+| D6-W01 spec-parse-at-save | M421 | passed at `a92ceb6`: 1 file, 17 tests |
+| D6-W02 spec-approval-floor | M422 | passed at `a92ceb6`: 2 files, 16 tests |
+| D6-W03 spec-writer-prohibitions | M423 | passed at `a92ceb6`: 1 file, 12 tests |
+| D6-A01 architect-products | M404 | passed at `a92ceb6`: 1 file, 9 tests |
+| D6-A02 approval-batched | M403 | passed at `a92ceb6`: 5 files, 16 tests |
+| D6-A03 architect-prohibitions | M423 | passed at `a92ceb6`: 1 file, 12 tests |
+| D6-A04 replan-one-shot | M424 | passed at `a92ceb6`: 3 files, 8 tests |
+| D6-A05 replan-refused-repairs | M424 | passed at `a92ceb6`: 3 files, 8 tests |
+| D6-A06 prospective-bundle | M448 | passed at `a92ceb6`: 1 file, 8 tests |
+| D6-P01 plan-references | M425 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-P02 plan-approvals | M425 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-P03 plan-dependencies | M426 | passed at `a92ceb6`: 2 files, 9 tests |
+| D6-P04 plan-validation | M426 | passed at `a92ceb6`: 2 files, 9 tests |
+| D6-P05 plan-routing | M427 | passed at `a92ceb6`: 2 files, 3 tests |
+| D6-P06 plan-registered-atomically | M405 | passed at `a92ceb6`: 1 file, 6 tests |
+| D6-P07 plan-open-question | M449 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-C01 change-request-work | M431 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-C02 proposed-diff-side-ref | M431 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-C03 impact-exact | M432 | passed at `a92ceb6`: 3 files, 9 tests |
+| D6-C04 change-approval | M433 | passed at `a92ceb6`: 4 files, 17 tests, E153's `M433-a-change-after-the-final-phase-schedules-a-replan` (8 of 8) among them |
+| D6-C05 change-invalidates | M433 | passed at `a92ceb6`: 4 files, 17 tests, E153's `M433-a-change-after-the-final-phase-schedules-a-replan` (8 of 8) among them |
+| D6-C06 unassigned-requirement | M434 | passed at `a92ceb6`: 1 file, 1 tests |
+| D6-W04 check-authoring | M435 | passed at `a92ceb6`: 2 files, 8 tests |
+| D6-W05 spec-semantic-representation | M449 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-W06 deferred-authoring-and-exception | M450 | at `a92ceb6`: 1 file, 2 passed: `M450-deferred-authoring-and-the-exception` (a) failed in the split gate; rerun alone on `mini-hp01` at `a92ceb6` three times, 3 of 3 each (the driver) |
+| D6-X01 autonomy-step | M436 | passed at `a92ceb6`: 3 files, 14 tests |
+| D6-X02 autonomy-stage | M436 | passed at `a92ceb6`: 3 files, 14 tests |
+| D6-X03 autonomy-phase | M436 | passed at `a92ceb6`: 3 files, 14 tests |
+| D6-X04 stage-order | M437 | passed at `a92ceb6`: 3 files, 10 tests |
+| D6-X05 pipelining | M437 | passed at `a92ceb6`: 3 files, 10 tests |
+| D6-X06 concurrency-envelope | M438 | passed at `a92ceb6`: 2 files, 8 tests; its exhaust file (M438 (h)) passed at `a92ceb6` (§12) |
+| D6-X07 event-driven-tick | M440 | passed at `a92ceb6`: 2 files, 16 tests; at `5bf01a4`: 14 passed, 2 failed (§10) |
+| D6-X08 memory-peak-recorded | M439 | passed at `a92ceb6`: 1 file, 3 tests |
+| D6-X09 profile-qualification-identity | M451 | passed at `a92ceb6`: 2 files, 5 tests |
+| D6-F01 phase-gate | M428 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-F02 phase-verification-work | M429 | passed at `a92ceb6`: 3 files, 6 tests |
+| D6-F03 phase-complete-effects | M406 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-F04 early-replan | M430 | at `a92ceb6`: 4 files, 12 passed: `M430-replacements-pending-while-stages-move` S2 failed in the split gate; rerun alone on `mini-hp01` at `a92ceb6` three times, 4 of 4 each (the driver) |
+| D6-D01 alpha-policy | M407 | passed at `a92ceb6`: 4 files, 11 tests |
+| D6-D02 alpha-whole-set | M407 | passed at `a92ceb6`: 4 files, 11 tests |
+| D6-M01 pace-read | M441 | passed at `a92ceb6`: 3 files, 18 tests |
+| D6-M02 pace-human-wait | M441 | passed at `a92ceb6`: 3 files, 18 tests |
+| D6-R01 adopt-records | M409 | passed at `a92ceb6`: 2 files, 9 tests |
+| D6-R02 index-origin | M410 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-R03 requirement-confirm | M411 | passed at `a92ceb6`: 2 files, 6 tests |
+| D6-R04 retrofit-session-paths | M412 | passed at `a92ceb6`: 1 file, 3 tests |
+| D6-R05 conformance-stage | M413 | passed at `a92ceb6`: 3 files, 12 tests |
+| D6-R06 conformance-fix-blocks | M413 | passed at `a92ceb6`: 3 files, 12 tests |
+| D6-R07 existing-tests-not-evidence | M414 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-R08 scoped-descriptive | M414 | passed at `a92ceb6`: 2 files, 7 tests |
+| D6-R09 retrofit-mode-rules | M452 | passed at `a92ceb6`: 1 file, 4 tests |
+| D6-R10 conformance-alpha-barrier | M453 | passed at `a92ceb6`: 1 file, 5 tests |
+| D6-J01 journey | M401 | passed at `a92ceb6`: 9 files, 22 tests; at `5bf01a4`: 21 passed, 1 failed (§10); its T1 variant (case (m)) is `M401-the-t1-variant-on-the-scripted-backend` |
 | D6-J02 journey-real | M443 | real lane at `5bf01a4`, 2026-10-16: **7 of 7 passed** (§14); a real-lane file, never in a gate |
-| D6-J03 retrofit-journey | M408 | passed at `5bf01a4`: 2 files, 9 tests, none failed |
+| D6-J03 retrofit-journey | M408 | passed at `a92ceb6`: 2 files, 9 tests |
 | D6-J04 retrofit-journey-real | M444 | real lane at `5bf01a4`, 2026-10-16: **8 of 8 passed** (§15); a real-lane file, never in a gate |
 
-Rows beyond Appendix C at `5bf01a4`: M442 (the packages and the rehearsal) 3 files, 55 passed; M445 (this report) 1 passed, (b) failed by design while the report was a skeleton; M446 (the hands-on script) 1 file, 7 passed.
+Rows beyond Appendix C at `a92ceb6`: M442 (the packages and the rehearsal) 3 files, 55 passed; M445 (this report) 1 passed, (b) failed by design while the report was a skeleton; M446 (the hands-on script) 1 file, 7 passed.
 
 ## 9. The C.2 migrations
 
@@ -206,19 +206,31 @@ Later corrections from Sean's decisions, recorded the same way: E152 item 4 chan
 4. `M401-the-journey-from-phase-two-to-alpha` (h): phase 2's authoring applied after CR-1's approval; its question was invalidated where the case expects it standing.
 5. `M445-the-m5-report` (b): the report was a skeleton (by design).
 
-None of 1 to 4 was rerun alone at `5bf01a4` in any record I found. At `e1c0f69` the driver's gate had the same kind (M15 run-end, M401 to Alpha) failing in the split gate and passing alone (findings file, "GATE e1c0f69": "M15-run-end 87/87, M401 phase-two-to-alpha 5/5 … load-dependent"); that is not a result at `5bf01a4`. Whether these are load-dependent at `5bf01a4` is not established here.
+**None of 1 to 4 was rerun alone at `5bf01a4`** (the driver). M401 (h) was then found to be a test's timing assumption and fixed test-side at `93cdfb3` (`verify/m5-m401h-flake`, SEAM §472: 10 of 10 alone, 6 of 6 under load). M15 run-end and M440 (e1), (e5) did not fail in the gate at `a92ceb6`. Nothing more is claimed of them at `5bf01a4`.
 
-**The gate at the final revision `a92ceb6`:** [[PENDING gate a92ceb6]]
+**The gate at the final engine `a92ceb6`**, on `mini-hp01`, split, three workers, 2026-10-16 23:27:50 to 2026-10-17 00:32:47 UTC: user manager running; **units before 0**; build exit 0; **unit 802 of 802 in 107 files** (E153's unit file added), exit 0; **acceptance: 393 files, 2,113 tests passed, 5 failed, 0 skipped, 0 todo, 0 empty files**, exit 1; **units left none; homes after 0**. By plan: M1 rows 128 files, 848 passed, 2 failed; M2 41 files, 222 passed; M3 50 files, 208 passed; M4 70 files, 356 passed; M5 104 files in 51 rows, 479 passed, 3 failed. The five failed tests, and each rerun alone on `mini-hp01` at `a92ceb6`, three times (the driver's reruns):
+
+| Failed in the split gate | Alone, three runs |
+|---|---|
+| `M29-ref-update-probe`: "ref_update, journal applied, effect found conflicting (the ref put at a third commit) … once what blocked it is gone, the next tick takes the operation on" | 15 of 15 each run |
+| `M430-replacements-pending-while-stages-move` S2: "stage 1 integrated and verifying, kept by the replacement; its check fails after the swap" | 4 of 4 each run |
+| `M450-deferred-authoring-and-the-exception` (a) to (c) | 3 of 3 each run |
+| `M66-backup-and-restore`: "a backup taken after a commit its manifest would list has left the repository is refused, and nothing it leaves is labeled complete" :: "the fixture: the commit is gone from the repository" | **4 of 5 every run**: the same case fails at the same fixture step |
+| `M445-the-m5-report` (b): the report was not yet final | by design |
+
+**M66: the fixture fails on `mini-hp01`'s git; fix in progress.** M66 passes 5 of 5 on the workstation at `93cdfb3` (git 2.43.0) and fails the same way on `mini-hp01` at `5bf01a4` as at `a92ceb6` (git 2.55.0, installed there 2026-09-04): the failure is the case's own setup on that host's git, before any engine assertion, not an engine change between the revisions. A Verifier is fixing the fixture (`verify/m66-prune-fixture`). Its result: [[PENDING M66 fixture fix on mini-hp01]]
+
+**The final confirming gate**, on the final `main` after M66's fix and this report, is recorded in erratum E154, not in this report, which cannot record a gate that runs on itself.
 
 ## 11. The project-lane journeys and their pace reads
 
-The files carrying the project-lane journeys at `5bf01a4`: M401's nine files (the journey from an idea to phase two, 7 of 7; from phase two to Alpha, 4 of 5, (h) failed, section 10; the T1 variant, 3 of 3; six narrower files 1 to 2 each, all passed), M408's two (the retrofit journey 8 of 8; a confirmed requirement that fails blocks conformance, 1 of 1), M436's three (14 passed) and M441's three (`the-pace-read-after-the-journey`, `the-pace-read-from-recorded-observations`, `the-peak-across-a-restart-on-the-real-boundary`; 18 passed). **Their pace reads' figures are not retained**: the gate keeps per-file pass counts only, and the files do not write their reads anywhere a later reader finds them. What M441 pins (that the read exists, derives every figure from a recorded observation and says `unknown` where one is missing, D6-M01 and D6-M02) passed; what the scripted journeys' reads said is unknown.
+The files carrying the project-lane journeys at `a92ceb6`: M401's nine files, 22 tests, all passed (at `5bf01a4` the journey from phase two to Alpha failed (h), section 10), M408's two (the retrofit journey 8 of 8; a confirmed requirement that fails blocks conformance, 1 of 1), M436's three (14 passed) and M441's three (`the-pace-read-after-the-journey`, `the-pace-read-from-recorded-observations`, `the-peak-across-a-restart-on-the-real-boundary`; 18 passed). **Their pace reads' figures are not retained**: the gate keeps per-file pass counts only, and the files do not write their reads anywhere a later reader finds them. What M441 pins (that the read exists, derives every figure from a recorded observation and says `unknown` where one is missing, D6-M01 and D6-M02) passed; what the scripted journeys' reads said is unknown.
 
 ## 12. The exhaustion lane
 
 Earlier result: at `2fe51ee` (slice 37's build), `--lane exhaust` on `mini-hp01` with `SURETY_EXHAUSTION_HOST` set, **15 of 15 in 5 files** (`M133-resource-limits`, `M130-exit-classes-limits`, `M205-an-oom-kill-on-the-exhaustion-host`, `M341-a-service-at-its-limits`, `M438-a-role-domain-past-its-maximum`), 0 units left (E150 item 5). Not rerun at `5bf01a4` in any record I found.
 
-**At the final revision `a92ceb6`:** [[PENDING exhaust a92ceb6]]
+**At the final engine `a92ceb6`**, `--lane exhaust` on `mini-hp01` with `SURETY_EXHAUSTION_HOST` set (`m5final-a92ceb6-exhaust-summary.log`): **exhaust exit 0; tests 15, pass 15, fail 0; acceptance: 5 file(s) passed; units 0**. M438 (h), the role domain past its maximum, is among the five.
 
 ## 13. The rehearsals
 
@@ -259,7 +271,7 @@ Never evidence (SEAM §171; BS5 §12). **Rehearsal 29**, on `5bf01a4`, the revis
 
 **The confirmations, as made** (by the driver, section 17): R1 to R7, R10 and R11 `confirm` (each `origin: observed`); **R8 and R9 `defect`** (R8, an overflowing sum; R9, a request target `new URL` cannot parse crashes the process), each scheduled to phase 2 and excluded from the conformance set (B11, B12).
 
-**After Alpha** (the change phase, the part of the journey M444 (f) and (g) read): the first replan run refused its own result (`requirement_conflict`: the Architect could not plan R8.1 and R9.4 as written, "the owner's to route to a specification change"; repaired, `completed`), and the Verifier's findings raised two `finding_disposition` questions, answered `change_spec`; two Spec Writer change runs produced spec v2 (R8 restated: an overflowing sum answers 400 and the server stays up) and v3 (R9 restated: an unparseable target answers 400 and the process stays up); their corrections approved; `spec_evidence_generation` 3. Each change queued its own replan (one per change request, E150 item 3): the first published phase 2 generation 1, then generation 2 (`plan_01M53HXCM5…`, its stage cancelled for the newer one); the Builder built R8 and R9 and the stage was verified (14 checks). **The third replan item `wi_01M53HQ8FM536YRSHC5HQ4ASFP` parked** after both its runs were refused `PLAN_DEPENDENCY_INCOMPLETE` (phase 1's checks read `unknown` on a candidate created when the corrections applied, before they had run); its `blocker` `dec_01M53J0X8P42FV5V1B99CHSEDX` (retry, cancel) was raised at 23:51:11 and **is still open in the store**: the test ended at 23:51:35 and the driver's two `retry` answers (23:51:52, 23:52:09) got no response (`"http":000`, the engine stopped). The replan was redundant (its plan already published as generation 2); the gap is recorded as M444F-1 (section 16). 17 one-shots: 6 Architect replans (4 `failed` `invalid_result`, 2 `completed`), 2 Spec Writer change runs, 8 Verifier runs, 1 Builder; **20 invocations, 6.51 USD estimated**, against an expectation of about 3 USD (E140 N3): the difference is the four refused replans (1.81 USD) and the two change runs with their corrections, none expected by BS5 §12's estimate.
+**After Alpha** (the change phase, the part of the journey M444 (f) and (g) read): the first replan run refused its own result (`requirement_conflict`: the Architect could not plan R8.1 and R9.4 as written, "the owner's to route to a specification change"; repaired, `completed`), and the Verifier's findings raised two `finding_disposition` questions, answered `change_spec`; two Spec Writer change runs produced spec v2 (R8 restated: an overflowing sum answers 400 and the server stays up) and v3 (R9 restated: an unparseable target answers 400 and the process stays up); their corrections approved; `spec_evidence_generation` 3. Each change queued its own replan (one per change request, E150 item 3): the first published phase 2 generation 1, then generation 2 (`plan_01M53HXCM5…`, its stage cancelled for the newer one); the Builder built R8 and R9 and the stage was verified (14 checks). **The third replan item `wi_01M53HQ8FM536YRSHC5HQ4ASFP` parked** after both its runs were refused `PLAN_DEPENDENCY_INCOMPLETE` (phase 1's checks read `unknown` on a candidate created when the corrections applied, before they had run); its `blocker` `dec_01M53J0X8P42FV5V1B99CHSEDX` (retry, cancel) was raised at 23:51:11 and **is still open in the store**: the test ended at 23:51:35 and the driver's two `retry` answers (23:51:52, 23:52:09) got no response (the act log: `"http":"000 (engine stopped: the runner had ended)"`). The replan was redundant (its plan already published as generation 2); the gap is recorded as M444F-1 (section 16), and both it and the open blocker are known defects carried to M6 (section 24). 17 one-shots: 6 Architect replans (4 `failed` `invalid_result`, 2 `completed`), 2 Spec Writer change runs, 8 Verifier runs, 1 Builder; **20 invocations, 6.51 USD estimated**, against an expectation of about 3 USD (E140 N3): the difference is the four refused replans (1.81 USD) and the two change runs with their corrections, none expected by BS5 §12's estimate.
 
 ## 16. The engine's real-run hardening
 
@@ -317,13 +329,13 @@ The acceptance real lane of sections 14 and 15 is the last of 15 real run direct
 
 ## 17. The human acts as they were made, and the token
 
-**Who acted.** Every act BS5 §12 names Sean's was made by **the driver**, under Sean's standing instruction, recorded line by line in `observed/driver-acts.jsonl` (63 lines; 61 parse as JSON, the last two carry `"http":000` and do not), each with `acted_by: driver` and `on_instruction`: **"answer all the questions and approve gates"** (39 lines) or **"answer all the questions and approve gates; go ahead and start M444"** (22 lines, the commands and session turns). The store records every answered decision's actor as `human` (38 answers, all `human`): the route, not who. `state.json` labels the two `qualify-adapter` steps `by: "Sean's command"`, the runner's fixed text; the act log shows the driver typed both. BS5 §12 asks that such acts be recorded in `state.json` (`acted_by: driver, on_instruction`); they were recorded in `observed/driver-acts.jsonl` instead, which is copied with it. **The runs were also started by the driver** (Sean delegated paid runs, E144 item 2; the memory file "paid runs delegated").
+**Who acted.** Every act BS5 §12 names Sean's was made by **the driver**, under Sean's standing instruction, recorded line by line in `observed/driver-acts.jsonl` (64 lines, all JSON), each with `acted_by: driver` and `on_instruction`: **"answer all the questions and approve gates"** (41 lines) or **"answer all the questions and approve gates; go ahead and start M444"** (23 lines, the commands and session turns). The driver corrected the file at its source on 2026-10-17 and the copy here is the corrected one: the two `retry` lines that read `"http":000` (not JSON) now read `"http":"000 (engine stopped: the runner had ended)"`, and one line was appended for M444's `surety deploy`, marked `"reconstructed"` (below). The store records every answered decision's actor as `human` (38 answers, all `human`): the route, not who. `state.json` labels the two `qualify-adapter` steps `by: "Sean's command"`, the runner's fixed text; the act log shows the driver typed both. BS5 §12 asks that such acts be recorded in `state.json` (`acted_by: driver, on_instruction`); they were recorded in `observed/driver-acts.jsonl` instead, which is copied with it. **The runs were also started by the driver** (Sean delegated paid runs, E144 item 2; the memory file "paid runs delegated").
 
 **The sessions' content was the driver's.** The driver wrote every owner turn: M443's Spec Writer turn 1 ("Please write the specification from the accepted idea (Mechanica). Keep every requirement, range and tolerance the idea states, R6 and R7 as human tests …") and turn 2 (answers to the Spec Writer's questions, physics included); the Architect's one turn; M444's two Spec Writer turns (turn 2 answered its questions, among them the tier: "T1, as the project was adopted"); the Architect's one turn. The transcripts are in `transcripts/`.
 
 **The acts, M443:** `qualification_approval` ×2 (22:06:04, 22:08:45); `trust_activation` ×2 (22:08:44; 22:10:10 refused 409 on a re-raised question, then 22:10:50); `policy_widening` (22:11:30); the Spec Writer session (open 22:24:09, two turns, save, close 22:28:31) and `spec_approval` (22:28:32, "standard owner answers"); the Architect session (22:28:42 to 22:31:58) and `architecture_approval` with `plan_approval` (22:31:58); phase 1's checks approved (22:37:15, "11 added incl. post-deploy-alpha"); the stage-1 `blocker` answered `correct_check` (22:40:07, "the Builder is right: smoke-physics at stage 1 imports validate.js, which the plan assigns" to stage 2) and its correction approved (22:40:57); phase 2's checks approved (22:47:16, tightening); `surety spec change-request` (22:47:29, R11.5 numeric strings refused); `spec_change` approved (22:48:15); its correction approved (22:49:05); `surety qualify-adapter local_service` (22:52:10). **The Alpha request was the engine's**, under policy.
 
-**The acts, M444:** `surety project adopt` (22:56:20); `adoption_mode` `full` (22:56:56); `policy_widening` (22:57:33); the Spec Writer session (23:09:58 to 23:13:56); eleven `requirement_confirm` (23:14:09 to 23:14:10: nine `confirm`, R8 and R9 `defect`); `spec_approval` (23:14:21); the Architect session (23:14:31 to 23:15:57); `architecture_approval` and `plan_approval` (23:15:57); the conformance checks approved (23:18:36, "12 added incl. floor checks"); `surety qualify-adapter local_service` (23:24:40); **`surety deploy` of c-1: the store records the request `requested_by: human` at 23:36:58; `driver-acts.jsonl` has no line for it**, so who typed it is not in any record I read; the alpha gap's check approved (23:37:50); two `finding_disposition` answered `change_spec` (23:41:53: R8, R9 "to be restated as intended"); `spec_change` v2 approved (23:43:48); its correction approved (23:44:54); `spec_change` v3 approved (23:45:55); its correction approved (23:46:45); the parked replan's `blocker` answered `retry` twice (23:51:52, 23:52:09), **neither reached the engine** (section 15).
+**The acts, M444:** `surety project adopt` (22:56:20); `adoption_mode` `full` (22:56:56); `policy_widening` (22:57:33); the Spec Writer session (23:09:58 to 23:13:56); eleven `requirement_confirm` (23:14:09 to 23:14:10: nine `confirm`, R8 and R9 `defect`); `spec_approval` (23:14:21); the Architect session (23:14:31 to 23:15:57); `architecture_approval` and `plan_approval` (23:15:57); the conformance checks approved (23:18:36, "12 added incl. floor checks"); `surety qualify-adapter local_service` (23:24:40); **`surety deploy` of c-1, by the driver** (23:36:58): its line was lost when the driver piped its act script into `head`, which ended it before it wrote; the line now in the log is marked `"reconstructed"`, built after the fact from the store's row `dreq_01M53H6VVAQBQTMMAK685KDBTK` (`requested_by: human`, `deployed`, 23:36:58Z); the driver also made the request again several times while the gap's check was authored, all under the one request key; the alpha gap's check approved (23:37:50); two `finding_disposition` answered `change_spec` (23:41:53: R8, R9 "to be restated as intended"); `spec_change` v2 approved (23:43:48); its correction approved (23:44:54); `spec_change` v3 approved (23:45:55); its correction approved (23:46:45); the parked replan's `blocker` answered `retry` twice (23:51:52, 23:52:09), **neither reached the engine** (section 15).
 
 **The token.** The token was in `~/.config/surety/m5-subscription.token` (0600, 109 bytes), outside the repository, `~/.claude` and the run directory. The runs' own searches: M443 (g) and M444 (h), "the token in no file, git object or journal output": `records.token` hits **0** over the root `~/s5-final` and each repository; the units' journals 10 (M443) and 20 (M444) searched, **0 hits**; the units' properties while running `token_hits` 0. **My search of the copied records** (`docs/acceptance/reports/M5-real-lane/2026-10-16/`, 13 files: `state.json`, the five files of `observed/`, the two runner logs, the five transcripts), by the token file's bytes and their base64 form, the value never printed: **0 hits**; the same for the disposable deploy secret (`~/s5-final/secrets/ref_secret`): **0 hits**. Whether the token's value passed through any conversation is not in the records I read. Sean revokes the token (BS5 §12).
 
@@ -355,7 +367,7 @@ From `observed/pace-M443.json` and `observed/pace-M444.json` (the engine's `GET 
 
 **The run's total:** 50 invocations, **12.26 USD estimated**: the two projects above and the qualification fixture's 8 (0.24 USD, of which 2 rows `unknown`, below); billable 1,223,253, cached 7,545,410, output 286,470 tokens. Every row is dated 2026-10-16 UTC. Expected: M443 about 5 USD, M444 about 3, the attempts under 0.50 (BS5 §12): M443 and the attempts within, M444 at about twice (section 15).
 
-**The model observed.** Every one of the 50 ledger rows records `model_observed` equal to `model_requested`; the `runs` table's `model_observed` is null for all 47 runs, and the pace read, which reads the run's, says `unknown` for every run. A read that reports `unknown` where the ledger holds the observation: a finding, section 26.
+**The model observed.** Every one of the 50 ledger rows records `model_observed` equal to `model_requested`; the `runs` table's `model_observed` is null for all 47 runs, and the pace read, which reads the run's, says `unknown` for every run. **A known defect, carried to M6, not fixed in M5** (the driver): `runs.model_observed` is never set, so the pace read reports `unknown` although the ledger records the model (section 24; `M5-not-claimed.md`).
 
 **Unknown usage.** No session turn's usage was unknown: all 8 turns of the run directory settled with usage `recorded` (the continuation canary's 2, M443's 3, M444's 3). Two ledger rows have `cost_status` `unknown` and `usage_complete` 0: the two cancellation canaries (`run_01M53C1JDW…`, `run_01M53C5QFY…`, both `stopped` `human_stop`), on the qualification fixture project, each reserving its unknown allowance (296,599 and 296,927 tokens). No real project's run reserved its allowance. The caps in force (Sean's choice of 2026-10-14, E151 item 3): 2,000,000 billable tokens a run; 30 USD a day for M443, 20 for M444; 4,000,000 unknown tokens a day. No cap was reached.
 
@@ -386,11 +398,11 @@ From `observed/pace-M443.json` and `observed/pace-M444.json` (the engine's `GET 
 
 ## 20. Cases reported `not_exercised`
 
-By name: **M438's exhaust file** (`M438-a-role-domain-past-its-maximum`) off `mini-hp01` (plan §2.5), run only by `--lane exhaust` there (section 12); **H13** of every host qualification (the execution observer, optional, section 5). No real row was left unrun. No case of the `5bf01a4` gate reported `not_exercised` as a pass (its summary: 0 skipped, 0 todo, 0 empty files).
+By name: **M438's exhaust file** (`M438-a-role-domain-past-its-maximum`) off `mini-hp01` (plan §2.5), run only by `--lane exhaust` there (section 12); **H13** of every host qualification (the execution observer, optional, section 5). No real row was left unrun. No case of the gates at `5bf01a4` or `a92ceb6` reported `not_exercised` as a pass (each summary: 0 skipped, 0 todo, 0 empty files).
 
 ## 21. The packages and the rehearsal (M442)
 
-M442 at `5bf01a4`: 3 files, **55 tests passed** ((a) each role's package states what the engine reads; (b) the rehearsal's fakes under a package with one stated element removed fail; (c) the rehearsal plays from the package). The packages' elements are SEAM §454's registry, each rendered in its role's `prompt.md` as a `surety-reads` block (E151 item 1). **The package gaps the rehearsal found** before any paid step (E151 item 2): the authoring package forbade the toolchain it had to name; the phase Verifier's schema had no `signoffs`; the spec change's one-shot had no `changes`; the Builder's dependency interfaces were empty; the post-deploy target's value form was lost; the Architect was not told what `prepared_against` holds. **The package gaps the real runs found** that no rehearsal could (section 16): the covers rule (`e9509db`), the module path form (`f40f075`), the kept-stage rule (`e56385e`), the per-stage validation rule (`dc899f3`), the finding categories (`0863c17`), file-level inputs (`4ccbb9b`), nothing under `.surety/` a Builder's (`339e116`); still open, the Spec Writer reading `phase_size` as a cap on requirements per phase (V2 note) and not asking for experience or design criteria (#17).
+M442 at `a92ceb6` (as at `5bf01a4`): 3 files, **55 tests passed** ((a) each role's package states what the engine reads; (b) the rehearsal's fakes under a package with one stated element removed fail; (c) the rehearsal plays from the package). The packages' elements are SEAM §454's registry, each rendered in its role's `prompt.md` as a `surety-reads` block (E151 item 1). **The package gaps the rehearsal found** before any paid step (E151 item 2): the authoring package forbade the toolchain it had to name; the phase Verifier's schema had no `signoffs`; the spec change's one-shot had no `changes`; the Builder's dependency interfaces were empty; the post-deploy target's value form was lost; the Architect was not told what `prepared_against` holds. **The package gaps the real runs found** that no rehearsal could (section 16): the covers rule (`e9509db`), the module path form (`f40f075`), the kept-stage rule (`e56385e`), the per-stage validation rule (`dc899f3`), the finding categories (`0863c17`), file-level inputs (`4ccbb9b`), nothing under `.surety/` a Builder's (`339e116`); still open, the Spec Writer reading `phase_size` as a cap on requirements per phase (V2 note) and not asking for experience or design criteria (#17).
 
 ## 22. What M5 does not claim
 
@@ -403,8 +415,9 @@ BS5 §8's limits: the scripted backend's products are the test's, so a pass on t
 - **The real runs' owner was the driver**, an agent acting under Sean's standing instruction, not Sean; what the sessions produced depended on its answers (section 17). That a human owner would have answered alike is not claimed.
 - **The real lane ran at `5bf01a4`, the final engine is `a92ceb6`**: E153's code was not exercised by a real run.
 - **The acceptance lane is one run per journey**; the clean-run bar of section 16 was met on four runs at `295e6a7` and `339e116`, not at `5bf01a4`. M444 itself ended with a parked replan's question open (M444F-1).
-- **The gate's failures were not rerun alone** at `5bf01a4`; the split gate runs three workers, and the failures at `e1c0f69` of the same kind passed alone (E150 item 6's protocol).
-- **The pace read reports the run's model `unknown`** though the ledger observed it (section 18).
+- **The split gate runs three workers**: four of the five failures at `5bf01a4` were not rerun alone there; at `a92ceb6` three of the four non-report failures passed alone three times each (E150 item 6's protocol), and M66 fails on `mini-hp01`'s git at a fixture step (section 10).
+- **The pace read reports the run's model `unknown`** though the ledger observed it (section 18; a known defect carried to M6, section 24).
+- **The store's `engine_version` reads `0.0.0`** (the package version): a run's revision comes from the runner's header, not the store (section 2).
 - **Service domains have no recorded peak or maximum** (section 19).
 - **Wall-clock timestamps** are no more exact than this WSL2 clock, which was stepping after `wsl --shutdown` (findings file, 10-15; BS5 §4.1 rule 17); durations the engine measures are monotonic.
 - **The project-lane pace reads' figures were not retained** (section 11).
@@ -417,18 +430,17 @@ From E142 to E153, what stays provisional or open:
 - **E140's numerics** are trial values; section 19's peaks are the first real measurements.
 - **The driver's rulings** under Sean's delegation (E143 to E153, each "the rest the driver's"), among them the qualification step's place before phase 2 and the teardown in its deployment's `finally` (E151 item 4), the runner's drain-before-stop, the human-test scope rule (#12), the restart staleness rule (#14), the owed-finding rules (#21, #22), the embedded-ripgrep rule (L2-1): each provisional until Sean confirms it.
 - **The design questions the loops raised for Sean** (findings file), not decided: whether work held after a run ends `recovered` at restart should raise an owner question (objection 120's note); whether the engine may propose a requalification attempt itself (L4); the Alpha sign-off's fix path when the Reviewer asks for fixes (L5-2's note); an owner attestation route for human tests (#5, after M5).
+- **Known defects carried to M6, not fixed in M5** (the driver, 2026-10-17): (1) `runs.model_observed` is never set, so the pace read reports `unknown` although the ledger records the model (section 18); (2) the plan check counts a dependency check result that has not yet run as incomplete and spends a replan's repairs on it (M444F-1, section 15); (3) the parked third replan's blocker in M444's store was left open because the runner had already ended (section 15); (4) the shared seed's engine switch should wait for live runs (the mechanism behind M401 (h)'s failure at `5bf01a4`, fixed test-side at `93cdfb3`, section 10).
+- **M66's fixture on `mini-hp01`'s git 2.55.0**: fix in progress (`verify/m66-prune-fixture`, section 10).
 - **M4's open items** carried (BS5 §14): E134 item 6, E132 item 10, E133 item 5, E125 to E134's readings, E94 item 5, E106, E50, E51, E53 to E55.
 
 ## 25. Hands-on run (M446)
 
-`M5-hands-on.sh`'s file (`M446`) passed at `5bf01a4`, 7 of 7 (its form and guards). **No record of Sean's run of it** was found; what surprised him is his to add if he makes it. Sean did try the earlier real runs' Mechanica apps (findings file #17, 10-15: "it met the requirements but the design is so basic i am surprised it took so long and so many stages to build").
+`M5-hands-on.sh`'s file (`M446`) passed at `a92ceb6`, 7 of 7 (its form and guards). **No record of Sean's run of it** was found; what surprised him is his to add if he makes it. Sean did try the earlier real runs' Mechanica apps (findings file #17, 10-15: "it met the requirements but the design is so basic i am surprised it took so long and so many stages to build").
 
 ## 26. Questions for Sean
 
 1. **"Under Sean's command."** Every human act of the acceptance runs was the driver's under your standing instruction (section 17), as in M4 (`M4-not-claimed.md` section 6). Does that meet BS5 §1's condition?
-2. **M444's `surety deploy`** (23:36:58) has no line in the driver's act log. Who issued it?
-3. **The final gate and exhaustion lane at `a92ceb6`** (sections 10, 12): the four non-report failures at `5bf01a4` (M15 run-end, M440 (e1) and (e5), M401 (h)) were not rerun alone there; if they fail at `a92ceb6`, are they to be rerun alone under E150 item 6's protocol before acceptance?
-4. **The run's model in the pace read** (section 18): the ledger observes the model for every invocation, the run row never records it, and the pace read says `unknown`. A failing acceptance test of M441's per-run figure (a Verifier's to write), or a reading you accept?
-5. **M444F-1**: the plan check refusing a replan on dependency results still `unknown`, spending its repairs in seconds and parking. Fix before acceptance, or carry as an open item?
-6. **M444's cost** (6.51 USD against about 3): four refused Architect replans and two change runs. A figure for the benchmark's planning, or a cap to revisit?
-7. **The open gaps of section 16** (#18, #19, #20, L1-3, #6, #15, INK-2, INK2-2) and the design questions of section 24: which are M5's and which after it.
+2. **The four known defects carried to M6** (section 24), the driver's call: do you confirm they are not M5's?
+3. **M444's cost** (6.51 USD against about 3): four refused Architect replans and two change runs. A figure for the benchmark's planning, or a cap to revisit?
+4. **The open gaps of section 16** (#18, #19, #20, L1-3, #6, #15, INK-2, INK2-2) and the design questions of section 24: which are M5's and which after it.
