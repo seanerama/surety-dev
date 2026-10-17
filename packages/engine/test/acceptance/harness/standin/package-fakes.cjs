@@ -38,6 +38,7 @@ var SURETY_PACKAGE_FAKES = (function () {
   'use strict';
   const fs = require('node:fs');
   const path = require('node:path');
+  const crypto = require('node:crypto');
 
   // ---- the package -----------------------------------------------------------------------
 
@@ -147,6 +148,20 @@ var SURETY_PACKAGE_FAKES = (function () {
         } catch {
           return null;
         }
+      },
+      // M6 slice 46: a file the fake owns removed; a package file copied byte for byte.
+      remove(rel) {
+        try {
+          fs.rmSync(path.join(workspace, rel), { recursive: true, force: true });
+        } catch {
+          // nothing to remove
+        }
+      },
+      copyFrom(abs, rel) {
+        const p = path.join(workspace, rel);
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.copyFileSync(abs, p);
+        written[rel] = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')}`;
       },
       list(rel) {
         try {
@@ -607,6 +622,11 @@ var SURETY_PACKAGE_FAKES = (function () {
     const named = new Set(open.flatMap((o) => [o.check_key, o.key, o.check].filter((x) => typeof x === 'string')));
     const corrections = content.corrections ?? {};
     const keys = Object.keys(corrections).filter((k) => named.has(k) || [...named].some((n) => n.endsWith(k)));
+    // M6 slice 46: the design criteria's checks, from verifier.design_catalogue alone (SEAM.md §539).
+    const design = designChecks(pkg, ws, content);
+    if (design.length > 0 && keys.length === 0) return shapeResult(pkg, { summary: `the design criteria's checks: ${design.map((d) => d.key).join(', ')}`, proposal: { rationale: 'the approved design added criteria; their checks', requested_change_kind: 'tightening' } });
+    // A design rehearsal whose package states no design criteria: nothing to write, said so (its judgement names the element).
+    if (content.design && keys.length === 0) return shapeResult(pkg, { summary: 'no check written: the package states no design criteria', proposal: { rationale: 'no design criterion was stated to this run', requested_change_kind: 'tightening' } });
     // A correction that matches no open obligation fails loudly (M7 of the review): it never writes every correction.
     if (keys.length === 0) throw new Error(`rehearsal fake: no correction in the rehearsal's content matches the open obligations ${JSON.stringify([...named])}`);
     for (const k of keys) for (const [p, text] of Object.entries(corrections[k])) ws.write(p, text);
@@ -656,6 +676,338 @@ var SURETY_PACKAGE_FAKES = (function () {
     return shapeResult(pkg, { summary: 'signed off', signoffs: [{ scope: 'candidate' }] });
   }
 
+  // ---- the Designer (M6 slice 46; M537 (b), (c); SEAM.md §539) ----------------------------------
+  //
+  // The design tree written ONLY from the package's `designer.*` blocks
+  // (SEAM.md §538): the inventory it is drawn against, the schemas of the
+  // files (a file is written only where its schema is stated, its objects
+  // pruned to the schema's fields), the conventions each target requires,
+  // the layouts, the mockup kinds each capability admits and how a
+  // simulation is declared, the selection's defaults, the pinned-URL
+  // allowlist, the ratio the contrast reason states, the criterion
+  // catalogue. What a model writes and no package states (the colours, the
+  // type, the convention values, the criteria the owner wants with their
+  // paths, a library, a logo proposal) is CONTENT.design. Each turn rewrites
+  // the whole design (the files it owns removed first); the engine's
+  // inventory and placeholders are never touched but for the logo proposal
+  // in the manifest.
+
+  const DESIGN_ROOT = '.surety/design/';
+  const OWNED = ['design.json', 'tokens.json', 'flows.json', 'screens.json', 'navigation.json', 'criteria.json', 'mockups'];
+  const sub = (tpl, vars) => String(tpl ?? '').replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] === undefined ? `{{${k}}}` : String(vars[k])));
+  const lum = (hex) => {
+    const m = /^#([0-9a-fA-F]{6})$/.exec(String(hex ?? ''));
+    if (!m) return null;
+    const c = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255).map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratioOf = (a, b) => {
+    const la = lum(a);
+    const lb = lum(b);
+    return la === null || lb === null ? 0 : (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  };
+  const schemaFor = (R, rel) => ((R['designer.schemas'] && R['designer.schemas'].schemas) || []).find((x) => x && x.file === `${DESIGN_ROOT}${rel}`) || null;
+
+  // The tokens: the palette, and each candidate colour chosen by the ratio
+  // DESIGN_CONTRAST_BELOW_AA states; told no ratio, the first candidate.
+  function tokensOf(R, d) {
+    const reason = ((R['designer.check_reasons'] && R['designer.check_reasons'].reasons) || []).find((r) => r && r.code === 'DESIGN_CONTRAST_BELOW_AA');
+    const ratio = reason && typeof reason.ratio === 'number' ? reason.ratio : null;
+    const themes = {};
+    for (const [theme, colours] of Object.entries(d.palette || {})) {
+      themes[theme] = { ...colours };
+      for (const [token, candidates] of Object.entries((d.contrast_candidates || {})[theme] || {})) {
+        const pair = (d.pairs || []).find((p) => p.text === token);
+        const bg = pair ? themes[theme][pair.background] : null;
+        const fit = ratio === null ? null : candidates.find((c) => ratioOf(c, bg) >= ratio);
+        themes[theme][token] = fit || candidates[0];
+      }
+    }
+    return { unit: 'lu', themes, type: d.type || {}, space: d.space || {}, radius: d.radius || {}, duration: d.duration || {}, pairs: d.pairs || [] };
+  }
+
+  // The fixture path of an obligation from the inventory's list (a permission state reads its target's first interface's ok fixture).
+  function fixtureOf(inv, o) {
+    const iface = o.interface || ((inv.obligations || []).find((x) => x.target === o.target && x.interface) || {}).interface;
+    const state = o.interface ? o.state : 'ok';
+    const f = (inv.fixtures || []).find((x) => x.interface === iface && x.state === state);
+    if (!f) return null;
+    return f.path.startsWith(DESIGN_ROOT) ? f.path.slice(DESIGN_ROOT.length) : f.path;
+  }
+
+  // A screen's conventions: each its target requires (designer.conventions), its value the content's.
+  function conventionsOf(R, inv, target, root, d) {
+    const block = R['designer.conventions'];
+    const e = block && Array.isArray(block.targets) ? block.targets.find((x) => x && x.target === target) : null;
+    if (!e) return null;
+    const v = d.conventions || {};
+    const out = {};
+    for (const r of e.required || []) {
+      if (r === 'route|transient') out.route = v.route || '/';
+      else if (r === 'back') {
+        if (!root) out.back = v.back || 'exit';
+      } else if (v[r] !== undefined) out[r] = v[r];
+    }
+    const perms = ((inv.targets || []).find((t) => t.target === target) || {}).permissions || [];
+    if (e.if_permissions && perms.length > 0) out[e.if_permissions] = perms.map((permission) => ({ permission, prompt_when: d.permission_prompt_when, rationale: d.permission_rationale }));
+    return out;
+  }
+
+  function designerTurn(pkg, ws, content) {
+    const R = pkg.reads;
+    const d = content.design || {};
+    const invBlock = R['designer.inventory'];
+    const inv = invBlock && invBlock.inventory ? invBlock.inventory : null;
+    for (const f of OWNED) ws.remove(`${DESIGN_ROOT}${f}`);
+    if (!inv) return shapeResult(pkg, { summary: 'no inventory', reply: 'I was not given the interface inventory, so I cannot draw the design.', artifact_changed: true });
+    const layoutsOf = (target) => {
+      const L = R['designer.layouts'];
+      const e = L && Array.isArray(L.targets) ? L.targets.find((x) => x && x.target === target) : null;
+      return e ? e.layouts : null;
+    };
+    const mk = R['designer.mockup_kinds'];
+    const capOf = (target) => (((mk && mk.capabilities) || []).find((x) => x && x.target === target) || {}).preview_capability;
+    // Screens: one per UI requirement and target, each with every obligation of its target.
+    const screens = [];
+    const flowSteps = [];
+    const ifaces = new Map((inv.interfaces || []).map((i) => [i.name, i]));
+    for (const i of inv.interfaces || []) flowSteps.push({ key: `F1.${flowSteps.length + 1}`, title: i.name, interfaces: [i.name] });
+    let n = 0;
+    const roots = new Map();
+    for (const req of inv.ui_requirements || []) {
+      for (const target of req.targets || []) {
+        n += 1;
+        const key = `S${n}`;
+        const root = !roots.has(target);
+        if (root) roots.set(target, key);
+        const obligations = (inv.obligations || []).filter((o) => o.target === target);
+        const used = [...new Set(obligations.map((o) => o.interface).filter(Boolean))];
+        const inputs = [];
+        for (const name of used) {
+          const props = ((ifaces.get(name) || {}).request || {}).properties || {};
+          for (const [prop, shape] of Object.entries(props)) inputs.push({ interface: name, property: prop, label: `${prop[0].toUpperCase()}${prop.slice(1)}${shape && shape.unit ? ` (${shape.unit})` : ''}`, ...(shape && shape.unit ? { unit: shape.unit } : {}) });
+        }
+        screens.push({
+          key,
+          target,
+          title: d.title || 'Screen',
+          flow_steps: flowSteps.filter((s) => used.includes(s.interfaces[0])).map((s) => s.key),
+          requirements: [req.key],
+          interfaces: used,
+          states: obligations.map((o) => ({ obligation: o, fixture: fixtureOf(inv, o) })),
+          layouts: layoutsOf(target) || undefined,
+          inputs,
+          conventions: conventionsOf(R, inv, target, root, d) || undefined,
+        });
+      }
+    }
+    // Mockups: the first HTML kind the target's capability admits; a simulation declared as the package says.
+    const mockups = [];
+    const allow = R['designer.external_urls'];
+    const lib = d.library && allow && Array.isArray(allow.allowlist) && allow.allowlist.length > 0 ? `https://${allow.allowlist[0]}/npm/${d.library.name}@${d.library.version}/${d.library.file}` : null;
+    for (const s of screens) {
+      const cap = capOf(s.target);
+      const admitted = mk && mk.by_capability ? mk.by_capability[cap] || [] : [];
+      const kind = ['static_html', 'simulated_html'].find((k) => admitted.includes(k) && (k !== 'static_html' || s.target === 'web'));
+      if (!kind) continue;
+      const rel = `mockups/${s.target}/${s.key.toLowerCase()}.html`;
+      const t = (inv.targets || []).find((x) => x.target === s.target) || {};
+      const ff = (t.form_factors || [])[0];
+      const sim = kind === 'simulated_html' && mk.simulation && mk.simulation.declares ? { [mk.simulation.declares]: { target: s.target, ...(ff ? { form_factor: ff } : {}), layout: (s.layouts || [])[0] } } : {};
+      const html = [
+        '<!doctype html>',
+        '<html lang="en">',
+        `<head><meta charset="utf-8"><title>${s.key} ${d.title || ''} (${s.target})</title>${lib ? `<link rel="stylesheet" href="${lib}">` : ''}<link rel="stylesheet" href="../../tokens.css"></head>`,
+        '<body><main>',
+        `<h1>${d.title || ''}</h1>`,
+        ...s.states.map((st) => `<p data-state="${st.obligation.state}">${st.obligation.state}</p>`),
+        ...s.inputs.map((i) => `<label>${i.label} <input name="${i.property}"></label>`),
+        '</main></body>',
+        '</html>',
+        '',
+      ].join('\n');
+      ws.write(`${DESIGN_ROOT}${rel}`, html);
+      for (const st of s.states) st.mockup = rel;
+      mockups.push({ path: rel, kind, screens: [s.key], ...sim, external_urls: lib ? [lib] : [] });
+    }
+    // The selection: the defaults the package states; the layouts as the package states them.
+    const sf = R['designer.selection_floor'];
+    let selection;
+    if (sf && sf.defaults) {
+      const slots = new Map();
+      for (const x of sf.defaults.slots || []) slots.set(x.kind, [...new Set([...(slots.get(x.kind) || []), ...(x.variants || [])])]);
+      selection = { themes: sf.defaults.themes || [], slots: [...slots].map(([kind, variants]) => ({ kind, variants })), layouts: (inv.targets || []).map((t) => ({ target: t.target, layouts: layoutsOf(t.target) || [] })) };
+    }
+    // Criteria: each the owner wants where the catalogue applies it, its text from the content's template.
+    const cat = R['designer.criterion_catalogue'];
+    const criteria = [];
+    for (const w of d.criteria || []) {
+      const t = (inv.targets || []).find((x) => x.target === w.target);
+      const e = cat && Array.isArray(cat.kinds) ? cat.kinds.find((k) => k && k.kind === w.kind) : null;
+      if (!t || !e) continue;
+      const tOk = e.targets === 'all' || (Array.isArray(e.targets) && e.targets.includes(w.target));
+      const xOk = e.technologies === 'all' || (Array.isArray(e.technologies) && e.technologies.includes(t.ui_technology));
+      if (!tOk || !xOk) continue;
+      const req = (inv.ui_requirements || []).find((r) => (r.targets || []).includes(w.target));
+      if (!req) continue;
+      const paths = w.paths || [];
+      criteria.push({
+        requirement: req.key,
+        text: sub((d.criterion_text || {})[w.kind], { module: t.module, path0: paths[0], path1: paths[1], paths: paths.join(', '), slot: w.slot, variant: w.variant }),
+        kind: w.kind,
+        targets: [w.target],
+        ...(paths.length > 0 ? { paths } : {}),
+        ...(w.slot ? { slot: w.slot, variant: w.variant } : {}),
+      });
+    }
+    const conv = R['designer.conventions'];
+    const human_tests = (inv.targets || []).map((t) => {
+      const mine = screens.filter((s) => s.target === t.target);
+      const nc = conv && Array.isArray(conv.targets) ? (conv.targets.find((x) => x && x.target === t.target) || {}).not_checkable_yet || [] : [];
+      return {
+        target: t.target,
+        text: sub(d.human_test_text, { target: t.target, screens: mine.map((s) => s.key).join(', '), native: capOf(t.target) === 'native' ? '' : ', on an emulator or a device and not on the simulated preview' }),
+        screens: mine.map((s) => s.key),
+        not_checkable_yet: mine.flatMap((s) => nc.filter((c) => c !== 'permission_prompt' || (t.permissions || []).length > 0).map((convention) => ({ screen: s.key, convention }))),
+      };
+    });
+    // The logo proposal, in the manifest the engine wrote (idempotent across turns), its status from the schema's enum.
+    const manSchema = schemaFor(R, 'assets/manifest.json');
+    const manifest = parse(ws.read(`${DESIGN_ROOT}assets/manifest.json`), null);
+    const statusEnum = manSchema && manSchema.schema ? ((((manSchema.schema.properties || {}).slots || {}).items || {}).properties || {}).status : null;
+    if (d.logo_svg && manifest && Array.isArray(manifest.slots) && statusEnum && Array.isArray(statusEnum.enum) && statusEnum.enum.includes('proposed')) {
+      const digest = crypto.createHash('sha256').update(d.logo_svg).digest('hex');
+      const slot = manifest.slots.find((x) => x.kind === 'logo');
+      const full = slot ? (slot.variants || []).find((v) => v.name === 'full') : null;
+      if (slot && full && full.digest !== digest) {
+        ws.write(`${DESIGN_ROOT}assets/logo/proposed-full.svg`, d.logo_svg);
+        slot.variants = slot.variants.map((v) => (v.name === 'full' ? { name: 'full', format: 'svg', transparency: v.transparency || 'any', file: 'assets/logo/proposed-full.svg', digest } : v));
+        slot.slot_version += 1;
+        slot.status = 'proposed';
+        slot.provenance = 'designer';
+        slot.status_since = 1;
+        slot.history = [...(slot.history || []), { slot_version: slot.slot_version, design_version: 1, status: 'proposed', files: slot.variants.filter((v) => v.digest).map((v) => ({ variant: v.name, digest: v.digest })) }];
+        manifest.version += 1;
+        ws.write(`${DESIGN_ROOT}assets/manifest.json`, `${JSON.stringify(prune(manSchema.schema, manifest), null, 2)}\n`);
+      }
+    }
+    // Each machine file written only where the package states its schema, pruned to it.
+    const files = {
+      'tokens.json': tokensOf(R, d),
+      'flows.json': { flows: [{ key: 'F1', title: d.title || 'Flow', requirements: (inv.ui_requirements || []).map((r) => r.key), steps: flowSteps }] },
+      'screens.json': { screens },
+      'navigation.json': { targets: (inv.targets || []).map((t) => ({ target: t.target, entries: roots.has(t.target) ? [roots.get(t.target)] : [], edges: [] })) },
+      'criteria.json': { criteria, human_tests },
+    };
+    const names = {};
+    for (const [rel, value] of Object.entries(files)) {
+      const s = schemaFor(R, rel);
+      if (!s) continue;
+      ws.write(`${DESIGN_ROOT}${rel}`, `${JSON.stringify(prune(s.schema, value), null, 2)}\n`);
+      names[rel] = true;
+    }
+    const ds = schemaFor(R, 'design.json');
+    if (ds) {
+      const design = {
+        version: 1,
+        origin: 'intended',
+        inventory_digest: inv.inventory_digest,
+        selection,
+        targets: (inv.targets || []).map((t) => ({ module: t.module, target: t.target, ui_technology: t.ui_technology, form_factors: t.form_factors || [], preview_capability: t.preview_capability, layouts: layoutsOf(t.target) || [] })),
+        ...(inv.cross_platform ? { cross_platform: { targets: (inv.targets || []).map((t) => t.target), differences: [] } } : {}),
+        tokens_file: names['tokens.json'] ? 'tokens.json' : undefined,
+        flows_file: names['flows.json'] ? 'flows.json' : undefined,
+        screens_file: names['screens.json'] ? 'screens.json' : undefined,
+        navigation_file: names['navigation.json'] ? 'navigation.json' : undefined,
+        criteria_file: names['criteria.json'] ? 'criteria.json' : undefined,
+        assets_file: 'assets/manifest.json',
+        mockups,
+      };
+      ws.write(`${DESIGN_ROOT}design.json`, `${JSON.stringify(prune(ds.schema, design), null, 2)}\n`);
+    }
+    ws.write(`${DESIGN_ROOT}design.md`, `# ${d.title || 'The design'}\n\nDrawn from the interface inventory ${inv.inventory_digest}.\n`);
+    return shapeResult(pkg, { summary: 'the design written', reply: `The design is written: ${screens.length} screens, ${mockups.length} mockups, ${criteria.length} criteria.`, artifact_changed: true });
+  }
+
+  // Review mode (designer.review): a verdict per screen, each resting on the
+  // evidence its package lists; a native screen not observed; every verdict
+  // a proposal. A first design at Alpha draws the design too (D7 §10.6).
+  function designerReviewTurn(pkg, ws, content) {
+    const R = pkg.reads;
+    const rv = R['designer.review'] || {};
+    const review = parse(pkg.files['design/review.json'], {}) || {};
+    const obs = parse(pkg.files['design/observations.json'], {}) || {};
+    const approved = parse(pkg.files['design/approved/design.json'], null);
+    const approvedScreens = parse(pkg.files['design/approved/screens.json'], { screens: [] }) || { screens: [] };
+    if (review.first_design) designerTurn(pkg, ws, content);
+    const screens = [];
+    for (const o of obs.observations || []) screens.push({ target: o.target, key: o.screen, verdict: 'matches', observed_on: 'browser', evidence: [o.evidence], deltas: [] });
+    for (const o of obs.not_observed || []) screens.push({ target: o.target, key: o.screen, verdict: 'not_observed', not_observed_reason: o.reason || 'no_native_runtime', evidence: [], deltas: [] });
+    const owner = rv.owner || null;
+    if (owner && Array.isArray(owner.evidence)) {
+      const target = review.subject && review.subject.target;
+      for (const s of (approvedScreens.screens || []).filter((x) => x.target === target)) screens.push({ target, key: s.key, verdict: 'matches', observed_on: (owner.evidence[0] || {}).observed_on || 'device', evidence: owner.evidence.map((e) => e.id), deltas: [] });
+    }
+    const n = ws.list(`${DESIGN_ROOT}reviews`).filter((x) => /^review-\d+\.json$/.test(x)).length + 1;
+    const body = { ...(approved && approved.version ? { design_version: approved.version } : {}), subject: review.subject || {}, screens, revised_design: false, first_design: Boolean(review.first_design) };
+    const s = schemaFor(R, 'reviews/review-<n>.json');
+    ws.write(`${DESIGN_ROOT}reviews/review-${n}.json`, `${JSON.stringify(s ? prune(s.schema, body) : body, null, 2)}\n`);
+    return shapeResult(pkg, { summary: 'the review written', reply: `Review ${n}: ${screens.length} screens; every verdict is a proposal for you to confirm.`, artifact_changed: true });
+  }
+
+  // A UI Builder (or an asset_updated fix) places each effective asset file
+  // its package carries (design/effective-assets.json, SEAM.md §482) at its
+  // declared path, or where CONTENT.asset_paths puts it for the stage's
+  // target, and binds each; an asset_updated fix at the bound paths its
+  // prompt lists. Returns the bindings, or null for a package with no design.
+  function placeAssets(pkg, ws, content) {
+    const eff = parse(pkg.files['design/effective-assets.json'], null);
+    if (!Array.isArray(eff)) return null;
+    const screens = (parse(pkg.files['design/screens.json'], { screens: [] }) || { screens: [] }).screens || [];
+    const targets = [...new Set(screens.map((s) => s.target))];
+    const bound = [...String(pkg.prompt).matchAll(/^- `([^`]+)` \((\w+), (copy|derived)\)$/gm)].map((m) => ({ path: m[1], target: m[2], form: m[3] }));
+    const bindings = [];
+    for (const e of eff) {
+      const places = bound.length > 0
+        ? bound.map((b) => ({ target: b.target, path: b.path }))
+        : targets.map((t) => ({ target: t, path: ((content.asset_paths || {})[t] || {})[`${e.slot}/${e.variant}`] || (targets.length === 1 ? e.declared_path : undefined) })).filter((x) => x.path);
+      for (const pl of places) {
+        if (!fs.existsSync(path.join(pkg.dir, e.path))) continue;
+        ws.copyFrom(path.join(pkg.dir, e.path), pl.path);
+        bindings.push({ slot: e.slot, variant: e.variant, target: pl.target, path: pl.path, form: 'copy' });
+      }
+    }
+    return bindings;
+  }
+
+  // The design criteria's checks (verifier.design_catalogue): one acceptance
+  // check per criterion, covering it, its program the CONTENT's for its kind
+  // with the implemented paths the block names, reading a slot through the
+  // member the block states. Returns the definitions written.
+  function designChecks(pkg, ws, content) {
+    const R = pkg.reads;
+    const dc = R['verifier.design_catalogue'];
+    if (!dc || !Array.isArray(dc.criteria)) return [];
+    const kinds = R['verifier.kinds'];
+    const accept = kinds && Array.isArray(kinds.criteria_kinds) && kinds.criteria_kinds.includes('acceptance') ? 'acceptance' : null;
+    const floor = R['verifier.gate_kinds_floor'];
+    const gates = floor && Array.isArray(floor.gate_kinds) ? floor.gate_kinds : ['stage'];
+    const dir = definitionsDir(R);
+    const program = programOf(R, null);
+    const out = [];
+    for (const c of dc.criteria) {
+      const key = `design-${String(c.id).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      const tpl = (content.design_checks || {})[c.kind] || `// rehearsal design check {{criterion}} on {{paths}}\nprocess.exit(0);\n`;
+      const body = { files: { [`.surety/checks/run/${key}.mjs`]: sub(tpl, { criterion: c.id, paths: (c.paths || []).join(' '), path0: (c.paths || [])[0], slot: c.slot, variant: c.variant }) }, run: [`.surety/checks/run/${key}.mjs`] };
+      const { d, files } = checkDefinition(pkg, { ...content, checks: { [key]: body } }, { program, key, kind: accept, criteria: [c.id], gates });
+      if (c.slot && dc.asset_inputs && dc.asset_inputs.member) d[dc.asset_inputs.member] = [{ slot: c.slot, variant: c.variant }];
+      for (const [p, text] of Object.entries(files)) ws.write(p, text);
+      ws.write(`${dir}${d.key}.json`, `${JSON.stringify(d, null, 2)}\n`);
+      out.push(d);
+    }
+    return out;
+  }
+
   // ---- dispatch ------------------------------------------------------------------------------
 
   function play({ context, workspace, content = {} }) {
@@ -665,14 +1017,23 @@ var SURETY_PACKAGE_FAKES = (function () {
     const role = pkg.manifest.role;
     const kind = pkg.manifest.kind;
     let result;
-    if (kind === 'session' && role === 'spec_writer') result = specWriterTurn(pkg, ws);
+    if (kind === 'session' && role === 'designer') result = pkg.reads['designer.review'] ? designerReviewTurn(pkg, ws, content) : designerTurn(pkg, ws, content);
+    else if (kind === 'session' && role === 'spec_writer') result = specWriterTurn(pkg, ws);
     else if (kind === 'session' && role === 'architect') result = architectTurn(pkg, ws);
     else if (kind === 'session') result = shapeResult(pkg, { summary: 'rehearsal', reply: 'Noted.', artifact_changed: false });
     else if (kind === 'replan') result = replanRun(pkg, ws, content);
     else if (kind === 'spec_change') result = specChangeRun(pkg, ws);
     else if (kind === 'check_authoring') result = authoringRun(pkg, ws, content);
     else if (kind === 'check_correction') result = correctionRun(pkg, ws, content);
-    else if (kind === 'stage_build') result = builderRun(pkg, ws, content);
+    else if (kind === 'stage_build') {
+      result = builderRun(pkg, ws, content);
+      // M6 slice 46: a UI stage places the effective assets its package carries and binds them (SEAM.md §539).
+      const bindings = placeAssets(pkg, ws, content);
+      if (bindings && pkg.resultSchema && pkg.resultSchema.properties && 'asset_bindings' in pkg.resultSchema.properties) result.asset_bindings = bindings;
+    } else if (kind === 'fix' && pkg.files['design/effective-assets.json']) {
+      const bindings = placeAssets(pkg, ws, content) || [];
+      result = shapeResult(pkg, { summary: `the effective assets placed at ${bindings.length} bound paths`, asset_bindings: bindings });
+    }
     else if (role === 'reviewer') result = reviewerRun(pkg);
     else if (kind === 'phase_verification') {
       // The sign-off in the form the package states it (verifier.phase_signoff).
