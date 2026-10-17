@@ -67,11 +67,12 @@ export class SessionDriver {
   // workspace, a worktree of the project at the run's base made through the
   // journal as any run's is (D1 §7.3). A workspace that cannot be made ends
   // the run; the opening is refused.
-  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null; mode?: unknown }): Promise<{ status: number; body: unknown }> {
+  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null; mode?: unknown; review?: Record<string, unknown> }): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
-    const made = await this.rt.engine<{ run: Record<string, unknown> }>('session.open_tx', { project, ...args });
-    return this.withWorkspace(project, made.run.id as string);
+    const made = await this.rt.engine<{ run: Record<string, unknown>; review?: string }>('session.open_tx', { project, ...args });
+    const answer = await this.withWorkspace(project, made.run.id as string);
+    return made.review === undefined ? answer : { status: answer.status, body: { ...(answer.body as object), review: { id: made.review, subject: args.review } } };
   }
 
   async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
@@ -569,7 +570,7 @@ export class SessionDriver {
     };
     const content = { design: read('design.json'), screens: read('screens.json'), navigation: read('navigation.json'), criteria: read('criteria.json'), manifest: read('assets/manifest.json') };
     const findings = await this.rt.read<Record<string, unknown>[]>('design.session_findings', { run: facts.run });
-    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, blobs: tree.blobs, content, check: check.id, findings } };
+    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, tree: tree.tree, blobs: tree.blobs, content, check: check.id, findings } };
   }
 
   // A review-mode close (D7 §10.3): the review file read from the head, its

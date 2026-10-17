@@ -214,6 +214,7 @@ export function writeConfigVersion(
   args: { project: string; name: string; content: ConfigContent; identity: string; secretDigests: { ref: string; digest: string }[]; homeHash: string },
 ): CommandResult {
   if (!tx.db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
+  if (args.name === DESIGN_PREVIEW_ENV) throw environmentReserved(args.project);
   let env = tx.db.prepare('SELECT * FROM "environments" WHERE "project" = ? AND "name" = ? AND "prefix" IS NOT NULL').get(args.project, args.name) as EnvRow | undefined;
   const verifySpec = JSON.stringify({ identity_method: args.content.identity_method ?? 'none', target_set: args.content.targets });
   const answer = (status: number, e: EnvRow, c: ConfigRow): CommandResult => ({
@@ -907,7 +908,9 @@ function authorizeChecksComing(db: Db, project: string, candidate: string): bool
 export function requestFacts(db: Db, args: { project: string; candidate: string; environment: string }) {
   const candidate = getCandidate(db, args.candidate);
   if (!candidate || candidate.project !== args.project) throw notFound('candidate', args.candidate);
+  // A candidate is never deployed to the design preview (D7 §5.7; G4).
   const env = environmentByName(db, args.project, args.environment);
+  if (args.environment === DESIGN_PREVIEW_ENV || env?.name === DESIGN_PREVIEW_ENV) throw environmentReserved(args.project, 'Deploy the candidate to an environment of another name.');
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   const config = currentConfig(db, env);
   if (!config) throw notFound('environment configuration', args.environment);
@@ -1737,6 +1740,7 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
 // transaction committed before the answer.
 export function requestTeardown(tx: Tx, args: { project: string; environment: string; preempt?: boolean }): CommandResult {
   const env = environmentByName(tx.db, args.project, args.environment);
+  if (args.environment === DESIGN_PREVIEW_ENV || env?.name === DESIGN_PREVIEW_ENV) throw environmentReserved(args.project, `Stop the preview with surety design preview --stop --project ${args.project}.`);
   if (!env || env.prefix === null) throw notFound('environment', args.environment);
   // The relay closes when a teardown is asked for, ordinary or preempting
   // (D4 §5.2; the slice-28 review, m3): its row here, its listener after the
@@ -2209,8 +2213,8 @@ export function startDeployAttempt(
   const op = getOp(tx.db, args.operation)!;
   // Admission and allocation in one transaction (D4 §4.7; the slice-24
   // review, m4): the service domain holds its reservation from here.
-  if (op.kind === 'deploy' && args.service && serviceAdmissionHold(tx.db, { project: op.project }).admission !== 'granted') return { retry: true };
   const frozen = frozenOf(op);
+  if (op.kind === 'deploy' && args.service && serviceAdmissionHold(tx.db, { project: op.project, preview: frozen.preview !== undefined && frozen.preview !== null }).admission !== 'granted') return { retry: true };
   const env = getEnv(tx.db, frozen.environment)!;
   const latest = attemptsOf(tx.db, op.id).at(-1);
   const g = env.deployment_generation + 1;
@@ -2275,7 +2279,8 @@ export function startDeployAttempt(
     const policy = projectPolicy(tx.db, op.project) as Record<string, number>;
     // The check capacity it reserves: its project's effective check maximum
     // (D6 K2, E126; B09), no longer the ceiling.
-    const reservation = { memory: (frozen.preview ? policy.preview_memory_max : policy.service_memory_max) ?? null, check_capacity: args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
+    // A design preview reserves none (D7 §5.7: no check runs on a preview).
+    const reservation = { memory: (frozen.preview ? policy.preview_memory_max : policy.service_memory_max) ?? null, check_capacity: frozen.preview ? 0 : args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
     const runtimeDir = args.service ? serviceRuntimeDir(args.service.home, env.id, g) : null;
     tx.db
       .prepare(
@@ -2402,6 +2407,9 @@ export function launchLookup(db: Db, args: { attempt: string }) {
     attempt: a.id,
     operation: op.id,
     project: op.project,
+    // The design preview's deployment (D7 §5.7): its program is the
+    // engine's server, bound read-only into the domain at its own path.
+    preview: frozen.preview !== undefined && frozen.preview !== null,
     status: a.status,
     launch_state: a.launch_state,
     incarnation: a.incarnation,
@@ -4274,6 +4282,15 @@ export function qualificationAnswer(db: Db, args: { run: string }): CommandResul
 // release target and never the owner's to configure.
 export const DESIGN_PREVIEW_ENV = 'design-preview';
 
+// The reserved environment is the engine's to configure (D7 §5.7; G4;
+// SEAM.md §499): no owner's configuration of it, on any project, under any
+// policy.
+export const environmentReserved = (project: string, whatToDo = 'Configure an environment of another name; ask for the preview with surety design preview.'): Refusal =>
+  new Refusal(409, 'environment_reserved', `The environment ${DESIGN_PREVIEW_ENV} is reserved: the engine configures, deploys and tears it down for the design preview, and nobody else does.`, whatToDo, {
+    project,
+    environment: DESIGN_PREVIEW_ENV,
+  });
+
 interface PreviewRow {
   id: string;
   project: string;
@@ -4347,6 +4364,8 @@ export function previewArtifact(tx: Tx, args: { preview: string; sealed: SealedA
   const p = tx.db.prepare('SELECT * FROM "design_previews" WHERE "id" = ?').get(args.preview) as PreviewRow | undefined;
   if (!p) throw notFound('design preview', args.preview);
   const a = recordArtifact(tx, p.project, args.sealed);
+  // The preview's tree digest is the sealed tree's (SEAM.md §499).
+  tx.db.prepare('UPDATE "design_previews" SET "tree_digest" = ? WHERE "id" = ?').run(a.digest, p.id);
   return { digest: a.digest, path: a.path, manifest: JSON.parse(a.manifest) as unknown[] };
 }
 
@@ -4434,27 +4453,68 @@ export function previewFailed(tx: Tx, args: { preview: string; reason: string })
 // The preview torn down (`--stop`, or its time ran out): nothing of its unit left.
 export function previewTornDown(tx: Tx, args: { project: string; operation: string; reason: string }): void {
   const env = previewEnvOf(tx.db, args.project);
-  const rows = tx.db.prepare(`SELECT "id", "generation" FROM "design_previews" WHERE "project" = ? AND "status" IN ('deployed', 'deploying', 'failed')`).all(args.project) as { id: string; generation: number }[];
+  const rows = tx.db.prepare(`SELECT "id", "generation", "unit" FROM "design_previews" WHERE "project" = ? AND "status" IN ('deployed', 'deploying', 'failed')`).all(args.project) as { id: string; generation: number; unit: string | null }[];
   for (const r of rows) tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "id" = ?`).run(tx.at, r.id);
-  tx.emit('design.preview_torn_down', { project: args.project, operation: args.operation, ...(env ? { environment: env.id } : {}) }, { reason: args.reason, previews: rows.map((r) => r.id) });
+  // The generation torn down: the newest the teardown ended, else the newest of the project.
+  const latest = tx.db.prepare('SELECT "generation", "unit" FROM "design_previews" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project) as { generation: number; unit: string | null } | undefined;
+  const ended = rows.length > 0 ? rows.reduce((a, b) => (b.generation > a.generation ? b : a)) : latest;
+  // The units the teardown's attempt stopped, by exact name (N1).
+  const op = getOp(tx.db, args.operation);
+  const stopped = op ? ((parseJson<{ stop_units?: string[] }>(attemptsOf(tx.db, op.id).at(-1)?.capability ?? null)?.stop_units ?? []) as string[]) : [];
+  tx.emit('design.preview_torn_down', { project: args.project, operation: args.operation, ...(env ? { environment: env.id } : {}) }, {
+    generation: ended?.generation ?? null,
+    reason: args.reason,
+    unit: ended?.unit ?? null,
+    units_stopped: stopped,
+    previews: rows.map((r) => r.id),
+  });
 }
 
 // What the previewer reads: the reserved environment, its running service,
-// the latest preview, and the previews whose time has run out.
-export function previewState(db: Db, args: { project: string }) {
+// the latest preview, and whether a deployed one has reached its end
+// (D7 §5.7, A.7; SEAM.md §499):
+// - `approved`: a design approval's effect (`design.approved`) recorded
+//   after the preview was asked for, by event order (one that landed while
+//   it was deploying ends it once deployed);
+// - `ttl`: no Designer session of the project open, and `now` past the
+//   close of its newest Designer session, or the preview's deployment if
+//   later, plus the `design_preview_ttl` in force.
+export function previewState(db: Db, args: { project: string; now?: string }) {
   const env = previewEnvOf(db, args.project);
-  const latest = db.prepare('SELECT * FROM "design_previews" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project) as (PreviewRow & { ttl_until: string | null }) | undefined;
+  const latest = db.prepare('SELECT * FROM "design_previews" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project) as (PreviewRow & { deployed_at: string | null }) | undefined;
+  let end: 'ttl' | 'approved' | null = null;
+  if (latest?.status === 'deployed') {
+    // From the preview's request: an approval that landed while it was
+    // still deploying ends it once deployed (N9).
+    const requested = db.prepare(`SELECT "seq" FROM "events" WHERE "type" = 'design.preview_requested' AND json_extract("subject", '$.design_preview') = ? ORDER BY "seq" DESC LIMIT 1`).get(latest.id) as { seq: number } | undefined;
+    const approved = db.prepare(`SELECT "seq" FROM "events" WHERE "type" = 'design.approved' AND json_extract("subject", '$.project') = ? ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { seq: number } | undefined;
+    if (requested && approved && approved.seq > requested.seq) end = 'approved';
+    else if (args.now !== undefined && latest.deployed_at !== null) {
+      const open = db.prepare(`SELECT 1 FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "role" = 'designer' AND "state" <> 'ended' AND ("session_state" IS NULL OR "session_state" <> 'closing') LIMIT 1`).get(args.project);
+      if (!open) {
+        const closed = db
+          .prepare(`SELECT e."at" FROM "events" e JOIN "runs" r ON r."id" = json_extract(e."subject", '$.run') WHERE e."type" = 'session.closed' AND r."project" = ? AND r."role" = 'designer' ORDER BY e."seq" DESC LIMIT 1`)
+          .get(args.project) as { at: string } | undefined;
+        const from = Math.max(Date.parse(latest.deployed_at), closed ? Date.parse(closed.at) : 0);
+        const ttl = (projectPolicy(db, args.project) as Record<string, number>).design_preview_ttl ?? 86_400;
+        if (Date.parse(args.now) > from + ttl * 1000) end = 'ttl';
+      }
+    }
+  }
   return {
     environment: env ? { id: env.id, prefix: env.prefix } : null,
     running: env ? runningService(db, env.id) !== null : false,
     busy: env ? environmentLease(db, env.id) !== undefined : false,
-    latest: latest ? { id: latest.id, status: latest.status, generation: latest.generation, port: latest.port, ttl_until: latest.ttl_until } : null,
+    latest: latest ? { id: latest.id, status: latest.status, generation: latest.generation, port: latest.port } : null,
+    end,
   };
 }
 
-// Projects with a deployed preview past its time (D7 A.7 `design_preview_ttl`).
-export function previewsExpired(db: Db, args: { now: string }): string[] {
-  return (db.prepare(`SELECT DISTINCT "project" FROM "design_previews" WHERE "status" = 'deployed' AND "ttl_until" IS NOT NULL AND "ttl_until" < ?`).all(args.now) as { project: string }[]).map((r) => r.project);
+// Whether an adapter has a current qualification of the version this
+// engine builds, every fact of it the engine's now (D4 §2.6): a lapsed one
+// does not count (the design preview's `adapter_unqualified`, SEAM.md §499).
+export function adapterQualified(db: Db, adapter: string): boolean {
+  return qualificationOf(db, adapter, adapterVersion(adapter)) !== undefined;
 }
 
 // At start (the slice-40 review's B2): every design-preview operation an

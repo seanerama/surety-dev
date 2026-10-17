@@ -115,7 +115,7 @@ export function memAvailable(): number | null {
 export type Admitting =
   | { kind: 'role'; project?: string; memory?: number }
   | { kind: 'check'; bound?: boolean; project?: string; memory?: number }
-  | { kind: 'service'; memory: number; writable: number; project?: string };
+  | { kind: 'service'; memory: number; writable: number; project?: string; checkCapacity?: boolean };
 
 // Why a new domain may not be admitted now, or null (D6 §6.4, K2, B09 as
 // built: reserve + Σ admitted maxima + service reservations + self-test
@@ -171,18 +171,29 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
       return null;
     }
   };
+  // A design preview's service reserves no check capacity (D7 §5.7: no
+  // check runs on a preview; its reservation says `check_capacity: 0`).
+  const keepsCheck = (d: (typeof all)[number]): boolean => {
+    try {
+      return (JSON.parse(d.reservation ?? 'null') as { check_capacity?: unknown } | null)?.check_capacity !== 0;
+    } catch {
+      return true;
+    }
+  };
+  const checked = services.filter(keepsCheck);
   const unreadReservation = services.find((d) => reservationOf(d) === null);
   const serviceMemory = services.reduce((n, d) => n + (reservationOf(d) ?? 0), 0);
   const serviceWritable = services.reduce((n, d) => n + (projectPolicy(db, d.project).service_writable_bytes ?? 0), 0);
   const newService = admitting.kind === 'service' ? admitting : null;
+  const newChecked = newService !== null && newService.checkCapacity !== false;
   // The check capacity kept free for post-deploy checks: while a service runs
   // (or is admitted), unless a deployment verification's check domain already
   // holds it or the domain admitted is such a check itself (Q5).
   const admittingBound = admitting.kind === 'check' && admitting.bound === true;
-  const reserveCheck = (services.length > 0 || newService !== null) && !admittingBound && !running.some((d) => d.profile === 'check' && d.bound === 1);
+  const reserveCheck = (checked.length > 0 || newChecked) && !admittingBound && !running.some((d) => d.profile === 'check' && d.bound === 1);
   // Its size: the largest effective check maximum among the projects it
   // serves, once (E126; B09).
-  const servedProjects = [...new Set([...services.map((d) => d.project), ...(newService?.project ? [newService.project] : [])])];
+  const servedProjects = [...new Set([...checked.map((d) => d.project), ...(newChecked && newService?.project ? [newService.project] : [])])];
   const capacity = reserveCheck ? Math.max(0, ...servedProjects.map((p) => effectiveProfileMax(db, p, 'check'))) || s.domain_memory_max : 0;
   const newDomains = admitting.kind === 'service' ? 0 : 1;
   const ownMax =
@@ -285,9 +296,12 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
 }
 
 // Admission of a service domain for a project (D4 §4.7): `granted`, or held
-// with why.
-export function serviceAdmissionHold(db: Db, args: { project: string }): { admission: 'granted' | 'held'; hold: EnvelopeHold | null } {
-  const p = projectPolicy(db, args.project);
-  const h = envelopeHold(db, { kind: 'service', memory: p.service_memory_max!, writable: p.service_writable_bytes!, project: args.project });
+// with why. A design preview's (D7 §5.7) at `preview_memory_max`, with no
+// shared check capacity kept for it.
+export function serviceAdmissionHold(db: Db, args: { project: string; preview?: boolean }): { admission: 'granted' | 'held'; hold: EnvelopeHold | null } {
+  const p = projectPolicy(db, args.project) as Record<string, number>;
+  const h = args.preview
+    ? envelopeHold(db, { kind: 'service', memory: p.preview_memory_max!, writable: p.service_writable_bytes!, project: args.project, checkCapacity: false })
+    : envelopeHold(db, { kind: 'service', memory: p.service_memory_max!, writable: p.service_writable_bytes!, project: args.project });
   return { admission: h === null ? 'granted' : 'held', hold: h };
 }

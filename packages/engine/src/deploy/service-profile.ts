@@ -42,6 +42,10 @@ export interface ServicePlanInput {
   node: string;
   initNodeCopy: string;
   initScript: string;
+  // Engine files the application runs, bound read-only (and not
+  // executable) at their own paths: the design preview's server (D7 §5.7;
+  // SEAM.md §499). None for any other service.
+  programs?: string[];
 }
 
 // `mountPoints`: the host's mount points the builder accounts for (the
@@ -72,6 +76,13 @@ export function buildServicePlan(input: ServicePlanInput, mountPoints: string[] 
   const first = { skeleton: b.skeleton, fstab: b.fstab };
   b.second();
   b.entry({ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' });
+  // The engine's programs, bound in the second phase, after the volatile
+  // /tmp, /surety/home and /surety/state are mounted: at its own path the
+  // bind is then on top whatever mount holds that path, so an install under
+  // /tmp is not hidden by the domain's /tmp (the slice-42 review). Its
+  // directories are made where that path lies (in the volatile filesystem
+  // under /tmp, in the root otherwise).
+  for (const program of input.programs ?? []) b.bind(realpathSync(program), { target: program, noexec: true });
   return {
     stage,
     vol,

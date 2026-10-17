@@ -10,6 +10,9 @@ export interface DesignTreeAt {
   // path relative to .surety/design/ → bytes, and → blob id.
   files: Map<string, Buffer>;
   blobs: Record<string, string>;
+  // The git tree id of `.surety/design/` at the revision (D7 A.3
+  // `design_revisions.tree_blob`; SEAM.md §501), null with no such tree.
+  tree: string | null;
 }
 
 export async function designTreeAt(repo: string, rev: string): Promise<DesignTreeAt | null> {
@@ -27,7 +30,9 @@ export async function designTreeAt(repo: string, rev: string): Promise<DesignTre
     files.set(rel, r.bytes);
     blobs[rel] = e.oid;
   }
-  return { files, blobs };
+  const t = await git(ctx, ['rev-parse', '--verify', '--quiet', `${rev}:${DESIGN_ROOT.replace(/\/$/, '')}`]);
+  const designTree = t.code === 0 && /^[0-9a-f]{40}$/.test(t.stdout.trim()) ? t.stdout.trim() : null;
+  return { files, blobs, tree: designTree };
 }
 
 // The design tree's size in a git tree (D7 §5.5; SEAM.md §493): every blob

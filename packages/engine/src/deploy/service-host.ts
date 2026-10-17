@@ -61,12 +61,14 @@ import { pausePoint, seamLauncherBarriers, seamLauncherReached, seamTakeDeployFa
 import { exeSha, innerPid, membersNamed, procStat, cgroupOf, cmdlineOf } from './identity.js';
 import { showUnits } from './adapters/local-service.js';
 import { APP_DIR, INGRESS_SOCKET, buildServicePlan, serviceEnvironment } from './service-profile.js';
+import { previewServerPath } from '../design/preview/path.js';
 
 type Msg = Record<string, unknown>;
 type Lookup = {
   attempt: string;
   operation: string;
   project: string;
+  preview: boolean;
   status: string;
   launch_state: string | null;
   incarnation: string | null;
@@ -1034,6 +1036,8 @@ export class ServiceHost {
             node: engineNode(),
             initNodeCopy: await initNodeIn(area, x.copy),
             initScript: INIT_SCRIPT,
+            // The design preview runs the engine's own server, and only it.
+            ...(lk.preview && lk.start?.[1] === previewServerPath() ? { programs: [lk.start[1]] } : {}),
           });
           ch.send({ t: 'plan', plan });
         } else if (m.stage === 'init') {

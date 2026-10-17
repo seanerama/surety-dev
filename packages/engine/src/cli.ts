@@ -13,7 +13,7 @@ import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
-import { parseDesignCommand } from './design/design-command.js';
+import { designExport, parseDesignCommand, parseDesignExport } from './design/design-command.js';
 import { deployTimeoutMs, parseDeploy } from './deploy/deploy-command.js';
 import { paceLines, parsePace, parseSession, settledText, turnOf } from './sessions/session-command.js';
 import { configureHarness, setHarnessSwitches, setPackageOmit, setProbeOverrides, setRealLane } from './testing/seam.js';
@@ -46,6 +46,7 @@ if (command === 'env') {
   await envCommand(args);
 }
 if (command === 'design') {
+  if (args[0] === 'export') await designExportCommand(args.slice(1));
   await envCommand(args, parseDesignCommand);
 }
 if (command === 'qualify-adapter') {
@@ -410,6 +411,21 @@ async function contractCommand(argv: string[]): Promise<never> {
 // the attempt's qualification_approval.
 // `surety env …` (deploy/env-command.ts; SEAM.md §§313, 317): one request
 // to the running engine's environment routes, its answer printed.
+async function designExportCommand(argv: string[]): Promise<never> {
+  const parsed = parseDesignExport(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { code, out } = await designExport(home, parsed);
+    (code === 0 ? process.stdout : process.stderr).write(`${out}\n`);
+    process.exit(code);
+  } catch (err) {
+    process.stderr.write(`${JSON.stringify({ code: 'export_failed', reason: `The design could not be exported: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`);
+    process.exit(1);
+  }
+}
+
 async function envCommand(argv: string[], parse: (argv: string[]) => ReturnType<typeof parseEnv> = parseEnv): Promise<never> {
   const parsed = parse(argv);
   if (typeof parsed === 'string') usage(parsed);
