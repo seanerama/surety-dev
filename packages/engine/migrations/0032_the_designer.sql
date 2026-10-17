@@ -6,10 +6,10 @@
 -- change-request sources `design` and `design_review`; the obligation reason
 -- `asset_version_changed` (G14); and D7 A.3's tables.
 --
--- Seven tables are rebuilt because SQLite cannot widen a CHECK constraint in
+-- Six tables are rebuilt because SQLite cannot widen a CHECK constraint in
 -- place (as 0023 did): `runs` and `ledger_rows` (role), `decisions` (kind),
--- `records` (kind), `work_items` (held), `spec_change_requests` (source) and
--- `check_obligations` (reason). Every row is kept as it is; the two triggers
+-- `records` (kind), `spec_change_requests` (source) and `check_obligations`
+-- (reason); `work_items.held` is remade as 0031_carried_corrections remade it. Every row is kept as it is; the two triggers
 -- whose bodies name a rebuilt table are dropped for the rebuild and recreated
 -- after it, unchanged.
 
@@ -187,53 +187,16 @@ CREATE INDEX records_by_run ON records(run);
 CREATE INDEX records_by_project ON records(project, published);
 
 -- ---- work_items ----
-CREATE TABLE work_items_0031 (
-  id TEXT PRIMARY KEY,
-  created_at TEXT NOT NULL,
-  project TEXT NOT NULL REFERENCES projects(id),
-  seq INTEGER NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN (
-    'stage_build', 'fix', 'verification', 'review', 'phase_verification', 'replan', 'assessment',
-    'spec_change', 'check_correction', 'check_authoring', 'triage_accept', 'export', 'publish', 'deploy', 'rollback',
-    'adoption_baseline', 'conformance')),
-  subject TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying', 'complete',
-    'awaiting_decision', 'held', 'parked', 'cancelled')),
-  blocker TEXT,
-  depends_on TEXT,
-  trigger_source TEXT NOT NULL,
-  trigger_id TEXT NOT NULL,
-  trigger_generation INTEGER NOT NULL,
-  trigger_consumed_at TEXT,
-  repair_attempts INTEGER NOT NULL,
-  no_progress_count INTEGER NOT NULL,
-  progress_key TEXT,
-  preflight_refusals INTEGER NOT NULL,
-  prior_status TEXT CHECK (prior_status IN (
-    'eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying', 'complete',
-    'awaiting_decision', 'held', 'parked', 'cancelled')),
-  dispatch_hold INTEGER NOT NULL CHECK (dispatch_hold IN (0, 1)),
-  continuation TEXT CHECK (continuation IN ('executing', 'integrating', 'verifying')),
-  repair_due INTEGER NOT NULL DEFAULT 0 CHECK (repair_due IN (0, 1)),
-  chain INTEGER NOT NULL DEFAULT 0,
-  continue_from TEXT,
-  profile TEXT CHECK (profile IS NULL OR profile IN ('role', 'probe', 'check')),
-  qualification_attempt TEXT REFERENCES qualification_attempts(id),
-  canary_kind TEXT CHECK (canary_kind IS NULL OR canary_kind IN ('positive', 'cancellation', 'containment')),
-  check_repair TEXT,
-  check_conflict TEXT,
-  -- K3: the owner's `continue` at an autonomy boundary, recorded, so that the
-  -- boundary does not fall again for the same item under `stage`.
-  boundary_passed_at TEXT, held TEXT CHECK (held IN (
-  'resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy', 'design_pending', 'design_stale')), trigger_evidence TEXT, end_cause TEXT CHECK (end_cause IS NULL OR end_cause IN ('superseded', 'plan_replaced')), held_intervals TEXT, chain_origin TEXT, milestones_met TEXT,
-  UNIQUE (project, seq),
-  UNIQUE (project, trigger_source, trigger_id, trigger_generation)
-);
-INSERT INTO work_items_0031 SELECT * FROM work_items;
-DROP TABLE work_items;
-ALTER TABLE work_items_0031 RENAME TO work_items;
-CREATE INDEX work_items_by_status ON work_items(project, status);
+-- The HoldReasons `design_pending` and `design_stale` (D7 §8.2): the
+-- column's CHECK widened as 0031_carried_corrections widened it, by remaking
+-- the column (renamed, added again with the wider CHECK, its values copied,
+-- the old one dropped).
+ALTER TABLE work_items RENAME COLUMN held TO held_0032;
+ALTER TABLE work_items ADD COLUMN held TEXT CHECK (held IN (
+  'resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy', 'prerequisite_results',
+  'design_pending', 'design_stale'));
+UPDATE work_items SET held = held_0032;
+ALTER TABLE work_items DROP COLUMN held_0032;
 
 -- ---- spec_change_requests ----
 CREATE TABLE spec_change_requests_0031 (

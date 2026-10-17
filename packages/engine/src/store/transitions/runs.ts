@@ -5,6 +5,8 @@
 // that between transitions and hands each result to the next one.
 
 import { notePeakDomains } from '../../plan/pace.js';
+import { IN_FLIGHT, type PendingPrerequisite, pendingPrerequisites, replanTarget } from '../../plan/bundle.js';
+import { PREREQUISITES_PENDING } from '../../plan/check.js';
 import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
@@ -235,6 +237,40 @@ export interface Claim {
 // Why an item may not be dispatched now (D1 §8.1 step 8), or null if it may.
 // `check`: false for a projection, which reads the budget without being a
 // budget check (D1 §6.6 governs the check, not the read).
+// The dispatch blocker of a replan held for its prerequisite results (M543):
+// a dependency hold (scheduler/holds.ts), its interval naming the results.
+export { PREREQUISITES_PENDING };
+
+// A replan's prerequisite results still to come (plan/bundle.ts
+// pendingPrerequisites), for the phase the item plans; null for any other
+// item or when nothing is pending.
+// A run of the item that ended held on its prerequisite results (the
+// run-end fallback, below) holds the item until every execution it named
+// has left the in-flight set, whatever the approved roadmap reads: the
+// commit it ran on may have named a dependency the roadmap does not, and
+// dispatching again at once would pay for a run that ends held again (the
+// review's finding 1).
+export function replanPendingPrerequisites(db: Tx['db'], item: Pick<WorkRow, 'id' | 'project' | 'kind'>): PendingPrerequisite[] | null {
+  if (item.kind !== 'replan') return null;
+  const target = replanTarget(db, item);
+  const pending = [...((target === null ? null : pendingPrerequisites(db, item.project, target.depends_on)) ?? [])];
+  const last = db.prepare(`SELECT "reason_detail" FROM "runs" WHERE "work_item" = ? AND "state" = 'ended' ORDER BY "seq" DESC LIMIT 1`).get(item.id) as { reason_detail: string | null } | undefined;
+  let held: { hold?: string; pending?: PendingPrerequisite[] } = {};
+  try {
+    held = last?.reason_detail ? (JSON.parse(last.reason_detail) as typeof held) : {};
+  } catch {
+    held = {};
+  }
+  if (held.hold === 'prerequisite_results' && Array.isArray(held.pending)) {
+    for (const p of held.pending) {
+      if (pending.some((x) => x.execution === p.execution)) continue;
+      const x = db.prepare('SELECT "status" FROM "check_executions" WHERE "id" = ?').get(p.execution) as { status: string } | undefined;
+      if (x && IN_FLIGHT.includes(x.status)) pending.push({ ...p, status: x.status });
+    }
+  }
+  return pending.length > 0 ? pending : null;
+}
+
 export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean } = {}): string | null {
   // A canary's item is run only by its attempt's own dispatch (K10).
   if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
@@ -301,6 +337,19 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     if (design && (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" = 'awaiting_human'`).get(item.project) as { n: number }).n > 0) {
       return 'depends on a protected proposal not yet applied or rejected';
     }
+  }
+  // A phase verification of a superseded candidate is never run (M545;
+  // INK-2): the phase step retires it (plan/phase.ts
+  // retireSupersededVerifications); until then it is not dispatched.
+  if (item.kind === 'phase_verification') {
+    let candidate: unknown;
+    try {
+      candidate = (JSON.parse(item.subject) as { candidate?: unknown }).candidate;
+    } catch {
+      candidate = undefined;
+    }
+    const c = typeof candidate === 'string' ? (db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ?').get(candidate) as { superseded_by: string | null } | undefined) : undefined;
+    if (c && c.superseded_by !== null) return `candidate ${String(candidate)} was superseded by candidate ${c.superseded_by}`;
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
@@ -377,6 +426,13 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
       );
       if (requeued > 0) return `depends on the checks the correction of specification change request ${request} re-queued`;
     }
+    // Held, not refused, while the results the plan check's dependency
+    // clause would read are still to come (M543; M444F-1): run now, the
+    // check would read them `unknown` and spend the replan's repair on a
+    // result not yet observed. A lack no execution in flight will settle is
+    // not held: the plan check refuses it as built.
+    const pending = replanPendingPrerequisites(db, item);
+    if (pending !== null) return `${PREREQUISITES_PENDING}: ${pending.map((x) => `${x.key} (${x.status}) on ${x.candidate}`).join(', ')}`;
   }
   if (PROTECTED_WRITERS.includes(item.kind)) {
     const writer = live(
@@ -1335,6 +1391,17 @@ function workAfterRun(tx: Tx, run: RunRow): void {
           const deps = JSON.parse(item.depends_on ?? '[]') as (string | Milestone)[];
           deps.push({ milestone: 'spec_change_requests', requests: open });
           tx.db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), item.id);
+          return;
+        }
+      }
+      // A replan whose plan check read its prerequisite results still to come
+      // (M543; M444F-1): not refused and no repair spent; back to wait,
+      // held while they are in flight (dispatchBlocker), and checked again
+      // once they are recorded.
+      if (item.kind === 'replan' && run.reason_detail) {
+        const detail = JSON.parse(run.reason_detail) as { hold?: string; pending?: unknown };
+        if (detail.hold === 'prerequisite_results') {
+          transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'prerequisite_results_pending', pending: detail.pending ?? [] });
           return;
         }
       }

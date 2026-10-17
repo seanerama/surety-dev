@@ -30,8 +30,8 @@ import { nowIso } from '../clock.js';
 import { commitContent, messageText } from '../git/commit.js';
 import { repoContext, worktreeContext } from '../git/exec.js';
 import { catBlob, isAncestor, listTree, mergeBase, treeOf } from '../git/repo.js';
-import type { BundleContent, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
-import { artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute, touchedCriteria } from '../plan/check.js';
+import type { BundleContent, PendingPrerequisite, ReplanBaseline, ReplanPrepared } from '../plan/bundle.js';
+import { PREREQUISITES_PENDING, artifactDiff, checkPlan, computeChanges, executionInputsDigest, specChangeRoute, touchedCriteria } from '../plan/check.js';
 import { parseSpecification } from '../spec/semantics.js';
 import { discover } from '../checks/discovery.js';
 import { proposedCheckRefusal, proposesChecks } from './report.js';
@@ -340,6 +340,14 @@ export class Acceptor {
         if (role === 'architect' && plans.plans.length > 0) {
           const prepared = await this.replanOf(facts, target.sha, plans.plans.map((x) => x.path), base);
           if (prepared !== null && 'refused' in prepared) return failed('invalid_result', prepared.refused);
+          // Held for its prerequisite results (M543): not refused, no repair
+          // spent; the run's end returns the item to wait for them.
+          if (prepared !== null && 'held' in prepared) {
+            return failed('invalid_result', `${PREREQUISITES_PENDING}: the plan check's dependency clause reads ${prepared.held.map((x) => `${x.key} on ${x.candidate} (${x.status})`).join(', ')}; the replan waits for their results and is checked again after`, {
+              hold: 'prerequisite_results',
+              pending: prepared.held,
+            });
+          }
           if (prepared !== null) {
             replan = prepared.replan;
             legacy = [];
@@ -451,7 +459,7 @@ export class Acceptor {
 
   // A replan's B.5 plan, checked against the approved bundle (D6 §5.3,
   // §5.4): null when the commit carries no plan in that form.
-  private async replanOf(facts: AcceptFacts, sha: string, paths: string[], base: string): Promise<{ replan: ReplanPrepared } | { refused: string } | null> {
+  private async replanOf(facts: AcceptFacts, sha: string, paths: string[], base: string): Promise<{ replan: ReplanPrepared } | { refused: string } | { held: PendingPrerequisite[] } | null> {
     const ctx = repoContext(facts.project.repo);
     let plan: PhasePlanFile | null = null;
     for (const path of paths) {
@@ -556,6 +564,16 @@ export class Acceptor {
       return { refused: 'spec_change_requests is a retrofit replan\'s field: this project was not adopted, and its specification changes are the owner\'s requests' };
     }
     if (check.outcome !== 'passed') {
+      // Refused only for a dependency whose results are still to come (M543;
+      // M444F-1): executions of the prerequisite phase's checks queued or
+      // running on the newest candidate. Not refused, and no repair spent:
+      // the replan goes back to wait for them (store/transitions/runs.ts),
+      // held while they are in flight, and is checked again after.
+      if (check.reasons.length > 0 && check.reasons.every((r) => r.code === 'PLAN_DEPENDENCY_INCOMPLETE')) {
+        const dependsOn = roadmap.phases.find((ph) => ph.number === plan!.phase)?.depends_on ?? [];
+        const pending = await this.rt.read<PendingPrerequisite[] | null>('replan.pending_prerequisites', { project: facts.project.id, depends_on: dependsOn });
+        if (pending !== null) return { held: pending };
+      }
       // Recorded as a refused check, with the requests the result carried
       // (D6 §8.3; SEAM.md §383), before the run fails its acceptance.
       await this.rt.engine('replan.record_refused', { project: facts.project.id, run: facts.run.id, phase: plan.phase, check, requests, declared });

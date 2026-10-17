@@ -139,18 +139,33 @@ export function transitionWork(tx: Tx, item: WorkRow, to: WorkStatus, changes: W
 // `work.hold_began` and closed with `work.hold_ended` when the reason changes
 // or the item leaves `eligible`; `held` is the reason now. No status
 // changes. D1's `work.held` (a Stop's status change) is another thing.
-export type HoldReason = 'resource_envelope' | 'chain_boundary' | 'depends_on' | 'authoring_readiness' | 'open_decision' | 'session_busy' | 'design_pending' | 'design_stale';
-export function setHold(tx: Tx, item: Pick<WorkRow, 'id' | 'project' | 'status'>, reason: HoldReason | null): void {
+export type HoldReason = 'resource_envelope' | 'chain_boundary' | 'depends_on' | 'authoring_readiness' | 'open_decision' | 'session_busy' | 'prerequisite_results' | 'design_pending' | 'design_stale';
+// A hold may name what it waits on (M543: a replan's prerequisite results,
+// each by its check, candidate and execution): kept on its interval, every
+// result named while it lasted, and on its events.
+export interface HoldDetail {
+  pending?: { phase: number; key: string; candidate: string; execution: string; status: string }[];
+}
+export function setHold(tx: Tx, item: Pick<WorkRow, 'id' | 'project' | 'status'>, reason: HoldReason | null, detail: HoldDetail | null = null): void {
   const row = tx.db.prepare('SELECT "held", "held_intervals" FROM "work_items" WHERE "id" = ?').get(item.id) as { held: string | null; held_intervals: string | null } | undefined;
   if (!row) return;
-  let intervals: { from: string; to?: string; reason: string }[] = [];
+  let intervals: { from: string; to?: string; reason: string; pending?: NonNullable<HoldDetail['pending']> }[] = [];
   try {
     intervals = row.held_intervals ? (JSON.parse(row.held_intervals) as typeof intervals) : [];
   } catch {
     intervals = [];
   }
   const open = intervals.length > 0 && intervals[intervals.length - 1]!.to === undefined ? intervals[intervals.length - 1]! : null;
+  // The same hold goes on; a result it now waits on that its interval does
+  // not name yet is added to it: what it waited on, not only its first.
   if ((open?.reason ?? null) === reason) {
+    const seen = new Set((open?.pending ?? []).map((r) => r.execution));
+    const added = (detail?.pending ?? []).filter((r) => !seen.has(r.execution));
+    if (open && added.length > 0) {
+      open.pending = [...(open.pending ?? []), ...added];
+      tx.db.prepare('UPDATE "work_items" SET "held" = ?, "held_intervals" = ? WHERE "id" = ?').run(reason, JSON.stringify(intervals), item.id);
+      return;
+    }
     if (row.held !== reason) tx.db.prepare('UPDATE "work_items" SET "held" = ? WHERE "id" = ?').run(reason, item.id);
     return;
   }
@@ -159,8 +174,8 @@ export function setHold(tx: Tx, item: Pick<WorkRow, 'id' | 'project' | 'status'>
     tx.emit('work.hold_ended', { project: item.project, work_item: item.id }, { reason: open.reason, status: item.status, from: open.from });
   }
   if (reason !== null) {
-    intervals.push({ from: tx.at, reason });
-    tx.emit('work.hold_began', { project: item.project, work_item: item.id }, { reason, status: item.status });
+    intervals.push({ from: tx.at, reason, ...(detail?.pending ? { pending: detail.pending } : {}) });
+    tx.emit('work.hold_began', { project: item.project, work_item: item.id }, { reason, status: item.status, ...(detail?.pending ? { pending: detail.pending } : {}) });
   }
   tx.db.prepare('UPDATE "work_items" SET "held" = ?, "held_intervals" = ? WHERE "id" = ?').run(reason, JSON.stringify(intervals), item.id);
 }

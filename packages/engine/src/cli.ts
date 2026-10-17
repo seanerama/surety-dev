@@ -110,6 +110,7 @@ const harnessOnly: string[] = [];
 const secretFiles: { ref: string; path: string }[] = [];
 const providerCaps: { ref: string; usd: number }[] = [];
 let realLane = false;
+let engineRevisionUnread = false;
 for (let i = 0; i < args.length; i++) {
   const flag = args[i]!;
   if (flag === '--harness') {
@@ -117,6 +118,10 @@ for (let i = 0; i < args.length; i++) {
   } else if (flag === '--harness-real-lane') {
     harnessOnly.push(flag);
     realLane = true;
+  } else if (flag === '--harness-engine-revision-unread') {
+    // SEAM.md §474 (M544): this start records its revision as unreadable.
+    harnessOnly.push(flag);
+    engineRevisionUnread = true;
   } else if (flag === '--secret-file' || flag === '--provider-cap-usd') {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -280,6 +285,7 @@ const switchProblem = setHarnessSwitches({
   serviceProfileVariant: serviceProfileVariantValue,
   hostFactsUnread: hostFactUnreadValues,
   profileMaxima: profileMaximaValue,
+  engineRevisionUnread,
 });
 if (switchProblem !== null) usage(switchProblem);
 

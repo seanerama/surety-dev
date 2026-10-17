@@ -45,6 +45,7 @@ import { CheckRunner } from './checks/run.js';
 import { ReleaseOperator } from './deploy/release-operator.js';
 import { AdapterQualifier } from './deploy/qualify.js';
 import { RunnerSelfTest, sweepPriorSelfTestBoxes, sweepSelfTestLeftovers } from './checks/selftest.js';
+import { engineRevision } from './revision.js';
 
 export const EXIT = { usage: 2, locked: 3, config: 4, token: 5, notStarted: 6 } as const;
 
@@ -272,6 +273,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   // before that (RunEnder.retryDue); the expiry is the backstop.
   process.on('uncaughtException', (err, origin) => log('uncaught exception', err, { origin }));
   process.on('unhandledRejection', (reason) => log('unhandled rejection', reason));
+
+  // The source revision this engine was started from (M544), read once now:
+  // what its host observations record, whatever the tree holds later.
+  engineRevision();
 
   // 3. store: open, migrate, record the incarnation
   state.step = 'store';

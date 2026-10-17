@@ -273,6 +273,8 @@ export interface HarnessSwitches {
   serviceProfileVariant?: string | null;
   // SEAM.md §328: `--harness-host-fact-unread <member>`.
   hostFactsUnread?: string[];
+  // SEAM.md §474 (M544): `--harness-engine-revision-unread`.
+  engineRevisionUnread?: boolean;
 }
 
 export interface CheckDomainLimits {
@@ -1911,6 +1913,7 @@ export function setHarnessSwitches(values: {
   serviceProfileVariant?: string | null;
   hostFactsUnread?: string[];
   profileMaxima?: string | null;
+  engineRevisionUnread?: boolean;
 }): string | null {
   const templateVersions: Record<string, string> = {};
   for (const v of values.templateVersions) {
@@ -2014,6 +2017,7 @@ export function setHarnessSwitches(values: {
       serviceProfileVariant: values.serviceProfileVariant ?? null,
       hostFactsUnread,
       profileMaxima,
+      engineRevisionUnread: values.engineRevisionUnread === true,
     },
   };
   return null;
@@ -2047,6 +2051,10 @@ export const seamEngineBuildVariant = (): string | null => (init.harness ? (init
 export const seamServiceProfileVariant = (): string | null => (init.harness ? (init.switches?.serviceProfileVariant ?? null) : null);
 // SEAM.md §328: the host facts this start records as unread.
 export const seamHostFactsUnread = (): string[] => (init.harness ? (init.switches?.hostFactsUnread ?? []) : []);
+// SEAM.md §474 (M544): this start records its source revision as unreadable.
+// The reason it records, or null (the revision is read).
+export const seamEngineRevisionUnread = (): string | null =>
+  init.harness && init.switches?.engineRevisionUnread === true ? 'the engine was started with its source revision unreadable (--harness-engine-revision-unread)' : null;
 export const seamAdapterVersion = (adapter: string): string | null => (init.harness ? (init.switches?.adapterVersions?.[adapter] ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
