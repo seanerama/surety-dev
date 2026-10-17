@@ -148,6 +148,10 @@ export class Effects {
       const refuse = (reason: string) => this.rt.engine('spec.refuse_application', { intent: row.id, reason });
       const facts = await this.rt.engine<SpecApplicationFacts | null>('spec.application_facts', { intent: row.id });
       if (facts === null || facts.revision === null) return void (await refuse('proposal'));
+      // A design's change waits for its batch (D7 §7.4): nothing is begun
+      // until the design is approved and the batch released.
+      const batch = await this.rt.read<'none' | 'wait' | 'go' | 'refuse'>('design.batch_state', { request: facts.request });
+      if (batch === 'wait') return;
       const ctx = repoContext(facts.repo);
       const read = await readRef(ctx, facts.ref);
       if (read.state !== 'ok' || read.oid === null) return void (await refuse('integration_revision_unread'));

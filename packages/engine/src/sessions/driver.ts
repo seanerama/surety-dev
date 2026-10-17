@@ -32,6 +32,11 @@ import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
 import type { SpecRepresentation } from '../spec/semantics.js';
 import { SESSION_PATHS, type SaveFacts, type SaveOutcome, type SessionRole } from './session.js';
+import { type CheckContext, type DesignReason, checkDesign } from '../design/check.js';
+import { DESIGN_ROOT } from '../design/inventory.js';
+import { reasonFinding } from '../design/records.js';
+import { designTreeAt } from '../design/tree.js';
+import { reviewRaise } from '../design/review-driver.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
 
@@ -40,6 +45,8 @@ export interface SaveAnswer {
   revision: string | null;
   idle_generation: number;
   findings: Finding[];
+  // D7 §5.6 (SEAM.md §483): a Designer's save answers its design check.
+  design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] } | null;
 }
 
 export class SessionDriver {
@@ -58,7 +65,7 @@ export class SessionDriver {
   // workspace, a worktree of the project at the run's base made through the
   // journal as any run's is (D1 §7.3). A workspace that cannot be made ends
   // the run; the opening is refused.
-  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null }): Promise<{ status: number; body: unknown }> {
+  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null; mode?: unknown }): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
     const made = await this.rt.engine<{ run: Record<string, unknown> }>('session.open_tx', { project, ...args });
@@ -293,7 +300,12 @@ export class SessionDriver {
     // A save with nothing new answers with what the engine found at the
     // checkpoint that stands: the artifact as saved is unchanged, and so is
     // what is wrong with it.
-    return { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.nothingToSave ? (done.standing ?? []) : outcome.findings };
+    const answer: SaveAnswer = { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.nothingToSave ? (done.standing ?? []) : outcome.findings };
+    if (facts.role === 'designer') {
+      const check = outcome.products.design_check ?? (await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] } | null>('design.latest_check', { project, run }));
+      answer.design_check = check ? { id: check.id, outcome: check.outcome, reasons: check.reasons } : null;
+    }
+    return answer;
   }
 
   // The snapshot, its validation against the role's paths, the checkpoint
@@ -379,6 +391,7 @@ export class SessionDriver {
   // The parse at save of the role's products (SEAM.md §346): every file of
   // its paths at the checkpoint, read from the commit, never from the reply.
   private async parse(facts: SaveFacts, sha: string): Promise<{ blobs: Record<string, string>; findings: Finding[]; products: SaveOutcome['products'] }> {
+    if (facts.role === 'designer') return this.parseDesign(facts, sha);
     const { blobs, texts } = await this.productFiles(facts.repo, sha, facts.role);
     if (facts.role === 'vision') {
       const text = texts['.surety/idea.md'];
@@ -403,6 +416,64 @@ export class SessionDriver {
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
     const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys });
     return { blobs, findings: r.findings, products: {} };
+  }
+
+  // A Designer's save (D7 §5.6; SEAM.md §483): the design check over the
+  // tree at the checkpoint, recorded, its reasons the save's findings.
+  private async parseDesign(facts: SaveFacts, sha: string): Promise<{ blobs: Record<string, string>; findings: Finding[]; products: SaveOutcome['products'] }> {
+    const tree = await designTreeAt(facts.repo, sha);
+    if (tree === null) throw new Error(`the design tree at ${sha} could not be read`);
+    const ctx = await this.rt.read<CheckContext>('design.check_context', { project: facts.project });
+    const result = checkDesign({ files: tree.files }, ctx);
+    const record = await this.rt.engine<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] }>('design.record_check', {
+      project: facts.project,
+      run: facts.run,
+      revision: sha,
+      inventory_digest: ctx.inventory?.inventory_digest ?? null,
+      outcome: result.outcome,
+      reasons: result.reasons,
+      blobs: tree.blobs,
+    });
+    const blobs = Object.fromEntries(Object.entries(tree.blobs).map(([p, b]) => [`${DESIGN_ROOT}${p}`, b]));
+    return { blobs, findings: result.reasons.map(reasonFinding), products: { design_check: record } };
+  }
+
+  // What a Designer's close raises (D7 §5a, §5.6, §7.1): refused 422
+  // `design_check_failed` while the session's last check refuses; the
+  // design proposed and its change requested; in review mode, the review.
+  private async designRaise(facts: SaveFacts): Promise<Record<string, unknown>> {
+    const check = await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; tree_revision: string; blobs: Record<string, string> } | null>('design.latest_check', { project: facts.project, run: facts.run });
+    const mode = await this.rt.read<string | null>('design.session_mode', { run: facts.run });
+    if (mode === 'review') return this.reviewRaise(facts);
+    if (check === null) return { kind: 'none' };
+    if (check.outcome !== 'passed') {
+      throw new Refusal(422, 'design_check_failed', `The design of session ${facts.run} does not pass the design check: ${check.reasons.map((r) => r.code).join(', ')}.`, 'Correct the design in the session, save, and close again; or close with refuse, which records the product and raises nothing.', {
+        run: facts.run,
+        design_check: check.id,
+        reasons: check.reasons,
+      });
+    }
+    const tree = await designTreeAt(facts.repo, check.tree_revision);
+    if (tree === null) throw new Error(`the design tree at ${check.tree_revision} could not be read`);
+    const read = (p: string): unknown => {
+      const b = tree.files.get(p);
+      if (!b) return null;
+      try {
+        return JSON.parse(b.toString('utf8'));
+      } catch {
+        return null;
+      }
+    };
+    const content = { design: read('design.json'), screens: read('screens.json'), navigation: read('navigation.json'), criteria: read('criteria.json'), manifest: read('assets/manifest.json') };
+    const findings = await this.rt.read<Record<string, unknown>[]>('design.session_findings', { run: facts.run });
+    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, blobs: tree.blobs, content, check: check.id, findings } };
+  }
+
+  // A review-mode close (D7 §10.3): the review file read from the head, its
+  // verdicts recorded as proposals.
+  private async reviewRaise(facts: SaveFacts): Promise<Record<string, unknown>> {
+    const raise = await reviewRaise(this.rt, facts);
+    return raise ?? { kind: 'none' };
   }
 
   private async productFiles(repo: string, rev: string, role: SessionRole): Promise<{ blobs: Record<string, string>; texts: Record<string, string> }> {
@@ -437,6 +508,7 @@ export class SessionDriver {
     if (!opts.refuse) {
       if (facts.role === 'vision') raise = { kind: 'idea_accept' };
       else if (facts.role === 'spec_writer') raise = { kind: 'spec_approval' };
+      else if (facts.role === 'designer') raise = await this.designRaise(facts);
       else raise = await this.bundle(facts);
     }
     let closed: { decisions: { id: string; kind: string; batch_key: string | null }[] };
@@ -502,6 +574,7 @@ export class SessionDriver {
     if (answer !== null && answer.findings.length === 0 && facts.head !== null && facts.head !== facts.base_revision) {
       if (facts.role === 'vision') raise = { kind: 'idea_accept' };
       else if (facts.role === 'spec_writer') raise = { kind: 'spec_approval' };
+      else if (facts.role === 'designer') raise = await this.designRaise(facts).catch(() => ({ kind: 'none' }));
       else raise = await this.bundle(facts).catch(() => ({ kind: 'none' }));
     }
     try {

@@ -189,6 +189,18 @@ const MAIN_BARRIERS: readonly string[] = [
   'deploy.before_finalizer',
   'verify.after_first_read',
   'verify.before_second_read',
+  // M6 plan §2.3 (SEAM.md §§484, 486): the inventory committed and not yet
+  // recorded; a design batch's two answers consumed, its effect not begun;
+  // and the barriers later slices name.
+  'design.inventory_committed',
+  'design.approved',
+  'design.batch_raise',
+  'design.effective_moved',
+  'integration.bindings_validated',
+  'review.before_fetch',
+  'review.after_fetch',
+  'preview.sealed',
+  'design.save_rebase',
 ];
 // SEAM.md §125: barriers the launcher reaches and waits at itself. Its wait
 // survives the engine: it marks it with a file under the home's release

@@ -9,7 +9,7 @@ import { Refusal } from '../refusal.js';
 import { BUDGET_BOUNDARIES, type OptionSpec, PROJECT_OPTIONS, PROJECT_POLICY, numberInSpec } from './schema.js';
 
 // A value of an ungoverned key: a number, or one of the typed options.
-export type PolicyValue = number | string | boolean | string[] | Record<string, unknown>;
+export type PolicyValue = number | string | boolean | string[] | number[] | Record<string, unknown>;
 export type Policy = Record<string, PolicyValue>;
 
 export function projectPolicyDefaults(): Record<string, number> {
@@ -73,6 +73,22 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
       if (Object.keys(o).some((k) => k !== 'min' && k !== 'max') || !ok(o.min) || !ok(o.max)) throw invalidValue(key, `an object {min, max}, each an integer from ${r.min} to ${r.max}`);
       if (o.min > o.max) throw invalidValue(key, 'an object whose min is not above its max');
       return { min: o.min, max: o.max };
+    }
+    case 'int_list': {
+      const r = spec.range!;
+      const c = spec.count!;
+      const ok = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= r.min && (n as number) <= r.max;
+      if (!Array.isArray(value) || value.length < c.min || value.length > c.max || !value.every(ok) || new Set(value).size !== value.length) {
+        throw invalidValue(key, `an array of ${c.min} to ${c.max} distinct integers, each from ${r.min} to ${r.max}`);
+      }
+      return [...value] as unknown as string[];
+    }
+    case 'subset': {
+      const values = spec.values!;
+      if (!Array.isArray(value) || value.length === 0 || !value.every((v) => typeof v === 'string' && values.includes(v)) || new Set(value).size !== value.length) {
+        throw invalidValue(key, `a non-empty subset of ${values.join(', ')}`);
+      }
+      return [...value];
     }
     case 'absolute_paths': {
       const ok = (p: unknown): p is string => typeof p === 'string' && p.length > 0 && !p.includes('\0') && isAbsolute(p) && normalize(p) === p;

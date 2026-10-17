@@ -11,6 +11,10 @@
 
 import type { Runtime } from '../runtime.js';
 import { publishAuthorized } from '../plan/publish.js';
+import { pausePoint } from '../testing/seam.js';
+
+// The design batches an answer's continuation is releasing now.
+const releasing = new Set<string>();
 
 export interface AnswerWaits {
   project: string;
@@ -26,5 +30,22 @@ export async function afterAnswer(rt: Runtime, waits: AnswerWaits | undefined): 
   // A read that fails is an error, never "no intent" (the review's N3 (c)).
   const intents = await rt.read<string[]>('decision.intents', { decisions: waits.decisions, kind: 'spec_approval_application' });
   for (const intent of intents) await rt.services?.effect(intent);
+  // A design batch whose two answers are both consumed approve (D7 §7.4;
+  // SEAM.md §486): the barrier `design.approved` after the answers and
+  // before any effect; then the batch released and its change applied.
+  const batches = await rt.read<{ revision: string; request: string; intents: string[] }[]>('design.answered_batches', { decisions: waits.decisions });
+  for (const b of batches) {
+    // One answer's continuation takes a batch: the other answer's, racing it,
+    // does not release it past the barrier.
+    if (releasing.has(b.revision)) continue;
+    releasing.add(b.revision);
+    try {
+      await pausePoint('design.approved');
+      await rt.engine('design.release_batch', { revision: b.revision });
+      for (const intent of b.intents) await rt.services?.effect(intent);
+    } finally {
+      releasing.delete(b.revision);
+    }
+  }
   await publishAuthorized(rt, waits.project);
 }

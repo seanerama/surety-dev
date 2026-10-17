@@ -11,6 +11,7 @@ import type { LockRecord } from '../lock.js';
 import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
+import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
@@ -356,6 +357,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
   'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
+  // D7 (M6): the design's API commands (design/ops.ts).
+  ...DESIGN_COMMANDS,
 };
 
 // The checks a round requires (D4 §5.3): the `alpha_complete` scope's.
@@ -573,6 +576,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.provider_files': (d, a: { run: string }) =>
     d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
+  // D7 (M6): the design's reads (design/ops.ts).
+  ...DESIGN_READS,
 };
 
 // Transitions the engine itself performs (the scheduler, the choke point, the
@@ -807,6 +812,8 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
     const made = closeSession(tx, a);
     return { decisions: made.decisions };
   },
+  // D7 (M6): the design's engine transitions (design/ops.ts).
+  ...DESIGN_ENGINE_OPS,
 };
 
 const ROLE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {

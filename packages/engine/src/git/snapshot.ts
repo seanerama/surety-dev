@@ -115,6 +115,10 @@ const ARCHITECT_PREFIXES = ['.surety/adrs/', '.surety/architecture/', '.surety/r
 // D6 §2.5: the interactive roles' permitted paths.
 const VISION_PATHS = ['.surety/idea.md'];
 const SPEC_WRITER_PREFIXES = ['.surety/spec/'];
+// D7 §3.3, G9: the Designer's paths, `.surety/design/` less the engine-owned
+// `inventory/`; and no other role writes under `.surety/design/`.
+const DESIGN_PREFIX = '.surety/design/';
+const INVENTORY_PREFIX = '.surety/design/inventory/';
 const IDENTITY_FILE = '.surety/project.json';
 const PLAN_FILE = /^\.surety\/phases\/phase-([0-9]+)\.json$/;
 
@@ -127,6 +131,11 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   }
   if (path === IDENTITY_FILE) return `${path} is the project's identity file, which no role may change`;
   if (role === 'verifier') return `${path} is not in the protected set, and a verifier may change only the protected set`;
+  if (role === 'designer') {
+    if (path.startsWith(INVENTORY_PREFIX)) return `DESIGN_INVENTORY_MODIFIED: ${path} is under ${INVENTORY_PREFIX}, the engine's inventory, which the Designer may read and may not change`;
+    if (!path.startsWith(DESIGN_PREFIX)) return `${path} is not under ${DESIGN_PREFIX}, the only path a designer may change`;
+    return null;
+  }
   if (role === 'builder' && path.startsWith('.surety/')) return `${path} is under .surety/, which a builder may not change`;
   if (role === 'architect' && !ARCHITECT_PREFIXES.some((prefix) => path.startsWith(prefix))) return `${path} is not under ${ARCHITECT_PREFIXES.join(', ')}, the only paths an architect may change`;
   if (role === 'vision' && !VISION_PATHS.includes(path)) return `${path} is not ${VISION_PATHS.join(', ')}, the only path a vision session may change`;

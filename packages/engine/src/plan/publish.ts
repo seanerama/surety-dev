@@ -61,6 +61,8 @@ async function publishAll(rt: Runtime, project: string): Promise<number> {
     if (made?.published) {
       n++;
       await pausePoint('plan.after_publication');
+      // The interface inventory, derived at publication (D7 §1 step 4a).
+      await rt.design?.deriveIfDue(project).catch((err) => log('design inventory', err, { project }));
     }
   }
   return n;

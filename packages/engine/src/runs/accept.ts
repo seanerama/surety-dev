@@ -40,6 +40,7 @@ import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parse
 import { architectFindings } from '../plan/findings.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, type Violation, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
+import { type AssetBinding, validateBindings } from '../design/asset-bindings.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal, Settled } from '../journal/driver.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
@@ -344,10 +345,21 @@ export class Acceptor {
             legacy = [];
           }
         }
+        // A UI Builder's asset bindings (D7 §6.5; G15), validated against
+        // the tree to integrate; a failure refuses the integration.
+        const bindings = (facts.result?.report as { asset_bindings?: AssetBinding[] } | undefined)?.asset_bindings ?? [];
+        let bound: (AssetBinding & { slot_version: number })[] = [];
+        if (bindings.length > 0) {
+          const carried = await this.rt.read<{ slot: string; variant: string; slot_version: number; digest: string }[] | null>('design.carried_effective', { run });
+          const refused = await validateBindings(repo, targetTree, bindings, carried);
+          if (refused !== null) return failed('invalid_result', `the asset bindings were refused: ${refused}`);
+          bound = bindings.map((b) => ({ ...b, slot_version: carried!.find((c) => c.slot === b.slot && c.variant === b.variant)!.slot_version }));
+          await pausePoint('integration.bindings_validated');
+        }
         const intent = await this.journal.withProject(facts.project.id, () =>
           this.journal.intend(
             'accept.intend_integration',
-            { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
+            { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), ...(bound.length > 0 ? { asset_bindings: bound } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
             'ref_update',
           ),
         );

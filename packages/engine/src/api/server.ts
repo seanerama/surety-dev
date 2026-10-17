@@ -486,10 +486,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           prepare: async (b) => {
             // `reason` and `review`: the `build_first` exception's (D6 §6.2;
             // F §5.1; SEAM.md §428), read by that answer alone.
-            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review']);
+            // `assets_held`: design_approval's (D7 §6.4; SEAM.md §486).
+            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review', 'assets_held']);
             const facts = await answerFacts(runtime(), project, decision);
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, facts, waits };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, ...(body.assets_held !== undefined ? { assets_held: body.assets_held } : {}), facts, waits };
           },
           // A committed answer is answered 200 whatever follows it: a failed
           // effect or publication is logged and carried by the next tick
@@ -553,7 +554,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           kind: 'prepared',
           name: 'session.reply',
           prepare: async (b) => {
-            const body = onlyFields(b, ['role', 'model']);
+            const body = onlyFields(b, ['role', 'model', 'mode']);
             if (typeof body.role !== 'string' || body.role === '') throw new Refusal(400, 'invalid_value', '"role" must be one of vision, spec_writer, architect.', 'Open a session for an interactive role.', { field: 'role' });
             const sessions = runtime().sessions;
             if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
@@ -561,7 +562,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             // guard read, the barrier, and the transaction's own re-check of
             // it, so that an opening racing a one-shot's claim admits one;
             // then its workspace (D6-S01).
-            return sessions.open(project, { role: body.role, model: body.model, scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
+            return sessions.open(project, { role: body.role, model: body.model, ...(body.mode !== undefined ? { mode: body.mode } : {}), scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
           },
         };
       }
@@ -685,6 +686,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         };
       }
       // D6 §7.6 (SEAM.md §355): the pace read, a projection.
+      // D7 A.8 (M6): the design's read.
+      if (rest.length === 1 && rest[0] === 'design' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'design.view', args: { project } }) }) };
+      }
       if (rest.length === 1 && rest[0] === 'pace' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };
       }

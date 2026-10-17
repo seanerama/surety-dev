@@ -55,6 +55,9 @@ import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
 import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
+import { DESIGN_DUE, DESIGN_DUE_KEYS } from '../../design/due.js';
+import { designBatchKeyOf } from '../../design/batch-key.js';
+import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
 
 type Db = Tx['db'];
 
@@ -115,6 +118,8 @@ interface KindSpec {
 export interface AnswerExtra {
   reason?: unknown;
   review?: unknown;
+  // D7 §6.4 (SEAM.md §486): the slots an owner holds with design_approval's approve.
+  assets_held?: unknown;
 }
 
 const consumed = (d: DecisionRow, effects: Effect[] = []): CommandResult => ({ status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects });
@@ -1815,6 +1820,16 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   get requirement_confirm() {
     return REQUIREMENT_CONFIRM;
   },
+  // D7 (M6): the design's decisions (design/due.ts, design/approval.ts).
+  get design_due() {
+    return DESIGN_DUE;
+  },
+  get design_approval() {
+    return DESIGN_APPROVAL;
+  },
+  get design_verdicts() {
+    return DESIGN_VERDICTS;
+  },
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -1849,6 +1864,15 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   },
   get requirement_confirm() {
     return REQUIREMENT_CONFIRM_KEYS;
+  },
+  get design_due() {
+    return DESIGN_DUE_KEYS;
+  },
+  get design_approval() {
+    return DESIGN_APPROVAL_KEYS;
+  },
+  get design_verdicts() {
+    return DESIGN_VERDICTS_KEYS;
   },
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
@@ -1953,6 +1977,12 @@ export function raiseQuestion(
     evidence: args.evidence ?? p.evidence,
     raised: p.raised,
   });
+  // A design batch's members keep their batch_key in every generation (D7 §7.4).
+  const batch = designBatchKeyOf(tx.db, args.kind, args.subjectId);
+  if (batch !== null && row.batch_key !== batch) {
+    tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "id" = ?').run(batch, row.id);
+    row.batch_key = batch;
+  }
   if (args.kind === 'blocker' && args.subjectType === 'work_item') {
     // The item's blocker names the decision that holds it.
     const item = getWorkItem(tx, args.subjectId)!;
@@ -2018,7 +2048,7 @@ export function dropBlockQuestion(tx: Tx, item: string): void {
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §76).
-export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; facts?: Facts | undefined }): CommandResult {
+export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; facts?: Facts | undefined }): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
   if ((d.status === 'open' || d.status === 'invalidated') && typeof args.option === 'string') {
@@ -2047,7 +2077,7 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
       blockers: option.blockers,
     });
   }
-  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review });
+  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review, ...(args.assets_held !== undefined ? { assets_held: args.assets_held } : {}) });
 }
 
 // POST /v1/projects/:p/decisions/answer-batch (D1 §10.3; SEAM.md §81): one

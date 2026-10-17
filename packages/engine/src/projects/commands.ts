@@ -201,11 +201,32 @@ export async function preparePolicyCommit(
   const content = `${JSON.stringify(sorted, null, 2)}\n`;
   const revision = (facts.revision ?? 0) + 1;
   const message = messageText({ title: `surety: project policy revision ${revision}`, trailers: [['Surety-Project', project], ['Surety-Policy-Revision', String(revision)]] });
-  const commit = await prepareCommit(facts.repo, facts.head, { '.surety/policy.json': content }, message, rt.scratch);
+  const files: Record<string, string> = { '.surety/policy.json': content };
+  // Design turned on (D7 §2, §4.4): the inventory, its fixtures and the
+  // placeholders committed with the policy, recorded by its finalizer.
+  const derived = await rt.read<{ digest: string; inventory: unknown; text: string; fixtures: Record<string, string>; placeholders: { manifest: unknown; files: Record<string, string> } } | null>('design.inventory_for_policy', { project, effective: sorted });
+  if (derived) {
+    files['.surety/design/inventory/inventory.json'] = derived.text;
+    for (const [p, t] of Object.entries(derived.fixtures)) files[`.surety/design/${p}`] = t;
+    if ((await gitOk(ctx, ['cat-file', '-e', `${facts.head}:.surety/design/assets/manifest.json`])) === null) {
+      files['.surety/design/assets/manifest.json'] = `${JSON.stringify(derived.placeholders.manifest, null, 2)}\n`;
+      for (const [p, t] of Object.entries(derived.placeholders.files)) files[`.surety/design/${p}`] = t;
+    }
+  }
+  const commit = await prepareCommit(facts.repo, facts.head, files, message, rt.scratch);
   if (commit === null) throw policyRefusal('repository');
   const blob = await writeBlob(ctx, content);
   if (blob === null) throw policyRefusal('repository');
-  return { head: facts.head, revision, commit, blob, effective: sorted, change, deadlineSeconds: rt.setting('git_deadline') };
+  return {
+    head: facts.head,
+    revision,
+    commit,
+    blob,
+    effective: sorted,
+    change,
+    deadlineSeconds: rt.setting('git_deadline'),
+    ...(derived ? { design_inventory: { digest: derived.digest, inventory: derived.inventory, manifest: derived.placeholders.manifest, incarnation: rt.incarnation } } : {}),
+  };
 }
 
 // The identity of a diff: its changes, path by path (SEAM.md §77).

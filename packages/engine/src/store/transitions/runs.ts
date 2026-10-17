@@ -27,6 +27,7 @@ import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
+import { designUnmet } from '../../design/readiness.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -293,10 +294,18 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
         .get(item.project) as { n: number }
     ).n;
     if (unapplied > 0) return 'depends on a protected proposal not yet applied or rejected';
+    // A design's change (D7 §7.4) is batched with the design's approval and
+    // bound to the protected version: it waits for a proposal the owner has
+    // still to answer too, so the batch is not raised on a version about to move.
+    const design = (db.prepare(`SELECT "source" FROM "spec_change_requests" WHERE "id" = ?`).get(request) as { source: string } | undefined)?.source === 'design';
+    if (design && (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" = 'awaiting_human'`).get(item.project) as { n: number }).n > 0) {
+      return 'depends on a protected proposal not yet applied or rejected';
+    }
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.
-  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended'`, item.project) > 0) return 'session_busy';
+  // D7 §3.1, G12: a Designer session admits one-shot runs beside it.
+  if (live(`SELECT COUNT(*) AS n FROM "runs" WHERE "project" = ? AND "kind" = 'session' AND "state" <> 'ended' AND "role" <> 'designer'`, item.project) > 0) return 'session_busy';
   // D6 K2 (E139 item 4; B09): no run count caps admission at either scope.
   // What stays: one run per work item; integration serial under its lease
   // (runs/accept.ts); the session's exclusivity above; and, so that D3's
@@ -495,6 +504,8 @@ export function heldOnRequalification(db: Tx['db'], project: string, entry: stri
 
 // Why a milestone is unmet (D6 §6.4), or null.
 export function milestoneUnmet(db: Tx['db'], m: Milestone): string | null {
+  // D7 §8.2, G6: the third milestone of a UI stage.
+  if (m.milestone === 'design_ready') return designUnmet(db, m.stage);
   if (m.milestone === 'spec_change_requests') {
     for (const id of m.requests) {
       const r = db.prepare('SELECT "status" FROM "spec_change_requests" WHERE "id" = ?').get(id) as { status: string } | undefined;

@@ -15,6 +15,9 @@ import { type HoldReason, type WorkRow, setHold } from '../store/transitions/wor
 // The HoldReason a dispatch blocker names, or null.
 export function holdReasonOf(blocker: string): HoldReason | null {
   if (blocker === 'session_busy') return 'session_busy';
+  // D7 §8.2: the third milestone unmet.
+  if (blocker === 'design_pending') return 'design_pending';
+  if (blocker === 'design_stale') return 'design_stale';
   if (blocker === CHAIN_BOUNDARY) return 'chain_boundary';
   if (blocker === 'held by an open decision' || blocker.startsWith("waits for the owner's decision")) return 'open_decision';
   if (blocker === 'authoring not ready' || blocker === 'plan not active') return 'authoring_readiness';

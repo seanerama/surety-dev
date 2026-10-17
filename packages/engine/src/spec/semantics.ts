@@ -38,6 +38,11 @@ export interface SemanticRequirement {
   phase_hint: number | null;
   origin: 'intended' | 'observed';
   blocked_by_questions: string[];
+  // D7 §4.2, G3 (B.2's `**Surface:** ui` mark): `ui` where the subsection
+  // carries the mark, absent otherwise; `surface_targets` the mark's list,
+  // null for a bare `**Surface:** ui` (SEAM.md §481).
+  surface?: 'ui';
+  surface_targets?: string[] | null;
   // A key of an earlier save that this one no longer has (SEAM.md §397):
   // kept in the save's representation, marked, never dropped; it is
   // recorded withdrawn at approval and is no requirement of this text.
@@ -77,6 +82,11 @@ export interface SpecRepresentation {
   modules: SemanticModule[];
   environments: SemanticEnvironment[];
   claims: SemanticClaim[];
+  // D7 §4.1, G3, Q7: the header's `**Targets:**` (in its order) and
+  // `**Cross-platform:** yes`, each present only when its line is: an M5
+  // specification's representation, and its digest, are unchanged.
+  targets?: string[];
+  cross_platform?: boolean;
 }
 
 export interface SemanticFinding {
@@ -102,7 +112,13 @@ export interface SemanticFinding {
     | 'question_malformed'
     | 'question_unknown_key'
     | 'claims_table_invalid'
-    | 'claims_requirement_unknown';
+    | 'claims_requirement_unknown'
+    // D7 §4.1, G3 (M6): a target outside A.2's six, one listed twice, a
+    // surface mark naming a target the header lacks or not of B.2's form.
+    | 'target_unknown'
+    | 'target_duplicate'
+    | 'surface_target_unknown'
+    | 'surface_invalid';
   why: string;
 }
 
@@ -134,7 +150,17 @@ export const SPEC_BLOCKING_CODES: readonly string[] = Object.freeze([
   'claims_table_invalid',
   // The review's N3 (d): a question naming a key the specification lacks.
   'question_unknown_key',
+  // D7 §4.1, G3 (M6): the targets and the surface mark.
+  'target_unknown',
+  'target_duplicate',
+  'surface_target_unknown',
+  'surface_invalid',
 ]);
+
+// D7 A.2 Target: the closed list of product targets (Q7: the approved
+// specification's header names them).
+export const TARGETS = ['web', 'android', 'ios', 'macos', 'windows', 'linux'] as const;
+export type Target = (typeof TARGETS)[number];
 
 export interface SemanticResult {
   // false when the representation is not readable as a specification at all.
@@ -155,7 +181,9 @@ export const SPEC_FILE = '.surety/spec/spec.md';
 export const SPEC_HEADER_FIELDS = ['Spec version', 'Status', 'Tier', 'Owner'] as const;
 export const SPEC_STATUS_VALUES = ['draft', 'approved'] as const;
 export const SPEC_TIERS = ['T1', 'T2', 'T3'] as const;
-export const SPEC_MARKS = { human_test: '**Human test.**', descriptive: '**Descriptive.**' } as const;
+export const SPEC_MARKS = { human_test: '**Human test.**', descriptive: '**Descriptive.**', surface: '**Surface:** ui' } as const;
+// D7 §4.1, G3: the header lines the Designer's axes add (TPL).
+export const SPEC_TARGET_FIELDS = { targets: 'Targets', cross_platform: 'Cross-platform' } as const;
 export const SPEC_AREAS_LABEL = '**Sensitive areas:**';
 export const SPEC_SECTIONS = { requirements: 4, index: 5, modules: 6, environments: 7, questions: 10, change_log: 11, claims: 12 } as const;
 export const MODULE_TABLE_COLUMNS = ['Module', 'Paths', 'Sensitive areas'] as const;
@@ -214,6 +242,28 @@ function firstTable(lines: string[]): string[] | null {
     else if (inTable && line.trim() === '') break;
   }
   return rows.length > 0 ? rows : null;
+}
+
+// D7 §4.1, G3: `**Targets:**` and `**Cross-platform:**`, each only when its
+// line is present (null: absent).
+function parseTargets(text: string, findings: SemanticFinding[]): { targets: string[] | null; cross_platform: boolean | null } {
+  const field = (name: string): string | null => {
+    const m = new RegExp(`^\\*\\*${name}:\\*\\*\\s*(.*)$`, 'm').exec(text);
+    return m ? m[1]!.replace(/\*\[.*?\]\*/g, '').trim() : null;
+  };
+  const t = field(SPEC_TARGET_FIELDS.targets);
+  let targets: string[] | null = null;
+  if (t !== null) {
+    targets = list(t);
+    const seen = new Set<string>();
+    for (const x of targets) {
+      if (!(TARGETS as readonly string[]).includes(x)) findings.push({ where: 'header', code: 'target_unknown', why: `the target "${x}" is not one of ${TARGETS.join(', ')}` });
+      else if (seen.has(x)) findings.push({ where: 'header', code: 'target_duplicate', why: `the target "${x}" is listed twice` });
+      seen.add(x);
+    }
+  }
+  const c = field(SPEC_TARGET_FIELDS.cross_platform);
+  return { targets, cross_platform: c === null ? null : /^yes\b/i.test(c) };
 }
 
 function parseHeader(text: string, findings: SemanticFinding[]): SpecRepresentation['header'] {
@@ -287,6 +337,18 @@ function parseRequirements(lines: string[], findings: SemanticFinding[]): Semant
       // An area outside the closed list stays in the representation, as
       // written, beside the finding that blocks approval: never dropped.
       cur.sensitive_areas = names;
+      cur.seenStatement = true;
+      continue;
+    }
+    const surface = /^\*\*Surface:\*\*\s*(.*)$/.exec(line.trim());
+    if (surface) {
+      const value = surface[1]!.replace(/\*\[.*?\]\*/g, '').trim();
+      const m = /^ui\s*(?:\(([^)]*)\))?\s*$/.exec(value);
+      if (!m) findings.push({ where: cur.key, code: 'surface_invalid', why: `${cur.key}'s surface mark "${value}" is not ui or ui (<targets>)` });
+      else {
+        cur.surface = 'ui';
+        cur.surface_targets = m[1] === undefined ? null : list(m[1]);
+      }
       cur.seenStatement = true;
       continue;
     }
@@ -453,11 +515,15 @@ export function digestOf(r: SpecRepresentation): string {
         descriptive: q.descriptive,
         phase_hint: q.phase_hint,
         origin: q.origin,
+        // G3: only when marked, so an M5 specification's digest is unchanged.
+        ...(q.surface ? { surface: q.surface, surface_targets: q.surface_targets ?? null } : {}),
       })),
       questions: [...r.questions].sort((a, b) => a.id.localeCompare(b.id)).map((q) => ({ id: q.id, text: q.text, blocks: [...q.blocks].sort(), phase_hint: q.phase_hint })),
       modules: [...r.modules].sort((a, b) => a.name.localeCompare(b.name)).map((m) => ({ name: m.name, paths: [...m.paths].sort(), sensitive_areas: [...m.sensitive_areas].sort() })),
       environments: [...r.environments].sort((a, b) => a.name.localeCompare(b.name)),
       claims: r.claims,
+      ...(r.targets !== undefined ? { targets: r.targets } : {}),
+      ...(r.cross_platform !== undefined ? { cross_platform: r.cross_platform } : {}),
     }),
   );
 }
@@ -527,7 +593,24 @@ export function parseSpecification(text: string): SemanticResult {
   claims.forEach((c, i) => {
     if (c.requirement !== null && !byKey.has(c.requirement)) findings.push({ where: 'claims', code: 'claims_requirement_unknown', why: `the claims row ${i + 1} ("${c.claim}") names ${c.requirement}, which is no requirement of this specification` });
   });
-  const representation: SpecRepresentation = { header, requirements, index, questions, modules, environments, claims };
+  // D7 §4.1, G3: the header's targets, and every surface mark naming one the header lacks.
+  const axes = parseTargets(text, findings);
+  for (const r of requirements) {
+    for (const t of r.surface_targets ?? []) {
+      if (!(axes.targets ?? []).includes(t)) findings.push({ where: r.key, code: 'surface_target_unknown', why: `${r.key}'s surface mark names the target "${t}", which the header's **Targets:** does not list` });
+    }
+  }
+  const representation: SpecRepresentation = {
+    header,
+    requirements,
+    index,
+    questions,
+    modules,
+    environments,
+    claims,
+    ...(axes.targets !== null ? { targets: axes.targets } : {}),
+    ...(axes.cross_platform !== null ? { cross_platform: axes.cross_platform } : {}),
+  };
   return { readable: true, representation, findings, digest: digestOf(representation) };
 }
 

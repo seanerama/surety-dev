@@ -25,7 +25,7 @@ import { gitOk, repoContext } from '../git/exec.js';
 import { treeOf } from '../git/repo.js';
 import { captureMetadata, indexHashOfTree } from '../git/snapshot.js';
 import { ACCEPTED_KINDS } from '../runs/accept.js';
-import { fieldAllowed, parseReport, proposesChecks } from '../runs/report.js';
+import { fieldAllowed, parseReport, proposesChecks, reportProblem } from '../runs/report.js';
 import type { RunResult } from '../store/transitions/accept.js';
 import { isoAt, nowMs } from '../clock.js';
 import { processStartTime } from '../lock.js';
@@ -55,6 +55,7 @@ import { type ContainmentWatch, watchContainment } from './containment.js';
 import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
 import { startBackendSampler } from './sampler.js';
 import { type ContextFacts, writeContextPackage } from './sandbox/context.js';
+import { designPackageFor } from '../design/package.js';
 import { domainArea } from './sandbox/prepare.js';
 import { recordsDir } from '../records/files.js';
 import { writeTurnPackage } from '../sessions/turn-package.js';
@@ -666,7 +667,9 @@ export class Launcher {
         const facts = await this.rt.read<ContextFacts | null>('context.facts', { run: claim.run });
         await loadReplanSpec(facts);
         const paths = new Map((facts?.resumed?.records ?? []).map((r) => [r.id, r.path]));
+        const design = await designPackageFor(this.rt, claim.run);
         writeContextPackage(dir, claim, facts, {
+          design,
           probe: claim.profile === 'probe',
           readRecord: (id) => {
             const path = paths.get(id);
@@ -1348,7 +1351,7 @@ export class Launcher {
       // by the turn's settlement as on the kernel lane, never a run's result.
       let reply: ReturnType<typeof parseSessionReply> = null;
       try {
-        reply = parseSessionReply(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))));
+        reply = parseSessionReply(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
       } catch {
         reply = null;
       }
@@ -1356,7 +1359,10 @@ export class Launcher {
       verdict = reply === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     } else {
       try {
-        value = parseResult(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
+        const sent = redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)));
+        value = parseResult(sent, claim.role);
+        const problem = value === null ? reportProblem(sent) : null;
+        if (problem !== null) handle.invalidDetail = redactText(problem);
       } catch {
         value = null;
       }
@@ -1629,7 +1635,7 @@ export class Launcher {
       // settlement, never recorded as a run's result (the run goes on).
       if (handle.claim.session) {
         if (handle.sessionReply !== null || handle.ending) return;
-        handle.sessionReply = parseSessionReply(redactValue(m.result)) ?? 'invalid';
+        handle.sessionReply = parseSessionReply(redactValue(m.result), handle.claim.role) ?? 'invalid';
         return;
       }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
@@ -1641,6 +1647,10 @@ export class Launcher {
       // Nothing the role sent is kept with a secret in it (SEAM.md §57).
       const sent = redactValue(m.result);
       let result = parseResult(sent, handle.claim.role);
+      if (result === null) {
+        const problem = reportProblem(sent);
+        if (problem !== null) handle.invalidDetail = redactText(problem);
+      }
       if (result !== null && namesReference(result)) {
         const read = await this.rt.read<{ keys: string[] | null; criteria: string[] | null }>('run.check_keys', { run }).catch(() => undefined);
         // Checks that cannot be read judge no key: the result is not taken.

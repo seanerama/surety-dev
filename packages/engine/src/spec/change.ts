@@ -43,6 +43,14 @@ import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
+import { approveDesign, designBatchState, designBindingsChanged, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
+import { blobsHash } from '../design/store.js';
+import { latestCheck } from '../design/records.js';
+
+const designTreeHash = (db: Db, project: string): string | null => {
+  const c = latestCheck(db, { project });
+  return c ? blobsHash(c.blobs) : null;
+};
 
 type Db = Tx['db'];
 
@@ -578,7 +586,21 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  // A design's change (D7 §7.4): its inventory compared at raise, a
+  // difference refusing the batch with nothing raised.
+  if (r.source === 'design') {
+    const added = inputs.impact.requirements.filter((q) => q.changes.includes('added')).map((q) => q.key);
+    const batch = raiseDesignBatch(tx, { request: r.id, rep: inputs.representation, added });
+    if (batch.refused !== null) {
+      const failure = `design_batch_refused: ${batch.refused}`;
+      tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ?`).run(failure, r.id);
+      tx.emit('spec.change_failed', { project: op.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'design_batch_refused', failure });
+      settleWork(tx, getRequest(tx.db, r.id)!, 'design_batch_refused');
+      return { request: r.id, decision: null };
+    }
+  }
   const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
+  if (d && r.source === 'design') tx.db.prepare('UPDATE "decisions" SET "batch_key" = (SELECT "batch_key" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1) WHERE "id" = ?').run(r.id, d.id);
   if (d && item && item.status === 'executing') {
     transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
   }
@@ -671,6 +693,9 @@ export function changeManifest(db: Db, id: string): Record<string, unknown> {
     // the request recorded, whatever the ref holds.
     side_ref: r ? sideRefObservation(db, r) : null,
     policy_revision: project === null ? null : policyRevision(db, project),
+    // A design's change is bound to the design tree as the last save left
+    // it, as its batched design_approval is (D7 §7.4; M505 (g)).
+    ...(r?.source === 'design' && project !== null ? { design_tree: designTreeHash(db, project) } : {}),
   };
 }
 
@@ -745,11 +770,15 @@ export function specChangeKind(): KindSpec {
     },
     // An effect whose precondition failed: the question is asked again
     // against what is there now.
-    withdraw: () => true,
+    withdraw: (tx, d) => {
+      // A design's change asked again: its design_approval with it (D7 §7.4).
+      if (getRequest(tx.db, d.subject_id)?.source === 'design') reraiseDesignBatch(tx, d.subject_id);
+      return true;
+    },
   };
 }
 
-function settleWork(tx: Tx, r: RequestRow, cause: string): void {
+export function settleWork(tx: Tx, r: RequestRow, cause: string): void {
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
   if (!item || item.status === 'complete' || item.status === 'cancelled') return;
   // The proposal path (work-table.ts): executing → awaiting_decision → complete.
@@ -840,6 +869,23 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
   // begun at a later tick, against what is there then.
   if (facts.head !== args.head) return null;
   const r = getRequest(tx.db, facts.request)!;
+  // A design's change waits for its design's approval and the batch's
+  // release, and is refused when the design was sent back, rejected, or the
+  // bindings its approval was given on moved (D7 §7.4; E156 Q3).
+  if (r.source === 'design') {
+    const state = designBatchState(tx.db, r.id);
+    if (state === 'wait') return null;
+    if (state === 'refuse') {
+      refuseApplication(tx, { intent: args.intent, reason: 'design_not_approved' });
+      return null;
+    }
+    const moved = designBindingsChanged(tx.db, r.id);
+    if (moved !== null) {
+      refuseApplication(tx, { intent: args.intent, reason: `design_bindings_changed:${moved}` });
+      reraiseDesignBatch(tx, r.id);
+      return null;
+    }
+  }
   if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }).length > 0) {
     refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
     return null;
@@ -929,7 +975,12 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Before any roadmap there is no phase to touch (D6 §4.5; the
   // coordinator's ruling on slice 34): no replan holds the project then.
   const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
-  if ((impact.touches_current || impact.touches_later === true) && roadmap) {
+  // A design's change (D7 §7.4): the design approved in the transaction that
+  // applies n+1; its human tests are placed by the engine's assignment, so
+  // it registers no replan.
+  const design = r.source === 'design' ? revisionOfRequest(tx.db, r.id) : undefined;
+  if (design) approveDesign(tx, { revision: design.id, specRevision: made.spec_revision, withoutCriteria: false });
+  if ((impact.touches_current || impact.touches_later === true) && roadmap && !design) {
     // Only a change touching the current phase replaces its plan early (D6
     // §5.7; the slice-36 review's M1): a later-only change's replan binds no
     // open plan and supersedes none of the current phase's stages.

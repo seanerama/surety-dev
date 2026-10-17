@@ -14,7 +14,8 @@ import { milestoneUnmet } from '../store/transitions/runs.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { Milestone } from '../store/transitions/work.js';
 
-const keyOf = (m: Milestone): string | null => (m.milestone === 'authoring_ready' ? 'authoring_ready' : m.milestone === 'stage_code' ? `stage_code:${m.stage}` : null);
+const keyOf = (m: Milestone): string | null =>
+  m.milestone === 'authoring_ready' ? 'authoring_ready' : m.milestone === 'stage_code' ? `stage_code:${m.stage}` : m.milestone === 'design_ready' ? 'design_ready' : null;
 
 export function recordMetMilestones(tx: Tx, project: string): number {
   const items = tx.db
@@ -51,7 +52,7 @@ export function recordMetMilestones(tx: Tx, project: string): number {
         'work.dependency_met',
         { project, work_item: item.id },
         {
-          ...(last.milestone === 'stage_code' ? { milestone: 'stage_code', stage: last.stage } : { milestone: 'authoring_ready', phase_plan: (last as { phase_plan: string }).phase_plan }),
+          ...(last.milestone === 'stage_code' || last.milestone === 'design_ready' ? { milestone: last.milestone, stage: last.stage } : { milestone: 'authoring_ready', phase_plan: (last as { phase_plan: string }).phase_plan }),
           milestones: deps.map((m) => keyOf(m)),
         },
       );

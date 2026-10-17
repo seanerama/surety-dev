@@ -7,6 +7,7 @@
 // restricted with the failure readable and the scheduler not started.
 
 import { SessionDriver } from './sessions/driver.js';
+import { DesignDriver } from './design/driver.js';
 import type { Server } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -337,6 +338,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const effects = new Effects(runtime, journal);
   const sessions = new SessionDriver(runtime, journal, launcher, ender);
   runtime.sessions = sessions;
+  runtime.design = new DesignDriver(runtime, journal);
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;
   // D6 K1: the ticks committed transitions request reach D1 §1.5's flag.

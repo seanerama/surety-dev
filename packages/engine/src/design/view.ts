@@ -1,0 +1,62 @@
+// GET /v1/projects/:p/design (D7 A.8; SEAM.md §480): the policy and whether
+// it is inert (and why: never an empty design shown as complete), the
+// inventory, the revisions, the effective asset set, the design's human
+// tests with their status (`pending`, or `owner_accepted` on the owner's
+// confirmed verdict, Q4: never `verified`), and the open design_due. A read.
+
+import type Database from 'better-sqlite3';
+
+import { notFound, parseJson } from '../store/transitions/common.js';
+import { projectEffective } from '../store/transitions/settings.js';
+import { approvedModuleMap, designPolicyOf } from './policy.js';
+import { currentInventory } from './store.js';
+import { heldStages } from './readiness.js';
+
+export function designView(db: Database.Database, args: { project: string }): Record<string, unknown> {
+  const project = db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string } | undefined;
+  if (!project) throw notFound('project', args.project);
+  const policy = designPolicyOf(db, args.project);
+  const map = approvedModuleMap(db, args.project)?.map ?? null;
+  const hasUi = (map?.modules ?? []).some((m) => m.surface === 'ui');
+  const inert = policy === 'off' || (map !== null && !hasUi);
+  const inertReason = policy === 'off' ? 'design is off for this project' : map !== null && !hasUi ? 'the module map has no ui module: there is nothing to design, and no design is shown as complete' : null;
+  const inv = currentInventory(db, args.project);
+  const revisions = (
+    db.prepare('SELECT "id", "version", "status", "scope", "current_against_spec", "ready_at", "approved_at", "assignments", "origin" FROM "design_revisions" WHERE "project" = ? ORDER BY rowid').all(args.project) as {
+      id: string;
+      version: number;
+      status: string;
+      scope: string;
+      current_against_spec: string | null;
+      ready_at: string | null;
+      approved_at: string | null;
+      assignments: string | null;
+      origin: string;
+    }[]
+  ).map((r) => ({ id: r.id, version: r.version, status: r.status, scope: r.scope, origin: r.origin, current_against_spec: r.current_against_spec, ready_at: r.ready_at, approved_at: r.approved_at }));
+  const effective = db.prepare('SELECT "slot", "kind", "variant", "slot_version", "source", "digest", "format" FROM "design_effective_assets" WHERE "project" = ? ORDER BY "slot", "variant"').all(args.project);
+  // The design's human tests: one per target of the approved design's change.
+  const approved = db.prepare(`SELECT "id", "assignments" FROM "design_revisions" WHERE "project" = ? AND "assignments" IS NOT NULL AND "status" IN ('approved', 'approved_without_criteria', 'superseded') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
+    | { id: string; assignments: string }
+    | undefined;
+  const confirmed = (
+    db.prepare(`SELECT "verdicts" FROM "design_reviews" WHERE "project" = ? AND "confirmation_decision" IS NOT NULL ORDER BY rowid`).all(args.project) as { verdicts: string }[]
+  ).flatMap((r) => parseJson<{ target: string; verdict: string; status: string; observed_on?: string }[]>(r.verdicts) ?? []);
+  const human_tests = (parseJson<{ target: string; requirement: string | null; phase: number | null }[]>(approved?.assignments ?? null) ?? []).map((h) => {
+    const accepted = confirmed.some((v) => v.target === h.target && v.status === 'confirmed' && v.verdict === 'matches' && v.observed_on !== 'simulation');
+    return { target: h.target, requirement: h.requirement, phase: h.phase, status: accepted ? 'owner_accepted' : 'pending' };
+  });
+  const due = db.prepare(`SELECT "id", "evidence" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { id: string; evidence: string } | undefined;
+  return {
+    policy,
+    design_preview: (projectEffective(db, args.project) as Record<string, unknown>).design_preview ?? 'static',
+    inert,
+    ...(inert && inertReason ? { inert_reason: inertReason } : {}),
+    inventory: inv?.inventory ?? null,
+    revisions,
+    effective_assets: effective,
+    human_tests,
+    holds: heldStages(db, args.project),
+    design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
+  };
+}

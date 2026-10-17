@@ -66,6 +66,11 @@ const SPEC_CODES: Record<string, string> = {
   question_unknown_key: 'spec_question_unknown_key',
   claims_table_invalid: 'spec_claims_invalid',
   claims_requirement_unknown: 'spec_claims_invalid',
+  // D7 §4.1, G3 (SEAM.md §481).
+  target_unknown: 'spec_target_unknown',
+  target_duplicate: 'spec_target_duplicate',
+  surface_target_unknown: 'spec_surface_target_unknown',
+  surface_invalid: 'spec_surface_invalid',
 };
 
 // One finding of the representation as the save answers it (SEAM.md §346).
@@ -94,6 +99,9 @@ export function specFinding(f: SemanticFinding, path = '.surety/spec/spec.md'): 
   } else if (f.code === 'claims_requirement_unknown') {
     subject.key = / names (R[1-9][0-9]*),/.exec(f.why)?.[1] ?? null;
     subject.row = Number(/claims row (\d+)/.exec(f.why)?.[1] ?? 0);
+  } else if (f.code === 'target_unknown' || f.code === 'target_duplicate' || f.code === 'surface_target_unknown') {
+    subject.target = valueNamed(f.why);
+    if (f.where !== 'header') subject.key = f.where;
   } else if (f.code === 'area_unknown' || f.code === 'areas_missing') {
     subject.area = valueNamed(f.why);
     subject.where = f.where;
@@ -175,15 +183,17 @@ export interface ArchitectParsed {
 export function architectFindings(texts: ArchitectTexts, baseline: ArchitectBaseline): { findings: Finding[]; parsed: ArchitectParsed } {
   const findings: Finding[] = [];
   const parsed: ArchitectParsed = { modules: null, roadmap: null, plans: {}, adrs: {}, architecture_text: texts.files['.surety/architecture/architecture.md'] ?? null };
-  const schema = (path: string, finding: { field: string | null; why: string }) => {
+  const schema = (path: string, finding: { field: string | null; why: string; code?: string }) => {
     const unknown = /"([^"]+)" is not a field of/.exec(finding.why);
-    if (unknown) findings.push({ code: 'unknown_field', path, subject: { path, field: unknown[1] }, message: `${path}: ${finding.why}` });
+    // A reason of its own (D7 §4.1; SEAM.md §481), naming where it is.
+    if (finding.code) findings.push({ code: finding.code, path, subject: { path, field: finding.field }, message: `${path}: ${finding.field ?? ''}: ${finding.why}` });
+    else if (unknown) findings.push({ code: 'unknown_field', path, subject: { path, field: unknown[1] }, message: `${path}: ${finding.why}` });
     else findings.push({ code: 'machine_file_invalid', path, subject: { path, field: finding.field }, message: `${path}: ${finding.why}` });
   };
   if (texts.files[MODULES_FILE] !== undefined) {
     const m = parseModuleMap(texts.files[MODULES_FILE]!, MODULES_FILE);
     if (m.ok) parsed.modules = m.value;
-    else schema(MODULES_FILE, m.finding);
+    else for (const f of [m.finding, ...(m.also ?? [])]) schema(MODULES_FILE, f);
   }
   if (texts.files[ROADMAP_FILE] !== undefined) {
     const r = parseRoadmap(texts.files[ROADMAP_FILE]!, ROADMAP_FILE);
