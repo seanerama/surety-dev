@@ -244,6 +244,8 @@ export class Scheduler {
     // project's tick: a dependency that changed raises their next generation.
     await this.rt.engine('decisions.review', { project: null, channel: 'none' });
     await this.effects.step(project);
+    // The design (D7): the inventory due, readiness and design_due.
+    await this.rt.design?.step(project).catch((err) => log('design', err, { project }));
     // The authorized finalizer (D6 §5.5): a bundle whose authority is
     // complete and which a restart left unpublished is published now, once.
     await publishAuthorized(this.rt, project).catch((err) => log('publication', err, { project }));

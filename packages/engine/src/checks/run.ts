@@ -19,8 +19,8 @@
 // scripted boundary registrations stay `queued`.
 
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { createDomainCgroup, verifyLimits } from '../boundary/cgroup.js';
@@ -46,7 +46,11 @@ import { pausePoint, seamCheckDomainLimits, seamLauncherBarriers, seamLauncherRe
 import { hostIdentity } from '../trust/host.js';
 import { type CheckTree, MaterializationFailed, listTrees, materialize, projectionOf, releaseTree } from './checktree.js';
 import { checkLimits } from './limits.js';
-import { LINK_SOCKET, buildCheckPlan, inputMountConflict, inputOverlayOverlong, inputTargetConflict } from './profile.js';
+import { ASSETS_MOUNT, LINK_SOCKET, buildCheckPlan, inputMountConflict, inputOverlayOverlong, inputTargetConflict } from './profile.js';
+import { assetVariable } from '../design/asset-inputs.js';
+import { isSlug, within } from '../design/paths.js';
+import { blobAt } from '../design/tree.js';
+import { DESIGN_ROOT } from '../design/inventory.js';
 import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
 import { PROJECT_POLICY } from '../config/schema.js';
@@ -340,6 +344,8 @@ export class Supervisor implements DomainHolder {
   // only (D4 §7.2): set at its start, placed in its environment at launch.
   private readonly secretEnv: Record<string, string> = {};
   private secretRefs: string[] = [];
+  // The effective asset files the definition's asset_inputs name (D7 §6.5).
+  private assetFiles: { slot: string; variant: string; format: string; bytes: Buffer }[] | null = null;
   private secretRefsRecorded = false;
   private fireCancel: () => void = () => {};
 
@@ -465,6 +471,20 @@ export class Supervisor implements DomainHolder {
         secretEnv[checkSecretVariable(ref)] = value;
       }
       this.secretRefs = granted.refs;
+    }
+    // The design's asset inputs (D7 §6.5; G14): the effective file of each
+    // slot and variant at the version the execution was registered with.
+    if (Array.isArray((def as { asset_inputs?: unknown[] }).asset_inputs) && (def as { asset_inputs?: unknown[] }).asset_inputs!.length > 0) {
+      const got = await this.rt.read<{ repo: string; files: { slot: string; variant: string; revision: string; file: string; format: string; digest: string }[] | null; missing: string | null }>('checks.asset_files', { execution: a.execution });
+      if (got.files === null) return this.notRun('mount_plan_refused', `an asset input cannot be placed: ${got.missing ?? 'the execution names no asset inputs'}`);
+      const files: { slot: string; variant: string; format: string; bytes: Buffer }[] = [];
+      for (const f of got.files) {
+        if (!isSlug(f.slot) || !isSlug(f.variant) || !isSlug(f.format)) return this.notRun('mount_plan_refused', `the asset input ${JSON.stringify(`${f.slot}/${f.variant}.${f.format}`)} is not a slot, variant and format the engine places`);
+        const bytes = await blobAt(got.repo, f.revision, `${DESIGN_ROOT}${f.file}`);
+        if (bytes === null || createHash('sha256').update(bytes).digest('hex') !== f.digest.replace(/^sha256:/, '')) return this.notRun('mount_plan_refused', `the effective file of ${f.slot}/${f.variant} could not be read as recorded`);
+        files.push({ slot: f.slot, variant: f.variant, format: f.format, bytes });
+      }
+      this.assetFiles = files;
     }
     // The program, resolved now and recorded whether pinned or not (Q6).
     const program = resolveProgram(governed, def);
@@ -621,7 +641,18 @@ export class Supervisor implements DomainHolder {
       source = join(area, 'empty-source');
       mkdirSync(source, { mode: 0o755 });
     }
+    let assets: string | null = null;
+    if (this.assetFiles !== null) {
+      assets = join(area, 'assets');
+      for (const f of this.assetFiles) {
+        const target = within(assets, `${f.slot}/${f.variant}.${f.format}`);
+        if (target === null) throw new Error(`the asset input ${f.slot}/${f.variant} would be placed outside the domain's assets`);
+        mkdirSync(dirname(target), { recursive: true, mode: 0o755 });
+        writeFileSync(target, f.bytes, { mode: 0o444 });
+      }
+    }
     const plan = buildCheckPlan({
+      assets,
       linkSocket: this.link?.path ?? null,
       area,
       source: realpathSync(source),
@@ -651,6 +682,7 @@ export class Supervisor implements DomainHolder {
     const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
     if (this.link && a.link) for (const t of a.link.targets) env[targetVariable(t)] = targetValue(a.link.port);
     Object.assign(env, this.secretEnv);
+    for (const f of this.assetFiles ?? []) env[assetVariable(f.slot, f.variant)] = `${ASSETS_MOUNT}/${f.slot}/${f.variant}.${f.format}`;
     const backend: BackendLaunch = {
       argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
       env,

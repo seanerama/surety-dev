@@ -43,6 +43,14 @@ import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
+import { DESIGN_BATCH_DEFERRED, approveDesign, deferredBatches, designBatchState, designBindingsChanged, getRevision, pendingCorrections, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
+import { blobsHash } from '../design/store.js';
+import { latestCheck } from '../design/records.js';
+
+const designTreeHash = (db: Db, project: string): string | null => {
+  const c = latestCheck(db, { project });
+  return c ? blobsHash(c.blobs) : null;
+};
 
 type Db = Tx['db'];
 
@@ -577,12 +585,89 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .prepare(`UPDATE "spec_change_requests" SET "status" = 'proposed', "proposal_revision" = ?, "proposal_blob" = ?, "side_ref" = ?, "impact" = ?, "impact_value" = ? WHERE "id" = ?`)
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
-  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
-  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
-  if (d && item && item.status === 'executing') {
-    transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
+  // A design's change (D7 §7.4) waits while a correction of the protected
+  // checks is undecided, or approved and not applied yet: its batch would be
+  // bound to a version that may be replaced (objection 166). It is raised
+  // once none is pending.
+  if (r.source === 'design') {
+    const pending = pendingCorrections(tx.db, op.project, r.id).map((c) => c.proposal);
+    if (pending.length > 0) {
+      deferDesignBatch(tx, getRequest(tx.db, r.id)!, pending);
+      return { request: r.id, decision: null, deferred: pending };
+    }
   }
-  return { request: r.id, decision: d?.id ?? null };
+  const added = inputs.impact.requirements.filter((q) => q.changes.includes('added')).map((q) => q.key);
+  return { request: r.id, decision: raiseChangeQuestion(tx, getRequest(tx.db, r.id)!, { rep: inputs.representation, added }) };
+}
+
+// The change's question raised: for a design's change its batch first, its
+// inventory compared at raise, a difference refusing the batch with nothing
+// raised. The work awaits the question. Returns the spec_change raised.
+function raiseChangeQuestion(tx: Tx, r: RequestRow, args: { rep: SpecRepresentation | null; added: string[] }): string | null {
+  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  if (r.source === 'design') {
+    const batch = raiseDesignBatch(tx, { request: r.id, rep: args.rep, added: args.added });
+    if (batch.refused !== null) {
+      const failure = `design_batch_refused: ${batch.refused}`;
+      tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ?`).run(failure, r.id);
+      tx.emit('spec.change_failed', { project: r.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'design_batch_refused', failure });
+      settleWork(tx, getRequest(tx.db, r.id)!, 'design_batch_refused');
+      return null;
+    }
+  }
+  const d = raiseQuestion(tx, { project: r.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
+  if (d && r.source === 'design') tx.db.prepare('UPDATE "decisions" SET "batch_key" = (SELECT "batch_key" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1) WHERE "id" = ?').run(r.id, d.id);
+  const blocker = d ? JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) : null;
+  if (d && item && item.status === 'executing') {
+    transitionWork(tx, item, 'awaiting_decision', { blocker }, { spec_change_request: r.id, decision: d.id });
+  } else if (d && item && item.status === 'awaiting_decision') {
+    // A deferred batch raised now: the work awaits this question.
+    tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(blocker, item.id);
+  }
+  return d?.id ?? null;
+}
+
+// The batch held back (objection 166): the work awaits, its blocker naming
+// the corrections it waits for; no question is raised.
+function deferDesignBatch(tx: Tx, r: RequestRow, pending: string[]): void {
+  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  if (!item || item.status !== 'executing') return;
+  const blocker = JSON.stringify({ reason: DESIGN_BATCH_DEFERRED, raised_at: tx.at, spec_change_request: r.id, pending_corrections: pending });
+  transitionWork(tx, item, 'awaiting_decision', { blocker }, { spec_change_request: r.id, cause: DESIGN_BATCH_DEFERRED, pending_corrections: pending });
+}
+
+// At the design's tick: with no correction pending any more, each deferred
+// batch is raised, bound to the version as it now is (objection 166).
+export function raiseDeferredBatches(tx: Tx, project: string): string[] {
+  const raised: string[] = [];
+  for (const b of deferredBatches(tx.db, project)) {
+    if (b.pending_corrections.length > 0) continue;
+    const d = raiseDeferred(tx, b.spec_change_request);
+    if (d) raised.push(d);
+  }
+  return raised;
+}
+
+function raiseDeferred(tx: Tx, request: string): string | null {
+  const r = getRequest(tx.db, request);
+  if (!r || r.status !== 'proposed') return null;
+  const sem = proposalSemantics(tx.db, r);
+  const rep = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
+  const added = (parseJson<Impact>(r.impact_value)?.requirements ?? []).filter((q) => q.changes.includes('added')).map((q) => q.key);
+  return raiseChangeQuestion(tx, r, { rep, added });
+}
+
+// What a deferred batch's work waits on (store/transitions/awaiting.ts: no
+// item awaits on nothing): the corrections pending; with none, the batch is
+// raised now. False: nothing to wait on and nothing raised.
+export function settleDeferredBatch(tx: Tx, item: string): boolean {
+  const w = getWorkItem(tx, item);
+  if (!w || w.status !== 'awaiting_decision') return true;
+  const blocker = parseJson<{ spec_change_request?: string }>(w.blocker);
+  const request = blocker?.spec_change_request ?? (tx.db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { id: string } | undefined)?.id ?? null;
+  if (pendingCorrections(tx.db, w.project, request).length > 0) return true;
+  if (request && raiseDeferred(tx, request) !== null) return true;
+  return getWorkItem(tx, item)?.status !== 'awaiting_decision';
 }
 
 // The impact as it stands now (D6 §4.4: preview and effect recompute it):
@@ -671,6 +756,9 @@ export function changeManifest(db: Db, id: string): Record<string, unknown> {
     // the request recorded, whatever the ref holds.
     side_ref: r ? sideRefObservation(db, r) : null,
     policy_revision: project === null ? null : policyRevision(db, project),
+    // A design's change is bound to the design tree as the last save left
+    // it, as its batched design_approval is (D7 §7.4; M505 (g)).
+    ...(r?.source === 'design' && project !== null ? { design_tree: designTreeHash(db, project) } : {}),
   };
 }
 
@@ -745,11 +833,15 @@ export function specChangeKind(): KindSpec {
     },
     // An effect whose precondition failed: the question is asked again
     // against what is there now.
-    withdraw: () => true,
+    withdraw: (tx, d) => {
+      // A design's change asked again: its design_approval with it (D7 §7.4).
+      if (getRequest(tx.db, d.subject_id)?.source === 'design') reraiseDesignBatch(tx, d.subject_id);
+      return true;
+    },
   };
 }
 
-function settleWork(tx: Tx, r: RequestRow, cause: string): void {
+export function settleWork(tx: Tx, r: RequestRow, cause: string): void {
   const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
   if (!item || item.status === 'complete' || item.status === 'cancelled') return;
   // The proposal path (work-table.ts): executing → awaiting_decision → complete.
@@ -806,6 +898,9 @@ export interface AppliedInputs {
   // (D1 correction 14): the finalizer recomputes it and falls back to this,
   // never to the proposal's (the 31b review's M1).
   impact: Impact;
+  // A design's change (E156 Q3): the roadmap file the same commit writes,
+  // with the human tests' engine assignment, as the next roadmap version.
+  roadmap?: { blob: string; path: string; version: number; from_version: number };
 }
 
 // An application that cannot be made as approved (a precondition unread, a
@@ -829,7 +924,10 @@ export function refuseApplication(tx: Tx, args: { intent: string; reason: string
 // The intent begins (decisions/effects.ts): its preconditions read again,
 // then the integration branch moved to the proposal (or its rebase onto the
 // head, committed first) by a journaled compare-and-swap.
-export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string } | null; deadlineSeconds: number }): IntentResult | null {
+export function beginApplication(
+  tx: Tx,
+  args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string; roadmap?: AppliedInputs['roadmap'] } | null; deadlineSeconds: number },
+): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, {})) return null;
   const facts = applicationFacts(tx, { intent: args.intent });
   if (!facts || facts.revision === null) {
@@ -840,6 +938,23 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
   // begun at a later tick, against what is there then.
   if (facts.head !== args.head) return null;
   const r = getRequest(tx.db, facts.request)!;
+  // A design's change waits for its design's approval and the batch's
+  // release, and is refused when the design was sent back, rejected, or the
+  // bindings its approval was given on moved (D7 §7.4; E156 Q3).
+  if (r.source === 'design') {
+    const state = designBatchState(tx.db, r.id);
+    if (state === 'wait') return null;
+    if (state === 'refuse') {
+      refuseApplication(tx, { intent: args.intent, reason: 'design_not_approved' });
+      return null;
+    }
+    const moved = designBindingsChanged(tx.db, r.id);
+    if (moved !== null) {
+      refuseApplication(tx, { intent: args.intent, reason: `design_bindings_changed:${moved}` });
+      reraiseDesignBatch(tx, r.id);
+      return null;
+    }
+  }
   if (specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }).length > 0) {
     refuseApplication(tx, { intent: args.intent, reason: 'spec_semantics_invalid' });
     return null;
@@ -856,7 +971,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
     payload: { repo: facts.repo, ref: facts.ref, old_oid: args.head, new_oid: target },
     target: { repo: facts.repo, ref: facts.ref },
     subject: { spec_change_request: facts.request, old_oid: args.head, new_oid: target },
-    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
+    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}), ...(args.commit?.roadmap ? { roadmap: args.commit.roadmap } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
     deadlineSeconds: args.deadlineSeconds,
   };
   const made = args.commit === null
@@ -929,7 +1044,21 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // Before any roadmap there is no phase to touch (D6 §4.5; the
   // coordinator's ruling on slice 34): no replan holds the project then.
   const roadmap = tx.db.prepare('SELECT 1 FROM "roadmap_revisions" WHERE "project" = ? LIMIT 1').get(op.project) !== undefined;
-  if ((impact.touches_current || impact.touches_later === true) && roadmap) {
+  // A design's change (D7 §7.4): the design approved in the transaction that
+  // applies n+1; its human tests are placed by the engine's assignment, so
+  // it registers no replan.
+  const design = r.source === 'design' ? revisionOfRequest(tx.db, r.id) : undefined;
+  if (design) approveDesign(tx, { revision: design.id, specRevision: made.spec_revision, withoutCriteria: false, ...(inputs.roadmap ? { roadmap: inputs.roadmap } : {}) });
+  // A requirement the change adds that the engine's assignment did not
+  // place (a human test whose phase cannot be determined, a criterion with
+  // requirement "new", an ordinary new requirement) goes the normal way
+  // (E156 Q3; D6 reading 6): the replan places it, REQUIREMENT_UNASSIGNED
+  // naming it on every phase gate until then.
+  const placed = new Set(
+    (parseJson<{ requirement: string | null; phase: number | null }[]>(design ? (getRevision(tx.db, design.id)?.assignments ?? null) : null) ?? []).filter((a) => a.requirement !== null && a.phase !== null).map((a) => a.requirement!),
+  );
+  const unplaced = design !== undefined && impact.requirements.some((q) => q.changes.includes('added') && !placed.has(q.key));
+  if ((impact.touches_current || impact.touches_later === true) && roadmap && (!design || unplaced)) {
     // Only a change touching the current phase replaces its plan early (D6
     // §5.7; the slice-36 review's M1): a later-only change's replan binds no
     // open plan and supersedes none of the current phase's stages.

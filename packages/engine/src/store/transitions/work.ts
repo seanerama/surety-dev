@@ -11,6 +11,7 @@ import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
 import { illegal, nextSeq, notFound } from './common.js';
 import { raiseQuestion } from './queue.js';
+import { designPolicyOf, holdsBeforeBuild, isUiStage } from '../../design/policy.js';
 import type { EventType, Tx } from './tx.js';
 import {
   DISPATCHABLE,
@@ -138,7 +139,7 @@ export function transitionWork(tx: Tx, item: WorkRow, to: WorkStatus, changes: W
 // `work.hold_began` and closed with `work.hold_ended` when the reason changes
 // or the item leaves `eligible`; `held` is the reason now. No status
 // changes. D1's `work.held` (a Stop's status change) is another thing.
-export type HoldReason = 'resource_envelope' | 'chain_boundary' | 'depends_on' | 'authoring_readiness' | 'open_decision' | 'session_busy' | 'prerequisite_results';
+export type HoldReason = 'resource_envelope' | 'chain_boundary' | 'depends_on' | 'authoring_readiness' | 'open_decision' | 'session_busy' | 'prerequisite_results' | 'design_pending' | 'design_stale';
 // A hold may name what it waits on (M543: a replan's prerequisite results,
 // each by its check, candidate and execution): kept on its interval, every
 // result named while it lasted, and on its events.
@@ -197,7 +198,9 @@ export type Milestone =
   | { milestone: 'stage_code'; stage: string }
   // D6 §8.3 (B10): a retrofit replan waits for the owner's decision on the
   // requests for criteria its refused result made.
-  | { milestone: 'spec_change_requests'; requests: string[] };
+  | { milestone: 'spec_change_requests'; requests: string[] }
+  // D7 §8.2, G6: a UI stage's design readiness under before_build or both.
+  | { milestone: 'design_ready'; stage: string };
 
 export interface TriggerInput {
   project: string;
@@ -257,7 +260,8 @@ export function originOfRun(db: Tx['db'], run: string): ChainOrigin | null {
   return r?.work_item ? originOfItem(db, r.work_item) : null;
 }
 
-const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization', 'phase_plan', 'request'];
+// D7 §6.5 (SEAM.md §487): an `asset_updated` fix names its cause, slot, versions and bindings.
+const SUBJECT_KEYS = ['stage', 'candidate', 'finding', 'decision', 'proposal', 'operation', 'environment', 'authorization', 'phase_plan', 'request', 'cause', 'slot', 'from_version', 'to_version', 'bindings'];
 
 // Observe a trigger (D1 §8.2): create-or-return across every status, terminal
 // included. Re-observing an identity creates nothing and raises nothing.
@@ -543,6 +547,8 @@ export function registerPlan(
     // depends on. A fixture's or an Architect integration's plan is as D1
     // built it: no milestone.
     const milestones: Milestone[] = publication ? [{ milestone: 'authoring_ready', phase_plan: plan }, ...deps.map((d) => ({ milestone: 'stage_code' as const, stage: d }))] : [];
+    // D7 §8.2, G6: a UI stage under before_build or both waits on design too.
+    if (publication && holdsBeforeBuild(designPolicyOf(tx.db, args.project)) && isUiStage(tx.db, args.project, { modules: JSON.stringify(stage.modules ?? []) })) milestones.push({ milestone: 'design_ready', stage: id });
     const made = observeTrigger(
       tx,
       { project: args.project, kind: 'stage_build', trigger_source: 'plan', trigger_id: id, trigger_generation: 1, subject: { stage: id }, chain: args.chain ?? 0, ...(milestones.length > 0 ? { depends_on: milestones } : {}) },

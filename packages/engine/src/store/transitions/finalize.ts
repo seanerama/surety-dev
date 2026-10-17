@@ -26,6 +26,8 @@ import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/
 import { supersededWhileRunning } from '../../plan/replace.js';
 import { registerPhaseAtNomination } from '../../plan/phase.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
+import { type InventoryRefInputs, designTurnedOn, finalizeInventoryRef, recordInventory } from '../../design/store.js';
+import { recordBindings } from '../../design/asset-bindings.js';
 
 export interface WorkspaceInputs {
   purpose: 'workspace';
@@ -42,7 +44,7 @@ export interface DiscardInputs {
 }
 
 export interface CommitInputs {
-  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt' | 'spec';
+  purpose: 'run' | 'bootstrap' | 'policy' | 'protected' | 'stash' | 'adopt' | 'spec' | 'design';
   run?: string;
   sha: string;
   parent: string;
@@ -63,7 +65,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved' | 'design_inventory';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -104,6 +106,10 @@ export interface RefInputs {
   decision?: string;
   // the effect intent this operation completes
   intent?: string | null;
+  // D7 §6.5 (G15): a UI Builder's validated asset bindings
+  asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived'; slot_version: number }[];
+  // D7 §4.4: an inventory committed with a policy change turning design on
+  design_inventory?: { digest: string; inventory: unknown; manifest: unknown; incarnation: string };
 }
 
 export function runFinalizer(tx: Tx, op: OpDetail): Record<string, unknown> {
@@ -195,6 +201,14 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
       reraiseOnPolicy(tx, op.project);
+      // Design turned on (D7 §2): the undispatched UI stages wait on it, and
+      // the inventory committed with the policy is recorded.
+      designTurnedOn(tx, op.project);
+      if (inputs.design_inventory) {
+        const di = inputs.design_inventory;
+        const made = finalizeInventoryRef(tx, op, { purpose: 'design_inventory', ref: inputs.ref, ref_kind: 'integration', new_oid: inputs.new_oid, project: op.project, inventory_digest: di.digest, inventory: di.inventory as never, manifest: di.manifest as never, incarnation: di.incarnation });
+        recordInventory(tx, { id: made.design_inventory as string });
+      }
       // A pending bundle on the head the policy commit moved stays answerable
       // (B03): the commit touches none of its bound inputs.
       if (op.payload.old_oid) rebindHarmless(tx, { project: op.project, from: op.payload.old_oid, to: inputs.new_oid });
@@ -212,6 +226,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     // D6 §3.4: spec_approval's change log row integrated; the approval.
     case 'spec_approved':
       return finalizeApproved(tx, op, inputs as unknown as ApprovedInputs);
+    // D7 §4.4: the inventory's engine commit on the integration branch.
+    case 'design_inventory':
+      return finalizeInventoryRef(tx, op, inputs as unknown as InventoryRefInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':
@@ -251,6 +268,10 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
   if (item && item.status === 'integrating') {
     transitionWork(tx, item, 'integrated', {}, { run: inputs.run, operation: op.id, revision: inputs.new_oid });
     status = 'integrated';
+  }
+  // D7 §6.5 (G15): the asset bindings recorded with the stage and the revision.
+  if (inputs.asset_bindings && inputs.asset_bindings.length > 0 && item && inputs.run) {
+    recordBindings(tx, { project: op.project, run: inputs.run, work_item: item.id, stage: inputs.stage ?? null, revision: inputs.new_oid, bindings: inputs.asset_bindings });
   }
   if (inputs.stage) {
     tx.db.prepare(`UPDATE "stages" SET "status" = 'integrated', "integrated_revision" = ? WHERE "id" = ?`).run(inputs.new_oid, inputs.stage);

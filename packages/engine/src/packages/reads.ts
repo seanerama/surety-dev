@@ -28,7 +28,7 @@ import { dirname } from 'node:path';
 import { CHECK_KINDS, COMMAND_NAME, COVERING_KINDS, CRITERION, DEPLOY_SECRET_REFERENCE, DIRECT_RUNNER_MEMBERS, GATE_KINDS, GOVERNED_FILE, GOVERNED_MEMBERS, POST_DEPLOY, REQUIRES_VALUES, SENSITIVE_AREAS, SENSITIVE_AREA_NAMES, SYSTEM_DIRS, defaultGoverned } from '../checks/schema.js';
 import { KIND_INVENTORY, MODULE_PATH, MODULE_PATH_FORM, SCOPE_KINDS, type Tier } from '../checks/scope.js';
 import { PLAN_REASONS, STAGE_VALIDATION_REPLAN_EXCEPTIONS, STAGE_VALIDATION_RULE } from '../plan/check.js';
-import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, INTERFACE_KINDS, MODULES_FILE, ROADMAP_FILE, adrPath, planPath } from '../plan/schemas.js';
+import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, B8, FORM_FACTORS, INTERFACE_KINDS, MODULE_SURFACES, MODULES_FILE, ROADMAP_FILE, SHAPE_TYPES, UI_TECHNOLOGIES, adrPath, planPath } from '../plan/schemas.js';
 import type { PreparedAgainstFacts } from '../plan/bundle.js';
 import { QUESTION_BLOCKER_CODES } from '../spec/keys.js';
 import { CLAIMS_COLUMNS, ENVIRONMENT_FIELDS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
@@ -208,7 +208,34 @@ const strings = { type: 'array', items: str };
 const keys = { type: 'array', items: { type: 'string', pattern: KEY_PATTERN } };
 const areas = { type: 'array', items: { enum: [...SENSITIVE_AREAS] } };
 
-const INTERFACE_SCHEMA = closedObject(B3.interface, { name: nonEmpty, kind: { enum: [...INTERFACE_KINDS] }, path: str, description: str });
+// D7 Appendix B.8: the shape language, recursive (a shape's `properties`
+// and `items` are shapes of this form).
+const SHAPE_SCHEMA = {
+  ...closedObject({ fields: B8.fields, required: ['type'] }, {
+    type: { oneOf: [{ enum: [...SHAPE_TYPES] }, { type: 'array', minItems: 2, maxItems: 2, description: 'one type and "null"' }] },
+    properties: { description: 'an object: each property name to a shape of this form' },
+    required: strings,
+    enum: { type: 'array', minItems: 1 },
+    minimum: { type: 'number' },
+    maximum: { type: 'number' },
+    minLength: { type: 'integer', minimum: 0 },
+    maxLength: { type: 'integer', minimum: 0 },
+    items: { description: 'a shape of this form' },
+    collection: { type: 'boolean' },
+    unit: nonEmpty,
+  }),
+  description: 'D7 B.8: no references, no union beyond one type with null',
+};
+const INTERFACE_SCHEMA = closedObject(B3.interface, {
+  name: nonEmpty,
+  kind: { enum: [...INTERFACE_KINDS] },
+  path: str,
+  description: str,
+  consumed_by: { ...strings, description: 'modules of this map only' },
+  request: SHAPE_SCHEMA,
+  response: SHAPE_SCHEMA,
+  errors: { type: 'array', items: closedObject(B3.error, { code: nonEmpty, when: str }) },
+});
 // A module path in the one form the engine's matcher reads (checks/scope.ts
 // MODULE_PATH): a module whose paths it cannot read has a presence that is
 // never read, and the build stalls on it (the real M443 run's `dir/**`).
@@ -220,6 +247,10 @@ const MODULE_SCHEMA = closedObject(B3.module, {
   tier_override: { enum: ['T1', 'T2', 'T3'] },
   interfaces: { type: 'array', items: INTERFACE_SCHEMA },
   requirements: keys,
+  surface: { enum: [...MODULE_SURFACES] },
+  targets: { type: 'array', items: closedObject(B3.target, { target: { enum: ['web', 'android', 'ios', 'macos', 'windows', 'linux'] }, ui_technology: { enum: [...UI_TECHNOLOGIES] }, form_factors: { type: 'array', items: { enum: [...FORM_FACTORS] }, description: 'android and ios only' } }) },
+  platform_permissions: { type: 'array', items: closedObject(B3.permission, { target: { enum: ['android', 'ios', 'macos'] }, permission: nonEmpty, why: str }) },
+  asset_paths: { type: 'array', items: closedObject(B3.asset_path, { slot: nonEmpty, variant: nonEmpty, target: nonEmpty, path: nonEmpty }) },
 });
 export const MODULE_MAP_SCHEMA = closedObject(B3.file, {
   version: { const: 1 },

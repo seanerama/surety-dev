@@ -148,6 +148,10 @@ export class Effects {
       const refuse = (reason: string) => this.rt.engine('spec.refuse_application', { intent: row.id, reason });
       const facts = await this.rt.engine<SpecApplicationFacts | null>('spec.application_facts', { intent: row.id });
       if (facts === null || facts.revision === null) return void (await refuse('proposal'));
+      // A design's change waits for its batch (D7 §7.4): nothing is begun
+      // until the design is approved and the batch released.
+      const batch = await this.rt.read<'none' | 'wait' | 'go' | 'refuse'>('design.batch_state', { request: facts.request });
+      if (batch === 'wait') return;
       const ctx = repoContext(facts.repo);
       const read = await readRef(ctx, facts.ref);
       if (read.state !== 'ok' || read.oid === null) return void (await refuse('integration_revision_unread'));
@@ -186,14 +190,44 @@ export class Effects {
       const proposed = await specFileAt(ctx, facts.revision, null);
       if (proposed === null) return void (await refuse('proposal_unread'));
       const text = Buffer.from(appendChangeLog(proposed.bytes.toString('latin1'), { version: facts.version, date: nowIso().slice(0, 10), change: `Specification change ${facts.seq}`, approved_by: facts.approved_by }), 'latin1');
-      const tree = await treeWith(facts.repo, base.tree, { [SPEC_PATH]: { bytes: text, mode: proposed.mode } }, this.rt.scratch);
+      // A design's change (E156 Q3): the human tests' assignment written into
+      // the roadmap file in the same commit, as the next roadmap version.
+      const files: Record<string, { bytes: Buffer; mode: string }> = { [SPEC_PATH]: { bytes: text, mode: proposed.mode } };
+      let roadmap: { blob: string; path: string; version: number; from_version: number } | undefined;
+      if (batch === 'go') {
+        const plan = await this.rt.read<{ path: string; version: number; moves: { requirement: string; phase: number }[] } | null>('design.roadmap_assignment', { request: facts.request });
+        if (plan !== null) {
+          const current = await gitOk(ctx, ['cat-file', 'blob', `${base.tree}:${plan.path}`]);
+          const parsed = ((): { version?: number; phases: { number: number; requirement_ids: string[] }[] } | null => {
+            try {
+              const v = current === null ? null : (JSON.parse(current) as { version?: number; phases?: unknown });
+              return v !== null && Array.isArray(v.phases) ? (v as { version?: number; phases: { number: number; requirement_ids: string[] }[] }) : null;
+            } catch {
+              return null;
+            }
+          })();
+          if (parsed === null) return void (await refuse('roadmap_unread'));
+          for (const m of plan.moves) {
+            for (const ph of parsed.phases) ph.requirement_ids = (ph.requirement_ids ?? []).filter((k) => k !== m.requirement);
+            const to = parsed.phases.find((ph) => ph.number === m.phase);
+            if (to) to.requirement_ids.push(m.requirement);
+          }
+          parsed.version = plan.version + 1;
+          const bytes = Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`);
+          const rblob = await writeBlob(ctx, bytes);
+          if (rblob === null) return void (await refuse('commit_unprepared'));
+          files[plan.path] = { bytes, mode: '100644' };
+          roadmap = { blob: rblob, path: plan.path, version: plan.version + 1, from_version: plan.version };
+        }
+      }
+      const tree = await treeWith(facts.repo, base.tree, files, this.rt.scratch);
       const blob = await writeBlob(ctx, text);
       if (tree === null || blob === null) return void (await refuse('commit_unprepared'));
       const message = messageText({ title: `surety: apply specification change ${facts.request} as version ${facts.version}`, trailers: [['Surety-Project', row.project], ['Surety-Spec-Change', facts.request]] });
       const content = commitContent({ tree, parent: base.parent, message, at: nowIso() });
       const sha = await commitId(facts.repo, content);
       if (sha === null) return void (await refuse('commit_unprepared'));
-      const commit = { sha, tree, content, parent: base.parent, blob };
+      const commit = { sha, tree, content, parent: base.parent, blob, ...(roadmap ? { roadmap } : {}) };
       const made = await this.journal.withProject(row.project, () => this.journal.intend('spec.begin_application', { intent: row.id, head, commit, deadlineSeconds: this.rt.setting('git_deadline') }, 'commit_tree'));
       if (made && 'operation' in made) await this.journal.withProject(row.project, () => this.journal.drive(made.operation));
     }

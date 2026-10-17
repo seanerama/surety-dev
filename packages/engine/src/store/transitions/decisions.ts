@@ -38,7 +38,11 @@ export type DecisionKind =
   | 'spec_change'
   // D6 §8.1 (M5 slice 32): the adoption's mode and the retrofit confirmations.
   | 'adoption_mode'
-  | 'requirement_confirm';
+  | 'requirement_confirm'
+  // D7 A.2, G5 (M6): the design's decisions.
+  | 'design_approval'
+  | 'design_due'
+  | 'design_verdicts';
 
 export interface OptionSpec {
   key: string;
@@ -82,8 +86,10 @@ export interface DecisionSpec {
   manifest: Record<string, unknown>;
   blockedWorkItems?: string[] | undefined;
   blockedOperation?: string | undefined;
-  // D1 A.3: the records the question rests on, with their provenance.
-  evidence?: { record: string; provenance: 'observed' | 'claimed' | 'configured' }[] | undefined;
+  // D1 A.3: the records the question rests on, with their provenance. The
+  // design's decisions carry their preview's text fields here as an object
+  // (D7 §11, §7.4; SEAM.md §§485, 486).
+  evidence?: { record: string; provenance: 'observed' | 'claimed' | 'configured' }[] | Record<string, unknown> | undefined;
   // Facts recorded with the question when it is raised, not bound by its
   // preview (decision.raised's payload; a spec_change's `settling`).
   raised?: Record<string, unknown> | undefined;

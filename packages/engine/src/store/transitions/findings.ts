@@ -52,6 +52,9 @@ export interface Report {
   spec_change_requests?: { keys: string[]; text: string }[];
   // D6 §4.5 (Q6): a Verifier's applicability assessment on a correction.
   spec_applicability?: { check: string; criteria: string[]; rationale: string }[];
+  // D7 §6.5, B.17, G15 (M6): a UI Builder's asset bindings, validated at
+  // integration (design/asset-bindings.ts).
+  asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived' }[];
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;

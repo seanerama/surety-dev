@@ -197,6 +197,10 @@ export const DECISION_KINDS = [
   // D2 A.2, A.7.
   'qualification_approval',
   'trust_activation',
+  // D7 A.2 (M6): the design's decisions.
+  'design_approval',
+  'design_due',
+  'design_verdicts',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
@@ -232,6 +236,10 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   // retrofit confirmations, 2 d each.
   adoption_mode: 172_800,
   requirement_confirm: 172_800,
+  // D7 §11, G5 (M6): the design's decisions, 2 d each.
+  design_approval: 172_800,
+  design_due: 172_800,
+  design_verdicts: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). The project
@@ -279,6 +287,17 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   service_writable_bytes: int(67_108_864, 1_048_576, 1_073_741_824),
   service_writable_inodes: int(4096, 256, 65_536),
   service_log_max_bytes: int(1_048_576, 65_536, 16_777_216),
+  // D7 A.7 (M6; E156 Q4: trial values): the Designer's turn deadline and
+  // session budget, the design tree's bounds, the preview's memory, its time
+  // to live, design_due's longest deferral and the review evidence's bound.
+  deadline_designer: int(1800, 300, 10_800),
+  designer_session_budget_billable_tokens: int(3_000_000, 250_000, 20_000_000),
+  design_tree_max_bytes: int(33_554_432, 1_048_576, 134_217_728),
+  design_tree_max_files: int(800, 50, 8000),
+  preview_memory_max: int(268_435_456, 67_108_864, 68_719_476_736),
+  design_preview_ttl: int(86_400, 3600, 1_209_600),
+  design_due_max_defer: int(604_800, 3600, 2_592_000),
+  design_review_evidence_max_bytes: int(67_108_864, 1_048_576, 2_147_483_648),
 };
 
 // The finer a budget boundary, the earlier in this list (D2 A.2
@@ -297,6 +316,10 @@ export const BACKEND_NAMES = ['scripted', 'claude', 'codex'] as const;
 export const AUTONOMY_PROFILES = ['step', 'stage', 'phase'] as const;
 export type Autonomy = (typeof AUTONOMY_PROFILES)[number];
 export const ALPHA_DEPLOY_POLICIES = ['manual', 'on_phase_complete'] as const;
+// D7 §2, A.2 DesignPolicy; §5.2 DesignPreviewPolicy (`stack` refused in M6, E156 Q4).
+export const DESIGN_POLICIES = ['off', 'before_build', 'at_alpha', 'both'] as const;
+export type DesignPolicy = (typeof DESIGN_POLICIES)[number];
+export const DESIGN_PREVIEW_POLICIES = ['off', 'static'] as const;
 export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
 
 // Ungoverned project keys that are not numbers (D2 A.7). `widening` says when
@@ -304,7 +327,11 @@ export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
 // adds an element the effective value lacks, `coarser` when it names a
 // coarser budget boundary, `never` when no change does.
 export interface OptionSpec {
-  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model' | 'size_range';
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model' | 'size_range' | 'int_list' | 'subset';
+  // `int_list` (D7 A.7 `design_widths`): 1 to `count.max` distinct integers
+  // within `range`; `subset` (`design_orientations`): a non-empty subset of
+  // `values`, no repeats.
+  count?: { min: number; max: number };
   // `size_range` (D6 §5.2, A.7 `phase_size`): `{min, max}`, each an integer
   // within [range.min, range.max], min not above max.
   range?: { min: number; max: number };
@@ -353,6 +380,18 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   // outside it is `uncertain` and goes to the human, never refused outright.
   phase_size: { type: 'size_range', default: { min: 3, max: 5 }, range: { min: 1, max: 12 }, widening: 'never' },
   backend_mode: { type: 'enum', values: TRUST_MODES, default: 'one_shot_headless', widening: 'never' },
+  // D7 §2, A.7 (M6): when design happens, target-blind; turning it on is a
+  // tightening for undispatched UI stages, so no change of it widens.
+  design: { type: 'enum', values: DESIGN_POLICIES, default: 'off', widening: 'never' },
+  // D7 §5.2, A.7; E156 Q4: `stack` refused in M6.
+  design_preview: { type: 'enum', values: DESIGN_PREVIEW_POLICIES, default: 'static', widening: 'never' },
+  design_widths: { type: 'int_list', default: [360, 720, 1280], range: { min: 240, max: 3840 }, count: { min: 1, max: 6 }, widening: 'never' },
+  design_orientations: { type: 'subset', values: ['portrait', 'landscape'], default: ['portrait', 'landscape'], widening: 'never' },
+  design_external_urls: { type: 'host_names', default: ['cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com'], widening: 'added' },
+  // D7 §6.7; Q8: never `alpha`.
+  assets_required_for: { type: 'enum', values: ['none', 'beta', 'live'], default: 'live', widening: 'never' },
+  backend_designer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  model_designer: { type: 'model', default: 'opus', widening: 'never' },
 };
 
 // A JSON number of the right kind inside its range. null, strings and

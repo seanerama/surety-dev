@@ -6,6 +6,7 @@
 // a measured zero. Nothing here writes, evaluates or probes.
 
 import { activeStages } from './active.js';
+import { designPace } from '../design/pace.js';
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
@@ -548,6 +549,8 @@ export function paceView(db: Database, args: { project: string }) {
     domains,
     host: hostSection,
     hosts,
+    // D7 §13 (M6 build spec §10): the design's figures.
+    design: designPace(db, p),
   };
 }
 

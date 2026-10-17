@@ -1,0 +1,74 @@
+// The design check's record (D7 §5.6; A.3 design_checks; SEAM.md §483): one
+// row per save and per close's check, with its reasons and the design tree's
+// blobs, and `design.checked`; and what the check reads of the store (the
+// recorded inventory, the allowed external hosts, what the last approval
+// approved, the tree's bounds).
+
+import type Database from 'better-sqlite3';
+
+import { canonical, parseJson, sha256 } from '../store/transitions/common.js';
+import { projectEffective, projectPolicy } from '../store/transitions/settings.js';
+import type { Tx } from '../store/transitions/tx.js';
+import type { CheckContext, DesignReason } from './check.js';
+import { currentInventory } from './store.js';
+
+export function checkContext(db: Database.Database, project: string): CheckContext {
+  const inv = currentInventory(db, project);
+  const options = projectEffective(db, project) as Record<string, unknown>;
+  const policy = projectPolicy(db, project);
+  // What an owner's approval made effective (§6.4): a manifest may mark only
+  // these `approved`, with the same versions and digests.
+  const effective = db.prepare(`SELECT "slot", "variant", "slot_version", "digest" FROM "design_effective_assets" WHERE "project" = ? AND "source" = 'approved' ORDER BY "slot", "variant"`).all(project) as {
+    slot: string;
+    variant: string;
+    slot_version: number;
+    digest: string;
+  }[];
+  const bySlot = new Map<string, { slot: string; slot_version: number; digests: Record<string, string> }>();
+  for (const e of effective) {
+    const s = bySlot.get(e.slot) ?? { slot: e.slot, slot_version: e.slot_version, digests: {} };
+    s.digests[e.variant] = e.digest;
+    bySlot.set(e.slot, s);
+  }
+  return {
+    inventory: inv?.inventory ?? null,
+    externalHosts: Array.isArray(options.design_external_urls) ? (options.design_external_urls as string[]) : [],
+    approved: [...bySlot.values()],
+    ...(policy.design_tree_max_bytes !== undefined ? { maxBytes: policy.design_tree_max_bytes } : {}),
+    ...(policy.design_tree_max_files !== undefined ? { maxFiles: policy.design_tree_max_files } : {}),
+  };
+}
+
+export interface CheckRecord {
+  id: string;
+  outcome: 'passed' | 'refused';
+  reasons: DesignReason[];
+  hash: string;
+}
+
+export function recordCheck(tx: Tx, args: { project: string; run: string | null; revision: string; inventory_digest: string | null; outcome: 'passed' | 'refused'; reasons: DesignReason[]; blobs: Record<string, string> }): CheckRecord {
+  const id = tx.newId('dchk_');
+  const hash = sha256(canonical({ revision: args.revision, outcome: args.outcome, reasons: args.reasons, blobs: args.blobs }));
+  tx.db
+    .prepare('INSERT INTO "design_checks" ("id", "created_at", "project", "run", "tree_revision", "inventory_digest", "outcome", "reasons", "hash", "blobs") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, tx.at, args.project, args.run, args.revision, args.inventory_digest, args.outcome, JSON.stringify(args.reasons), hash, JSON.stringify(args.blobs));
+  tx.emit('design.checked', { project: args.project, design_check: id, ...(args.run ? { run: args.run } : {}) }, { outcome: args.outcome, revision: args.revision, reasons: args.reasons.map((r) => r.code) });
+  return { id, outcome: args.outcome, reasons: args.reasons, hash };
+}
+
+// The latest design check of a project (by insertion), or of a session run.
+export function latestCheck(db: Database.Database, args: { project: string; run?: string }): (CheckRecord & { tree_revision: string; blobs: Record<string, string>; inventory_digest: string | null }) | null {
+  const row = (
+    args.run
+      ? db.prepare('SELECT * FROM "design_checks" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(args.run)
+      : db.prepare('SELECT * FROM "design_checks" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project)
+  ) as { id: string; outcome: 'passed' | 'refused'; reasons: string; hash: string; tree_revision: string; blobs: string; inventory_digest: string | null } | undefined;
+  if (!row) return null;
+  return { id: row.id, outcome: row.outcome, reasons: parseJson<DesignReason[]>(row.reasons) ?? [], hash: row.hash, tree_revision: row.tree_revision, blobs: parseJson<Record<string, string>>(row.blobs) ?? {}, inventory_digest: row.inventory_digest };
+}
+
+// A reason as a save's finding (SEAM.md §346's form), naming its subjects.
+export function reasonFinding(r: DesignReason): { code: string; path: string; subject: Record<string, unknown>; message: string } {
+  const parts = Object.entries(r.subjects).map(([k, v]) => `${k} ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+  return { code: r.code, path: '.surety/design/', subject: r.subjects, message: `${r.code}: ${parts.join(', ')}` };
+}

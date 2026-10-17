@@ -7,6 +7,7 @@
 // execution (admission, its domain, its launch, its result) is
 // check-executions.ts.
 
+import { stampAssetInputs } from '../../design/asset-inputs.js';
 import { notePeakDomains } from '../../plan/pace.js';
 import type { Discovery } from '../../checks/discovery.js';
 import { type DiscoveryError, criterionErrors, requirementKeyOf } from '../../checks/schema.js';
@@ -322,6 +323,8 @@ export function registerExecutions(
         args.binding ? JSON.stringify(args.binding.deployment) : null,
       );
     stampGeneration(tx, id, args.project);
+    // D7 §6.5 (G14): the effective slot@version a check reading assets is given.
+    stampAssetInputs(tx, id, args.project, c.id);
     tx.emit('check.registered', { project: args.project, candidate: args.candidate.id, check_execution: id }, { key: c.key, trigger: args.trigger, execution_seq: seq, check: c.id });
     out.push({ id, check: c.id, key: c.key, created: true });
   }
@@ -1082,6 +1085,7 @@ export function registerRecoveryRetry(tx: Tx, execution: string): string | null 
     )
     .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at);
   stampGeneration(tx, id, x.project);
+  tx.db.prepare('UPDATE "check_executions" SET "asset_inputs" = (SELECT "asset_inputs" FROM "check_executions" WHERE "id" = ?) WHERE "id" = ?').run(x.id, id);
   if (x.deployment !== null) {
     tx.db.prepare('UPDATE "check_executions" SET "environment" = ?, "artifact_digest" = ?, "deployment" = ? WHERE "id" = ?').run(x.environment, x.artifact_digest, x.deployment, id);
   }

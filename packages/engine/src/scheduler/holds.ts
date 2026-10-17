@@ -15,6 +15,9 @@ import { type HoldDetail, type HoldReason, type WorkRow, setHold } from '../stor
 // The HoldReason a dispatch blocker names, or null.
 export function holdReasonOf(blocker: string): HoldReason | null {
   if (blocker === 'session_busy') return 'session_busy';
+  // D7 §8.2: the third milestone unmet.
+  if (blocker === 'design_pending') return 'design_pending';
+  if (blocker === 'design_stale') return 'design_stale';
   // M543 (SEAM.md §474): a replan held for its prerequisite results.
   if (blocker.startsWith(PREREQUISITES_PENDING)) return 'prerequisite_results';
   if (blocker === CHAIN_BOUNDARY) return 'chain_boundary';

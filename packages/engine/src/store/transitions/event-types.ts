@@ -210,6 +210,25 @@ export const EVENT_OWNERS = {
   'conformance.source_bound': 'adopt/conformance.ts',
   'stage.conformance_integrated': 'adopt/conformance.ts',
   'conformance.alpha_barrier_opened': 'plan/phase.ts',
+  // D7 A.2 (M6): the design's events.
+  'design.inventory_derived': 'design/store.ts',
+  'design.checked': 'design/store.ts',
+  'design.proposed': 'design/store.ts',
+  'design.approved': 'design/approval.ts',
+  'design.rejected': 'design/approval.ts',
+  'design.ready': 'design/approval.ts',
+  'design.stale': 'design/store.ts',
+  'design.waived': 'design/due.ts',
+  'design.asset_added': 'design/approval.ts',
+  'design.assets_approved': 'design/approval.ts',
+  'design.preview_deployed': 'design/preview.ts',
+  'design.preview_torn_down': 'design/preview.ts',
+  'design.preview_requested': 'design/preview.ts',
+  'design.preview_failed': 'design/preview.ts',
+  'design.review_recorded': 'design/review.ts',
+  'design.review_requested': 'design/review.ts',
+  'design.verdicts_confirmed': 'design/review.ts',
+  'design.asset_bound': 'design/approval.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;
