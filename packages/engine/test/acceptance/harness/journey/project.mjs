@@ -24,8 +24,9 @@ import { consume, decision } from '../decisions.mjs';
 import { RUNTIME, configContent, configure, unitPrefix } from '../deploy/kernel.mjs';
 import { cgroupsNamed, endEnvironment, realAdapterStarts, unitsOfHome } from '../deploy/host.mjs';
 import { qualifyByCommand } from '../deploy/qualify.mjs';
-import { freePort } from '../engine.mjs';
+import { freePort, waitFor } from '../engine.mjs';
 import { sandboxEngine } from '../sandbox/lane.mjs';
+import { SESSION_IDLE_STATES } from '../runs.mjs';
 import { storePath, withStore } from '../store.mjs';
 import {
   architectSession,
@@ -122,18 +123,56 @@ export async function toPhaseTwoPublished(fx, { lane }) {
   return J;
 }
 
-// The seeded home carried on: the kernel-lane engine killed (the verified
-// kill) and the same home started on the project lane, its runner
-// self-tested at this start. Returns the moment of the switch (ISO), after
-// which every candidate is nominated on the project lane.
+// What of the project is in flight (SEAM.md §474): a run not ended and not
+// quarantined (an idle session, `allocated` or `open_idle`, is not in
+// flight), and a check execution past `queued`.
+const inFlight = (home, project) =>
+  withStore(home, (db) => [
+    ...db
+      .prepare(`SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' AND "quarantined" = 0`)
+      .all(project)
+      .filter((r) => !(r.kind === 'session' && SESSION_IDLE_STATES.includes(r.session_state))),
+    ...db
+      .prepare(`SELECT x."id", 'check_execution' AS "kind", x."status" AS "state" FROM "check_executions" x JOIN "candidates" k ON k."id" = x."candidate" WHERE k."project" = ? AND x."status" IN ('materializing', 'running', 'collecting')`)
+      .all(project),
+  ]);
+
+// The seeded home carried on: the project paused through the owner's route,
+// what it has in flight waited for to end on the kernel-lane engine, that
+// engine killed (the verified kill) and the same home started on the project
+// lane, its runner self-tested at this start, and the project resumed.
+// Returns the moment of the switch (ISO) and its event seq, both read before
+// the resume, after which every candidate is nominated and every run started
+// on the project lane; `waited` names what was in flight at the pause.
+//
+// The wait (E154 item 6 (4); E156 Q1; SEAM.md §474): the engine's own
+// requested tick claims phase 2's authoring run within ~100 ms of the seed's
+// last tick, and a kill that lands while that run is claimed or running ends
+// it `recovered` at the restart and leaves its item `held` (D1 §8.4), which
+// the journey never resumes (§472). Pausing stops new dispatch (a paused
+// project's work is not claimed); a run already claimed carries on to its end.
 export async function toProjectLane(fx, ctx) {
+  const project = ctx.project;
+  assert.ok(project, 'the journey context names its project');
+  const paused = await fx.engine.post(`/v1/projects/${project}/pause`, {});
+  assert.equal(paused.status, 200, `the project paused before the switch (${paused.status} ${paused.text})`);
+  const waited = inFlight(fx.home, project).map((r) => ({ id: r.id, kind: r.kind, role: r.role ?? null, state: r.state }));
+  await waitFor(() => inFlight(fx.home, project).length === 0, {
+    timeoutMs: 180_000,
+    what: `nothing of the project in flight before the switch (at the pause: ${JSON.stringify(waited)})`,
+  });
   const previous = previousQualification(fx);
   await fx.engine.kill();
+  const atKill = inFlight(fx.home, project);
+  assert.deepEqual(atKill, [], `nothing of the project was in flight when the kernel-lane engine was killed (${JSON.stringify(atKill)})`);
   await fx.start();
   const qualification = await waitSelfTest(fx, { notRow: previous });
   ctx.lane = 'project';
   const seq = withStore(fx.home, (db) => db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get().n);
-  return { at: new Date().toISOString(), seq, qualification };
+  const at = new Date().toISOString();
+  const resumed = await fx.engine.post(`/v1/projects/${project}/resume`, {});
+  assert.equal(resumed.status, 200, `the project resumed on the project lane (${resumed.status} ${resumed.text})`);
+  return { at, seq, qualification, waited };
 }
 
 // D6 §1 step 12: the adapter qualified by command in the test's home, then
