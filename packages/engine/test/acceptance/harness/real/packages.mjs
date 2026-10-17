@@ -49,6 +49,13 @@ export const IMPACT_KINDS = Object.freeze(['added', 'withdrawn', 'text_changed',
 export const BUILDER_ELEMENTS = Object.freeze(['builder.tasks', 'builder.implements', 'builder.integration_obligations', 'builder.dependency_interfaces']);
 export const ALL_ELEMENTS = Object.freeze([...new Set([...SPEC_WRITER_RETROFIT_ELEMENTS, 'spec_writer.change_result', ...REPLAN_RETROFIT_ELEMENTS, ...AUTHORING_RETROFIT_ELEMENTS, ...PHASE_VERIFICATION_ELEMENTS, ...BUILDER_ELEMENTS])]);
 
+// B.3's module and interface members: M5's (D6 B.3; E145 item 1) and D7
+// G1's additions (D7 §4.1, B.17), the straddle of objection 146.
+export const B3_MODULE_M5 = Object.freeze(['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements']);
+export const B3_MODULE_D7 = Object.freeze(['surface', 'targets', 'platform_permissions', 'asset_paths']);
+export const B3_INTERFACE_M5 = Object.freeze(['name', 'kind', 'path', 'description']);
+export const B3_INTERFACE_D7 = Object.freeze(['consumed_by', 'request', 'response', 'errors']);
+
 // D6 A.4: the sixteen plan reasons; and the two of retrofit.
 export const PLAN_REASONS_EVERY_PLAN = Object.freeze([
   'PLAN_UNKNOWN_REQUIREMENT',
@@ -262,8 +269,19 @@ export function elementProblems(id, d, facts = {}) {
       const s = d.schema;
       want(d.file === '.surety/architecture/modules.json', 'file .surety/architecture/modules.json');
       want(setEq(propsAt(s, []), ['version', 'modules', 'mapping_from_spec']), 'B.3 top level: version, modules, mapping_from_spec');
-      want(setEq(propsAt(s, ['modules', '[]']), ['name', 'paths', 'sensitive_areas', 'tier_override', 'interfaces', 'requirements']), 'B.3 module: name, paths, sensitive_areas, tier_override, interfaces, requirements (E145 item 1)');
-      want(setEq(propsAt(s, ['modules', '[]', 'interfaces', '[]']), ['name', 'kind', 'path', 'description']), 'B.3 interface: name, kind, path, description');
+      // M5's members, each still stated (E145 item 1), and exactly D7 G1's
+      // additions beside them (objection 146; SEAM.md §530, BS6 §9.3's
+      // straddle): the module's surface, targets, platform_permissions and
+      // asset_paths; the interface's consumed_by, request, response, errors.
+      want(setEq(propsAt(s, ['modules', '[]']), [...B3_MODULE_M5, ...B3_MODULE_D7]), `B.3 module: ${B3_MODULE_M5.join(', ')} (E145 item 1), with D7's ${B3_MODULE_D7.join(', ')} (G1)`);
+      want(setEq(propsAt(s, ['modules', '[]', 'interfaces', '[]']), [...B3_INTERFACE_M5, ...B3_INTERFACE_D7]), `B.3 interface: ${B3_INTERFACE_M5.join(', ')}, with D7's ${B3_INTERFACE_D7.join(', ')} (G1)`);
+      want(setEq(schemaAt(s, ['modules', '[]', 'surface'])?.enum, ['ui', 'api', 'cli', 'library', 'none']), 'module surface ui | api | cli | library | none (D7 §1)');
+      want(setEq(propsAt(s, ['modules', '[]', 'targets', '[]']), ['target', 'ui_technology', 'form_factors']), 'module targets: target, ui_technology, form_factors (D7 §4.1)');
+      want(setEq(schemaAt(s, ['modules', '[]', 'targets', '[]', 'target'])?.enum, ['web', 'android', 'ios', 'macos', 'windows', 'linux']), 'target web | android | ios | macos | windows | linux (D7 §4.1)');
+      want(setEq(schemaAt(s, ['modules', '[]', 'targets', '[]', 'ui_technology'])?.enum, ['html_css', 'three_js', 'streamlit', 'react_native', 'flutter', 'swiftui', 'compose', 'other']), 'ui_technology, D7 §4.1\'s closed list');
+      want(setEq(propsAt(s, ['modules', '[]', 'platform_permissions', '[]']), ['target', 'permission', 'why']), 'platform_permissions: target, permission, why (D7 §4.1)');
+      want(setEq(propsAt(s, ['modules', '[]', 'asset_paths', '[]']), ['slot', 'variant', 'target', 'path']), 'asset_paths: slot, variant, target, path (D7 B.17)');
+      want(setEq(propsAt(s, ['modules', '[]', 'interfaces', '[]', 'errors', '[]']), ['code', 'when']), 'interface errors: code, when (D7 §4.1)');
       want(setEq(schemaAt(s, ['modules', '[]', 'interfaces', '[]', 'kind'])?.enum, ['http', 'cli', 'module', 'file', 'event']), 'interface kind http | cli | module | file | event');
       want(setEq(propsAt(s, ['mapping_from_spec', '[]']), ['spec_module', 'to']), 'B.3 mapping: spec_module, to');
       want(openObjects(s).length === 0, `every object closed (open: ${openObjects(s).join(', ')})`);

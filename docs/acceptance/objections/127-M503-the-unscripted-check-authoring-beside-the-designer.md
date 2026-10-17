@@ -23,3 +23,19 @@ Without G12 the cases would fail differently: the session could not open beside 
 - D7 §3.2 (G12): the Designer session runs beside the project's one-shot runs.
 - D6 §4.1: phase authoring registered at publication.
 - harness/SEAM.md §2449 and §2504: the same pattern, fixed in the cases by a default script.
+
+## Verifier's answer
+
+Verifier, `verify/m6-s40b` from `main` `a33c06d`, 2026-10-17. **Upheld; the test is changed.**
+
+The claim is right. Under `design: both` (`DESIGN_POLICY`), publication registers phase 1's `check_authoring` (D6 §4.1). G12 (D7 §3.1; SEAM §492) dispatches it beside the Designer session, and the cases scripted no launch of it, so it followed the scripted program's `HOLD_FOREVER` (`harness/scripted/child.mjs`, `chooseScript`). One correction to the account: the cases do not reach their own assertions before the wait. On `build/m6-s40` at `231b6d1`, run unchanged, (a), (b) and (d) each time out in the **first** `sayAndSettle` of `refusedDesignerSave` (line 59), before the save. M503 was 3/6 (`timed out after 30000 ms waiting for every run of proj_… to end`).
+
+**The change.** The three cases now publish through `publishedPantry(fx)`. It sets `fx.scripted.defaultScript(script.crash())` **before** `toPublished`, so no launch of the project is ever unscripted, whenever the engine dispatches it. The authoring launch, and any repair of it, end at once without a candidate, so nothing reaches `.surety/checks/` or a check domain. This is SEAM §454's fix for M239 and M342. Nothing the cases assert changed: the save refused whole with `diff_violation` or `DESIGN_INVENTORY_MODIFIED`, naming the path, nothing committed, the session `open_idle`, and the refusal as the next turn's engine entry. The authoring run beside the Designer is G12's, and M532 pins it.
+
+**Run** against the Builder's engine (a detached scratch worktree of `231b6d1`, `npm install`, `npm run build`, `TMPDIR=/tmp/v40b`, the file alone with `node --test`): **M503 6/6** (it was 3/6 unchanged). SEAM §530.
+
+## Sources
+
+- D6 §4.1 (phase authoring registered at publication); D7 §3.1, G12; SEAM §492.
+- `harness/scripted/child.mjs`: "With no script at all the program holds until it is killed".
+- SEAM §454 (M239, M342: the same pattern, the same fix).

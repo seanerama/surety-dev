@@ -25,3 +25,18 @@ So the two accepted runs of (d) fail on `'none' !== null` while what the case is
 
 - migrations/0001_store_core.sql: `runs.reason_class` CHECK (… 'none' …).
 - M231, M201, M129: an accepted run is `['completed', 'none']`.
+
+## Verifier's answer
+
+Verifier, `verify/m6-s40b` from `main` `a33c06d`, 2026-10-17. **Upheld; the test is changed.**
+
+`runs.reason_class` is a closed enumeration. Its "no reason" member is `'none'` (`migrations/0001_store_core.sql`: `CHECK (reason_class IN (…, 'recovered', 'none'))`). Every accepted row that reads an accepted run reads `['completed', 'none']`: M201 (three files), M231, M130, M205, M15, M223 and others. The case's `null` was the Verifier's slip. It is not a reading of D7 or B.17, neither of which says anything about the reason of an accepted run.
+
+**The change.** The two accepted runs of (d) now assert `['completed', 'none']`. The third, a binding with the unknown field `colour`, still asserts `['failed', 'invalid_result']` naming `colour`. Nothing else of M501 changed.
+
+**Run** against the Builder's engine (a scratch worktree of `231b6d1`, `TMPDIR=/tmp/v40b`, the file alone): **M501 15/15**. SEAM §530.
+
+## Sources
+
+- `migrations/0001_store_core.sql`, `runs.reason_class`.
+- M231 (`scope-modules-tier-and-cadence`), M201 (`check-journey-path-one`, `source-symlink-refused`, `materialization-is-the-revision`), M130 (`exit-classes`): `['completed', 'none']`.
