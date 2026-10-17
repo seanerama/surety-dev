@@ -7555,3 +7555,128 @@ Where D7 gives a name, the name is D7's. The names marked † are the Verifier's
 - **The owner's acts**: `ownerChange` (the Spec Writer scripted, the request posted, its `spec_change` answered); `laterArchitect` (a later Architect session, every decision its close raises approved); `ownerReview` and `reviewFileOf` (§502's route); `approveReviewBatch` (a review's batch: the verdicts confirmed, then the approval and the change approved).
 - **Replans**: `replanWith({phase, stages, spec_version, architecture_version, roadmap_version, roadmap})`; `currentRoadmap` and `roadmapRevision` write a revision against the roadmap the store holds.
 - **Reads**: `designScreens`, `screenStatus`, `staleKeys`, `stageScreens`, `designDues`, `openDues`, `staleEvents`, `escalations`, `waivedEvents`, `designClassOf`, `screenPairs`, `currentRevision`, `revisionsOf`, `policyEffective`, `stageIdsOf`, `engineNow` (the controlled clock moved by one second).
+
+## 521. M6 slice 45: the files, the lanes and what they reuse (M516, M518, M528, M529, M531; BS6 §§3, 8; D7 §§10, 12, 14, A.2 to A.8; G7, G13; Q4)
+
+The Verifier of slice 45, 2026-10-17, on `verify/m6-s45` from `main` `a33c06d`. **Files:** `M516-the-review-at-alpha` (project lane: manifest slice `45` and `sandbox`); `M518-retrofit-the-observed-design`, `M528-the-owner-invoked-review-of-a-native-build`, `M529-a-first-design-at-alpha`, `M531-owner-verdicts-are-owner-acts` (kernel). **Harness:** `harness/design/review45.mjs` and `harness/design/retrofit45.mjs` (§529). The names of slices 40 to 44 are reused as pinned: the policy key `design`, `GET …/design` with `human_tests` and `design_due` (§§480, 491); the save's `design_check` (§§483, 493); the review-mode session `{role: "designer", mode: "review"}`, `design/observations.json`, `design_reviews.verdicts` and `design_verdicts` (§489); the owner-invoked review route (§502); the batch, its preview and manifest (§486); `design_effective_assets` and the asset manifest (§§487, 505); the post-final-phase replan under its built trigger `spec_change` (§518); a first design's `initial_review` (§519); `design_review_evidence_max_bytes` (§516); the project lane's seed and switch (§357) and the operator relay (§317). Where D7 gives a name it is D7's; the names marked † are the Verifier's within D7's text, and the Builder may object.
+
+## 522. The owner-invoked review (M528; D7 §10.5, A.6 to A.8; G13)
+
+- **`surety design review --project <p> --target <t> --build <id> [--candidate <c>] [--observed-on <device|emulator|simulator>] [--evidence <file>…]`** (D7 A.8, in M4's `surety env` form: the answer's JSON and exit 0 on 2xx, else the code and body and exit 1). `--evidence` takes the rest of the arguments as files. **`--observed-on` †** is the runtime the owner states for his evidence (`design_evidence.observed_on`). The command is the route `POST …/design/reviews` with the files. **The route's body for evidence files is the Builder's; the tests send evidence through the CLI only** (as §508's `asset add`).
+- **The answer** (route and CLI): 201 `{run: {id, role: "designer", kind: "session", mode: "review", …}, review: {id} †, evidence: [{id, …}] †}`.
+- **The review row is recorded when the review is opened** †. It is a `design_reviews` row with its `trigger` (`owner_command`), its `subject` `{kind: "owner_build", target, build_ref, candidate?}` and `design_revision` the current approved revision (or null). `build_ref` is byte for byte as given; `candidate` is there only when given. Its `verdicts` are written at the close (§489). Each evidence file is a `design_evidence` row recorded at the command, its `review` naming the review.
+- **The candidate is his word** (D7 §10.5, §15 class C). The command records it in the subject and makes no observation, check execution or operation. The tests count `records` of kind `design_observation`, `check_executions` and the project's `operations` before and after.
+- **Evidence** (D7 §10.5; A.2 `EvidenceFormat`): `png`, `webp`, `jpeg`, `mp4`, `webm`. Each is judged by its magic bytes against its file name's extension (`.png`, `.webp`, `.jpg` or `.jpeg`, `.mp4`, `.webm`), never decoded beyond the header:
+  - PNG: its signature;
+  - WebP: `RIFF….WEBP`;
+  - JPEG: `FF D8 FF`;
+  - MP4: an `ftyp` box at offset 4;
+  - WebM: EBML `1A 45 DF A3` with DocType `webm`.
+- **An evidence row** holds `provenance` `owner_supplied`, `format`, `digest` (SHA-256 hex; a `sha256:` prefix allowed), `bytes` (the file's size), `target` and `observed_on`. The build reference is reachable from it, through its `review`'s subject or a column of its own; the tests accept either.
+- **Refused** 422 **`design_evidence_invalid`** (A.6). The body's reasons are each **`REVIEW_EVIDENCE_INVALID`** (A.4), naming the file's name and, for a bound, the key:
+  - a file whose magic bytes contradict its extension;
+  - a file past `design_review_evidence_max_bytes`;
+  - the files together past **`design_review_evidence_max_review_bytes` †**, the per-review bound of D7 A.7's "512 MiB per review": a project policy key in bytes, default 536870912, its range not pinned.
+
+  A refusal is whole: no session opened, no evidence recorded.
+- **A target the inventory lacks**: 422 **`design_review_target_unknown`** (A.6), nothing opened.
+- **Under `design: off`**: 409 **`design_review_unavailable` †**, `subject.cause` `design_off` (the form of §499's `design_preview_unavailable`), nothing opened.
+- **A product with no web target**: the `alpha_review` `design_due`'s `evidence.command` names `surety design review --target <t> --build` for its native target (D7 §10.1; §512's "for a target M6 cannot run").
+
+## 523. The review-mode package (M516 (b), M528 (d), M529 (a), M518 (a); D7 §3.4, §10.2, §10.5, §12)
+
+Paths are relative to the package's directory, beside §489's `design/observations.json`:
+- **`design/review.json` †** `{subject, design_revision: <id> | null, first_design: <bool>}`. `first_design` is true when no design is approved (D7 §10.6).
+- **`design/approved/<path under .surety/design/>` †**: the approved revision's design tree, byte for byte (`design/approved/design.json`, `…/screens.json`, …). Absent when none is approved.
+- **`design/source/<path>` †**: the candidate's UI source, read-only. These are the files under the paths of every `ui` module of the module map, at the candidate's revision (`design/source/web/index.html`, `design/source/mobile/App.js`), and nothing of a non-UI module. In retrofit mode (§528) they are the adopted integration head's.
+- **`design/check-results.json` †** `{candidate, results: [{check, key, criteria, exit_status | state, …}]}`: the latest result, on the review's candidate, of each check covering a design criterion.
+- **`design/observations/<evidence id>` †**: each observation's recorded bytes (redacted, bounded), one file per §489 entry.
+- **`design/evidence.json` †** (owner-invoked reviews) `{evidence: [{id, provenance, format, target, build_ref, observed_on, name, file?}]}`:
+  - `name` is the file's name as the owner gave it;
+  - a screenshot's `file` is the package path of its bytes, byte for byte;
+  - a recording has no `file`, and its bytes are nowhere in the package (D7 §3.4: "recordings by name only").
+
+## 524. Reviews, verdicts and evidence in the store and the reads (M516, M528 (f), M529, M531; D7 §10.3, §10.5, A.3)
+
+- **`design_reviews.project` †**. A.3 lists none, and a first design's review has no `design_revision` through which to reach the project. `reviewsOf` reads by it. `confirmed_by` and `confirmation_decision` (A.3) are null until a `confirm`.
+- **Verdict statuses** (A.2 `VerdictStatus`). They are `proposed` at close, and `confirmed` or `struck` by the owner's `design_verdicts` answer only. `reject` leaves every one unconfirmed (`proposed` or `struck`, never `confirmed`). A verdict keeps `screen`, or B.14's `key`; the tests read either.
+- **A review file whose verdict carries `status`** is the save's `DESIGN_SCHEMA_INVALID` naming `status` (B.14; §493's form: the save answered 200, its check refused).
+- **`GET …/design`** gains:
+  - **`reviews` †** `[{id, trigger, subject, design_revision, first_design, verdicts, evidence: [{id, provenance, label}], evidence_by_provenance: {engine_observed, owner_supplied, owner_reported}}]`;
+  - on each `human_tests[]` entry, **`evidence` †** `[{review, screen, verdict, observed_on, provenance, label, design_version, candidate?, build_ref?}]`, one per confirmed verdict of that target and none for a struck one.
+- **Labels †**: evidence is labelled `engine-observed`, `owner-supplied` or `owner-reported`; a human test's confirmed verdict is labelled `owner accepted` (Q4: "shown as owner accepted", apart from automated verification).
+- **A human test is never `verified`.** Its `status` is `owner_accepted` only from a confirmed `matches` verdict, on a runtime other than a simulation, for the current approved design version (§502); otherwise it is `pending`. A confirmed verdict of an older design version is kept with its `design_revision` and not counted for the new version.
+- **`design_verdicts`' `evidence`** (the preview) labels each verdict's evidence by provenance, as above.
+
+## 525. Confirming, editing, striking; what a confirmation routes (M516 (f) to (h), M529 (d), (f), M531 (d), (e); D7 §10.3)
+
+- **The answer** is `{option: "confirm", preview_hash, edits?: [{target, screen, verdict?, observed_on?, deltas?}] †, strikes?: [{target, screen}] †, severity? †}`:
+  - an edit replaces those fields of that verdict before it is recorded `confirmed`;
+  - a struck verdict is recorded `struck`;
+  - `severity` (`critical`, `high`, `medium`, `low`) is the owner's for the implementation defects, `medium` when absent.
+
+  `reject` records none. **`design.verdicts_confirmed`** is emitted once per confirmation.
+- **`surety design verdicts --project <p> <review> confirm [--edit <json>]… [--strike <target>/<screen>]… [--severity <s>] | reject` †** (D7 A.8) gives the same answer to the open `design_verdicts` about `<review>`, in M4's `surety env` form.
+- **The batch of a review with design deltas** (D7 §10.3): `design_verdicts`, `design_approval` (the revised design) and one `spec_change` share one `batch_key`. Until the verdicts are confirmed, `design_approval`'s `approve` carries the blocker **`DESIGN_VERDICTS_UNCONFIRMED:<review id>` †** (M5's `CODE:subject` form, §486). A first design's batch carries the same blocker when its review has verdicts.
+- **Implementation defects** are a confirmed verdict's deltas of `kind` `implementation` or `both`. Each is one finding:
+  - `scope` `candidate`, `candidate` the review's candidate (for an owner build, the one he named, or else the latest integrated one holding that target's UI modules);
+  - `category` `defect`;
+  - `proposed_severity` and `effective_severity` the confirmation's severity, `medium` by default;
+  - `message` holding the delta's `owner_words` as confirmed.
+
+  Each raises a `finding_disposition` question; `fix` makes `fix` work with `subject.finding` (E43). Nothing is filed before the confirmation, and nothing from a struck verdict or a `design` delta.
+
+## 526. The review at Alpha (M516; D7 §10.1, §10.2; D4 §5.2)
+
+- **`design_due` `alpha_review`** binds the Alpha's candidate and its deploy operation: their ids appear in its `evidence` or `manifest` (the test reads both as text). Its `command` names `surety session open designer` for a product with a web target.
+- **The engine's fetch** makes one §489 observation per web screen's `conventions.route` in the approved design, before the review's first turn's package is built.
+  - **It is bounded by the engine configuration's `adapter_output_max_bytes`** (default 1048576). A response past it is recorded `truncated: true`, with `bytes` at most the bound and a record no longer than it.
+  - **A route that answers non-2xx** is recorded with its `status` and what it answered (a 404's body).
+  - A fetch that gets no answer is recorded with `status` null and a **`reason` †** naming what happened (a timeout, a refusal).
+  - Nothing is invented: there is no observation for a target with no native runtime.
+- **The redactor**: a held secret (the harness's `POST /v1/harness/secrets`) served by the Alpha is absent from the observation's record and from the package's copy.
+- **The role's reach** (D2 §2): from the review turn's domain, the Alpha's configured port answers no connection on `127.0.0.1`, `::1` or any host address. The test reads this with a guarded `tcp_connect` probe (§141), its guard read first, while the owner's relay (§317) is open on that port for the host.
+
+## 527. A first design at Alpha (M529; D7 §10.6; G7; E153 item 1 (d))
+
+- **The review opens with no `design_revision`**: `design/review.json` is `{design_revision: null, first_design: true}`, there is no `design/approved/`, and the review row's `design_revision` is null. Under `both` this holds once the design before build was waived (`design_due` answered `waive` with its `note`).
+- **The product**: `design.json` has `origin: "observed"`, and the review file has `first_design: true` and no `design_version`. The design check runs on it as on any save (§483).
+- **The batch**:
+  - `design_approval`'s `evidence.scope` is **`initial_review` †** and its `evidence.deltas` **`[]` †**, with the consolidated `spec_change`;
+  - the approved revision's `scope` is `initial_review` and its `origin` `observed` (§519);
+  - when the design gives no file, the effective set holds every default slot's placeholder.
+- **Its criteria on completed phases** reach §518's replan: one replan, `trigger_source` `spec_change` naming the request, when the corrected check fails on the Alpha candidate; none when it passes.
+
+## 528. Retrofit: the observed design (M518; D7 §12; objections 150, 151)
+
+- **Retrofit mode is the Designer's on an adopted project** †. `POST …/sessions {role: "designer"}` with no `mode`, before any design is approved, opens it. Its package's `prompt.md` says `retrofit`, and `design/source/` (§523) holds the adopted UI files.
+- **An interface the retrofit map cannot shape** carries **`shape: "unknown"` †** in place of `request`, `response` and `errors` (B.3 as G1 extends it; objection 150).
+  - In an adopted project's map the plan check does not refuse it `ARCH_INTERFACE_SHAPE_MISSING`.
+  - The inventory lists it with `shape_known: false` and no `request` or `response`, and derives no obligation and no fixture from it.
+- **Two reasons block under `before_build` and are shown under `at_alpha`**: `DESIGN_CONVENTION_UNKNOWN`, naming target, screen and convention; and `DESIGN_INTERFACE_SHAPE_UNKNOWN`, naming target, screen and interface, one per screen using it.
+  - Under `before_build` they are among the save's `design_check.reasons`, its `outcome` is `refused`, and the close is 422 `design_check_failed`.
+  - Under `at_alpha` they are in **`design_check.notices` †** `[{code, subjects}]`, its `outcome` is `passed`, and the close raises the batch. `design_approval`'s `evidence` names them, and no `approve` blocker does.
+- **The observed design's records**:
+  - the close's `design_revisions` row has `origin` `observed` and `status` `proposed`;
+  - that revision's `design_assets` rows (A.3, §505) hold the logo with `provenance` `observed` and `status` `proposed`, and a default slot with no file as `engine_placeholder`, `placeholder`;
+  - **`design_approval`'s `evidence.origin` †** and `GET …/design` `revisions[].origin` † show it.
+- **Never the conformance set.** The observed design's criterion (R5.2, on the conformance requirement R5) is approved and its check fails on c-1. Even so, the conformance stage is `conformed` and phase 1 completes; no stage or phase gate evaluation of the project that is not satisfied names R5.2 or its check; and R5.2 is in no conformance stage's `validation.criteria`. **Where R5.2 is then scheduled is not pinned** (objection 151).
+- **A conformance stage over the `web` module** makes every requirement it implements a UI requirement of the inventory (D7 §4.2's rule, as slice 40 pins it). Shelf's observed design maps R1 to R3 to the sum page for that reason (objection 150).
+
+## 529. The harness of slice 45 (`harness/design/review45.mjs`, `harness/design/retrofit45.mjs`)
+
+- **`review45.mjs`**:
+  - evidence bytes: `jpegOf`, `mp4Of`, `webmOf`, `evidenceBytes(format, {tag, pad})` (with check41's `flatPng` and `webpOf`), and `evidenceFiles` (files under the test's root, never decoded);
+  - the owner's commands: `designReview` and `postReview` (§522), `designVerdicts` (§525), `reviewJson` and `REVIEW_FILE`;
+  - `driveReview`: a review-mode or retrofit session's turns, saves and close; a session driven again keeps its earlier launches' scripts;
+  - reads: `reviewsOf`, `reviewRow`, `evidenceRow`, `findingsOf`, `designerRuns`, `verdictOf`, `openVerdicts`, `batchMembers`, `blockersOf`, `humanTestOf`, `reviewInDesign`, `packageOfLaunch`, `packageJson`;
+  - M517's `MARKER_CRITERION`, `MARKER_CORRECTION`, `markerFails`, `deliveryReplan` and `DELIVERY_BUILDER`;
+  - `toAlphaWithoutDesign` (`at_alpha`, or `both` with `design_due` answered `waive`);
+  - `ANDROID_ONLY` and `androidOnlyAtAlpha`: Pantry with `**Targets:** android` only, its authoring without the web checks;
+  - M516's Pantry: `reviewModel` (designModel's with R2.2 `tokens_only` and web screens S3 at `/web/big.html` and S4 at `/gone`), `revisedReviewModel`, `REVIEW_SERVER` (the page at `/` carrying `SERVED_SECRET`, assembled at run time so no file holds it), `BIG_PAGE` (1.5 MiB), `TOKENS_CORRECTION`, `reviewBuilders`.
+- **`retrofit45.mjs`** is "Shelf": Sums (§376) with `web/index.html`, `web/history.html`, `web/style.css` (literals) and `web/logo.svg`, a server serving them, and a README naming `/history` (`SHELF_EXTRA`, for `makeAdoptedRepo`'s `extra`). It provides:
+  - `SHELF_SPEC` (`**Targets:** web`; R5 and R6 `**Surface:** ui (web)`, observed) and `SHELF_ANSWERS`;
+  - `SHELF_ARCHITECT`: the map with `history-feed` `shape: "unknown"`, a roadmap whose conformance phase carries `web`, and the conformance stage over R1 to R3, R5 and R6;
+  - `PAGE_CHECKS`;
+  - `observedDesign(inventory, manifest, {unknownBack})`, `observedManifest`, `OBSERVED_TOKENS`, `R5_TOKENS` and `R5_TOKENS_CORRECTION`.
+- **The seed of M516** is §357's. The project is carried on the kernel lane's production path to phase 1 complete, with no environment configured, so no request is made. Then `toProjectLane`, and on the project lane `alphaByCommand` and the policy's request.
