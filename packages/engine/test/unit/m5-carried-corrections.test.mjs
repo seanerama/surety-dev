@@ -341,6 +341,21 @@ test('M545 (b): an eligible phase verification of a superseded candidate is not 
   assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => retireSupersededVerifications(tx, 'prj_1')), []);
 });
 
+test("M545 (a): the successor's phase sign-off recorded before its item completes retires the parked one in the same phase step", (t) => {
+  const { db } = phased(t);
+  db.prepare(`UPDATE phase_plans SET status = 'published', completed_at = NULL, completion_binding = NULL WHERE id = 'plan_1'`).run();
+  const c1 = item(db, 'wi_pv1', 'phase_verification', { candidate: 'cand_1', phase_plan: 'plan_1' }, 'executing', { source: 'phase', id: 'cand_1:plan_1' });
+  transact(db, ENGINE_ACTOR, (tx) => parkWork(tx, c1(), 'repair_attempts_max', {}));
+  item(db, 'wi_pv2', 'phase_verification', { candidate: 'cand_2', phase_plan: 'plan_1' }, 'executing', { source: 'phase', id: 'cand_2:plan_1' });
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => retireSupersededVerifications(tx, 'prj_1')), []);
+  db.prepare(
+    `INSERT INTO signoffs (id, created_at, project, candidate, revision, role, scope, module, run, acceptance_content_hash, recorded_at, binding, phase_plan)
+     VALUES ('so_1', ?, 'prj_1', 'cand_2', ?, 'verifier', 'phase', NULL, 'run_pv2', 'h', ?, '{}', 'plan_1')`,
+  ).run(AT, B, AT);
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => retireSupersededVerifications(tx, 'prj_1')), ['wi_pv1'], "c2's sign-off is recorded: c1's is retired");
+  assert.equal(c1().status, 'cancelled');
+});
+
 // ---- M546 ------------------------------------------------------------------------------------
 
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: null };

@@ -270,7 +270,18 @@ export function retireSupersededVerifications(tx: Tx, project: string): string[]
            ORDER BY k."seq" DESC LIMIT 1`,
         )
         .get(project, subject.phase_plan, c.seq) as { candidate: string } | undefined;
-      by = done?.candidate ?? null;
+      // Or its Verifier's phase sign-off on a later candidate already
+      // recorded (its item completes at its run's end, which a tick may
+      // reach after the phase step that completes the phase on it).
+      const signed = done
+        ? undefined
+        : (tx.db
+            .prepare(
+              `SELECT s."candidate" FROM "signoffs" s JOIN "candidates" k ON k."id" = s."candidate"
+               WHERE s."project" = ? AND s."scope" = 'phase' AND s."phase_plan" = ? AND k."seq" > ? ORDER BY k."seq" DESC LIMIT 1`,
+            )
+            .get(project, subject.phase_plan, c.seq) as { candidate: string } | undefined);
+      by = done?.candidate ?? signed?.candidate ?? null;
     }
     if (by === null) continue;
     const item = getWorkItem(tx, w.id);
