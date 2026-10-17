@@ -17,6 +17,8 @@ const SPEC_FORMS = [
   'spec_writer.sensitive_areas',
   'spec_writer.tier_table',
   'spec_writer.index_cells',
+  // M6 (D7 §4.1, G3): the header's targets and a UI requirement's surface mark.
+  'spec_writer.targets',
 ] as const;
 const ARCHITECT = ['architect.schema.modules', 'architect.schema.roadmap', 'architect.schema.phase_plan', 'architect.schema.adr', 'architect.plan_reasons', 'architect.routing', 'architect.prepared_against'] as const;
 const VERIFIER = ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'] as const;
@@ -40,7 +42,8 @@ export const PACKAGE_ELEMENTS = Object.freeze({
   spec_writer_retrofit: [...SPEC_FORMS, 'spec_writer.approval_blockers', 'spec_writer.claims_table'] as const,
   // The Spec Writer's one-shot run on a specification change: the same file
   // in the same forms.
-  spec_change: [...SPEC_FORMS, 'spec_writer.change_result'] as const,
+  // A design batch's change adds what the design proposes (D7 §7.1; M6).
+  spec_change: [...SPEC_FORMS, 'spec_writer.change_result', 'spec_writer.design_change'] as const,
   // The Architect's session (and its retrofit variant) and the replan one-shot.
   architect: [...ARCHITECT] as const,
   architect_retrofit: [...ARCHITECT] as const,
@@ -80,6 +83,8 @@ export const ELEMENT_TITLES: Readonly<Record<ElementId, string>> = Object.freeze
   'spec_writer.index_cells': "The requirement index's cells",
   'spec_writer.approval_blockers': "What blocks the owner's approval",
   'spec_writer.claims_table': 'Claims and reality (section 12)',
+  'spec_writer.targets': "The product's targets and a requirement's surface",
+  'spec_writer.design_change': "The approved design's criteria and human tests",
   'spec_writer.change_result': 'Your result: the changes you propose',
   'architect.schema.modules': 'The module map (B.3)',
   'architect.schema.roadmap': 'The roadmap (B.4)',

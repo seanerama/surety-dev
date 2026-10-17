@@ -27,6 +27,7 @@ import {
   SUBJECT_KINDS,
 } from '../design/check.js';
 import { AA_RATIO } from '../design/contrast.js';
+import { SPEC_MARKS } from '../spec/semantics.js';
 import { INVENTORY_FILE, type Inventory, requiredConventions } from '../design/inventory.js';
 import { B8, FORM_FACTORS, SHAPE_TYPES, TARGET_NAMES, UI_TECHNOLOGIES } from '../plan/schemas.js';
 import { TURN_RESULT_SCHEMA } from '../sessions/package.js';
@@ -618,6 +619,42 @@ export function verifierDesignElements(f: DesignCatalogueFacts | null): Built {
           rule: "A design check's command names one of these programs first, by its name, never a path (the governed file's check_commands); its program file is under the protected root.",
         },
         asset_inputs: { member: 'asset_inputs', item: { slot: '<slot key>', variant: '<variant>' }, variable: 'SURETY_ASSET_<SLOT>_<VARIANT>' },
+      },
+    },
+  };
+}
+
+// ---- the design batch's specification change (D7 §7.1, §7.3) --------------------------------------
+
+export interface DesignChangeFacts {
+  criteria: Record<string, unknown>[];
+  human_tests: (Record<string, unknown> & { phase: number | null })[];
+}
+export function designChangeElements(f: DesignChangeFacts | null): Built {
+  if (f === null) return {};
+  return {
+    'spec_writer.design_change': {
+      id: 'spec_writer.design_change',
+      gloss:
+        "This change writes an approved design's criteria and human tests into the specification (D7 §7.1, §7.3), in the forms above. The owner approves it with the design, as one batch.",
+      data: {
+        source: 'design',
+        criteria: f.criteria,
+        human_tests: f.human_tests,
+        criterion: {
+          under: 'its requirement; a criterion whose requirement is "new" is a requirement of its own',
+          id: 'R<n>.<m>, the next free number under its requirement; no existing key changes',
+          text: "the criterion's text exactly as given: the engine finds each design criterion in the specification by its text",
+          change_kind: 'criteria_added',
+        },
+        human_test: {
+          key: 'a new requirement, the next free R<n>, one per human test',
+          surface: `${SPEC_MARKS.surface} (<target>)`,
+          mark: SPEC_MARKS.human_test,
+          text: "the human test's text, after the mark; no criteria",
+          phase: "its Phase in the index: the human test's phase above (the phase that holds the target's last UI stage); empty where it is null",
+          change_kind: 'added',
+        },
       },
     },
   };

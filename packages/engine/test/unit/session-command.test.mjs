@@ -22,6 +22,8 @@ test('surety session: each command is one request to its route with its closed b
   const P = '/v1/projects/prj_1/sessions';
   assert.deepEqual(parseSession(['open', '--project', 'prj_1', '--role', 'spec_writer']).request, { method: 'POST', path: P, body: { role: 'spec_writer' } });
   assert.deepEqual(parseSession(['open', '--role', 'architect', '--model', 'opus', '--project', 'prj_1']).request, { method: 'POST', path: P, body: { role: 'architect', model: 'opus' } });
+  assert.deepEqual(parseSession(['open', '--project', 'prj_1', '--role', 'designer', '--mode', 'review']).request, { method: 'POST', path: P, body: { role: 'designer', mode: 'review' } }, 'a Designer session in review mode (D7 §10.2)');
+  assert.equal(typeof parseSession(['open', '--project', 'prj_1', '--role', 'architect', '--mode', 'review']), 'string', 'review mode is the Designer\'s only');
   const say = parseSession(['say', 'run_1', '--project', 'prj_1', '--text', '--not a flag, my words']);
   assert.deepEqual(say.request, { method: 'POST', path: `${P}/run_1/turns`, body: { text: '--not a flag, my words' } }, "the owner's words as they are");
   assert.equal(say.waitMs, 45 * 60_000);

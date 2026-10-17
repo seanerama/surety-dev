@@ -31,7 +31,7 @@ import { PLAN_REASONS, STAGE_VALIDATION_REPLAN_EXCEPTIONS, STAGE_VALIDATION_RULE
 import { ADR_FIELDS, ADR_HEADINGS, ADR_STATUSES, B3, B4, B5, B8, FORM_FACTORS, INTERFACE_KINDS, MODULE_SURFACES, MODULES_FILE, ROADMAP_FILE, SHAPE_TYPES, UI_TECHNOLOGIES, adrPath, planPath } from '../plan/schemas.js';
 import type { PreparedAgainstFacts } from '../plan/bundle.js';
 import { QUESTION_BLOCKER_CODES } from '../spec/keys.js';
-import { CLAIMS_COLUMNS, ENVIRONMENT_FIELDS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES } from '../spec/semantics.js';
+import { CLAIMS_COLUMNS, ENVIRONMENT_FIELDS, IMPACT_KINDS, MODULE_TABLE_COLUMNS, SPEC_BLOCKING_CODES, SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_MARKS, SPEC_SECTIONS, SPEC_STATUS_VALUES, SPEC_TARGET_FIELDS, TARGETS } from '../spec/semantics.js';
 import { seamPackageOmitted } from '../testing/seam.js';
 import { ELEMENT_TITLES, type ElementId, PACKAGE_ELEMENTS, type PackageName } from './elements.js';
 
@@ -155,6 +155,21 @@ export function specElements(opts: { retrofit: boolean }): Built {
         list_separator: `${INDEX_LIST_SEPARATOR} `,
         origin: ORIGINS.join(' | '),
         separator_row: { rule: 'the line after the header, one cell per column, each cell three or more - (optionally : at either end)', cell_pattern: INDEX_SEPARATOR_CELL.source },
+      },
+    },
+    'spec_writer.targets': {
+      id: 'spec_writer.targets',
+      gloss:
+        "A product with a user interface names its targets in the header, a line after the fields above; and each requirement a user interface fulfils carries the surface mark, a line after its statement. The engine derives the interface inventory from them (D7 §4.1, §4.2).",
+      data: {
+        targets: { line: `**${SPEC_TARGET_FIELDS.targets}:**`, values: [...TARGETS], separator: ', ', rule: 'each target the product is built for, once, comma-separated; no line for a product with no user interface' },
+        cross_platform: { line: `**${SPEC_TARGET_FIELDS.cross_platform}:**`, value: 'yes', rule: 'only when two or more targets share one design and one workflow; no line otherwise' },
+        surface: {
+          mark: SPEC_MARKS.surface,
+          with_targets: `${SPEC_MARKS.surface} (<targets>)`,
+          separator: ', ',
+          rule: "on its own line after the statement of each requirement a user interface fulfils; with targets, comma-separated in parentheses, when it applies to some of the header's targets only, each one the header lists",
+        },
       },
     },
     'spec_writer.approval_blockers': {

@@ -14,7 +14,8 @@ import { boundSubjectOfRun } from './review.js';
 import { ownerReviewOfRun } from './owner-review.js';
 import { currentInventory } from './store.js';
 import { projectEffective } from '../store/transitions/settings.js';
-import type { DesignCatalogueFacts, DesignerReadsFacts } from '../packages/design-reads.js';
+import type { DesignCatalogueFacts, DesignChangeFacts, DesignerReadsFacts } from '../packages/design-reads.js';
+import { lastUiPhase } from './approval.js';
 
 type Db = Database.Database;
 
@@ -117,6 +118,23 @@ export function designerReadsFacts(db: Db, args: { run: string }): DesignerReads
     widths: nums(options.design_widths) ?? [360, 720, 1280],
     orientations: strs(options.design_orientations) ?? ['portrait', 'landscape'],
     allowlist: strs(options.design_external_urls) ?? [],
+  };
+}
+
+// A design batch's change request, as its Spec Writer's package states it
+// (D7 §7.1, §7.3; SEAM.md §486): the design's criteria and human tests, each
+// human test with the phase that holds its target's last UI stage (null when
+// none can be determined: never a guess). null for a request that is not a
+// design's.
+export function designChangeFacts(db: Db, request: string): DesignChangeFacts | null {
+  const row = db.prepare('SELECT "project", "source" FROM "spec_change_requests" WHERE "id" = ?').get(request) as { project: string; source: string } | undefined;
+  if (!row || row.source !== 'design') return null;
+  const rev = db.prepare('SELECT "content" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1').get(request) as { content: string | null } | undefined;
+  const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[]; human_tests?: Record<string, unknown>[] } }>(rev?.content ?? null);
+  if (!content) return null;
+  return {
+    criteria: content.criteria?.criteria ?? [],
+    human_tests: (content.criteria?.human_tests ?? []).map((h) => ({ ...h, phase: lastUiPhase(db, row.project, String(h.target)).phase })),
   };
 }
 

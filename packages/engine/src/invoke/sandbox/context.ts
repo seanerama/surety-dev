@@ -26,7 +26,7 @@ import { type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, pha
 import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
-import { type DesignCatalogueFacts, verifierDesignElements } from '../../packages/design-reads.js';
+import { type DesignCatalogueFacts, type DesignChangeFacts, designChangeElements, verifierDesignElements } from '../../packages/design-reads.js';
 import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
 import { CHANGE_SPEC_CATEGORIES, DISPOSITIONS } from '../../runs/report.js';
 
@@ -73,6 +73,8 @@ export type ContextFacts = {
   // For check_authoring and check_correction work: the design criteria it
   // covers (M537 (a2); src/packages/design-reads.ts).
   design_catalogue?: DesignCatalogueFacts | null;
+  // For a design batch's spec_change: the design's criteria and human tests.
+  design_change?: DesignChangeFacts | null;
   // For check_authoring work: the phase-authoring package (D6 §6.2; N04).
   authoring?: PhaseAuthoringFacts | null;
   // For check_authoring and check_correction work after its last proposal
@@ -147,7 +149,7 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
     return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit, prepared_against: prepared, kind: 'replan' }));
   }
   if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
-  if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', specElements({ retrofit }));
+  if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', { ...specElements({ retrofit }), ...designChangeElements(facts.design_change ?? null) });
   if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));
   return { pkg: null, elements: [] };
 }
