@@ -177,7 +177,24 @@ describe('M507 design readiness and the third milestone', () => {
     const named = (e) => e.reasons.includes('ACCEPTANCE_SCOPE_INCOMPLETE') && e.reasons.includes('R2.2');
     const gate = await pump(fx, ctx, () => after().find((e) => e.gate_kind === 'stage' && e.stage === stageRow(fx.home, p.id, 2)?.id), { what: 'the web stage\'s gate after version 2', max: 80 });
     assert.ok(named(gate), `ACCEPTANCE_SCOPE_INCOMPLETE naming the design criterion R2.2 (${gate.reasons})`);
+    // "Delivers R2" is read from the engine's records, never from the snapshot's text, whose ids
+    // hold "R2" by chance (objection 168): a stage gate delivers R2 when its stage implements R2
+    // (a stage gate's scope lists the whole candidate's requirements, R1 to R3 for every stage);
+    // any other gate when its acceptance scope's delivered requirements hold R2. Either list holds
+    // the requirement's id, or its key.
+    const r2 = rows(fx.home, 'SELECT "id" FROM "requirements" WHERE "project" = ? AND "key" = \'R2\'', p.id)[0]?.id;
+    assert.ok(r2, 'R2 is a requirement of the project');
+    const holdsR2 = (text) => {
+      const list = JSON.parse(text ?? '[]');
+      return list.includes(r2) || list.includes('R2');
+    };
+    const delivers = (e) =>
+      e.gate_kind === 'stage'
+        ? holdsR2(rows(fx.home, 'SELECT "implements" AS l FROM "stages" WHERE "id" = ?', e.stage)[0]?.l)
+        : holdsR2(rows(fx.home, 'SELECT "delivered_requirement_ids" AS l FROM "acceptance_scopes" WHERE "id" = ?', e.scope)[0]?.l);
+    assert.ok(delivers(gate), `the fixture is live: the web stage's gate delivers R2 (stage ${gate.stage})`);
+    assert.equal(holdsR2(stageRow(fx.home, p.id, 1)?.implements), false, 'and the API stage does not implement R2');
     const applied = rows(fx.home, 'SELECT COUNT(*) AS n FROM "checks" WHERE "project" = ? AND "key" = \'accept-r2-tokens\'', p.id)[0].n;
-    if (applied === 0) for (const e of after().filter((x) => x.inputs_snapshot.includes('R2'))) assert.ok(named(e), `every gate delivering R2 names it while its checks do not exist (${e.gate_kind}: ${e.reasons})`);
+    if (applied === 0) for (const e of after().filter(delivers)) assert.ok(named(e), `every gate delivering R2 names it while its checks do not exist (${e.gate_kind}: ${e.reasons})`);
   });
 });
