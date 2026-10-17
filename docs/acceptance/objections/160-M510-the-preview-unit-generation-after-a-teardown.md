@@ -38,3 +38,13 @@ The case assumes the preview's generation and the unit's suffix are the same num
 - D4 §9.3 (unit names from the deployment generation), §4.2 and J9 (each attempt's generation from the environment's counter; the capability's generation check).
 - SEAM.md §488 (objection 135's decision), §499 ("One generation per project"; the unit "as D4 §9.3 names every unit").
 - M6 plan §3.4 M510 (e).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17, because D4's generation rule governs: every attempt, a teardown's included, takes a new generation from the environment's counter, which fences stale capabilities, and the unit is named from it (D4 §9.3). The preview's own `generation` is a separate counter. **The test is changed** (Verifier, `verify/m6-s42b` from `main` `ca0ac5a`).
+
+In M510 (e), the third preview's unit is read from `design.preview_deployed`'s `unit` (`d3.payload.unit`) instead of being built from generation 3. The case asserts that the unit has the form `surety-<h>-env_<ULID>-g<n>.service`, under the prefix of this home and the project's `design-preview` environment id, and that `n` is greater than the second preview's `2`. The assertion `'not torn down at the close itself'` now expects that unit to be the only one loaded. `assert.equal(d3.payload?.generation, 3)` stays. Nothing else in M510 changed: no teardown comes before `g1` or `g2`, so the other unit-name assertions of (b) and (e) hold as written. SEAM.md §499 now says that the unit's `g<n>` is D4's generation and can run ahead of the preview's counter, and §532 records this decision.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s42` at `3e760a4`, `npm ci`, `npm run build`, `TMPDIR=/tmp/v42b`, the file alone with `node --test`): **M510 7/7**, (a) to (g), from a worktree at `/home/smahoney/v42b-eng`. No `surety-*` unit was loaded before or after the run.
+
+**Found on the way (for the Builder; not part of this decision).** The same file failed twice, 0/7, stopped at (a), when the scratch worktree, and so the engine's install, was at `/tmp/v42b/eng`. The first preview's server exited with status 1 at once (`deploy.service_exited` `{code: 1}`, `design.preview_failed` "the deploy's reconcile read partial"). `buildServicePlan` (`src/deploy/service-profile.ts`) binds the preview server read-only at its own path. In the same first stage it then mounts the domain's own `vol/tmp` on `/tmp`, which hides a server under `/tmp`. So the preview cannot run when the engine is installed under `/tmp`. Whether that install location must work is the driver's question; no test pins it now.
