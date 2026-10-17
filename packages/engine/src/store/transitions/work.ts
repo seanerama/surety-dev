@@ -3,6 +3,7 @@
 // Resume. Every status change goes through transitionWork, which checks the
 // table in work-table.ts and writes exactly one work.* event.
 
+import { bindStageScreensTo } from '../../design/stage-screens.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
 import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
@@ -348,6 +349,8 @@ export interface PlanStageInput {
   adrs?: string[];
   conformance?: boolean;
   execution_inputs_digest?: string | null;
+  // D7 §8.1 (G6): the approved design's screens the plan names for it.
+  screens?: string[];
 }
 
 // Who authorizes a plan's registration (D6 §5.5; B02; the driver's ruling:
@@ -535,6 +538,7 @@ export function registerPlan(
         stage.execution_inputs_digest ?? null,
         stage.conformance === true ? 1 : 0,
       );
+    if (stage.screens !== undefined) tx.db.prepare('UPDATE "stages" SET "screens" = ? WHERE "id" = ?').run(JSON.stringify(stage.screens), id);
     // K11 (B11): a conformance stage has no stage_build at any point; its
     // lifecycle is its own (adopt/conformance.ts), its source bound to A here.
     if (stage.conformance === true && publication) {
@@ -594,6 +598,9 @@ export function registerPlan(
         : {}),
     });
   }
+  // The stage-to-screen binding of the stages it publishes, against the
+  // approved design (D7 §8.1; SEAM.md §513).
+  if (publication) bindStageScreensTo(tx, { project: args.project, stages: out.filter((o) => o.work_item !== '').map((o) => o.id) });
   // Milestones already met at publication (an inherited readiness, a
   // stage already integrated) are recorded now (D6 §6.4).
   if (publication) recordMetMilestones(tx, args.project);

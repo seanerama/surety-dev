@@ -10,9 +10,10 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { AssetManifest } from './assets.js';
-import { inventoryAttempt, reviewDesignDue } from './due.js';
+import { inventoryAttempt, openRefused, reviewDesignDue, writeDueState } from './due.js';
+import { designDueState } from './readiness.js';
 import type { Inventory } from './inventory.js';
-import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
+import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, placeholderRecord, recordInventory } from './store.js';
 import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
 import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
@@ -21,7 +22,8 @@ import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
 import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
 import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
-import { submitAssets } from './assets-submit.js';
+import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
+import { bindingsView } from './asset-bindings.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
 import { raiseDeferredBatches } from '../spec/change.js';
 import { beginPreview, interruptPreviews, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
@@ -65,6 +67,10 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.inventory_for_policy': (d, a: { project: string; effective: Record<string, unknown> }) => inventoryForPolicy(d, a),
   'design.batch_state': (d, a: { request: string }) => designBatchState(d, a.request),
   'design.view': (d, a: { project: string }) => designView(d, a),
+  'design.bindings': (d, a: { project: string }) => bindingsView(d, a),
+  'design.approved_revision': (d, a: { project: string }) => approvedRevisionFacts(d, a),
+  'design.asset_facts': (d, a: { project: string }) => assetFacts(d, a),
+  'design.placeholder_record': (d, a: { project: string }) => placeholderRecord(d, a.project),
   'design.package_facts': (d, a: { run: string }) => designPackageFacts(d, a),
   'design.carried_effective': (d, a: { run: string }) => carriedEffective(d, a.run),
   'design.preview_facts': (d, a: { project: string; revision?: string }) => previewFacts(d, a),
@@ -78,6 +84,10 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
     return r ? { project: r.project, role: r.role, mode: parseJson<{ mode?: string }>(r.session_notes)?.mode ?? null, owner_review: ownerReviewOfRun(d, a.run) } : null;
   },
   'design.observations': (d, a: { run: string }) => observationsOf(d, a),
+  'design.open_requested': (d, a: { project: string }) => {
+    const state = designDueState(d, a.project);
+    return state.open_requested ? { decision: state.open_requested, mode: state.open_mode ?? null } : null;
+  },
   'design.review_facts': (d, a: { project: string; run: string }) => {
     const rev = d.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(a.project) as { id: string } | undefined;
     const state = parseJson<{ stage?: string }>((d.prepare('SELECT "design_due" FROM "projects" WHERE "id" = ?').get(a.project) as { design_due: string | null }).design_due);
@@ -102,6 +112,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
 
 export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'design.intend_inventory': (tx, a) => intendInventory(tx, a),
+  'design.intend_asset': (tx, a) => intendAsset(tx, a),
   'design.record_inventory': (tx, a: { id?: string; project?: string; digest?: string }) => {
     const id = a.id ?? (tx.db.prepare('SELECT "id" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(a.project, a.digest) as { id: string } | undefined)?.id;
     return id ? recordInventory(tx, { id }) : { recorded: false };
@@ -116,6 +127,17 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
     return {};
   },
   'design.release_batch': (tx, a: { revision: string }) => releaseBatch(tx, a),
+  'design.open_cleared': (tx, a: { project: string; decision: string }) => {
+    const state = designDueState(tx.db, a.project);
+    if (state.open_requested !== a.decision) return { cleared: false };
+    const { open_requested: _o, open_mode: _m, ...rest } = state;
+    writeDueState(tx, a.project, rest);
+    return { cleared: true };
+  },
+  'design.open_refused': (tx, a: { project: string; decision: string; reason: string }) => {
+    openRefused(tx, a);
+    return {};
+  },
   'design.record_check': (tx, a) => recordCheck(tx, a),
   'design.propose': (tx, a) => proposeDesign(tx, a),
   'design.preview_begin': (tx, a) => beginPreview(tx, a),
@@ -133,5 +155,7 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
 export const DESIGN_COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // The preview's answers (SEAM.md §488): what the main thread prepared, audited here.
   'design.preview_answer': (_tx, a: { status: number; body: Record<string, unknown> }) => ({ status: a.status, body: a.body }),
-  'design.assets_submit': (tx, a: { project: string }) => submitAssets(tx, a),
+  'design.assets_submit': (tx, a) => submitAssets(tx, a),
+  // The owner's asset added (SEAM.md §508): the main thread's answer, audited here.
+  'design.asset_answer': (_tx, a: { status: number; body: Record<string, unknown> }) => ({ status: a.status, body: a.body }),
 };

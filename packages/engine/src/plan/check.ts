@@ -58,7 +58,18 @@ export interface BundleBaseline {
   phase_size?: { min: number; max: number };
   // D7 §4.1, §8.3 (G2): the project's design policy and the specification's
   // `**Targets:**` (null when it states none), for clause 5. Absent: off.
-  design?: { policy: string; spec_targets: string[] | null; spec_targets_unknown?: string };
+  design?: {
+    policy: string;
+    spec_targets: string[] | null;
+    spec_targets_unknown?: string;
+    // D7 §8.1, §8.3 (G2, G6): the approved design's screens (null: no
+    // design approved yet), for clause 1's PLAN_SCREEN_UNKNOWN, clause 4's
+    // PLAN_DESIGN_UNCOVERED and the planned design obligation.
+    approved_screens?: { key: string; target: string; requirements: string[] }[] | null;
+    // The requirements' `**Surface:** ui (<targets>)` marks: a marked
+    // requirement is a UI requirement of those targets only.
+    surface_targets?: Record<string, string[] | null>;
+  };
   // D6 §5.7 (B08): an early replacement's kept stages (integrated or
   // verified in the generation it replaces), by number, with their
   // execution-inputs digest and the requirement keys they implement. Each
@@ -115,6 +126,10 @@ export interface PlanCheckResult {
   conformance: 'within_baseline' | 'uncertain';
   // §5.4: registered automatically, or to the human.
   routing: 'registered' | 'human';
+  // D7 §8.3 (SEAM.md §513): before any design is approved, under
+  // `before_build` or `both`, one planned design obligation per UI stage
+  // with the targets its `ui` modules serve; [] otherwise.
+  design_obligations: { stage: number; targets: string[] }[];
 }
 
 const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
@@ -133,6 +148,28 @@ export const TECHNOLOGY_TARGETS: Readonly<Record<string, readonly string[]>> = {
   other: ALL_TARGETS,
 };
 export const technologyAdmits = (technology: string, target: string): boolean => (TECHNOLOGY_TARGETS[technology] ?? []).includes(target);
+
+// D7 §4.1 (clause 5, SEAM.md §§495, 513): each interface a `ui` module
+// consumes that lacks `request`, `response` or `errors`, as
+// `<module>:<interface>`. Told to the Architect's session at its save and
+// refusing the plan under any design policy but off.
+export function interfaceShapesMissing(map: ModuleMap): string[] {
+  const ui = new Set(map.modules.filter((m) => m.surface === 'ui').map((m) => m.name));
+  const out: string[] = [];
+  for (const m of map.modules) {
+    for (const i of m.interfaces ?? []) {
+      if (!(i.consumed_by ?? []).some((c) => ui.has(c))) continue;
+      if (i.request === undefined || i.response === undefined || i.errors === undefined) out.push(`${m.name}:${i.name}`);
+    }
+  }
+  return uniq(out).sort();
+}
+
+// The targets a plan stage's `ui` modules serve (D7 §8.1); empty for a stage
+// that is not a UI stage.
+export function stageTargets(map: ModuleMap, modules: string[]): string[] {
+  return uniq(map.modules.filter((m) => m.surface === 'ui' && modules.includes(m.name)).flatMap((m) => (m.targets ?? []).map((t) => t.target))).sort();
+}
 
 // The stage graph is acyclic (clause 3): a depth-first search by number.
 function cycle(stages: { number: number; depends_on: number[] }[]): number[] | null {
@@ -263,6 +300,22 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   add('PLAN_UNKNOWN_ADR', unknownAdr);
   add('PLAN_CRITERION_MISMATCH', criterionMismatch);
   add('PLAN_UNKNOWN_STAGE', unknownStage);
+  // D7 §8.3 clause 1 (G6): a `screens` key the approved design lacks.
+  const approvedScreens = baseline.design?.approved_screens ?? null;
+  const screenKeys = new Set((approvedScreens ?? []).map((x) => x.key));
+  // A key of a screen of a target the stage does not serve (a non-UI
+  // stage serves none) is refused too, never dropped (the slice-44 review).
+  add(
+    'PLAN_SCREEN_UNKNOWN',
+    plan.stages.flatMap((st) =>
+      (st.screens ?? []).flatMap((k) => {
+        if (!screenKeys.has(k)) return [`stage ${st.number}:${k}`];
+        const served = stageTargets(a.modules, st.modules);
+        const targets = (approvedScreens ?? []).filter((x) => x.key === k).map((x) => x.target);
+        return targets.some((t) => served.includes(t)) ? [] : [`stage ${st.number}:${k} (its target ${targets.join(', ')} is not served by the stage's modules)`];
+      }),
+    ),
+  );
   const dup = stageNumbers.filter((n, i) => stageNumbers.indexOf(n) !== i);
   // A kept stage listed with other inputs would be a second stage under
   // its number: the replacement keeps the stage as it is (D6 §5.7; the
@@ -374,6 +427,36 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     const scope = planned('phase', keys, phase.modules);
     obligations.push({ scope: { kind: 'phase', number: phase.number }, tier: scope.tier, criteria: uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? [])), kinds: [...scope.kinds], sensitive_areas: scope.categories });
   }
+  // Clause 4's design obligations (D7 §8.3; G2, G6; SEAM.md §513): under
+  // `before_build` or `both`, with an approved design, a UI stage
+  // implementing a UI requirement that no approved screen of a target it
+  // serves covers is refused PLAN_DESIGN_UNCOVERED (`<key>:<target>`);
+  // before any design, a planned design obligation per UI stage instead.
+  // A requirement marked `**Surface:** ui (<targets>)` is a UI requirement
+  // of those targets only; a design's own human tests are none.
+  const designObligations: { stage: number; targets: string[] }[] = [];
+  const designPolicy = baseline.design?.policy ?? 'off';
+  if (designPolicy === 'before_build' || designPolicy === 'both') {
+    const uncovered: string[] = [];
+    for (const st of plan.stages) {
+      const targets = stageTargets(a.modules, st.modules);
+      if (targets.length === 0) continue;
+      if (approvedScreens === null) {
+        designObligations.push({ stage: st.number, targets });
+        continue;
+      }
+      for (const k of st.implements) {
+        const r = reqs.get(k);
+        if (!r || r.withdrawn || r.design_human_test === true) continue;
+        const marked = baseline.design?.surface_targets?.[k] ?? null;
+        for (const t of targets) {
+          if (marked !== null && marked.length > 0 && !marked.includes(t)) continue;
+          if (!approvedScreens.some((x) => x.target === t && x.requirements.includes(k))) uncovered.push(`${k}:${t}`);
+        }
+      }
+    }
+    add('PLAN_DESIGN_UNCOVERED', uncovered);
+  }
   // 5. Retrofit (D6 §8; K11; B10, B11): the conformance stage is phase 1's
   // one stage of an adopted project, with no tasks, implementing no defect;
   // phase 1 of an adopted project changes no source (no repair before
@@ -418,8 +501,8 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // 5. Interfaces and targets (D7 §4.1, §8.3; G2; SEAM.md §495), under a
   // design policy other than off: the spec states the targets (the engine
   // assumes none), the `ui` modules serve exactly them, each with a UI
-  // technology the admissibility table admits on it. (ARCH_INTERFACE_SHAPE_MISSING
-  // is M508's, slice 44.)
+  // technology the admissibility table admits on it; and every interface a
+  // `ui` module consumes has its shapes (ARCH_INTERFACE_SHAPE_MISSING).
   let targetsMissing = false;
   if (baseline.design && baseline.design.policy !== 'off') {
     const ui = a.modules.modules.filter((m) => m.surface === 'ui');
@@ -438,6 +521,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
       add('ARCH_TARGET_UNCOVERED', specTargets.filter((t) => !served.has(t)));
     }
     add('ARCH_TECHNOLOGY_TARGET_MISMATCH', ui.flatMap((m) => (m.targets ?? []).filter((t) => !technologyAdmits(t.ui_technology, t.target)).map((t) => `${m.name}:${t.target}:${t.ui_technology}`)));
+    add('ARCH_INTERFACE_SHAPE_MISSING', interfaceShapesMissing(a.modules));
   }
   // The spec's own gap is the spec-change workflow's (D7 §4.1: routed to
   // change_spec), never a plan's.
@@ -462,6 +546,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     needs_spec_change: needsSpecChange,
     conformance,
     routing,
+    design_obligations: outcome === 'passed' ? designObligations : [],
   };
 }
 
@@ -517,6 +602,10 @@ export const PLAN_REASONS = [
   'ARCH_TARGET_UNKNOWN',
   'ARCH_TARGET_UNCOVERED',
   'ARCH_TECHNOLOGY_TARGET_MISMATCH',
+  'ARCH_INTERFACE_SHAPE_MISSING',
+  // Clause 1 and clause 4's design additions (D7 §8.3; G2, G6).
+  'PLAN_SCREEN_UNKNOWN',
+  'PLAN_DESIGN_UNCOVERED',
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;

@@ -90,11 +90,14 @@ import {
 } from './fixtures.js';
 import { addAnswers, adapterReport, launchReplyHolds, releaseHeld, scriptedAdmission, scriptedDeploymentAdapter, setAdmission, setTarget } from './deploy-adapter.js';
 import { installAdapterQualification, installFixtureAuthorization } from './deploy-fixtures.js';
+import { type HookEvaluation, evaluateReleaseHook, recordHookEvaluationsWith } from '../design/release-hook.js';
 
 // Barriers reached in the store worker, and those reached in the main thread.
-const WORKER_BARRIERS = ['migration.before_commit', 'checks.registered'] as const;
+const WORKER_BARRIERS = ['migration.before_commit', 'checks.registered', 'design.effective_moved'] as const;
 // Worker barriers a test may also arm while the engine runs (SEAM.md §184).
-const WORKER_RUNTIME_BARRIERS: readonly string[] = ['checks.registered'];
+// `design.effective_moved` (SEAM.md §510): inside an approval's effect, after
+// the effective set's move and before its work's registration, one transaction.
+const WORKER_RUNTIME_BARRIERS: readonly string[] = ['checks.registered', 'design.effective_moved'];
 const JOURNAL_KINDS = ['ref_update', 'commit_tree', 'worktree_add', 'worktree_remove'] as const;
 const JOURNAL_BOUNDARIES = ['intent_committed', 'effect_applied', 'receipt_committed', 'probe_confirmed', 'finalizer_committed', 'reconciled'] as const;
 const MAIN_BARRIERS: readonly string[] = [
@@ -195,7 +198,6 @@ const MAIN_BARRIERS: readonly string[] = [
   'design.inventory_committed',
   'design.approved',
   'design.batch_raise',
-  'design.effective_moved',
   'integration.bindings_validated',
   'review.before_fetch',
   'review.after_fetch',
@@ -799,6 +801,8 @@ const OP = {
   adapterQualification: 'harness.adapter_qualification',
   fixtureAuthorization: 'harness.fixture_authorization',
   scriptedEnvelope: 'harness.scripted_envelope',
+  releaseHook: 'harness.release_hook',
+  releaseHookEvaluations: 'harness.release_hook_evaluations',
 } as const;
 
 const decodeSegment = (segment: string): string => {
@@ -965,6 +969,12 @@ export function seamRoute(method: string, segments: string[], hooks: SeamRequest
   if (s.length === 3 && s[0] === 'deploy' && s[1] === 'environments' && get) {
     return { restricted: false, handler: async () => ({ status: 200, body: adapterReport(init.scripted, decodeSegment(s[2]!)) }) };
   }
+  // SEAM.md §509: the release hook's condition, reached only through the
+  // seam until D5 (D7 §6.7), and every evaluation of it since the start.
+  if (s.length === 1 && s[0] === 'release-hook' && get) {
+    return { restricted: false, handler: async () => ({ status: 200, body: { evaluations: await storeOp(OP.releaseHookEvaluations, {}) } }) };
+  }
+  if (s.length === 1 && s[0] === 'release-hook' && post) return route(200, (body) => storeOp(OP.releaseHook, { body }));
   if (!post) return null;
   if (s.length === 2 && s[0] === 'ledger' && s[1] === 'corrections') {
     return {
@@ -1491,9 +1501,14 @@ export function seamDescribe<T extends object>(info: T): T & { harness: boolean 
 
 // ---- store worker -----------------------------------------------------------
 
+// SEAM.md §509: every evaluation of the release hook's condition since the
+// engine started, kept in the store worker in harness mode only.
+const hookEvaluationLog: HookEvaluation[] = [];
+
 export function configureWorker(given: SeamInit, send: (message: unknown) => void): void {
   adopt(given);
   post = send;
+  if (init.harness) recordHookEvaluationsWith((e) => hookEvaluationLog.push(e));
 }
 
 // A store operation the worker does not know. Outside harness mode, or for an
@@ -1568,6 +1583,15 @@ export function seamStoreOp(op: string, args: unknown, store: () => Database): u
       return installAdapterQualification(store(), a.actor, a.body);
     case OP.fixtureAuthorization:
       return installFixtureAuthorization(store(), a.actor, a.body);
+    case OP.releaseHook: {
+      const b = isObject(a.body) ? a.body : {};
+      const unknown = Object.keys(b).filter((k) => !['project', 'tier', 'public', 'targets'].includes(k));
+      if (unknown.length > 0) throw new Refusal(400, 'unknown_field', `"${unknown[0]}" is not a field of the hook's question.`, 'Send {project, tier, public?, targets?}.', { field: unknown[0] });
+      if (typeof b.project !== 'string') throw new Refusal(400, 'invalid_value', '"project" must name a project.', 'Send {project, tier, public?, targets?}.', { field: 'project' });
+      return evaluateReleaseHook(store(), { project: b.project, tier: b.tier, public: b.public, targets: b.targets }, 'harness');
+    }
+    case OP.releaseHookEvaluations:
+      return hookEvaluationLog.map((e) => ({ ...e }));
     case OP.correction:
       return transact(store(), a.actor, (tx) => appendCorrection(tx, (isObject(a.body) ? a.body : {}) as Parameters<typeof appendCorrection>[1]));
     default:

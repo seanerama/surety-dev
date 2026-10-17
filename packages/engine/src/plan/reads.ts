@@ -9,6 +9,8 @@
 import { activeStages } from './active.js';
 import type { Database } from 'better-sqlite3';
 
+import { nowMs } from '../clock.js';
+import { deferredOf } from '../design/view.js';
 import { notFound } from '../store/transitions/common.js';
 import { buildComplete } from './phase.js';
 import { alphaBarrier, conformancePhaseComplete, conformanceStateOf } from '../adopt/conformance.js';
@@ -25,6 +27,28 @@ const json = <T>(text: unknown, fallback: T): T => {
 const mustProject = (db: Database, project: string) => {
   if (!db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(project)) throw notFound('project', project);
 };
+
+// A stage's design hold (D7 §8.2, §11; SEAM.md §514): its reason, the open
+// design_due (null only when none is open, which the invariant forbids and
+// the read then shows), and how long the hold has lasted; null when its
+// work is not held for design.
+function designHoldOf(db: Database, project: string, workItem: string | null): { reason: string; question: string | null; age_seconds: number | null; deferred_until?: string; deferred_by?: string } | null {
+  if (workItem === null) return null;
+  const w = db.prepare('SELECT "held", "held_intervals" FROM "work_items" WHERE "id" = ?').get(workItem) as { held: string | null; held_intervals: string | null } | undefined;
+  if (!w || (w.held !== 'design_pending' && w.held !== 'design_stale')) return null;
+  const open = json<{ from: string; to?: string; reason: string }[]>(w.held_intervals, []).filter((i) => i.to === undefined).at(-1);
+  const due = db.prepare(`SELECT "id", "raised_at" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(project) as { id: string; raised_at: string } | undefined;
+  const since = Date.parse(open?.from ?? due?.raised_at ?? '');
+  // A `later` deferral: no question open until the owner's time or a new
+  // cause, named here with the decision that asked for it (rule 25).
+  const deferred = deferredOf(db, project);
+  return {
+    reason: w.held,
+    question: due?.id ?? null,
+    age_seconds: Number.isFinite(since) ? Math.max(0, Math.floor((nowMs() - since) / 1000)) : null,
+    ...(deferred ? { deferred_until: deferred.until, deferred_by: deferred.decision } : {}),
+  };
+}
 
 export function specView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
@@ -143,6 +167,9 @@ export function planView(db: Database, args: { project: string }) {
       implements: json<string[]>(s.implements, []),
       validation: json<unknown>(s.validation, null),
       work_item: s.work_item,
+      // A stage held for design, with the open question naming it and the
+      // hold's age (D7 §11; SEAM.md §514): never a silent hold.
+      hold: designHoldOf(db, args.project, typeof s.work_item === 'string' ? s.work_item : null),
     }));
     plan = {
       id: p.id,

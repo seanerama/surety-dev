@@ -32,17 +32,20 @@ import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { recordMetMilestones } from '../scheduler/milestones.js';
+import { barrier } from '../testing/seam.js';
 import type { SpecRepresentation } from '../spec/semantics.js';
 import { liveRepresentation } from '../spec/semantics.js';
 import type { AssetManifest } from './assets.js';
 import { narrowings as narrowingsOf } from './check.js';
-import { writeDueState } from './due.js';
+import { reviewDesignDue, writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
-import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
+import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames } from './policy.js';
 import { designDueState } from './readiness.js';
-import { blobsHash, currentInventory } from './store.js';
+import { type PlaceholderRecord, blobsHash, currentInventory, placeholderDigest, placeholderSource, slotStanding } from './store.js';
 import { latestCheck } from './records.js';
 import { disputedInterfaces } from './findings.js';
+import { bindStageScreensTo } from './stage-screens.js';
+import { slotCarried } from './asset-bindings.js';
 
 type Db = Database.Database;
 
@@ -119,7 +122,7 @@ export function requestText(content: DesignContent): string {
 
 export function proposeDesign(
   tx: Tx,
-  args: { project: string; run: string | null; revision: string; tree?: string | null; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' },
+  args: { project: string; run: string | null; revision: string; tree?: string | null; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' | 'initial_review' },
 ): { revision: string; request: string | null } {
   const d = args.content.design;
   const inv = currentInventory(tx.db, args.project);
@@ -158,6 +161,7 @@ export function proposeDesign(
       JSON.stringify(args.findings),
       JSON.stringify(args.content),
     );
+  recordRevisionAssets(tx, { revision: id, project: args.project, manifest: args.content.manifest ?? null });
   tx.emit('design.proposed', { project: args.project, design_revision: id }, { version: d.version ?? null, scope, revision: args.revision, design_check: args.check });
   if (scope === 'asset_only') {
     raiseQuestion(tx, { project: args.project, kind: 'design_approval', subjectType: 'design_revision', subjectId: id });
@@ -187,13 +191,35 @@ export const revisionOfRequest = (db: Db, request: string): RevisionRow | undefi
 // the design's at raise: a difference refuses the batch (§7.4). null when
 // they agree; the reason otherwise.
 export function batchInventoryDifference(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): string | null {
+  return batchInventoryDiff(db, args)?.reason ?? null;
+}
+
+// The same, with what differs (SEAM.md §519 `evidence.inventory_difference`):
+// the UI requirements added or gone, and the interfaces and targets moved.
+export function batchInventoryDiff(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): { reason: string; detail: Record<string, unknown> } | null {
   // The design's human tests already approved stay excluded beside the ones
   // this change adds: a later design's batch revises them (M533 (e)).
   const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: [...new Set([...designHumanTestKeys(db, args.project), ...args.addedHumanTests])] });
-  if ('unknown' in inputs) return `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`;
+  if ('unknown' in inputs) return { reason: `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`, detail: { unknown: inputs.unknown } };
   const next = deriveInventory(inputs);
-  if (args.designDigest === null) return 'the design names no inventory';
-  return next.inventory_digest === args.designDigest ? null : `the proposed specification's inventory (${next.inventory_digest.slice(0, 12)}) differs from the design's (${args.designDigest.slice(0, 12)})`;
+  if (args.designDigest === null) return { reason: 'the design names no inventory', detail: { design_inventory: null } };
+  if (next.inventory_digest === args.designDigest) return null;
+  const drawn = parseJson<Inventory>((db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(args.project, args.designDigest) as { inventory: string } | undefined)?.inventory ?? null);
+  const keyed = (inv: Inventory | null) => new Map((inv?.ui_requirements ?? []).map((r) => [r.key, canonical(r)]));
+  const [a, b] = [keyed(drawn), keyed(next)];
+  const shapes = (inv: Inventory | null) => new Map((inv?.interfaces ?? []).map((i) => [i.name, canonical(i)]));
+  const [ia, ib] = [shapes(drawn), shapes(next)];
+  const targets = (inv: Inventory | null) => new Map((inv?.targets ?? []).map((t) => [t.target, canonical(t)]));
+  const [ta, tb] = [targets(drawn), targets(next)];
+  const moved = <T>(x: Map<string, T>, y: Map<string, T>) => [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).sort();
+  const detail = {
+    design_inventory: args.designDigest,
+    proposed_inventory: next.inventory_digest,
+    ui_requirements: { added: [...b.keys()].filter((k) => !a.has(k)).sort(), removed: [...a.keys()].filter((k) => !b.has(k)).sort(), changed: [...a.keys()].filter((k) => b.has(k) && a.get(k) !== b.get(k)).sort() },
+    interfaces: moved(ia, ib),
+    targets: moved(ta, tb),
+  };
+  return { reason: `the proposed specification's inventory (${next.inventory_digest.slice(0, 12)}) differs from the design's (${args.designDigest.slice(0, 12)})`, detail };
 }
 
 // Called when a design request's proposal is recorded (spec/change.ts
@@ -204,13 +230,20 @@ export function raiseDesignBatch(tx: Tx, args: { request: string; rep: SpecRepre
   const rev = revisionOfRequest(tx.db, args.request);
   if (!rev || rev.status !== 'proposed') return { refused: 'the design is no longer proposed' };
   const human = args.rep ? args.rep.requirements.filter((q) => q.human_test && args.added.includes(q.key)).map((q) => q.key) : [];
-  const diff = args.rep ? batchInventoryDifference(tx.db, { project: rev.project, rep: args.rep, addedHumanTests: human, designDigest: rev.inventory_digest }) : 'the proposed specification cannot be read';
-  if (diff !== null) {
-    tx.db.prepare(`UPDATE "design_revisions" SET "status" = 'superseded' WHERE "id" = ?`).run(rev.id);
-    writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', note: `the batch was refused at raise: ${diff}` });
-    return { refused: diff };
+  const found = args.rep ? batchInventoryDiff(tx.db, { project: rev.project, rep: args.rep, addedHumanTests: human, designDigest: rev.inventory_digest }) : { reason: 'the proposed specification cannot be read', detail: { proposed: null } };
+  if (found !== null) {
+    // The close's product stays recorded, `proposed` and never raised
+    // (SEAM.md §519); design_due names what differs.
+    writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', note: `the batch was refused at raise: ${found.reason}`, inventory_difference: { design_revision: rev.id, ...found.detail } });
+    return { refused: found.reason };
   }
   const key = `design:${rev.id}`;
+  // An earlier batch's refusal at raise is answered by this one.
+  const due = designDueState(tx.db, rev.project);
+  if (due.inventory_difference) {
+    const { inventory_difference: _d, ...rest } = due;
+    writeDueState(tx, rev.project, rest);
+  }
   tx.db.prepare('UPDATE "design_revisions" SET "batch_key" = ? WHERE "id" = ?').run(key, rev.id);
   const d = raiseQuestion(tx, { project: rev.project, kind: 'design_approval', subjectType: 'design_revision', subjectId: rev.id });
   if (d) tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "id" = ?').run(key, d.id);
@@ -392,6 +425,23 @@ export function planVersions(db: Db, project: string): { id: string; generation:
 }
 const roadmapVersion = (db: Db, project: string): number | null => (db.prepare('SELECT "version" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number } | undefined)?.version ?? null;
 
+// The asset manifest's version as the project's head holds it now, for a
+// revision's bindings: the version the latest owner's `asset add` committed
+// after the revision was proposed (`design.asset_added` carries it; SEAM.md
+// §505), else the revision's own (a later Designer save moves the tree,
+// which `tree_blobs` binds).
+export function manifestVersionNow(db: Db, rev: Pick<RevisionRow, 'id' | 'project' | 'asset_manifest_version'>): number | null {
+  const added = db
+    .prepare(
+      `SELECT json_extract(e."payload", '$.manifest.version') AS "version" FROM "events" e
+       WHERE e."type" = 'design.asset_added' AND json_extract(e."subject", '$.project') = ?
+         AND e."seq" > COALESCE((SELECT MAX(p."seq") FROM "events" p WHERE p."type" = 'design.proposed' AND json_extract(p."subject", '$.design_revision') = ?), 0)
+       ORDER BY e."seq" DESC LIMIT 1`,
+    )
+    .get(rev.project, rev.id) as { version: number | null } | undefined;
+  return added && typeof added.version === 'number' ? added.version : rev.asset_manifest_version;
+}
+
 export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown> {
   const r = requestRow(db, rev.spec_change_request);
   const current = (db.prepare('SELECT "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(rev.project) as { version: number } | undefined)?.version ?? null;
@@ -405,7 +455,10 @@ export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown
     design_version: rev.version,
     architecture_version: arch,
     design_check: rev.design_check,
-    asset_manifest_version: rev.asset_manifest_version,
+    // The manifest's version at the head, not the revision's own (the
+    // Verifier's finding on M514 (b)): an owner's `asset add` after the
+    // proposal moves it and stales the approval.
+    asset_manifest_version: manifestVersionNow(db, rev),
     selection: sha256(canonical(parseJson(rev.selection))),
     // The design tree as the project's last save left it: a later save
     // stales the approval (M505 (g)).
@@ -480,6 +533,28 @@ function interfacesDisputed(db: Db, rev: RevisionRow): string[] {
   return disputedInterfaces(db, rev.project).filter((i) => used.has(i));
 }
 
+// The verdicts a review's design rests on, not the owner's (D7 §10.3;
+// SEAM.md §525): `DESIGN_VERDICTS_UNCONFIRMED:<review>` while they are
+// unanswered, `DESIGN_VERDICTS_REJECTED:<review>` once he rejected them
+// (the review's S9). Both block the design's approval and its batched
+// spec_change.
+export function reviewVerdictBlockers(db: Db, run: string | null): string[] {
+  if (run === null) return [];
+  const reviews = db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL ORDER BY rowid`).all(run) as { id: string }[];
+  return reviews.map((r) => {
+    const rejected = db
+      .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'design_verdicts' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'reject' LIMIT 1`)
+      .get(r.id);
+    return rejected ? `DESIGN_VERDICTS_REJECTED:${r.id}` : `DESIGN_VERDICTS_UNCONFIRMED:${r.id}`;
+  });
+}
+
+// The same for a design's batched spec_change (the driver's decision on S9).
+export function requestVerdictBlockers(db: Db, request: string): string[] {
+  const rev = revisionOfRequest(db, request);
+  return rev && rev.status === 'proposed' ? reviewVerdictBlockers(db, rev.run) : [];
+}
+
 export const DESIGN_APPROVAL: KindSpec = {
   preview(tx, d: Subject) {
     const rev = getRevision(tx.db, d.subject_id);
@@ -512,6 +587,9 @@ export const DESIGN_APPROVAL: KindSpec = {
       human_test_assignments: assignments,
     };
     const approveBlockers = [
+      // A review's revised or first design (D7 §10.3): approved only once the
+      // verdicts it rests on are the owner's.
+      ...reviewVerdictBlockers(tx.db, rev.run),
       ...(check && check.outcome !== 'passed' ? [`DESIGN_CHECK_FAILED:${check.id}`] : []),
       ...disputed.map((i) => `DESIGN_INTERFACE_DISPUTED:${i}`),
       ...(r && r.status === 'rejected' ? [`SPEC_CHANGE_REJECTED:${r.seq}`] : []),
@@ -573,11 +651,14 @@ export const DESIGN_APPROVAL: KindSpec = {
       writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', ...(note ? { note } : {}) });
       settleBatchRequest(tx, rev, 'the batched design was sent back for revision');
       tx.emit('design.rejected', { project: rev.project, design_revision: rev.id }, { option, note });
+      // A new cause: asked again at once, a `later` deferral included (D7 §11).
+      reviewDesignDue(tx, rev.project);
       return { ...consumed(d), effects: [{ kind: 'tick' }] };
     }
     tx.db.prepare(`UPDATE "design_revisions" SET "status" = 'rejected' WHERE "id" = ?`).run(rev.id);
     settleBatchRequest(tx, rev, 'the batched design was rejected');
     tx.emit('design.rejected', { project: rev.project, design_revision: rev.id }, { option, note });
+    reviewDesignDue(tx, rev.project);
     return { ...consumed(d), effects: [{ kind: 'tick' }] };
   },
 };
@@ -609,22 +690,14 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   }
   const held = new Set(parseJson<string[]>(rev.assets_held) ?? []);
   const manifest = parseJson<AssetManifest>(rev.asset_manifest);
+  // The slots as this revision holds them (recorded at its proposal): every
+  // pending proposal approved, except those held, which stay proposed (§6.4).
+  recordRevisionAssets(tx, { revision: rev.id, project: rev.project, manifest });
+  // A slot the selection narrowed away is not approved by it (the review's note).
+  const selected = selectionOf(tx.db, rev);
   for (const slot of manifest?.slots ?? []) {
-    tx.db
-      .prepare(`INSERT OR IGNORE INTO "design_assets" ("id", "created_at", "design_revision", "slot", "slot_version", "kind", "platforms", "status", "provenance", "variants", "held") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(
-        tx.newId('dast_'),
-        tx.at,
-        rev.id,
-        slot.key,
-        slot.slot_version,
-        slot.kind,
-        JSON.stringify(slot.platforms),
-        slot.status === 'proposed' && !held.has(slot.key) ? 'approved' : slot.status,
-        slot.provenance,
-        JSON.stringify(slot.variants.map((v) => ({ name: v.name, format: v.format, digest: v.digest ?? null }))),
-        held.has(slot.key) ? 1 : 0,
-      );
+    if (held.has(slot.key)) tx.db.prepare(`UPDATE "design_assets" SET "held" = 1 WHERE "design_revision" = ? AND "slot" = ?`).run(rev.id, slot.key);
+    else if (slot.variants.some((v) => selected(slot.kind, v.name))) tx.db.prepare(`UPDATE "design_assets" SET "status" = 'approved' WHERE "design_revision" = ? AND "slot" = ? AND "status" = 'proposed'`).run(rev.id, slot.key);
   }
   const moved = moveEffective(tx, rev, manifest, held);
   // The human tests' assignment (E156 Q3), with the change's effect; an
@@ -638,6 +711,9 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
   if (moved.length > 0) {
     tx.emit('design.assets_approved', { project: rev.project, design_revision: rev.id }, { moved });
+    // SEAM.md §510: after the move, before its work's registration (one
+    // transaction: a kill here leaves neither).
+    barrier('design.effective_moved');
     registerAssetUpdates(tx, rev, moved);
   }
   if (args.withoutCriteria) {
@@ -646,33 +722,76 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   }
 }
 
+// A revision's slots, recorded when it is proposed (SEAM.md §508): each
+// with its slot@version and status, `approved` where the effective set
+// already holds that slot@version from an approval at the same digests,
+// `placeholder` for the engine's, else `proposed` (a pending proposal, a
+// slot held at an earlier approval included). Idempotent per revision.
+export function recordRevisionAssets(tx: Tx, args: { revision: string; project: string; manifest: AssetManifest | null }): void {
+  for (const slot of args.manifest?.slots ?? []) {
+    const standing = slotStanding(tx.db, args.project, slot);
+    const status = standing === 'placeholder' || (slot.status === 'placeholder' && slot.provenance === 'engine_placeholder') ? 'placeholder' : standing === 'approved' ? 'approved' : 'proposed';
+    tx.db
+      .prepare(`INSERT OR IGNORE INTO "design_assets" ("id", "created_at", "design_revision", "slot", "slot_version", "kind", "platforms", "status", "provenance", "variants", "held") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`)
+      .run(
+        tx.newId('dast_'),
+        tx.at,
+        args.revision,
+        slot.key,
+        slot.slot_version,
+        slot.kind,
+        JSON.stringify(slot.platforms),
+        status,
+        slot.provenance,
+        JSON.stringify(slot.variants.map((v) => ({ name: v.name, format: v.format, digest: v.digest ?? null }))),
+      );
+  }
+}
+
 // The effective set moved by an approval (§6.4): per selected slot and
 // variant, the approved slot@version where the slot was proposed and not
 // held, else what was effective (the placeholder or an earlier approval).
 // Returns each move.
-function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null, held: Set<string>): { slot: string; variant: string; from_version: number | null; to_version: number }[] {
-  if (!manifest) return [];
+// What a revision selects (§5.8, §6.2; SEAM.md §496): a default kind the
+// selection leaves out is narrowed away; a kind the design adds beyond the
+// defaults (a banner, an illustration) is the design's own.
+function selectionOf(db: Db, rev: RevisionRow): (kind: string, variant: string) => boolean {
   const selection = parseJson<{ slots?: { kind: string; variants: string[] }[] }>(rev.selection);
-  // A default kind the selection leaves out is narrowed away (§5.8: "slots
-  // and variants only as selected"; SEAM.md §496); a kind the design adds
-  // beyond the defaults (a banner, an illustration) is the design's own.
-  const defaults = new Set((currentInventory(tx.db, rev.project)?.inventory.targets ?? []).flatMap((t) => t.required_slots.map((s) => s.kind)));
-  const selected = (kind: string, variant: string): boolean => {
+  const defaults = new Set((currentInventory(db, rev.project)?.inventory.targets ?? []).flatMap((t) => t.required_slots.map((s) => s.kind)));
+  return (kind: string, variant: string): boolean => {
     const s = selection?.slots?.find((x) => x.kind === kind);
     if (s) return s.variants.includes(variant);
     return !(Array.isArray(selection?.slots) && defaults.has(kind));
   };
+}
+
+function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null, held: Set<string>): { slot: string; variant: string; from_version: number | null; to_version: number }[] {
+  if (!manifest) return [];
+  const selected = selectionOf(tx.db, rev);
+  // The engine's placeholders, as the inventory records them (the review's
+  // B2): never a Designer's or the owner's file.
+  const inv = currentInventory(tx.db, rev.project);
+  const record = parseJson<PlaceholderRecord>(inv?.row.manifest ?? null);
   const moved: { slot: string; variant: string; from_version: number | null; to_version: number }[] = [];
   for (const slot of manifest.slots) {
     for (const v of slot.variants) {
-      const now = tx.db.prepare('SELECT * FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name) as { slot_version: number; source: string } | undefined;
+      const now = tx.db.prepare('SELECT * FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name) as { slot_version: number; source: string; digest: string } | undefined;
       if (!selected(slot.kind, v.name)) {
         if (now) tx.db.prepare('DELETE FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(rev.project, slot.key, v.name);
         continue;
       }
-      const approve = slot.status === 'proposed' && !held.has(slot.key) && typeof v.file === 'string' && typeof v.digest === 'string';
+      // An approval never approves an engine placeholder (S2): a variant
+      // whose file is the placeholder's stays the placeholder.
+      const isPlaceholder = typeof v.digest === 'string' && v.digest === placeholderDigest(record, slot.key, v.name);
+      const approve = slot.status === 'proposed' && !held.has(slot.key) && typeof v.file === 'string' && typeof v.digest === 'string' && !isPlaceholder;
       if (!approve) continue;
       if (now && now.source === 'approved' && now.slot_version === slot.slot_version) continue;
+      // The same file at a later slot_version (the engine added variants to
+      // the slot): its version follows, and nothing moved, so no work (S2).
+      if (now && now.source === 'approved' && now.digest === v.digest) {
+        tx.db.prepare('UPDATE "design_effective_assets" SET "slot_version" = ? WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(slot.slot_version, rev.project, slot.key, v.name);
+        continue;
+      }
       tx.db.prepare('DELETE FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(rev.project, slot.key, v.name);
       tx.db
         .prepare(
@@ -685,19 +804,20 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
   }
   // A selected slot and variant with no effective row (narrowed away by an
   // earlier design, selected again by this one): its engine placeholder,
-  // from the recorded inventory's manifest, is its effective version again
-  // (§6.4: "else the slot's engine placeholder"; the slice-41 review's S3).
-  const inv = currentInventory(tx.db, rev.project);
-  for (const slot of parseJson<AssetManifest>(inv?.row.manifest ?? null)?.slots ?? []) {
+  // from the inventory's placeholder record alone, is its effective version
+  // again (§6.4: "else the slot's engine placeholder"; the slice-41 review's
+  // S3), its platforms the derivation's.
+  for (const slot of record?.slots ?? []) {
     for (const v of slot.variants) {
       if (!selected(slot.kind, v.name) || typeof v.file !== 'string' || typeof v.digest !== 'string') continue;
       if (tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name)) continue;
+      const at = placeholderSource(record, inv!.row.revision, slot.key, v.name)!;
       tx.db
         .prepare(
           `INSERT INTO "design_effective_assets" ("id", "created_at", "project", "slot", "kind", "variant", "slot_version", "source", "digest", "format", "revision", "file", "platforms", "since_design_revision")
            VALUES (?, ?, ?, ?, ?, ?, ?, 'placeholder', ?, ?, ?, ?, ?, ?)`,
         )
-        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, inv!.row.revision, v.file, JSON.stringify(slot.platforms), rev.id);
+        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, at.revision, at.file, JSON.stringify(slot.platforms), rev.id);
     }
   }
   return moved;
@@ -739,22 +859,9 @@ function assignHumanTests(tx: Tx, rev: RevisionRow, file: { blob: string; path: 
   tx.emit('baseline.roadmap_revised', { project: rev.project, roadmap_revision: id }, { version: road.version + 1, phases: phases.map((p) => p.number), design_revision: rev.id, approved_by: 'engine:design_approval', moved_requirements: moves });
 }
 
-// The stage-to-screen binding (D7 §8.1): each UI stage's screens, of the
-// targets its modules serve, naming a requirement it implements.
+// The stage-to-screen binding (D7 §8.1): design/stage-screens.ts.
 export function bindStageScreens(tx: Tx, rev: RevisionRow): void {
-  const content = contentOf(rev);
-  const map = approvedModuleMap(tx.db, rev.project)?.map ?? null;
-  for (const st of publishedStages(tx.db, rev.project)) {
-    const modules = stageModuleNames(tx.db, rev.project, st.modules);
-    const targets = new Set((map?.modules ?? []).filter((m) => m.surface === 'ui' && modules.includes(m.name)).flatMap((m) => (m.targets ?? []).map((t) => t.target)));
-    if (targets.size === 0) continue;
-    const reqs = new Set(stageRequirementKeys(tx.db, rev.project, st.implements));
-    for (const s of content?.screens.screens ?? []) {
-      if (!targets.has(String(s.target))) continue;
-      if (!(Array.isArray(s.requirements) ? (s.requirements as string[]) : []).some((r) => reqs.has(r))) continue;
-      tx.db.prepare('INSERT OR IGNORE INTO "stage_screens" ("id", "created_at", "stage", "screen", "target", "design_revision") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('sscr_'), tx.at, st.id, String(s.key), String(s.target), rev.id);
-    }
-  }
+  bindStageScreensTo(tx, { project: rev.project, revision: rev.id });
 }
 
 // D7 §5.3's "not checkable" column as A.2's NativeConvention, per target
@@ -811,14 +918,9 @@ function registerAssetUpdates(tx: Tx, rev: RevisionRow, moved: { slot: string; v
     // A slot an integrated stage carried: bound, or carried and unbound.
     // (A stage's package carried the effective set when it was built under
     // the design: its work waited on design_ready.)
-    const carried =
-      bindings.length > 0 ||
-      tx.db
-        .prepare(
-          `SELECT 1 FROM "stages" s JOIN "work_items" w ON w."id" = s."work_item" WHERE s."project" = ? AND s."status" IN ('integrated', 'verified')
-             AND EXISTS (SELECT 1 FROM json_each(w."depends_on") j WHERE json_extract(j.value, '$.milestone') = 'design_ready') LIMIT 1`,
-        )
-        .get(rev.project) !== undefined;
+    // (What a package carried is recorded when it is built: a slot no
+    // integrated stage's package carried needs no work, SEAM.md §510.)
+    const carried = bindings.length > 0 || slotCarried(tx.db, rev.project, slot);
     if (carried) {
       const candidate = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(rev.project) as { id: string } | undefined;
       observeTrigger(

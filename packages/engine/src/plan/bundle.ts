@@ -11,6 +11,7 @@
 // from one (B02).
 
 import { designAssignedHumanTests, designPolicyOf } from '../design/policy.js';
+import { approvedDesignScreens } from '../design/stage-screens.js';
 import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest, specChangeRoute } from './check.js';
@@ -202,6 +203,9 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
         policy: designPolicyOf(db, args.project),
         spec_targets: representation?.targets ?? null,
         ...(spec && representation === null ? { spec_targets_unknown: `the representation of specification version ${spec.version} cannot be read` } : {}),
+        // Clause 1 and clause 4's design reads (D7 §8.1, §8.3; G6).
+        approved_screens: approvedDesignScreens(db, args.project),
+        surface_targets: Object.fromEntries((representation?.requirements ?? []).filter((r) => r.surface === 'ui').map((r) => [r.key, r.surface_targets ?? null])),
       },
       questions: (representation?.questions ?? []).map((q) => ({ id: q.id, blocks: q.blocks, phase_hint: q.phase_hint })),
     },
@@ -444,6 +448,8 @@ export function recordBundle(tx: Tx, args: RecordBundleArgs): { bundle: string; 
         JSON.stringify(declaredOf(c, args.declared)),
         args.diff ?? null,
       );
+    // The planned design obligations (D7 §8.3; SEAM.md §513).
+    tx.db.prepare('UPDATE "plan_checks" SET "design_obligations" = ? WHERE "id" = ?').run(JSON.stringify(c.design_obligations ?? []), check);
     tx.emit('plan.checked', { project: args.project, plan_bundle: args.bundle, plan_check: check }, { phase: args.phase, outcome: c.outcome, reasons: c.reasons.map((r) => r.code), routing: c.routing, run: args.run, uncertain: c.uncertain ?? [], diff: args.diff ?? null });
     if (c.outcome === 'refused') tx.emit('baseline.plan_refused', { project: args.project, plan_bundle: args.bundle }, { phase: args.phase, reasons: c.reasons });
   }
@@ -670,6 +676,7 @@ export function publishBundle(tx: Tx, args: { bundle: string; by: string }): { p
           adrs: s.adrs,
           conformance: s.conformance === true,
           execution_inputs_digest: executionInputsDigest(s),
+          ...(s.screens !== undefined ? { screens: s.screens } : {}),
         })),
       },
       {},
@@ -753,6 +760,7 @@ export function recordRefusedReplan(tx: Tx, args: { project: string; run: string
       JSON.stringify(c.uncertain ?? []),
       JSON.stringify(declaredOf(c, args.declared)),
     );
+  tx.db.prepare('UPDATE "plan_checks" SET "design_obligations" = ? WHERE "id" = ?').run(JSON.stringify(c.design_obligations ?? []), id);
   tx.emit('plan.checked', { project: args.project, plan_check: id, run: args.run }, { phase: args.phase, outcome: c.outcome, reasons: c.reasons.map((r) => r.code), routing: null, run: args.run });
   // A refused replan is a refused plan like a session's (D6 §5.3; M425 (a)).
   // An unknown requirement is offered through the spec-change workflow,
@@ -987,6 +995,7 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
         adrs: s.adrs,
         conformance: s.conformance === true,
         execution_inputs_digest: executionInputsDigest(s),
+        ...(s.screens !== undefined ? { screens: s.screens } : {}),
       })),
     },
     {},

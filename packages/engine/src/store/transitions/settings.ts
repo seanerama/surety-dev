@@ -57,6 +57,15 @@ export function effectiveProfileMax(db: Database, project: string, profile: 'rol
   return ceiling === undefined ? value : Math.min(value, ceiling);
 }
 
+// A design preview's effective memory maximum (D7 A.7): the project's
+// `preview_memory_max` under the engine's `domain_memory_max`, as a profile's
+// maximum is (E158 item 4).
+export function effectivePreviewMax(db: Database, project: string): number {
+  const value = projectPolicy(db, project).preview_memory_max!;
+  const ceiling = settings?.domain_memory_max;
+  return ceiling === undefined ? value : Math.min(value, ceiling);
+}
+
 // The engine's effective default maximum of a profile, for no project: the
 // schema default under the ceiling (a qualification attempt's, the runner's).
 export function defaultProfileMax(profile: 'role' | 'check'): number {

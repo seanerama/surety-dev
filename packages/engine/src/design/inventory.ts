@@ -148,6 +148,9 @@ export function deriveInventory(input: InventoryInputs): Inventory {
   const targets: InventoryTarget[] = [];
   for (const m of uiModules) {
     for (const t of m.targets ?? []) {
+      // The approved specification's targets bound the design (G3, Q7): a
+      // target the header removed is no longer the inventory's (D7 §9.1).
+      if (input.spec_targets !== null && !input.spec_targets.includes(t.target)) continue;
       const permissions = (m.platform_permissions ?? []).filter((p) => p.target === t.target).map((p) => p.permission);
       targets.push({
         module: m.name,
@@ -211,7 +214,7 @@ export function deriveInventory(input: InventoryInputs): Inventory {
     const modules = new Set<string>();
     for (const s of input.stages) if (s.implements.includes(key)) for (const m of s.modules) if (uiNames.has(m)) modules.add(m);
     const ts = new Set<string>();
-    for (const m of modules) for (const t of targetsOf(m)) ts.add(t);
+    for (const m of modules) for (const t of targetsOf(m)) if (input.spec_targets === null || input.spec_targets.includes(t)) ts.add(t);
     return { modules: [...modules].sort(), targets: [...ts] };
   };
   const ui_requirements: Inventory['ui_requirements'] = [];

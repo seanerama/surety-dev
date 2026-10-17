@@ -4570,6 +4570,9 @@
         "diff": {
           "required": false,
           "references": "records"
+        },
+        "design_obligations": {
+          "required": false
         }
       }
     },
@@ -5840,6 +5843,9 @@
           "required": false
         },
         "conformance_state": {
+          "required": false
+        },
+        "screens": {
           "required": false
         }
       }
@@ -7127,7 +7133,8 @@
         "held_stages",
         "stale_screens",
         "policy_revision",
-        "inventory_failure"
+        "inventory_failure",
+        "reason"
       ],
       "target_seconds": 172800
     },

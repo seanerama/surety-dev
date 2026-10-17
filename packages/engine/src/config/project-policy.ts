@@ -99,8 +99,10 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
   }
 }
 
-// The keys bounded above by the engine's `domain_memory_max` (D6 K2, A.7).
-export const CEILED_KEYS = ['role_memory_max', 'check_memory_max'] as const;
+// The keys bounded above by the engine's `domain_memory_max` (D6 K2, A.7;
+// D7 A.7: `preview_memory_max`, from 64 MiB to the effective
+// `domain_memory_max`; E158 item 4).
+export const CEILED_KEYS = ['role_memory_max', 'check_memory_max', 'preview_memory_max'] as const;
 
 // `ceiling`: the engine's `domain_memory_max` in force, which an explicit
 // per-profile maximum may not exceed (the driver's ruling Q1, slice 37).
