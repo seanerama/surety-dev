@@ -24,7 +24,9 @@ import { runningService } from '../store/transitions/deploy.js';
 import { SEVERITIES, raiseFinding } from '../store/transitions/findings.js';
 import { OWED_SCOPE, type AnswerExtra, type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
-import { checksOfVersion } from '../store/transitions/evidence.js';
+import { type CandidateRow, checksOfVersion, presenceOf } from '../store/transitions/evidence.js';
+import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
+import { approvedModuleMap } from './policy.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { OBSERVED_ON } from './evidence.js';
 import { designPolicyOf } from './policy.js';
@@ -44,6 +46,9 @@ export interface ReviewArgs {
   verdicts: Record<string, unknown>[];
   // The design the review proposed beside its verdicts (D7 §10.3, §10.6).
   proposed_revision?: string | null;
+  // The review file's path (N7), and whether it draws the first design (B2).
+  review_path?: string | null;
+  first_design?: boolean;
 }
 
 export const VERDICTS = ['matches', 'deltas', 'not_observed'] as const;
@@ -60,12 +65,33 @@ const latestAlpha = (db: Db, project: string): { id: string; candidate: string }
     | { id: string; candidate: string }
     | undefined;
 
-// The deploy operation that put the candidate on Alpha (the newest of the
-// project's for that candidate).
+// The deploy operation that put the candidate on Alpha: the newest of the
+// project's whose subject names that candidate; null when none does, never
+// another candidate's.
 function deployOperationOf(db: Db, project: string, candidate: string): string | null {
-  const rows = db.prepare(`SELECT "id", "subject" FROM "operations" WHERE "project" = ? AND "kind" = 'deploy' ORDER BY "seq" DESC`).all(project) as { id: string; subject: string }[];
-  return (rows.find((r) => JSON.stringify(parseJson(r.subject) ?? {}).includes(candidate)) ?? rows[0])?.id ?? null;
+  return (
+    (db.prepare(`SELECT "id" FROM "operations" WHERE "project" = ? AND "kind" = 'deploy' AND json_extract("subject", '$.candidate') = ? ORDER BY "seq" DESC LIMIT 1`).get(project, candidate) as { id: string } | undefined)?.id ??
+    null
+  );
 }
+
+// The subject of a review at Alpha (D7 §10.1): the Alpha's candidate and
+// the deployment that put it there, as the store holds them now; both null
+// before any Alpha.
+export function alphaSubject(db: Db, project: string): { kind: 'candidate'; candidate: string | null; deployment: string | null } {
+  const alpha = latestAlpha(db, project);
+  return { kind: 'candidate', candidate: alpha?.candidate ?? null, deployment: alpha ? deployOperationOf(db, project, alpha.candidate) : null };
+}
+
+// The subject a review-mode session was bound to at its opening (S2), if any.
+export function boundSubjectOfRun(db: Db, run: string): Record<string, unknown> | null {
+  const notes = parseJson<{ subject?: Record<string, unknown> }>((db.prepare('SELECT "session_notes" FROM "runs" WHERE "id" = ?').get(run) as { session_notes: string | null } | undefined)?.session_notes ?? null);
+  return notes?.subject ?? null;
+}
+
+// A route the engine asks for: a request path of printable ASCII, no
+// space, CR, LF or control (S1).
+export const isRequestPath = (route: unknown): route is string => typeof route === 'string' && /^\/[!-~]*$/.test(route);
 
 // At the design's review: an `alpha_complete` satisfied since the last
 // review puts design_due at stage `alpha_review`, bound to the Alpha's
@@ -81,7 +107,7 @@ export function noteAlphaReview(tx: Tx, project: string): void {
   // before build waived) the review is a first design at Alpha (D7 §10.6;
   // SEAM.md §514): asked all the same.
   const operation = deployOperationOf(tx.db, project, alpha.candidate);
-  const review = { kind: 'candidate', candidate: alpha.candidate, ...(operation ? { deployment: operation } : {}), gate_evaluation: alpha.id };
+  const review = { kind: 'candidate', candidate: alpha.candidate, deployment: operation, gate_evaluation: alpha.id };
   writeDueState(tx, project, { ...state, stage: 'alpha_review', alpha_pending: alpha.id, review } as never);
   tx.emit('design.review_requested', { project }, { trigger: 'alpha_complete', gate_evaluation: alpha.id, candidate: alpha.candidate, deployment: operation });
 }
@@ -93,6 +119,10 @@ export interface ReviewTarget {
   attempt: string;
   generation: number | null;
   candidate: string | null;
+  // The operation of the running attempt, and the deployment the review is
+  // bound to: a route is observed only when they are the same (S2).
+  running_operation: string | null;
+  bound_deployment: string | null;
   routes: { screen: string; target: string; route: string }[];
   not_observed: { screen: string; target: string; reason: string }[];
 }
@@ -108,19 +138,22 @@ function approvedScreens(db: Db, project: string): { key: string; target: string
 
 // The Alpha's running service and the approved design's screens: each web
 // screen with a route is fetched; every other screen is not observable here.
-export function reviewTarget(db: Db, args: { project: string }): ReviewTarget | null {
+export function reviewTarget(db: Db, args: { project: string; run?: string }): ReviewTarget | null {
   const screens = approvedScreens(db, args.project);
+  const bound = args.run ? boundSubjectOfRun(db, args.run) : null;
   const envs = db.prepare(`SELECT "id" FROM "environments" WHERE "project" = ? AND "prefix" IS NOT NULL AND "name" <> 'design-preview' AND "qualification_run" IS NULL ORDER BY rowid`).all(args.project) as { id: string }[];
   for (const e of envs) {
     const svc = runningService(db, e.id);
     if (!svc || svc.supervision !== 'attached') continue;
-    const alpha = latestAlpha(db, args.project);
+    const running = (db.prepare('SELECT "operation" FROM "operation_attempts" WHERE "id" = ?').get(svc.attempt) as { operation: string } | undefined)?.operation ?? null;
     return {
       environment: e.id,
       attempt: svc.attempt,
       generation: svc.generation,
-      candidate: alpha?.candidate ?? null,
-      routes: screens.filter((s) => s.target === 'web' && typeof s.route === 'string').map((s) => ({ screen: s.key, target: s.target, route: s.route as string })),
+      candidate: typeof bound?.candidate === 'string' ? bound.candidate : null,
+      running_operation: running,
+      bound_deployment: typeof bound?.deployment === 'string' ? bound.deployment : null,
+      routes: screens.filter((s) => s.target === 'web' && s.route !== undefined).map((s) => ({ screen: s.key, target: s.target, route: s.route as string })),
       not_observed: screens.filter((s) => s.target !== 'web').map((s) => ({ screen: s.key, target: s.target, reason: 'no_native_runtime' })),
     };
   }
@@ -199,15 +232,26 @@ export function recordReview(tx: Tx, args: ReviewArgs): { review: string; decisi
   const opened = tx.db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "trigger" = 'owner_command' AND "review_blob" IS NULL ORDER BY rowid DESC LIMIT 1`).get(args.run) as { id: string } | undefined;
   const id = opened?.id ?? tx.newId('drv_');
   const state = designDueState(tx.db, args.project) as ReturnType<typeof designDueState> & { alpha_pending?: string; alpha_reviewed?: string };
+  // A review file rewritten: the earlier review of the same file is
+  // replaced, and its open question invalidated (N7).
+  if (args.review_path) {
+    const earlier = tx.db.prepare(`SELECT "id" FROM "design_reviews" WHERE "project" = ? AND "review_path" = ? AND "confirmation_decision" IS NULL AND "id" <> ? ORDER BY rowid`).all(args.project, args.review_path, id) as { id: string }[];
+    for (const e of earlier) {
+      const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'design_verdicts' AND "subject_id" = ? AND "status" = 'open'`).all(e.id) as DecisionRow[];
+      for (const d of open) invalidateDecision(tx, d, `the review file ${args.review_path} was written again: review ${id} replaces review ${e.id}`, { replaced_by: id });
+    }
+  }
   if (opened) {
-    tx.db.prepare('UPDATE "design_reviews" SET "review_blob" = ?, "verdicts" = ?, "proposed_revision" = ? WHERE "id" = ?').run(args.review_blob, JSON.stringify(args.verdicts), args.proposed_revision ?? null, id);
+    tx.db.prepare('UPDATE "design_reviews" SET "review_blob" = ?, "verdicts" = ?, "proposed_revision" = ?, "review_path" = ? WHERE "id" = ?').run(args.review_blob, JSON.stringify(args.verdicts), args.proposed_revision ?? null, args.review_path ?? null, id);
   } else {
     // A review at Alpha is about the Alpha's candidate and its deployment,
-    // as the engine bound them (D7 §10.1), never as the role's file says.
-    const subject = args.trigger === 'alpha_complete' && state.review ? { kind: 'candidate', candidate: state.review.candidate, ...(state.review.deployment ? { deployment: state.review.deployment } : {}) } : args.subject;
+    // as the engine bound them at the session's opening (D7 §10.1; S2),
+    // never as the role's file says.
+    const bound = boundSubjectOfRun(tx.db, args.run);
+    const subject = args.trigger === 'alpha_complete' ? (bound ?? { kind: 'candidate', candidate: state.review?.candidate ?? null, deployment: state.review?.deployment ?? null }) : args.subject;
     tx.db
-      .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "review_blob", "verdicts", "proposed_revision") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, tx.at, args.project, args.design_revision, args.run, args.trigger, JSON.stringify(subject), args.review_blob, JSON.stringify(args.verdicts), args.proposed_revision ?? null);
+      .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "review_blob", "verdicts", "proposed_revision", "review_path") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, tx.at, args.project, args.design_revision, args.run, args.trigger, JSON.stringify(subject), args.review_blob, JSON.stringify(args.verdicts), args.proposed_revision ?? null, args.review_path ?? null);
   }
   tx.db.prepare('UPDATE "design_evidence" SET "review" = ? WHERE "run" = ? AND "review" IS NULL').run(id, args.run);
   tx.emit('design.review_recorded', { project: args.project, design_review: id }, { trigger: args.trigger, verdicts: args.verdicts.length, run: args.run, ...(args.proposed_revision ? { design_revision: args.proposed_revision } : {}) });
@@ -216,8 +260,10 @@ export function recordReview(tx: Tx, args: ReviewArgs): { review: string; decisi
     const { stage: _stage, alpha_pending, review: _review, ...rest } = state;
     writeDueState(tx, args.project, { ...rest, ...(alpha_pending ? { alpha_reviewed: alpha_pending } : {}) } as never);
   }
-  // A review with no verdict asks nothing of the owner.
-  if (args.verdicts.length === 0) return { review: id, decision: null };
+  // Only the owner's act finishes a review (D7 §10.3, §11; the driver's B2):
+  // design_verdicts is raised even with no verdict, except for a first
+  // design whose review holds none (its approval is the act).
+  if (args.verdicts.length === 0 && args.first_design === true) return { review: id, decision: null };
   const d = raiseQuestion(tx, { project: args.project, kind: 'design_verdicts', subjectType: 'design_review', subjectId: id });
   return { review: id, decision: d?.id ?? null };
 }
@@ -277,10 +323,12 @@ const evidenceRows = (db: Db, review: string) =>
 
 // The provenance a verdict rests on (D7 §10.5): that of the evidence it
 // names, or the owner's typed words where it names none.
-export function verdictProvenance(db: Db, v: Pick<Verdict, 'evidence'>): string {
+// Only the review's own evidence counts (B1): an id of another review's
+// evidence lends this verdict nothing, engine-observed least of all.
+export function verdictProvenance(db: Db, v: Pick<Verdict, 'evidence'>, review: string): string {
   const ids = Array.isArray(v.evidence) ? v.evidence : [];
   if (ids.length === 0) return 'owner_reported';
-  const rows = ids.map((id) => db.prepare('SELECT "provenance" FROM "design_evidence" WHERE "id" = ?').get(id) as { provenance: string } | undefined).filter((x) => x !== undefined);
+  const rows = ids.map((id) => db.prepare('SELECT "provenance" FROM "design_evidence" WHERE "id" = ? AND "review" = ?').get(id, review) as { provenance: string } | undefined).filter((x) => x !== undefined);
   const kinds = [...new Set(rows.map((r) => r!.provenance))];
   // Never merged: one provenance, or each named.
   return kinds.length === 1 ? kinds[0]! : kinds.length === 0 ? 'owner_reported' : kinds.sort().join('+');
@@ -294,7 +342,10 @@ export const DESIGN_VERDICTS: KindSpec = {
     const evidence = evidenceRows(tx.db, r.id);
     return {
       manifest: { review: r.id, review_blob: reviewFileBlob(tx.db, r), evidence: evidence.map((e) => e.id) },
-      question: `The design review of ${r.trigger === 'alpha_complete' ? 'the Alpha' : 'the build'} proposes ${verdicts.length} verdict(s): ${verdicts.map((v) => `${String(v.target)} ${String(v.screen)} ${String(v.verdict)}`).join('; ')}. Confirm them as yours (editing or striking any), or reject them?`,
+      question:
+        verdicts.length === 0
+          ? `The design review of ${r.trigger === 'alpha_complete' ? 'the Alpha' : 'the build'} holds no verdicts: nothing is proposed, and the design's human tests stay pending. Confirm the review as finished, or reject it?`
+          : `The design review of ${r.trigger === 'alpha_complete' ? 'the Alpha' : 'the build'} proposes ${verdicts.length} verdict(s): ${verdicts.map((v) => `${String(v.target)} ${String(v.screen)} ${String(v.verdict)}`).join('; ')}. Confirm them as yours (editing or striking any), or reject them?`,
       options: [
         {
           key: 'confirm',
@@ -306,7 +357,7 @@ export const DESIGN_VERDICTS: KindSpec = {
         { key: 'reject', label: 'Reject', consequence: 'The verdicts stay proposals; nothing is accepted, filed or routed.', effect: { design_review: r.id } },
       ],
       evidence: {
-        verdicts: verdicts.map((v) => ({ ...v, provenance: PROVENANCE_LABEL[verdictProvenance(tx.db, v)] ?? verdictProvenance(tx.db, v) })),
+        verdicts: verdicts.map((v) => ({ ...v, provenance: PROVENANCE_LABEL[verdictProvenance(tx.db, v, r.id)] ?? verdictProvenance(tx.db, v, r.id) })),
         evidence: evidence.map((e) => ({ id: e.id, label: e.label, format: e.format, target: e.target, screen: e.screen, route: e.route, status: e.status, observed_on: e.observed_on, name: e.name })),
       } as never,
     };
@@ -394,13 +445,24 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined):
   return { verdicts: out, severity };
 }
 
-// The candidate a review's defects are filed against (D7 §10.3): the
-// review's; for an owner build, the one he named where the project holds
-// it, or else the latest of the project.
-function reviewCandidate(db: Db, r: ReviewRow): string | null {
+// The candidate a review's defects are filed against (D7 §10.3; SEAM.md
+// §525): the review's; for an owner build, the one he named where the
+// project holds it, or else the latest integrated candidate holding that
+// target's UI modules (its recorded presence names them all); null, unknown,
+// when none does or no presence is read.
+function reviewCandidate(db: Db, r: ReviewRow, target: string): string | null {
   const subject = parseJson<{ candidate?: string }>(r.subject) ?? {};
   if (typeof subject.candidate === 'string' && db.prepare('SELECT 1 FROM "candidates" WHERE "id" = ? AND "project" = ?').get(subject.candidate, r.project)) return subject.candidate;
-  return (db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? ORDER BY "seq" DESC LIMIT 1').get(r.project) as { id: string } | undefined)?.id ?? null;
+  const map = approvedModuleMap(db, r.project)?.map ?? null;
+  const names = (map?.modules ?? []).filter((m) => m.surface === 'ui' && (m.targets ?? []).some((t) => t.target === target)).map((m) => m.name);
+  if (names.length === 0) return null;
+  const ids = (db.prepare(`SELECT "id" FROM "modules" WHERE "project" = ? AND "name" IN (${names.map(() => '?').join(', ')})`).all(r.project, ...names) as { id: string }[]).map((m) => m.id);
+  if (ids.length !== names.length) return null;
+  for (const c of db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq" DESC').all(r.project) as CandidateRow[]) {
+    const present = presenceOf(db, r.project, c);
+    if (present !== null && ids.every((id) => present.includes(id))) return c.id;
+  }
+  return null;
 }
 
 // The check that decides a target's design criteria (D7 §10.3: "the design
@@ -433,10 +495,10 @@ function designCheckFor(db: Db, project: string, target: string): { check: strin
 // the owner; nothing from a struck verdict or a `design` delta.
 function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string): string[] {
   const subject = parseJson<{ build_ref?: string }>(r.subject) ?? {};
-  const candidate = reviewCandidate(tx.db, r);
   const out: string[] = [];
   for (const v of verdicts) {
     if (v.status !== 'confirmed') continue;
+    const candidate = reviewCandidate(tx.db, r, v.target);
     for (const dl of v.deltas ?? []) {
       if (dl.kind !== 'implementation' && dl.kind !== 'both') continue;
       const where = `${v.target} ${v.screen}${dl.state ? ` (${dl.state})` : ''}`;
@@ -465,7 +527,15 @@ function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string
 
 // Every review of the project, its evidence labelled and counted by provenance.
 export function reviewsView(db: Db, project: string): Record<string, unknown>[] {
-  const rows = db.prepare('SELECT * FROM "design_reviews" WHERE "project" = ? ORDER BY rowid').all(project) as ReviewRow[];
+  // A review whose session never had its workspace (the opening refused
+  // after the row was written) is not a review (N3).
+  const rows = db
+    .prepare(
+      `SELECT r.* FROM "design_reviews" r WHERE r."project" = ?
+         AND NOT (r."review_blob" IS NULL AND EXISTS (SELECT 1 FROM "runs" x WHERE x."id" = r."run" AND x."state" = 'ended') AND NOT EXISTS (SELECT 1 FROM "workspaces" w WHERE w."run" = r."run"))
+       ORDER BY r.rowid`,
+    )
+    .all(project) as ReviewRow[];
   return rows.map((r) => {
     const evidence = evidenceRows(db, r.id);
     const count = (p: string) => evidence.filter((e) => e.provenance === p).length;
@@ -475,7 +545,7 @@ export function reviewsView(db: Db, project: string): Record<string, unknown>[] 
       subject: parseJson(r.subject),
       design_revision: r.design_revision,
       first_design: r.design_revision === null,
-      verdicts: (parseJson<Verdict[]>(r.verdicts) ?? []).map((v) => ({ ...v, provenance: verdictProvenance(db, v) })),
+      verdicts: (parseJson<Verdict[]>(r.verdicts) ?? []).map((v) => ({ ...v, provenance: verdictProvenance(db, v, r.id) })),
       confirmed_by: r.confirmed_by,
       confirmation_decision: r.confirmation_decision,
       findings: parseJson(r.findings) ?? [],
@@ -499,7 +569,7 @@ export function humanTestEvidence(db: Db, project: string, target: string, curre
     const subject = parseJson<{ candidate?: string; build_ref?: string }>(r.subject) ?? {};
     for (const v of parseJson<Verdict[]>(r.verdicts) ?? []) {
       if (v.target !== target || v.status !== 'confirmed') continue;
-      const provenance = verdictProvenance(db, v);
+      const provenance = verdictProvenance(db, v, r.id);
       evidence.push({
         review: r.id,
         target: v.target,
@@ -514,8 +584,10 @@ export function humanTestEvidence(db: Db, project: string, target: string, curre
         ...(typeof subject.build_ref === 'string' ? { build_ref: subject.build_ref } : {}),
       });
       // Counted only for the design version it was given on, only from a
-      // `matches` on a runtime that is not a simulation (D7 §10.2; Q4).
-      if (current !== null && r.design_revision === current && v.verdict === 'matches' && v.observed_on !== undefined && v.observed_on !== 'simulation') accepted = true;
+      // `matches` on a runtime that is not a simulation (D7 §10.2; Q4), and
+      // for a native target never from a browser (S7).
+      const native = target !== 'web';
+      if (current !== null && r.design_revision === current && v.verdict === 'matches' && v.observed_on !== undefined && v.observed_on !== 'simulation' && !(native && v.observed_on === 'browser')) accepted = true;
     }
   }
   return { evidence, accepted };

@@ -8,14 +8,19 @@
 // beyond the header, nothing is executed or played. A refusal is whole.
 // Pure: bytes in, a verdict out.
 
+import { constants as bufferConstants } from 'node:buffer';
 import { createHash } from 'node:crypto';
 
 import { Refusal } from '../refusal.js';
 
 export const EVIDENCE_FORMATS = ['png', 'webp', 'jpeg', 'mp4', 'webm'] as const;
 export type EvidenceFormat = (typeof EVIDENCE_FORMATS)[number];
-// The runtime the owner states his evidence was seen on (A.2 ObservedOn).
+// The runtime a verdict says it was seen on (A.2 ObservedOn).
 export const OBSERVED_ON = ['browser', 'simulator', 'emulator', 'device', 'simulation'] as const;
+// The runtime the owner states his evidence files were seen on (D7 §10.5;
+// SEAM.md §522; the slice-45 review's S7): a device, an emulator or a
+// simulator he ran.
+export const EVIDENCE_OBSERVED_ON = ['device', 'emulator', 'simulator'] as const;
 // Screenshots reach the role's package as images; recordings by name only (D7 §10.5).
 export const SCREENSHOT_FORMATS: readonly string[] = ['png', 'webp', 'jpeg'];
 
@@ -54,8 +59,14 @@ function webmDocType(b: Buffer): boolean {
 
 export interface EvidenceFile {
   name: string;
-  bytes: Buffer;
+  // Its size, known from its base64 length before any decoding (S4).
+  size: number;
+  // Its bytes, decoded only once every bound holds.
+  bytes: () => Buffer;
 }
+
+// The decoded size of a base64 text, from its length alone.
+export const base64Size = (b64: string): number => Math.floor((b64.length * 3) / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
 
 export interface CheckedEvidence {
   name: string;
@@ -75,17 +86,23 @@ export function checkEvidence(files: EvidenceFile[], bounds: { file: number; rev
   const reasons: EvidenceReason[] = [];
   const out: CheckedEvidence[] = [];
   const add = (subjects: Record<string, unknown>) => reasons.push({ code: 'REVIEW_EVIDENCE_INVALID', subjects });
-  let total = 0;
+  // The bounds first, from the sizes alone: nothing past them is decoded.
+  const total = files.reduce((n, f) => n + f.size, 0);
+  const overReview = total > bounds.review;
+  if (overReview) add({ files: files.map((f) => f.name), key: REVIEW_KEY, max: bounds.review, bytes: total, why: `the files together are larger than ${REVIEW_KEY}` });
   for (const f of files) {
-    total += f.bytes.length;
     const claimed = formatOfName(f.name);
-    const shown = formatOfBytes(f.bytes);
     if (claimed === null) add({ file: f.name, why: `its name does not end in one of ${Object.keys(EXTENSIONS).map((e) => `.${e}`).join(', ')}` });
-    else if (shown !== claimed) add({ file: f.name, format: claimed, header: shown, why: shown === null ? `its first bytes are not a ${claimed} header` : `its name says ${claimed} but its header is ${shown}` });
-    if (f.bytes.length > bounds.file) add({ file: f.name, key: FILE_KEY, max: bounds.file, bytes: f.bytes.length, why: `it is larger than ${FILE_KEY}` });
-    if (claimed !== null && shown === claimed) out.push({ name: f.name, format: claimed, digest: `sha256:${createHash('sha256').update(f.bytes).digest('hex')}`, bytes: f.bytes });
+    if (f.size > bounds.file) {
+      add({ file: f.name, key: FILE_KEY, max: bounds.file, bytes: f.size, why: `it is larger than ${FILE_KEY}` });
+      continue;
+    }
+    if (overReview || claimed === null) continue;
+    const bytes = f.bytes();
+    const shown = formatOfBytes(bytes);
+    if (shown !== claimed) add({ file: f.name, format: claimed, header: shown, why: shown === null ? `its first bytes are not a ${claimed} header` : `its name says ${claimed} but its header is ${shown}` });
+    else out.push({ name: f.name, format: claimed, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes });
   }
-  if (total > bounds.review) add({ files: files.map((f) => f.name), key: REVIEW_KEY, max: bounds.review, bytes: total, why: `the files together are larger than ${REVIEW_KEY}` });
   return reasons.length > 0 ? { ok: false, reasons } : { ok: true, files: out };
 }
 
@@ -104,10 +121,12 @@ export function validName(name: unknown): name is string {
   return typeof name === 'string' && name !== '' && Buffer.byteLength(name) <= 255 && !/[/\\\0]/.test(name) && name !== '.' && name !== '..' && !/[\x00-\x1f\x7f]/.test(name);
 }
 
-// The upload's body cap: the per-review bound's default (D7 A.7, 512 MiB),
-// base64, and its JSON. A review whose files together pass it is refused at
-// the transport before any is read (413), whatever a raised key allows.
-const REVIEW_BYTES_TRANSPORT = 512 * 1024 * 1024;
-export const REVIEW_BODY_CAP = Math.ceil(REVIEW_BYTES_TRANSPORT / 3) * 4 + 1024 * 1024;
+// The upload's body cap (the slice-45 review's S4): the body is read whole
+// and parsed as one JSON text, so it stays below the longest string this
+// runtime can hold, with a margin. Evidence of about three quarters of it
+// fits, base64; a larger body is refused 413 at the transport before any is
+// read, whatever a raised key allows.
+export const REVIEW_BODY_CAP = Math.min(Math.ceil((512 * 1024 * 1024) / 3) * 4 + 1024 * 1024, bufferConstants.MAX_STRING_LENGTH - 1024 * 1024);
+const REVIEW_BYTES_TRANSPORT = Math.floor(((REVIEW_BODY_CAP - 1024 * 1024) * 3) / 4);
 export const reviewTooLarge = (cap: number) =>
   new Refusal(413, 'payload_too_large', `The review's upload exceeds ${cap} bytes, its body's limit (evidence of at most ${REVIEW_BYTES_TRANSPORT} bytes together, base64). Nothing was opened or recorded.`, `Supply evidence of at most ${REVIEW_BYTES_TRANSPORT} bytes in one review.`, { limit: 'body', max: cap });

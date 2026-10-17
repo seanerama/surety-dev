@@ -540,8 +540,14 @@ function interfacesDisputed(db: Db, rev: RevisionRow): string[] {
 // spec_change.
 export function reviewVerdictBlockers(db: Db, run: string | null): string[] {
   if (run === null) return [];
-  // A review with no verdict asks the owner nothing, and holds nothing.
-  const reviews = db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL AND "verdicts" <> '[]' ORDER BY rowid`).all(run) as { id: string }[];
+  // A review whose verdicts were asked about, or that holds any: only a
+  // first design's review with no verdict asks nothing, and holds nothing.
+  const reviews = db
+    .prepare(
+      `SELECT r."id" FROM "design_reviews" r WHERE r."run" = ? AND r."confirmation_decision" IS NULL
+         AND (r."verdicts" <> '[]' OR EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'design_verdicts' AND d."subject_id" = r."id")) ORDER BY r.rowid`,
+    )
+    .all(run) as { id: string }[];
   return reviews.map((r) => {
     const rejected = db
       .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'design_verdicts' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'reject' LIMIT 1`)
@@ -691,6 +697,12 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   tx.db
     .prepare(`UPDATE "design_revisions" SET "status" = ?, "approved_by" = ?, "approved_at" = ?, "current_against_spec" = ?, "ready_at" = ?, "supersedes" = ? WHERE "id" = ?`)
     .run(args.withoutCriteria ? 'approved_without_criteria' : 'approved', tx.actor.actor_kind, tx.at, spec, readyAt, prior?.id ?? null, rev.id);
+  // The criterion ids its consolidated change added, recorded as it is
+  // applied (the slice-45 review's S6): later reads match them by id.
+  if (args.specRevision !== null && rev.spec_change_request) {
+    const added = parseJson<{ added_criteria?: string[] }>(requestRow(tx.db, rev.spec_change_request)?.impact_value ?? null)?.added_criteria ?? [];
+    tx.db.prepare('UPDATE "design_revisions" SET "criterion_ids" = ? WHERE "id" = ?').run(JSON.stringify([...added].sort()), rev.id);
+  }
   // The screens, and the slots as this revision holds them.
   for (const s of content?.screens.screens ?? []) {
     tx.db

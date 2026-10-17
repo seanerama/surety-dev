@@ -2152,14 +2152,24 @@ export function answerQueued(
 // POST /v1/projects/:p/decisions/answer-batch (D1 §10.3; SEAM.md §81): one
 // combined plan, consumed in one transaction or not at all. Two answers that
 // both change the project's policy against one base conflict.
+// The fields one answer of a batch may carry: a single answer's (B3).
+const BATCH_ANSWER_FIELDS = ['decision', 'option', 'preview_hash', 'note', 'reason', 'review', 'assets_held', 'until', 'edits', 'strikes', 'severity'];
+
 export function answerBatch(tx: Tx, args: { project: string; answers: unknown; facts?: Record<string, Facts> }): CommandResult {
   if (!Array.isArray(args.answers) || args.answers.length === 0) {
     throw new Refusal(400, 'invalid_value', '"answers" must be a non-empty array.', 'Send {"answers": [{"decision", "option", "preview_hash"}]}.', { field: 'answers' });
   }
-  const answers = args.answers as { decision?: unknown; option?: unknown; preview_hash?: unknown }[];
+  const answers = args.answers as ({ decision?: unknown; option?: unknown; preview_hash?: unknown } & AnswerExtra & { note?: unknown })[];
   const rows: DecisionRow[] = [];
-  for (const a of answers) {
+  for (const [i, a] of answers.entries()) {
     if (typeof a !== 'object' || a === null || typeof a.decision !== 'string') throw new Refusal(400, 'invalid_value', 'Each answer names a decision.', 'Send {"decision", "option", "preview_hash"}.', { field: 'answers' });
+    // Each answer carries what a single answer may, and nothing else (the
+    // slice-45 review's B3): an unknown field is refused, named.
+    for (const k of Object.keys(a)) {
+      if (!BATCH_ANSWER_FIELDS.includes(k)) {
+        throw new Refusal(400, 'unknown_field', `"${k}" is not a field of an answer.`, `Send only ${BATCH_ANSWER_FIELDS.join(', ')} in each answer; nothing was consumed.`, { field: `answers[${i}].${k}` });
+      }
+    }
     const d = getDecision(tx, a.decision);
     if (!d || d.project !== args.project) throw notFound('decision', a.decision);
     rows.push(d);
@@ -2182,7 +2192,21 @@ export function answerBatch(tx: Tx, args: { project: string; answers: unknown; f
   const effects: Effect[] = [];
   const results: unknown[] = [];
   for (const [i, a] of answers.entries()) {
-    const r = answerQueued(tx, { project: args.project, decision: rows[i]!.id, option: a.option, preview_hash: a.preview_hash, note: null, facts: args.facts?.[rows[i]!.id] });
+    const r = answerQueued(tx, {
+      project: args.project,
+      decision: rows[i]!.id,
+      option: a.option,
+      preview_hash: a.preview_hash,
+      note: a.note ?? null,
+      ...(a.reason !== undefined ? { reason: a.reason } : {}),
+      ...(a.review !== undefined ? { review: a.review } : {}),
+      ...(a.assets_held !== undefined ? { assets_held: a.assets_held } : {}),
+      ...(a.until !== undefined ? { until: a.until } : {}),
+      ...(a.edits !== undefined ? { edits: a.edits } : {}),
+      ...(a.strikes !== undefined ? { strikes: a.strikes } : {}),
+      ...(a.severity !== undefined ? { severity: a.severity } : {}),
+      facts: args.facts?.[rows[i]!.id],
+    });
     // A batch is consumed whole or not at all: a guard's refusal of one
     // answer refuses the batch (D1 §10.3).
     if (r.status >= 400) {

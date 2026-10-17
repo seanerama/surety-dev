@@ -12,7 +12,9 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
-const { checkEvidence, formatOfBytes, formatOfName, validName } = await import(join(dist, 'design', 'evidence.js'));
+const { checkEvidence: checkSized, formatOfBytes, formatOfName, validName } = await import(join(dist, 'design', 'evidence.js'));
+// Files as the route gives them: a size, and bytes decoded on demand.
+const checkEvidence = (files, bounds) => checkSized(files.map((f) => ({ name: f.name, size: f.bytes.length, bytes: () => f.bytes })), bounds);
 const { parseDesignCommand, parseDesignVerdicts } = await import(join(dist, 'design', 'design-command.js'));
 const { checkDesign, gitBlobId } = await import(join(dist, 'design', 'check.js'));
 const { parseModuleMap } = await import(join(dist, 'plan', 'schemas.js'));
@@ -106,9 +108,9 @@ test('git blob ids as git computes them', () => {
 test('at_alpha shows a convention the code does not show and an unshaped interface; before_build refuses them', () => {
   const inventory = { inventory_digest: 'd', targets: [{ module: 'web', target: 'web', ui_technology: 'html_css', layouts: [], required_conventions: ['browser_back'], permissions: [], preview_capability: 'native', required_slots: [] }], ui_requirements: [], interfaces: [{ name: 'feed', module: 'service', kind: 'http', errors: [], shape_known: false }], obligations: [], fixtures: [] };
   const screens = { screens: [{ key: 'S1', target: 'web', title: 't', flow_steps: [], requirements: [], interfaces: ['feed'], states: [], layouts: [], inputs: [], conventions: { route: '/', browser_back: 'unknown' } }] };
-  const files = new Map([['screens.json', Buffer.from(JSON.stringify(screens))]]);
-  const codes = (policy) => {
-    const out = checkDesign({ files }, { inventory, externalHosts: [], approved: [], policy });
+  const files = new Map([['screens.json', Buffer.from(JSON.stringify(screens))], ['design.json', Buffer.from(JSON.stringify({ origin: 'observed' }))]]);
+  const codes = (policy, tree = files) => {
+    const out = checkDesign({ files: tree }, { inventory, externalHosts: [], approved: [], policy });
     return { reasons: out.reasons.map((r) => r.code), notices: out.notices.map((r) => r.code) };
   };
   const before = codes('before_build');
@@ -117,6 +119,10 @@ test('at_alpha shows a convention the code does not show and an unshaped interfa
   const alpha = codes('at_alpha');
   assert.ok(!alpha.reasons.includes('DESIGN_CONVENTION_UNKNOWN') && !alpha.reasons.includes('DESIGN_INTERFACE_SHAPE_UNKNOWN'));
   assert.deepEqual(alpha.notices.sort(), ['DESIGN_CONVENTION_UNKNOWN', 'DESIGN_INTERFACE_SHAPE_UNKNOWN']);
+  // Only an observed design's (S5): an intended design is refused them under at_alpha too.
+  const intended = codes('at_alpha', new Map([...files, ['design.json', Buffer.from(JSON.stringify({ origin: 'intended' }))]]));
+  assert.ok(intended.reasons.includes('DESIGN_CONVENTION_UNKNOWN') && intended.reasons.includes('DESIGN_INTERFACE_SHAPE_UNKNOWN'));
+  assert.deepEqual(intended.notices, []);
 });
 
 const MAP = (iface) =>

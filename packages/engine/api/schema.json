@@ -2820,6 +2820,9 @@
         "proposed_revision": {
           "required": false,
           "references": "design_revisions"
+        },
+        "review_path": {
+          "required": false
         }
       }
     },
@@ -2929,6 +2932,9 @@
           "required": false
         },
         "batch_released_at": {
+          "required": false
+        },
+        "criterion_ids": {
           "required": false
         }
       }

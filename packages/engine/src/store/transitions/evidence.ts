@@ -264,28 +264,21 @@ const toScopeCheck = (c: CheckRow): ScopeCheck => ({
 // (the conformance phase carries the adopted code unchanged; a criterion it
 // fails would block conformance on an aspiration); they are read at the
 // first change phase's gates. These are the criterion ids an approved
-// observed design gave, matched by their text under their requirement.
+// observed design's consolidated change added, as recorded when it was
+// applied (the slice-45 review's S6): by id, never by text.
 export function observedDesignCriteria(db: Db, project: string): Set<string> {
-  const revs = db.prepare(`SELECT "content" FROM "design_revisions" WHERE "project" = ? AND "origin" = 'observed' AND "status" IN ('approved', 'approved_without_criteria', 'superseded') AND "approved_at" IS NOT NULL ORDER BY rowid`).all(project) as { content: string | null }[];
+  const revs = db
+    .prepare(`SELECT "criterion_ids" FROM "design_revisions" WHERE "project" = ? AND "origin" = 'observed' AND "status" IN ('approved', 'approved_without_criteria', 'superseded') AND "approved_at" IS NOT NULL ORDER BY rowid`)
+    .all(project) as { criterion_ids: string | null }[];
   const out = new Set<string>();
   for (const r of revs) {
-    type Content = { criteria?: { criteria?: { requirement?: unknown; text?: unknown }[] } };
-    let criteria: { requirement?: unknown; text?: unknown }[] = [];
+    let ids: unknown = [];
     try {
-      criteria = r.content === null ? [] : ((JSON.parse(r.content) as Content | null)?.criteria?.criteria ?? []);
+      ids = r.criterion_ids === null ? [] : JSON.parse(r.criterion_ids);
     } catch {
-      criteria = [];
+      ids = [];
     }
-    for (const c of criteria) {
-      const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, String(c.requirement ?? '')) as { criteria_text: string | null } | undefined;
-      let texts: { id: string; text: string }[] = [];
-      try {
-        texts = row?.criteria_text ? (JSON.parse(row.criteria_text) as { id: string; text: string }[]) : [];
-      } catch {
-        texts = [];
-      }
-      for (const t of texts) if (t.text.trim() === String(c.text ?? '').trim()) out.add(t.id);
-    }
+    for (const id of Array.isArray(ids) ? ids : []) if (typeof id === 'string') out.add(id);
   }
   return out;
 }

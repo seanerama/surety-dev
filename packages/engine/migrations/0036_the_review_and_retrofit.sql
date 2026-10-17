@@ -20,3 +20,15 @@ ALTER TABLE design_checks ADD COLUMN notices TEXT;
 -- §10.6): the verdicts' question shares that revision's batch, and the
 -- revision's approval waits on them.
 ALTER TABLE design_reviews ADD COLUMN proposed_revision TEXT REFERENCES design_revisions(id);
+
+-- The review file a review was recorded from (its path in the tree): a
+-- second review of the same file replaces the first, whose open
+-- design_verdicts is invalidated (the slice-45 review's N7). NULL on an
+-- owner-invoked review not yet closed.
+ALTER TABLE design_reviews ADD COLUMN review_path TEXT;
+
+-- The criterion ids the consolidated change of a design's batch added,
+-- recorded in the transaction that applies it (the slice-45 review's S6):
+-- what later reads match by id, never by text. NULL on an asset-only
+-- revision and on one approved without criteria.
+ALTER TABLE design_revisions ADD COLUMN criterion_ids TEXT;

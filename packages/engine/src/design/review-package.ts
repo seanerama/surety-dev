@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3';
 
 import { parseJson } from '../store/transitions/common.js';
 import { approvedModuleMap } from './policy.js';
-import { designDueState } from './readiness.js';
+import { boundSubjectOfRun } from './review.js';
 import { ownerReviewOfRun } from './owner-review.js';
 
 type Db = Database.Database;
@@ -53,8 +53,7 @@ export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackage
   const retrofit = mode !== 'review' && p.adoption !== null && !approved;
   if (mode !== 'review' && !retrofit) return null;
   const owner = mode === 'review' ? ownerReviewOfRun(db, args.run) : null;
-  const due = designDueState(db, project);
-  const subject: Record<string, unknown> = owner ? owner.subject : retrofit ? { kind: 'adopted_repository' } : ((due.review as Record<string, unknown> | undefined) ?? { kind: 'candidate' });
+  const subject: Record<string, unknown> = owner ? owner.subject : retrofit ? { kind: 'adopted_repository' } : (boundSubjectOfRun(db, args.run) ?? { kind: 'candidate', candidate: null, deployment: null });
   const design_revision = owner ? owner.design_revision : (approved?.id ?? null);
   // The candidate the review is about: the Alpha's, or the one the owner
   // names where the project holds it.

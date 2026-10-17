@@ -20,7 +20,7 @@ import { designView } from './view.js';
 import { designPackageFacts } from './package.js';
 import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
-import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
+import { ownerReviewFacts, ownerReviewOfRun, releaseEvidenceRecords } from './owner-review.js';
 import { reviewPackageFacts } from './review-package.js';
 import { noteAlphaReview, notObservedScreens, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
@@ -78,7 +78,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.preview_state': (d, a: { project: string; now?: string }) => previewState(d, a),
   'design.export_facts': (d, a: { project: string; revision?: string }) => exportFacts(d, a),
   'design.owner_review_facts': (d, a: { project: string; target: string }) => ownerReviewFacts(d, a),
-  'design.review_target': (d, a: { project: string }) => reviewTarget(d, a),
+  'design.review_target': (d, a: { project: string; run?: string }) => reviewTarget(d, a),
   'design.not_observed': (d, a: { project: string }) => notObservedScreens(d, a),
   'design.review_package_facts': (d, a: { run: string }) => reviewPackageFacts(d, a),
   'design.roadmap_assignment': (d, a: { request: string }) => roadmapAssignment(d, a),
@@ -95,8 +95,10 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
     const rev = d.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(a.project) as { id: string } | undefined;
     const state = parseJson<{ stage?: string }>((d.prepare('SELECT "design_due" FROM "projects" WHERE "id" = ?').get(a.project) as { design_due: string | null }).design_due);
     const recorded = (d.prepare('SELECT "review_blob" FROM "design_reviews" WHERE "project" = ? AND "review_blob" IS NOT NULL').all(a.project) as { review_blob: string }[]).map((r) => r.review_blob);
-    // An owner-invoked review is never the Alpha's (SEAM.md §522).
-    return { design_revision: rev?.id ?? null, alpha_review: ownerReviewOfRun(d, a.run) === null && state?.stage === 'alpha_review', recorded };
+    // An owner-invoked review is never the Alpha's (SEAM.md §522); every
+    // other review-mode session is bound to the Alpha at its opening (S2).
+    void state;
+    return { design_revision: rev?.id ?? null, alpha_review: ownerReviewOfRun(d, a.run) === null, recorded };
   },
   'checks.asset_files': (d, a: { execution: string }) => executionAssetFiles(d, a),
   'design.answered_batches': (d, a: { decisions?: string[]; project?: string }) => answeredBatches(d, a),
@@ -148,6 +150,7 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
   'design.record_carried': (tx, a: { run: string; effective: unknown[] }) => recordCarried(tx, a),
   'design.preview_interrupt': (tx, a: { incarnation: string }) => interruptPreviews(tx, a),
   'design.record_observation': (tx, a) => recordObservation(tx, a),
+  'design.release_evidence': (tx, a: { records: string[] }) => releaseEvidenceRecords(tx, a),
   'design.preview_artifact': (tx, a) => previewArtifact(tx, a),
   'design.preview_intend': (tx, a) => intendPreviewOp(tx, a),
   'design.preview_deployed': (tx, a) => previewDeployed(tx, a),

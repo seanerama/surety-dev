@@ -223,6 +223,10 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     for (const [j, inp] of (Array.isArray(s.inputs) ? s.inputs : []).entries()) if (isObj(inp)) closed('screens.json', `${at}.inputs[${j}]`, inp, FIELDS.input);
     if (isObj(s.conventions)) {
       closed('screens.json', `${at}.conventions`, s.conventions, FIELDS.conventions);
+      // A route is a request path the engine may ask for (the slice-45 review's S1).
+      if (s.conventions.route !== undefined && (typeof s.conventions.route !== 'string' || !/^\/[!-~]*$/.test(s.conventions.route))) {
+        schema('screens.json', `${at}.conventions.route`, 'must be a request path: "/" then printable characters, no space, CR, LF or control');
+      }
       const allowed = CONVENTION_TARGETS[String(s.target)] ?? [];
       for (const k of Object.keys(s.conventions)) if ((FIELDS.conventions as readonly string[]).includes(k) && !allowed.includes(k)) schema('screens.json', `${at}.conventions.${k}`, `"${k}" is not a convention of the target ${String(s.target)}`);
     } else schema('screens.json', `${at}.conventions`, 'must be an object');
@@ -632,8 +636,9 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     }
     for (const d of new Set(dropped)) add('DESIGN_SELECTION_BELOW_FLOOR', { dropped: d });
   }
-  // Under `at_alpha` (D7 §12): shown, not refusing.
-  const shown = ctx.policy === 'at_alpha' ? reasons.filter((r) => NOTICE_CODES.includes(r.code)) : [];
+  // Under `at_alpha`, for an observed design only (D7 §12; the slice-45
+  // review's S5): shown, not refusing.
+  const shown = ctx.policy === 'at_alpha' && isObj(design) && design.origin === 'observed' ? reasons.filter((r) => NOTICE_CODES.includes(r.code)) : [];
   const refusing = reasons.filter((r) => !shown.includes(r));
   return { outcome: refusing.length === 0 ? 'passed' : 'refused', reasons: refusing, notices: shown, design };
 }

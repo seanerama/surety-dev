@@ -40,6 +40,7 @@ import { proposeDesign } from '../design/approval.js';
 import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
 import { type OwnerEvidence, openOwnerReview } from '../design/owner-review.js';
+import { alphaSubject } from '../design/review.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -322,8 +323,12 @@ export function openSession(
       idle,
     );
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
-  // A Designer session in review mode (D7 §10.2): its notes say so.
-  if (args.mode === 'review') tx.db.prepare('UPDATE "runs" SET "session_notes" = ? WHERE "id" = ?').run(JSON.stringify({ mode: 'review' }), run);
+  // A Designer session in review mode (D7 §10.2): its notes say so; a
+  // review at Alpha is bound to the Alpha's candidate and deployment here,
+  // at its opening (the slice-45 review's S2).
+  if (args.mode === 'review') {
+    tx.db.prepare('UPDATE "runs" SET "session_notes" = ? WHERE "id" = ?').run(JSON.stringify({ mode: 'review', ...(args.review === undefined ? { subject: alphaSubject(tx.db, p.id) } : {}) }), run);
+  }
   tx.emit('session.allocated', subject, { role, idle_deadline_at: idle, ...(args.mode === 'review' ? { mode: 'review' } : {}) });
   // An owner-invoked review (D7 §10.5): its row and subject in this same
   // transaction, so no review-mode session exists without them.
@@ -1216,7 +1221,7 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
   }
   if (args.raise.kind === 'design') proposeDesign(tx, args.raise.propose);
   if (args.raise.kind === 'review') {
-    const { revised_design: _r, first_design: _f, ...review } = args.raise.review as Record<string, unknown>;
+    const { revised_design: _r, ...review } = args.raise.review as Record<string, unknown>;
     // The revised (or first) design of the review (D7 §10.3, §10.6), first:
     // the verdicts' question is batched with it.
     const proposed = args.raise.propose ? proposeDesign(tx, args.raise.propose as Parameters<typeof proposeDesign>[1]) : null;

@@ -564,6 +564,15 @@ export class SessionDriver {
     const check = await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; tree_revision: string; blobs: Record<string, string> } | null>('design.latest_check', { project: facts.project, run: facts.run });
     const mode = await this.rt.read<string | null>('design.session_mode', { run: facts.run });
     if (mode === 'review') {
+      // A review is closed only on a passing check of the session's last
+      // save (the slice-45 review's B1): its review file included.
+      if (check !== null && check.outcome !== 'passed') {
+        throw new Refusal(422, 'design_check_failed', `The review of session ${facts.run} does not pass the design check: ${check.reasons.map((r) => r.code).join(', ')}.`, 'Correct the review in the session, save, and close again; or close with refuse.', {
+          run: facts.run,
+          design_check: check.id,
+          reasons: check.reasons,
+        });
+      }
       const review = await this.reviewRaise(facts);
       // A review whose file says it revised the design, or drew the first
       // one (D7 §10.3, §10.6; SEAM.md §§518, 519): the design in the same

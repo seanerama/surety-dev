@@ -70,7 +70,13 @@ export function readJsonBody(req: IncomingMessage, cap: number, deadlineMs: numb
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      fn();
+      // An error inside the settling step (a body too long to hold as a
+      // string) still settles the request, never leaving it to hang.
+      try {
+        fn();
+      } catch (err) {
+        reject(err instanceof Refusal ? err : tooLarge(cap));
+      }
     };
     const timer = setTimeout(
       () =>
