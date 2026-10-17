@@ -210,6 +210,49 @@ export function raiseDesignBatch(tx: Tx, args: { request: string; rep: SpecRepre
   return { refused: null };
 }
 
+// ---- a batch deferred behind a pending correction (objection 166) ---------------------------------
+//
+// The driver's ruling on objection 166: the engine raises no decision whose
+// binding is known to be about to move. A design batch's `spec_change` binds
+// the effective protected-check version; while a correction of the protected
+// checks is approved and its effect not yet applied, applying it will move
+// that version. So the batch is not raised then: the change's work waits
+// `awaiting_decision` with the blocker `design_batch_deferred`, naming the
+// corrections, and the design's tick raises the batch once none is pending,
+// bound to the version the correction applied. The design read names the
+// deferral (BS6 §4.1 rule 25). A correction approved after the batch was
+// raised is not this case: the effect's revalidation (D1 §10.5) refuses it
+// and the batch is asked again.
+
+export const DESIGN_BATCH_DEFERRED = 'design_batch_deferred';
+
+// The project's protected proposals approved, by the owner or a Reviewer,
+// whose application has not happened yet: each will move the effective
+// protected version when it is applied.
+export function pendingCorrections(db: Db, project: string): string[] {
+  return (db.prepare(`SELECT "id" FROM "protected_proposals" WHERE "project" = ? AND "status" = 'approved' ORDER BY "seq", "id"`).all(project) as { id: string }[]).map((r) => r.id);
+}
+
+// The design batches the engine is holding back, with what holds them.
+export function deferredBatches(db: Db, project: string): { spec_change_request: string; design_revision: string | null; work_item: string; since: string | null; reason: string; pending_corrections: string[] }[] {
+  const items = db
+    .prepare(`SELECT "id", "blocker" FROM "work_items" WHERE "project" = ? AND "kind" = 'spec_change' AND "status" = 'awaiting_decision' AND json_extract("blocker", '$.reason') = ? ORDER BY "seq"`)
+    .all(project, DESIGN_BATCH_DEFERRED) as { id: string; blocker: string }[];
+  const pending = pendingCorrections(db, project);
+  return items.map((w) => {
+    const blocker = parseJson<{ raised_at?: string; spec_change_request?: string }>(w.blocker) ?? {};
+    const request = blocker.spec_change_request ?? (db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(w.id) as { id: string } | undefined)?.id ?? '';
+    return {
+      spec_change_request: request,
+      design_revision: revisionOfRequest(db, request)?.id ?? null,
+      work_item: w.id,
+      since: blocker.raised_at ?? null,
+      reason: 'an approved correction of the protected checks is not applied yet: the batch would be bound to a version it is about to replace',
+      pending_corrections: pending,
+    };
+  });
+}
+
 // Whether a design request's application may begin (SEAM.md §486): 'none'
 // for a request that is not a design's; 'wait' while its design_approval is
 // open or the batch is not released; 'go'; or 'refuse' when the design was

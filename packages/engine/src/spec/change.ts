@@ -43,7 +43,7 @@ import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
-import { approveDesign, designBatchState, designBindingsChanged, getRevision, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
+import { DESIGN_BATCH_DEFERRED, approveDesign, deferredBatches, designBatchState, designBindingsChanged, getRevision, pendingCorrections, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
 import { blobsHash } from '../design/store.js';
 import { latestCheck } from '../design/records.js';
 
@@ -585,26 +585,88 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .prepare(`UPDATE "spec_change_requests" SET "status" = 'proposed', "proposal_revision" = ?, "proposal_blob" = ?, "side_ref" = ?, "impact" = ?, "impact_value" = ? WHERE "id" = ?`)
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
-  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
-  // A design's change (D7 §7.4): its inventory compared at raise, a
-  // difference refusing the batch with nothing raised.
+  // A design's change (D7 §7.4) waits while an approved correction of the
+  // protected checks is not applied yet: its batch would be bound to a
+  // version about to be replaced (objection 166). The design's tick raises it.
   if (r.source === 'design') {
-    const added = inputs.impact.requirements.filter((q) => q.changes.includes('added')).map((q) => q.key);
-    const batch = raiseDesignBatch(tx, { request: r.id, rep: inputs.representation, added });
+    const pending = pendingCorrections(tx.db, op.project);
+    if (pending.length > 0) {
+      deferDesignBatch(tx, getRequest(tx.db, r.id)!, pending);
+      return { request: r.id, decision: null, deferred: pending };
+    }
+  }
+  const added = inputs.impact.requirements.filter((q) => q.changes.includes('added')).map((q) => q.key);
+  return { request: r.id, decision: raiseChangeQuestion(tx, getRequest(tx.db, r.id)!, { rep: inputs.representation, added }) };
+}
+
+// The change's question raised: for a design's change its batch first, its
+// inventory compared at raise, a difference refusing the batch with nothing
+// raised. The work awaits the question. Returns the spec_change raised.
+function raiseChangeQuestion(tx: Tx, r: RequestRow, args: { rep: SpecRepresentation | null; added: string[] }): string | null {
+  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  if (r.source === 'design') {
+    const batch = raiseDesignBatch(tx, { request: r.id, rep: args.rep, added: args.added });
     if (batch.refused !== null) {
       const failure = `design_batch_refused: ${batch.refused}`;
       tx.db.prepare(`UPDATE "spec_change_requests" SET "status" = 'failed', "failure" = ? WHERE "id" = ?`).run(failure, r.id);
-      tx.emit('spec.change_failed', { project: op.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'design_batch_refused', failure });
+      tx.emit('spec.change_failed', { project: r.project, spec_change_request: r.id }, { work_item: r.work_item, reason: 'design_batch_refused', failure });
       settleWork(tx, getRequest(tx.db, r.id)!, 'design_batch_refused');
-      return { request: r.id, decision: null };
+      return null;
     }
   }
-  const d = raiseQuestion(tx, { project: op.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
+  const d = raiseQuestion(tx, { project: r.project, kind: 'spec_change', subjectType: 'spec_change_request', subjectId: r.id });
   if (d && r.source === 'design') tx.db.prepare('UPDATE "decisions" SET "batch_key" = (SELECT "batch_key" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1) WHERE "id" = ?').run(r.id, d.id);
+  const blocker = d ? JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) : null;
   if (d && item && item.status === 'executing') {
-    transitionWork(tx, item, 'awaiting_decision', { blocker: JSON.stringify({ reason: 'spec_change', raised_at: tx.at, decision: d.id }) }, { spec_change_request: r.id, decision: d.id });
+    transitionWork(tx, item, 'awaiting_decision', { blocker }, { spec_change_request: r.id, decision: d.id });
+  } else if (d && item && item.status === 'awaiting_decision') {
+    // A deferred batch raised now: the work awaits this question.
+    tx.db.prepare('UPDATE "work_items" SET "blocker" = ? WHERE "id" = ?').run(blocker, item.id);
   }
-  return { request: r.id, decision: d?.id ?? null };
+  return d?.id ?? null;
+}
+
+// The batch held back (objection 166): the work awaits, its blocker naming
+// the corrections it waits for; no question is raised.
+function deferDesignBatch(tx: Tx, r: RequestRow, pending: string[]): void {
+  const item = r.work_item ? getWorkItem(tx, r.work_item) : undefined;
+  if (!item || item.status !== 'executing') return;
+  const blocker = JSON.stringify({ reason: DESIGN_BATCH_DEFERRED, raised_at: tx.at, spec_change_request: r.id, pending_corrections: pending });
+  transitionWork(tx, item, 'awaiting_decision', { blocker }, { spec_change_request: r.id, cause: DESIGN_BATCH_DEFERRED, pending_corrections: pending });
+}
+
+// At the design's tick: with no correction pending any more, each deferred
+// batch is raised, bound to the version as it now is (objection 166).
+export function raiseDeferredBatches(tx: Tx, project: string): string[] {
+  if (pendingCorrections(tx.db, project).length > 0) return [];
+  const raised: string[] = [];
+  for (const b of deferredBatches(tx.db, project)) {
+    const d = raiseDeferred(tx, b.spec_change_request);
+    if (d) raised.push(d);
+  }
+  return raised;
+}
+
+function raiseDeferred(tx: Tx, request: string): string | null {
+  const r = getRequest(tx.db, request);
+  if (!r || r.status !== 'proposed') return null;
+  const sem = proposalSemantics(tx.db, r);
+  const rep = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
+  const added = (parseJson<Impact>(r.impact_value)?.requirements ?? []).filter((q) => q.changes.includes('added')).map((q) => q.key);
+  return raiseChangeQuestion(tx, r, { rep, added });
+}
+
+// What a deferred batch's work waits on (store/transitions/awaiting.ts: no
+// item awaits on nothing): the corrections pending; with none, the batch is
+// raised now. False: nothing to wait on and nothing raised.
+export function settleDeferredBatch(tx: Tx, item: string): boolean {
+  const w = getWorkItem(tx, item);
+  if (!w || w.status !== 'awaiting_decision') return true;
+  if (pendingCorrections(tx.db, w.project).length > 0) return true;
+  const blocker = parseJson<{ spec_change_request?: string }>(w.blocker);
+  const request = blocker?.spec_change_request ?? (tx.db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { id: string } | undefined)?.id;
+  if (request && raiseDeferred(tx, request) !== null) return true;
+  return getWorkItem(tx, item)?.status !== 'awaiting_decision';
 }
 
 // The impact as it stands now (D6 §4.4: preview and effect recompute it):

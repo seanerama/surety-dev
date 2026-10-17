@@ -11,6 +11,7 @@ import { projectEffective } from '../store/transitions/settings.js';
 import { approvedModuleMap, designPolicyOf } from './policy.js';
 import { currentInventory } from './store.js';
 import { heldStages } from './readiness.js';
+import { deferredBatches } from './approval.js';
 
 export function designView(db: Database.Database, args: { project: string }): Record<string, unknown> {
   const project = db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string } | undefined;
@@ -57,6 +58,8 @@ export function designView(db: Database.Database, args: { project: string }): Re
     effective_assets: effective,
     human_tests,
     holds: heldStages(db, args.project),
+    // A design batch the engine is holding back, and why (objection 166; rule 25).
+    batches_deferred: deferredBatches(db, args.project),
     design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
   };
 }

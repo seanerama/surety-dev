@@ -16,6 +16,9 @@
 //   given the D1 blocker route in the same transaction: a blocker
 //   `{reason: 'block'}` and its question (resume to the continuation, or
 //   cancel); the driver's ruling on M09/M234, slice 37;
+// - a design batch held behind a pending correction (`design_batch_deferred`,
+//   objection 166) waits on that correction's application, and is raised
+//   once none is pending;
 // - anything else has its `blocker` question raised. With nothing to ask,
 //   the item cannot be left waiting on nothing: the transaction is refused
 //   (illegal_transition), so a new path that would wedge an item fails where
@@ -34,6 +37,9 @@ export interface AwaitingDeps {
   proposalDecided: (tx: Tx, args: { proposal: string; applied: boolean }) => void;
   // Invalidates the open blocker question about the item, if one stands.
   dropBlocker: (tx: Tx, item: string) => void;
+  // A design batch held behind a pending correction (objection 166): true
+  // while a correction is pending, or once the batch is raised.
+  deferredBatch?: (tx: Tx, item: string) => boolean;
 }
 
 let deps: AwaitingDeps | null = null;
@@ -86,6 +92,12 @@ export function settleAwaitingItem(tx: Tx, id: string): boolean {
     const kind = deps?.correctionKind(p.classified_change_kind);
     if (kind && deps?.raiseQuestion(tx, { project: p.project, kind, subjectType: 'protected_proposal', subjectId: p.id })) return true;
     return false;
+  }
+  // A design batch held back while an approved correction of the protected
+  // checks is not applied (objection 166): it waits on that application,
+  // and is raised once none is pending.
+  if (blocker?.reason === 'design_batch_deferred' && deps?.deferredBatch) {
+    if (deps.deferredBatch(tx, item.id)) return true;
   }
   return deps?.raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id }) != null;
 }

@@ -282,7 +282,7 @@ import { registerAwaiting, settleAwaiting, sweepAwaiting } from './transitions/a
 import { registerAfterTransition } from './transitions/tx.js';
 import { CORRECTION_KIND as AWAIT_CORRECTION_KIND } from './transitions/protected.js';
 import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion, reverifyResolvedCompletions } from './transitions/queue.js';
-import { correctionProposalDecided as awaitProposalDecided } from '../spec/change.js';
+import { correctionProposalDecided as awaitProposalDecided, settleDeferredBatch as awaitDeferredBatch } from '../spec/change.js';
 
 // No work item awaits a decision without one it waits on (slice 37).
 registerAwaiting({
@@ -290,6 +290,7 @@ registerAwaiting({
   correctionKind: (k) => (k === null ? undefined : (AWAIT_CORRECTION_KIND[k] as never)),
   proposalDecided: (tx, a) => awaitProposalDecided(tx, a),
   dropBlocker: (tx, item) => awaitDropBlocker(tx, item),
+  deferredBatch: (tx, item) => awaitDeferredBatch(tx, item),
 });
 registerAfterTransition(settleAwaiting);
 
