@@ -35,3 +35,13 @@ All of them are in the engine's exported contract (`api/schema.json`, regenerate
 - D7 §4.5 and A.2 (DecisionKind: the three design kinds added, `finding_disposition` unchanged); SEAM.md §491 ("of a kind other than `design_approval`, `design_due` and `design_verdicts` … The kind … not pinned").
 - E157 item 5 (objection 130): `change_spec` and the Architect route; D3 X2's `correct_check`, `retry` and `cancel` not offered.
 - packages/engine/src/design/findings.ts (`DESIGN_CONFLICT`); harness/decisions.mjs `assertPreview`.
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The table is changed; no test is** (Verifier, `verify/m6-s41c` from `gate/s40c` `1bbe470`; SEAM.md §533).
+
+- **`contract/decisions.json` `kinds.finding_disposition.subject_types`** gains `design_finding`, the subject of the Designer's finding question (D7 §4.5; SEAM.md §491). `assertPreview` asserts a decision's `subject_type` is one of these, so a case that checks that question's preview now passes the subject check. Its manifest and `effect: false` are unchanged, as the objection says.
+- **`options` gains `change_spec` and `architect`.** The file's `$comment` defines `options` as "the keys it can offer (a decision offers a subset where SEAM.md says so)", so the list is meant to name every option a kind can offer, and the Designer's question adds two. No test reads the list: `assertPreview` checks each option the decision row offers for an effect plan and its hash, never against the table, and M73 compares only the kinds and their manifests with the exported contract. Adding them therefore changes no test's outcome. Kind and X2 options stay unpinned (§491; objection 130).
+- **What the list still lacks.** As the objection notes, the options of the owed scope (SEAM.md §466) are not listed: `fix` and `correct_check`, which M235 (g) pins, and the others the engine offers there, which no case pins. This objection does not ask for them, so they are left as they are. The `$comment` says so.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s41` at `46b18ab`, `npm ci`, `npm run build`, the edited `decisions.json` copied over, `TMPDIR=/tmp/v41c`, each file alone with `node --test`): **M73-executable-contract 11/11, M07-closed-configuration 18/18, M538-the-designer-session-its-limits-and-its-findings 4/4.** The engine raises the question as the objection describes (`src/design/findings.ts`: `kind: 'finding_disposition'`, `subjectType: 'design_finding'`, scope `design_conflict`).
