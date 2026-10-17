@@ -1,0 +1,2461 @@
+{
+  "row": "M444",
+  "written_by": "the real-lane test, never edited by hand",
+  "cost_statement": "SURETY REAL LANE, M5 (row M444): what this run can cost, before anything starts.\nExpected: about 3 USD in Claude Code's own estimates (BS5 §12; E139 item 7, E140 N3), drawn from your subscription's usage limits, which your own Claude use shares.\n  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks' roles).\n  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).\nAt most: each run (a session is one run) is bounded by 2000000 billable tokens; the project's day limit of 20 USD in estimates stops it earlier, and its day bound on unknown usage is 4000000 tokens, twice the run cap (caps of Sean's choice, 2026-10-14, the unknown-usage bound the driver's ruling under it; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.\nAn estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.",
+  "updated_at": "2026-10-16T23:51:39.081Z",
+  "setup_policy": {
+    "change": {
+      "budget_day_verified_usd": 20,
+      "deadline_builder": 900,
+      "deadline_verifier": 600,
+      "deadline_reviewer": 600,
+      "model_vision": "claude-opus-5-5",
+      "model_spec_writer": "claude-opus-5-5",
+      "model_architect": "claude-opus-5-5",
+      "model_builder": "claude-sonnet-5-5",
+      "model_verifier": "claude-sonnet-5-5",
+      "model_reviewer": "claude-sonnet-5-5",
+      "backend_builder": "claude",
+      "backend_verifier": "claude",
+      "backend_reviewer": "claude",
+      "backend_architect": "claude",
+      "backend_spec_writer": "claude",
+      "backend_vision": "claude",
+      "phase_size": {
+        "min": 1,
+        "max": 5
+      }
+    },
+    "widen": {
+      "budget_run_billable_tokens": 2000000,
+      "budget_day_unknown_tokens": 4000000
+    },
+    "ordinary": {
+      "status": 200,
+      "confirmed": false
+    },
+    "widened": {
+      "status": 409,
+      "confirmed": true
+    }
+  },
+  "adopt": {
+    "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+    "source": {
+      "source": "the M4 real run's Builder repository",
+      "from": "/home/smahoney/surety-m4-real-20261012/repos/real-deployment-journey-3",
+      "recorded_head": "5fcd423b0bd333273344c23725b23b8e836d3255",
+      "prepared": "f427c7fc19d2056dcfcc02d22bc934909182189a",
+      "repo": "/home/smahoney/s5-final/repos/sums"
+    },
+    "cli": null,
+    "adoption": {
+      "pinned_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a",
+      "branch": "main",
+      "signals": {
+        "files": 3,
+        "bytes": 1251,
+        "commits": 6,
+        "languages": [
+          "JavaScript",
+          "Markdown"
+        ],
+        "test_files": [],
+        "ci_files": [],
+        "deploy_files": []
+      },
+      "recommended_mode": "full",
+      "threshold": 2000,
+      "source_digest": "e321368e8f332c36d85f7b2cfdb41967705c8cc33fa789f591ea1c1d57e6465b",
+      "idea_given": false,
+      "tracked_paths": [
+        "README.md",
+        "server.mjs",
+        "src/sum.mjs"
+      ],
+      "tracked_paths_total": 3,
+      "idea_first_version": [],
+      "environments": [],
+      "mode": "full",
+      "mode_reason": null,
+      "mode_decision": "dec_01M53EWES29P1WRAHD1T8W3K2T",
+      "adopted_at": "2026-10-16T22:56:20.255Z"
+    },
+    "mode": "full",
+    "shown": [
+      {
+        "kind": "adoption_mode",
+        "id": "dec_01M53EWES29P1WRAHD1T8W3K2T",
+        "options": [
+          "full",
+          "scoped"
+        ],
+        "at": "2026-10-16T22:56:21.418Z"
+      }
+    ],
+    "setup": {
+      "setup": "policy",
+      "what": "the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000",
+      "detail": {
+        "change": {
+          "budget_day_verified_usd": 20,
+          "deadline_builder": 900,
+          "deadline_verifier": 600,
+          "deadline_reviewer": 600,
+          "model_vision": "claude-opus-5-5",
+          "model_spec_writer": "claude-opus-5-5",
+          "model_architect": "claude-opus-5-5",
+          "model_builder": "claude-sonnet-5-5",
+          "model_verifier": "claude-sonnet-5-5",
+          "model_reviewer": "claude-sonnet-5-5",
+          "backend_builder": "claude",
+          "backend_verifier": "claude",
+          "backend_reviewer": "claude",
+          "backend_architect": "claude",
+          "backend_spec_writer": "claude",
+          "backend_vision": "claude",
+          "phase_size": {
+            "min": 1,
+            "max": 5
+          }
+        },
+        "widen": {
+          "budget_run_billable_tokens": 2000000,
+          "budget_day_unknown_tokens": 4000000
+        },
+        "ordinary": {
+          "status": 200,
+          "confirmed": false
+        },
+        "widened": {
+          "status": 409,
+          "confirmed": true
+        }
+      }
+    }
+  },
+  "drained_m5r_adopt": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [],
+    "waited_ms": 5,
+    "still_live": []
+  },
+  "spec": {
+    "value": {
+      "id": "spec_01M53FXERG54362W2EZJR5TEJ0",
+      "version": 1,
+      "approved_by": "engine"
+    },
+    "shown": [
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEG",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.718Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEJ",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.718Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP8314D4BWZW263RTSN3",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.719Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP8314D4BWZW263RTSN5",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.719Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKA",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.720Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKC",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.720Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ355",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.721Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ357",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.721Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP86FW4E767V7NEQK55T",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.722Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP86FW4E767V7NEQK55W",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.723Z"
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP87DKVRFXX75CJ1ZWEK",
+        "options": [
+          "confirm",
+          "defect",
+          "withdraw"
+        ],
+        "at": "2026-10-16T23:14:08.724Z"
+      },
+      {
+        "kind": "spec_approval",
+        "id": "dec_01M53FWP80TNJG917P3YEJ2XM2",
+        "options": [
+          "approve (blocked: REQUIREMENT_UNANSWERED:R1, REQUIREMENT_UNANSWERED:R10, REQUIREMENT_UNANSWERED:R11, REQUIREMENT_UNANSWERED:R2, REQUIREMENT_UNANSWERED:R3, REQUIREMENT_UNANSWERED:R4, REQUIREMENT_UNANSWERED:R5, REQUIREMENT_UNANSWERED:R6, REQUIREMENT_UNANSWERED:R7, REQUIREMENT_UNANSWERED:R8, REQUIREMENT_UNANSWERED:R9)",
+          "reject"
+        ],
+        "at": "2026-10-16T23:14:08.724Z"
+      }
+    ],
+    "runs": [
+      {
+        "id": "run_01M53FNDJYRT0C19ZPY2864B77",
+        "outcome": "completed",
+        "reason_class": "none",
+        "model_requested": "claude-opus-5-5"
+      }
+    ],
+    "claims": [
+      {
+        "id": "claim_01M53FXERKVB920391913B4PFE",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 1,
+        "claim_source": "README.md:1",
+        "claim": "The repository is a \"fixture\" (the README's only content is the heading `# fixture`). It makes no behavioural claim.",
+        "observed": "No behaviour to compare. The README does not document startup, routes, `REF_SECRET` or `PORT`.",
+        "requirement": null
+      },
+      {
+        "id": "claim_01M53FXERKVB920391913B4PFF",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 2,
+        "claim_source": "server.mjs:5",
+        "claim": "The stderr message says \"REF_SECRET must be set and not empty\".",
+        "observed": "Matches: an unset or empty value exits 1 with that message. A whitespace-only value counts as non-empty and is accepted.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ1"
+      },
+      {
+        "id": "claim_01M53FXERKVB920391913B4PFG",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 3,
+        "claim_source": "server.mjs:33",
+        "claim": "The 400 body says \"a and b must be numbers\".",
+        "observed": "Mostly matches, but \"numbers\" means finite numbers convertible by `Number()`. `Infinity` and `NaN` are rejected, while hex, octal, binary and exponent forms are accepted.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ6"
+      },
+      {
+        "id": "claim_01M53FXERKVB920391913B4PFH",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 4,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It refuses to start without REF_SECRET.",
+        "observed": "Matches for unset or empty. After the check the secret is otherwise unused.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ1"
+      },
+      {
+        "id": "claim_01M53FXERMTEG2CKYQAM7T3YCY",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 5,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It listens on 127.0.0.1 at PORT.",
+        "observed": "Matches for a valid PORT. An unset or invalid PORT crashes; PORT empty or 0 listens on a random port.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ2"
+      },
+      {
+        "id": "claim_01M53FXERMTEG2CKYQAM7T3YCZ",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 6,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It answers GET /health.",
+        "observed": "Matches: 200 `{\"ok\":true}`. Only GET, and only the exact path.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ4"
+      },
+      {
+        "id": "claim_01M53FXERMTEG2CKYQAM7T3YD0",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 7,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It answers GET /sum with numeric a and b.",
+        "observed": "Matches: 200 `{\"sum\":a+b}`. Overflow gives `{\"sum\":null}`.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ5"
+      },
+      {
+        "id": "claim_01M53FXERMTEG2CKYQAM7T3YD1",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 8,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It returns 400 for non-numeric input.",
+        "observed": "Matches, including missing, empty and non-finite values.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ6"
+      },
+      {
+        "id": "claim_01M53FXERMTEG2CKYQAM7T3YD2",
+        "created_at": "2026-10-16T23:14:21.583Z",
+        "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+        "ordinal": 9,
+        "claim_source": "Owner, transcript turn 1",
+        "claim": "It returns 404 otherwise.",
+        "observed": "Matches for well-formed requests, including non-GET methods on known paths. An unparseable target crashes the process instead.",
+        "requirement": "req_01M53FXERG54362W2EZJR5TEJ7"
+      }
+    ],
+    "confirms": [
+      {
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEG",
+        "key": "R1",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:09.454Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEJ",
+        "key": "R2",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:09.574Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP8314D4BWZW263RTSN3",
+        "key": "R3",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:09.714Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP8314D4BWZW263RTSN5",
+        "key": "R4",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:09.845Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKA",
+        "key": "R5",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:09.960Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKC",
+        "key": "R6",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.101Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ355",
+        "key": "R7",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.228Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ357",
+        "key": "R8",
+        "status": "consumed",
+        "answer": {
+          "option": "defect",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.595Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP86FW4E767V7NEQK55T",
+        "key": "R9",
+        "status": "consumed",
+        "answer": {
+          "option": "defect",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.708Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP86FW4E767V7NEQK55W",
+        "key": "R10",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.346Z"
+        }
+      },
+      {
+        "id": "dec_01M53FWP87DKVRFXX75CJ1ZWEK",
+        "key": "R11",
+        "status": "consumed",
+        "answer": {
+          "option": "confirm",
+          "note": null,
+          "actor": "human",
+          "at": "2026-10-16T23:14:10.481Z"
+        }
+      }
+    ],
+    "requirements": [
+      {
+        "key": "R1",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP82NM68NDM7DQ7BFFEG"
+      },
+      {
+        "key": "R10",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP86FW4E767V7NEQK55W"
+      },
+      {
+        "key": "R11",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP87DKVRFXX75CJ1ZWEK"
+      },
+      {
+        "key": "R2",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP82NM68NDM7DQ7BFFEJ"
+      },
+      {
+        "key": "R3",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP8314D4BWZW263RTSN3"
+      },
+      {
+        "key": "R4",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP8314D4BWZW263RTSN5"
+      },
+      {
+        "key": "R5",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP848PF8CT4FM9RV2TKA"
+      },
+      {
+        "key": "R6",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP848PF8CT4FM9RV2TKC"
+      },
+      {
+        "key": "R7",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 0,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP85VHDTAZHJ91KJQ355"
+      },
+      {
+        "key": "R8",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 1,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP85VHDTAZHJ91KJQ357"
+      },
+      {
+        "key": "R9",
+        "status": "pending",
+        "origin": "observed",
+        "defect": 1,
+        "reverse_engineered": 1,
+        "confirmed_by": "dec_01M53FWP86FW4E767V7NEQK55T"
+      }
+    ]
+  },
+  "drained_m5r_spec": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [],
+    "waited_ms": 5,
+    "still_live": []
+  },
+  "setup_alpha": {
+    "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG",
+    "config": "envc_01M53FXKZ0XBSKKQ35943ZFH0K",
+    "config_identity": "sha256:fb1bc63bb657dd9ed92b5936353b4022b63cd6ce48db483b1037b764cf3b1780",
+    "port": 45707
+  },
+  "architecture": {
+    "value": {
+      "id": "plan_01M53G0CSFMZMVQKRT51PZMNX9",
+      "created_at": "2026-10-16T23:15:57.868Z",
+      "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+      "phase_number": 1,
+      "prepared_against_revision": "384bc12481bf3224f0abf0c6f91cbee1a9e86115",
+      "git_path": ".surety/phases/phase-1.json",
+      "approved_by": "human",
+      "approved_at": "2026-10-16T23:15:57.868Z",
+      "prepared_against_spec": "spec_01M53FXERG54362W2EZJR5TEJ0",
+      "prepared_against_architecture": "arch_01M53G0CSDJ3AM10AQDN7DWW49",
+      "prepared_against_roadmap": "road_01M53G0CSE7HD11W31KP3J8BQ0",
+      "roadmap_revision": "road_01M53G0CSE7HD11W31KP3J8BQ0",
+      "generation": 1,
+      "active": 1,
+      "bundle": "rec_01M53G0CET38R0A98DXN6TW8CC",
+      "check": "pchk_01M53G0CFYPB87SWKQY12JAYDS",
+      "routing": "human",
+      "status": "published",
+      "published_at": "2026-10-16T23:15:57.868Z",
+      "authoring_ready_at": null,
+      "authoring_ready_by": null,
+      "completed_at": null,
+      "completion_binding": null,
+      "planned_obligations": "rec_01M53G0CF96V51VK2N11PC9FHB",
+      "verification": null,
+      "replaced_by": null,
+      "check_authoring": "wi_01M53G0CSGPFX1V5XV49ZAZ9E8",
+      "replacement": null
+    },
+    "shown": [],
+    "runs": [
+      {
+        "id": "run_01M53FXRP3MEJJ60B76BDA6FAV",
+        "outcome": "completed",
+        "reason_class": "none",
+        "model_requested": "claude-opus-5-5"
+      }
+    ],
+    "setup": {
+      "setup": "alpha",
+      "what": "alpha's configuration (PUT /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/environments/alpha/config): local_service, target app, `node server.mjs` on port 45707, the disposable secret deploy/ref_secret (also allowed its checks)",
+      "detail": {
+        "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG",
+        "config": "envc_01M53FXKZ0XBSKKQ35943ZFH0K",
+        "config_identity": "sha256:fb1bc63bb657dd9ed92b5936353b4022b63cd6ce48db483b1037b764cf3b1780",
+        "port": 45707
+      }
+    },
+    "conformance_stages": [
+      {
+        "id": "stage_01M53G0CSGPFX1V5XV49ZAZ9E5",
+        "number": 1,
+        "implements": [
+          "req_01M53FXERG54362W2EZJR5TEJ1",
+          "req_01M53FXERG54362W2EZJR5TEJ2",
+          "req_01M53FXERG54362W2EZJR5TEJ3",
+          "req_01M53FXERG54362W2EZJR5TEJ4",
+          "req_01M53FXERG54362W2EZJR5TEJ5",
+          "req_01M53FXERG54362W2EZJR5TEJ6",
+          "req_01M53FXERG54362W2EZJR5TEJ7",
+          "req_01M53FXERG54362W2EZJR5TEJA",
+          "req_01M53FXERG54362W2EZJR5TEJB"
+        ],
+        "conformance_state": "source_bound",
+        "source_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a"
+      }
+    ]
+  },
+  "drained_m5r_architecture": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [
+      {
+        "id": "run_01M53G0DBWWRZHGH6FZN868Y4J",
+        "kind": "one_shot",
+        "role": "verifier"
+      }
+    ],
+    "waited_ms": 120291,
+    "still_live": []
+  },
+  "conformance": {
+    "value": {
+      "plan": "plan_01M53G0CSFMZMVQKRT51PZMNX9",
+      "state": "conformed"
+    },
+    "shown": [
+      {
+        "kind": "check_correction_unclassifiable",
+        "id": "dec_01M53G47ZEXSCBGASDPB8DZ532",
+        "options": [
+          "approve",
+          "reject"
+        ],
+        "at": "2026-10-16T23:18:12.699Z"
+      }
+    ],
+    "setup": {
+      "setup": "alpha",
+      "already": true,
+      "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG"
+    },
+    "proposals": [
+      {
+        "id": "prop_01M53G47HHTPQ1HZ2ZVB7JE9EM",
+        "status": "applied",
+        "classified_change_kind": "unclassifiable"
+      }
+    ],
+    "stages": [
+      {
+        "number": 1,
+        "status": "verified",
+        "conformance": 1,
+        "conformance_state": "conformed",
+        "source_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a"
+      }
+    ],
+    "builds": 0,
+    "candidates": [
+      {
+        "id": "cand_01M53G58KFR255K7KGNGTT9T33",
+        "seq": 1,
+        "revision": "9250a80c3c5bb80fb115a785cfd9a5d0d5592764",
+        "progress": "developing"
+      }
+    ]
+  },
+  "drained_m5r_conformance": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [
+      {
+        "id": "cx_01M53GB36JT3RC6GDXDYGQ3PRC",
+        "kind": "check_execution",
+        "role": "floor-authentication"
+      }
+    ],
+    "waited_ms": 130344,
+    "still_live": []
+  },
+  "m5r_qualify": {
+    "by": "Sean's command",
+    "cli": null,
+    "row": {
+      "id": "aq_01M53GGB1GSW2XH9JFHRP6EST1",
+      "status": "current",
+      "adapter": "local_service",
+      "cases": [
+        {
+          "case": "deploy_read_back",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GG16BBVKYKVCQ3C092YKN",
+            "attempt": "att_01M53GG17ZWZN1CACZSVKKYW9E",
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+            "generation": 2,
+            "receipt": "issued",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "one launch granted, the init instance recorded at the grant",
+                "held": true,
+                "read": {
+                  "grants": 1,
+                  "init": {
+                    "pid": 2783225,
+                    "start_time": 13208607
+                  }
+                }
+              },
+              {
+                "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 2783256,
+                    "start_time": 13208618,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "disagreement": null
+                }
+              },
+              {
+                "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                    "generation": 2,
+                    "at": "2026-10-16T23:24:31.012Z",
+                    "read": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "d5338b33f1c8466e9b10e71c562f887c",
+                      "pid": 2783256,
+                      "start_time": 13208618
+                    },
+                    "detail": null,
+                    "duration_ms": 187
+                  }
+                ]
+              }
+            ],
+            "control": [
+              {
+                "what": "the same read, expecting B's digest, differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                    "generation": 2,
+                    "at": "2026-10-16T23:24:31.211Z",
+                    "read": "unread",
+                    "match": "differs",
+                    "instance": {
+                      "pid": 2783256,
+                      "start_time": 13208618
+                    },
+                    "detail": {
+                      "field": "mounts",
+                      "expected": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c"
+                      },
+                      "read": {
+                        "dev": "8:48",
+                        "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3"
+                      }
+                    },
+                    "duration_ms": 100
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "case": "replace",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GG2KRN9DBKF7YGXSEAHMR",
+            "attempt": "att_01M53GG2NB89X5PNJBBXDNBRZC",
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g3.service",
+            "generation": 3,
+            "replaced": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+            "assertions": [
+              {
+                "what": "the reconcile read answers applied",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service is gone",
+                "held": true,
+                "read": "not-found"
+              },
+              {
+                "what": "verify reads B's digest",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                    "generation": 3,
+                    "at": "2026-10-16T23:24:32.564Z",
+                    "read": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                    "match": "match",
+                    "instance": {
+                      "invocation_id": "6601cf84ce0f4b7cad4d0761afe4fe1d",
+                      "pid": 2783600,
+                      "start_time": 13208776
+                    },
+                    "detail": null,
+                    "duration_ms": 176
+                  }
+                ]
+              },
+              {
+                "what": "the new generation is recorded current",
+                "held": true,
+                "read": {
+                  "recorded": 3,
+                  "attempt": 3
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service read loaded and active before the replacement",
+                "held": true,
+                "read": {
+                  "load": "loaded",
+                  "active": "active"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "receipt_lost",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "incarnation": "inc_01M53GF69DSDKK6RHD6CEME1TN",
+            "scope": "in_process",
+            "engine_crash": false,
+            "dropped_receipt": {
+              "result": "issued",
+              "bound": null,
+              "refused": null
+            },
+            "operation": "op_01M53GG3KFJCX4FY71P80Q85X9",
+            "attempt": "att_01M53GG3NBFQTC48EFMA4WXMHW",
+            "assertions": [
+              {
+                "what": "reconcile answers applied with no receipt recorded",
+                "held": true,
+                "read": "applied"
+              },
+              {
+                "what": "the attempt holds no receipt",
+                "held": true,
+                "read": null
+              },
+              {
+                "what": "the attempt succeeded",
+                "held": true,
+                "read": "succeeded"
+              }
+            ],
+            "control": [
+              {
+                "what": "before the effect, the same read answered absent",
+                "held": true,
+                "read": "absent"
+              }
+            ]
+          }
+        },
+        {
+          "case": "not_issued",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GG4EN48M8WS5YV1B7RCR0",
+            "attempt": "att_01M53GG4GF4NCZ8GMR923VTYRY",
+            "assertions": [
+              {
+                "what": "reconcile answers absent",
+                "held": true,
+                "read": "absent"
+              },
+              {
+                "what": "no launch was granted",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the running deployment's attempt read the same way answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "late_launcher",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GG0RCKFF4Z3JZ6YK4ZN3W",
+            "attempt": "att_01M53GG0SJ8WRPTJHYRJQD6763",
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g1.service",
+            "assertions": [
+              {
+                "what": "the launcher asked and was refused because its launch is closed",
+                "held": true,
+                "read": {
+                  "reason": "the launch is closed",
+                  "refusals": [
+                    {
+                      "reason": "the launch is closed",
+                      "at": "2026-10-16T23:24:30.015Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "no launch was granted: nothing of the application ran",
+                "held": true,
+                "read": 0
+              },
+              {
+                "what": "while the unit was loaded, reconcile did not answer absent",
+                "held": true,
+                "read": {
+                  "unit": {
+                    "load": "loaded",
+                    "active": "active"
+                  },
+                  "outcome": "unknown"
+                }
+              },
+              {
+                "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                "held": true,
+                "read": {
+                  "gone": true,
+                  "before_cleanup": "partial",
+                  "outcome": "absent"
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "another attempt's launcher, its launch authorizable, was granted once",
+                "held": true,
+                "read": {
+                  "attempt": "att_01M53GG9CQQ49GWF2FVEAH48PJ",
+                  "grants": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "out_of_band",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "stopped": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+            "restarted": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+            "changed": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+            "assertions": [
+              {
+                "what": "the stop by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl stop surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service: exit 0"
+              },
+              {
+                "what": "detected: the environment down, surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service recorded stopped out of band after the stop",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-16T23:24:36.174Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                      "change": "stopped",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-16T23:24:36.174Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the restart by hand was made on the owned unit",
+                "held": true,
+                "read": "systemctl restart surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service: exit 0"
+              },
+              {
+                "what": "a new invocation of the unit",
+                "held": true,
+                "read": {
+                  "before": "193748d8d94d43799c8a230a50e5fa89",
+                  "after": "1be87fe96156463f9a4c3a4adaada9df"
+                }
+              },
+              {
+                "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                "held": true,
+                "read": {
+                  "reason": "a launch connection of this attempt has already proved its peer",
+                  "grants": 1
+                }
+              },
+              {
+                "what": "nothing of the application runs again: the original instance is gone",
+                "held": true,
+                "read": {
+                  "app": {
+                    "pid": 2784320,
+                    "start_time": 13209209,
+                    "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                    "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                    "argv": [
+                      "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                      "server.js"
+                    ]
+                  },
+                  "gone": true
+                }
+              },
+              {
+                "what": "detected: surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service recorded restarted out of band after the restart",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "down",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-16T23:24:38.321Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                      "change": "stopped",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                      "closed_at": "2026-10-16T23:24:36.885Z",
+                      "detected_at": "2026-10-16T23:24:36.174Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M53GG91JYHGYRRX2E9QCJ5BA",
+                      "change": "restarted",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-16T23:24:38.321Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "one byte of the sealed copy changed",
+                "held": true,
+                "read": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3/server.js: its last byte changed"
+              },
+              {
+                "what": "an identity read differs",
+                "held": true,
+                "read": [
+                  {
+                    "target": "app",
+                    "method": "tree_digest",
+                    "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                    "generation": 9,
+                    "at": "2026-10-16T23:24:39.538Z",
+                    "read": "sha256:392bf661c2da34e068d564cb921ece78a69baeacc4fab2a721f5744cb21635c6",
+                    "match": "differs",
+                    "instance": {
+                      "invocation_id": "0864a1187149432aaa1eeea2ced42e7d",
+                      "pid": 2784665,
+                      "start_time": 13209452
+                    },
+                    "detail": {
+                      "field": "tree",
+                      "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                      "read": "sha256:392bf661c2da34e068d564cb921ece78a69baeacc4fab2a721f5744cb21635c6"
+                    },
+                    "duration_ms": 127
+                  }
+                ]
+              },
+              {
+                "what": "detected: surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service recorded with an identity that differs, after the change",
+                "held": true,
+                "read": {
+                  "observation": {
+                    "condition": "degraded",
+                    "detail": {
+                      "code": "out_of_band"
+                    },
+                    "observed_at": "2026-10-16T23:24:39.821Z"
+                  },
+                  "changes": [
+                    {
+                      "seq": 5,
+                      "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                      "change": "stopped",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                      "closed_at": "2026-10-16T23:24:36.885Z",
+                      "detected_at": "2026-10-16T23:24:36.174Z"
+                    },
+                    {
+                      "seq": 6,
+                      "id": "oob_01M53GG91JYHGYRRX2E9QCJ5BA",
+                      "change": "restarted",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                      "closed_at": "2026-10-16T23:24:38.662Z",
+                      "detected_at": "2026-10-16T23:24:38.321Z"
+                    },
+                    {
+                      "seq": 7,
+                      "id": "oob_01M53GG9C8H3VMK0AW5T6E1RWM",
+                      "change": "stopped",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                      "closed_at": "2026-10-16T23:24:39.321Z",
+                      "detected_at": "2026-10-16T23:24:38.662Z"
+                    },
+                    {
+                      "seq": 8,
+                      "id": "oob_01M53GGAGEFPQC63Q2ZMMTPKRA",
+                      "change": "identity_differs",
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+                      "closed_at": null,
+                      "detected_at": "2026-10-16T23:24:39.821Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "what": "the byte restored",
+                "held": true,
+                "read": null
+              }
+            ],
+            "control": [
+              {
+                "what": "before the stop: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-16T23:24:35.031Z"
+                }
+              },
+              {
+                "what": "before the restart: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-16T23:24:37.114Z"
+                }
+              },
+              {
+                "what": "before the byte is changed: an observation reads healthy",
+                "held": true,
+                "read": {
+                  "condition": "healthy",
+                  "detail": null,
+                  "observed_at": "2026-10-16T23:24:39.529Z"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "case": "unreadable",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "bus": "/home/smahoney/s5-final/home/run/qualify-wbknnym9y0ce-no-bus",
+            "bus_existed": false,
+            "assertions": [
+              {
+                "what": "status is unread (a failure), never an empty or complete inventory",
+                "held": true,
+                "read": {
+                  "failure": "unavailable"
+                }
+              },
+              {
+                "what": "verify reads nothing: every identity unread",
+                "held": true,
+                "read": [
+                  "unread"
+                ]
+              },
+              {
+                "what": "reconcile answers unknown, never absent or applied",
+                "held": true,
+                "read": "unknown"
+              }
+            ],
+            "control": [
+              {
+                "what": "with the engine's own bus, status reads the running unit",
+                "held": true,
+                "read": {
+                  "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+                  "kind": "unit",
+                  "recorded": true,
+                  "state": "active",
+                  "pendingJob": false,
+                  "generation": 2,
+                  "invocation_id": "d5338b33f1c8466e9b10e71c562f887c",
+                  "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service"
+                }
+              },
+              {
+                "what": "verify matches",
+                "held": true,
+                "read": [
+                  "match"
+                ]
+              },
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": "applied"
+              }
+            ]
+          }
+        },
+        {
+          "case": "refused",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GG4Q867W8EJJ5BNC3TCZB",
+            "attempt": "att_01M53GG4RVQVTS469XHEG6YS6B",
+            "stale_attempt": "att_01M53GG4GF4NCZ8GMR923VTYRY",
+            "assertions": [
+              {
+                "what": "a capability forged in environment is refused naming environment",
+                "held": true,
+                "read": {
+                  "member": "environment",
+                  "refused": "environment",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                "held": true,
+                "read": {
+                  "member": "artifact_digest",
+                  "refused": "artifact_digest",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in create_units is refused naming create_units",
+                "held": true,
+                "read": {
+                  "member": "create_units",
+                  "refused": "create_units",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in attempt is refused naming attempt",
+                "held": true,
+                "read": {
+                  "member": "attempt",
+                  "refused": "attempt",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "a capability forged in lease_generation is refused naming lease_generation",
+                "held": true,
+                "read": {
+                  "member": "lease_generation",
+                  "refused": "lease_generation",
+                  "result": "refused"
+                }
+              },
+              {
+                "what": "the adapter's effect entry was never reached",
+                "held": true,
+                "read": 0
+              }
+            ],
+            "control": [
+              {
+                "what": "the minted capability passes the same check",
+                "held": true,
+                "read": null
+              }
+            ]
+          }
+        },
+        {
+          "case": "teardown",
+          "result": "passed",
+          "control": "passed",
+          "detail": {
+            "operation": "op_01M53GGAHYD8MY8VK7ZNY2T26V",
+            "at": "2026-10-16T23:24:40.342Z",
+            "assertions": [
+              {
+                "what": "reconcile answers applied",
+                "held": true,
+                "read": {
+                  "receipt": "issued",
+                  "outcome": "applied"
+                }
+              },
+              {
+                "what": "no unit of the environment is listed",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no cgroup of it",
+                "held": true,
+                "read": []
+              },
+              {
+                "what": "no socket or runtime directory of it under run/, each read",
+                "held": true,
+                "read": {
+                  "dirs": [],
+                  "files": []
+                }
+              }
+            ],
+            "control": [
+              {
+                "what": "the same reads before it found units of the environment",
+                "held": true,
+                "read": {
+                  "units": [
+                    "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service"
+                  ],
+                  "cgroups": [
+                    "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service"
+                  ],
+                  "dirs": [
+                    {
+                      "path": "/home/smahoney/s5-final/home/run/env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9",
+                      "state": "present"
+                    }
+                  ],
+                  "files": [
+                    "env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "runs": [
+      {
+        "id": "aqr_01M53GG0NCBMZHWBKNNYM9Y0CE",
+        "status": "qualified"
+      }
+    ],
+    "environment": null,
+    "left": []
+  },
+  "drained_m5r_qualify": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [],
+    "waited_ms": 7,
+    "still_live": []
+  },
+  "deploy": {
+    "cli": null,
+    "candidate": "cand_01M53G58KFR255K7KGNGTT9T33",
+    "progress": "alpha_deployed",
+    "alpha_complete": {
+      "id": "gate_01M53HCC0A8G1339CGC4T4A7MK",
+      "created_at": "2026-10-16T23:39:58.849Z",
+      "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+      "scope": "scope_01M53HCC09XM7A7MD55NXED3QZ",
+      "candidate": "cand_01M53G58KFR255K7KGNGTT9T33",
+      "gate_kind": "alpha_complete",
+      "computed_at": "2026-10-16T23:39:58.849Z",
+      "inputs_hash": "5b6302bfbc100433579263433dea8e815b96afd31ed9e5495dacfc7f50cea22a",
+      "inputs_snapshot": "{\"results\":{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":\"cr_01M53HCBGXTJ9DP3FJSTE38S8E\"},\"findings\":[],\"signoffs\":[],\"head_fingerprint\":\"b4594bff08329ae218945ae2c4d92d3f115043aac9e3cc627468f65688c5eefc\"}",
+      "check_states": "{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":\"passed\"}",
+      "outcome": "satisfied",
+      "reasons": [],
+      "satisfiers": "[]",
+      "stale": 0,
+      "stage": null,
+      "authorization": null,
+      "checks": "{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":{\"key\":\"post-deploy-user-operation\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53HC3KQ1Y65TDFZ94W7D4X2\",\"result\":\"cr_01M53HCBGXTJ9DP3FJSTE38S8E\",\"execution_seq\":37},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":null}}",
+      "missing_verifications": "[]",
+      "phase_plan": null,
+      "plan_generation": null
+    },
+    "replans_before_complete": [],
+    "host": [
+      {
+        "unit": "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+        "props": {
+          "MainPID": "2868522",
+          "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+          "Delegate": "yes",
+          "LoadState": "loaded",
+          "ActiveState": "active"
+        },
+        "token_hits": 0
+      }
+    ]
+  },
+  "m5r_teardown": {
+    "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG",
+    "deploys": [
+      "op_01M53HC2QT5FR50GQAPS4PA5EF"
+    ],
+    "loaded_before": [
+      "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service"
+    ],
+    "request": {
+      "status": 202,
+      "preempt": false,
+      "code": null
+    },
+    "applied": true,
+    "attempt": {
+      "id": "att_01M53HCRP7YJ2E6WWP017B483D",
+      "status": "succeeded",
+      "last_read": "applied"
+    },
+    "left": {
+      "units": [],
+      "cgroups": [],
+      "run_files": []
+    },
+    "journal_search": [
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g1.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g3.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g4.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g5.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g6.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g1.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g3.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g4.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g5.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g6.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+        "status": 0,
+        "hits": 0
+      },
+      {
+        "unit": "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+        "status": 0,
+        "hits": 0
+      }
+    ]
+  },
+  "drained_1792194016370": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [
+      {
+        "id": "run_01M53HCSBSZ005JKB2Y3C0PQJ4",
+        "kind": "one_shot",
+        "role": "architect"
+      }
+    ],
+    "waited_ms": 80176,
+    "still_live": []
+  },
+  "replan": {
+    "plan": {
+      "id": "plan_01M53HH0T05D541WBNES8M434V",
+      "routing": "registered"
+    },
+    "replans": [
+      {
+        "id": "wi_01M53HCRM69S9MCQNEFJQERGWG",
+        "created_at": "2026-10-16T23:40:11.781Z",
+        "status": "complete"
+      }
+    ],
+    "alpha_complete": [
+      {
+        "id": "gate_01M53HCC0A8G1339CGC4T4A7MK",
+        "outcome": "satisfied",
+        "created_at": "2026-10-16T23:39:58.849Z"
+      }
+    ],
+    "shown": [
+      {
+        "kind": "finding_disposition",
+        "id": "dec_01M53HF2YQXG6K9MMKPHN7T13C",
+        "options": [
+          "change_spec",
+          "accept"
+        ],
+        "at": "2026-10-16T23:41:38.582Z"
+      },
+      {
+        "kind": "finding_disposition",
+        "id": "dec_01M53HF2YSRB34P8RE2E7P2M46",
+        "options": [
+          "change_spec",
+          "lower_and_accept"
+        ],
+        "at": "2026-10-16T23:41:38.582Z"
+      }
+    ]
+  },
+  "drained_m5r_replan": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [
+      {
+        "id": "run_01M53HFWE38YNS5MQ28T1X8R95",
+        "kind": "one_shot",
+        "role": "spec_writer"
+      }
+    ],
+    "waited_ms": 50118,
+    "still_live": []
+  },
+  "phase2": {
+    "stages": [
+      {
+        "number": 1,
+        "status": "verified"
+      }
+    ],
+    "builds": [
+      {
+        "id": "run_01M53HXD5P8AX6649CGFMHKH04",
+        "kind": "one_shot",
+        "role": "builder",
+        "work_item": "wi_01M53HXCM6H9W1935DH64JMTMF",
+        "state": "ended",
+        "outcome": "completed",
+        "reason_class": "none",
+        "model_requested": "claude-sonnet-5-5"
+      }
+    ],
+    "shown": [
+      {
+        "kind": "spec_change",
+        "id": "dec_01M53HJN74CZG1VA42H5CXX8Z3",
+        "options": [
+          "approve",
+          "reject"
+        ],
+        "at": "2026-10-16T23:43:29.771Z"
+      },
+      {
+        "kind": "check_correction_tightening",
+        "id": "dec_01M53HMM9FYT0ENRNWSQT574M7",
+        "options": [
+          "approve",
+          "reject"
+        ],
+        "at": "2026-10-16T23:44:43.499Z"
+      },
+      {
+        "kind": "spec_change",
+        "id": "dec_01M53HPJC5ASVMB6PCD0QBB5J4",
+        "options": [
+          "approve",
+          "reject"
+        ],
+        "at": "2026-10-16T23:45:42.156Z"
+      },
+      {
+        "kind": "check_correction_unclassifiable",
+        "id": "dec_01M53HR99Q5WVSE78CRT0F4YPF",
+        "options": [
+          "approve",
+          "reject"
+        ],
+        "at": "2026-10-16T23:46:40.872Z"
+      },
+      {
+        "kind": "blocker",
+        "id": "dec_01M53J0X8P42FV5V1B99CHSEDX",
+        "options": [
+          "retry",
+          "cancel"
+        ],
+        "at": "2026-10-16T23:51:19.997Z"
+      }
+    ]
+  },
+  "drained_m5r_phase2": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [],
+    "waited_ms": 5,
+    "still_live": []
+  },
+  "records": {
+    "pace_status": 200,
+    "acts": [
+      {
+        "kind": "adoption_mode",
+        "id": "dec_01M53EWES29P1WRAHD1T8W3K2T",
+        "option": "full",
+        "seq": 4417
+      },
+      {
+        "kind": "policy_widening",
+        "id": "dec_01M53EXV630ENJY81ZTXQ9P7DF",
+        "option": "approve",
+        "seq": 4452
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEG",
+        "option": "confirm",
+        "seq": 4847
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP82NM68NDM7DQ7BFFEJ",
+        "option": "confirm",
+        "seq": 4853
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP8314D4BWZW263RTSN3",
+        "option": "confirm",
+        "seq": 4859
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP8314D4BWZW263RTSN5",
+        "option": "confirm",
+        "seq": 4866
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKA",
+        "option": "confirm",
+        "seq": 4872
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP848PF8CT4FM9RV2TKC",
+        "option": "confirm",
+        "seq": 4878
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ355",
+        "option": "confirm",
+        "seq": 4884
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP86FW4E767V7NEQK55W",
+        "option": "confirm",
+        "seq": 4891
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP87DKVRFXX75CJ1ZWEK",
+        "option": "confirm",
+        "seq": 4897
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP85VHDTAZHJ91KJQ357",
+        "option": "defect",
+        "seq": 4903
+      },
+      {
+        "kind": "requirement_confirm",
+        "id": "dec_01M53FWP86FW4E767V7NEQK55T",
+        "option": "defect",
+        "seq": 4910
+      },
+      {
+        "kind": "spec_approval",
+        "id": "dec_01M53FX44VE1G303E3J3SDRF2W",
+        "option": "approve",
+        "seq": 4918
+      },
+      {
+        "kind": "architecture_approval",
+        "id": "dec_01M53G0CG4MTFVSFPNPP525037",
+        "option": "approve",
+        "seq": 5078
+      },
+      {
+        "kind": "plan_approval",
+        "id": "dec_01M53G0CG6DES1TGN2WF9X9VAS",
+        "option": "approve",
+        "seq": 5083
+      },
+      {
+        "kind": "check_correction_unclassifiable",
+        "id": "dec_01M53G47ZEXSCBGASDPB8DZ532",
+        "option": "approve",
+        "seq": 5214
+      },
+      {
+        "kind": "check_correction_tightening",
+        "id": "dec_01M53H7NY222CGVDPF5A0X9PQ9",
+        "option": "approve",
+        "seq": 6182
+      },
+      {
+        "kind": "finding_disposition",
+        "id": "dec_01M53HF2YQXG6K9MMKPHN7T13C",
+        "option": "change_spec",
+        "seq": 6619
+      },
+      {
+        "kind": "finding_disposition",
+        "id": "dec_01M53HF2YSRB34P8RE2E7P2M46",
+        "option": "change_spec",
+        "seq": 6627
+      },
+      {
+        "kind": "spec_change",
+        "id": "dec_01M53HJN74CZG1VA42H5CXX8Z3",
+        "option": "approve",
+        "seq": 6819
+      },
+      {
+        "kind": "check_correction_tightening",
+        "id": "dec_01M53HMM9FYT0ENRNWSQT574M7",
+        "option": "approve",
+        "seq": 6950
+      },
+      {
+        "kind": "spec_change",
+        "id": "dec_01M53HPJC5ASVMB6PCD0QBB5J4",
+        "option": "approve",
+        "seq": 7139
+      },
+      {
+        "kind": "check_correction_unclassifiable",
+        "id": "dec_01M53HR99Q5WVSE78CRT0F4YPF",
+        "option": "approve",
+        "seq": 7351
+      }
+    ],
+    "ledger": [
+      {
+        "run": "run_01M53FNDJYRT0C19ZPY2864B77",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.5419801999999999
+      },
+      {
+        "run": "run_01M53FNDJYRT0C19ZPY2864B77",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.3308788
+      },
+      {
+        "run": "run_01M53FXRP3MEJJ60B76BDA6FAV",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.4318564
+      },
+      {
+        "run": "run_01M53G0DBWWRZHGH6FZN868Y4J",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.41880510000000004
+      },
+      {
+        "run": "run_01M53G59N5KY4YXGDXWAFX0T55",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.0700278
+      },
+      {
+        "run": "run_01M53H6WNYPNFDVCMH9GFXW596",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.13329030000000003
+      },
+      {
+        "run": "run_01M53HCSBSZ005JKB2Y3C0PQJ4",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.48772839999999995
+      },
+      {
+        "run": "run_01M53HFE7YBQXAYAG23J3BDA4G",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.43181159999999996
+      },
+      {
+        "run": "run_01M53HFWE38YNS5MQ28T1X8R95",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.34407399999999994
+      },
+      {
+        "run": "run_01M53HKCVJW9JN34THK11Z86BT",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.20263779999999998
+      },
+      {
+        "run": "run_01M53HMMQJ0MWDBNPP57NTHN4R",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.37359020000000004
+      },
+      {
+        "run": "run_01M53HQ93S1NPYXM9MDCQXXAK5",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.16229380000000002
+      },
+      {
+        "run": "run_01M53HR9RF5F9A5SPCDNY5HPRT",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.26246860000000005
+      },
+      {
+        "run": "run_01M53HSVC7CGX1AYXQT30SZ0K7",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.1804279
+      },
+      {
+        "run": "run_01M53HRGX7ADN2HRMARP66B5C9",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.5287100000000001
+      },
+      {
+        "run": "run_01M53HTP9NPPWCKGT9MSR3FPS3",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.6650035999999999
+      },
+      {
+        "run": "run_01M53HXD5P8AX6649CGFMHKH04",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.046614
+      },
+      {
+        "run": "run_01M53HXYT6W8T1DMYEHPG7521D",
+        "model_requested": "claude-sonnet-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.10661059999999997
+      },
+      {
+        "run": "run_01M53HXDRAWZ857S41WWNN8XZM",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.39047339999999997
+      },
+      {
+        "run": "run_01M53HYYXXQW7W1RQWBVK9MNGE",
+        "model_requested": "claude-opus-5-5",
+        "cost_status": "estimated",
+        "cost_usd": 0.4026274
+      }
+    ],
+    "results": [
+      {
+        "id": "cr_01M53G5X67YSPSB0T32VMXKTG5",
+        "execution": "cx_01M53G58M0CQTHWWAHQ6EB12KM",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G6C0RPG039QX0AGZ8JBM9",
+        "execution": "cx_01M53G58M3A7YBWHQVRKC3EZ4J",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G6VN4KJ3CD8108Z1A6113",
+        "execution": "cx_01M53G58M5NAFFJVZ81WBCX33P",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G7A1T40J44JGCCBHRS219",
+        "execution": "cx_01M53G58M78X99R9SXQJBZTE2K",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G7SFXZ9XW2JFCB38G6ADQ",
+        "execution": "cx_01M53G58M84YD1EDQ2J14VQN3D",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G88E3DVPCEQDJ7TGC42N7",
+        "execution": "cx_01M53G58M84YD1EDQ2J14VQN3F",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G8R6HYQZMY0X2R7D38F3D",
+        "execution": "cx_01M53G58M9AMXKKVCQRGGHQ4X0",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G9745KZ1N7893G68MTWS0",
+        "execution": "cx_01M53G58MAP3MQQ9MP3SBCG592",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53G9PYD7TSX3TJEBGJPGCQH",
+        "execution": "cx_01M53G58MAP3MQQ9MP3SBCG594",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GA5SB8XXEZ13716054P3Z",
+        "execution": "cx_01M53G58MC8RTKEC86KGB69ASJ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GAMHK7PGQGRZ7Y24WE0KT",
+        "execution": "cx_01M53G58ME8EMFWXJKGP5GBTNY",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GB2T26QDDGA441VWXGFD5",
+        "execution": "cx_01M53G58MFKW1ZSP52XKBP76HG",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GBGQV2G3V0ERGK532Z3DM",
+        "execution": "cx_01M53GB36JT3RC6GDXDYGQ3PRC",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GBXJPYRQ75XHYEKF6T8QB",
+        "execution": "cx_01M53GB36KRR5FQATTDJQB1BPA",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GCBJ0H3ZCW8C1QR6MMZEW",
+        "execution": "cx_01M53GB36MK10K8RK8QV4HRT9S",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GCS4SKHNZHNEX12M6GBFQ",
+        "execution": "cx_01M53GB36N6GWE2JD9QE6XG307",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GD4WH44JG5T1FKBHS7XD3",
+        "execution": "cx_01M53GB36PC4PK9XHN5R8QBKHE",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GDCX9WVG80XAH4R909MZR",
+        "execution": "cx_01M53GB36PC4PK9XHN5R8QBKHG",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GDP4A4W9G5T42ZFBET0TM",
+        "execution": "cx_01M53GB36PC4PK9XHN5R8QBKHJ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GDY81XT9TVBR7FEXHNR1C",
+        "execution": "cx_01M53GB36QSAG3C2015S780ZPS",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GE62RF7Y82Z8HBG6C6PQT",
+        "execution": "cx_01M53GB36QSAG3C2015S780ZPV",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GEEBHAQXJ6CVVSWHVH3M5",
+        "execution": "cx_01M53GB36QSAG3C2015S780ZPX",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GEPFG5W0F1D7ABWDHZV3F",
+        "execution": "cx_01M53GB36QSAG3C2015S780ZPZ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53GEYFH9WTHYN624AAQZFCT",
+        "execution": "cx_01M53GB36QSAG3C2015S780ZQ1",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H8Q2A16DTXEAPVQ2YG6S2",
+        "execution": "cx_01M53H8ETZYSA0QZ06AWGR5H89",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H8ZAP3HTA6Q4R8NJP3ZJ6",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTQP",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H9702DG07ZCJ8VPECAEBN",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTQR",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H9ES8R3AS061SJS61N7F7",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTQT",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H9PWRMWJ2F4ATD6D21CKX",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTQW",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53H9Z9BRTAYCXS027T35E0F",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTQY",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HA7G3P8A2YWZ5T8ZJY96J",
+        "execution": "cx_01M53H8EV0DCPMWAM2DMHQHTR0",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HAFMYJ48P9ST8BGK2KW99",
+        "execution": "cx_01M53H8EV10S47M6ZEHG9XH4T1",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HAQYMYHBC0R09151BSPB4",
+        "execution": "cx_01M53H8EV10S47M6ZEHG9XH4T3",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HAZGZ4GXGJXWA5ZV16YYZ",
+        "execution": "cx_01M53H8EV10S47M6ZEHG9XH4T5",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HB7GQ2NVG3WKM334ZWZV2",
+        "execution": "cx_01M53H8EV2TRN5SHS1DVCB7P1E",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HBFEAHBQY7YGD092BM4XN",
+        "execution": "cx_01M53H8EV2TRN5SHS1DVCB7P1G",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HCBGXTJ9DP3FJSTE38S8E",
+        "execution": "cx_01M53HC3KQ1Y65TDFZ94W7D4X2",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HNMWQN2G20SHH2B7VAN9Q",
+        "execution": "cx_01M53HND2NSCAY2ME8TRZADEKN",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HNWDWVB2VMCE22D74SF02",
+        "execution": "cx_01M53HND2NSCAY2ME8TRZADEKQ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HP4BN47HHGPYKC0Y0FR55",
+        "execution": "cx_01M53HND2PT5QBB9P0V1MQYA8X",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HPCC3D091GFMZXQ2HBQRC",
+        "execution": "cx_01M53HND2PT5QBB9P0V1MQYA8Z",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HPM15K7CYKCEBKM05RRKX",
+        "execution": "cx_01M53HND2PT5QBB9P0V1MQYA91",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HPWBY7RYDF28SBSXP2WEK",
+        "execution": "cx_01M53HND2PT5QBB9P0V1MQYA93",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HQ59NMRDKTQY8X24AM0GQ",
+        "execution": "cx_01M53HND2QYG0MHYB56WNF9MBZ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HQFH21WJ56J4DV8NJH7FC",
+        "execution": "cx_01M53HND2QYG0MHYB56WNF9MC1",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HQQAWB4AJRJPXJK30VRX1",
+        "execution": "cx_01M53HND2QYG0MHYB56WNF9MC3",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HQZF4RHQ1DCQSVQPMDZXP",
+        "execution": "cx_01M53HND2R1M775P9RMTK1V2P6",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HR7JE09NSGXA5X2PW8FZT",
+        "execution": "cx_01M53HND2R1M775P9RMTK1V2P8",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HRG2P6V28AZ7B17HM8Y5V",
+        "execution": "cx_01M53HND2R1M775P9RMTK1V2PA",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HS1QBZFZEKK3TYM2C50T6",
+        "execution": "cx_01M53HRSABQGT4Z7XT3ZS6KMKF",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HSA2G4JYGBPYAA5Y6JSDQ",
+        "execution": "cx_01M53HRSAC1MYSMJ764MCPZJZA",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HSHWM4YWH19DTGS8M6762",
+        "execution": "cx_01M53HRSAC1MYSMJ764MCPZJZC",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HSSHZSPP5GASX1HHE5KBK",
+        "execution": "cx_01M53HRSAC1MYSMJ764MCPZJZE",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HT32PRHF61NZQ8Z559TQA",
+        "execution": "cx_01M53HRSAC1MYSMJ764MCPZJZG",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HTBRJ0ZWYC88D43QCYXQG",
+        "execution": "cx_01M53HRSAC1MYSMJ764MCPZJZJ",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HTKTF3DB1BB90014JNXXH",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP38",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HTX4FS3FP77436JG9FYXX",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP3A",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HV53DV9H37BVS6AGN9VEC",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP3C",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HVCMEHW5EQHNGV7FSPZ9P",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP3E",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HVMH5ZBG6ZCF0QVZF184D",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP3G",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HVW8WAT35XJY1V4C67M54",
+        "execution": "cx_01M53HRSADZTEV7AEJFD9DXP3J",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HY7QJMJDM6MQ870YGF77H",
+        "execution": "cx_01M53HXXXA3Y767WZR6K0VPR20",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HYFFGX5PXV2CXTM0QQFAB",
+        "execution": "cx_01M53HXXXA3Y767WZR6K0VPR22",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HYQSC81WA4VN42Z9YTXRE",
+        "execution": "cx_01M53HXXXB04GZJ7Q75GDE8JSY",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HZ12KN8VJGWSXQVAB98RC",
+        "execution": "cx_01M53HXXXB04GZJ7Q75GDE8JT0",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HZ8NME42GBV307MTHM3RZ",
+        "execution": "cx_01M53HXXXB04GZJ7Q75GDE8JT2",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HZH5AHA3Q9DMGS6SFV26R",
+        "execution": "cx_01M53HXXXB04GZJ7Q75GDE8JT4",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53HZSRZSSES734APRPSGYCT",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMPT",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J01JAEDR6VQQ5PTGT2J1B",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMPW",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J092D1XFDA6XVYE9JA850",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMPY",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J0H3JCWHBZ8WHEFG5P09Z",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMQ0",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J0S1TT8JS6MXEM0D3EPDP",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMQ2",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J11EPQH54YS0RJTSK3A9W",
+        "execution": "cx_01M53HXXXC7ZPQ4P07RS3WCMQ4",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J19NFS07WKJZEKK819CG9",
+        "execution": "cx_01M53HXXXD2WFZ4YWC7NE833MT",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      },
+      {
+        "id": "cr_01M53J1HF7JJ110J3TNV4917D2",
+        "execution": "cx_01M53HXXXD2WFZ4YWC7NE833MW",
+        "runner_id": "direct@1a2241c9653441439658410880ea14af/3f7152b98031"
+      }
+    ],
+    "token": {
+      "roots": [
+        "/home/smahoney/s5-final"
+      ],
+      "repos": [
+        "/home/smahoney/s5-final/repos/sums"
+      ],
+      "hits": 0,
+      "where": []
+    }
+  },
+  "drained_records": {
+    "paused": [
+      "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+    ],
+    "waited_only": [],
+    "waited_for": [],
+    "waited_ms": 5,
+    "still_live": []
+  }
+}

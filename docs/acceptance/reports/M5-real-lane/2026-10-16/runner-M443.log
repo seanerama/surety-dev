@@ -1,0 +1,146 @@
+=== M443 start 2026-10-16T22:05:40Z at 5bf01a4  ===
+
+==============================================================================
+SURETY REAL LANE, M5 (row M443): what this run can cost, before anything starts.
+Expected: about 5 USD in Claude Code's own estimates (BS5 §12; E139 item 7, E140 N3), drawn from your subscription's usage limits, which your own Claude use shares.
+  Three sessions of a few turns each on Opus (Vision optional), about twelve to sixteen one-shot runs on Sonnet (two check authorings, four Builders, four Verifiers, four Reviewers, two phase verifications, one replan, one Spec Writer change run, plus repairs).
+  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).
+At most: each run (a session is one run) is bounded by 2000000 billable tokens; the project's day limit of 30 USD in estimates stops it earlier, and its day bound on unknown usage is 4000000 tokens, twice the run cap (caps of Sean's choice, 2026-10-14, the unknown-usage bound the driver's ruling under it; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.
+An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer: the qualification attempt for Claude Code on claude-opus-5-5 in session_headless mode, paid.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46429/v1/decisions/dec_01M53BZW7SEK9TJVXNG5S41HZJ/answer -d '{"option": "approve", "preview_hash": "d446ad97bfbdd2394fb7a8964c5b812ded2b61c6228bcabca1b57d6757698701"}'
+This test waits 360 minutes.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer: the qualification attempt for Claude Code on claude-sonnet-5-5 in one_shot_headless mode, paid.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46249/v1/decisions/dec_01M53C4M0YJPWFBCJ21YQS7QM2/answer -d '{"option": "approve", "preview_hash": "60fd2bec1bc2652a652c750fa6dd2e6defda83d7e751c4070465c34bf5191b78"}'
+This test waits 360 minutes.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer: the activation of the claude-sonnet-5-5 entry trust_01M53C7AMQS9TK2ZGQWBSGDDD6. Activating launches nothing.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45617/v1/decisions/dec_01M53C7AMRGWE3HPJCYAZYY0D2/answer -d '{"option": "approve", "preview_hash": "4a3a9f709dc6b3e2ebdf24bc8d59d296569d40e387c31e84bfec2c21b8e18899"}'
+==============================================================================
+▶ M443 the real journey from an idea to Alpha (real lane, paid)
+  ✔ (a) the attempts: session_qualified true from the continuation canary; the Opus and Sonnet entries active (314356.255791ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the widening of budget_run_billable_tokens, budget_day_unknown_tokens, alpha_deploy: a widening the owner confirms (E143 item 1).
+Decision policy_widening dec_01M53C9DW729A76MC3N0GRRRZ1 (preview 30c1553adb8af8a89770201376b1a109605f0247f9e01696b0480f2c964e8602); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:46181.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46181/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53C9DW729A76MC3N0GRRRZ1/answer -d '{"option": "approve", "preview_hash": "30c1553adb8af8a89770201376b1a109605f0247f9e01696b0480f2c964e8602"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46181/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53C9DW729A76MC3N0GRRRZ1/answer -d '{"option": "reject", "preview_hash": "30c1553adb8af8a89770201376b1a109605f0247f9e01696b0480f2c964e8602"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: setup (the runner's, through the owner's route): the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000, alpha_deploy "on_phase_complete"
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: your spec_writer session (the specification). In another terminal, as often as you like (the test waits for the approval):
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session open --project proj_01M53C9CP71558J8MFCQ1NAFER --role spec_writer
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session say '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER --text '<what you say>'
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session show '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session save '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session close '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+Closing raises the decision your product calls for; the test then prints it for your answer.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: setup (the runner's, through the owner's route): alpha's configuration (PUT /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/environments/alpha/config): local_service, target app, `node server.mjs` on port 46221, the disposable secret deploy/ref_secret (also allowed its checks)
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: your architect session (the architecture and the first plan). In another terminal, as often as you like (the test waits for the approval):
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session open --project proj_01M53C9CP71558J8MFCQ1NAFER --role architect
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session say '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER --text '<what you say>'
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session show '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session save '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session close '<run>' --project proj_01M53C9CP71558J8MFCQ1NAFER
+Closing raises the decision your product calls for; the test then prints it for your answer.
+==============================================================================
+  ✔ (b) Sean's sessions: each turn metered with its ledger row; each product parsed and approved by his answer (1564732.517794ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 1 built, verified and complete, and phase 2 planned by the replan.
+Decision check_correction_unclassifiable dec_01M53DRZRAFAA4MZCS5MMZZ9QH (preview 3c9a3303ab5a186cb55ce659e106ace8798bd62e9e7dace3330de5f9ad560b88); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:45325.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DRZRAFAA4MZCS5MMZZ9QH/answer -d '{"option": "approve", "preview_hash": "3c9a3303ab5a186cb55ce659e106ace8798bd62e9e7dace3330de5f9ad560b88"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DRZRAFAA4MZCS5MMZZ9QH/answer -d '{"option": "reject", "preview_hash": "3c9a3303ab5a186cb55ce659e106ace8798bd62e9e7dace3330de5f9ad560b88"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 1 built, verified and complete, and phase 2 planned by the replan.
+Decision blocker dec_01M53DX8N8P3RRW41RRJ38MYE5 (preview 5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d) (not one this step expects: read it before answering); options: correct_check, change_spec, retry, replan, cancel.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:45325.
+  correct_check: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DX8N8P3RRW41RRJ38MYE5/answer -d '{"option": "correct_check", "preview_hash": "5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d"}'
+  change_spec: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DX8N8P3RRW41RRJ38MYE5/answer -d '{"option": "change_spec", "preview_hash": "5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d"}'
+  retry: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DX8N8P3RRW41RRJ38MYE5/answer -d '{"option": "retry", "preview_hash": "5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d"}'
+  replan: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DX8N8P3RRW41RRJ38MYE5/answer -d '{"option": "replan", "preview_hash": "5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d"}'
+  cancel: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DX8N8P3RRW41RRJ38MYE5/answer -d '{"option": "cancel", "preview_hash": "5bf032da1eb5b3fb0ff835c70b3f54f538261874dd9ab06d7100f5cb8f72034d"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 1 built, verified and complete, and phase 2 planned by the replan.
+Decision check_correction_unclassifiable dec_01M53DZD22TKPRZ1NVGZ6K1ZZW (preview ecb61185621774639f5681a57015d6711eb71fc90021df01387abb2cbab06a12); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:45325.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DZD22TKPRZ1NVGZ6K1ZZW/answer -d '{"option": "approve", "preview_hash": "ecb61185621774639f5681a57015d6711eb71fc90021df01387abb2cbab06a12"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45325/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53DZD22TKPRZ1NVGZ6K1ZZW/answer -d '{"option": "reject", "preview_hash": "ecb61185621774639f5681a57015d6711eb71fc90021df01387abb2cbab06a12"}'
+==============================================================================
+  ✔ (c) phase 1 by real roles: the authoring's proposal approved by Sean, every check result an engine execution, both stages verified, the phase complete, the replan registered (605436.888973ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's own command (the test will not run it): the specification change (write it in /home/smahoney/s5-final/change-request.md first)
+In another terminal:
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js spec change-request --project proj_01M53C9CP71558J8MFCQ1NAFER --file /home/smahoney/s5-final/change-request.md
+This test waits 360 minutes for its effect, then stops with nothing further started.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the change approved, its invalidation and its correction done.
+Decision check_correction_tightening dec_01M53EB7RZ9QBZN1XTK7Q2JBBK (preview 0f096224a398a56991b850619a7094a98c2ebbbb23353ffc27d08c2cc8cd6e97); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:46147.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53EB7RZ9QBZN1XTK7Q2JBBK/answer -d '{"option": "approve", "preview_hash": "0f096224a398a56991b850619a7094a98c2ebbbb23353ffc27d08c2cc8cd6e97"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53EB7RZ9QBZN1XTK7Q2JBBK/answer -d '{"option": "reject", "preview_hash": "0f096224a398a56991b850619a7094a98c2ebbbb23353ffc27d08c2cc8cd6e97"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the change approved, its invalidation and its correction done.
+Decision spec_change dec_01M53ED8AZQCY1K9MNK92CQ31F (preview 9d517f2ab3f8cebebbd010c09c26bf9d407cf27da16c590b15f0d24100789f8c); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:46147.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53ED8AZQCY1K9MNK92CQ31F/answer -d '{"option": "approve", "preview_hash": "9d517f2ab3f8cebebbd010c09c26bf9d407cf27da16c590b15f0d24100789f8c"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53ED8AZQCY1K9MNK92CQ31F/answer -d '{"option": "reject", "preview_hash": "9d517f2ab3f8cebebbd010c09c26bf9d407cf27da16c590b15f0d24100789f8c"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the change approved, its invalidation and its correction done.
+Decision check_correction_unclassifiable dec_01M53EEHMESTDKG4JBCHFN64G7 (preview 38e6c77ed43695ccdcc9684a6cba679725f6e0e3e6d2de5f4b7d22e9baf5a56b); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions on http://127.0.0.1:46147.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53EEHMESTDKG4JBCHFN64G7/answer -d '{"option": "approve", "preview_hash": "38e6c77ed43695ccdcc9684a6cba679725f6e0e3e6d2de5f4b7d22e9baf5a56b"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46147/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/decisions/dec_01M53EEHMESTDKG4JBCHFN64G7/answer -d '{"option": "reject", "preview_hash": "38e6c77ed43695ccdcc9684a6cba679725f6e0e3e6d2de5f4b7d22e9baf5a56b"}'
+==============================================================================
+  ✔ (d) the change: the impact shown, approved by Sean, its invalidation and its correction done (278883.122335ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's own command (the test will not run it): the adapter's qualification (D4 §2.6): no model, nothing paid
+In another terminal:
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js qualify-adapter local_service
+This test waits 360 minutes for its effect, then stops with nothing further started.
+==============================================================================
+  ✔ (e) phase 2 by real roles: its stages verified, the phase complete, every check result an engine execution (223186.735768ms)
+  ✔ (f) Sean's qualify-adapter; the engine's request under policy; alpha_authorize satisfied; verified; alpha_deployed on a real unit of the run home's prefix (250.028959ms)
+  ✔ (g) the teardown applied, nothing of the prefix left; pace.json recorded; no check result by a fixture; the token in no file, git object or journal output (3838.499804ms)
+✔ M443 the real journey from an idea to Alpha (real lane, paid) (2990685.349183ms)
+ℹ tests 7
+ℹ suites 1
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2991040.195407
+M443 exit 0

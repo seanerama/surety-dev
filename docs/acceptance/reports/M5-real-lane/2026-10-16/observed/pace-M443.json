@@ -1,0 +1,2387 @@
+{
+  "labels": {
+    "invocation_elapsed": "invocation elapsed time"
+  },
+  "project": {
+    "id": "proj_01M53C9CP71558J8MFCQ1NAFER",
+    "created_at": "2026-10-16T22:10:58.449Z",
+    "created_to_spec_approved": 1053.955,
+    "created_to_architecture_approved": 1260.239,
+    "created_to_phase_complete": [
+      {
+        "phase": 1,
+        "seconds": 2001.099
+      },
+      {
+        "phase": 2,
+        "seconds": 2640.51
+      }
+    ],
+    "created_to_alpha_deployed": 2650.123,
+    "decisions": [
+      {
+        "id": "dec_01M53C9DW729A76MC3N0GRRRZ1",
+        "kind": "policy_widening",
+        "open_seconds": 31.055
+      },
+      {
+        "id": "dec_01M53D9HBPG05YRR676ZE9J1FP",
+        "kind": "spec_approval",
+        "open_seconds": 0.357
+      },
+      {
+        "id": "dec_01M53DFV568QJY304DZHC9QHZK",
+        "kind": "architecture_approval",
+        "open_seconds": 0.174
+      },
+      {
+        "id": "dec_01M53DFV57NSD01FVGC85FKHDS",
+        "kind": "plan_approval",
+        "open_seconds": 0.31
+      },
+      {
+        "id": "dec_01M53DRZRAFAA4MZCS5MMZZ9QH",
+        "kind": "check_correction_unclassifiable",
+        "open_seconds": 17.804
+      },
+      {
+        "id": "dec_01M53DX8N8P3RRW41RRJ38MYE5",
+        "kind": "blocker",
+        "open_seconds": 49.394
+      },
+      {
+        "id": "dec_01M53DZD22TKPRZ1NVGZ6K1ZZW",
+        "kind": "check_correction_unclassifiable",
+        "open_seconds": 29.089
+      },
+      {
+        "id": "dec_01M53EB7RZ9QBZN1XTK7Q2JBBK",
+        "kind": "check_correction_tightening",
+        "open_seconds": 20.628
+      },
+      {
+        "id": "dec_01M53EDD4PDYJ3S0G5TW60M4F3",
+        "kind": "spec_change",
+        "open_seconds": 8.289
+      },
+      {
+        "id": "dec_01M53EEHMESTDKG4JBCHFN64G7",
+        "kind": "check_correction_unclassifiable",
+        "open_seconds": 21.082
+      }
+    ],
+    "sessions": {
+      "count": 2,
+      "turns": 3,
+      "seconds": 455.644,
+      "seconds_unmeasured": 0,
+      "tokens": {
+        "billable": 89176,
+        "cached": 537113,
+        "output": 45771
+      }
+    },
+    "idle": {
+      "resource_envelope": 5.213,
+      "chain_boundary": {
+        "unknown": "no closed chain_boundary hold interval was recorded"
+      },
+      "depends_on": 113.878,
+      "authoring_readiness": 93.788,
+      "open_decision": {
+        "unknown": "no closed open_decision hold interval was recorded"
+      },
+      "session_busy": {
+        "unknown": "no closed session_busy hold interval was recorded"
+      }
+    },
+    "idle_open": {
+      "resource_envelope": 0,
+      "chain_boundary": 0,
+      "depends_on": 0,
+      "authoring_readiness": 0,
+      "open_decision": 0,
+      "session_busy": 0
+    }
+  },
+  "human_tests": [
+    {
+      "requirement": "R6",
+      "phase": 2,
+      "status": "owed"
+    },
+    {
+      "requirement": "R7",
+      "phase": 2,
+      "status": "owed"
+    }
+  ],
+  "sessions": [
+    {
+      "run": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+      "role": "spec_writer",
+      "turns": 2,
+      "seconds": 260.93,
+      "outcome": "completed"
+    },
+    {
+      "run": "run_01M53D9VZ9R567YWKDBHME8714",
+      "role": "architect",
+      "turns": 1,
+      "seconds": 194.714,
+      "outcome": "completed"
+    }
+  ],
+  "phases": [
+    {
+      "phase": 1,
+      "plan": "plan_01M53DFVF6Q6Z9GZC2BTSPRHE5",
+      "generation": 1,
+      "routing": "human",
+      "published_to_completed": 740.86,
+      "published_to_authoring_ready": 317.384,
+      "authoring_seconds": 298.703,
+      "proposal_class": "unclassifiable",
+      "authoring_ready": "2026-10-16T22:37:16.072Z",
+      "phase_verification": 12.799,
+      "replan": {
+        "seconds": 59.033,
+        "routing": "registered"
+      },
+      "stages": 2
+    },
+    {
+      "phase": 2,
+      "plan": "plan_01M53E88VBGVF30VWZR7QH4FZZ",
+      "generation": 1,
+      "routing": "registered",
+      "published_to_completed": 580.136,
+      "published_to_authoring_ready": 118.098,
+      "authoring_seconds": 96.275,
+      "proposal_class": "tightening",
+      "authoring_ready": "2026-10-16T22:47:16.921Z",
+      "phase_verification": 14.268,
+      "replan": {
+        "unknown": "no replan followed the phase"
+      },
+      "stages": 2
+    }
+  ],
+  "stages": [
+    {
+      "id": "stage_01M53DFVF6Q6Z9GZC2BTSPRHE6",
+      "number": 1,
+      "phase": 1,
+      "status": "verified",
+      "eligible_to_integrated": 70.214,
+      "integrated_to_first_evaluation": 24.335,
+      "to_verified": 256.302,
+      "created_to_integrated": 387.598,
+      "runs": {
+        "builder": 1,
+        "verifier": 2,
+        "reviewer": 2,
+        "fix": 0
+      },
+      "builder_runs": 1,
+      "checks": {
+        "count": 40,
+        "seconds": 27.921
+      },
+      "repairs": 0,
+      "findings": {},
+      "human_wait": 49.394,
+      "decision_hours": 0.013720555555555555
+    },
+    {
+      "id": "stage_01M53DFVF6Q6Z9GZC2BTSPRHE7",
+      "number": 2,
+      "phase": 1,
+      "status": "verified",
+      "eligible_to_integrated": 63.266,
+      "integrated_to_first_evaluation": 27.254,
+      "to_verified": 192.953,
+      "created_to_integrated": 450.864,
+      "runs": {
+        "builder": 1,
+        "verifier": 1,
+        "reviewer": 2,
+        "fix": 0
+      },
+      "builder_runs": 1,
+      "checks": {
+        "count": 34,
+        "seconds": 23.853999999999996
+      },
+      "repairs": 0,
+      "findings": {},
+      "human_wait": 0,
+      "decision_hours": 0
+    },
+    {
+      "id": "stage_01M53E88VBGVF30VWZR7QH4G00",
+      "number": 1,
+      "phase": 2,
+      "status": "verified",
+      "eligible_to_integrated": 43.394,
+      "integrated_to_first_evaluation": 20.16,
+      "to_verified": 281.313,
+      "created_to_integrated": 161.492,
+      "runs": {
+        "builder": 1,
+        "verifier": 2,
+        "reviewer": 1,
+        "fix": 0
+      },
+      "builder_runs": 1,
+      "checks": {
+        "count": 38,
+        "seconds": 32.87999999999999
+      },
+      "repairs": 0,
+      "findings": {},
+      "human_wait": 0,
+      "decision_hours": 0
+    },
+    {
+      "id": "stage_01M53E88VBGVF30VWZR7QH4G01",
+      "number": 2,
+      "phase": 2,
+      "status": "verified",
+      "eligible_to_integrated": 77.539,
+      "integrated_to_first_evaluation": 17.962,
+      "to_verified": 203.735,
+      "created_to_integrated": 239.031,
+      "runs": {
+        "builder": 1,
+        "verifier": 1,
+        "reviewer": 1,
+        "fix": 0
+      },
+      "builder_runs": 1,
+      "checks": {
+        "count": 29,
+        "seconds": 26.273999999999994
+      },
+      "repairs": 0,
+      "findings": {},
+      "human_wait": 0,
+      "decision_hours": 0
+    }
+  ],
+  "runs": [
+    {
+      "id": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+      "role": "spec_writer",
+      "work_kind": "session",
+      "created_at": "2026-10-16T22:24:09.763Z",
+      "claimed_at": "2026-10-16T22:24:09.763Z",
+      "launched_at": "2026-10-16T22:24:10.967Z",
+      "finished_at": "2026-10-16T22:28:31.897Z",
+      "wait": 1.204,
+      "invocation_elapsed": 108.177,
+      "end_protocol": 152.753,
+      "elapsed": 260.93,
+      "tokens": {
+        "billable": 51020,
+        "cached": 302154,
+        "output": 25762
+      },
+      "cost": {
+        "usd": 0.9836947999999999,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53CAWQ9S13TRYS89GB26E74",
+      "backend_entry": {
+        "id": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-opus-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53D1HVD98DJ3DHK1PHHB8SN",
+        "memory_peak": 200069120,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53D1HVD98DJ3DHK1PHHB8SN",
+          "memory_peak": 200069120,
+          "memory_max": 4294967296
+        },
+        {
+          "id": "dom_01M53D53HBCSWH1YGZC697N7N3",
+          "memory_peak": 167059456,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53D9VZ9R567YWKDBHME8714",
+      "role": "architect",
+      "work_kind": "session",
+      "created_at": "2026-10-16T22:28:42.600Z",
+      "claimed_at": "2026-10-16T22:28:42.600Z",
+      "launched_at": "2026-10-16T22:28:43.697Z",
+      "finished_at": "2026-10-16T22:31:58.411Z",
+      "wait": 1.097,
+      "invocation_elapsed": 190.892,
+      "end_protocol": 3.822,
+      "elapsed": 194.714,
+      "tokens": {
+        "billable": 38156,
+        "cached": 234959,
+        "output": 20009
+      },
+      "cost": {
+        "usd": 0.7523478,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53D9PW7PSRJETM1N98V7XRM",
+      "backend_entry": {
+        "id": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-opus-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53D9WACGXG2856GM4XZGCP0",
+        "memory_peak": 157122560,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53D9WACGXG2856GM4XZGCP0",
+          "memory_peak": 157122560,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DFVXMPXJCFKXQR924NR60",
+      "role": "verifier",
+      "work_kind": "check_authoring",
+      "created_at": "2026-10-16T22:31:59.153Z",
+      "claimed_at": "2026-10-16T22:31:59.153Z",
+      "launched_at": "2026-10-16T22:31:59.750Z",
+      "finished_at": "2026-10-16T22:36:57.856Z",
+      "wait": 0.597,
+      "invocation_elapsed": 298.106,
+      "end_protocol": 0,
+      "elapsed": 298.106,
+      "tokens": {
+        "billable": 77980,
+        "cached": 691286,
+        "output": 45921
+      },
+      "cost": {
+        "usd": 0.8402026000000001,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53D9PW7PSRJETM1N98V7XRM",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DFVXPS41BPAY0M8QPPATD",
+        "memory_peak": 236171264,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DFVXPS41BPAY0M8QPPATD",
+          "memory_peak": 236171264,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DSJ0DDCHTP4ZJ35S5YQZC",
+      "role": "builder",
+      "work_kind": "stage_build",
+      "created_at": "2026-10-16T22:37:16.682Z",
+      "claimed_at": "2026-10-16T22:37:16.682Z",
+      "launched_at": "2026-10-16T22:37:17.515Z",
+      "finished_at": "2026-10-16T22:38:26.373Z",
+      "wait": 0.833,
+      "invocation_elapsed": 68.858,
+      "end_protocol": 0,
+      "elapsed": 68.858,
+      "tokens": {
+        "billable": 34738,
+        "cached": 248129,
+        "output": 8090
+      },
+      "cost": {
+        "usd": 0.24462090000000003,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DSJ0ECK8TAYNG16716R1S",
+        "memory_peak": 241954816,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DSJ0ECK8TAYNG16716R1S",
+          "memory_peak": 241954816,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DVPN26FACR6GP09FPEMZP",
+      "role": "verifier",
+      "work_kind": "verification",
+      "created_at": "2026-10-16T22:38:26.976Z",
+      "claimed_at": "2026-10-16T22:38:26.976Z",
+      "launched_at": "2026-10-16T22:38:27.905Z",
+      "finished_at": "2026-10-16T22:38:50.506Z",
+      "wait": 0.929,
+      "invocation_elapsed": 22.601,
+      "end_protocol": 0,
+      "elapsed": 22.601,
+      "tokens": {
+        "billable": 11557,
+        "cached": 103103,
+        "output": 1663
+      },
+      "cost": {
+        "usd": 0.0731323,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DVPN46Q148C4Y4G2PNHDV",
+        "memory_peak": 145969152,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DVPN46Q148C4Y4G2PNHDV",
+          "memory_peak": 145969152,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DVQB51THTM8HAYKK70K46",
+      "role": "builder",
+      "work_kind": "stage_build",
+      "created_at": "2026-10-16T22:38:27.682Z",
+      "claimed_at": "2026-10-16T22:38:27.682Z",
+      "launched_at": "2026-10-16T22:38:28.388Z",
+      "finished_at": "2026-10-16T22:39:29.673Z",
+      "wait": 0.706,
+      "invocation_elapsed": 61.285,
+      "end_protocol": 0,
+      "elapsed": 61.285,
+      "tokens": {
+        "billable": 26875,
+        "cached": 163317,
+        "output": 9690
+      },
+      "cost": {
+        "usd": 0.2206997,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DVQB6QF7PC1NPGDGY46P0",
+        "memory_peak": 154804224,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DVQB6QF7PC1NPGDGY46P0",
+          "memory_peak": 154804224,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DXMF8BGYV04DPFWZ9GQKX",
+      "role": "verifier",
+      "work_kind": "verification",
+      "created_at": "2026-10-16T22:39:30.277Z",
+      "claimed_at": "2026-10-16T22:39:30.277Z",
+      "launched_at": "2026-10-16T22:39:30.978Z",
+      "finished_at": "2026-10-16T22:39:56.697Z",
+      "wait": 0.701,
+      "invocation_elapsed": 25.719,
+      "end_protocol": 0,
+      "elapsed": 25.719,
+      "tokens": {
+        "billable": 21508,
+        "cached": 120221,
+        "output": 2352
+      },
+      "cost": {
+        "usd": 0.12154210000000001,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DXMFAKGQCY4BAXQQ2W4TP",
+        "memory_peak": 149786624,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DXMFAKGQCY4BAXQQ2W4TP",
+          "memory_peak": 149786624,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53DYSG16PPXJBYKH41S2948",
+      "role": "verifier",
+      "work_kind": "check_correction",
+      "created_at": "2026-10-16T22:40:08.191Z",
+      "claimed_at": "2026-10-16T22:40:08.191Z",
+      "launched_at": "2026-10-16T22:40:08.894Z",
+      "finished_at": "2026-10-16T22:40:28.080Z",
+      "wait": 0.703,
+      "invocation_elapsed": 19.186,
+      "end_protocol": 0,
+      "elapsed": 19.186,
+      "tokens": {
+        "billable": 17058,
+        "cached": 109008,
+        "output": 1786
+      },
+      "cost": {
+        "usd": 0.09696480000000002,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53DYSG2Z4SC1AHH3DW8SHC4",
+        "memory_peak": 150634496,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53DYSG2Z4SC1AHH3DW8SHC4",
+          "memory_peak": 150634496,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53E084SD5NDAVETZBX1XATV",
+      "role": "reviewer",
+      "work_kind": "review",
+      "created_at": "2026-10-16T22:40:55.959Z",
+      "claimed_at": "2026-10-16T22:40:55.959Z",
+      "launched_at": "2026-10-16T22:40:56.832Z",
+      "finished_at": "2026-10-16T22:41:23.370Z",
+      "wait": 0.873,
+      "invocation_elapsed": 26.538,
+      "end_protocol": 0,
+      "elapsed": 26.538,
+      "tokens": {
+        "billable": 23023,
+        "cached": 121539,
+        "output": 2330
+      },
+      "cost": {
+        "usd": 0.1275139,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53E084WNVZGS1NCC7Y6JW74",
+        "memory_peak": 149082112,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53E084WNVZGS1NCC7Y6JW74",
+          "memory_peak": 149082112,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53E2W6FRDSQ8S6QJK5A2RMK",
+      "role": "reviewer",
+      "work_kind": "review",
+      "created_at": "2026-10-16T22:42:22.028Z",
+      "claimed_at": "2026-10-16T22:42:22.028Z",
+      "launched_at": "2026-10-16T22:42:22.904Z",
+      "finished_at": "2026-10-16T22:42:42.116Z",
+      "wait": 0.876,
+      "invocation_elapsed": 19.212,
+      "end_protocol": 0,
+      "elapsed": 19.212,
+      "tokens": {
+        "billable": 24801,
+        "cached": 59992,
+        "output": 1854
+      },
+      "cost": {
+        "usd": 0.12372319999999999,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53E2W6HGG9RRPCAJ8610959",
+        "memory_peak": 145231872,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53E2W6HGG9RRPCAJ8610959",
+          "memory_peak": 145231872,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53E624V4K04F6YKB8D0FXN3",
+      "role": "verifier",
+      "work_kind": "phase_verification",
+      "created_at": "2026-10-16T22:44:06.425Z",
+      "claimed_at": "2026-10-16T22:44:06.425Z",
+      "launched_at": "2026-10-16T22:44:07.174Z",
+      "finished_at": "2026-10-16T22:44:19.224Z",
+      "wait": 0.749,
+      "invocation_elapsed": 12.05,
+      "end_protocol": 0,
+      "elapsed": 12.05,
+      "tokens": {
+        "billable": 8850,
+        "cached": 45132,
+        "output": 898
+      },
+      "cost": {
+        "usd": 0.0488732,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53E624YQ331JW3JYRYHH7N4",
+        "memory_peak": 155324416,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53E624YQ331JW3JYRYHH7N4",
+          "memory_peak": 155324416,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53E6FBPCD2KYKKHKTGK0548",
+      "role": "architect",
+      "work_kind": "replan",
+      "created_at": "2026-10-16T22:44:19.955Z",
+      "claimed_at": "2026-10-16T22:44:19.955Z",
+      "launched_at": "2026-10-16T22:44:20.704Z",
+      "finished_at": "2026-10-16T22:45:18.988Z",
+      "wait": 0.749,
+      "invocation_elapsed": 58.284,
+      "end_protocol": 0,
+      "elapsed": 58.284,
+      "tokens": {
+        "billable": 41823,
+        "cached": 246198,
+        "output": 5678
+      },
+      "cost": {
+        "usd": 0.4973116000000001,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-opus-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53E6FBQG4K1FNECMTVMNW4N",
+        "memory_peak": 157437952,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53E6FBQG4K1FNECMTVMNW4N",
+          "memory_peak": 157437952,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53E89KHZ69YMQKABWD0W7RM",
+      "role": "verifier",
+      "work_kind": "check_authoring",
+      "created_at": "2026-10-16T22:45:19.599Z",
+      "claimed_at": "2026-10-16T22:45:19.599Z",
+      "launched_at": "2026-10-16T22:45:20.382Z",
+      "finished_at": "2026-10-16T22:46:55.874Z",
+      "wait": 0.783,
+      "invocation_elapsed": 95.492,
+      "end_protocol": 0,
+      "elapsed": 95.492,
+      "tokens": {
+        "billable": 53430,
+        "cached": 323988,
+        "output": 12918
+      },
+      "cost": {
+        "usd": 0.3752628,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53E89KJYSQ3JC50CQS4PJ6P",
+        "memory_peak": 237080576,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53E89KJYSQ3JC50CQS4PJ6P",
+          "memory_peak": 237080576,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53EBWP2HYWCET3WBKDKYNX1",
+      "role": "builder",
+      "work_kind": "stage_build",
+      "created_at": "2026-10-16T22:47:17.438Z",
+      "claimed_at": "2026-10-16T22:47:17.438Z",
+      "launched_at": "2026-10-16T22:47:18.232Z",
+      "finished_at": "2026-10-16T22:48:00.432Z",
+      "wait": 0.794,
+      "invocation_elapsed": 42.2,
+      "end_protocol": 0,
+      "elapsed": 42.2,
+      "tokens": {
+        "billable": 20474,
+        "cached": 107606,
+        "output": 5882
+      },
+      "cost": {
+        "usd": 0.15144860000000002,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53EBWP4SNZ12Q93N8WKNGXA",
+        "memory_peak": 149606400,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53EBWP4SNZ12Q93N8WKNGXA",
+          "memory_peak": 149606400,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53EC8WV5DTJHQNT10BD12K6",
+      "role": "spec_writer",
+      "work_kind": "spec_change",
+      "created_at": "2026-10-16T22:47:29.945Z",
+      "claimed_at": "2026-10-16T22:47:29.945Z",
+      "launched_at": "2026-10-16T22:47:30.658Z",
+      "finished_at": "2026-10-16T22:48:02.202Z",
+      "wait": 0.713,
+      "invocation_elapsed": 31.544,
+      "end_protocol": 0,
+      "elapsed": 31.544,
+      "tokens": {
+        "billable": 17799,
+        "cached": 101490,
+        "output": 2126
+      },
+      "cost": {
+        "usd": 0.20515400000000003,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-opus-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53EC8WWH7NX64EHJ0883RQA",
+        "memory_peak": 149975040,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53EC8WWH7NX64EHJ0883RQA",
+          "memory_peak": 149975040,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53ED73T8KV9R2VVVEYDWJSV",
+      "role": "verifier",
+      "work_kind": "verification",
+      "created_at": "2026-10-16T22:48:00.887Z",
+      "claimed_at": "2026-10-16T22:48:00.887Z",
+      "launched_at": "2026-10-16T22:48:01.649Z",
+      "finished_at": "2026-10-16T22:48:20.351Z",
+      "wait": 0.762,
+      "invocation_elapsed": 18.702,
+      "end_protocol": 0,
+      "elapsed": 18.702,
+      "tokens": {
+        "billable": 10393,
+        "cached": 102088,
+        "output": 1372
+      },
+      "cost": {
+        "usd": 0.06546479999999999,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53ED73ZJV7ZTPGHYNF0QZEX",
+        "memory_peak": 145043456,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53ED73ZJV7ZTPGHYNF0QZEX",
+          "memory_peak": 145043456,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53ED8PNVRVT67SYXGNKR4NW",
+      "role": "builder",
+      "work_kind": "stage_build",
+      "created_at": "2026-10-16T22:48:02.515Z",
+      "claimed_at": "2026-10-16T22:48:02.515Z",
+      "launched_at": "2026-10-16T22:48:03.177Z",
+      "finished_at": "2026-10-16T22:49:18.007Z",
+      "wait": 0.662,
+      "invocation_elapsed": 74.83,
+      "end_protocol": 0,
+      "elapsed": 74.83,
+      "tokens": {
+        "billable": 26614,
+        "cached": 169952,
+        "output": 11130
+      },
+      "cost": {
+        "usd": 0.2347152,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53ED8PQX7DC78FQNCBVRYYW",
+        "memory_peak": 162631680,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53ED8PQX7DC78FQNCBVRYYW",
+          "memory_peak": 162631680,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53EDTN028B7JH7EM39SJSDT",
+      "role": "verifier",
+      "work_kind": "check_correction",
+      "created_at": "2026-10-16T22:48:20.893Z",
+      "claimed_at": "2026-10-16T22:48:20.893Z",
+      "launched_at": "2026-10-16T22:48:21.611Z",
+      "finished_at": "2026-10-16T22:48:44.271Z",
+      "wait": 0.718,
+      "invocation_elapsed": 22.66,
+      "end_protocol": 0,
+      "elapsed": 22.66,
+      "tokens": {
+        "billable": 22603,
+        "cached": 121230,
+        "output": 2103
+      },
+      "cost": {
+        "usd": 0.123537,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53EDTN13B88Y4J56RZY744W",
+        "memory_peak": 150798336,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53EDTN13B88Y4J56RZY744W",
+          "memory_peak": 150798336,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53EFJW3BR0MK0FNMH1B1RAP",
+      "role": "verifier",
+      "work_kind": "verification",
+      "created_at": "2026-10-16T22:49:18.464Z",
+      "claimed_at": "2026-10-16T22:49:18.464Z",
+      "launched_at": "2026-10-16T22:49:19.201Z",
+      "finished_at": "2026-10-16T22:49:35.696Z",
+      "wait": 0.737,
+      "invocation_elapsed": 16.495,
+      "end_protocol": 0,
+      "elapsed": 16.495,
+      "tokens": {
+        "billable": 9209,
+        "cached": 84190,
+        "output": 1104
+      },
+      "cost": {
+        "usd": 0.056263,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53EFJW9068F8CRKHYCHHAKN",
+        "memory_peak": 155004928,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53EFJW9068F8CRKHYCHHAKN",
+          "memory_peak": 155004928,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53EN0MJKEP98J89A1ZJ5678",
+      "role": "reviewer",
+      "work_kind": "review",
+      "created_at": "2026-10-16T22:52:16.399Z",
+      "claimed_at": "2026-10-16T22:52:16.399Z",
+      "launched_at": "2026-10-16T22:52:17.342Z",
+      "finished_at": "2026-10-16T22:52:41.432Z",
+      "wait": 0.943,
+      "invocation_elapsed": 24.09,
+      "end_protocol": 0,
+      "elapsed": 24.09,
+      "tokens": {
+        "billable": 18155,
+        "cached": 161518,
+        "output": 1887
+      },
+      "cost": {
+        "usd": 0.10759780000000001,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EN0EGN240RRVC0YBZCHPM",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53EN0MSNS3XBPQ97YMYMAFM",
+        "memory_peak": 147570688,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53EN0MSNS3XBPQ97YMYMAFM",
+          "memory_peak": 147570688,
+          "memory_max": 4294967296
+        }
+      ]
+    },
+    {
+      "id": "run_01M53ESHDY5J3EFK5ND4RV7WX3",
+      "role": "verifier",
+      "work_kind": "phase_verification",
+      "created_at": "2026-10-16T22:54:44.667Z",
+      "claimed_at": "2026-10-16T22:54:44.667Z",
+      "launched_at": "2026-10-16T22:54:45.405Z",
+      "finished_at": "2026-10-16T22:54:58.935Z",
+      "wait": 0.738,
+      "invocation_elapsed": 13.53,
+      "end_protocol": 0,
+      "elapsed": 13.53,
+      "tokens": {
+        "billable": 10173,
+        "cached": 62360,
+        "output": 1140
+      },
+      "cost": {
+        "usd": 0.058304,
+        "status": "estimated"
+      },
+      "model": {
+        "unknown": "no model was observed for the run"
+      },
+      "outcome": "completed",
+      "reason_class": "none",
+      "repair_ordinal": 0,
+      "host_observation": "hobs_01M53EN0EGN240RRVC0YBZCHPM",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "domain": {
+        "id": "dom_01M53ESHE2VYCSNNGN2T903HW2",
+        "memory_peak": 153133056,
+        "memory_max": 4294967296
+      },
+      "domains": [
+        {
+          "id": "dom_01M53ESHE2VYCSNNGN2T903HW2",
+          "memory_peak": 153133056,
+          "memory_max": 4294967296
+        }
+      ]
+    }
+  ],
+  "domains": [
+    {
+      "id": "dom_01M53D1HVD98DJ3DHK1PHHB8SN",
+      "run": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 200069120,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53D53HBCSWH1YGZC697N7N3",
+      "run": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 167059456,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53D9WACGXG2856GM4XZGCP0",
+      "run": "run_01M53D9VZ9R567YWKDBHME8714",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 157122560,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DFVXPS41BPAY0M8QPPATD",
+      "run": "run_01M53DFVXMPXJCFKXQR924NR60",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 236171264,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DSJ0ECK8TAYNG16716R1S",
+      "run": "run_01M53DSJ0DDCHTP4ZJ35S5YQZC",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 241954816,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DVP4CQTSSRHADKYXXCBZ9",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33886208,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DVPN46Q148C4Y4G2PNHDV",
+      "run": "run_01M53DVPN26FACR6GP09FPEMZP",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 145969152,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DVQB6QF7PC1NPGDGY46P0",
+      "run": "run_01M53DVQB51THTM8HAYKK70K46",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 154804224,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DVZRHXD0PP8YGF5623PGX",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 100536320,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DW8PPYAPG9V9DR5T4XYPG",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 83574784,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DWHPXEVR9E3MFSMWA7PD3",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 32653312,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DWS6C8RZV361BD2T22P6A",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 26656768,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DX0ZQ3Y60QKMVAWPSSF2M",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33804288,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DXKYCA8DPR7JD3KRG1DGW",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 54771712,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DXMFAKGQCY4BAXQQ2W4TP",
+      "run": "run_01M53DXMF8BGYV04DPFWZ9GQKX",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 149786624,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DXWXT2JNRH8E9QWAJV8Z9",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 34775040,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DY4P80AM0B84B3XA8Z7QZ",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 99471360,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DYDMQ5BHCJXD33CDX6CQ5",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 48758784,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DYNJAVRWCSFCCF8JTKQEY",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 83595264,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DYSG2Z4SC1AHH3DW8SHC4",
+      "run": "run_01M53DYSG16PPXJBYKH41S2948",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 150634496,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53DYZW7KJYVRPSBCF9Q83GW",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 31387648,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DZ7F0M5CNBZ7RJF9BAWHA",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 88506368,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DZGBCGAZCSRKDHNR9WTQE",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 81063936,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DZR70QQ63W56ZHSFY7QQ3",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 43626496,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53DZZYQ55VM439RETGMFBSM",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33849344,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E084WNVZGS1NCC7Y6JW74",
+      "run": "run_01M53E084SD5NDAVETZBX1XATV",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 149082112,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53E0AD25M4HNC1M03AVX4Y1",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 57638912,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E0JN0DRK1ZHEW0YYNJ63M",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33398784,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E0T7XBMN67XZ4JZQETREY",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 100962304,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E135KK1XEKVFJXNQ7C9ZA",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 48746496,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E1AYMB3A6W55DKCJNB1MM",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 85061632,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E1M59TP5PG6PSKE6N1FKF",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 31703040,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E1VSHH34AGS65NKV02Q30",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 88961024,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E24CERX6GS5N0K59B8YXZ",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 80424960,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E2CC8RG3ZZ8KJNMSSNPXF",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 45588480,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E2M1BYBYRSD5GTQ5E2N24",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33353728,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E2W6HGG9RRPCAJ8610959",
+      "run": "run_01M53E2W6FRDSQ8S6QJK5A2RMK",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 145231872,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53E3GAWNFCFAWP49XNC5S6D",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 56463360,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E3QY8MJ6ZAKK98MXSKRKY",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33492992,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E3ZBGH9TQZDWEA2832H5K",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 101617664,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E485DKAN5ZSRK61WFZRB9",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 47603712,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E4FQTVWEY0T3QRGSX0PZ5",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 85671936,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E4RSJBM4JRWS3YN49VDF5",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 31997952,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E510CNBPXTPPR1HSSYQW6",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 88690688,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E59T1YBSJ0MXGEX6NSJRT",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 80850944,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E5HNXT67H6C5RHRBTP6H5",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 43802624,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E5SW3V2M3R08KJM4XMKP6",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33820672,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53E624YQ331JW3JYRYHH7N4",
+      "run": "run_01M53E624V4K04F6YKB8D0FXN3",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 155324416,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53E6FBQG4K1FNECMTVMNW4N",
+      "run": "run_01M53E6FBPCD2KYKKHKTGK0548",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 157437952,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53E89KJYSQ3JC50CQS4PJ6P",
+      "run": "run_01M53E89KHZ69YMQKABWD0W7RM",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 237080576,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53EBWP4SNZ12Q93N8WKNGXA",
+      "run": "run_01M53EBWP2HYWCET3WBKDKYNX1",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 149606400,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53EC7PSMPH0PZWMD2SBN1DW",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 54370304,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EC8WWH7NX64EHJ0883RQA",
+      "run": "run_01M53EC8WV5DTJHQNT10BD12K6",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 149975040,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53ECGVS8680RVXGTDWTR198",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 34222080,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ECSCJJ5EQK1CKTEQTSAB5",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 101539840,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ED2TKMFQ7GREEEKSHPZH2",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 48803840,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ED73ZJV7ZTPGHYNF0QZEX",
+      "run": "run_01M53ED73T8KV9R2VVVEYDWJSV",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 145043456,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53ED8PQX7DC78FQNCBVRYYW",
+      "run": "run_01M53ED8PNVRVT67SYXGNKR4NW",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 162631680,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53EDD52P1Z0SVS40W1B0W24",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 56160256,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EDNECXFNBP386CGA6JE8V",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33775616,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EDTN13B88Y4J56RZY744W",
+      "run": "run_01M53EDTN028B7JH7EM39SJSDT",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 150798336,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53EDYF44J9B60R1DVABEGGK",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 39432192,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EE6BZPYDYJK1F8PHC715M",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 99479552,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EEF9FQQH3224184GMK10X",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 79523840,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EEQPBRRF0DJF84Q4S3SRK",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 47620096,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EEZW6N5FGJ38QQ836GQ67",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 82931712,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EF9D67QNMD4FQPPYS4SN8",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 55902208,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EFHDJEBZJ9WZS4KTH4YHB",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 34172928,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EFJW9068F8CRKHYCHHAKN",
+      "run": "run_01M53EFJW3BR0MK0FNMH1B1RAP",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 155004928,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53EFTPN8K771X34C87J2C81",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 56270848,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EG2TZTTRDBCQRX92CCQV3",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33841152,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EGAMBZEVFQBENESXDAPC7",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 40116224,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EGJ9PY2TGZS2J0NR5ZCJS",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 101388288,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EGVG5MCPDV1SX2TBV1XVC",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 79638528,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EH3QP3YK2H9DBETSENWB7",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 49926144,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EHC34MP7GRAHX37EGNN29",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 85700608,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EHP5KJM12BYGNA24F6YGJ",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 77946880,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EHYRMPD24NR8P3WHFPK26",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 109850624,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EJAEWBDYVZ8WQE2EV67RB",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 31313920,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EJJXMBM6HZW8206ZBM583",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 91377664,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EJWCBF590TCGXQVZPVF6Z",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 79958016,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EK3ZTPH537ZM9BXT1J1ZZ",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 42647552,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EKD0CZRSAA1WB353FASTG",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 32907264,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EN0MSNS3XBPQ97YMYMAFM",
+      "run": "run_01M53EN0MJKEP98J89A1ZJ5678",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 147570688,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53ENSAFHMXYCENNB8M45WJ2",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 56377344,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EP0TKT15703NW2JN9GW0E",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33992704,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EP8GQ42HZ142KKQFPFZKA",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 39985152,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EPGA9WJR3VE46EJ0K4TS9",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 99606528,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EPSGXY2M5B0C2P5QZATEN",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 80715776,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EQ15AWFG5STDY9XRWBHCT",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 50307072,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EQ95T0AVW5E3C7F532Y27",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 84115456,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EQJF31P9B541P1281XFP0",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 76480512,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EQTV3MWK3HH3XS0WZEMTV",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 105312256,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ER6BW9D8DPGFJ73PARAZ4",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 31711232,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53EREQEFYA55QN7FEC6DWFZ",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 89403392,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ERR3RKQ182X72SBGH8YG1",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 80637952,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ES08GA7A2S4EP3RX8HS40",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 44056576,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ES8PD9PXH8ZZ0CEN0BSDD",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 33464320,
+      "memory_max": 2147483648
+    },
+    {
+      "id": "dom_01M53ESHE2VYCSNNGN2T903HW2",
+      "run": "run_01M53ESHDY5J3EFK5ND4RV7WX3",
+      "profile": "role",
+      "status": "terminated",
+      "memory_peak": 153133056,
+      "memory_max": 4294967296
+    },
+    {
+      "id": "dom_01M53ESZXZQ4DZMJ0YYJVYXS51",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "service",
+      "status": "terminated",
+      "memory_peak": {
+        "unknown": "the peak has not been read"
+      },
+      "memory_max": {
+        "unknown": "the maximum was not recorded at admission"
+      }
+    },
+    {
+      "id": "dom_01M53ET0WG2D81S4A5Y3GDRQTX",
+      "run": {
+        "unknown": "a domain of no run (a check or a service)"
+      },
+      "profile": "check",
+      "status": "terminated",
+      "memory_peak": 27684864,
+      "memory_max": 2147483648
+    }
+  ],
+  "host": {
+    "id": "hobs_01M53EN0EGN240RRVC0YBZCHPM",
+    "trigger": "engine_start",
+    "observed_at": "2026-10-16T22:52:16.206Z",
+    "incarnation": "inc_01M53EMX5TA1BSWC5Z81XVSVYV",
+    "engine_version": "0.0.0",
+    "host_qualification": "hq_01M53EMZPVF7FQHC44RR868CZX",
+    "backend_entry": {
+      "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+      "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+      "model": "claude-sonnet-5-5"
+    },
+    "autonomy": "phase",
+    "tick_interval": 30,
+    "domain_memory_max": 8589934592,
+    "role_memory_max": 4294967296,
+    "check_memory_max": 2147483648,
+    "max_concurrent_domains": 4,
+    "mem_available": 13323780096,
+    "peak_domains": 1
+  },
+  "hosts": [
+    {
+      "id": "hobs_01M53C9CZK27R5QABDY6KG3X1R",
+      "trigger": "project_start",
+      "observed_at": "2026-10-16T22:10:58.675Z",
+      "incarnation": "inc_01M53C9A4CTBWXN275SE8NP3KE",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53C9C91BZW55C5H145J4DV1",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13582209024,
+      "peak_domains": 0
+    },
+    {
+      "id": "hobs_01M53CAWQ9S13TRYS89GB26E74",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:11:47.560Z",
+      "incarnation": "inc_01M53CAT2ZN9YC09T378VKJNNP",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53CAW6KS2A7QD29TQK9YPC3",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13548163072,
+      "peak_domains": 1
+    },
+    {
+      "id": "hobs_01M53D9PW7PSRJETM1N98V7XRM",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:28:37.382Z",
+      "incarnation": "inc_01M53D9KSCDCSDWMJ3MPMECNXC",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53D9PA71HGYYMFTBD2XKRNR",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13521403904,
+      "peak_domains": 1
+    },
+    {
+      "id": "hobs_01M53DS4HWJVTEQ7D8X2W4EJVT",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:37:02.907Z",
+      "incarnation": "inc_01M53DS1F7058FHSMTV1ASP69Q",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53DS3XCTBX63QVX77KFNAQY",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13549576192,
+      "peak_domains": 3
+    },
+    {
+      "id": "hobs_01M53EBJ39DG7GP7CAVM4CM8AR",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:47:06.600Z",
+      "incarnation": "inc_01M53EBF0GA9P70RSRPVA7ASRH",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53EBHFWC4Y09T9GC52842XY",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13295230976,
+      "peak_domains": 3
+    },
+    {
+      "id": "hobs_01M53EMHPJTKEHZRSP8X6V4QBZ",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:52:01.105Z",
+      "incarnation": "inc_01M53EKWZZEHYFBPBDTKHH7NGP",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53EKZH1WH42K5BSXS2QXXTP",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13559029760,
+      "peak_domains": 0
+    },
+    {
+      "id": "hobs_01M53EN0EGN240RRVC0YBZCHPM",
+      "trigger": "engine_start",
+      "observed_at": "2026-10-16T22:52:16.206Z",
+      "incarnation": "inc_01M53EMX5TA1BSWC5Z81XVSVYV",
+      "engine_version": "0.0.0",
+      "host_qualification": "hq_01M53EMZPVF7FQHC44RR868CZX",
+      "backend_entry": {
+        "id": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "binary_sha256": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453",
+        "model": "claude-sonnet-5-5"
+      },
+      "autonomy": "phase",
+      "tick_interval": 30,
+      "domain_memory_max": 8589934592,
+      "role_memory_max": 4294967296,
+      "check_memory_max": 2147483648,
+      "max_concurrent_domains": 4,
+      "mem_available": 13323780096,
+      "peak_domains": 1
+    }
+  ]
+}
