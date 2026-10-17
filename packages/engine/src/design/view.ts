@@ -11,7 +11,29 @@ import { projectEffective } from '../store/transitions/settings.js';
 import { approvedModuleMap, designPolicyOf } from './policy.js';
 import { currentInventory } from './store.js';
 import { heldStages } from './readiness.js';
+import type { AssetManifest } from './assets.js';
 import { deferredBatches } from './approval.js';
+
+// The selected slots and their selected variants (D7 §5.8, §6.2): the
+// current approved revision's manifest under its selection; before any
+// approval, every default slot and variant of the recorded inventory's
+// manifest. A default kind the selection leaves out is not selected.
+function selectedSlots(db: Database.Database, project: string, inventoryManifest: string | null): { key: string; variants: string[] }[] {
+  const rev = db.prepare(`SELECT "selection", "asset_manifest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as
+    | { selection: string | null; asset_manifest: string | null }
+    | undefined;
+  const invSlots = parseJson<AssetManifest>(inventoryManifest)?.slots ?? [];
+  if (!rev) return invSlots.map((s) => ({ key: s.key, variants: s.variants.map((v) => v.name) }));
+  const selection = parseJson<{ slots?: { kind: string; variants: string[] }[] }>(rev.selection);
+  const defaults = new Set(invSlots.map((s) => s.kind));
+  return (parseJson<AssetManifest>(rev.asset_manifest)?.slots ?? [])
+    .map((s) => {
+      const chosen = selection?.slots?.find((x) => x.kind === s.kind);
+      const variants = chosen ? s.variants.map((v) => v.name).filter((n) => chosen.variants.includes(n)) : Array.isArray(selection?.slots) && defaults.has(s.kind) ? [] : s.variants.map((v) => v.name);
+      return { key: s.key, variants };
+    })
+    .filter((s) => s.variants.length > 0);
+}
 
 export function designView(db: Database.Database, args: { project: string }): Record<string, unknown> {
   const project = db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string } | undefined;
@@ -48,6 +70,28 @@ export function designView(db: Database.Database, args: { project: string }): Re
     return { target: h.target, requirement: h.requirement, phase: h.phase, status: accepted ? 'owner_accepted' : 'pending' };
   });
   const due = db.prepare(`SELECT "id", "evidence" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { id: string; evidence: string } | undefined;
+  // The native conventions the current approved revision leaves not
+  // checkable yet, counted per target (D7 §7.2, A.8; SEAM.md §494).
+  const current = db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(args.project) as { id: string } | undefined;
+  const not_checkable_yet = Object.fromEntries(
+    (current
+      ? (db.prepare(`SELECT "target", COUNT(*) AS "n" FROM "design_native_obligations" WHERE "design_revision" = ? AND "status" = 'not_checkable_yet' GROUP BY "target" ORDER BY "target"`).all(current.id) as { target: string; n: number }[])
+      : []
+    ).map((r) => [r.target, r.n]),
+  );
+  // The release hook's count (D7 §6.7, A.8; SEAM.md §496), inert until D5:
+  // every selected slot (the inventory's defaults before the first
+  // approval) one of whose selected variants has no effective version from
+  // an approval, counted over the selection, not over the rows that happen
+  // to exist (the slice-41 review's S3).
+  const notApproved = selectedSlots(db, args.project, inv?.row.manifest ?? null)
+    .filter((s) => !s.variants.every((v) => (effective as { slot: string; variant: string; source: string }[]).some((e) => e.slot === s.key && e.variant === v && e.source === 'approved')))
+    .map((s) => s.key)
+    .sort();
+  // The policy read gives every key its value or default; a value it lacks
+  // is unknown, never assumed (the review's N5).
+  const requiredFor = (projectEffective(db, args.project) as Record<string, unknown>).assets_required_for;
+  const assets_required = { for: typeof requiredFor === 'string' ? requiredFor : { unknown: 'assets_required_for could not be read from the effective policy' }, not_approved: notApproved, count: notApproved.length };
   return {
     policy,
     design_preview: (projectEffective(db, args.project) as Record<string, unknown>).design_preview ?? 'static',
@@ -56,7 +100,9 @@ export function designView(db: Database.Database, args: { project: string }): Re
     inventory: inv?.inventory ?? null,
     revisions,
     effective_assets: effective,
+    assets_required,
     human_tests,
+    not_checkable_yet,
     holds: heldStages(db, args.project),
     // A design batch the engine is holding back, and why (objection 166; rule 25).
     batches_deferred: deferredBatches(db, args.project),

@@ -10,7 +10,7 @@
 // A checkpoint invokes none of this; `finalizeIntegration` registers nothing
 // from one (B02).
 
-import { designAssignedHumanTests } from '../design/policy.js';
+import { designAssignedHumanTests, designPolicyOf } from '../design/policy.js';
 import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest, specChangeRoute } from './check.js';
@@ -195,6 +195,14 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
       approved,
       adopted: (db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption !== null,
       phase_size: projectOptions(db, args.project).phase_size,
+      // D7 §4.1, §8.3 (G2): clause 5 reads the design policy and the spec's targets.
+      // A specification whose representation cannot be read has targets
+      // unknown, never "none stated" (the slice-41 review's N1).
+      design: {
+        policy: designPolicyOf(db, args.project),
+        spec_targets: representation?.targets ?? null,
+        ...(spec && representation === null ? { spec_targets_unknown: `the representation of specification version ${spec.version} cannot be read` } : {}),
+      },
       questions: (representation?.questions ?? []).map((q) => ({ id: q.id, blocks: q.blocks, phase_hint: q.phase_hint })),
     },
     spec_revision: spec?.id ?? null,

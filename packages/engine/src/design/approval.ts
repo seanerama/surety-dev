@@ -38,10 +38,11 @@ import type { AssetManifest } from './assets.js';
 import { narrowings as narrowingsOf } from './check.js';
 import { writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
-import { approvedModuleMap, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
+import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
 import { designDueState } from './readiness.js';
 import { blobsHash, currentInventory } from './store.js';
 import { latestCheck } from './records.js';
+import { disputedInterfaces } from './findings.js';
 
 type Db = Database.Database;
 
@@ -182,7 +183,9 @@ export const revisionOfRequest = (db: Db, request: string): RevisionRow | undefi
 // the design's at raise: a difference refuses the batch (§7.4). null when
 // they agree; the reason otherwise.
 export function batchInventoryDifference(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): string | null {
-  const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: args.addedHumanTests });
+  // The design's human tests already approved stay excluded beside the ones
+  // this change adds: a later design's batch revises them (M533 (e)).
+  const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: [...new Set([...designHumanTestKeys(db, args.project), ...args.addedHumanTests])] });
   if ('unknown' in inputs) return `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`;
   const next = deriveInventory(inputs);
   if (args.designDigest === null) return 'the design names no inventory';
@@ -465,11 +468,12 @@ function proposedRepresentation(db: Db, request: string): SpecRepresentation | n
   return liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
 }
 
-function interfacesDisputed(rev: RevisionRow): string[] {
+// The interfaces its screens use that a Designer's finding still open
+// disputes (D7 §4.5; SEAM.md §491): open until the owner routes it.
+function interfacesDisputed(db: Db, rev: RevisionRow): string[] {
   const content = contentOf(rev);
   const used = new Set((content?.screens.screens ?? []).flatMap((s) => (Array.isArray(s.interfaces) ? (s.interfaces as string[]) : [])));
-  const findings = parseJson<{ interface?: string; category?: string }[]>(rev.findings) ?? [];
-  return [...new Set(findings.filter((f) => typeof f.interface === 'string' && used.has(f.interface)).map((f) => f.interface!))].sort();
+  return disputedInterfaces(db, rev.project).filter((i) => used.has(i));
 }
 
 export const DESIGN_APPROVAL: KindSpec = {
@@ -493,7 +497,7 @@ export const DESIGN_APPROVAL: KindSpec = {
     const impact = parseJson<Record<string, unknown>>(r?.impact_value ?? null);
     const assetManifest = parseJson<AssetManifest>(rev.asset_manifest);
     const narrowings = parseJson<string[]>(rev.narrowings) ?? [];
-    const disputed = interfacesDisputed(rev);
+    const disputed = interfacesDisputed(tx.db, rev);
     const evidence = {
       mockups,
       design_check: check ? { id: check.id, outcome: check.outcome, hash: check.hash } : null,
@@ -624,6 +628,9 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   if (!args.withoutCriteria && rev.spec_change_request) assignHumanTests(tx, rev, args.roadmap ?? null);
   else if (rev.scope === 'asset_only' && prior) tx.db.prepare('UPDATE "design_revisions" SET "assignments" = (SELECT "assignments" FROM "design_revisions" WHERE "id" = ?) WHERE "id" = ?').run(prior.id, rev.id);
   bindStageScreens(tx, rev);
+  // The native conventions the design leaves not checkable yet (§7.2, §7.3;
+  // SEAM.md §494), each bound to its target's human-test requirement.
+  recordNativeObligations(tx, rev);
   tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
   if (moved.length > 0) {
     tx.emit('design.assets_approved', { project: rev.project, design_revision: rev.id }, { moved });
@@ -642,9 +649,14 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
 function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null, held: Set<string>): { slot: string; variant: string; from_version: number | null; to_version: number }[] {
   if (!manifest) return [];
   const selection = parseJson<{ slots?: { kind: string; variants: string[] }[] }>(rev.selection);
+  // A default kind the selection leaves out is narrowed away (§5.8: "slots
+  // and variants only as selected"; SEAM.md §496); a kind the design adds
+  // beyond the defaults (a banner, an illustration) is the design's own.
+  const defaults = new Set((currentInventory(tx.db, rev.project)?.inventory.targets ?? []).flatMap((t) => t.required_slots.map((s) => s.kind)));
   const selected = (kind: string, variant: string): boolean => {
     const s = selection?.slots?.find((x) => x.kind === kind);
-    return s ? s.variants.includes(variant) : true;
+    if (s) return s.variants.includes(variant);
+    return !(Array.isArray(selection?.slots) && defaults.has(kind));
   };
   const moved: { slot: string; variant: string; from_version: number | null; to_version: number }[] = [];
   for (const slot of manifest.slots) {
@@ -665,6 +677,23 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
         )
         .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, rev.revision, v.file, JSON.stringify(slot.platforms), rev.id);
       moved.push({ slot: slot.key, variant: v.name, from_version: now?.slot_version ?? null, to_version: slot.slot_version });
+    }
+  }
+  // A selected slot and variant with no effective row (narrowed away by an
+  // earlier design, selected again by this one): its engine placeholder,
+  // from the recorded inventory's manifest, is its effective version again
+  // (§6.4: "else the slot's engine placeholder"; the slice-41 review's S3).
+  const inv = currentInventory(tx.db, rev.project);
+  for (const slot of parseJson<AssetManifest>(inv?.row.manifest ?? null)?.slots ?? []) {
+    for (const v of slot.variants) {
+      if (!selected(slot.kind, v.name) || typeof v.file !== 'string' || typeof v.digest !== 'string') continue;
+      if (tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name)) continue;
+      tx.db
+        .prepare(
+          `INSERT INTO "design_effective_assets" ("id", "created_at", "project", "slot", "kind", "variant", "slot_version", "source", "digest", "format", "revision", "file", "platforms", "since_design_revision")
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'placeholder', ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, inv!.row.revision, v.file, JSON.stringify(slot.platforms), rev.id);
     }
   }
   return moved;
@@ -720,6 +749,47 @@ export function bindStageScreens(tx: Tx, rev: RevisionRow): void {
       if (!targets.has(String(s.target))) continue;
       if (!(Array.isArray(s.requirements) ? (s.requirements as string[]) : []).some((r) => reqs.has(r))) continue;
       tx.db.prepare('INSERT OR IGNORE INTO "stage_screens" ("id", "created_at", "stage", "screen", "target", "design_revision") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('sscr_'), tx.at, st.id, String(s.key), String(s.target), rev.id);
+    }
+  }
+}
+
+// D7 §5.3's "not checkable" column as A.2's NativeConvention, per target
+// (SEAM.md §494): what only a running build of the target can show, web's
+// browser back and keyboard path included; `permission_prompt` only where
+// the target has a platform permission.
+export const NOT_CHECKABLE_CONVENTIONS: Readonly<Record<string, readonly string[]>> = {
+  web: ['browser_back', 'keyboard_path'],
+  android: ['system_back', 'permission_prompt', 'touch_interaction'],
+  ios: ['platform_navigation', 'safe_area', 'permission_prompt'],
+  macos: ['window_resize', 'menu_entries', 'keyboard_shortcuts'],
+  windows: ['window_resize', 'menu_entries', 'keyboard_shortcuts'],
+  linux: ['window_resize', 'menu_entries', 'keyboard_shortcuts'],
+};
+
+// The approval's native obligations (D7 §7.2, §7.3; A.3): one row per
+// screen of the approved design and convention its target leaves not
+// checkable yet, derived by the engine from the screens and the inventory
+// (never from the design's own list, so none is dropped), each bound to
+// the target's human-test requirement where the approval made one.
+function recordNativeObligations(tx: Tx, rev: RevisionRow): void {
+  const content = contentOf(rev);
+  const inv = currentInventory(tx.db, rev.project)?.inventory ?? null;
+  const assigned = new Map(((parseJson<{ target: string; requirement: string | null }[]>(getRevision(tx.db, rev.id)?.assignments ?? null) ?? []) as { target: string; requirement: string | null }[]).map((a) => [a.target, a.requirement]));
+  const requirementId = (target: string): string | null => {
+    const key = assigned.get(target) ?? null;
+    if (key === null) return null;
+    return (tx.db.prepare('SELECT "id" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(rev.project, key) as { id: string } | undefined)?.id ?? null;
+  };
+  for (const s of content?.screens.screens ?? []) {
+    const target = String(s.target);
+    const permitted = (inv?.targets ?? []).some((t) => t.target === target && t.permissions.length > 0);
+    for (const convention of NOT_CHECKABLE_CONVENTIONS[target] ?? []) {
+      if (convention === 'permission_prompt' && !permitted) continue;
+      tx.db
+        .prepare(
+          `INSERT OR IGNORE INTO "design_native_obligations" ("id", "created_at", "project", "design_revision", "target", "screen", "convention", "status", "requirement") VALUES (?, ?, ?, ?, ?, ?, ?, 'not_checkable_yet', ?)`,
+        )
+        .run(tx.newId('dnob_'), tx.at, rev.project, rev.id, target, String(s.key), convention, requirementId(target));
     }
   }
 }

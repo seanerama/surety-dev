@@ -9,6 +9,7 @@
 // subjects, the target among them.
 
 import { isSlug } from './paths.js';
+import { fixtureProblem } from './shape.js';
 import { AA_RATIO, contrastRatio } from './contrast.js';
 import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, formatOf, svgActive, sha256hex } from './assets.js';
 import type { Inventory } from './inventory.js';
@@ -29,8 +30,6 @@ export interface CheckContext {
   // The slots and digests the last approved revision approved (§6.4), to
   // judge a forged `approved` status.
   approved: { slot: string; slot_version: number; digests: Record<string, string> }[];
-  maxBytes?: number;
-  maxFiles?: number;
 }
 
 export interface CheckOutcome {
@@ -54,6 +53,9 @@ export const CRITERION_CATALOGUE: Record<string, { targets: string[] | 'all'; te
   asset_parity: { targets: 'all', technologies: 'all', reads: true },
   human: { targets: 'all', technologies: 'all', reads: false },
 };
+// The kinds that read the implemented tokens: the CSS binding, or the
+// neutral tokens.json from named paths (§7.2).
+const NEUTRAL_TOKEN_KINDS = ['token_parity', 'contrast_aa'];
 // D7 A.2 NativeConvention: never a criterion in M6 (not_checkable_yet).
 export const NATIVE_CONVENTIONS = ['browser_back', 'keyboard_path', 'system_back', 'safe_area', 'permission_prompt', 'touch_interaction', 'platform_navigation', 'window_resize', 'menu_entries', 'keyboard_shortcuts'];
 
@@ -115,11 +117,8 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     }
     return ok;
   };
-  // The tree's bounds (§5.5).
-  let bytes = 0;
-  for (const b of tree.files.values()) bytes += b.length;
-  if (ctx.maxBytes !== undefined && bytes > ctx.maxBytes) add('DESIGN_SCHEMA_INVALID', { field: 'design_tree_max_bytes', bytes, max: ctx.maxBytes, why: 'the design tree is larger than its bound' });
-  if (ctx.maxFiles !== undefined && tree.files.size > ctx.maxFiles) add('DESIGN_SCHEMA_INVALID', { field: 'design_tree_max_files', files: tree.files.size, max: ctx.maxFiles, why: 'the design tree has more files than its bound' });
+  // (The tree's bounds, §5.5, refuse the save before any commit or check:
+  // sessions/driver.ts, 413 design_tree_too_large.)
   const json = (path: string): Record<string, unknown> | null => {
     const b = tree.files.get(path);
     if (!b) {
@@ -232,6 +231,14 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
   for (const path of tree.files.keys()) {
     if (!path.startsWith('mockups/') || path.startsWith('mockups/data/')) continue;
     if (!mockups.some((m) => m.path === path) && !named.has(path)) add('DESIGN_MOCKUP_ORPHAN', { mockup: path });
+  }
+  // The role's own fixtures (§4.4; SEAM.md §493): data, never mockups; each
+  // named as the inventory's fixtures are and valid against what that
+  // fixture is valid against.
+  for (const [path, bytes] of tree.files) {
+    if (!path.startsWith('mockups/data/')) continue;
+    const problem = fixtureProblem(path.slice('mockups/data/'.length), bytes, inv);
+    if (problem !== null) add('DESIGN_FIXTURE_INVALID', { file: path, why: problem });
   }
   // ---- clause 3: coverage, per target ----------------------------------------------------------
   const selection = isObj(design?.selection) ? (design!.selection as Record<string, unknown>) : {};
@@ -381,21 +388,41 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     }
   }
   // ---- clause 7: criteria (§7.2) -----------------------------------------------------------------------
+  const techOf = (target: string): string => inv?.targets.find((x) => x.target === target)?.ui_technology ?? 'other';
   for (const [i, c] of criteria.entries()) {
     const kind = String(c.kind);
     const spec = CRITERION_CATALOGUE[kind];
-    if (!spec) {
-      add(NATIVE_CONVENTIONS.includes(kind) ? 'DESIGN_CRITERION_NOT_APPLICABLE' : 'DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, ...(NATIVE_CONVENTIONS.includes(kind) ? { hint: 'not_checkable_yet' } : {}) });
-      continue;
-    }
     const onScreens = screens.filter((s) => c.requirement !== 'new' && strs(s.requirements) && s.requirements.includes(String(c.requirement)));
     const targetsOf = strs(c.targets) ? c.targets : [];
-    for (const s of onScreens.filter((x) => targetsOf.length === 0 || targetsOf.includes(String(x.target)))) {
-      const target = String(s.target);
-      const tech = inv?.targets.find((x) => x.target === target)?.ui_technology ?? 'other';
-      if ((spec.targets !== 'all' && !spec.targets.includes(target)) || (spec.technologies !== 'all' && !spec.technologies.includes(tech))) add('DESIGN_CRITERION_NOT_APPLICABLE', { criterion: i, kind, target, technology: tech });
+    const scoped = onScreens.filter((x) => targetsOf.length === 0 || targetsOf.includes(String(x.target)));
+    if (!spec) {
+      // A native convention is recorded not_checkable_yet, never a
+      // criterion in M6 (§7.2; SEAM.md §494); any other kind is outside
+      // the catalogue.
+      if (NATIVE_CONVENTIONS.includes(kind)) {
+        const targets = [...new Set([...targetsOf, ...scoped.map((s) => String(s.target))])];
+        add('DESIGN_CRITERION_NOT_APPLICABLE', { criterion: i, kind, targets, technologies: targets.map(techOf), hint: 'not_checkable_yet' });
+      } else add('DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, why: 'not a kind of the criterion catalogue (D7 §7.2)' });
+      continue;
     }
-    if (spec.reads && (!strs(c.paths) || c.paths.length === 0)) add('DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, why: 'a criterion that reads files names the implemented paths' });
+    const hasPaths = strs(c.paths) && c.paths.length > 0;
+    let pathsNamed = false;
+    for (const s of scoped) {
+      const target = String(s.target);
+      const tech = techOf(target);
+      if ((spec.targets !== 'all' && !spec.targets.includes(target)) || (spec.technologies !== 'all' && !spec.technologies.includes(tech))) {
+        add('DESIGN_CRITERION_NOT_APPLICABLE', { criterion: i, kind, target, technology: tech });
+        continue;
+      }
+      // token_parity and contrast_aa outside the CSS binding read the
+      // neutral tokens.json where the code reads it: only with paths naming
+      // that (§7.2; SEAM.md §494).
+      if (NEUTRAL_TOKEN_KINDS.includes(kind) && !CSS_TECH.includes(tech) && !hasPaths) {
+        add('DESIGN_CRITERION_NOT_APPLICABLE', { criterion: i, kind, target, technology: tech, missing: 'paths', why: `outside html_css and three_js, ${kind} applies only with paths naming where the code reads the neutral tokens.json` });
+        pathsNamed = true;
+      }
+    }
+    if (spec.reads && !hasPaths && !pathsNamed) add('DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, missing: 'paths', why: 'a criterion that reads files names the implemented paths' });
   }
   // ---- clause 8: assets and the selection --------------------------------------------------------------
   if (manifest && Array.isArray(manifest.slots)) {

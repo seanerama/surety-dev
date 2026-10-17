@@ -328,10 +328,41 @@ export function noteRunModel(tx: Tx, run: string, observed: string | null): void
 
 // The run's token limit as its receipt fixed it at dispatch, or the
 // project's current one where the receipt holds none.
+// A Designer session's receipt fixes the Designer's own budget beside it,
+// and that is its limit (D7 §3.2; SEAM.md §491). The raw limit: what the
+// session has left of it is `sessionRemainder`'s, the one place prior
+// spend is subtracted (the slice-41 review's B1).
 function runLimit(db: Db, invocation: string, project: string): number {
   const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
-  const snapshot = row ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown }) : {};
+  const snapshot = row ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown; designer_session_budget_billable_tokens?: unknown }) : {};
+  if (typeof snapshot.designer_session_budget_billable_tokens === 'number') return snapshot.designer_session_budget_billable_tokens;
   return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
+}
+
+// What an invocation may still spend: its limit less what its session's
+// earlier turns were charged (0 for an invocation that is not a session
+// turn), not below zero.
+function sessionRemainder(db: Db, invocation: string, project: string): number {
+  return Math.max(0, runLimit(db, invocation, project) - sessionPriorSpend(db, invocation));
+}
+
+// Whether an invocation's receipt is a Designer turn's (its snapshot holds
+// the Designer's own budget).
+function designerTurn(db: Db, invocation: string): boolean {
+  const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
+  return row !== undefined && typeof (JSON.parse(row.budget_snapshot) as { designer_session_budget_billable_tokens?: unknown }).designer_session_budget_billable_tokens === 'number';
+}
+
+// The key of a run's cumulative token budget: a Designer session's is
+// `designer_session_budget_billable_tokens`, in place of the run budget
+// (D7 §3.2, "double the run budget"; SEAM.md §491); every other run's,
+// the other roles' sessions included, `budget_run_billable_tokens`.
+export type RunBudgetKey = 'budget_run_billable_tokens' | 'designer_session_budget_billable_tokens';
+export const runBudgetKey = (run: { kind?: string | null; role?: string | null }): RunBudgetKey =>
+  run.kind === 'session' && run.role === 'designer' ? 'designer_session_budget_billable_tokens' : 'budget_run_billable_tokens';
+export function runBudgetOf(db: Db, run: { project: string; kind?: string | null; role?: string | null }): { key: RunBudgetKey; limit: number } {
+  const key = runBudgetKey(run);
+  return { key, limit: projectPolicy(db, run.project)[key]! };
 }
 
 // C4's unknown allowance (D2 §§1.5, 5 C4; E58 item 9; SEAM.md §120 as
@@ -344,7 +375,7 @@ function runLimit(db: Db, invocation: string, project: string): number {
 // cancellation). One of the scripted provider is charged when the engine
 // ended it after at least one observation: an M1 scripted role that reports
 // none is a provider that said nothing, as M1 accepted.
-function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number, engineEnded: boolean): number | null {
+export function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number, engineEnded: boolean): number | null {
   const receipt = db.prepare('SELECT "trust_entry", "qualification_attempt", "provider" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as
     | { trust_entry: string | null; qualification_attempt: string | null; provider: string }
     | undefined;
@@ -356,8 +387,7 @@ function unknownAllowance(db: Db, invocation: string, project: string, n: Amount
   // A session turn is charged the session's remainder (D6 §2.4; M447 (c);
   // the review's N5): the run's limit less what its earlier turns were
   // charged and what this one is known to have spent, not below zero.
-  const prior = sessionPriorSpend(db, invocation);
-  return Math.max(0, runLimit(db, invocation, project) - prior - (billable(n) ?? 0));
+  return Math.max(0, sessionRemainder(db, invocation, project) - (billable(n) ?? 0));
 }
 
 // ---- corrections (SEAM.md §54) ---------------------------------------------------
@@ -631,7 +661,10 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     // its ledger row with the table's version: an invocation under way counts
     // its reported cost as it arrives, and its estimate once it is charged.
     accounts.push({ ...so, cost_usd: so.cost_status === 'estimated' ? null : so.cost_usd, unknown_allowance_tokens: null });
-    if (opts.dispatch) runningAllowanceTokens += Math.max(0, runLimit(db, u.id, project) - (billable(so) ?? 0));
+    // A Designer turn reserves what its session has left (the driver's
+    // decision on objection 156, item 5); every other invocation its run's
+    // limit, as built.
+    if (opts.dispatch) runningAllowanceTokens += Math.max(0, (designerTurn(db, u.id) ? sessionRemainder(db, u.id, project) : runLimit(db, u.id, project)) - (billable(so) ?? 0));
   }
   let unknownCostTokens = 0;
   let allowanceTokens = 0;
@@ -680,10 +713,10 @@ export function exhaustedLimits(db: Db, project: string, opts: { check: boolean;
 // the run's ledger row; the run's own limit on what is known, and the day's
 // limits, are still checked, and a limit passed is still a stop.
 export function budgetCheck(db: Db, args: { run: string; invocation: string; terminal?: boolean }): string | null {
-  const run = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string } | undefined;
+  const run = db.prepare('SELECT "project", "kind", "role" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; kind: string; role: string | null } | undefined;
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
-  const policy = projectPolicy(db, run.project);
+  const limit = runBudgetOf(db, run);
   // An unknown count is never read as zero (E74 item 3): where usage has
   // been observed and nothing billable in it is known, the run's budget
   // cannot be judged and the run does not go on without it (D1 §6.6). With
@@ -696,7 +729,7 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string; ter
   const own = billable(observedSoFar(db, args.invocation));
   const spent = sessionSpendAt(db, { invocation: args.invocation, current: own });
   if (observed && spent === null && args.terminal !== true) return 'budget_usage_unknown';
-  if (spent !== null && spent > policy.budget_run_billable_tokens!) return 'budget_run_billable_tokens';
+  if (spent !== null && spent > limit.limit) return limit.key;
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
 }

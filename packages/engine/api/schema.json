@@ -238,6 +238,49 @@
       "owner_supplied",
       "owner_reported"
     ],
+    "DesignFindingCategory": [
+      "requirement_conflict",
+      "contract_conflict",
+      "defect"
+    ],
+    "Severity": [
+      "critical",
+      "high",
+      "medium",
+      "low"
+    ],
+    "DesignFindingStatus": [
+      "open",
+      "routed",
+      "recorded"
+    ],
+    "DesignFindingRoute": [
+      "change_spec",
+      "architect"
+    ],
+    "Target": [
+      "web",
+      "android",
+      "ios",
+      "macos",
+      "windows",
+      "linux"
+    ],
+    "NativeConvention": [
+      "browser_back",
+      "keyboard_path",
+      "system_back",
+      "safe_area",
+      "permission_prompt",
+      "touch_interaction",
+      "platform_navigation",
+      "window_resize",
+      "menu_entries",
+      "keyboard_shortcuts"
+    ],
+    "NativeObligationStatus": [
+      "not_checkable_yet"
+    ],
     "DesignPreviewsStatus": [
       "deploying",
       "deployed",
@@ -325,12 +368,6 @@
       "contract_conflict",
       "security",
       "hygiene"
-    ],
-    "Severity": [
-      "critical",
-      "high",
-      "medium",
-      "low"
     ],
     "FindingStatus": [
       "open",
@@ -927,6 +964,8 @@
       "plan.generation_refused",
       "session.allocated",
       "session.turn_started",
+      "session.turn_held",
+      "session.turn_released",
       "session.turn_ended",
       "session.turn_settled",
       "session.saved",
@@ -2520,6 +2559,66 @@
         }
       }
     },
+    "design_findings": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "turn": {
+          "required": true
+        },
+        "category": {
+          "required": true,
+          "enum": "DesignFindingCategory"
+        },
+        "severity": {
+          "required": true,
+          "enum": "Severity"
+        },
+        "message": {
+          "required": true
+        },
+        "interface": {
+          "required": false
+        },
+        "requirement": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "DesignFindingStatus"
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "route": {
+          "required": false,
+          "enum": "DesignFindingRoute"
+        },
+        "spec_change_request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "routed_at": {
+          "required": false
+        }
+      }
+    },
     "design_inventories": {
       "fields": {
         "id": {
@@ -2557,6 +2656,43 @@
         },
         "recorded_at": {
           "required": false
+        }
+      }
+    },
+    "design_native_obligations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "design_revision": {
+          "required": true,
+          "references": "design_revisions"
+        },
+        "target": {
+          "required": true,
+          "enum": "Target"
+        },
+        "screen": {
+          "required": true
+        },
+        "convention": {
+          "required": true,
+          "enum": "NativeConvention"
+        },
+        "status": {
+          "required": true,
+          "enum": "NativeObligationStatus"
+        },
+        "requirement": {
+          "required": false,
+          "references": "requirements"
         }
       }
     },
@@ -5314,6 +5450,40 @@
         }
       }
     },
+    "session_held_turns": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "number": {
+          "required": true
+        },
+        "limits": {
+          "required": true
+        },
+        "waiting_on": {
+          "required": true
+        },
+        "released_at": {
+          "required": false
+        },
+        "released_turn": {
+          "required": false,
+          "references": "turns"
+        }
+      }
+    },
     "session_transcripts": {
       "fields": {
         "id": {
@@ -7450,6 +7620,12 @@
       "owner": "sessions/session.ts"
     },
     "session.turn_started": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_held": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_released": {
       "owner": "sessions/session.ts"
     },
     "session.turn_ended": {

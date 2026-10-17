@@ -182,6 +182,10 @@ export const EVENT_OWNERS = {
   'plan.generation_refused': 'plan/bundle.ts',
   'session.allocated': 'sessions/session.ts',
   'session.turn_started': 'sessions/session.ts',
+  // A Designer turn held on the day limits and released (the driver's
+  // decision on objection 156).
+  'session.turn_held': 'sessions/session.ts',
+  'session.turn_released': 'sessions/session.ts',
   'session.turn_ended': 'sessions/session.ts',
   'session.turn_settled': 'sessions/session.ts',
   'session.saved': 'sessions/session.ts',

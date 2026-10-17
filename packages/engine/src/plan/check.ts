@@ -56,6 +56,9 @@ export interface BundleBaseline {
   // D6 §5.2, A.7 (F §9.2): the project's `phase_size`; a plan outside it is
   // `uncertain` and routed to the human, never refused. Absent: not judged.
   phase_size?: { min: number; max: number };
+  // D7 §4.1, §8.3 (G2): the project's design policy and the specification's
+  // `**Targets:**` (null when it states none), for clause 5. Absent: off.
+  design?: { policy: string; spec_targets: string[] | null; spec_targets_unknown?: string };
   // D6 §5.7 (B08): an early replacement's kept stages (integrated or
   // verified in the generation it replaces), by number, with their
   // execution-inputs digest and the requirement keys they implement. Each
@@ -115,6 +118,21 @@ export interface PlanCheckResult {
 }
 
 const uniq = <T>(xs: T[]): T[] => [...new Set(xs)];
+
+// D7 §4.1's admissibility table: the targets each UI technology may serve;
+// `other` any (its preview capability is never `native`, design/inventory.ts).
+const ALL_TARGETS = ['web', 'android', 'ios', 'macos', 'windows', 'linux'];
+export const TECHNOLOGY_TARGETS: Readonly<Record<string, readonly string[]>> = {
+  html_css: ['web'],
+  three_js: ['web'],
+  streamlit: ['web'],
+  react_native: ['android', 'ios'],
+  flutter: ALL_TARGETS,
+  swiftui: ['ios', 'macos'],
+  compose: ['android'],
+  other: ALL_TARGETS,
+};
+export const technologyAdmits = (technology: string, target: string): boolean => (TECHNOLOGY_TARGETS[technology] ?? []).includes(target);
 
 // The stage graph is acyclic (clause 3): a depth-first search by number.
 function cycle(stages: { number: number; depends_on: number[] }[]): number[] | null {
@@ -397,7 +415,33 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     0;
   const adrsChanged = changes.changes_adrs.added.length + changes.changes_adrs.changed.length + changes.changes_adrs.deleted.length > 0;
   const baselineChanging = changes.changes_architecture.changed || adrsChanged || roadmapChanged || a.plan.roadmap_revision !== undefined;
-  const needsSpecChange = unknownReq.length > 0;
+  // 5. Interfaces and targets (D7 §4.1, §8.3; G2; SEAM.md §495), under a
+  // design policy other than off: the spec states the targets (the engine
+  // assumes none), the `ui` modules serve exactly them, each with a UI
+  // technology the admissibility table admits on it. (ARCH_INTERFACE_SHAPE_MISSING
+  // is M508's, slice 44.)
+  let targetsMissing = false;
+  if (baseline.design && baseline.design.policy !== 'off') {
+    const ui = a.modules.modules.filter((m) => m.surface === 'ui');
+    const specTargets = baseline.design.spec_targets ?? [];
+    if (ui.length > 0 && baseline.design.spec_targets_unknown !== undefined) {
+      // Unknown, not missing: refused naming why, and not routed to a
+      // specification change (the review's N1).
+      add('SPEC_TARGETS_MISSING', [`unknown: ${baseline.design.spec_targets_unknown}`]);
+    } else if (ui.length > 0 && specTargets.length === 0) {
+      add('SPEC_TARGETS_MISSING', ui.map((m) => m.name));
+      targetsMissing = true;
+    }
+    if (ui.length > 0 && specTargets.length > 0) {
+      const served = new Set(ui.flatMap((m) => (m.targets ?? []).map((t) => t.target)));
+      add('ARCH_TARGET_UNKNOWN', ui.flatMap((m) => (m.targets ?? []).filter((t) => !specTargets.includes(t.target)).map((t) => `${m.name}:${t.target}`)));
+      add('ARCH_TARGET_UNCOVERED', specTargets.filter((t) => !served.has(t)));
+    }
+    add('ARCH_TECHNOLOGY_TARGET_MISMATCH', ui.flatMap((m) => (m.targets ?? []).filter((t) => !technologyAdmits(t.ui_technology, t.target)).map((t) => `${m.name}:${t.target}:${t.ui_technology}`)));
+  }
+  // The spec's own gap is the spec-change workflow's (D7 §4.1: routed to
+  // change_spec), never a plan's.
+  const needsSpecChange = unknownReq.length > 0 || targetsMissing;
   const outcome = reasons.length === 0 ? 'passed' : 'refused';
   // §5.2: a stage count outside `phase_size` is sense, not error: it routes
   // to the human, never refuses. Kept stages count toward it.
@@ -468,6 +512,11 @@ export const PLAN_REASONS = [
   'PLAN_DESCRIPTIVE_MODULE_TOUCHED',
   'PLAN_CONFORMANCE_MISPLACED',
   'PLAN_MODULE_PATH_INVALID',
+  // Clause 5 (D7 §4.1, §8.3; G2), under a design policy other than off.
+  'SPEC_TARGETS_MISSING',
+  'ARCH_TARGET_UNKNOWN',
+  'ARCH_TARGET_UNCOVERED',
+  'ARCH_TECHNOLOGY_TARGET_MISMATCH',
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;
