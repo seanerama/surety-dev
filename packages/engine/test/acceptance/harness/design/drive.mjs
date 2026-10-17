@@ -252,7 +252,10 @@ export async function assertHoldsAccounted(fx, project, where = 'here') {
   assert.equal(plan.status, 200, `${where}: GET …/plan (${plan.status} ${plan.text?.slice(0, 300)})`);
   const design = await readDesign(fx, project);
   const stages = plan.body?.plan?.stages ?? [];
-  for (const h of acc.holds) {
+  // The engine runs on between the store's snapshot and the reads: a hold
+  // released meanwhile (the design ready, waived) is no stall and is not read.
+  const still = new Set(designHoldAccounts(fx.home, project, { nowMs: engineTimeMs(fx.engine) }).holds.map((h) => `${h.work_item} ${h.held}`));
+  for (const h of acc.holds.filter((x) => still.has(`${x.work_item} ${x.held}`))) {
     const s = stages.find((x) => x.id === h.stage);
     assert.ok(s, `${where}: GET …/plan shows held stage ${h.stage} (it shows ${JSON.stringify(stages.map((x) => x.id))})`);
     assert.equal(s.hold?.reason, h.held, `${where}: stage ${s.number}: GET …/plan names its hold (${JSON.stringify(s.hold)})`);
