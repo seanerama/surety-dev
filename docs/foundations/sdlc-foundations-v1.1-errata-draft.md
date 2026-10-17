@@ -2520,3 +2520,39 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - The engine emits `design.assets_approved` only when an effective version moves. D7 §6.4 can be read as "at every approval"; if that is the reading, M526 needs a case.
    - Turning `design` on by a policy change, on a project that already has an asset manifest, records placeholders but writes none of their files (`projects/commands.ts`). It predates this slice and no row reaches it.
    - In M512 (c), both `open` and `later` are consumed, and the tests pass as built. Objections 126 and 145 stay open; with the deferral now visible on the reads, rule 25 holds either way.
+
+## E161. Slice 45 merged: the design review at Alpha and retrofit; objections 190 to 193 upheld; the review's decisions (decided by the driver under Sean's delegation, 2026-10-17)
+
+**Status: decided by the driver** under Sean's standing instruction; Sean may overturn any item.
+
+1. **Slice 45 merged** (`f22951d`; build `6de71a1`, cases `e2a0b70`): M516, M518, M528, M529, M531. The gate, split, 3 workers, at `18c7d14`: 435 files, 2,334 passed; 4 failed, in M440, M29 and M432. M432 is new to the list: S2 opened a Spec Writer session while a one-shot was still running and was refused `session_busy`. Each of the three passed alone three times out of three. The slice 43/44 gate's M29 also passed three of three alone.
+2. **Built.**
+   - **The owner-invoked review:** evidence checked by header and size only, never decoded; `surety design review` and `surety design verdicts`.
+   - **Review packages,** and the Alpha review bound to its candidate and deployment when the session opens.
+   - **The engine's own fetch of each route:** inside the attempt's domain, at 127.0.0.1 only, capped at `adapter_output_max_bytes`.
+   - **Confirmed defects:** each becomes a finding against the review's candidate, offering `fix`.
+   - **Batching:** the verdicts share the batch key of the design the review proposed.
+   - **Retrofit:** `shape: "unknown"` only in an adopted project's map (objection 150). An observed design's criteria are kept out of the conformance and deployment-gate scopes by id (objection 151 (a)).
+   - **A new project key, `design_review_evidence_max_review_bytes`:** default 536870912, from 1 MiB to 16 GiB.
+3. **The review's blocking findings, fixed.**
+   - **B1:** a review-mode close was not stopped by a refused design check. A verdict could cite another review's engine-observed evidence and be labelled engine-observed, against D7 §10.5. The close is now refused while the check refuses, and provenance is read only from the review's own evidence.
+   - **B2, the driver's decision:** a review with no verdicts finished the Alpha review with no owner act. Closing a review now always raises `design_verdicts`, even with none, except for a first design's review, whose question is the design approval (D7 §10.3, §11).
+   - **B3:** `answer-batch` dropped `edits`, `strikes` and `severity`, which would have recorded an owner act he did not make (rule 26). They now pass through, and any unknown per-answer field is refused.
+4. **Should-fix items, fixed.**
+   - A route must match `^/[!-~]*$`, so no request can be smuggled through it.
+   - A route the bound deployment does not serve is recorded as not observed.
+   - After a crash, missing observations are compared by route.
+   - The review body cap sits below Node's maximum string length, sizes are checked before decoding, and a body error settles the request.
+   - Unknown-shape and unknown-convention notices apply only to an observed design.
+   - Observed criteria are matched by id.
+   - A `browser` verdict never accepts a native target, and the owner's `observed_on` is `device`, `emulator` or `simulator`.
+5. **Objections upheld, tests corrected** (`e2a0b70`):
+   - **190:** M518's observed design places UI requirements (R5) on S1.
+   - **191:** M518 (a) asserts that nothing is held, not that `design_due` is open; the plan's row does not require the question.
+   - **192:** M528 (a) waits for the build, and counts only D4 operations.
+   - **193:** the Verifier's table gains the new key.
+6. **Recorded for Sean.**
+   - One confirmed `matches` verdict on any screen accepts the target's human test, as SEAM §524 allows.
+   - Verdicts and the design approval need two owner acts, because the approval's preview changes when the verdicts are confirmed.
+   - Without a change phase in the roadmap, nothing reads an observed design's criterion.
+   - An asset-only approval resets `owner_accepted` to pending.
