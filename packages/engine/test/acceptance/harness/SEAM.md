@@ -7470,3 +7470,88 @@ Where D7 gives a name, the name is D7's. The names below are the Verifier's with
   - `assetAdd`, `assetsSubmit`, `readBindings`, `assetFixes`, `versionObligations`, `resultsOfKey`, `designAssetsOf` and `openApproval` drive the owner's commands and read the results;
   - `setPolicy`, `evaluateHook`, `hookEvaluated`, `hookEvaluations` and `notApprovedOf` serve the release hook;
   - `toAlphaWithPlaceholders(fx)` carries Pantry under `before_build` and `on_phase_complete` to `alpha_deployed` on the kernel lane, its design `designModel`'s, which proposes no asset.
+
+## 512. M6 slice 44: the files, the lane and what they reuse (M508, M512, M513, M514, M515, M517, M530; BS6 §§3, 8; D7 §§2, 7 to 11, A.2 to A.8; G2, G5, G6, G7, G8; E156 Q2, Q3)
+
+The Verifier of slice 44, 2026-10-17, on `verify/m6-s44` from `main` `6f7b452`. **Files** (kernel lane, manifest slice `44`): `M508-plan-check-additions`, `M512-design-due-and-no-silent-stalls`, `M513-the-policy-and-its-keys`, `M514-the-design-decisions-bindings`, `M515-staleness-the-design-class`, `M517-a-design-change-after-the-final-phase`, `M530-no-self-staleness`. **Harness:** `harness/design/plan44.mjs` (§520). The names of slices 40 to 43 are reused as pinned:
+- the policy key `design`, `GET …/design` with `human_tests`, `design_due` and `inert` (§§480, 491);
+- the plan check's clause-5 subjects (§495);
+- the inventory and its fixtures (§484);
+- holds, readiness, `design_due`'s `evidence` and `assertNoSilentHold` (§485);
+- the batch, its preview, its manifest and `human_test_assignments`, the barrier `design.approved` (§486);
+- the owner-invoked review (§502); the asset commands (§508); `toAlphaWithPlaceholders` (§511).
+
+Where D7 gives a name, the name is D7's. The names marked † are the Verifier's within D7's text, and the Builder may object.
+
+## 513. The plan check's design clauses (M508; D7 §4.1, §8.1, §8.3; G2, G6)
+
+- **`ARCH_INTERFACE_SHAPE_MISSING`** (clause 5) names `<module>:<interface>` (§495) for each interface a `ui` module consumes that lacks `request`, `response` or `errors`. "Told to the Architect's session before close": the save's findings, or an engine entry of the session's transcript, carry the code and the interface's name; the test reads either. The close is then refused 422 `plan_refused`. Under `off` the same map publishes.
+- **B.5's stage gains `screens`** (G6): a list of screen keys of the approved design. **`PLAN_SCREEN_UNKNOWN`** (clause 1) names each key the approved design lacks, and not the keys it holds.
+- **`PLAN_DESIGN_UNCOVERED`** (clause 4), under `before_build` or `both` with an approved design, names the requirement and the target in one subject (the test reads the subject's text for both, for example `R4:android`), one per uncovered requirement and target of a UI stage.
+- **The planned design obligation** †: a passed plan check with no approved design records `plan_checks.design_obligations` `[{stage, targets}]`, `stage` the stage's number in the plan, `targets` the targets its `ui` modules serve: one per UI stage, none for any other. The stage's `stage_build` carries it as the `design_ready` milestone (§485).
+- **The replan's blocker** after a refused repair offers the options `design`, `retry`, `replan` and `cancel` (D7 §8.3; A.2 `BlockerOption`).
+- **`stage_screens`** (A.3): one row per stage and bound screen, `{stage, screen, target, design_revision}`, written at a design's approval for the published plans and at each later publication for the stages it publishes. The test reads the rows by stage; a stage with no `ui` module has none.
+
+## 514. `design_due`: its answers, its reads, its escalation (M512; D7 §11; A.8)
+
+- **Options**: exactly `open`, `waive`, `policy_off`, `later`. `target_seconds` 172800.
+- **`waive`** carries the owner's reason in the answer's **`note`** (as `revise` does, §486). Each held stage is released with one **`design.waived`** †, `subject` `{project, stage}`, its payload carrying the reason.
+- **`policy_off`** records a policy revision whose effective `design` is `off`, and releases the holds as turning the policy off does (§516), each with `design.waived`.
+- **`later`** carries **`until`** †, an ISO 8601 time on the engine's clock. A time later than now plus `design_due_max_defer` is refused (4xx), the body naming `design_due_max_defer`, and the question stays open. Once the engine's clock passes an accepted time, an open `design_due` names the held stages, its `raised_at` at or after `until` (10 s margin). Whether a question is open during the deferral is not pinned (objection 145).
+- **`open`** allocates a Designer session: a `runs` row of role `designer`, kind `session`, `session_state` `allocated`, with no launch before the owner's first turn. **What `open` does to the question itself is not pinned (objection 126)**; that case asserts no invariant at its end.
+- **A new cause while one is open** (a `revise`; a second change staling another screen): the earlier row is no longer `open`, an answer to it is refused 409 `decision_stale` or `decision_invalidated`, and exactly one row is open, with the new subjects.
+- **`GET /v1/projects/:p/plan`** †: each stage of `plan.stages` whose work is held for design carries **`hold`** `{reason: "design_pending" | "design_stale", question: <the open design_due's id>, age_seconds}`; a stage not held for design carries none (absent or null).
+- **Escalation**: `decision.escalated` with `subject.decision` the question, once the engine's clock passes `raised_at` plus `target_seconds` (D1 §10).
+- **`alpha_review`**: raised on `alpha_complete` under `at_alpha` and under `both`; its `command` names `surety session open designer`.
+
+## 515. The design class (M515; D7 §9; G8; D6 §4.4)
+
+- **The impact's design class** †: the change request's impact (§418's record) gains **`design`** `{screens: [{screen, target, …}], requirements: […]}`. `screens` lists exactly the approved screens the change stales: those whose requirement is `text_changed`, `criteria_changed` or `withdrawn`. `requirements` names each requirement made newly UI (its key appears there). The batch's own change stales no screen.
+- **`design_screens.status`**: `stale` for exactly the staled screens of the current approved revision, `current` for the rest; staleness from an architecture revision (an interface's shape, a technology) and from a removed target is recorded the same way. **`design.stale`**: one event per staling change, its payload naming each stale screen's key and no other.
+- **The inventory** is recomputed: `inventory.json`'s `spec_version` is the new version, its `ui_requirements` follow the change.
+- **`design_due`** stage `revise`, its `evidence.stale_screens` `[{screen, target}]` exactly the stale screens, raised whether or not a stage is held (D7 §9.1: stale screens "raise `design_due` (stage `revise`) naming them").
+- **A target removed** †: `GET …/design` gains **`stale_platforms`** `[{slot, target}]`, each slot of the manifest whose `platforms` hold the removed target, and no other target's.
+- **A later Architect revision** (D6 §3.4) writing only `architecture.md` leaves `inventory_digest` and every screen as they were.
+- **A header-only change** (the `**Targets:**` line) is the Spec Writer's result with `changes: []`.
+
+## 516. The policy keys (M513; D7 §2, A.7; BS6 §11.1; E143 item 1)
+
+- **Units and defaults**, on `GET …/policy`'s `effective`: `design` `off`; `design_preview` `static`; `design_widths` `[360, 720, 1280]`; `design_orientations` `["portrait", "landscape"]`; `design_external_urls` `["cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"]`; `assets_required_for` `live`; `model_designer` `opus`; `deadline_designer` 1800 (seconds, §491); `designer_session_budget_billable_tokens` 3000000; `design_tree_max_bytes` 33554432 and `design_tree_max_files` 800 (§493); `preview_memory_max` 268435456 (§499); `design_preview_ttl` 86400 (seconds, §499); **`design_due_max_defer` 604800 †** (seconds, range 3600 to 2592000); **`design_review_evidence_max_bytes` 67108864 †** (the per-file bound in bytes, range 1048576 to 2147483648; the per-review bound is M528's, slice 45).
+- **A value outside its range** is refused 400 `invalid_value` at configuration, the body naming the key and, for a numeric key, its bounds as integers in the key's own unit; nothing is written (no policy revision). `preview_memory_max` above the effective `domain_memory_max` is refused likewise.
+- **Classification**: `design` turned on (`before_build`) and turned off are each applied directly (200, no `confirm_required`, no `policy_widening` decision), the policy revision's `widens_authority` 0.
+- **Mid-project**: turning `before_build` on derives the inventory on that revision (`design.inventory_derived`) and holds only the UI stages not yet dispatched; an integrated stage keeps its status and its work stays `complete`. Turning design `off`, or to `at_alpha`, releases the holds (`design.waived` per stage for `off`).
+- **No `ui` module**: under `before_build`, `at_alpha` and `both`, `GET …/design` answers `inert: true` with an `inert_reason`; no `design_due` is ever raised.
+
+## 517. The design decisions' manifests (M514, M530 (a); D7 §7.4, §11, §10.3; G5; D1 §4.6)
+
+- **`design_approval`'s manifest** (§486's keys): `design_version` the design revision's version (1 for the first); `architecture_version`; `design_check` the id of the passing save's `design_checks` row; `asset_manifest_version` the version of the manifest the design names; `selection` and `tree_blobs` present (their form is the Builder's); `spec_version` the version the batched change takes; **`spec_change_diff_hash` the batched request's `proposal_blob` †**; `inventory_digest`; `roadmap_version`; `plan_versions`.
+- **What stales it** between the preview and the answer, each answered 409 `decision_stale` or `decision_invalidated`: the project's asset manifest version moved by the owner's `surety design asset add`; a later architecture revision, even one that leaves `inventory_digest` unchanged; a later Designer save (the tree, the check, the selection); a roadmap or plan version (§519).
+- **`design_due`'s manifest** binds **`held_stages` and `stale_screens` †**; a change to either stales it (§514).
+- **`design_verdicts`' manifest** binds the review file's hash (its git blob id or the SHA-256 of its bytes; the test accepts either) and **`evidence` †** (the review's evidence records). A Designer save that changes the review file stales it.
+- **`target_seconds`** 172800 for `design_approval`, `design_due` and `design_verdicts`.
+
+## 518. The post-final-phase replan reached from a design change (M517; D7 §10.3, §10.4; E153 item 1; E156 Q2)
+
+- **The design path**: Pantry `alpha_deployed` with every phase complete (`toAlphaWithPlaceholders`, §511); the owner-invoked review of the android target (§502) whose role writes a B.14 review file with a `deltas` verdict (`kind` `design`, `observed_on` `device`, no evidence id) and `revised_design: true`, and the revised design in the same tree. The close records the review and raises `design_verdicts` and one `design_approval` batched with one `spec_change` (D7 §10.3); `approve` is blocked until the verdicts are confirmed. The harness confirms, then approves (`approveReviewBatch`, §520).
+- **The trigger keeps its built name**: the replan's `trigger_source` is `spec_change` and its `trigger_id` the request (E156 Q2; COVERAGE's declared deviation from D7 A.2's `post_phase_change`). One per change request and roadmap generation, across ticks and a restart.
+- **Unresolved evidence**: while the corrected check's execution on the Alpha candidate is `queued` (the kernel lane records nothing), no replan is registered.
+- **No implementation impact**: the corrected check passing on the Alpha candidate, or a change carrying only human-test requirements (their texts), registers no replan and no phase.
+- **The delivery replan** the scripted Architect writes is prepared against the roadmap version current at the change (the engine's placing of the human tests is a roadmap revision, §486) and moves R3 from phase 1 into a delivery phase 2 with `moved_requirements` (§471's form). A refused delivery plan and its repair raise a `blocker` on the replan item, its question naming the plan check's reason.
+
+## 519. No self-staleness (M530; D7 §7.4, §10.6; E156 Q3; BS6 §11.5)
+
+- **The same transaction** †: the batch's approved `design_revisions.approved_at` equals the `created_at` of the `spec_revisions` row the batch applied (one transaction, one time); `current_against_spec` names that row (its id or its version number).
+- **The human-test requirements are never UI requirements of the inventory**, though each carries `**Surface:** ui (<target>)` (§486): after the batch, `inventory.json`'s `inventory_digest` is n's and its `ui_requirements` hold none of their keys.
+- **A batch refused at raise** (plan §2.6): when the n+1 inventory differs from n's, no `design_approval` is raised; the close's product is a `design_revisions` row `proposed`; `design_due` stays open with **`evidence.inventory_difference` †** naming what differs (the test reads it for the requirement key, `R1`).
+- **Another spec change approved first** (M530 (c)): under D6 §4.2's one-pending rule another change is approved only after the batch's own change is answered `reject`; the open `design_approval`, answered then with its earlier preview, is refused stale.
+- **The roadmap window**: a replan writing a roadmap revision (R3 moved to a new phase 3) between the raise and the answer stales the batch; the re-raised `design_approval`'s manifest has the new `roadmap_version` and its `human_test_assignments` give android phase 3. Between the answer and the effect (barrier `design.approved`) the effect is refused whole: no approved revision, no new spec version, no roadmap revision `approved_by` `engine:design_approval`; the batch is re-raised.
+- **A first design at Alpha** (M529's path, D7 §10.6): under `at_alpha`, after `alpha_complete`, the owner opens `POST …/sessions {role: "designer", mode: "review"}`; the role writes the whole design (`origin` `observed`) and `reviews/review-1.json` `{subject: {kind: "candidate"}, screens: [], revised_design: false, first_design: true}`; the close raises `design_approval` and the batched `spec_change` (and a `design_verdicts`, if the engine raises one, which the harness confirms). The approved revision's `scope` is `initial_review`.
+
+## 520. The harness of slice 44 (`harness/design/plan44.mjs`)
+
+- **Variants of Pantry**: `TWO_PHASE` (R1 and R2 in phase 1 on `api` and `web`; R3 and R4, an unmarked requirement, in phase 2 on `api`, `web`, `mobile`; `PHASE_TWO_STAGES`); `FOUR` (R1 to R6, one screen per UI requirement: `fourScreenModel`, `FOUR_SCREENS`); `API_ONLY` (no `ui` module, no `**Targets:**` line).
+- **`batchSpec({base, criteria, version, phaseOf, humanKind, humanKeys})`**: the batched change's specification for any design and base; human tests numbered after the highest key, at `phaseOf(target)` in the index; a later design's human tests replace earlier ones at their keys (`text_changed`).
+- **`designedPantry(fx, {policy, name, variant, model, approve, answerKinds})`**: a published Pantry, its roles scripted (every later phase's check authoring a tightening, `authoringByPhase`), a Designer session drawing `model(inventory)` saved and closed, the batch raised and approved unless `approve` is false. `designWithCriterion` adds a `tokens_only` criterion on R2, so the approved design is not ready until its correction is applied.
+- **The owner's acts**: `ownerChange` (the Spec Writer scripted, the request posted, its `spec_change` answered); `laterArchitect` (a later Architect session, every decision its close raises approved); `ownerReview` and `reviewFileOf` (§502's route); `approveReviewBatch` (a review's batch: the verdicts confirmed, then the approval and the change approved).
+- **Replans**: `replanWith({phase, stages, spec_version, architecture_version, roadmap_version, roadmap})`; `currentRoadmap` and `roadmapRevision` write a revision against the roadmap the store holds.
+- **Reads**: `designScreens`, `screenStatus`, `staleKeys`, `stageScreens`, `designDues`, `openDues`, `staleEvents`, `escalations`, `waivedEvents`, `designClassOf`, `screenPairs`, `currentRevision`, `revisionsOf`, `policyEffective`, `stageIdsOf`, `engineNow` (the controlled clock moved by one second).

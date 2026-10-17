@@ -4388,3 +4388,114 @@ Slice 43's own:
 - `assets_required_for` with `alpha` refused;
 - the release hook's seam route and its evaluation counter;
 - `assets_required.text`.
+
+## M6 slice 44: approval, holds, staleness and the plan (M6 plan §3.6; BS6 §§3, 6, 8, 9, 11.5; D7 §§2, 7 to 11, A.2 to A.8; G2, G5 to G8; E156 Q2, Q3)
+
+2026-10-17, by the Verifier of slice 44, on `verify/m6-s44` cut from `main` `6f7b452`. Rows M508, M512, M513, M514, M515, M517 and M530, all on the kernel lane: seven files under the manifest's slice `44`. SEAM §§512 to 520 pin the names. Slices 40 to 43's names (§§480 to 511) are reused as pinned. Harness: `harness/design/plan44.mjs`, which provides:
+- three more variants of Pantry: in two phases (`TWO_PHASE`), of four screens (`FOUR`), and with no `ui` module (`API_ONLY`);
+- the batched change's specification for any design and base (`batchSpec`);
+- a Pantry designed and approved through the owner's routes (`designedPantry`);
+- the owner's change, a later Architect session, the owner-invoked review and a review's batch, through the owner's routes;
+- replans written against the roadmap the store holds;
+- reads of `design_screens`, `stage_screens`, every `design_due`, the impact's design class, and the engine's clock.
+
+No accepted file and no earlier slice's harness changed.
+
+**The trigger's name (E156 Q2; BS6 §6), the declared deviation, restated for M517:** the post-final-phase replan keeps the name it was built with, `trigger_source` `spec_change` with the request as its identity, not D7 A.2's `post_phase_change`; no rename, no migration. M517 asserts `spec_change`. M433's E153 file stays as written.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M508 | kernel | `M508-plan-check-additions.test.mjs` (4) | (a) list-items without `request` and `response`, add-item without `errors`: `ARCH_INTERFACE_SHAPE_MISSING` naming `api:list-items` and `api:add-item` at the save and at the refused close, not `health`; the same map published under `off`. (d) with (f): the first plan published with no design, `plan_checks.design_obligations` for stages 2 (web) and 3 (android), carried as their `design_ready` hold; then the batch approved: `stage_screens` stage 2 to S1, stage 3 to S2. (c) with (e): Pantry in two phases, R4 given to the Android and web UI stages of phase 2's replan, refused `PLAN_DESIGN_UNCOVERED` naming R4 with each target (not R3), its repair likewise, the blocker offering `design`, `retry`, `replan`, `cancel`. (b) with (f): phase 2's plan naming `S9` refused `PLAN_SCREEN_UNKNOWN` (not S2); the repair naming S2 published, `stage_screens` stage 3 to S2 and none for the API stage | written; fails on `main` |
+| M512 | kernel | `M512-design-due-and-no-silent-stalls.test.mjs` (7) | (a) with (b), (g), (e), (i): raised when the UI stages are held, its stage, held stages, stale screens, command, four options and 2 d target; `GET …/plan`'s `hold` per held stage; escalated after 2 d; one open after a restart; never answered by the engine. (c) `waive` with a reason on a design approved and not ready: `design.waived` per stage with the reason, the stages dispatched, the human tests pending. (c) `policy_off`: a policy revision, `design.waived` per stage, the stages dispatched. (c) `later` with `design_due_max_defer` lowered to 1 h: 2 h refused naming the key, the question open; 30 min accepted, re-raised once the clock passes it. (c) `open`: a session allocated, no launch before the first turn (the question's own state left out, objection 126). (f) `revise` while it is open: one row, stage `revise` with the note, the earlier generation refused. (a) `alpha_complete` under `at_alpha` and under `both`: `alpha_review` | written; fails on `main` |
+| M513 | kernel | `M513-the-policy-and-its-keys.test.mjs` (5) | (f) the fifteen A.7 keys at their defaults; 25 values outside their ranges (and `preview_memory_max` above `domain_memory_max`) refused 400 `invalid_value` naming the key and its bounds, no revision. (a) with (e): Pantry `webFirst` under `off`, phase 1 built, phase 2 published with its authoring unanswered; `before_build` applied directly (`widens_authority` 0, no `policy_widening`), the inventory derived, only the Android stage held, the integrated web stage untouched, `design_due` naming it; then `off` applied directly, the stage released with `design.waived`. (b) `off` with the stages held under an approved, unready design: released, `design.waived` per stage, the human tests pending. (c) `at_alpha` with the stages held: released; at Alpha, `alpha_review`. (d) no `ui` module under `before_build`, `at_alpha`, `both` and `off`: inert, nothing raised, nothing held | written; fails on `main` |
+| M514 | kernel | `M514-the-design-decisions-bindings.test.mjs` (6) | (a) with (e): every manifest field's value; `design_approval`'s and `design_due`'s `target_seconds`. (b) three cases, each stale at the answer: the owner's favicon added; an architecture revision leaving the inventory as it was; a later save narrowing the themes. (c) built Pantry, R2 then R3 reworded: `design_due` revise naming S1, then re-raised naming S1 and S2, the earlier generation refused, one open. (d) an owner-invoked review: `design_verdicts`' manifest binding the review file's hash and `evidence`, its 2 d target; a Designer save changing the file stales it | written; fails on `main` |
+| M515 | kernel | `M515-staleness-the-design-class.test.mjs` (6) | Pantry of four screens (its own checks of R4.1, R5.1, R6.1 authored), built to its three verified stages before any change, so nothing is in flight: (h) with (a): the batch stales nothing; one change of four kinds stales exactly S1, S2, S3 (impact, statuses, one `design.stale`), the inventory at version 3, `design_due` revise naming them. (e) with (b): an asset-only approval and an `architecture.md`-only revision stale nothing; add-item's request changed stales S3 and S4 only. (c) ios added (header change, Architect revision): its splash placeholder, nothing stale; removed again: `stale_platforms` naming ios only, nothing stale. (c) web to `three_js`: S1 and S3 stale. (d) Pantry in two phases, R4 moved to a new phase 3 by the replan's roadmap revision: nothing stale, `stage_screens` stage 3 to S2. (f) with (g): the `late` variant, R3 reworded in phase 1 so S2 is stale; after phase 2's publication and authoring, the web stage dispatched and the Android stage held `design_stale`, `design_due` naming both; the API stage's history kept; a revised design approved: its screens current, both revisions kept, the Android stage released | written; fails on `main` |
+| M517 | kernel | `M517-a-design-change-after-the-final-phase.test.mjs` (6) | Shared (Pantry at Alpha, the owner's review of his Android build with a design delta, R3.2 added and approved): (g) the corrected check queued on the Alpha candidate, four ticks, no replan; (a) failing there: one replan, `trigger_source` `spec_change`, `trigger_id` the request, an Architect one-shot, `plan_approval` with `phases_added` [2]; (d) ticks and a restart, one; (f) the delivery phase published, its stage verified, phase complete, its candidate `alpha_deployed` by the policy's request, phase 1's plan, stages, sign-offs, evaluations and completion unchanged. Separately: (b) with (c): R3.2 passing on the Alpha candidate, no replan and no phase; a second review changing only the human tests' texts (version 4), none. (e) the delivery plan refused, and its repair: a blocker naming the plan check's reason, `retry` offered, no stage | written; fails on `main` |
+| M530 | kernel | `M530-no-self-staleness.test.mjs` (6) | (a) with (b), (e): the manifest's `spec_version` 2 (current 1), `spec_change_diff_hash` the request's `proposal_blob`, the inventory's digest; approved: current against version 2, `approved_at` equal to version 2's `created_at`, nothing stale, nothing re-raised; n+1's inventory n's, the human tests not among its UI requirements. (c) the batch's change rejected, another change approved as version 2: the open approval refused stale. (d) the batch's Spec Writer marking R1 `ui (web)`: no `design_approval`, the product `proposed`, `design_due` naming `R1` in `inventory_difference`. (f) twice on the `late` variant, R3 moved to a new phase 3 by roadmap revision: before the answer (stale, re-raised at roadmap version 2 with android at phase 3, nothing assigned) and at the barrier `design.approved` (the effect refused whole, re-raised). (g) under `at_alpha`, Alpha deployed, a first design from a review-mode session: `initial_review`, current against version 2, the human tests on phase 1 and pending, no check, result, evaluation, sign-off or acceptance scope created, phase 1 unchanged | written; fails on `main` |
+
+**On `main` `6f7b452`.** Run in this worktree after `npm ci` and `npm run build`, with `TMPDIR=/tmp/v44`, each file alone with `node --test`; nothing else of the suite was run.
+
+Every case fails at its fixture's first step, the project's policy: **"a valid policy change (body: {"code":"unknown_field","reason":"\"design\" is not a writable project policy key.", …}) 400 !== 200"**, the missing feature of slice 40 on which every row of this slice stands. Two cases of M513 fail before that step:
+- **M513 (f)** at its first assertion, **"design defaults to "off" (D7 A.7; BS6 §11.1) (undefined) undefined !== 'off'"**: no A.7 key exists on `main`;
+- **M513 (a) with (e)** at the Architect's close under `off`: **"the Architect's close is accepted (422 {"code":"plan_refused", … unknown_field: .surety/architecture/modules.json: \"surface\" is not a field of modules[0] (api) …}) 422 !== 200"**, B.3's new fields (M501, slice 40).
+
+- **`M508` 0/4**, **`M512` 0/7**, **`M514` 0/6**, **`M515` 0/6**, **`M530` 0/6**: each case at the policy key `design`.
+- **`M513` 0/5**: (f) and (a) as above; (b), (c), (d) at the policy key.
+- **`M517` 0/6**: the shared fixture's `before` fails at the policy key, so its four cases (g), (a), (d), (f) are reported failed under it; (b) with (c), and (e), at the policy key.
+- Each file takes 3 to 7 s on `main`. No unit was started (kernel lane), and no engine, home or unit of `/tmp/v44` was left.
+
+**The harness checked beyond the policy key.** On a scratch copy outside the repository: `git archive` of `build/m6-s40` at `c8257a6`, the slice-40 Builder's work in progress, built, with this slice's seven files and `plan44.mjs` (and slice 43's `assets43.mjs`) copied in. Nothing from it is committed or claimed as a result; it only shows how far the harness reaches before the features this slice and the earlier ones owe.
+
+- **M530: 4/6 pass** there: (a) with (b) and (e); (c); both windows of (f). (d) fails at `design_due` naming the difference (`evidence.inventory_difference` not written); (g) at `design_due` `alpha_review` (not raised on that build).
+- **M514: 2/6**: (a) with (e), and (b) the later save, pass. (b) the asset add fails at `surety design asset add` (not in that build's CLI); (b) the architecture revision reaches the answer, which is accepted 200 instead of refused stale; (c) at `design_due` raised for a stale screen; (d) at `POST …/design/reviews` (404).
+- **M512: 2/7**: `waive` and (f) `revise` pass. (a) fails at `GET …/plan`'s `hold`; `policy_off` at `design.waived`; `later` at the refusal naming `design_due_max_defer` (the answer's `until` is refused as an unknown field); `open` at the session's allocation; (a) `alpha_complete` at `alpha_review`.
+- **M513: 2/5**: (f) (25 refusals, after the `model_designer` case was removed, below) and (d) pass. (a) with (e) reaches the release on `off` and fails at `design.waived`, every earlier assertion (the direct application, `widens_authority` 0, the inventory derived, only the Android stage held, the web stage untouched, `design_due` naming it) passing; (b) fails at `design.waived`; (c) at `alpha_review`.
+- **M515: 0/6**: Pantry of four screens designs, approves and builds to three verified stages. (h) passes and (a) fails at the impact's design class. (e) with (b) fails at `surety design asset add`. **(c) twice: the later Architect session is refused "roadmap.json assigns R7 to no phase … R8 to no phase"**: the engine's placing of the human tests is in the store and not in the file (below, what slice 40 owes). With a scratch-only workaround (the session also writing the store's roadmap), (c) ios reaches the re-derived inventory with ios and fails at ios's splash placeholder (as slice 43 found on that build), and the technology case reaches the wait for stale screens. **(d): the replan is refused `PLAN_REQUIREMENT_UNPLANNED (R5, R6)`**: phase 2's plan does not implement the two design human-test requirements the engine placed in phase 2. (f) fails at S2 stale.
+- **M508: 0/4**: (a) at the save's findings (no `ARCH_INTERFACE_SHAPE_MISSING`); (d) at `plan_checks.design_obligations`; (c) the replan refused "the replan's architecture products do not parse: .surety/roadmap/roadmap.json assigns R5 to no phase … R6 to no phase", as M515 (c); (b) refused `PLAN_INVALID … "screens" is not a field of stages[0]`.
+- **M517: 0/6**: `toAlphaWithPlaceholders` does not reach `alpha_deployed` on that build (slice 43 found the phase gate refusing `PLAN_REQUIREMENT_UNPLANNED` for the design's human tests), so no case reaches the review.
+
+Five harness errors were found and fixed this way: the API-only map's interfaces still named `web` and `mobile` as consumers; a replan writing a roadmap revision must be prepared against that revision's version; Pantry of four screens needed checks of its own criteria to build; a `screens` field in M515 (d)'s replan belonged to M508; and a spec change of the four-screen Pantry was held behind phase 1's unanswered authoring, so that variant is now built first.
+
+**Details of plan §2.6 fixed here** (each within D7's text; SEAM §§513 to 519):
+- **`design_due`'s text fields** stay §485's; its answers carry the owner's reason in `note` (`waive`) and his time in `until` (`later`). `GET …/plan` gains each held stage's `hold` `{reason, question, age_seconds}` (D7 §11: "each held stage with its hold, the open question and its age").
+- **The batch's refusal at raise** when the n+1 inventory differs: no `design_approval`, the close's product a `proposed` revision, `design_due` open with `evidence.inventory_difference` naming what differs.
+- **The hold reasons** `design_pending` and `design_stale` as D7 A.2 names them (§485).
+- **Reason and error codes D7 does not name**: none new. `PLAN_SCREEN_UNKNOWN`, `PLAN_DESIGN_UNCOVERED` (its subject naming the requirement and the target) and `BlockerOption` `design` are D7's; a refused answer is D1's 409 `decision_stale` or `decision_invalidated`; a value out of range is M5's 400 `invalid_value`.
+
+**Choices beyond §2.6 a Builder may object to:**
+- **The planned design obligation** recorded as `plan_checks.design_obligations` `[{stage, targets}]` (D7 §8.3 says it is recorded; not where).
+- **The impact's design class** as `impact.design` `{screens, requirements}`, and a removed target's slots as `GET …/design` `stale_platforms` `[{slot, target}]` (D7 §9.1: "marks its slots' `platforms` stale for the Designer to tidy").
+- **`design_due` raised for stale screens with no stage held** (D7 §9.1 read as "stale screens … raise `design_due` (stage `revise`) naming them").
+- **The units**: `design_due_max_defer` in seconds; `design_review_evidence_max_bytes` the per-file bound in bytes (its per-review bound left to M528); a refusal naming a numeric key's bounds as integers in its unit.
+- **`design: off` and `before_build` applied directly** with `widens_authority` 0 (D7 §2; E143 item 1 unchanged), and `off` recording `design.waived` per released stage, whether set by `POST …/policy` or by `design_due`'s `policy_off`.
+- **"In the transaction that applies n+1"** read as the design's `approved_at` equal to version n+1's `created_at`.
+- **`spec_change_diff_hash`** the batched request's `proposal_blob`.
+- **The design-verdicts binding**: the review file's git blob id or SHA-256, either accepted.
+- **The owner's asset add stales an open `design_approval`** (its "asset manifest's version" binding, D7 §7.4 and Appendix C M514).
+- **A replan that revises the roadmap** is prepared against the revision it writes; one that does not is prepared against the roadmap the store holds, which after a design's approval is the engine's placing of the human tests (§486).
+- **A header-only specification change** (the `**Targets:**` line) is the Spec Writer's result with `changes: []`.
+
+**Cases written that the plan's wording could not reach as written:**
+- **M530 (c)'s "another spec change approved after the batch's raise and before its answer"**: D6 §4.2's one-pending rule (SEAM §417) lets no other change be proposed while the batch's own awaits its decision. So the other change is approved after the batch's change is answered `reject`, with the `design_approval` still unanswered. Its earlier preview is then refused stale.
+- **M517 (a)'s "confirmed review deltas"**: reached through the owner-invoked review of the android target (D7 §10.5; SEAM §502), not through the Alpha review session, whose engine fetch of the served Alpha the kernel lane does not have (M516 is the project lane's, slice 45).
+- **M515 (c)'s "a target removed"**: ios added and then removed. Removing android would also re-mark or withdraw R3 and R5, staling its screens by requirement as well, so the target-only effect could not be seen apart.
+- **M512 (a)'s "a design rejected" and "sent back with revise"** are M505 (f)'s cases (slice 40), and **`design_stale`** M515's and M514 (c)'s; M512 (f) uses `revise` as its new cause. **M512 (d)** is M538 (f)'s case (slice 41), not repeated.
+- **M515 (d)'s "one assigning a UI requirement to a UI stage with no screen"** is M508 (c)'s case, not repeated.
+- **M514 (b)'s spec version and inventory** are M530 (c)'s and (d)'s cases. **M514 (d)'s "a change to its evidence records"**: evidence records are append-only, and a review file citing other evidence changes the file's hash, so the file's change is written.
+- **M513 (f)'s `model_designer`**: its range ("an active entry's model") is enforced at launch, as every `model_<role>` is (SEAM §391; the driver's ruling of 2026-10-13 under M420, SEAM §395); its default is pinned, and no refusal at configuration is.
+- **M513 (c)'s "the review at Alpha kept"** is read as `design_due` `alpha_review` on `alpha_complete`.
+
+**Pending objection 126 (open for Sean):** M512 (c)'s `open` case pins that answering `open` allocates a Designer session and starts no process before the owner's first turn. It does not pin what answering `open` does to `design_due` itself, and asserts no invariant at its end. The case that pins it is left out until Sean decides; a skipped test would fail the runner.
+
+**Objection filed** (a question for Sean, not a Builder's objection):
+- **145:** during a `later` deferral, is there an open question naming the held stages? M512 (c) asserts the invariant at the case's end, after the re-raise, and nothing between.
+
+**What the earlier slices' Builders must provide for these to pass.** Each is an earlier row's, used here as its tests pin it.
+
+From slice 40:
+- the policy key `design` and Pantry's publication with its inventory and `design_due` (M504, M507; §§484, 485);
+- the Designer session, the save's `design_check`, the close and the batch with its preview, manifest and `human_test_assignments` (M505; §486); the approval's effect, readiness and the third milestone (M507);
+- `GET …/design` with `human_tests`, `design_due` and `inert` (§§480, 491);
+- **the engine's placing of the human tests consistent with `.surety/roadmap/roadmap.json`**: on `build/m6-s40` at `c8257a6` an Architect replan that writes only its phase plan, and a later Architect session that writes only `modules.json` and `architecture.md`, are each refused "… roadmap.json assigns R5 to no phase", because the engine's roadmap revision (`approved_by` `engine:design_approval`) is in the store and not in the file. Every Architect product after a design's approval meets it (M508 (b), (c); M515 (b), (c), (f));
+- **no stage required for a design human-test requirement**: on that build a replan whose phase holds the design's human tests is refused `PLAN_REQUIREMENT_UNPLANNED` naming them (M515 (d)), as slice 43 found at the phase gate. D7 §7.3: such a requirement "has no check and is never `verified` by a gate";
+- the design's human-test requirements kept out of the inventory's UI requirements (slice 43's note on M526 (a); M530 (e));
+- Alpha under policy on the kernel lane with the design's human tests not blocking the phase gate (M536 (i); slice 43's note on M522 (b)).
+
+From slices 41 to 43:
+- the save's `design_check` and the plan check's clause 5 (M506, M524; §§493, 495);
+- the owner-invoked review route and `design_verdicts` (§502);
+- `surety design asset add` and `surety design assets submit` (§508); `toAlphaWithPlaceholders`'s path to Alpha (§511).
+
+From slice 45, ahead of its rows:
+- a review's close with confirmed design deltas raising `design_verdicts` and one `design_approval` batched with one `spec_change` (D7 §10.3; M516 (h)), for M517 and M514 (d);
+- `design_due` `alpha_review` on `alpha_complete` (D7 §10.1; M516 (a)), for M512 (a), M513 (c) and M530 (g);
+- a first design at Alpha from a review-mode session, scope `initial_review` (D7 §10.6; M529), for M530 (g).
+
+Slice 44's own:
+- clause 5's `ARCH_INTERFACE_SHAPE_MISSING` told at the save; `screens` on B.5's stage, `PLAN_SCREEN_UNKNOWN`, `PLAN_DESIGN_UNCOVERED`, the planned design obligation, the blocker's `design` option; `stage_screens` at approval and publication;
+- `design_due`'s four options (`open`'s effect on the session), one open per project, a new cause staling and re-raising it, its escalation, its manifest; `GET …/plan`'s hold;
+- the policy's transitions and A.7's ranges;
+- the design approval's manifest and everything that stales it; `design_verdicts`' manifest;
+- the impact's design class, stale screens, `design.stale`, `stale_platforms`, the held `design_stale` stage, the covering revision;
+- the post-final-phase replan from a design change, under its built name;
+- the batch never staling itself, its refusal at raise, its roadmap window.
