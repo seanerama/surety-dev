@@ -509,7 +509,15 @@
       "M527-bindings-and-versioned-parity.test.mjs",
       "M534-the-release-hook-and-its-range.test.mjs"
     ],
-    "44": [],
+    "44": [
+      "M508-plan-check-additions.test.mjs",
+      "M512-design-due-and-no-silent-stalls.test.mjs",
+      "M513-the-policy-and-its-keys.test.mjs",
+      "M514-the-design-decisions-bindings.test.mjs",
+      "M515-staleness-the-design-class.test.mjs",
+      "M517-a-design-change-after-the-final-phase.test.mjs",
+      "M530-no-self-staleness.test.mjs"
+    ],
     "45": [],
     "46": []
   },
