@@ -682,7 +682,8 @@
       "depends_on",
       "authoring_readiness",
       "open_decision",
-      "session_busy"
+      "session_busy",
+      "prerequisite_results"
     ],
     "WorkspaceDisposition": [
       "active",
@@ -775,6 +776,7 @@
       "finding.raised",
       "finding.severity_changed",
       "finding.dispositioned",
+      "finding.proposal_standing",
       "finding.resolved",
       "finding.reopened",
       "finding.check_unbound",
@@ -2897,6 +2899,12 @@
           "required": false
         },
         "peak_domains": {
+          "required": false
+        },
+        "engine_revision": {
+          "required": false
+        },
+        "engine_revision_unknown": {
           "required": false
         }
       }
@@ -5410,10 +5418,6 @@
         "boundary_passed_at": {
           "required": false
         },
-        "held": {
-          "required": false,
-          "enum": "HoldReason"
-        },
         "trigger_evidence": {
           "required": false
         },
@@ -5428,6 +5432,10 @@
         },
         "milestones_met": {
           "required": false
+        },
+        "held": {
+          "required": false,
+          "enum": "HoldReason"
         }
       }
     },
@@ -6517,6 +6525,9 @@
     },
     "finding.dispositioned": {
       "owner": "store/transitions/queue.ts"
+    },
+    "finding.proposal_standing": {
+      "owner": "store/transitions/findings.ts"
     },
     "finding.resolved": {
       "owner": "store/transitions/gates.ts, store/transitions/work.ts"

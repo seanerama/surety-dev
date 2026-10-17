@@ -92,6 +92,8 @@ export const EVENT_OWNERS = {
   'finding.raised': 'store/transitions/findings.ts',
   'finding.severity_changed': 'store/transitions/queue.ts',
   'finding.dispositioned': 'store/transitions/queue.ts',
+  // M546 (INK2-2): a Reviewer's proposal the owner's standing answer already gave, recorded against it, no question raised.
+  'finding.proposal_standing': 'store/transitions/findings.ts',
   'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
   // The driver's ruling on loop run 1: a finding's check its own proposal did not bring into effect.

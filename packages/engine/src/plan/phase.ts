@@ -33,6 +33,7 @@ import { correctionOpen } from '../store/transitions/repair.js';
 import { integrationRef, registryRow, projectRepoRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
+import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 
 type Db = Tx['db'];
 
@@ -102,6 +103,8 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   alphaBarrierStep(tx, args.project);
   // What an early replacement left behind (D6 §5.7; the review's M3, N2).
   settleReplacements(tx, args.project);
+  // A phase verification of a candidate a later one superseded (M545).
+  retireSupersededVerifications(tx, args.project);
   const plan = openPlan(tx.db, args.project);
   if (!plan) return NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
@@ -229,6 +232,67 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   if (!(isAdopted(tx.db, args.project) && plan.phase_number === 1)) replanAfter(tx, args.project, plan.id, plan.phase_number);
   markStale(tx, { project: args.project });
   return { evaluate: null, completed: plan.id };
+}
+
+// A superseded candidate's phase verification retired (M545; INK-2; E154
+// item 6 (6); D6 §5.8): a sign-off on code a later candidate replaced is
+// never asked for. From durable state at every phase step, so a restart
+// revives nothing:
+// - one not yet dispatched (`eligible`) is cancelled once its candidate is
+//   superseded, naming the candidate that superseded it (the newest
+//   verification is that candidate's own, phaseStep);
+// - one parked on its blocker (or awaiting a decision, or held) is
+//   cancelled once a later candidate's phase verification of the same plan
+//   generation (its plan row) is complete, its blocker closed naming that
+//   candidate, so a `retry` on it is refused as stale and nothing runs on
+//   the superseded code.
+// One whose run is under way ends as history (its item leaves these
+// statuses and is not touched here).
+export function retireSupersededVerifications(tx: Tx, project: string): string[] {
+  const items = tx.db
+    .prepare(`SELECT "id", "status", "subject" FROM "work_items" WHERE "project" = ? AND "kind" = 'phase_verification' AND "status" IN ('eligible', 'held', 'parked', 'awaiting_decision') ORDER BY "seq"`)
+    .all(project) as { id: string; status: string; subject: string }[];
+  const retired: string[] = [];
+  for (const w of items) {
+    const subject = parseJson<{ candidate?: string; phase_plan?: string }>(w.subject) ?? {};
+    if (!subject.candidate || !subject.phase_plan) continue;
+    const c = tx.db.prepare('SELECT "id", "seq", "superseded_by" FROM "candidates" WHERE "id" = ?').get(subject.candidate) as { id: string; seq: number; superseded_by: string | null } | undefined;
+    if (!c || c.superseded_by === null) continue;
+    // A run of the item still under way: it ends as history first.
+    if (tx.db.prepare(`SELECT 1 FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended'`).get(w.id)) continue;
+    let by: string | null = null;
+    if (w.status === 'eligible') by = c.superseded_by;
+    else {
+      const done = tx.db
+        .prepare(
+          `SELECT json_extract(w."subject", '$.candidate') AS "candidate" FROM "work_items" w JOIN "candidates" k ON k."id" = json_extract(w."subject", '$.candidate')
+           WHERE w."project" = ? AND w."kind" = 'phase_verification' AND w."status" = 'complete' AND json_extract(w."subject", '$.phase_plan') = ? AND k."seq" > ?
+           ORDER BY k."seq" DESC LIMIT 1`,
+        )
+        .get(project, subject.phase_plan, c.seq) as { candidate: string } | undefined;
+      // Or its Verifier's phase sign-off on a later candidate already
+      // recorded (its item completes at its run's end, which a tick may
+      // reach after the phase step that completes the phase on it).
+      const signed = done
+        ? undefined
+        : (tx.db
+            .prepare(
+              `SELECT s."candidate" FROM "signoffs" s JOIN "candidates" k ON k."id" = s."candidate"
+               WHERE s."project" = ? AND s."scope" = 'phase' AND s."phase_plan" = ? AND k."seq" > ? ORDER BY k."seq" DESC LIMIT 1`,
+            )
+            .get(project, subject.phase_plan, c.seq) as { candidate: string } | undefined);
+      by = done?.candidate ?? signed?.candidate ?? null;
+    }
+    if (by === null) continue;
+    const item = getWorkItem(tx, w.id);
+    if (!item) continue;
+    transitionWork(tx, item, 'cancelled', { blocker: null }, { cause: 'candidate_superseded', candidate: c.id, superseded_by: by, phase_plan: subject.phase_plan });
+    tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(w.id);
+    const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
+    for (const d of open) invalidateDecision(tx, d, `superseded: candidate ${c.id} was superseded by candidate ${by}, whose phase verification ${w.status === 'eligible' ? 'is its own' : 'is complete'}`, { superseded_by: by });
+    retired.push(w.id);
+  }
+  return retired;
 }
 
 // The replan of the phase after `plan`, once, when the roadmap has one.

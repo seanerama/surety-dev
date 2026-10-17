@@ -232,6 +232,30 @@ export function approvedAdrs(db: Db, project: string, archBlobs: string): Record
 // delivery phase is to fix, and its history is not reopened. A regression
 // with no such change still blocks the clause (D6 §5.8).
 export function phasesNotHeld(db: Db, project: string): Record<number, string[]> {
+  const out: Record<number, string[]> = {};
+  for (const [phase, lacking] of Object.entries(phaseLacking(db, project))) {
+    out[Number(phase)] = lacking.map((l) => (l.check === null ? `unknown: ${l.why}` : l.state === 'failed' ? `failed: ${l.check} on ${l.candidate}` : `unknown: ${l.check} ${l.state} on ${l.candidate}`));
+  }
+  return out;
+}
+
+// What a completed phase lacks on the newest candidate, each entry
+// structured (phasesNotHeld's strings are made from it): the check, its
+// state there, and the execution still to give its result, if one is in
+// flight (queued, materializing, running or collecting). `check` null: the
+// reading itself is unknown (no candidate, no effective version).
+export interface PhaseLack {
+  check: string | null;
+  state: string;
+  candidate: string | null;
+  execution: { id: string; status: string } | null;
+  why?: string;
+}
+// A quarantined execution counts too (the review's finding 2), as the spec
+// change's hold counts it: its result is not yet settled.
+export const IN_FLIGHT: readonly string[] = ['queued', 'materializing', 'running', 'quarantined', 'collecting'];
+
+export function phaseLacking(db: Db, project: string): Record<number, PhaseLack[]> {
   const plans = db.prepare(`SELECT "id", "phase_number", "completion_binding" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed' ORDER BY "phase_number"`).all(project) as {
     id: string;
     phase_number: number;
@@ -241,24 +265,84 @@ export function phasesNotHeld(db: Db, project: string): Record<number, string[]>
   const newest = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
   const candidate = newest ? getCandidate(db, newest.id) : undefined;
   const effective = effectiveVersion(db, project);
-  const out: Record<number, string[]> = {};
+  const out: Record<number, PhaseLack[]> = {};
   for (const plan of plans) {
     if (!candidate || !effective) {
-      out[plan.phase_number] = [`unknown: ${!candidate ? 'no current candidate' : 'no effective protected version'}`];
+      out[plan.phase_number] = [{ check: null, state: 'unknown', candidate: candidate?.id ?? null, execution: null, why: !candidate ? 'no current candidate' : 'no effective protected version' }];
       continue;
     }
     const set = requiredSet(db, { project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
     const changed = changedSinceCompletion(db, project, plan.completion_binding);
-    const lacking: string[] = [];
+    const lacking: PhaseLack[] = [];
     for (const c of set.required) {
       if (changed.has(c.key)) continue;
-      const state = checkState(db, project, c, { candidate, effective, environment: null, artifact: null }).state;
-      if (state === 'failed') lacking.push(`failed: ${c.key} on ${candidate.id}`);
-      else if (state !== 'passed') lacking.push(`unknown: ${c.key} ${state} on ${candidate.id}`);
+      const s = checkState(db, project, c, { candidate, effective, environment: null, artifact: null });
+      if (s.state === 'passed') continue;
+      const execution = s.state !== 'failed' && s.pending !== null && IN_FLIGHT.includes(s.pending.status) ? { id: s.pending.execution, status: s.pending.status } : null;
+      lacking.push({ check: c.key, state: s.state, candidate: candidate.id, execution });
     }
     if (lacking.length > 0) out[plan.phase_number] = lacking;
   }
   return out;
+}
+
+// A replan's prerequisite results still to come (M543; M444F-1; E154 item 6
+// (2); D6 §5.3 clause 3, §5.6): the phases `phase` depends on are complete,
+// and everything one of them lacks on the newest candidate is a required
+// check whose execution there is queued or running, so the dependency
+// clause would read `unknown` now and `passed` or `failed` once they are
+// recorded. Then the replan is held, not checked: refusing it now would
+// spend its repair on a result not yet observed. Any other lack (a failed
+// result, a result with no execution in flight, a dependency not complete,
+// the reading itself unknown) is not held: the plan check refuses it as
+// built. null when nothing is pending.
+export interface PendingPrerequisite {
+  phase: number;
+  key: string;
+  candidate: string;
+  execution: string;
+  status: string;
+}
+export function pendingPrerequisites(db: Db, project: string, dependsOn: readonly number[]): PendingPrerequisite[] | null {
+  if (dependsOn.length === 0) return null;
+  const completed = new Set((db.prepare(`SELECT "phase_number" FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).all(project) as { phase_number: number }[]).map((r) => r.phase_number));
+  if (!dependsOn.every((d) => completed.has(d))) return null;
+  const lacking = phaseLacking(db, project);
+  const pending: PendingPrerequisite[] = [];
+  for (const d of dependsOn) {
+    for (const l of lacking[d] ?? []) {
+      if (l.check === null || l.candidate === null || l.execution === null) return null;
+      pending.push({ phase: d, key: l.check, candidate: l.candidate, execution: l.execution.id, status: l.execution.status });
+    }
+  }
+  return pending.length > 0 ? pending : null;
+}
+
+// The phase a replan item plans and what that phase depends on, by the
+// approved roadmap (an early replacement's: the phase of the plan it
+// replaces; any other: the next phase after the last completed one).
+// null when the roadmap names no such phase.
+export function replanTarget(db: Db, item: { id: string; project: string }): { phase: number; depends_on: number[] } | null {
+  const row = db.prepare('SELECT "trigger_source", "trigger_id", "trigger_generation", "subject", "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(item.id) as
+    | { trigger_source: string; trigger_id: string; trigger_generation: number; subject: string; trigger_evidence: string | null }
+    | undefined;
+  if (!row) return null;
+  const target = replacementOf(db, row);
+  let phase: number | null = null;
+  if (target) phase = (db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(target.phase_plan) as { phase_number: number } | undefined)?.phase_number ?? null;
+  if (phase === null) {
+    const last = db.prepare(`SELECT MAX("phase_number") AS n FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(item.project) as { n: number | null };
+    phase = (last.n ?? 0) + 1;
+  }
+  const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(item.project) as { phases: string } | undefined;
+  let phases: { number: number; depends_on?: number[] }[] = [];
+  try {
+    phases = road ? (JSON.parse(road.phases) as typeof phases) : [];
+  } catch {
+    phases = [];
+  }
+  const entry = phases.find((p) => p.number === phase);
+  return entry ? { phase, depends_on: Array.isArray(entry.depends_on) ? entry.depends_on : [] } : null;
 }
 
 // The check keys a specification change approved after a phase's completion

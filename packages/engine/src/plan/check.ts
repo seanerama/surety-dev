@@ -16,6 +16,10 @@ import { TIER_RANK, type Tier, computeScope, modulePathOk } from '../checks/scop
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';
 import { canonical, sha256 } from '../store/transitions/common.js';
 
+// A replan held for its prerequisite results (M543; M444F-1): the dispatch
+// blocker's and the held run's text begin with it.
+export const PREREQUISITES_PENDING = 'depends on prerequisite results still to come';
+
 export interface PlanReason {
   code: string;
   subjects: string[];

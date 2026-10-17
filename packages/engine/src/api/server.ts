@@ -16,6 +16,7 @@ import { inspectEngineConfig } from '../config/engine-config.js';
 import { runningClassifierVersion } from '../checks/classify.js';
 import type { EngineState } from '../engine.js';
 import { ENGINE_VERSION } from '../index.js';
+import { engineRevision } from '../revision.js';
 import { answerFacts } from '../decisions/facts.js';
 import { type AnswerWaits, afterAnswer, beforeAnswer } from '../decisions/answer.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
@@ -1032,6 +1033,9 @@ async function engineInfo(state: EngineState) {
   const bootstrap = state.config.values.ui_bootstrap === true;
   return seamDescribe({
     version: ENGINE_VERSION,
+    // The source revision this engine was started from (M544): the package
+    // version beside it is not a revision.
+    revision: engineRevision(),
     incarnation: state.lock.incarnation_id,
     mode: state.mode,
     // The backends a dispatch may use: those with an active trust entry, and
