@@ -31,6 +31,8 @@ It is timing-dependent. The same cases failed the same way on the slice-43 base 
 # fail 0
 ```
 
+The same quiesced copy of M514 (c) also passes every assertion at `efe0a42`. In the final serial run of the slice-44 files at `efe0a42`, M515 (a) and M530 (c) passed and M514 (c) failed at this point. That is the timing dependence.
+
 ## What the test can do
 
 Either:

@@ -24,6 +24,15 @@ The same `designScripts` correction script was in the slice-43 base (`9d29f1e`),
 
 How far the case gets depends on timing. In a second run on this branch it failed earlier, at "phase 2 published: not reached within 60 ticks", with the same correction pending and refused 409 on every tick: phase 1's R3 obligation is unresolved while the correction cannot be approved.
 
+A scratch copy of the case outside the repository passes every assertion of (f) and (g) on this branch at `efe0a42`. Its one change is that, before the owner's R3 change, it scripts the `check_correction` kind as a role adding one smoke check (`smoke-r3`, `node --check server.mjs`, requested `tightening`):
+
+```
+# pass 1
+# fail 0
+```
+
+(Phase 2's `LATER_AUTHORING` script does not work as the correction. Its `smoke-later` file then exists before phase 2's authoring, and that authoring's proposal is left empty.)
+
 ## What the test can do
 
 Script the R3 change's correction as a correction of R3.1's own check (`accept-r3`, covering R3.1), for example with `fx.scripted.kindScript('check_correction', …)` before the owner's change. Or answer that correction `reject`, so it leaves and the batch is raised.
