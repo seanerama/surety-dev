@@ -411,7 +411,7 @@ export function contextFacts(db: Database, args: { run: string }) {
       run.role === 'builder'
         ? (
             db
-              .prepare(`SELECT e."name", c."content" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name"`)
+              .prepare(`SELECT e."name", c."content" FROM "environments" e JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? AND e."name" <> 'design-preview' ORDER BY e."name"`)
               .all(item.project) as { name: string; content: string }[]
           ).map((r) => {
             const c = parse<Record<string, unknown>>(r.content, {});
@@ -696,7 +696,7 @@ function checkEnvironments(db: Database, project: string): NonNullable<CheckWrit
     }
   };
   const all = db
-    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? ORDER BY e."name", e.rowid`)
+    .prepare(`SELECT e."name", c."content" FROM "environments" e LEFT JOIN "environment_configs" c ON c."id" = e."current_config" WHERE e."project" = ? AND e."name" <> 'design-preview' ORDER BY e."name", e.rowid`)
     .all(project) as { name: string; content: string | null }[];
   // An environment is one thing by name (the driver's ruling, slice 38):
   // stated once, from the owner's configuration where a row of the name has

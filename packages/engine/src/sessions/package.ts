@@ -118,6 +118,8 @@ export function writeSessionPackage(
   texts: Map<string, string | null> = new Map(),
   artifact: ArtifactState | null = null,
   canary: Record<string, unknown> | null = null,
+  // A review-mode Designer session's design files (D7 §10.2; design/package.ts).
+  design: { files: { path: string; content: Buffer }[]; prompt: string[] } | null = null,
 ): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: string; source: string | null; sha256: string }[] = [];
@@ -159,6 +161,7 @@ export function writeSessionPackage(
       '',
       ...(reads.elements.length > 0 ? [...readsText(reads.elements).slice(1), ''] : []),
       ...(canary ? canaryPromptText(canary) : []),
+      ...(design ? design.prompt : []),
     ].join('\n'),
   );
   put(
@@ -186,6 +189,11 @@ export function writeSessionPackage(
   for (const f of art.files) put(`artifact/${f.path}`, 'artifact', f.text);
   put('artifact.json', 'artifact', `${JSON.stringify({ files: art.files.map((f) => f.path), omitted: art.omitted, ...(art.unknown ? { unknown: art.unknown } : {}) }, null, 2)}\n`);
   if (canary) put('canary.json', 'instructions', `${JSON.stringify(canary, null, 2)}\n`);
+  for (const f of design?.files ?? []) {
+    mkdirSync(dirname(join(dir, f.path)), { recursive: true, mode: 0o755 });
+    writeFileSync(join(dir, f.path), f.content);
+    files.push({ path: f.path, kind: 'design', source: null, sha256: createHash('sha256').update(f.content).digest('hex') });
+  }
   put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
 }

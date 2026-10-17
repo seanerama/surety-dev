@@ -221,6 +221,8 @@ export const EVENT_OWNERS = {
   'design.assets_approved': 'design/approval.ts',
   'design.preview_deployed': 'design/preview.ts',
   'design.preview_torn_down': 'design/preview.ts',
+  'design.preview_requested': 'design/preview.ts',
+  'design.preview_failed': 'design/preview.ts',
   'design.review_recorded': 'design/review.ts',
   'design.review_requested': 'design/review.ts',
   'design.verdicts_confirmed': 'design/review.ts',

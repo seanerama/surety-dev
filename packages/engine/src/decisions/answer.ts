@@ -33,7 +33,18 @@ export async function afterAnswer(rt: Runtime, waits: AnswerWaits | undefined): 
   // A design batch whose two answers are both consumed approve (D7 §7.4;
   // SEAM.md §486): the barrier `design.approved` after the answers and
   // before any effect; then the batch released and its change applied.
-  const batches = await rt.read<{ revision: string; request: string; intents: string[] }[]>('design.answered_batches', { decisions: waits.decisions });
+  await releaseBatches(rt, await rt.read<{ revision: string; request: string; intents: string[] }[]>('design.answered_batches', { decisions: waits.decisions }));
+  await publishAuthorized(rt, waits.project);
+}
+
+// The design batches of a project whose answers are consumed and which no
+// continuation released (an answer's continuation cut short by a stop): at
+// the design's tick, through the same barrier.
+export async function releaseAnsweredBatches(rt: Runtime, project: string): Promise<void> {
+  await releaseBatches(rt, await rt.read<{ revision: string; request: string; intents: string[] }[]>('design.answered_batches', { project }));
+}
+
+async function releaseBatches(rt: Runtime, batches: { revision: string; request: string; intents: string[] }[]): Promise<void> {
   for (const b of batches) {
     // One answer's continuation takes a batch: the other answer's, racing it,
     // does not release it past the barrier.
@@ -47,5 +58,4 @@ export async function afterAnswer(rt: Runtime, waits: AnswerWaits | undefined): 
       releasing.delete(b.revision);
     }
   }
-  await publishAuthorized(rt, waits.project);
 }

@@ -7,6 +7,7 @@
 // these, and labels what it causes. M1 has no check runner, no classifier
 // and no reuse assessment; nothing here qualifies one.
 
+import { recordResultAssets } from '../../design/asset-inputs.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, sha256 } from './common.js';
 import { getCandidate, markStale } from './evidence.js';
@@ -421,6 +422,8 @@ export function insertExecutionResult(
       a.runner_qualification,
       a.deployment ?? null,
     );
+  // D7 §6.5 (G14): the slot@version it read, and the obligations a pass resolves.
+  recordResultAssets(tx, { result: id, execution: a.execution, project: a.project, exit_status: a.exit_status });
   tx.emit(
     'check.result',
     { project: a.project, check: a.check, candidate: a.candidate, check_result: id, check_execution: a.execution },

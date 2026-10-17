@@ -18,6 +18,7 @@ import { tokensCss } from './bindings-css.js';
 import { approvedModuleMap, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
 import { blobAt } from './tree.js';
 import { DESIGN_ROOT } from './inventory.js';
+import { observationsFor } from './review-driver.js';
 
 export interface DesignPackageFacts {
   // The approved design revision's commit and the files the package reads of it.
@@ -128,8 +129,22 @@ export function designPackageFacts(db: Database.Database, args: { run: string })
   return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(fix ? { asset_update: subject as Record<string, unknown> } : {}) };
 }
 
+const REVIEW_TEXT = [
+  'This is a review of the deployed build against the approved design (D7 §10). /surety/context/design/observations.json holds what the engine observed: for each web screen with a route, the HTTP response the engine fetched from the running service (`provenance: engine_observed`, its `record` and its `evidence` id); every native screen is listed under `not_observed` (`no_native_runtime`): nothing here runs it.',
+  'Write your review to `.surety/design/reviews/review-<n>.json`: per screen a verdict (`matches`, `differs` or `not_observed` with its reason), the evidence ids it rests on, and the deltas. Your verdicts are proposals; the owner confirms them.',
+];
+
+// A review-mode Designer session's package (D7 §10.2; SEAM.md §489).
+async function reviewPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage> {
+  const o = await observationsFor(rt, project, run);
+  const body = { observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) };
+  return { files: [{ path: 'design/observations.json', content: Buffer.from(`${JSON.stringify(body, null, 2)}\n`) }], prompt: ['', '## The review', '', ...REVIEW_TEXT] };
+}
+
 // The package's design files, read from git (main thread).
 export async function designPackageFor(rt: Runtime, run: string): Promise<DesignPackage | null> {
+  const who = await rt.read<{ project: string; role: string; mode: string | null } | null>('design.run_facts', { run });
+  if (who?.role === 'designer') return who.mode === 'review' ? reviewPackage(rt, who.project, run) : null;
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
   const files: DesignPackage['files'] = [];

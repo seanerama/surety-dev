@@ -419,9 +419,19 @@ export class ReleaseOperator {
     // adapterCall's check (D4 §2.2) is made in effectCall, the one entry
     // point, and nowhere else (the slice-28 review, m7).
     const attempt = made.attempt;
-    // The kernel lane's launch stand-in (SEAM.md §247) speaks through this
-    // channel; the real launcher through the launch socket (service-host.ts).
-    const launch: LaunchChannel = {
+    const launch = this.launchChannel(attempt, cap.lease_generation);
+    // A teardown's effect waits for every manager job of the environment
+    // (D4 §§2.4, 4.6; the slice-26 review, S1): a job pending, or a listing
+    // that cannot be read, leaves the attempt ambiguous with no host call.
+    return this.issue(d, attempt, cap, launch);
+  }
+
+  // The kernel lane's launch stand-in (SEAM.md §247) speaks through this
+  // channel; the real launcher through the launch socket (service-host.ts).
+  // The design preview's deploys use it too (design/preview.ts).
+  launchChannel(attempt: string, leaseGeneration: number): LaunchChannel {
+    const cap = { lease_generation: leaseGeneration };
+    return {
       placed: async (p) => {
         const lk = await this.rt.read<{ domain: { id: string } | null } | null>('deploy.launch_lookup', { attempt });
         if (!lk?.domain) return;
@@ -454,9 +464,9 @@ export class ReleaseOperator {
         await this.rt.engine('deploy.app_started', { attempt, app });
       },
     };
-    // A teardown's effect waits for every manager job of the environment
-    // (D4 §§2.4, 4.6; the slice-26 review, S1): a job pending, or a listing
-    // that cannot be read, leaves the attempt ambiguous with no host call.
+  }
+
+  private async issue(d: DeployDetail, attempt: string, cap: Capability, launch: LaunchChannel): Promise<boolean> {
     if (d.kind === 'teardown') {
       // A teardown closes the environment's relay before its effect (D4 §5.2).
       await this.services?.closeRelays({ environment: d.frozen.environment }, 'teardown');

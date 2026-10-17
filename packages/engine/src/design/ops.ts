@@ -18,6 +18,11 @@ import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
 import { designPackageFacts } from './package.js';
 import { carriedEffective } from './asset-bindings.js';
+import { previewFacts } from './preview-facts.js';
+import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
+import { submitAssets } from './assets-submit.js';
+import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
+import { beginPreview, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
 
 type Db = Database.Database;
 
@@ -60,6 +65,21 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.view': (d, a: { project: string }) => designView(d, a),
   'design.package_facts': (d, a: { run: string }) => designPackageFacts(d, a),
   'design.carried_effective': (d, a: { run: string }) => carriedEffective(d, a.run),
+  'design.preview_facts': (d, a: { project: string; revision?: string }) => previewFacts(d, a),
+  'design.preview_state': (d, a: { project: string }) => previewState(d, a),
+  'design.review_target': (d, a: { project: string }) => reviewTarget(d, a),
+  'design.run_facts': (d, a: { run: string }) => {
+    const r = d.prepare('SELECT "project", "role", "session_notes" FROM "runs" WHERE "id" = ?').get(a.run) as { project: string; role: string; session_notes: string | null } | undefined;
+    return r ? { project: r.project, role: r.role, mode: parseJson<{ mode?: string }>(r.session_notes)?.mode ?? null } : null;
+  },
+  'design.observations': (d, a: { run: string }) => observationsOf(d, a),
+  'design.review_facts': (d, a: { project: string; run: string }) => {
+    const rev = d.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(a.project) as { id: string } | undefined;
+    const state = parseJson<{ stage?: string }>((d.prepare('SELECT "design_due" FROM "projects" WHERE "id" = ?').get(a.project) as { design_due: string | null }).design_due);
+    const recorded = (d.prepare('SELECT "review_blob" FROM "design_reviews" WHERE "project" = ? AND "review_blob" IS NOT NULL').all(a.project) as { review_blob: string }[]).map((r) => r.review_blob);
+    return { design_revision: rev?.id ?? null, alpha_review: state?.stage === 'alpha_review', recorded };
+  },
+  'checks.asset_files': (d, a: { execution: string }) => executionAssetFiles(d, a),
   'design.answered_batches': (d, a: { decisions?: string[]; project?: string }) => answeredBatches(d, a),
   'design.check_context': (d, a: { project: string }) => checkContext(d, a.project),
   'design.latest_check': (d, a: { project: string; run?: string }) => latestCheck(d, a),
@@ -82,12 +102,25 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
   },
   'design.tick': (tx, a: { project: string }) => {
     designReadiness(tx, a.project);
+    noteAlphaReview(tx, a.project);
+    completeAssetFixes(tx, a.project);
     reviewDesignDue(tx, a.project);
     return {};
   },
   'design.release_batch': (tx, a: { revision: string }) => releaseBatch(tx, a),
   'design.record_check': (tx, a) => recordCheck(tx, a),
   'design.propose': (tx, a) => proposeDesign(tx, a),
+  'design.preview_begin': (tx, a) => beginPreview(tx, a),
+  'design.record_observation': (tx, a) => recordObservation(tx, a),
+  'design.preview_artifact': (tx, a) => previewArtifact(tx, a),
+  'design.preview_intend': (tx, a) => intendPreviewOp(tx, a),
+  'design.preview_deployed': (tx, a) => previewDeployed(tx, a),
+  'design.preview_failed': (tx, a) => previewFailed(tx, a),
+  'design.preview_torn_down': (tx, a) => previewTornDown(tx, a),
 };
 
-export const DESIGN_COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {};
+export const DESIGN_COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
+  // The preview's answers (SEAM.md §488): what the main thread prepared, audited here.
+  'design.preview_answer': (_tx, a: { status: number; body: Record<string, unknown> }) => ({ status: a.status, body: a.body }),
+  'design.assets_submit': (tx, a: { project: string }) => submitAssets(tx, a),
+};

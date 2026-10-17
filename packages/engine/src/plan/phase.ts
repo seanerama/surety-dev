@@ -19,6 +19,7 @@
 //   from (`phase_complete`, <plan>, 1) when the roadmap has a next phase.
 // Phase completion establishes nothing about deployment.
 
+import { designBoundHumanTests } from '../design/human-tests.js';
 import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
@@ -293,9 +294,11 @@ export function buildComplete(db: Db, project: string): boolean {
 export function unplannedRequirements(db: Db, planId: string): string[] {
   const plan = db.prepare('SELECT "project", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(planId) as { project: string; phase_number: number } | undefined;
   if (!plan) return [];
-  const implemented = new Set(
-    activeStages<{ implements: string }>(db, planId).flatMap((s) => parseJson<string[]>(s.implements) ?? []),
-  );
+  const active = activeStages<{ id: string; implements: string }>(db, planId);
+  const implemented = new Set(active.flatMap((s) => parseJson<string[]>(s.implements) ?? []));
+  // A design's human test (E156 Q3), assigned to the phase holding its
+  // target's last UI stage and bound to that stage of this plan: planned.
+  for (const k of designBoundHumanTests(db, plan.project, planId, new Set(active.map((s) => s.id)))) implemented.add(k);
   return (
     db
       .prepare(`SELECT "id", "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" = ? AND "withdrawn_at" IS NULL AND "status" <> 'descriptive_unverified' ORDER BY "key"`)

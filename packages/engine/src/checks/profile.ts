@@ -64,7 +64,12 @@ export interface CheckPlanInput {
   egressSocket?: string | null;
   // The execution's service link (D4 §5.2), bound beside the init.
   linkSocket?: string | null;
+  // The design's effective asset files it reads (D7 §6.5), read-only at
+  // /surety/assets.
+  assets?: string | null;
 }
+
+export const ASSETS_MOUNT = '/surety/assets';
 
 export const LINK_SOCKET = '/.init/link.sock';
 
@@ -88,6 +93,7 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
   );
   b.dir('/surety/home');
   b.line(join(vol, 'home'), '/surety/home', 'none', 'bind,nosuid,nodev');
+  if (input.assets) b.bind(input.assets, { target: ASSETS_MOUNT, noexec: true });
   b.dir('/tmp', 0o1777);
   b.line(join(vol, 'tmp'), '/tmp', 'none', 'bind,nosuid,nodev');
   const first = { skeleton: b.skeleton, fstab: b.fstab };

@@ -43,7 +43,7 @@ import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
-import { approveDesign, designBatchState, designBindingsChanged, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
+import { approveDesign, designBatchState, designBindingsChanged, getRevision, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
 import { blobsHash } from '../design/store.js';
 import { latestCheck } from '../design/records.js';
 
@@ -980,7 +980,16 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // it registers no replan.
   const design = r.source === 'design' ? revisionOfRequest(tx.db, r.id) : undefined;
   if (design) approveDesign(tx, { revision: design.id, specRevision: made.spec_revision, withoutCriteria: false });
-  if ((impact.touches_current || impact.touches_later === true) && roadmap && !design) {
+  // A requirement the change adds that the engine's assignment did not
+  // place (a human test whose phase cannot be determined, a criterion with
+  // requirement "new", an ordinary new requirement) goes the normal way
+  // (E156 Q3; D6 reading 6): the replan places it, REQUIREMENT_UNASSIGNED
+  // naming it on every phase gate until then.
+  const placed = new Set(
+    (parseJson<{ requirement: string | null; phase: number | null }[]>(design ? (getRevision(tx.db, design.id)?.assignments ?? null) : null) ?? []).filter((a) => a.requirement !== null && a.phase !== null).map((a) => a.requirement!),
+  );
+  const unplaced = design !== undefined && impact.requirements.some((q) => q.changes.includes('added') && !placed.has(q.key));
+  if ((impact.touches_current || impact.touches_later === true) && roadmap && (!design || unplaced)) {
     // Only a change touching the current phase replaces its plan early (D6
     // §5.7; the slice-36 review's M1): a later-only change's replan binds no
     // open plan and supersedes none of the current phase's stages.

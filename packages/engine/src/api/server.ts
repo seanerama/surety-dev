@@ -690,6 +690,27 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 1 && rest[0] === 'design' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'design.view', args: { project } }) }) };
       }
+      // D7 §5.7 (SEAM.md §488): the design preview, deployed and stopped.
+      if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'preview' && (post || method === 'DELETE')) {
+        const designer = () => {
+          const d = runtime().design;
+          if (!d) throw new Refusal(503, 'engine_starting', 'The design subsystem is not running yet.', 'Wait for startup to finish.', { step: state.step });
+          return d;
+        };
+        if (post) return { kind: 'prepared', name: 'design.preview_answer', prepare: async (b) => designer().preview.request(project, b) };
+        return { kind: 'prepared', name: 'design.preview_answer', prepare: async () => designer().preview.stop(project) };
+      }
+      // D7 §6.4 (SEAM.md §487): the held assets submitted on their own.
+      if (rest.length === 3 && rest[0] === 'design' && rest[1] === 'assets' && rest[2] === 'submit' && post) {
+        return {
+          kind: 'command',
+          name: 'design.assets_submit',
+          args: (b) => {
+            onlyFields(b ?? {}, []);
+            return { project };
+          },
+        };
+      }
       if (rest.length === 1 && rest[0] === 'pace' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };
       }

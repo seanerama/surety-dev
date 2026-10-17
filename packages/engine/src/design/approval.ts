@@ -341,7 +341,7 @@ export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown
 
 // The phase holding a target's last UI stage (E156 Q3; SEAM.md §486), or
 // null with why.
-export function lastUiPhase(db: Db, project: string, target: string): { phase: number | null; reason?: string } {
+export function lastUiPhase(db: Db, project: string, target: string): { phase: number | null; reason?: string; stage?: string; phase_plan?: string } {
   const map = approvedModuleMap(db, project)?.map ?? null;
   const serving = new Set((map?.modules ?? []).filter((m) => m.surface === 'ui' && (m.targets ?? []).some((t) => t.target === target)).map((m) => m.name));
   const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
@@ -350,19 +350,26 @@ export function lastUiPhase(db: Db, project: string, target: string): { phase: n
   const plans = planVersions(db, project);
   const stages = publishedStages(db, project);
   const holding: number[] = [];
+  // The stage of a published plan that is the target's last UI stage, by phase.
+  const last = new Map<number, { stage: string; phase_plan: string }>();
   for (const ph of phases) {
     const plan = plans.find((p) => p.phase === ph.number);
     if (plan) {
-      if (stages.some((s) => s.phase_plan === plan.id && stageModuleNames(db, project, s.modules).some((m) => serving.has(m)))) holding.push(ph.number);
+      const serving_ = stages.filter((s) => s.phase_plan === plan.id && stageModuleNames(db, project, s.modules).some((m) => serving.has(m))).sort((a, b) => a.number - b.number);
+      if (serving_.length > 0) {
+        holding.push(ph.number);
+        last.set(ph.number, { stage: serving_.at(-1)!.id, phase_plan: plan.id });
+      }
     } else if (ph.modules.some((m) => serving.has(m))) holding.push(ph.number);
   }
   if (holding.length === 0) return { phase: null, reason: `no phase of the roadmap holds a UI stage of ${target}` };
-  return { phase: Math.max(...holding) };
+  const phase = Math.max(...holding);
+  return { phase, ...(last.get(phase) ?? {}) };
 }
 
 // The design's human tests, each with the requirement the change gives it
 // and the phase it would be assigned to.
-export function humanTestAssignments(db: Db, rev: RevisionRow): { target: string; requirement: string | null; phase: number | null; reason?: string }[] {
+export function humanTestAssignments(db: Db, rev: RevisionRow): { target: string; requirement: string | null; phase: number | null; reason?: string; stage?: string; phase_plan?: string }[] {
   const content = contentOf(rev);
   const r = requestRow(db, rev.spec_change_request);
   if (!content || !r) return [];
@@ -372,7 +379,7 @@ export function humanTestAssignments(db: Db, rev: RevisionRow): { target: string
   return content.criteria.human_tests.map((h) => {
     const req = rep?.requirements.find((q) => q.human_test && added.has(q.key) && (q.surface_targets ?? []).includes(h.target)) ?? null;
     const where = lastUiPhase(db, rev.project, h.target);
-    return { target: h.target, requirement: req?.key ?? null, phase: where.phase, ...(where.reason ? { reason: where.reason } : {}) };
+    return { target: h.target, requirement: req?.key ?? null, phase: where.phase, ...(where.reason ? { reason: where.reason } : {}), ...(where.stage ? { stage: where.stage, phase_plan: where.phase_plan } : {}) };
   });
 }
 
@@ -539,8 +546,10 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
       );
   }
   const moved = moveEffective(tx, rev, manifest, held);
-  // The human tests' assignment (E156 Q3), with the change's effect.
+  // The human tests' assignment (E156 Q3), with the change's effect; an
+  // asset-only revision keeps the one it supersedes.
   if (!args.withoutCriteria && rev.spec_change_request) assignHumanTests(tx, rev);
+  else if (rev.scope === 'asset_only' && prior) tx.db.prepare('UPDATE "design_revisions" SET "assignments" = (SELECT "assignments" FROM "design_revisions" WHERE "id" = ?) WHERE "id" = ?').run(prior.id, rev.id);
   bindStageScreens(tx, rev);
   tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
   if (moved.length > 0) {
@@ -592,7 +601,8 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
 // revision placing each in the phase holding its target's last UI stage.
 function assignHumanTests(tx: Tx, rev: RevisionRow): void {
   const assignments = humanTestAssignments(tx.db, rev).filter((a) => a.requirement !== null && a.phase !== null) as { target: string; requirement: string; phase: number }[];
-  tx.db.prepare('UPDATE "design_revisions" SET "assignments" = ? WHERE "id" = ?').run(JSON.stringify(humanTestAssignments(tx.db, rev)), rev.id);
+  const all = humanTestAssignments(tx.db, rev);
+  tx.db.prepare('UPDATE "design_revisions" SET "assignments" = ? WHERE "id" = ?').run(JSON.stringify(all), rev.id);
   if (assignments.length === 0) return;
   const road = tx.db.prepare('SELECT * FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(rev.project) as
     | { version: number; architecture_revision: string | null; git_path: string; git_blob: string; phases: string; moved_requirements: string | null }
@@ -615,6 +625,8 @@ function assignHumanTests(tx: Tx, rev: RevisionRow): void {
     .prepare('INSERT INTO "roadmap_revisions" ("id", "created_at", "project", "version", "architecture_revision", "git_path", "git_blob", "phases", "moved_requirements", "approved_by", "approved_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, tx.at, rev.project, road.version + 1, road.architecture_revision, road.git_path, road.git_blob, JSON.stringify(phases), JSON.stringify(moves), 'engine:design_approval', tx.at);
   for (const m of moves) tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(m.to, rev.project, m.key);
+  // Each assignment bound to the roadmap and plan versions it was made against (E156 Q3).
+  tx.db.prepare('UPDATE "design_revisions" SET "assignments" = ? WHERE "id" = ?').run(JSON.stringify(all.map((a) => (a.requirement !== null && a.phase !== null ? { ...a, roadmap_version: road.version + 1 } : a))), rev.id);
   tx.emit('baseline.roadmap_revised', { project: rev.project, roadmap_revision: id }, { version: road.version + 1, phases: phases.map((p) => p.number), design_revision: rev.id, approved_by: 'engine:design_approval', moved_requirements: moves });
 }
 
@@ -717,15 +729,7 @@ export function designReadiness(tx: Tx, project: string): string[] {
   return out;
 }
 
-export const DESIGN_VERDICTS: KindSpec = {
-  preview: () => null,
-  manifest: () => ({ review: null, review_blob: null, evidence: null }),
-  reraise: true,
-  answer(tx, d, option, note) {
-    consumeDecision(tx, d, option, note);
-    return consumed(d);
-  },
-};
+export { DESIGN_VERDICTS } from './review.js';
 
 export type { Inventory };
 void policyRevision;

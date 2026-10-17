@@ -14,15 +14,21 @@ import { pausePoint } from '../testing/seam.js';
 import { MANIFEST_FILE } from './assets.js';
 import { DESIGN_ROOT, INVENTORY_FILE } from './inventory.js';
 import type { InventoryDue } from './store.js';
+import { DesignPreviewer } from './preview.js';
+import { releaseAnsweredBatches } from '../decisions/answer.js';
 
 export class DesignDriver {
   // Projects whose inventory this incarnation is deriving now.
   private readonly inFlight = new Set<string>();
+  // The design preview (D7 §5.7; design/preview.ts).
+  readonly preview: DesignPreviewer;
 
   constructor(
     private readonly rt: Runtime,
     private readonly journal: Journal,
-  ) {}
+  ) {
+    this.preview = new DesignPreviewer(rt);
+  }
 
   // The inventory, derived and committed when it is due (D7 §1 step 4a, §4.4):
   // after a plan's publication, a policy change and at every tick.
@@ -81,5 +87,7 @@ export class DesignDriver {
   async step(project: string): Promise<void> {
     await this.deriveIfDue(project).catch((err) => log('design inventory', err, { project }));
     await this.rt.engine('design.tick', { project }).catch((err) => log('design', err, { project }));
+    await releaseAnsweredBatches(this.rt, project).catch((err) => log('design batch', err, { project }));
+    await this.preview.expire(project).catch((err) => log('design preview', err, { project }));
   }
 }
