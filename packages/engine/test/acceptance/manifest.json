@@ -469,7 +469,14 @@
       "M445-the-m5-report.test.mjs",
       "M446-hands-on-script.test.mjs"
     ],
-    "39": [],
+    "39": [
+      "M542-the-runs-observed-model.test.mjs",
+      "M543-a-replan-held-while-its-prerequisite-results-are-pending.test.mjs",
+      "M543-a-replan-refused-when-no-result-is-coming.test.mjs",
+      "M544-the-engines-revision-recorded.test.mjs",
+      "M545-a-superseded-phase-verification-retired.test.mjs",
+      "M546-no-redundant-disposition-question.test.mjs"
+    ],
     "40": [],
     "41": [],
     "42": [],
