@@ -304,9 +304,20 @@ export function readProject(db: Db, args: { project: string }) {
       // driver's decision on objection 156; rule 25).
       held_turns: (
         db
-          .prepare(`SELECT "run", "number", "day_hold" FROM "turns" WHERE "project" = ? AND "day_hold" IS NOT NULL AND "day_hold_released_at" IS NULL AND "settled_at" IS NULL ORDER BY "created_at", rowid`)
-          .all(args.project) as { run: string; number: number; day_hold: string }[]
-      ).map((t) => ({ run: t.run, turn: t.number, reason: 'day_limit', ...(parseJson<{ limits: string[]; since: string }>(t.day_hold) ?? { limits: null, since: null }) })),
+          .prepare(
+            `SELECT h."run", h."number", h."limits", h."waiting_on", h."created_at" FROM "session_held_turns" h JOIN "runs" r ON r."id" = h."run"
+             WHERE h."project" = ? AND h."released_at" IS NULL AND r."state" <> 'ended' AND r."session_state" = 'turn_running' AND r."turn_count" = h."number"
+             ORDER BY h."created_at", h.rowid`,
+          )
+          .all(args.project) as { run: string; number: number; limits: string; waiting_on: string; created_at: string }[]
+      ).map((t) => ({
+        run: t.run,
+        turn: t.number,
+        reason: 'day_limit',
+        limits: parseJson<string[]>(t.limits),
+        waiting_on: (parseJson<{ run: string; role: string }[]>(t.waiting_on) ?? []).map((w) => ({ run: w.run, role: w.role })),
+        since: t.created_at,
+      })),
     },
   };
 }

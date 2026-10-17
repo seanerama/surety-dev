@@ -28,7 +28,7 @@ import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE, planPath } from '../plan/schemas
 import { writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
-import { pausePoint } from '../testing/seam.js';
+import { pausePoint, seamBackends } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
@@ -137,13 +137,24 @@ export class SessionDriver {
   // ---- the tick: admitted turns dispatched (D1 §15.1; SEAM.md §344) -------------------
 
   async dispatchTurns(): Promise<number> {
-    const pending = await this.rt.read<{ run: string; project: string; invocation: string; repo: string; branch: string; held: boolean }[]>('session.pending_turns', {});
+    // A Designer turn held on the day limits is started, oldest first, once
+    // the day admits it (the driver's decision on objection 156); then it is
+    // dispatched below with every other admitted turn.
+    const held = await this.rt.read<{ run: string }[]>('session.held_turns', {});
+    for (const h of held) {
+      await this.rt
+        .engine('session.turn_release', {
+          run: h.run,
+          incarnation: this.rt.incarnation,
+          scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
+          scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null,
+        })
+        .catch((err) => log('turn release', err, { run: h.run }));
+    }
+    const pending = await this.rt.read<{ run: string; project: string; invocation: string; repo: string; branch: string }[]>('session.pending_turns', {});
     let n = 0;
     for (const t of pending) {
       try {
-        // A Designer turn held on the day limits goes only once they clear
-        // without it (the driver's decision on objection 156).
-        if (t.held && !(await this.rt.engine<{ released: boolean }>('session.turn_release', { run: t.run, invocation: t.invocation })).released) continue;
         if (await this.launcher.dispatchTurn({ project: t.project, repo: t.repo, branch: t.branch }, { run: t.run, invocation: t.invocation })) n++;
       } catch (err) {
         log('turn dispatch', err, { run: t.run });
@@ -217,11 +228,13 @@ export class SessionDriver {
         return;
       }
       // (3)
-      const reply = materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
+      const reply = handle.turnStop === null && materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
       const failure =
         reply !== null
           ? null
-          : materializeFailure !== null
+          : handle.turnStop !== null
+            ? `the turn was stopped: the project's day passed ${handle.turnStop}; the session stays open, and the next turn waits until the day admits it`
+            : materializeFailure !== null
             ? materializeFailure
             : handle.sessionReply === 'invalid'
               ? `the role's result is not a turn's result (D6 B.7)${handle.invalidDetail ? `: ${handle.invalidDetail}` : ''}`
@@ -820,7 +833,7 @@ export function firstPlanMissing(plans: readonly number[], probe: { architecture
 // creates no request (D6 §5.4; the driver's ruling 5).
 function planRefused(run: string, reasons: { code: string; subjects: string[] }[], findings: Finding[], bundle: string | null = null, specChange: string | null = null): Refusal {
   const named = [...reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`), ...findings.map((f) => `${f.code}: ${f.message}`)];
-  const gap = reasons.some((r) => r.code === 'SPEC_TARGETS_MISSING')
+  const gap = reasons.some((r) => r.code === 'SPEC_TARGETS_MISSING' && !r.subjects.some((s) => s.startsWith('unknown:')))
     ? 'The approved specification states no **Targets:** for its ui modules, and the engine assumes none (D7 §4.1)'
     : 'A requirement the plan implements is not in the approved specification';
   const offer = specChange === null ? '' : ` ${gap}: request the change through the spec-change workflow, change_spec (${specChangeRoute(specChange)}), never through a plan.`;

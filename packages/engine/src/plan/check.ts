@@ -58,7 +58,7 @@ export interface BundleBaseline {
   phase_size?: { min: number; max: number };
   // D7 §4.1, §8.3 (G2): the project's design policy and the specification's
   // `**Targets:**` (null when it states none), for clause 5. Absent: off.
-  design?: { policy: string; spec_targets: string[] | null };
+  design?: { policy: string; spec_targets: string[] | null; spec_targets_unknown?: string };
   // D6 §5.7 (B08): an early replacement's kept stages (integrated or
   // verified in the generation it replaces), by number, with their
   // execution-inputs digest and the requirement keys they implement. Each
@@ -424,7 +424,11 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   if (baseline.design && baseline.design.policy !== 'off') {
     const ui = a.modules.modules.filter((m) => m.surface === 'ui');
     const specTargets = baseline.design.spec_targets ?? [];
-    if (ui.length > 0 && specTargets.length === 0) {
+    if (ui.length > 0 && baseline.design.spec_targets_unknown !== undefined) {
+      // Unknown, not missing: refused naming why, and not routed to a
+      // specification change (the review's N1).
+      add('SPEC_TARGETS_MISSING', [`unknown: ${baseline.design.spec_targets_unknown}`]);
+    } else if (ui.length > 0 && specTargets.length === 0) {
       add('SPEC_TARGETS_MISSING', ui.map((m) => m.name));
       targetsMissing = true;
     }
@@ -508,6 +512,11 @@ export const PLAN_REASONS = [
   'PLAN_DESCRIPTIVE_MODULE_TOUCHED',
   'PLAN_CONFORMANCE_MISPLACED',
   'PLAN_MODULE_PATH_INVALID',
+  // Clause 5 (D7 §4.1, §8.3; G2), under a design policy other than off.
+  'SPEC_TARGETS_MISSING',
+  'ARCH_TARGET_UNKNOWN',
+  'ARCH_TARGET_UNCOVERED',
+  'ARCH_TECHNOLOGY_TARGET_MISMATCH',
 ] as const;
 
 export const tierRank = (t: Tier): number => TIER_RANK[t]!;

@@ -1717,6 +1717,17 @@ export class Launcher {
     // A budget stop decided on a usage line read while the lease was pending
     // its challenge is the run's end as decided (SEAM.md §130).
     const pending = handle.sandbox !== null && (handle.gate !== null || this.pausedPastLease(handle));
+    // A Designer turn stopped by a day's limit ends that turn only: its
+    // domain terminated, the turn settled failed naming the limit, the
+    // session left open (the driver's decision on objection 156: only the
+    // session's own budget closes it; the slice-41 review's N2).
+    if (limit !== null && handle.claim.session && handle.claim.role === 'designer' && DAY_LIMIT_KEYS.includes(limit)) {
+      if (handle.turnStop !== null) return;
+      handle.turnStop = limit;
+      if (!this.rt.services) return;
+      void this.rt.services.terminateDomains(run).catch((err) => log('turn stop', err, { run }));
+      return;
+    }
     if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, ...(pending ? { asIs: true } : {}) });
   }
 
@@ -1819,6 +1830,8 @@ const DRAIN_CAP_MS = 2000;
 // The waits between attempts to record a role's result: a few seconds in
 // all, well within a minute (SEAM.md §61).
 const RESULT_RETRY_MS = [100, 300, 1000, 2000, 4000];
+// The project's day limits (D1 §13.3), as budget.check names them.
+const DAY_LIMIT_KEYS: readonly string[] = ['budget_day_unknown_tokens', 'budget_day_verified_usd'];
 
 // The role's standard output, as protocol lines. When the engine stops
 // reading, at the end of the stream or after the role's exit, whatever it has

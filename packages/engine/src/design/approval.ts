@@ -610,6 +610,23 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
       moved.push({ slot: slot.key, variant: v.name, from_version: now?.slot_version ?? null, to_version: slot.slot_version });
     }
   }
+  // A selected slot and variant with no effective row (narrowed away by an
+  // earlier design, selected again by this one): its engine placeholder,
+  // from the recorded inventory's manifest, is its effective version again
+  // (§6.4: "else the slot's engine placeholder"; the slice-41 review's S3).
+  const inv = currentInventory(tx.db, rev.project);
+  for (const slot of parseJson<AssetManifest>(inv?.row.manifest ?? null)?.slots ?? []) {
+    for (const v of slot.variants) {
+      if (!selected(slot.kind, v.name) || typeof v.file !== 'string' || typeof v.digest !== 'string') continue;
+      if (tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name)) continue;
+      tx.db
+        .prepare(
+          `INSERT INTO "design_effective_assets" ("id", "created_at", "project", "slot", "kind", "variant", "slot_version", "source", "digest", "format", "revision", "file", "platforms", "since_design_revision")
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'placeholder', ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, inv!.row.revision, v.file, JSON.stringify(slot.platforms), rev.id);
+    }
+  }
   return moved;
 }
 

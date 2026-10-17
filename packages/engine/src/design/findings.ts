@@ -65,6 +65,17 @@ export function recordDesignFindings(tx: Tx, args: { project: string; run: strin
   if (args.findings.length === 0) return null;
   const lines: string[] = [];
   for (const f of args.findings) {
+    // The same conflict about the same subject, still open: folded into it,
+    // no second question (the slice-41 review's S2).
+    if (f.category === 'contract_conflict' || f.category === 'requirement_conflict') {
+      const open = tx.db
+        .prepare(`SELECT "id", "decision" FROM "design_findings" WHERE "project" = ? AND "status" = 'open' AND "category" = ? AND "interface" IS ? AND "requirement" IS ? ORDER BY "seq" LIMIT 1`)
+        .get(args.project, f.category, f.interface ?? null, f.requirement ?? null) as { id: string; decision: string | null } | undefined;
+      if (open) {
+        lines.push(`Your ${f.category} finding about ${subjectOf(f)} is the one already before the owner (finding ${open.id}${open.decision ? `, question ${open.decision}` : ''}); no second question is raised.`);
+        continue;
+      }
+    }
     const { seq } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS seq FROM "design_findings" WHERE "project" = ?').get(args.project) as { seq: number };
     const id = tx.newId('dfnd_');
     const conflict = f.category === 'contract_conflict' || f.category === 'requirement_conflict';

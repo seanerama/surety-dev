@@ -52,10 +52,23 @@ CREATE TABLE design_native_obligations (
 );
 
 -- A Designer turn held on the project's day limits (the driver's decision
--- on objection 156, option (a): G12's "like any run"): admitted and
--- recorded, its dispatch held as a one-shot's is, released on a later tick
--- once the day's reservations clear. `day_hold` is {limits, since} as the
--- hold began (its limits brought up to date while it lasts); the hold is
--- current while `day_hold_released_at` is null and the turn unsettled.
-ALTER TABLE turns ADD COLUMN day_hold TEXT;
-ALTER TABLE turns ADD COLUMN day_hold_released_at TEXT;
+-- on objection 156, option (a): G12's "like any run"). The owner's entry is
+-- admitted and the session is `turn_running`, but nothing of the turn is
+-- allocated while it is held: no turn row, no receipt (so no reservation),
+-- no execution domain and no process ownership (the slice-41 review's S1).
+-- A later tick releases it once the day's limits pass no more, and only then
+-- is the turn started, from now. `limits` and `waiting_on` (the runs whose
+-- invocations hold the reservations; the review's N3) are brought up to
+-- date while it lasts; `released_turn` names the turn it became.
+CREATE TABLE session_held_turns (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  project TEXT NOT NULL REFERENCES projects(id),
+  run TEXT NOT NULL REFERENCES runs(id),
+  number INTEGER NOT NULL,
+  limits TEXT NOT NULL,
+  waiting_on TEXT NOT NULL DEFAULT '[]',
+  released_at TEXT,
+  released_turn TEXT REFERENCES turns(id),
+  UNIQUE (run, number)
+);

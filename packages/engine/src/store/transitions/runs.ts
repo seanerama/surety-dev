@@ -10,7 +10,7 @@ import { PREREQUISITES_PENDING } from '../../plan/check.js';
 import { correctionApplied, correctionFailed, correctionRequestOf, requestFailed } from '../../spec/change.js';
 import type { EgressEvidence } from '../../invoke/proxy/egress.js';
 import { seamLeaseRead } from '../../testing/seam.js';
-import { canonical, illegal, nextSeq, notFound, sha256 } from './common.js';
+import { canonical, illegal, nextSeq, notFound, parseJson, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
@@ -467,13 +467,20 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // project that has not yet been dispatched (the driver's decision on
   // objection 156, item 3): one-shots already in flight run out, and those
   // still eligible wait until the turn is released.
+  // Its reason names the cause (the review's N3): the limits and the runs
+  // whose reservations pass them.
   const heldTurn = db
     .prepare(
-      `SELECT t."run" FROM "turns" t JOIN "runs" r ON r."id" = t."run"
-       WHERE t."project" = ? AND t."day_hold" IS NOT NULL AND t."day_hold_released_at" IS NULL AND t."settled_at" IS NULL AND r."state" <> 'ended' LIMIT 1`,
+      `SELECT h."run", h."number", h."limits", h."waiting_on" FROM "session_held_turns" h JOIN "runs" r ON r."id" = h."run"
+       WHERE h."project" = ? AND h."released_at" IS NULL AND r."state" <> 'ended' AND r."session_state" = 'turn_running' AND r."turn_count" = h."number"
+       ORDER BY h."created_at" LIMIT 1`,
     )
-    .get(item.project) as { run: string } | undefined;
-  if (heldTurn) return `depends on the Designer turn of session ${heldTurn.run}, held on the day limit and dispatched first`;
+    .get(item.project) as { run: string; number: number; limits: string; waiting_on: string } | undefined;
+  if (heldTurn) {
+    const limits = parseJson<string[]>(heldTurn.limits) ?? [];
+    const waiting = (parseJson<{ run: string; role: string }[]>(heldTurn.waiting_on) ?? []).map((w) => `${w.role} run ${w.run}`);
+    return `depends on turn ${heldTurn.number} of Designer session ${heldTurn.run}, held on ${limits.join(', ')}${waiting.length > 0 ? ` while ${waiting.join(', ')} reserve the day` : ''}; it starts first`;
+  }
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   // One Builder per failure (real loop run 3, L3-1): a fix waits while the
   // stage's own Builder is being sent back for its finding's check at its
@@ -1090,7 +1097,7 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
          AND NOT (r."kind" = 'session' AND r."session_state" IN ('allocated', 'open_idle', 'saving'))
          -- A Designer turn held on the day limits owns no process: its
          -- lease starts again at its release (sessions/session.ts).
-         AND NOT EXISTS (SELECT 1 FROM "turns" t WHERE t."run" = r."id" AND t."day_hold" IS NOT NULL AND t."day_hold_released_at" IS NULL AND t."settled_at" IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM "session_held_turns" h WHERE h."run" = r."id" AND h."released_at" IS NULL AND h."number" = r."turn_count")
        ORDER BY r.rowid, r."id"`,
     )
     .all(at) as { run: string; project: string; state: RunState }[];

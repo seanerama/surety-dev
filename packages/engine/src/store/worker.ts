@@ -183,6 +183,7 @@ import {
   openSession,
   pendingTurns,
   releaseHeldTurn,
+  heldTurnsNow,
   sessionContextFacts,
   sessionExists,
   sessionView,
@@ -489,6 +490,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
   // D6 §2 (M5 slice 31): the sessions' reads.
   'session.pending_turns': (d) => pendingTurns(d, null),
+  'session.held_turns': (d) => heldTurnsNow(d, null),
   'session.workspace': (d, a: { run: string }) => sessionWorkspace(d, a.run),
   'session.context': (d, a: { run: string }) => sessionContextFacts(d, a.run),
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
