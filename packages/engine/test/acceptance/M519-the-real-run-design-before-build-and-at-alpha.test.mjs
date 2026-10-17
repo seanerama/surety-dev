@@ -39,7 +39,11 @@
 //       record;
 //   (h) no step judged passed with a question raised before its end still
 //       open (but those it hands over, recorded), or with nothing runnable,
-//       in flight or asked (BS6 §4.1 rule 25);
+//       in flight or asked (BS6 §4.1 rule 25); nor with a design-held stage
+//       accounted for by nothing, nor ending in an intentional wait (a
+//       deferral, a Designer session open on a held stage), which is
+//       recorded `waiting`, never `done` (rule 25 as amended, E162 item 1;
+//       SEAM.md §547);
 //   (i) every owner act with its performer recorded (Sean's own entry, or
 //       the driver's with Sean's words), evidence beyond the store's `human`
 //       actor; an act with neither reported `unknown`, and failing here;

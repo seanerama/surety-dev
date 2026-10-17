@@ -26,7 +26,7 @@ import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, STAGES, specText } from './harness/design/reference.mjs';
 import {
   answerWith,
-  assertNoSilentHold,
+  assertHoldsAccounted,
   batchOf,
   builderScript,
   designRevisions,
@@ -75,7 +75,7 @@ describe('M507 design readiness and the third milestone', () => {
     }
     assert.deepEqual(uiLaunches(fx, p), [], 'no UI Builder');
     assert.equal((stageWork(fx.home, p.id, 1).depends_on ?? []).some((d) => d.milestone === 'design_ready'), false, 'the API stage never waits on design');
-    assertNoSilentHold(fx.home, p.id, '(a)');
+    await assertHoldsAccounted(fx, p.id, '(a)');
   });
 
   test('(b) a stage depending on a UI stage waits on its code milestone only', async (t) => {

@@ -20,7 +20,9 @@
 // (e) the session continuing after a finding; the approval while the finding
 //     is open: `approve` blocked DESIGN_INTERFACE_DISPUTED (M505 (e));
 // (f) the session's end by idle timeout, by budget, by `--refuse`: each
-//     leaves `design_due` open, said on the next read (M512 (d)).
+//     re-raises `design_due`, said on the next read (M512 (d); E162 item 1:
+//     an open design_due naming the held stages, not naming the ended
+//     session, its `open` not blocked by it; every hold accounted for).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -34,7 +36,7 @@ import { advanceClock, scriptedEngine, tick, tickUntil } from './harness/runs.mj
 import { step } from './harness/scripted.mjs';
 import { invocationsOf, postCloseRaw, postSaveRaw, postTurnRaw } from './harness/session-lane.mjs';
 import { ledgerRowsOf, readSession, runRow, say, sayAndSettle, scriptTurns, transcriptEntries, turnResult } from './harness/sessions.mjs';
-import { inventoryOf, cli, openDesignDue, openDesigner, openOfKind, readDesign, toPublished } from './harness/design/drive.mjs';
+import { assertReRaised, inventoryOf, cli, openDesignDue, openDesigner, openOfKind, toPublished } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, designModel, designTurnOf, scriptVariant, untilBatch } from './harness/design/check41.mjs';
 
 const DESIGN_KINDS = Object.freeze(['design_approval', 'design_due', 'design_verdicts']);
@@ -162,18 +164,16 @@ describe('M538 the Designer session, its limits and its findings', () => {
     assert.ok(blockers.some((b) => b.includes('DESIGN_INTERFACE_DISPUTED') && b.includes('add-item')), `approve blocked DESIGN_INTERFACE_DISPUTED naming add-item while the finding is open (${JSON.stringify(blockers)})`);
   });
 
-  test('(f) a Designer session ended by idle timeout, by budget and by --refuse: each leaves design_due open, said on the next read', async (t) => {
+  test('(f) a Designer session ended by idle timeout, by budget and by --refuse: each re-raises design_due, said on the next read', async (t) => {
     const { fx, p, model } = await pantry(t);
     await changePolicy(fx.engine, p.id, { designer_session_budget_billable_tokens: 250_000 });
     const due = openDesignDue(fx.home, p.id);
     assert.ok(due, 'the fixture is live: design_due open at derivation (SEAM.md §485)');
-    const stillOpen = async (how) => {
+    // E162 item 1: the session ended without resolving the hold re-raises the question (assertReRaised).
+    const reRaised = async (how, run) => {
       await tick(fx.engine, p.id, { rounds: 2 });
-      const now = openDesignDue(fx.home, p.id);
-      assert.ok(now, `${how}: design_due still open (D7 §11)`);
       assert.deepEqual(openOfKind(fx.home, p.id, 'design_approval'), [], `${how}: no design_approval raised`);
-      const read = await readDesign(fx, p.id);
-      assert.equal(read.design_due?.id, now.id, `${how}: GET …/design says design_due is open (SEAM.md §491) (${JSON.stringify(read.design_due)})`);
+      await assertReRaised(fx, p.id, run, how);
     };
     // Idle timeout.
     const idle = await openDesigner(fx, p.id);
@@ -183,19 +183,19 @@ describe('M538 the Designer session, its limits and its findings', () => {
     await tick(fx.engine, p.id, { rounds: 2 });
     const timedOut = await endedRow(fx, idle.id);
     assert.deepEqual([timedOut.outcome, timedOut.reason_class], ['timed_out', 'deadline'], 'closed by the idle timeout');
-    await stillOpen('the idle timeout');
+    await reRaised('the idle timeout', idle.id);
     // Budget.
     const spent = await openDesigner(fx, p.id);
     scriptTurns(fx, spent.id, [spend(250_000, 'Everything at once.')]);
     await say(fx, p.id, spent.id, 'Draw everything.');
     assert.equal((await endedRow(fx, spent.id)).reason_class, 'budget', 'closed by the budget');
-    await stillOpen('budget exhaustion');
+    await reRaised('budget exhaustion', spent.id);
     // --refuse.
     const refused = await openDesigner(fx, p.id);
     scriptTurns(fx, refused.id, [designTurnOf(model)]);
     await sayAndSettle(fx, p.id, refused.id, 'Draw it.');
     assert.equal((await postSaveRaw(fx, p.id, refused.id)).status, 200, 'saved');
     assert.equal((await postCloseRaw(fx, p.id, refused.id, { refuse: true })).status, 200, 'closed with --refuse');
-    await stillOpen('--refuse');
+    await reRaised('--refuse', refused.id);
   });
 });

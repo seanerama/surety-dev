@@ -32,7 +32,7 @@ import { closeSession, sayAndSettle, scriptTurns, turnResult } from './harness/s
 import { postSaveRaw } from './harness/session-lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { MANIFEST_PATH } from './harness/design/reference.mjs';
-import { answerWith, assertNoSilentHold, gitJson, head, inventoryOf, openDesignDue, openDesigner, openOfKind, stageRow } from './harness/design/drive.mjs';
+import { answerWith, assertHoldsAccounted, gitJson, head, inventoryOf, openDesignDue, openDesigner, openOfKind, stageRow } from './harness/design/drive.mjs';
 import { checkSession, variantOf } from './harness/design/check41.mjs';
 import { assetAdd, blobBytes, passiveSvg, sha256hex } from './harness/design/assets43.mjs';
 import { gitQuiet } from './harness/repos.mjs';
@@ -101,7 +101,7 @@ describe('M514 the design decisions\' bindings', () => {
     await pump(fx, ctx, () => (rowsOfArchitecture(fx, p.id).length >= 2 ? true : undefined), { what: 'architecture version 2', max: 20 });
     assert.equal(inventoryOf(p).inventory_digest, digest, 'the fixture is live: the inventory is as it was');
     refusedStale(await answerWith(fx, p.id, batch.design_approval, 'approve'), 'design_approval after an architecture revision');
-    assertNoSilentHold(fx.home, p.id, '(b) architecture');
+    await assertHoldsAccounted(fx, p.id, '(b) architecture');
   });
 
   test('(b) a later save narrowing the selection (the tree, the check, the selection): the approval stale', async (t) => {
@@ -147,7 +147,7 @@ describe('M514 the design decisions\' bindings', () => {
     assert.notEqual(decision(fx.home, first.id).status, 'open', 'the earlier generation no longer open');
     refusedStale(await answerWith(fx, p.id, first, 'later', { until: new Date(Date.now() + 3600_000).toISOString() }), 'the earlier design_due');
     assert.equal(openDues(fx.home, p.id).length, 1, 'one open design_due');
-    assertNoSilentHold(fx.home, p.id, '(c)');
+    await assertHoldsAccounted(fx, p.id, '(c)');
   });
 
   test('(d) design_verdicts bound to the review file\'s hash and its evidence: a change to the file stales it; (e) its 2 d target', async (t) => {

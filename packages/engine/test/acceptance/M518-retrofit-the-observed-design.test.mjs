@@ -36,7 +36,7 @@ import { consume, decisionsOfKind } from './harness/decisions.mjs';
 import { alphaReady, evaluationsOfKind, phaseCompleted, pump, stagesOfPlan } from './harness/journey/drive.mjs';
 import { conformancePlan, conformanceStages, retrofitEngine, toConformancePublished } from './harness/retrofit/drive.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
-import { answerWith, assertNoSilentHold, designRevisions, effectiveAssets, inventoryOf, manifestOf, openDesigner } from './harness/design/drive.mjs';
+import { answerWith, assertHoldsAccounted, designRevisions, effectiveAssets, inventoryOf, manifestOf, openDesigner } from './harness/design/drive.mjs';
 import { runRow } from './harness/sessions.mjs';
 import { designAssetsOf } from './harness/design/assets43.mjs';
 import { specWriter } from './harness/design/plan44.mjs';
@@ -122,7 +122,7 @@ describe('M518 retrofit: the observed design', () => {
     // nothing and carries no design hold (D7 §12, never the conformance set), so nothing is held
     // and no design_due is owed; the refused close ends nothing, and the session waits on the
     // owner's next turn.
-    assert.deepEqual(assertNoSilentHold(fx.home, p.id, 'after the refused close'), [], 'nothing held: no UI stage waits on the observed design');
+    assert.deepEqual(await assertHoldsAccounted(fx, p.id, 'after the refused close'), [], 'nothing held: no UI stage waits on the observed design');
     const session = runRow(fx.home, run.id);
     assert.deepEqual([session?.outcome ?? null, session?.session_state], [null, 'open_idle'], `the session still open, idle for the owner's turn (${JSON.stringify(session && { outcome: session.outcome, session_state: session.session_state })})`);
     assert.deepEqual(designRevisions(fx.home, p.id).filter((r) => ['approved', 'approved_without_criteria'].includes(r.status)), [], 'nothing approved');

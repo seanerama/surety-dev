@@ -26,7 +26,7 @@ import { phaseCompleted, planChecks, planOfPhase, pump, runsOfProject, workOf } 
 import { scriptedEngine } from './harness/runs.mjs';
 import { closeSession, transcriptEntries } from './harness/sessions.mjs';
 import { INTERFACES, MODULES_JSON } from './harness/design/reference.mjs';
-import { assertNoSilentHold, createPantry, pantryArchitect, pantrySpec, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
+import { assertHoldsAccounted, createPantry, pantryArchitect, pantrySpec, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, approveBatch, latestPlanCheck, planSubjects } from './harness/design/check41.mjs';
 import { PHASE_TWO_STAGES, TWO_PHASE, currentRevision, currentRoadmap, designedPantry, replanWith, stageIdsOf, stageScreens } from './harness/design/plan44.mjs';
 
@@ -104,14 +104,14 @@ describe('M508 the plan check\'s design clauses', () => {
       assert.ok((w.depends_on ?? []).some((x) => x.milestone === 'design_ready'), `stage ${n} carries the obligation as its design_ready milestone (${JSON.stringify(w.depends_on)})`);
       assert.equal(w.held, 'design_pending', `stage ${n} held design_pending`);
     }
-    assertNoSilentHold(fx.home, p.id, '(d)');
+    await assertHoldsAccounted(fx, p.id, '(d)');
     // (f) at the design's approval: each UI stage bound to the approved screens of its targets.
     await approveBatch(fx, d.ctx, d.batch);
     const rev = currentRevision(fx.home, p.id);
     const [s2, s3] = stageIdsOf(fx.home, p.id, [2, 3]);
     const bound = stageScreens(fx.home, p.id).filter((b) => b.design_revision === rev.id);
     assert.deepEqual(bound.map((b) => [b.stage, b.screen, b.target]).sort(), [[s2, 'S1', 'web'], [s3, 'S2', 'android']].sort(), `stage_screens at the approval: stage 2 S1 (web), stage 3 S2 (android) (${JSON.stringify(bound)})`);
-    assertNoSilentHold(fx.home, p.id, '(f)');
+    await assertHoldsAccounted(fx, p.id, '(f)');
   });
 
   test('(c) with an approved design, R4 given to the Android and web UI stages: PLAN_DESIGN_UNCOVERED naming R4 and each target; (e) refused again at the repair: the blocker offers design beside retry, replan and cancel', async (t) => {
@@ -145,6 +145,6 @@ describe('M508 the plan check\'s design clauses', () => {
     const [s4] = stageIdsOf(fx.home, p.id, [4], 2);
     assert.deepEqual(stageScreens(fx.home, p.id).filter((b) => b.stage === s4), [], 'none for the API stage');
     assert.ok(published.id, 'published');
-    assertNoSilentHold(fx.home, p.id, '(b)');
+    await assertHoldsAccounted(fx, p.id, '(b)');
   });
 });

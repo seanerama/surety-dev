@@ -17,8 +17,11 @@
 //
 // The cases run in order, each one step of D7 §1, each asserting its clause
 // of the row; a step that cannot run because an earlier one failed says so
-// and fails. After each step: no design hold without an open design_due
-// naming it (D7 §11; rule 25).
+// and fails. After each step: every design-held stage accounted for by an
+// open owner question, an owner-opened active Designer session, pending
+// engine work or an unexpired owner deferral, the reads naming the cause and
+// the next action (D7 §11 as corrected; rule 25; E162 item 1;
+// `assertHoldsAccounted`, SEAM.md §547).
 //
 // SAFETY (BS6 §4.1; E64; SEAM.md §§257, 356, 488). The units are the
 // engine's own under this test home's prefix: the preview's
@@ -84,7 +87,7 @@ import {
 import {
   DESIGN_POLICY,
   answerWith,
-  assertNoSilentHold,
+  assertHoldsAccounted,
   assetBindings,
   batchOf,
   cli,
@@ -233,7 +236,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     assert.equal(due.evidence?.stage, 'before_build');
     assert.deepEqual([...(due.evidence?.held_stages ?? [])].sort(), [J.stage.web.id, J.stage.mobile.id].sort(), `naming both UI stages (${JSON.stringify(due.evidence)})`);
     assert.match(due.evidence?.command ?? '', /surety session open designer/, 'and the exact command');
-    assertNoSilentHold(fx.home, p.id, '(b)');
+    await assertHoldsAccounted(fx, p.id, '(b)');
   });
 
   step('(c) check authoring; the API stage verified while both UI stages\' work is held design_pending with recorded intervals', async () => {
@@ -248,7 +251,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
       assert.ok(w.held_intervals.some((i) => i.reason === 'design_pending'), `with a recorded interval (${JSON.stringify(w.held_intervals)})`);
       assert.deepEqual(fx.scripted.launches({ work_item: w.id }), [], `no Builder launched for stage ${n}`);
     }
-    assertNoSilentHold(fx.home, p.id, '(c)');
+    await assertHoldsAccounted(fx, p.id, '(c)');
   });
 
   step('(d) a Designer session of three turns: the first save refused by the design check, the reason the next turn\'s engine entry; a corrected save; surety design preview of the checkpoint on surety-<h>-<env id>-g1.service, two identity reads, no alpha_authorize; the relay opened and the preview read; --stop leaves nothing', async () => {
@@ -314,7 +317,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     await pump(fx, J.ctx, () => (designEvents(fx.home, 'design.preview_torn_down', p.id).length > 0 && previewUnits(fx.home, J.previewEnv.id).length === 0 ? true : undefined), { what: 'the preview to be torn down', projectMs: 300_000 });
     assert.deepEqual(previewUnits(fx.home, J.previewEnv.id), [], 'no unit of the preview left');
     assert.deepEqual(previewCgroups(fx.home, J.previewEnv.id), [], 'no cgroup of the preview left');
-    assertNoSilentHold(fx.home, p.id, '(d)');
+    await assertHoldsAccounted(fx, p.id, '(d)');
   });
 
   step('(e) close and the batch: a Spec Writer one-shot writes the diff on its side ref; design_approval and spec_change (source design) under one batch_key; answered approve with the logo held; design_revisions 1 current against the spec version the change created; the logo still proposed; the effective logo the placeholder', async () => {
@@ -346,7 +349,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     const eff = effectiveAssets(fx.home, p.id).find((e) => e.slot === logo.key && e.variant === 'full');
     const placeholder = J.placeholderManifest.slots.find((s) => s.kind === 'logo');
     assert.deepEqual([eff?.source, eff?.slot_version, eff?.digest], ['placeholder', placeholder.slot_version, placeholder.variants.find((v) => v.name === 'full').digest], `the effective logo the placeholder (${JSON.stringify(eff)})`);
-    assertNoSilentHold(fx.home, p.id, '(e)');
+    await assertHoldsAccounted(fx, p.id, '(e)');
   });
 
   step('(f) the spec change\'s effect: version 2 with the design criteria and two human-test requirements; the check correction applied; design_ready_at set, design.ready, the UI stages\' work.dependency_met; no UI Builder launched before', async () => {
@@ -368,7 +371,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
       const early = fx.scripted.launches({ work_item: w.id }).filter((l) => Date.parse(l.at) < Date.parse(ready));
       assert.deepEqual(early, [], `no stage ${n} Builder launched before readiness`);
     }
-    assertNoSilentHold(fx.home, p.id, '(f)');
+    await assertHoldsAccounted(fx, p.id, '(f)');
   });
 
   step('(g) the two UI stages built: each UI Builder\'s package holds its target\'s screens and the effective set, the held proposal\'s digest in no Builder package and no check\'s asset inputs; bindings validated and recorded; the design checks engine-run on the candidates', async () => {
@@ -401,7 +404,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
       assert.ok(rs.length > 0 && rs.every((r) => r.runner_qualification), `${k}: engine-run on the candidates (${rs.length} results)`);
     }
     for (const k of PARITY_CHECKS) for (const r of resultsOfKey(fx.home, p.id, k)) assert.ok(!JSON.stringify(parse(r.asset_inputs) ?? []).includes(LOGO_DIGEST), `${k}: no check read the held proposal`);
-    assertNoSilentHold(fx.home, p.id, '(g)');
+    await assertHoldsAccounted(fx, p.id, '(g)');
   });
 
   step('(h) the held logo approved by surety design assets submit: the effective set moved to its slot@version; one asset_updated fix naming the old and new versions and the bound paths, integrated; asset_version_changed obligations; the parity checks passing with the new slot@version', async () => {
@@ -433,7 +436,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
       const r = resultsOfKey(fx.home, p.id, k).find((x) => x.candidate === fixCandidate.id && x.exit_status === 0);
       assert.deepEqual(parse(r.asset_inputs), [{ slot: logoKey, variant: 'full', slot_version: eff.slot_version }], `${k} passed with the new slot@version on its result (G14) (${r.asset_inputs})`);
     }
-    assertNoSilentHold(fx.home, p.id, '(h)');
+    await assertHoldsAccounted(fx, p.id, '(h)');
   });
 
   step('(i) the phase gate and Alpha under policy: the phase complete once; one deployment_requests row requested_by policy; alpha_deployed on a real unit read by exact name', async () => {
@@ -505,7 +508,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     assert.ok(pace.design.asset_approvals.length >= 1, 'the asset approval');
   });
 
-  step('(l) teardown applied, nothing of the prefix left (Alpha\'s and the preview\'s); no check result from a fixture; no decision answered by a role; never a hold without an open design_due', async () => {
+  step('(l) teardown applied, nothing of the prefix left (Alpha\'s and the preview\'s); no check result from a fixture; no decision answered by a role; never a hold unaccounted for (E162 item 1)', async () => {
     const { fx, p } = J;
     J.afterTeardown = await endJourney(fx, p.id, J.env);
     assert.deepEqual(J.afterTeardown.units, [], 'no unit of Alpha\'s prefix');
@@ -518,7 +521,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     const answered = rows(fx.home, 'SELECT "kind", "answer" FROM "decisions" WHERE "project" = ? AND "status" = \'consumed\'', p.id).map((r) => ({ kind: r.kind, answer: JSON.parse(r.answer ?? '{}') }));
     assert.ok(answered.every((a) => (a.answer.actor ?? 'human') === 'human'), `no decision answered by a role (${JSON.stringify(answered.filter((a) => a.answer.actor !== 'human'))})`);
     for (const kind of ['design_due', 'design_approval', 'design_verdicts']) for (const d of designDecisions(fx.home, p.id, kind).filter((x) => x.status === 'consumed')) assert.equal(d.answer?.actor ?? 'human', 'human', `${kind} answered by the owner`);
-    assertNoSilentHold(fx.home, p.id, '(l)');
+    await assertHoldsAccounted(fx, p.id, '(l)');
   });
 });
 

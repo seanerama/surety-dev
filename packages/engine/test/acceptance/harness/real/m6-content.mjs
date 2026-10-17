@@ -134,7 +134,8 @@ export function pantryArchitecture(row) {
       sensitive_areas: [],
       requirements: ['R3'],
       targets: [{ target: 'android', ui_technology: 'react_native', form_factors: ['phone'] }],
-      platform_permissions: [{ target: 'android', permission: 'notifications', why: 'to remind the household when an item runs low' }],
+      // No platform permission: M535's brief has no Android notifications in
+      // this version (E162 item 3), and its rehearsal plays the same shape.
       asset_paths: [{ slot: 'logo', variant: 'full', target: 'android', path: ANDROID_LOGO_PATH }],
       interfaces: [],
     });

@@ -35,7 +35,7 @@ import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { transcriptEntries } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
-import { assertNoSilentHold, inventoryOf, stageRow, toPublished } from './harness/design/drive.mjs';
+import { assertHoldsAccounted, inventoryOf, stageRow, toPublished } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS, approveBatch, assertPassed, checkSession, designModel, filesOf, scriptVariant, untilBatch, variantOf } from './harness/design/check41.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { approveReviewBatch, authoringByPhase, batchSpec, currentRevision, revisedHumanTests, specWriter } from './harness/design/plan44.mjs';
@@ -237,6 +237,6 @@ describe('M531 owner verdicts are owner acts (shared: Pantry with R3.2 failing o
     const android = humanTestOf(design, 'android');
     assert.equal(android?.status, 'pending', `not counted for version 2: the android human test pending (${JSON.stringify(android)})`);
     assert.ok(!(android?.evidence ?? []).some((e) => e.review === confirmedReview.id && e.design_version === 2), 'no evidence of version 2 from it');
-    assertNoSilentHold(fx.home, p.id, '(g)');
+    await assertHoldsAccounted(fx, p.id, '(g)');
   });
 });

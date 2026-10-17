@@ -38,7 +38,13 @@
 //     open, but for the kinds it names as handed to the next step (each
 //     recorded); and an engine-driven wait fails at once, naming the state,
 //     when the project has nothing runnable, nothing in flight and nothing
-//     asked short of the step's end;
+//     asked short of the step's end. As amended by Sean (E162 item 1;
+//     SEAM.md §547): every design-held stage must be accounted for (an open
+//     question, an owner-opened Designer session, engine work, an unexpired
+//     deferral; harness/design/holds.mjs), and a step that ends in an
+//     intentional wait (a deferral, a Designer session open on a held
+//     stage) is recorded `waiting` (lane.mjs StepWaiting), never `done`,
+//     never passed: a deferral is never success;
 //   - WHO PERFORMED EACH OWNER ACT (rule 26; E156 Q6; SEAM.md §542): every
 //     act the store records as the owner's (a decision answered by the
 //     `human` actor, an owner turn in a session, an owner command) is
@@ -72,7 +78,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { CLI, REPO_ROOT } from '../engine.mjs';
 import { withStore } from '../store.mjs';
 import { holdsAny } from '../deploy/host.mjs';
-import { REAL, loadState, observe, realPreflight, stepValue, tellSean } from './lane.mjs';
+import { REAL, StepWaiting, loadState, observe, realPreflight, stepValue, tellSean } from './lane.mjs';
+import { describeHolds, designHoldAccounts } from '../design/holds.mjs';
 import {
   HOME_MAX_BYTES,
   MODELS,
@@ -300,25 +307,51 @@ const maxSeq = (home) => one(home, 'SELECT COALESCE(MAX("seq"), 0) AS n FROM "ev
 
 const openDecisions = (home, project) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY rowid`, project).map((d) => ({ ...d, options: json(d.options), evidence: json(d.evidence ?? null) }));
 
-// What the project has in flight or runnable (rule 25's three questions).
-export function activity(home, project) {
+// What the project has in flight or runnable (rule 25's three questions),
+// and what accounts for each design-held stage with the intentional waits
+// running (E162 item 1; harness/design/holds.mjs). `nowMs` the engine's time.
+export function activity(home, project, { nowMs = Date.now() } = {}) {
   const live = rows(home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, project).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle'));
   const executions = rows(home, `SELECT "id", "key", "status" FROM "check_executions" WHERE "project" = ? AND "status" IN ('queued', 'materializing', 'running', 'collecting')`, project);
-  const runnable = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "status" IN ('eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying')`, project);
+  // A work item held for its design is not runnable: it waits on the design,
+  // and what accounts for its hold is judged below (E162 item 1).
+  const runnable = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "status" IN ('eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying') AND ("held" IS NULL OR "held" NOT IN ('design_pending', 'design_stale'))`, project);
   const operations = rows(home, `SELECT "id", "kind" FROM "operations" WHERE "project" = ? AND "finalized_at" IS NULL`, project);
   const held = rows(home, `SELECT "id", "kind", "status", "held" FROM "work_items" WHERE "project" = ? AND "status" IN ('held', 'parked', 'awaiting_decision')`, project);
   const asked = openDecisions(home, project).map((d) => ({ id: d.id, kind: d.kind }));
-  return { live, executions, runnable, operations, held, asked };
+  const design = designHoldAccounts(home, project, { nowMs });
+  return { live, executions, runnable, operations, held, asked, design };
 }
 const silent = (a) => a.live.length === 0 && a.executions.length === 0 && a.runnable.length === 0 && a.operations.length === 0 && a.asked.length === 0;
 
+// A project with nothing running, runnable or asked (rule 25; E162 item 1):
+// `waiting` when an intentional wait on the owner runs (a deferral he chose,
+// his Designer session open while a stage is held), which is reported as
+// waiting and never as a pass; else `silent`, a stall. `busy` otherwise.
+export function quietState(a) {
+  if (!silent(a)) return { state: 'busy' };
+  // The engine's own tick-driven work on a hold (the session an `open` asked
+  // for, the inventory's derivation) is in flight.
+  if (a.design.holds.some((h) => h.accounts.some((x) => ['designer_session_opening', 'inventory_derivation'].includes(x.work)))) return { state: 'busy' };
+  if (a.design.waits.length > 0) return { state: 'waiting', waits: a.design.waits };
+  return { state: 'silent' };
+}
+const describeWaits = (waits) => waits.map((w) => (w.cause === 'deferral' ? `the owner's deferral ${w.decision} until ${w.until}` : `the owner's Designer session ${w.run} open (${w.session_state})`)).join('; ');
+
 // Rule 25 at a step's end: every open question fails the step but those of
-// the kinds it hands to the next step, which are recorded.
-export function ruleTwentyFive(home, project, name, { handover = [] } = {}) {
+// the kinds it hands to the next step, which are recorded. Every design-held
+// stage must be accounted for (E162 item 1): one accounted for by nothing
+// fails the step; and a step that ends in an intentional wait (an unexpired
+// deferral, or a Designer session open while a stage is held) is not passed
+// but recorded `waiting` (StepWaiting): a deferral is never success.
+export function ruleTwentyFive(home, project, name, { handover = [], nowMs = Date.now() } = {}) {
   const open = openDecisions(home, project);
   const kept = open.filter((d) => !handover.includes(d.kind));
   if (kept.length > 0) throw new Error(`${name} not passed: questions raised before its end are still open (BS6 §4.1 rule 25): ${kept.map((d) => `${d.kind} ${d.id}`).join(', ')}`);
-  return { handed_over: open.map((d) => ({ kind: d.kind, id: d.id })) };
+  const design = designHoldAccounts(home, project, { nowMs });
+  if (design.unaccounted.length > 0) throw new Error(`${name} not passed: design-held stages accounted for by nothing (no open question, no Designer session, no engine work, no unexpired deferral; BS6 §4.1 rule 25, E162 item 1): ${describeHolds(design)}`);
+  if (design.waits.length > 0) throw new StepWaiting(`${name} not passed: it ends waiting on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(design.waits)}; holds: ${describeHolds(design)}`, design.waits);
+  return { handed_over: open.map((d) => ({ kind: d.kind, id: d.id })), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
 }
 
 // ---- driving the project: Sean's answers, the rehearsal's, the stall check -------------------
@@ -382,10 +415,17 @@ export async function driveM6(ctx, fx, project, done, { expect = [], answer = ()
     }
     if (stall) {
       const a = activity(fx.home, project);
-      quiet = silent(a) ? quiet + 1 : 0;
-      if (quiet >= 3) throw new Error(`${what}: a silent stall (BS6 §4.1 rule 25): nothing runnable, nothing in flight, nothing asked; held: ${JSON.stringify(a.held)}`);
+      const q = quietState(a);
+      quiet = q.state === 'busy' ? 0 : quiet + 1;
+      if (quiet >= 3 && q.state === 'waiting') throw new StepWaiting(`${what}: not reached: the project waits on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(q.waits)}; holds: ${describeHolds(a.design)}`, q.waits);
+      if (quiet >= 3) throw new Error(`${what}: a silent stall (BS6 §4.1 rule 25): nothing runnable, nothing in flight, nothing asked; held: ${JSON.stringify(a.held)}; design holds: ${describeHolds(a.design) || 'none'}`);
     }
-    if (performance.now() - started > timeoutMs) throw new Error(`${what}: not reached within ${Math.round(timeoutMs / 60_000)} minutes (open decisions: ${JSON.stringify(openDecisions(fx.home, project).map((d) => [d.kind, d.id]))}); nothing further was started`);
+    if (performance.now() - started > timeoutMs) {
+      const waits = designHoldAccounts(fx.home, project).waits;
+      const why = `${what}: not reached within ${Math.round(timeoutMs / 60_000)} minutes (open decisions: ${JSON.stringify(openDecisions(fx.home, project).map((d) => [d.kind, d.id]))}); nothing further was started`;
+      if (waits.length > 0) throw new StepWaiting(`${why}; the project waits on the owner, an intentional wait, never a pass (E162 item 1): ${describeWaits(waits)}`, waits);
+      throw new Error(why);
+    }
     await fx.engine.post(`/v1/projects/${project}/tick`, {}).catch(() => null);
     await sleep(every);
   }

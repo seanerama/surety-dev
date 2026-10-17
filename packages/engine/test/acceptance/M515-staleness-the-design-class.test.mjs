@@ -36,7 +36,7 @@ import { phaseCompleted, planOfPhase, pump, stagesOfPlan } from './harness/journ
 import { step } from './harness/scripted.mjs';
 import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { MODULES_JSON } from './harness/design/reference.mjs';
-import { answerWith, assertNoSilentHold, designEvents, inventoryOf, manifestOf, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, variantSpec } from './harness/design/drive.mjs';
+import { answerWith, assertHoldsAccounted, designEvents, inventoryOf, manifestOf, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, variantSpec } from './harness/design/drive.mjs';
 import { KERNEL_KINDS, approveBatch, designModel, untilBatch } from './harness/design/check41.mjs';
 import { assetAdd, assetFixes, assetsSubmit, openApproval, passiveSvg } from './harness/design/assets43.mjs';
 import {
@@ -125,7 +125,7 @@ describe('M515 staleness: the design class', () => {
     assert.ok(uiKeys.includes('R6') && !uiKeys.includes('R4'), `R6 now a UI requirement, R4 withdrawn (${JSON.stringify(uiKeys)})`);
     const due = await pump(fx, ctx, () => (openDesignDue(fx.home, p.id)?.evidence?.stage === 'revise' ? openDesignDue(fx.home, p.id) : undefined), { what: 'design_due stage revise', max: 6 });
     assert.deepEqual(pairsOfDue(due), ['S1/web', 'S2/android', 'S3/web'], `naming the stale screens with their targets (${JSON.stringify(due.evidence)})`);
-    assertNoSilentHold(fx.home, p.id, '(a)');
+    await assertHoldsAccounted(fx, p.id, '(a)');
   });
 
   test('(e) an asset-only revision stales nothing; (b) an architecture revision leaving the inventory unchanged stales nothing; add-item\'s request changed: S3 and S4 stale, S1 and S2 current', async (t) => {
@@ -170,7 +170,7 @@ describe('M515 staleness: the design class', () => {
     assert.deepEqual(staleKeys(fx.home, current.id), ['S3', 'S4'], `the screens using add-item stale and no other (${JSON.stringify(screenStatus(fx.home, current.id))})`);
     const due = openDesignDue(fx.home, p.id);
     assert.deepEqual(pairsOfDue(due), ['S3/web', 'S4/android'], `design_due revise naming them (${JSON.stringify(due?.evidence)})`);
-    assertNoSilentHold(fx.home, p.id, '(b)');
+    await assertHoldsAccounted(fx, p.id, '(b)');
   });
 
   test('(c) ios added: its slots derived, no screen stale; removed again: its slots\' platforms marked stale, no screen stale', async (t) => {
@@ -196,7 +196,7 @@ describe('M515 staleness: the design class', () => {
     await laterArchitect(fx, p.id, { '.surety/architecture/modules.json': withIos(false), '.surety/architecture/architecture.md': architectureMd('The mobile app targets Android only.') });
     allCurrent(fx, p, '(c) ios removed from the map');
     assert.equal(rev.id, currentRevision(fx.home, p.id).id, 'the same approved revision throughout');
-    assertNoSilentHold(fx.home, p.id, '(c) targets');
+    await assertHoldsAccounted(fx, p.id, '(c) targets');
   });
 
   test('(c) a technology changed (web from html_css to three_js): the web screens stale, the android ones current', async (t) => {
@@ -209,7 +209,7 @@ describe('M515 staleness: the design class', () => {
     await pump(fx, ctx, () => (staleKeys(fx.home, rev.id).length > 0 ? true : undefined), { what: 'the web screens stale', max: 20 });
     assert.deepEqual(staleKeys(fx.home, rev.id), ['S1', 'S3'], `the web screens stale, the android ones current (${JSON.stringify(screenStatus(fx.home, rev.id))})`);
     assert.deepEqual(pairsOfDue(openDesignDue(fx.home, p.id)), ['S1/web', 'S3/web'], 'design_due revise naming them');
-    assertNoSilentHold(fx.home, p.id, '(c) technology');
+    await assertHoldsAccounted(fx, p.id, '(c) technology');
     void MODULES_JSON;
   });
 
@@ -232,7 +232,7 @@ describe('M515 staleness: the design class', () => {
     assert.deepEqual(staleEvents(fx.home, p.id), [], 'no design.stale');
     const [s3] = stageIdsOf(fx.home, p.id, [3], 2);
     assert.deepEqual(stageScreens(fx.home, p.id).filter((b) => b.stage === s3).map((b) => [b.screen, b.target, b.design_revision]), [['S2', 'android', rev.id]], 'stage_screens recomputed at the publication');
-    assertNoSilentHold(fx.home, p.id, '(d)');
+    await assertHoldsAccounted(fx, p.id, '(d)');
   });
 
   test('(f) the undispatched Android stage bound to a stale screen held design_stale, the web stage proceeding; (g) a covering revision approved: S2 current, design_revisions keeping every version', async (t) => {
@@ -260,7 +260,7 @@ describe('M515 staleness: the design class', () => {
     const due = openDesignDue(fx.home, p.id);
     assert.deepEqual(due?.evidence?.held_stages, stageIdsOf(fx.home, p.id, [3], 2), `design_due names the held stage (${JSON.stringify(due?.evidence)})`);
     assert.deepEqual(pairsOfDue(due), ['S2/android'], 'and the stale screen');
-    assertNoSilentHold(fx.home, p.id, '(f)');
+    await assertHoldsAccounted(fx, p.id, '(f)');
     // (f) integrated stages keep their history: phase 1's API stage untouched.
     assert.equal(stageRow(fx.home, p.id, 1).status, 'verified', 'phase 1\'s stage keeps its status');
     // (g) a covering revision: the design redrawn (its human tests revised, so its batch carries a change).
@@ -276,7 +276,7 @@ describe('M515 staleness: the design class', () => {
     const all = revisionsOf(fx.home, p.id);
     assert.ok(all.some((r) => r.id === rev.id) && all.some((r) => r.id === now.id), 'design_revisions keeps every version');
     await pump(fx, ctx, () => (fx.scripted.launches({ work_item: stageWork(fx.home, p.id, 3, 2)?.id }).length > 0 ? true : undefined), { what: 'the Android stage released', max: 40 });
-    assertNoSilentHold(fx.home, p.id, '(g)');
+    await assertHoldsAccounted(fx, p.id, '(g)');
     void KERNEL_KINDS;
   });
 });

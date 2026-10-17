@@ -24,6 +24,8 @@ import { roleThat } from '../gitruns.mjs';
 import { script, step } from '../scripted.mjs';
 import { closeSession, openSession, saveSession, sayAndSettle, scriptTurns, turnResult, turnThatWrites } from '../sessions.mjs';
 import { withStore } from '../store.mjs';
+import { engineTimeMs } from '../runs.mjs';
+import { describeHolds, designHoldAccounts } from './holds.mjs';
 import { specSaves } from '../journey/spec34.mjs';
 import {
   ANDROID_LOGO_PATH,
@@ -224,19 +226,76 @@ export async function readDesign(fx, project) {
   return res.body;
 }
 
-// ---- the invariant of D7 §11 (BS6 §4.1 rule 25) ------------------------------------------------
+// ---- the invariant of D7 §11 as corrected (E162 item 1; BS6 §4.1 rule 25) ------------------------
 
-// No design hold without an open design_due naming it: every stage_build
-// item held `design_pending` or `design_stale` has its stage among the open
-// design_due's `held_stages`. Returns the held items.
-export function assertNoSilentHold(home, project, where = 'here') {
-  const held = workItems(home, project, 'stage_build').filter((w) => ['design_pending', 'design_stale'].includes(w.held));
-  if (held.length === 0) return held;
-  const due = openDesignDue(home, project);
-  assert.ok(due, `${where}: ${held.length} UI stage(s) held ${held.map((w) => w.held).join(', ')} with no open design_due (D7 §11: no silent stall)`);
-  const named = due.evidence?.held_stages ?? [];
-  for (const w of held) assert.ok(named.includes(w.subject?.stage), `${where}: the open design_due names held stage ${w.subject?.stage} (it names ${JSON.stringify(named)})`);
-  return held;
+// Every design-held stage accounted for (SEAM.md §547): every stage_build
+// item held `design_pending` or `design_stale` is accounted for by an open
+// design_due naming it, an owner-opened active Designer session, pending
+// engine work or an unexpired owner deferral (holds.mjs), and the reads name
+// that cause and the next action: GET …/plan shows the stage with its hold,
+// and either the open question (whose command GET …/design states), the
+// deferral (`deferred_until`, `deferred_by`; GET …/design `deferred`), the
+// session (its id on either read), or the engine's work (the inventory
+// null, the approved revision not ready, the batch proposed or deferred, on
+// GET …/design). Replaces slices 40 to 45's "no hold without an open
+// design_due naming it". Returns the held items with their accounts.
+export async function assertHoldsAccounted(fx, project, where = 'here') {
+  const acc = designHoldAccounts(fx.home, project, { nowMs: engineTimeMs(fx.engine) });
+  if (acc.holds.length === 0) return [];
+  const facts = () => JSON.stringify({ open_design_due: openOfKind(fx.home, project, 'design_due').map((d) => ({ id: d.id, held_stages: d.evidence?.held_stages })), deferral_expired: acc.deferral_expired, waits: acc.waits });
+  assert.deepEqual(
+    acc.unaccounted.map((h) => h.stage),
+    [],
+    `${where}: every design-held stage accounted for by an open owner question, an owner-opened active Designer session, pending engine work or an unexpired owner deferral (D7 §11; E162 item 1); ${describeHolds(acc)} (${facts()})`,
+  );
+  const plan = await fx.engine.get(`/v1/projects/${project}/plan`);
+  assert.equal(plan.status, 200, `${where}: GET …/plan (${plan.status} ${plan.text?.slice(0, 300)})`);
+  const design = await readDesign(fx, project);
+  const stages = plan.body?.plan?.stages ?? [];
+  // The engine runs on between the store's snapshot and the reads: a hold
+  // released meanwhile (the design ready, waived) is no stall and is not read.
+  const still = new Set(designHoldAccounts(fx.home, project, { nowMs: engineTimeMs(fx.engine) }).holds.map((h) => `${h.work_item} ${h.held}`));
+  for (const h of acc.holds.filter((x) => still.has(`${x.work_item} ${x.held}`))) {
+    const s = stages.find((x) => x.id === h.stage);
+    assert.ok(s, `${where}: GET …/plan shows held stage ${h.stage} (it shows ${JSON.stringify(stages.map((x) => x.id))})`);
+    assert.equal(s.hold?.reason, h.held, `${where}: stage ${s.number}: GET …/plan names its hold (${JSON.stringify(s.hold)})`);
+    const named = h.accounts.filter((a) => namedByReads(a, s.hold, design));
+    assert.ok(
+      named.length > 0,
+      `${where}: stage ${s.number}: the reads name what accounts for its hold and the next action (E162 item 1): accounts ${JSON.stringify(h.accounts)}; plan hold ${JSON.stringify(s.hold)}; design_due ${JSON.stringify(design.design_due)}; deferred ${JSON.stringify(design.deferred)}`,
+    );
+  }
+  return acc.holds;
+}
+
+// Whether the reads name one account with its next action (SEAM.md §547).
+function namedByReads(a, hold, design) {
+  const mentions = (id) => JSON.stringify(hold ?? {}).includes(id) || JSON.stringify(design.design_due ?? {}).includes(id);
+  if (a.cause === 'question') return hold?.question === a.decision && design.design_due?.id === a.decision && typeof design.design_due?.command === 'string' && design.design_due.command.length > 0;
+  if (a.cause === 'deferral') return hold?.deferred_until === a.until && hold?.deferred_by === a.decision && design.deferred?.until === a.until;
+  if (a.cause === 'session') return mentions(a.run);
+  if (a.work === 'inventory_derivation') return design.inventory === null;
+  if (a.work === 'readiness') return (design.revisions ?? []).some((r) => r.id === a.design_revision && r.ready_at === null);
+  if (a.work === 'design_batch') return (design.revisions ?? []).some((r) => r.id === a.design_revision && r.status === 'proposed') || (design.batches_deferred ?? []).length > 0;
+  // The opening an `open` asked for: no read states it before the next tick allocates it.
+  return a.work === 'designer_session_opening' && hold !== null && hold !== undefined;
+}
+
+// A Designer session ended without resolving the hold re-raises design_due
+// (D7 §11 as corrected; E162 item 1; M512 (d), M538 (f)): an open design_due
+// naming the held stages, not naming the ended session as open, its `open`
+// not blocked by it, said on the next read; the holds accounted for.
+export async function assertReRaised(fx, project, endedRun, how) {
+  const due = openDesignDue(fx.home, project);
+  assert.ok(due, `${how}: design_due re-raised once the session ended without resolving the hold (E162 item 1)`);
+  assert.notEqual(due.evidence?.designer_session ?? null, endedRun, `${how}: the question does not name the ended session as open (${JSON.stringify(due.evidence)})`);
+  const open = (due.options ?? []).find((o) => o.key === 'open');
+  assert.ok(open, `${how}: it offers open (${JSON.stringify((due.options ?? []).map((o) => o.key))})`);
+  assert.ok(!(open.blockers ?? []).some((b) => JSON.stringify(b).includes(endedRun)), `${how}: open not blocked by the ended session (${JSON.stringify(open.blockers)})`);
+  const read = await readDesign(fx, project);
+  assert.equal(read.design_due?.id, due.id, `${how}: GET …/design says design_due is open (SEAM.md §491) (${JSON.stringify(read.design_due)})`);
+  await assertHoldsAccounted(fx, project, how);
+  return due;
 }
 
 // ---- the `surety design` and `surety env` commands, in the test's own home ----------------------
