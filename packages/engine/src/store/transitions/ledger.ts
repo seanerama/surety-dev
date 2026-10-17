@@ -307,7 +307,7 @@ export function chargeInvocation(
     { project: run.project, run: run.id, invocation: receipt.id },
     { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1, unknown_allowance_tokens: allowance },
   );
-  noteRunModel(tx, run.id);
+  noteRunModel(tx, run.id, n.model_observed);
 }
 
 // The run's observed model (D6 §7.6; M542; E154 item 6 (1)), set from its
@@ -315,10 +315,15 @@ export function chargeInvocation(
 // invocations observed, each once in the order first observed, joined by
 // a comma as a ledger row joins an invocation's own. null while none of
 // them observed one: unknown, never the requested model in its place.
-export function noteRunModel(tx: Tx, run: string): void {
-  const rows = tx.db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL ORDER BY rowid').all(run) as { model_observed: string }[];
-  const models = [...new Set(rows.flatMap((r) => r.model_observed.split(',').map((m) => m.trim()).filter((m) => m.length > 0)))];
-  tx.db.prepare('UPDATE "runs" SET "model_observed" = ? WHERE "id" = ?').run(models.length === 0 ? null : models.join(','), run);
+export function noteRunModel(tx: Tx, run: string, observed: string | null): void {
+  // The row just charged added to what the run's earlier rows gave (the
+  // rows are charged in order, so the first-observed order holds): one
+  // read of the run's row, not of every ledger row of it.
+  if (observed === null) return;
+  const had = (tx.db.prepare('SELECT "model_observed" FROM "runs" WHERE "id" = ?').get(run) as { model_observed: string | null } | undefined)?.model_observed ?? null;
+  const split = (v: string | null) => (v ?? '').split(',').map((m) => m.trim()).filter((m) => m.length > 0);
+  const models = [...new Set([...split(had), ...split(observed)])];
+  if (models.length > 0 && models.join(',') !== had) tx.db.prepare('UPDATE "runs" SET "model_observed" = ? WHERE "id" = ?').run(models.join(','), run);
 }
 
 // The run's token limit as its receipt fixed it at dispatch, or the

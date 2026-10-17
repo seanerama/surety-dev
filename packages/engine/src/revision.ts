@@ -81,11 +81,10 @@ let cached: EngineRevision | null = null;
 // this engine was started from).
 export function engineRevision(): EngineRevision {
   if (cached === null) {
-    // `--harness-engine-revision-unread` (SEAM.md §474): read as an engine
-    // built outside any repository would read it.
-    cached = seamEngineRevisionUnread()
-      ? { unknown: 'the engine was started with its source revision unreadable (--harness-engine-revision-unread)' }
-      : readRevision(dirname(fileURLToPath(import.meta.url)));
+    // A start the seam says records its revision as unreadable (SEAM.md
+    // §474), as an engine built outside any repository would read it.
+    const unread = seamEngineRevisionUnread();
+    cached = unread !== null ? { unknown: unread } : readRevision(dirname(fileURLToPath(import.meta.url)));
   }
   return cached;
 }

@@ -2040,7 +2040,9 @@ export const seamServiceProfileVariant = (): string | null => (init.harness ? (i
 // SEAM.md §328: the host facts this start records as unread.
 export const seamHostFactsUnread = (): string[] => (init.harness ? (init.switches?.hostFactsUnread ?? []) : []);
 // SEAM.md §474 (M544): this start records its source revision as unreadable.
-export const seamEngineRevisionUnread = (): boolean => (init.harness ? init.switches?.engineRevisionUnread === true : false);
+// The reason it records, or null (the revision is read).
+export const seamEngineRevisionUnread = (): string | null =>
+  init.harness && init.switches?.engineRevisionUnread === true ? 'the engine was started with its source revision unreadable (--harness-engine-revision-unread)' : null;
 export const seamAdapterVersion = (adapter: string): string | null => (init.harness ? (init.switches?.adapterVersions?.[adapter] ?? null) : null);
 export const seamCollectBounds = (): { entries: number; bytes: number } | null => (init.harness ? (init.switches?.collectBounds ?? null) : null);
 
