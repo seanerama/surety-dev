@@ -4276,3 +4276,115 @@ Sean's real run of M342 (run directory `~/surety-m4-real-20261012`, read only) p
 **Objection filed (a question for Sean, not a Builder's objection):** 135 (the preview's unit name `surety-<h>-design-preview-g<n>.service` carries no project, so two projects' previews in one home share a name; slice 40's Verifier noted it). The files use one previewing project per home; `operatorGuard` does not see the preview's prefix, so the two sandbox files read it themselves and stop a leftover only by its exact name after the engine's `--stop`.
 
 **What slice 40's Builder must provide for these to pass** (each a slice-40 row's, used here as its tests pin it): the policy key `design` and Pantry's publication with its inventory (M504, M507, §§484, 485); the Designer session, its save's `design_check` and checkpoint, and its close and batch (M503, M505, M536 (d), §§483, 486); `approveBatch`'s path to an approved revision with its human tests on `GET …/design` (M505, M507, §480); the preview of M536 (d) as §488 pins it (the CLI, its answer, `design.preview_deployed`, the unit name, the frame's prefix and `sandbox`, `--stop`); review mode, `design_reviews`, `design_verdicts` and `owner_accepted` (M536 (j), §489). Slice 42's own: the reserved environment and its refusal, the sealed tree, the server and its frame and index, the domain at `preview_memory_max` with no check capacity, one generation, the three teardowns and `design_preview_ttl`, the four causes of `design_preview_unavailable` and `stack`'s refusal, export with `SIMULATIONS.txt` and the archive, the barrier `preview.sealed`, `DESIGN_SIMULATION_UNDECLARED` on both faults, and, from slice 45 ahead of its rows, `POST …/design/reviews` with a verdict's `observed_on` kept non-native for `simulation`.
+
+## M6 slice 43: assets (M6 plan §3.5; BS6 §§3, 8, 9; D7 §6, A.4, A.6 to A.8; G10, G11, G14, G15; Q8)
+
+2026-10-17, by the Verifier of slice 43, on `verify/m6-s43` cut from `main` `95e8185`. Rows M522, M523, M525, M526, M527 and M534, all on the kernel lane: six files under the manifest's slice `43`. SEAM §§504 to 511 pin the names. Slices 40 to 42's names (§§480 to 503) are reused as pinned. Harness: `harness/design/assets43.mjs`, which provides:
+- the manifest edited as a Designer writes it;
+- a fault session whose turns carry the manifest and asset files;
+- generated asset files with valid headers and the test's own header reads;
+- the owner's asset commands and the bindings route;
+- the release hook's seam route;
+- Pantry carried to Alpha on the kernel lane with every slot a placeholder.
+
+No accepted file and no earlier slice's harness changed.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M522 | kernel | `M522-placeholders-never-block.test.mjs` (4) | (a) with (d): every default slot and variant of Pantry's targets, each file valid by its header (the logo block naming the project and PLACEHOLDER, the initials icon, any raster at its declared size); byte-identical in a second home under the same name, other logo bytes under another name; a design over the placeholders passes the engine's check. (a) a target added later: ios, through an approved spec change and a later Architect revision; `splash` gained, `app_icon` and `logo` gaining the platform, earlier files unchanged byte for byte, one engine intent revision. (b) to Alpha on the kernel lane with every effective slot a placeholder: `design_ready`, dispatch, the phase gate and `alpha_authorize` satisfied, no hook evaluation by any production caller. (c) `assets_required_for: alpha` refused | written; fails on `main` |
+| M523 | kernel | `M523-the-asset-manifests-versions.test.mjs` (2) | (a), (b), (f), (g): one fault session of 12 saves, the valid manifest first and last: the version faults, the forged approval, packaging `recorded`, `not_checkable_yet` and `checked_pass`, placement, alt text, platform, a missing slot, a variant with no file. (c), (d), (e) on a second Pantry, the batch approved with the logo held: an owner's active SVG refused, nothing committed; an owner's favicon committed as an engine intent revision; submit raises the asset-only approval (its check, no spec change, no blocker, the held logo and the favicon pending); answered with the favicon held; a second submit; the history kept, the placeholder recoverable from the derivation commit | written; fails on `main` |
+| M525 | kernel | `M525-asset-header-checks.test.mjs` (1) | (a) to (f) in one session of 13 saves on generated files: a PNG declared svg, a WebP declared png, a size mismatch, alpha forbidden (every pixel opaque) and required, three active SVGs, a PNG cut off in its IHDR. Controls: a valid PNG, a 20000 x 20000 PNG whose IDAT is not zlib, an alpha PNG under `required`, a passive SVG. The engine's descendants sampled around every save | written; fails on `main` |
+| M526 | kernel | `M526-the-effective-asset-set.test.mjs` (2) | (a), (c), (d), (e), (f): logo A approved; a revised design (accent, human-test texts, logo B) saved without moving the effective set; approved with B held; the engine restarted before the UI Builders' packages; packages, `asset_inputs` and `GET …/design` hold A by `slot@version` and digest, B's digest nowhere; B then approved by an asset-only approval. (b), (c): the logo held at the first approval: the placeholder throughout | written; fails on `main` |
+| M527 | kernel | `M527-bindings-and-versioned-parity.test.mjs` (1) | (a) to (g) on one Pantry: a parity criterion on the web logo only. The app_icon proposal is approved before any stage integrates: no work, and the android package holds its new version. Web's attempts: path missing, then unknown slot, then a copy and a derived binding. Android's: mismatch, then two copies. The bindings route, and the favicon `unbound`. The owner's favicon and app_icon and the held logo are approved in one asset-only approval, killed at `design.effective_moved`, then answered again, replayed and restarted: three fixes (logo's three paths; app_icon's one, no parity criterion; favicon's none) and one parity obligation. The old parity result is offered again and never counted. The fixes rebind and supersede | written; fails on `main` |
+| M534 | kernel | `M534-the-release-hook-and-its-range.test.mjs` (2) | (a) to (f) on Pantry everywhere, M533's narrowed selection approved (no splash): under `live`, public and private Betas met and Live naming app_icon, favicon and logo; `beta`; `none`; deployed targets ios and web; `assets_required.text` under live and beta; an Alpha tier refused. (g) Pantry to Alpha: no hook evaluation by any production caller | written; fails on `main` |
+
+**On `main` `95e8185`.** Run in this worktree after `npm ci` and `npm run build`, with `TMPDIR=/tmp/v43`, each file alone with `node --test`; nothing else of the suite was run.
+
+Every case fails at its fixture's first step, `createPantry`'s project policy: **"a valid policy change (body: {"code":"unknown_field","reason":"\"design\" is not a writable project policy key.", …}) 400 !== 200"**. That is slice 40's missing feature, on which every row of this slice stands.
+
+- **`M522` 0/4**, **`M523` 0/2**, **`M525` 0/1**, **`M526` 0/2**, **`M527` 0/1** and **`M534` 0/2**, each at the policy key `design`.
+- M522 (c) also stands on it: the project is created under `before_build` before the refusal of `alpha` is asked.
+
+**The harness checked beyond the policy key.** On a scratch copy outside the repository: `git archive` of `build/m6-s40` at `c8257a6`, the slice-40 Builder's work in progress, built with this slice's six files and harness copied in. Nothing from it is committed or claimed as a result; it only shows the harness reaches the slice's own features.
+
+- **M522 (a), (d): passes** (the default slots, the placeholders' validity and determinism, the second home, another name, the design check over them).
+- **M522 (c): passes.**
+- **M522 (a) ios:** the spec change, the Architect revision and the re-derived inventory with ios are all reached. It fails at "ios's splash slot", since that build does not yet write a new target's placeholders.
+- **M522 (b) and M534 (g):** they reach the phase gate, which refuses `PLAN_REQUIREMENT_UNPLANNED` for the design's human-test requirements (R4, R5). No question is open, so it is a silent stall. This is M536 (i)'s path, slices 40 and 44's, not this harness's.
+- **M523 (a):** the control (a logo proposal and a banner) and packaging pass; the run fails at the first version fault.
+- **M523 (c):** the batch, the held logo and readiness are reached; the run fails at `surety design asset add` ("not implemented in this revision").
+- **M525:** the control, `FORMAT_MISMATCH` and the WebP all pass; the run fails at `SIZE_MISMATCH`.
+- **M526 (b):** the effective placeholder, the packages and `GET …/design` pass; the run fails at `asset_inputs` (none recorded on that build).
+- **M526 (a):** v1 approved and logo A effective; the run fails at the second design's batch, refused `design_batch_refused: the proposed specification's inventory … differs from the design's` once its human-test texts change (M530's and slice 44's matter: a design's own human tests and the batch's inventory).
+- **M527:** every binding refusal and the recorded bindings pass, and the android package holds the app_icon's new version; the run fails at `GET …/design/bindings` (404).
+- **M534 (a):** fails at `POST /v1/harness/release-hook` (404).
+
+Three harness errors were found and fixed this way: a wrong import in M534; roles not scripted for a session; and an Architect session opened while the API stage could still move the head (E147 item 4's `integration_conflict`).
+
+**Details of plan §2.6 fixed here** (each within D7's text; SEAM §§505 to 510):
+- **The effective set's record and its event:** `design_effective_assets` and `design.assets_approved` as slice 40 left them. A save never moves the set. The set is the only source of packages, `asset_inputs` and `GET …/design`, across a restart (§511).
+- **The binding record and how a test reads it:** the `asset_bindings` row, its `superseded_by`, and `GET …/design/bindings` with every field of A.3 (§508). `GET …/design` gains `unbound` `[{slot, variant, target, stage}]`.
+- **Which candidate an `asset_updated` fix names:** the project's newest candidate at the approval. Its `bindings` are every current binding of the slot, across stages, as `{stage, target, path, form}`. A refused binding fails the run `invalid_result`, naming the code (§510).
+- **Reason codes D7 proposes:** A.4's asset codes as written. An unreadable header is any of the three header codes naming the file, the choice of code not pinned. `checked_pass` is `DESIGN_SCHEMA_INVALID`. `assets_required_for: alpha` and an Alpha tier at the hook are each 400 `invalid_value`.
+- **The release hook's seam** (D7 §6.7: "a condition function with no production caller until D5", BS6 §3):
+  - `POST /v1/harness/release-hook` and `GET /v1/harness/release-hook`, the latter's evaluations by caller;
+  - the only callers allowed are `harness` and `design_view`;
+  - `assets_required.text` on `GET …/design` (§509).
+
+**Choices beyond §2.6 a Builder may object to:**
+- **The base of the manifest's version rules** is the approved revision's manifest, else the engine's last committed one, never a checkpoint. The tests increment by exactly one and fault by none, so neither the size of a step nor a checkpoint-relative reading is tested beyond that (§505).
+- **Unreferenced asset files** under `assets/` are admitted.
+- **A banner** is selected to be admitted.
+- **The placeholders' forms:** initials as the first letters of the first two words, upper case.
+- **A target added later** gets its new slots' placeholders in one engine intent revision; existing slots gain the platform without a new `slot_version`.
+- **`surety design asset add --project <p> <slot> <variant> <file>`** in the CLI form of §480.
+- **The asset-only revision's** `design_assets` rows list every pending proposal, the held ones included.
+- **The barrier `design.effective_moved`** is used with `kill`; the test answers again if the decision is still open, so it holds whether the move and the registration share a transaction or not.
+- **The old parity result** is offered again through the evidence-reuse fixture and judged by the gates' `satisfiers`.
+- **The policy key** `assets_required_for` is set through `setPolicy`, which accepts either a direct change or a `policy_widening`.
+
+**Cases written that the plan's wording could not reach as written:**
+- **M522 (a)'s "the PNG variants at their declared sizes":** D7 §6.2's table gives no format or size, so the test requires a raster placeholder to be valid at its declared size, without requiring that any exist (objection 140).
+- **M522 (b)'s "no asset status read (counted)":** read as the release hook's condition counted by caller (§509). A gate that read asset status some other way is not something the count can see.
+- **M526 (c)'s "the export of the approved revision":** not asserted. SEAM §501 pins the export as the tree, which at a revision with a held logo holds the held file (objection 141).
+- **M526 (a)'s "a layout approved":** a second full design, its human-test texts revised so that its batch carries a change, as M533 (e) does.
+- **M527 (e)'s "the old result offered to the gate":** read through the evidence-reuse fixture (§73) and every later gate's `satisfiers`.
+- **M527 (b)'s "no `asset_parity` criterion":** the app_icon, a bound slot no check reads; the logo keeps its web parity criterion for (e).
+- **M534 (a)'s "a fixture Beta authorization, public":** the seam's `{tier: "beta", public: true}`, since D5 has no authorization to install.
+
+**Objections filed** (questions for Sean, not a Builder's objection):
+- **140:** where a raster placeholder's declared size comes from, when D7 §6.2's table names none.
+- **141:** whether the export of an approved revision holding a held proposal carries its file.
+
+**What the earlier slices' Builders must provide for these to pass.** Each is a slice-40 to 42 row's, used here as its tests pin it.
+
+From slice 40:
+- the policy key `design`, Pantry's publication with its inventory and placeholder manifest, and `design_due` (M504, M507; §§484, 485);
+- the Designer session, the save's `design_check` and close (§483);
+- the batch with `assets_held` and its effect: `design_revisions`, `design_assets.held`, `design_effective_assets` and `design.assets_approved` (M505, M536 (e); §§486, 487);
+- readiness and the third milestone (M507);
+- the UI Builder's package with `design/effective-assets.json` and its files, the `asset_updated` fix's package (M509; §482);
+- bindings validated and recorded at integration (`invalid_result` naming the code), and `asset_updated` work with its subject (M536 (g), (h); §487);
+- `check_results.asset_inputs` and `asset_version_changed` obligations from the definitions' `asset_inputs` (§487);
+- `surety design assets submit` (§480);
+- `GET …/design`'s `effective_assets` (§496);
+- Alpha under policy on the kernel lane with the design's human-test requirements not blocking the phase gate (M536 (i)).
+
+From slice 41:
+- the design check's clause 8 for the asset codes it shares with the floor;
+- `DESIGN_SCHEMA_INVALID`'s naming;
+- the selection's floor, the effective set's selected-only rows and `assets_required` (M533; §496);
+- `step.writeBytes`.
+
+Slice 43's own:
+- the placeholders' forms and determinism, and a new target's placeholders;
+- the manifest's version, slot_version, forged-status and history rules, `packaging`'s statuses and the placement, alt, platform, slot and file reasons;
+- the header checks, with nothing decoded or run;
+- `surety design asset add` and the asset-only revision with its approval;
+- `GET …/design/bindings` and `unbound`;
+- one `asset_updated` per moved slot with its bindings and candidate, idempotent across a replay, a kill at `design.effective_moved` and a restart;
+- the obligation's resolution only by a new-version result, and no gate counting an old one;
+- the rebinding and `superseded_by`;
+- `assets_required_for` with `alpha` refused;
+- the release hook's seam route and its evaluation counter;
+- `assets_required.text`.
