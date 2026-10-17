@@ -225,6 +225,15 @@ const COLUMN_ENUMS: Record<string, string> = {
   'stages.conformance_state': 'ConformanceStageState',
   'releases.state': 'ReleaseStateFact',
   'environments.origin': 'EnvironmentOrigin',
+  // D7 A.2, A.3 (M6 slice 41): a Designer's findings and the native
+  // conventions an approved design leaves not checkable yet.
+  'design_findings.category': 'DesignFindingCategory',
+  'design_findings.severity': 'Severity',
+  'design_findings.status': 'DesignFindingStatus',
+  'design_findings.route': 'DesignFindingRoute',
+  'design_native_obligations.target': 'Target',
+  'design_native_obligations.convention': 'NativeConvention',
+  'design_native_obligations.status': 'NativeObligationStatus',
 };
 
 const pascal = (text: string): string =>

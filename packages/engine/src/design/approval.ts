@@ -38,7 +38,7 @@ import type { AssetManifest } from './assets.js';
 import { narrowings as narrowingsOf } from './check.js';
 import { writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
-import { approvedModuleMap, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
+import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
 import { designDueState } from './readiness.js';
 import { blobsHash, currentInventory } from './store.js';
 import { latestCheck } from './records.js';
@@ -183,7 +183,9 @@ export const revisionOfRequest = (db: Db, request: string): RevisionRow | undefi
 // the design's at raise: a difference refuses the batch (§7.4). null when
 // they agree; the reason otherwise.
 export function batchInventoryDifference(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): string | null {
-  const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: args.addedHumanTests });
+  // The design's human tests already approved stay excluded beside the ones
+  // this change adds: a later design's batch revises them (M533 (e)).
+  const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: [...new Set([...designHumanTestKeys(db, args.project), ...args.addedHumanTests])] });
   if ('unknown' in inputs) return `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`;
   const next = deriveInventory(inputs);
   if (args.designDigest === null) return 'the design names no inventory';
