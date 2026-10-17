@@ -25,7 +25,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { CODES, decision } from './harness/decisions.mjs';
-import { pump, specRevisions } from './harness/journey/drive.mjs';
+import { phaseCompleted, pump, specRevisions } from './harness/journey/drive.mjs';
 import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { closeSession, sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
@@ -121,8 +121,11 @@ describe('M514 the design decisions\' bindings', () => {
     const fx = await scriptedEngine(t);
     const d = await designedPantry(fx, { name: 'pantry-bind-due' });
     const { p, ctx, v2 } = d;
-    // Built to the end of phase 1 (nothing held, nothing in flight).
+    // Built to the end of phase 1 (nothing held, nothing in flight): the
+    // stages verified and the phase complete, so its phase-gate checks have
+    // recorded their results before the change binds them (objection 180).
     await pump(fx, ctx, () => ([1, 2, 3].every((n) => stageRow(fx.home, p.id, n)?.status === 'verified') ? true : undefined), { what: 'the three stages verified', max: 200 });
+    await phaseCompleted(fx, ctx, 1, { max: 200 });
     await waitForIdle(fx.home, p.id);
     const reword = (reqs, key, statement) => reqs.map((r) => (r.key === key ? { ...r, statement } : r));
     const v3reqs = reword(v2.requirements, 'R2', 'A user sees every item of the pantry, and its quantity, in a web browser.');
@@ -131,6 +134,8 @@ describe('M514 the design decisions\' bindings', () => {
     assert.deepEqual((first.evidence?.stale_screens ?? []).map((s) => `${s.screen}/${s.target}`), ['S1/web'], `naming S1 on web (${JSON.stringify(first.evidence)})`);
     assert.ok(first.manifest && JSON.stringify(first.manifest).includes('S1'), `its manifest binds the stale screens (SEAM.md §517) (${JSON.stringify(first.manifest)})`);
     assert.ok('held_stages' in (first.manifest ?? {}) && 'stale_screens' in (first.manifest ?? {}), `and the held stages (${JSON.stringify(first.manifest)})`);
+    // The first change's own work ended before the second is made (objection 180).
+    await waitForIdle(fx.home, p.id);
     const v4reqs = reword(v3reqs, 'R3', 'A user sees every item of the pantry, and its quantity, in the Android app.');
     await ownerChange(fx, ctx, { text: specOf({ version: 4, requirements: v4reqs }), changes: [{ key: 'R3', kind: 'text_changed', reason: 'R3 names the quantity' }], say: 'And on Android.' });
     const next = await pump(fx, ctx, () => {

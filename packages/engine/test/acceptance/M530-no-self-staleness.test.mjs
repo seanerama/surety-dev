@@ -43,7 +43,7 @@ import { openSession, saveSession, sayAndSettle, scriptTurns, turnResult } from 
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
-import { answerWith, assertNoSilentHold, designScripts, inventoryOf, openDesignDue, openOfKind, readDesign, scriptBuilders, toPublished, variantSpec } from './harness/design/drive.mjs';
+import { answerWith, assertNoSilentHold, designScripts, inventoryOf, openDesignDue, openOfKind, readDesign, scriptBuilders, stageRow, toPublished, variantSpec } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS, approveBatch, checkSession, designModel, filesOf, scriptVariant } from './harness/design/check41.mjs';
 import {
   approveReviewBatch,
@@ -123,6 +123,10 @@ describe('M530 no self-staleness', () => {
     // The batch's own change leaves (D6 §4.2: one pending at a time), the design approval unanswered.
     await consume(fx, p.id, batch.spec_change, 'reject');
     await tick(fx.engine, p.id, { rounds: 2 });
+    // The API stage (not held by the open approval) built and its gate's
+    // results recorded before the change binds R1's checks (objection 180).
+    await pump(fx, ctx, () => (stageRow(fx.home, p.id, 1)?.status === 'verified' ? true : undefined), { what: 'the API stage verified', max: 80 });
+    await waitForIdle(fx.home, p.id);
     const open = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'design_approval').at(-1), { what: 'the design approval still open', max: 6 });
     const reqs = REQUIREMENTS.map((r) => (r.key === 'R1' ? { ...r, statement: 'The service lists the pantry\'s items and adds an item, over HTTP with JSON bodies, on loopback only.' } : r));
     await ownerChange(fx, ctx, { text: specOf({ version: 2, requirements: reqs }), changes: [{ key: 'R1', kind: 'text_changed', reason: 'loopback only' }], say: 'The API listens on loopback only.' });
