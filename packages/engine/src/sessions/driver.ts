@@ -10,9 +10,11 @@
 
 import { nowIso } from '../clock.js';
 import { commitContent, messageText } from '../git/commit.js';
-import { repoContext, worktreeContext } from '../git/exec.js';
-import { catBlob, listTree, treeOf } from '../git/repo.js';
-import { mkdirSync } from 'node:fs';
+import { gitOk, repoContext, worktreeContext } from '../git/exec.js';
+import { catBlob, diffTrees, listTree, treeOf } from '../git/repo.js';
+import { rebaseTree } from '../git/rebase.js';
+import { within } from '../design/paths.js';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { type MetadataBaseline, captureMetadata, indexHashOfTree, snapshotTree, validateDiff } from '../git/snapshot.js';
 import type { Launcher } from '../invoke/choke.js';
@@ -348,27 +350,45 @@ export class SessionDriver {
         },
       };
     }
+    // The checkpoint's tree and parent: the snapshot on its base, or, for a
+    // Designer save behind a moved head (G12; D7 §3.1; SEAM.md §492), the
+    // snapshot's own diff against its base (already judged by the path
+    // rules above) rebased onto the head (D1 §7.5), re-validated by the
+    // design check at the parse. Every other role's save on a moved head is
+    // refused as built (E147 item 4).
+    let commitTree = tree;
+    let parent = ws.current_base;
     if (facts.head !== ws.current_base) {
-      const text = `the integration branch is at ${facts.head ?? 'no registered commit'}, not at the session's checkpoint base ${ws.current_base}`;
-      return { refused: { code: 'integration_conflict', text, refusal: new Refusal(409, 'integration_conflict', `The save of session ${facts.run} was refused: ${text}.`, 'Close the session and open a new one on the current branch; the workspace keeps the change.', { run: facts.run, head: facts.head, base: ws.current_base }) } };
+      const conflict = (text: string, subject: Record<string, unknown>) => ({
+        refused: { code: 'integration_conflict', text, refusal: new Refusal(409, 'integration_conflict', `The save of session ${facts.run} was refused: ${text}.`, 'Close the session and open a new one on the current branch; the workspace keeps the change.', { run: facts.run, head: facts.head, base: ws.current_base, ...subject }) },
+      });
+      if (facts.role !== 'designer' || facts.head === null) return conflict(`the integration branch is at ${facts.head ?? 'no registered commit'}, not at the session's checkpoint base ${ws.current_base}`, {});
+      await pausePoint('design.save_rebase');
+      const rebased = await rebaseTree(facts.repo, ws.current_base, tree, facts.head, this.rt.scratch);
+      if (rebased === 'unknown') throw new Error('the save could not be rebased onto the moved integration branch: the repository could not be read');
+      if (rebased.conflict !== null) {
+        return conflict(`the save's changes conflict with the integration branch at ${facts.head}, which moved since the session's checkpoint base ${ws.current_base}: ${rebased.files.join(', ')}`, { files: rebased.files });
+      }
+      commitTree = rebased.tree;
+      parent = facts.head;
     }
     const message = messageText({
       title: `session ${facts.run} (${facts.role}): checkpoint after turn ${facts.turn}`,
       trailers: [
         ['Surety-Run', facts.run],
         ['Surety-Role', facts.role],
-        ['Surety-Base', ws.current_base],
+        ['Surety-Base', parent],
         ['Surety-Kind', 'checkpoint'],
       ],
     });
-    const content = commitContent({ tree, parent: ws.current_base, message, at: nowIso() });
+    const content = commitContent({ tree: commitTree, parent, message, at: nowIso() });
     const sha = await commitId(facts.repo, content);
     if (sha === null) throw new Error('the checkpoint commit could not be prepared: the repository could not be read');
     const deadlineSeconds = this.rt.setting('git_deadline');
     const committed = await this.journal.withProject(facts.project, async () => {
       const intent = await this.journal.intend(
         'accept.intend_commit',
-        { project: facts.project, repo: facts.repo, run: facts.run, purpose: 'run', tree, parent: ws.current_base, sha, content, revisionKind: 'checkpoint', checkpoint: true, workspace: ws.id, deadlineSeconds },
+        { project: facts.project, repo: facts.repo, run: facts.run, purpose: 'run', tree: commitTree, parent, sha, content, revisionKind: 'checkpoint', checkpoint: true, workspace: ws.id, deadlineSeconds },
         'commit_tree',
       );
       if (!('operation' in intent)) return false;
@@ -376,7 +396,7 @@ export class SessionDriver {
     });
     if (!committed) throw new Error('the checkpoint commit was not made');
     const integrated = await this.journal.withProject(facts.project, async () => {
-      const intent = await this.journal.intend('session.intend_checkpoint', { project: facts.project, run: facts.run, repo: facts.repo, head: ws.current_base, commit: sha, deadlineSeconds }, 'ref_update');
+      const intent = await this.journal.intend('session.intend_checkpoint', { project: facts.project, run: facts.run, repo: facts.repo, head: parent, commit: sha, deadlineSeconds }, 'ref_update');
       if (!('operation' in intent)) return { end: 'failed' as const, detail: null };
       const settled = await this.journal.drive(intent.operation);
       return { end: settled.end, detail: settled.op.outcome_detail ?? null };
@@ -385,7 +405,37 @@ export class SessionDriver {
       const text = `the checkpoint ${sha} was committed and not integrated (${integrated.end}${integrated.detail ? `: ${JSON.stringify(integrated.detail)}` : ''})`;
       return { refused: { code: 'integration_conflict', text, refusal: new Refusal(409, 'integration_conflict', `The save of session ${facts.run} was refused: ${text}.`, 'Read the session and the integration branch; the workspace keeps the change.', { run: facts.run, commit: sha }) } };
     }
+    // A rebased save: the workspace brought to its new checkpoint, the
+    // paths the head moved written from it, so the next snapshot's diff is
+    // the Designer's own again.
+    if (parent !== ws.current_base) await this.followHead(facts.repo, metadata, ws.path, ws.current_base, parent, sha);
     return { sha };
+  }
+
+  // The paths the integration branch changed between the workspace's old
+  // base and the head a save was rebased onto, written into the workspace
+  // from the new checkpoint (or removed where it removed them), through a
+  // private index: the worktree's own index and HEAD untouched. Each path
+  // confirmed inside the workspace first.
+  private async followHead(repo: string, metadata: MetadataBaseline, path: string, oldBase: string, head: string, checkpoint: string): Promise<void> {
+    const ctx = worktreeContext(repo, metadata.adminDir, path);
+    const changes = await diffTrees(repoContext(repo), oldBase, head);
+    if (changes === null) throw new Error('the paths the integration branch moved could not be read');
+    const index = join(this.rt.scratch, `follow-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const env = { GIT_INDEX_FILE: index };
+    try {
+      if ((await gitOk(ctx, ['read-tree', checkpoint], { env })) === null) throw new Error('the checkpoint could not be read into the workspace');
+      const write: string[] = [];
+      for (const c of changes) {
+        const target = within(path, c.path);
+        if (target === null) throw new Error(`the path ${JSON.stringify(c.path)} is not inside the workspace`);
+        if (c.status === 'D') rmSync(target, { force: true });
+        else write.push(c.path);
+      }
+      if (write.length > 0 && (await gitOk(ctx, ['checkout-index', '-f', '-z', '--stdin'], { env, input: `${write.join('\0')}\0` })) === null) throw new Error('the paths the integration branch moved could not be written into the workspace');
+    } finally {
+      rmSync(index, { force: true });
+    }
   }
 
   // The parse at save of the role's products (SEAM.md §346): every file of
