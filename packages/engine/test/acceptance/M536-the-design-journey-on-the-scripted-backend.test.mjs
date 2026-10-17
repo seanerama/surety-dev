@@ -22,8 +22,10 @@
 //
 // SAFETY (BS6 §4.1; E64; SEAM.md §§257, 356, 488). The units are the
 // engine's own under this test home's prefix: the preview's
-// `surety-<h>-design-preview-g<n>.service` and Alpha's; the test starts and
-// stops them only through the engine's commands, reads them by exact name,
+// `surety-<h>-<env id>-g<n>.service` (`<env id>` the project's reserved
+// `design-preview` row's, as D4 §9.3 names every unit; objection 135,
+// decided) and Alpha's, both under the guard's `env_` pattern; the test
+// starts and stops them only through the engine's commands, reads them by exact name,
 // and acts on no unit itself; it signals nothing but its own engine (the
 // verified kill). The relay is opened by the test's own command on
 // 127.0.0.1 and closed by the case that opened it (rule 24). Nothing the
@@ -34,8 +36,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { listUnits, operatorGuard, serviceOf, unitShow, cgroupsNamed } from './harness/deploy/host.mjs';
-import { homeHash } from './harness/deploy/kernel.mjs';
+import { assertOwnUnit, operatorGuard, serviceOf, unitShow } from './harness/deploy/host.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import {
   alphaDeployed,
@@ -60,6 +61,7 @@ import { alphaByCommand, endJourney, journeyEngine } from './harness/journey/pro
 import { changedPaths, fileAt } from './harness/repos.mjs';
 import { closeSession, ledgerRowsOf, saveSession, sayAndSettle, scriptTurns, transcriptEntries } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
+import { previewCgroups, previewEnvRow, previewUnitName, previewUnits } from './harness/design/preview42.mjs';
 import { semanticsOf } from './harness/journey/spec34.mjs';
 import {
   DESIGN,
@@ -118,8 +120,11 @@ const LOGO_DIGEST = sha256hex(LOGO_SVG);
 // `classifier_authority: authoritative` a tightening is the Reviewer's). The
 // design's decisions and the batched spec change are answered by the steps, never by the pump.
 const BUILD_KINDS = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
-const previewPrefix = (home) => `surety-${homeHash(home)}-design-preview-`;
-const previewUnits = (home) => (listUnits() ?? []).filter((u) => u.unit.startsWith(previewPrefix(home)));
+// The preview's unit is named from its reserved environment's id (objection 135; SEAM.md §§488, 499).
+const previewUnitsOf = (home, project) => {
+  const env = previewEnvRow(home, project);
+  return env ? previewUnits(home, env.id) : [];
+};
 
 describe('M536 the design journey on the scripted backend, a real preview unit and a real Alpha unit (project lane)', () => {
   const shared = sharedFixture();
@@ -148,7 +153,15 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
       const { fx, p } = J;
       if (fx && p) {
         if (J.relayOpen) cli(fx, ['env', 'close', 'design-preview', '--project', p.id]);
-        if (previewUnits(fx.home).length > 0) cli(fx, ['design', 'preview', '--stop', '--project', p.id]);
+        // Units unread (null) are not none: the engine's --stop is asked then too.
+        const left = (() => {
+          try {
+            return previewUnitsOf(fx.home, p.id);
+          } catch {
+            return null;
+          }
+        })();
+        if (left === null || left.length > 0) cli(fx, ['design', 'preview', '--stop', '--project', p.id]);
         if (J.env && !J.afterTeardown) J.afterTeardown = await endJourney(fx, p.id, J.env);
       }
       guard.assertClean();
@@ -238,7 +251,7 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     assertNoSilentHold(fx.home, p.id, '(c)');
   });
 
-  step('(d) a Designer session of three turns: the first save refused by the design check, the reason the next turn\'s engine entry; a corrected save; surety design preview of the checkpoint on surety-<h>-design-preview-g1.service, two identity reads, no alpha_authorize; the relay opened and the preview read; --stop leaves nothing', async () => {
+  step('(d) a Designer session of three turns: the first save refused by the design check, the reason the next turn\'s engine entry; a corrected save; surety design preview of the checkpoint on surety-<h>-<env id>-g1.service, two identity reads, no alpha_authorize; the relay opened and the preview read; --stop leaves nothing', async () => {
     const { fx, p } = J;
     const authorizationsBefore = rows(fx.home, 'SELECT COUNT(*) AS n FROM "deployment_authorizations"')[0].n;
     const alphaAuthorizeBefore = rows(fx.home, 'SELECT COUNT(*) AS n FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = \'alpha_authorize\'', p.id)[0].n;
@@ -262,8 +275,11 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     const url = preview.body?.preview?.url;
     assert.match(url ?? '', /^http:\/\/127\.0\.0\.1:\d+\/$/, `the URL printed (SEAM.md §488) (${preview.stdout.slice(0, 400)})`);
     const deployed = await pump(fx, J.ctx, () => designEvents(fx.home, 'design.preview_deployed', p.id).at(-1), { what: 'the preview to be deployed', projectMs: 300_000 });
-    const unit = `${previewPrefix(fx.home)}g1.service`;
-    assert.deepEqual(previewUnits(fx.home).map((u) => u.unit), [unit], 'the preview\'s unit by exact name');
+    J.previewEnv = previewEnvRow(fx.home, p.id);
+    assert.ok(J.previewEnv, 'the reserved environment design-preview, a row of the project (SEAM.md §499)');
+    const unit = previewUnitName(fx.home, J.previewEnv.id, 1);
+    assertOwnUnit(fx.home, unit, 'the preview\'s unit');
+    assert.deepEqual(previewUnits(fx.home, J.previewEnv.id).map((u) => u.unit), [unit], 'the preview\'s unit by exact name');
     const shown = unitShow(unit, ['LoadState', 'ActiveState']);
     assert.deepEqual([shown?.LoadState, shown?.ActiveState], ['loaded', 'active'], `read from the host by exact name (${JSON.stringify(shown)})`);
     assert.equal(deployed.payload?.unit, unit, 'the event names the unit');
@@ -295,9 +311,9 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     }
     const stop = cli(fx, ['design', 'preview', '--stop', '--project', p.id]);
     assert.equal(stop.status, 0, `surety design preview --stop exits 0 (${stop.stdout.slice(0, 300)} ${stop.stderr.slice(0, 300)})`);
-    await pump(fx, J.ctx, () => (designEvents(fx.home, 'design.preview_torn_down', p.id).length > 0 && previewUnits(fx.home).length === 0 ? true : undefined), { what: 'the preview to be torn down', projectMs: 300_000 });
-    assert.deepEqual(previewUnits(fx.home), [], 'no unit of the preview left');
-    assert.deepEqual(cgroupsNamed(previewPrefix(fx.home)), [], 'no cgroup of the preview left');
+    await pump(fx, J.ctx, () => (designEvents(fx.home, 'design.preview_torn_down', p.id).length > 0 && previewUnits(fx.home, J.previewEnv.id).length === 0 ? true : undefined), { what: 'the preview to be torn down', projectMs: 300_000 });
+    assert.deepEqual(previewUnits(fx.home, J.previewEnv.id), [], 'no unit of the preview left');
+    assert.deepEqual(previewCgroups(fx.home, J.previewEnv.id), [], 'no cgroup of the preview left');
     assertNoSilentHold(fx.home, p.id, '(d)');
   });
 
@@ -494,8 +510,9 @@ describe('M536 the design journey on the scripted backend, a real preview unit a
     J.afterTeardown = await endJourney(fx, p.id, J.env);
     assert.deepEqual(J.afterTeardown.units, [], 'no unit of Alpha\'s prefix');
     assert.deepEqual(J.afterTeardown.cgroups, [], 'no cgroup of Alpha\'s prefix');
-    assert.deepEqual(previewUnits(fx.home), [], 'no unit of the preview\'s prefix');
-    assert.deepEqual(cgroupsNamed(previewPrefix(fx.home)), [], 'no cgroup of the preview\'s prefix');
+    assert.ok(J.previewEnv, 'the preview\'s environment, read at (d)');
+    assert.deepEqual(previewUnits(fx.home, J.previewEnv.id), [], 'no unit of the preview\'s prefix');
+    assert.deepEqual(previewCgroups(fx.home, J.previewEnv.id), [], 'no cgroup of the preview\'s prefix');
     const fixtures = resultsOf(fx.home, p.id).filter((r) => !r.runner_qualification || r.runner_id === 'test_fixture');
     assert.deepEqual(fixtures.map((r) => r.id), [], 'no check result from a fixture');
     const answered = rows(fx.home, 'SELECT "kind", "answer" FROM "decisions" WHERE "project" = ? AND "status" = \'consumed\'', p.id).map((r) => ({ kind: r.kind, answer: JSON.parse(r.answer ?? '{}') }));

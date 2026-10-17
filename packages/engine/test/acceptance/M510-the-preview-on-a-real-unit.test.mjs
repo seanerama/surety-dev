@@ -1,6 +1,8 @@
 // M510, the preview on a real unit (slice 42; sandbox lane). M6 plan §3.4
 // M510; D7 §5.7, A.6, A.7; G4; D4 §4.6, §9.2, §9.3, Q7; E126; BS6 §4.1
-// rules 1, 2, 7, 8, 13, 15, 17, 21 to 24; SEAM.md §§488, 498 to 501.
+// rules 1, 2, 7, 8, 13, 15, 17, 21 to 24; SEAM.md §§488, 498 to 501;
+// objection 135 (decided: the preview's unit named from its environment's
+// id as D4 §9.3 names every unit).
 //
 // The reference project "Pantry" under `design: before_build`, on real
 // domains, the real `local_service` adapter qualified by `surety
@@ -12,9 +14,11 @@
 //       at that revision (the sealed directory exactly `.surety/design/` at
 //       the checkpoint) and deployed through D4's operation;
 //       `design.preview_deployed` with each mockup's `preview_capability`;
-//   (b) the unit `surety-<h>-design-preview-g1.service` by exact name, the
-//       only one of its prefix; its domain's `memory.max` reads back
-//       `preview_memory_max` (256 MiB); no shared check capacity reserved;
+//   (b) the unit `surety-<h>-<env id>-g1.service` by exact name, `<env id>`
+//       the project's reserved `design-preview` row's (objection 135), the
+//       only one of its prefix and under the guard's `env_` pattern; its
+//       domain's `memory.max` reads back `preview_memory_max` (256 MiB); no
+//       shared check capacity reserved;
 //   (c) verified by the two identity reads (`tree_digest`) only: no
 //       authorization, no `alpha_authorize`, no behaviour check;
 //   (g) the server: the engine's own file in the engine's install, run by
@@ -33,7 +37,8 @@
 // engine's own, `surety-<h>-…` with <h> this home's hash; the test starts
 // and stops the preview only through the engine's commands, reads units by
 // exact name or by the list filtered to this home's hash (§474), and acts on
-// none itself but by `stopPreviewLeftovers`' exact name after the file. It
+// none itself but by `stopPreviewLeftovers`' exact name after the file (an
+// `env_` name, so the fail-closed teardown and the guard see it too). It
 // signals nothing but its own engine (the verified kill). The relay is
 // opened by the test's own command on 127.0.0.1 and closed by the case that
 // opened it (rule 24). The Designer's files are read as bytes over HTTP,
@@ -46,7 +51,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
-import { cmdlineOf, exeShaOf, operatorGuard, unitShow } from './harness/deploy/host.mjs';
+import { assertOwnUnit, cmdlineOf, exeShaOf, operatorGuard, unitShow } from './harness/deploy/host.mjs';
 import { RUNTIME, filesUnder } from './harness/deploy/kernel.mjs';
 import { qualifyByCommand } from './harness/deploy/qualify.mjs';
 import { sharedFixture } from './harness/gates.mjs';
@@ -110,7 +115,7 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     });
   // The newest preview deployed, waited for by the engine's progress.
   const deployedNth = (n, what) => pump(J.fx, J.ctx, () => deployedEvents(J.fx.home, J.p.id)[n - 1], { what, projectMs: 300_000 });
-  const tornDownNth = (n, what) => pump(J.fx, J.ctx, () => (tornDownEvents(J.fx.home, J.p.id).length >= n && previewUnits(J.fx.home).length === 0 ? tornDownEvents(J.fx.home, J.p.id)[n - 1] : undefined), { what, projectMs: 300_000 });
+  const tornDownNth = (n, what) => pump(J.fx, J.ctx, () => (tornDownEvents(J.fx.home, J.p.id).length >= n && previewUnits(J.fx.home, J.env.id).length === 0 ? tornDownEvents(J.fx.home, J.p.id)[n - 1] : undefined), { what, projectMs: 300_000 });
   const preview = (revision = 'checkpoint') => cli(J.fx, ['design', 'preview', '--project', J.p.id, '--revision', revision]);
 
   before(async () => {
@@ -126,7 +131,8 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
         if (J.relayOpen) cli(fx, ['env', 'close', PREVIEW_ENV, '--project', p.id]);
         const left = stopPreviewLeftovers(fx, p.id);
         if (left.length > 0) problems.push(`preview units left: ${left.join(', ')}`);
-        for (const dir of previewCgroups(fx.home)) problems.push(`preview cgroup left: ${dir}`);
+        const env = previewEnvRow(fx.home, p.id);
+        if (env) for (const dir of previewCgroups(fx.home, env.id)) problems.push(`preview cgroup left: ${dir}`);
         if (!J.quiet) await quiesce(fx, p.id).catch((err) => problems.push(`the project could not be quiesced: ${err.message}`));
       }
       guard.assertClean();
@@ -159,7 +165,10 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
       alphaAuthorize: countOf(fx.home, 'SELECT COUNT(*) AS n FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = \'alpha_authorize\'', p.id),
       requests: countOf(fx.home, 'SELECT COUNT(*) AS n FROM "deployment_requests" WHERE "project" = ?', p.id),
     };
-    assert.deepEqual(previewUnits(fx.home), [], 'no preview unit before');
+    // No preview unit before: the reserved row, if it already exists, has no unit
+    // (and (b) reads that none of its prefix was in this list once its id is known).
+    const env0 = previewEnvRow(fx.home, p.id);
+    if (env0) assert.deepEqual(previewUnits(fx.home, env0.id), [], 'no preview unit before');
 
     const asked = preview('checkpoint');
     assert.equal(asked.status, 0, `surety design preview exits 0 (${asked.stdout.slice(0, 400)} ${asked.stderr.slice(0, 400)})`);
@@ -185,10 +194,12 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(hexOf(payload.tree_digest), hexOf(J.attempt.capability.artifact_digest), 'the event names the sealed tree\'s digest');
   });
 
-  step('(b) the unit surety-<h>-design-preview-g1.service by exact name; its domain\'s memory.max reads back preview_memory_max; no shared check capacity reserved for it', async () => {
+  step('(b) the unit surety-<h>-<env id>-g1.service by exact name; its domain\'s memory.max reads back preview_memory_max; no shared check capacity reserved for it', async () => {
     const { fx } = J;
-    const unit = previewUnitName(fx.home, 1);
-    assert.deepEqual(previewUnits(fx.home).map((u) => u.unit), [unit], `the only unit of ${previewPrefix(fx.home)}`);
+    const unit = previewUnitName(fx.home, J.env.id, 1);
+    assertOwnUnit(fx.home, unit, 'the preview\'s unit');
+    assert.deepEqual(J.before.units.filter((u) => u.startsWith(previewPrefix(fx.home, J.env.id))), [], 'no unit of the preview\'s prefix before the preview');
+    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [unit], `the only unit of ${previewPrefix(fx.home, J.env.id)}`);
     assert.equal(J.deployed.payload?.unit, unit, 'the event names it');
     assert.deepEqual(intentOf(fx.home, J.op)?.create_units, [unit], 'the attempt intent names it, exactly');
     const shown = unitShow(unit, ['LoadState', 'ActiveState', 'MemoryMax', 'ControlGroup']);
@@ -272,8 +283,8 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(d2.payload?.generation, 2, 'generation 2');
     const op2 = previewOps(fx.home, p.id).at(-1);
     const prior = (intentOf(fx.home, op2)?.prior ?? []).map((x) => x.unit);
-    assert.ok(prior.includes(previewUnitName(fx.home, 1)), `the new generation's intent names the first's unit as its prior: stopped, then started (D4's stop-then-start) (${JSON.stringify(prior)})`);
-    assert.deepEqual(previewUnits(fx.home).map((u) => u.unit), [previewUnitName(fx.home, 2)], 'one preview generation: only g2 loaded');
+    assert.ok(prior.includes(previewUnitName(fx.home, J.env.id, 1)), `the new generation's intent names the first's unit as its prior: stopped, then started (D4's stop-then-start) (${JSON.stringify(prior)})`);
+    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [previewUnitName(fx.home, J.env.id, 2)], 'one preview generation: only g2 loaded');
 
     // --stop.
     const stop = cli(fx, ['design', 'preview', '--stop', '--project', p.id]);
@@ -291,11 +302,11 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(closed.status, 200, `the Designer session closed (${closed.text?.slice(0, 300)})`);
     await pump(fx, J.ctx, () => (batchOf(fx.home, p.id)?.spec_change ? true : undefined), { what: 'the close\'s batch to be raised', projectMs: 600_000 });
     await tick(fx.engine, p.id, { rounds: 2 });
-    assert.deepEqual(previewUnits(fx.home).map((u) => u.unit), [previewUnitName(fx.home, 3)], 'not torn down at the close itself');
+    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [previewUnitName(fx.home, J.env.id, 3)], 'not torn down at the close itself');
     await advanceClock(fx.engine, PREVIEW_TTL_MIN + 60);
     await waitFor(async () => {
       await tick(fx.engine, p.id, { rounds: 1 });
-      return tornDownEvents(fx.home, p.id).length >= 2 && previewUnits(fx.home).length === 0;
+      return tornDownEvents(fx.home, p.id).length >= 2 && previewUnits(fx.home, J.env.id).length === 0;
     }, { timeoutMs: 240_000, what: 'the preview torn down once the clock passed the close plus design_preview_ttl' });
     const t2 = tornDownEvents(fx.home, p.id)[1];
     assert.deepEqual([t2.payload?.generation, t2.payload?.reason], [3, 'ttl'], `design.preview_torn_down (${JSON.stringify(t2.payload)})`);
@@ -320,8 +331,8 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     const teardowns = previewOps(fx.home, p.id, 'teardown');
     assert.equal(teardowns.length, 3, `three teardown operations on the reserved environment (--stop, the TTL, the approval) (${teardowns.map((o) => o.id).join(', ')})`);
     for (const op of teardowns) assert.ok(teardownApplied(fx.home, op), `teardown ${op.id} applied (D4 §4.6)`);
-    assert.deepEqual(previewUnits(fx.home), [], 'no unit of the preview\'s prefix');
-    assert.deepEqual(previewCgroups(fx.home), [], 'no cgroup of the preview\'s prefix');
+    assert.deepEqual(previewUnits(fx.home, J.env.id), [], 'no unit of the preview\'s prefix');
+    assert.deepEqual(previewCgroups(fx.home, J.env.id), [], 'no cgroup of the preview\'s prefix');
     const runDir = join(fx.home, 'run');
     const leftover = existsSync(runDir) ? readdirSync(runDir, { recursive: true }).map(String).filter((n) => n.includes(J.env.id) || n.includes('design-preview')) : [];
     assert.deepEqual(leftover, [], 'no socket or runtime directory of the preview left');

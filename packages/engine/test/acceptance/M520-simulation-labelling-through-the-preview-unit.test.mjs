@@ -1,11 +1,13 @@
 // M520, simulation labelling through the preview's unit (slice 42; sandbox
 // lane; its kernel half is `M520-simulation-labelling`). M6 plan §3.4 M520
 // (a) to (c); D7 §5.4, §5.7; Q2; BS6 §4.1 rules 1, 2, 7, 8, 15, 21 to 24;
-// SEAM.md §§488, 498 to 500.
+// SEAM.md §§488, 498 to 500; objection 135 (decided: the preview's unit
+// named from its environment's id as D4 §9.3 names every unit).
 //
 // The reference project "Pantry" under `design: before_build` on real
 // domains and the real `local_service` adapter; one Designer save, its
-// checkpoint previewed on `surety-<h>-design-preview-g1.service`, read
+// checkpoint previewed on `surety-<h>-<env id>-g1.service` (`<env id>` the
+// project's reserved `design-preview` row's), read
 // through the operator relay (`surety env open design-preview`, 127.0.0.1):
 //   (a) the simulated mockup's frame path (the index's link) and a direct
 //       request for its own path: the engine's frame, each, never the
@@ -21,7 +23,8 @@
 // the engine's own under this home's hash, started and stopped only by the
 // engine's commands and read by exact name or the list filtered to this
 // home's prefix; the test acts on none itself but by `stopPreviewLeftovers`'
-// exact name after the file, and signals nothing but its own engine. The
+// exact name after the file (an `env_` name, so the fail-closed teardown and
+// the guard see it too), and signals nothing but its own engine. The
 // relay is opened by the test's own command on 127.0.0.1 and closed by the
 // case that opened it. Mockups are read as bytes and markup, never rendered
 // or run (rules 21, 22). The file ends with `operatorGuard`.
@@ -29,7 +32,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { operatorGuard } from './harness/deploy/host.mjs';
+import { assertOwnUnit, operatorGuard } from './harness/deploy/host.mjs';
 import { qualifyByCommand } from './harness/deploy/qualify.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import { journeyContext, pump } from './harness/journey/drive.mjs';
@@ -43,6 +46,7 @@ import {
   deployedEvents,
   indexEntries,
   previewCgroups,
+  previewEnvRow,
   previewOps,
   previewUnitName,
   previewUnits,
@@ -85,7 +89,8 @@ describe('M520 simulation labelling through the preview\'s unit (sandbox lane)',
         if (J.relayOpen) cli(fx, ['env', 'close', PREVIEW_ENV, '--project', p.id]);
         const left = stopPreviewLeftovers(fx, p.id);
         if (left.length > 0) problems.push(`preview units left: ${left.join(', ')}`);
-        for (const dir of previewCgroups(fx.home)) problems.push(`preview cgroup left: ${dir}`);
+        const env = previewEnvRow(fx.home, p.id);
+        if (env) for (const dir of previewCgroups(fx.home, env.id)) problems.push(`preview cgroup left: ${dir}`);
         await quiesce(fx, p.id).catch((err) => problems.push(`the project could not be quiesced: ${err.message}`));
       }
       guard.assertClean();
@@ -112,7 +117,11 @@ describe('M520 simulation labelling through the preview\'s unit (sandbox lane)',
     const url = asked.body?.preview?.url;
     assert.match(url ?? '', /^http:\/\/127\.0\.0\.1:\d+\/$/, `the URL printed (${asked.stdout.slice(0, 300)})`);
     await pump(fx, J.ctx, () => deployedEvents(fx.home, p.id)[0], { what: 'the preview to be deployed', projectMs: 300_000 });
-    assert.deepEqual(previewUnits(fx.home).map((u) => u.unit), [previewUnitName(fx.home, 1)], 'the preview\'s unit by exact name');
+    J.env = previewEnvRow(fx.home, p.id);
+    assert.ok(J.env, 'the reserved environment design-preview, a row of the project (SEAM.md §499)');
+    const unit = previewUnitName(fx.home, J.env.id, 1);
+    assertOwnUnit(fx.home, unit, 'the preview\'s unit');
+    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [unit], 'the preview\'s unit by exact name');
     const port = Number(new URL(url).port);
     const opened = cli(fx, ['env', 'open', PREVIEW_ENV, '--project', p.id]);
     assert.equal(opened.status, 0, `surety env open design-preview exits 0 (${opened.stdout.slice(0, 300)} ${opened.stderr.slice(0, 300)})`);
@@ -142,9 +151,10 @@ describe('M520 simulation labelling through the preview\'s unit (sandbox lane)',
     const { fx, p } = J;
     const stop = cli(fx, ['design', 'preview', '--stop', '--project', p.id]);
     assert.equal(stop.status, 0, `surety design preview --stop exits 0 (${stop.stdout.slice(0, 300)} ${stop.stderr.slice(0, 300)})`);
-    await pump(fx, J.ctx, () => (tornDownEvents(fx.home, p.id).length > 0 && previewUnits(fx.home).length === 0 ? true : undefined), { what: 'the preview to be torn down', projectMs: 300_000 });
+    await pump(fx, J.ctx, () => (tornDownEvents(fx.home, p.id).length > 0 && previewUnits(fx.home, J.env.id).length === 0 ? true : undefined), { what: 'the preview to be torn down', projectMs: 300_000 });
     const [teardown] = previewOps(fx.home, p.id, 'teardown');
     assert.ok(teardown && teardownApplied(fx.home, teardown), 'the teardown applied (D4 §4.6)');
-    assert.deepEqual(previewCgroups(fx.home), [], 'no cgroup of the preview\'s prefix');
+    assert.deepEqual(previewUnits(fx.home, J.env.id), [], 'no unit of the preview\'s prefix');
+    assert.deepEqual(previewCgroups(fx.home, J.env.id), [], 'no cgroup of the preview\'s prefix');
   });
 });
