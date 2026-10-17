@@ -28,6 +28,32 @@ export function approvedRevisionId(db: Db, project: string): string | null {
   );
 }
 
+// The one revision rule (D7 §7.5, §8.2, §9.1; the slice-44 review's B1):
+// the design in force is the latest approved revision (by insertion), and
+// its `ready_at` is the design_ready milestone; holds, the stage-to-screen
+// binding and design_due read it. Staleness marks it and every approved
+// revision back to the latest ready one (which an approval not yet ready
+// supersedes), so no revision a stage could be released against is left
+// fresh.
+export interface DesignInForce {
+  current: { id: string; ready_at: string | null } | null;
+  stale_scope: string[];
+}
+export function designInForce(db: Db, project: string): DesignInForce {
+  const current =
+    (db.prepare(`SELECT "id", "ready_at" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as
+      | { id: string; ready_at: string | null }
+      | undefined) ?? null;
+  const ready = db.prepare(`SELECT rowid AS "r", "id" FROM "design_revisions" WHERE "project" = ? AND "ready_at" IS NOT NULL AND "status" NOT IN ('proposed', 'rejected') ORDER BY rowid DESC LIMIT 1`).get(project) as
+    | { r: number; id: string }
+    | undefined;
+  const later = ready
+    ? (db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND rowid > ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid`).all(project, ready.r) as { id: string }[]).map((r) => r.id)
+    : [];
+  const scope = [...new Set([...(ready ? [ready.id] : []), ...later, ...(current ? [current.id] : [])])];
+  return { current, stale_scope: scope };
+}
+
 // The approved design's screens (null: no design approved yet).
 export function approvedDesignScreens(db: Db, project: string): ApprovedScreen[] | null {
   const rev = approvedRevisionId(db, project);
@@ -66,9 +92,11 @@ export function bindStageScreensTo(tx: Tx, args: { project: string; revision?: s
     const modules = stageModuleNames(tx.db, args.project, st.modules);
     const targets = new Set((map?.modules ?? []).filter((m) => m.surface === 'ui' && modules.includes(m.name)).flatMap((m) => (m.targets ?? []).map((t) => t.target)));
     if (targets.size === 0) continue;
-    const named = parseJson<string[]>(st.screens);
+    // The plan's named screens and the computed ones, together (the review's
+    // S6): naming fewer, or none, never unbinds a screen the stage needs.
+    const named = parseJson<string[]>(st.screens) ?? [];
     const reqs = new Set(stageRequirementKeys(tx.db, args.project, st.implements));
-    const bound = screens.filter((s) => targets.has(s.target) && (named !== null ? named.includes(s.key) : s.requirements.some((r) => reqs.has(r))));
+    const bound = screens.filter((s) => targets.has(s.target) && (named.includes(s.key) || s.requirements.some((r) => reqs.has(r))));
     for (const s of bound) {
       n += tx.db.prepare('INSERT OR IGNORE INTO "stage_screens" ("id", "created_at", "stage", "screen", "target", "design_revision") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('sscr_'), tx.at, st.id, s.key, s.target, revision).changes;
     }

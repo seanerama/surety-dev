@@ -36,7 +36,7 @@ import type { SpecRepresentation } from '../spec/semantics.js';
 import { liveRepresentation } from '../spec/semantics.js';
 import type { AssetManifest } from './assets.js';
 import { narrowings as narrowingsOf } from './check.js';
-import { writeDueState } from './due.js';
+import { reviewDesignDue, writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
 import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames } from './policy.js';
 import { designDueState } from './readiness.js';
@@ -510,6 +510,28 @@ function interfacesDisputed(db: Db, rev: RevisionRow): string[] {
   return disputedInterfaces(db, rev.project).filter((i) => used.has(i));
 }
 
+// The verdicts a review's design rests on, not the owner's (D7 §10.3;
+// SEAM.md §525): `DESIGN_VERDICTS_UNCONFIRMED:<review>` while they are
+// unanswered, `DESIGN_VERDICTS_REJECTED:<review>` once he rejected them
+// (the review's S9). Both block the design's approval and its batched
+// spec_change.
+export function reviewVerdictBlockers(db: Db, run: string | null): string[] {
+  if (run === null) return [];
+  const reviews = db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL ORDER BY rowid`).all(run) as { id: string }[];
+  return reviews.map((r) => {
+    const rejected = db
+      .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'design_verdicts' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'reject' LIMIT 1`)
+      .get(r.id);
+    return rejected ? `DESIGN_VERDICTS_REJECTED:${r.id}` : `DESIGN_VERDICTS_UNCONFIRMED:${r.id}`;
+  });
+}
+
+// The same for a design's batched spec_change (the driver's decision on S9).
+export function requestVerdictBlockers(db: Db, request: string): string[] {
+  const rev = revisionOfRequest(db, request);
+  return rev && rev.status === 'proposed' ? reviewVerdictBlockers(db, rev.run) : [];
+}
+
 export const DESIGN_APPROVAL: KindSpec = {
   preview(tx, d: Subject) {
     const rev = getRevision(tx.db, d.subject_id);
@@ -541,13 +563,10 @@ export const DESIGN_APPROVAL: KindSpec = {
       impact,
       human_test_assignments: assignments,
     };
-    // A review's revised or first design (D7 §10.3): approved only once the
-    // verdicts it rests on are the owner's.
-    const unconfirmed = rev.run
-      ? (tx.db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL ORDER BY rowid`).all(rev.run) as { id: string }[]).map((x) => x.id)
-      : [];
     const approveBlockers = [
-      ...unconfirmed.map((x) => `DESIGN_VERDICTS_UNCONFIRMED:${x}`),
+      // A review's revised or first design (D7 §10.3): approved only once the
+      // verdicts it rests on are the owner's.
+      ...reviewVerdictBlockers(tx.db, rev.run),
       ...(check && check.outcome !== 'passed' ? [`DESIGN_CHECK_FAILED:${check.id}`] : []),
       ...disputed.map((i) => `DESIGN_INTERFACE_DISPUTED:${i}`),
       ...(r && r.status === 'rejected' ? [`SPEC_CHANGE_REJECTED:${r.seq}`] : []),
@@ -609,11 +628,14 @@ export const DESIGN_APPROVAL: KindSpec = {
       writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', ...(note ? { note } : {}) });
       settleBatchRequest(tx, rev, 'the batched design was sent back for revision');
       tx.emit('design.rejected', { project: rev.project, design_revision: rev.id }, { option, note });
+      // A new cause: asked again at once, a `later` deferral included (D7 §11).
+      reviewDesignDue(tx, rev.project);
       return { ...consumed(d), effects: [{ kind: 'tick' }] };
     }
     tx.db.prepare(`UPDATE "design_revisions" SET "status" = 'rejected' WHERE "id" = ?`).run(rev.id);
     settleBatchRequest(tx, rev, 'the batched design was rejected');
     tx.emit('design.rejected', { project: rev.project, design_revision: rev.id }, { option, note });
+    reviewDesignDue(tx, rev.project);
     return { ...consumed(d), effects: [{ kind: 'tick' }] };
   },
 };

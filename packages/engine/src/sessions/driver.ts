@@ -564,10 +564,21 @@ export class SessionDriver {
       // one (D7 §10.3, §10.6; SEAM.md §§518, 519): the design in the same
       // tree is proposed with its consolidated change, as any close's, its
       // approval blocked until the review's verdicts are confirmed.
-      const r = review.kind === 'review' ? (review.review as { revised_design?: unknown; first_design?: unknown }) : null;
-      if (r && (r.revised_design === true || r.first_design === true) && check !== null) {
+      const r = review.kind === 'review' ? (review.review as { revised_design?: unknown; first_design?: unknown; design_revision?: unknown }) : null;
+      if (r && (r.revised_design === true || r.first_design === true)) {
+        // A design the review says it drew, never saved through the design
+        // check: refused, naming why (the slice-44 review's S9).
+        if (check === null) {
+          throw new Refusal(422, 'design_check_failed', `The review of session ${facts.run} says it ${r.first_design === true ? 'drew the first design' : 'revised the design'}, but no save of the session ran the design check on it.`, 'Save the design in the session (the check runs at each save), then close again; or close with refuse.', {
+            run: facts.run,
+            design_check: null,
+            reasons: [],
+          });
+        }
         const made = await this.designProposal(facts, check);
-        return { ...review, propose: { ...made, scope: r.first_design === true ? 'initial_review' : 'full' } };
+        // The scope is the engine's: a first design when no design is
+        // approved, whatever the role's flag says (D7 §10.6).
+        return { ...review, propose: { ...made, scope: r.design_revision === null || r.design_revision === undefined ? 'initial_review' : 'full' } };
       }
       return review;
     }

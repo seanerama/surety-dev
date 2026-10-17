@@ -10,6 +10,7 @@ import { activeStages } from './active.js';
 import type { Database } from 'better-sqlite3';
 
 import { nowMs } from '../clock.js';
+import { deferredOf } from '../design/view.js';
 import { notFound } from '../store/transitions/common.js';
 import { buildComplete } from './phase.js';
 import { alphaBarrier, conformancePhaseComplete, conformanceStateOf } from '../adopt/conformance.js';
@@ -31,14 +32,22 @@ const mustProject = (db: Database, project: string) => {
 // design_due (null only when none is open, which the invariant forbids and
 // the read then shows), and how long the hold has lasted; null when its
 // work is not held for design.
-function designHoldOf(db: Database, project: string, workItem: string | null): { reason: string; question: string | null; age_seconds: number | null } | null {
+function designHoldOf(db: Database, project: string, workItem: string | null): { reason: string; question: string | null; age_seconds: number | null; deferred_until?: string; deferred_by?: string } | null {
   if (workItem === null) return null;
   const w = db.prepare('SELECT "held", "held_intervals" FROM "work_items" WHERE "id" = ?').get(workItem) as { held: string | null; held_intervals: string | null } | undefined;
   if (!w || (w.held !== 'design_pending' && w.held !== 'design_stale')) return null;
   const open = json<{ from: string; to?: string; reason: string }[]>(w.held_intervals, []).filter((i) => i.to === undefined).at(-1);
   const due = db.prepare(`SELECT "id", "raised_at" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(project) as { id: string; raised_at: string } | undefined;
   const since = Date.parse(open?.from ?? due?.raised_at ?? '');
-  return { reason: w.held, question: due?.id ?? null, age_seconds: Number.isFinite(since) ? Math.max(0, Math.floor((nowMs() - since) / 1000)) : null };
+  // A `later` deferral: no question open until the owner's time or a new
+  // cause, named here with the decision that asked for it (rule 25).
+  const deferred = deferredOf(db, project);
+  return {
+    reason: w.held,
+    question: due?.id ?? null,
+    age_seconds: Number.isFinite(since) ? Math.max(0, Math.floor((nowMs() - since) / 1000)) : null,
+    ...(deferred ? { deferred_until: deferred.until, deferred_by: deferred.decision } : {}),
+  };
 }
 
 export function specView(db: Database, args: { project: string }) {

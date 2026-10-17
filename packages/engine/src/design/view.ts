@@ -10,7 +10,7 @@ import { notFound, parseJson } from '../store/transitions/common.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import { approvedModuleMap, designPolicyOf } from './policy.js';
 import { currentInventory } from './store.js';
-import { heldStages } from './readiness.js';
+import { designDueState, heldStages } from './readiness.js';
 import type { AssetManifest } from './assets.js';
 import { deferredBatches } from './approval.js';
 import { stalePlatforms } from './stale.js';
@@ -34,6 +34,12 @@ function selectedSlots(db: Database.Database, project: string, inventoryManifest
       return { key: s.key, variants };
     })
     .filter((s) => s.variants.length > 0);
+}
+
+// The `later` deferral running now, or null.
+export function deferredOf(db: Database.Database, project: string): { until: string; decision: string; held_stages: string[]; stale_screens: string[] } | null {
+  const d = designDueState(db, project).deferred;
+  return d ? { until: d.until, decision: d.decision, held_stages: d.held, stale_screens: d.stale } : null;
 }
 
 export function designView(db: Database.Database, args: { project: string }): Record<string, unknown> {
@@ -111,5 +117,8 @@ export function designView(db: Database.Database, args: { project: string }): Re
     // hold a target the inventory no longer has, for the Designer to tidy.
     stale_platforms: stalePlatforms(db, args.project, inv?.inventory ?? null, inv?.row.manifest ?? null),
     design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
+    // A `later` deferral running (rule 25; the slice-44 review's S1): until
+    // when, the decision that asked for it, and what it was answered on.
+    deferred: deferredOf(db, args.project),
   };
 }

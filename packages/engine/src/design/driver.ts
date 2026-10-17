@@ -118,10 +118,17 @@ export class DesignDriver {
   // The request is cleared first: an opening refused (another session open)
   // leaves the question's command for the owner, never a loop.
   async openRequested(project: string): Promise<void> {
-    const requested = await this.rt.read<string | null>('design.open_requested', { project });
+    const requested = await this.rt.read<{ decision: string; mode: 'review' | null } | null>('design.open_requested', { project });
     if (requested === null || !this.rt.sessions) return;
-    await this.rt.engine('design.open_cleared', { project, decision: requested });
-    await this.rt.sessions.open(project, { role: 'designer', scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
+    await this.rt.engine('design.open_cleared', { project, decision: requested.decision });
+    try {
+      await this.rt.sessions.open(project, { role: 'designer', ...(requested.mode ? { mode: requested.mode } : {}), scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
+    } catch (err) {
+      // Refused (another session open, the project paused, no inventory):
+      // recorded on design_due, whose next question says why (the review's S2).
+      const e = err as { code?: string; message?: string };
+      await this.rt.engine('design.open_refused', { project, decision: requested.decision, reason: `${e.code ?? 'refused'}: ${e.message ?? String(err)}` });
+    }
   }
 
   // The design's part of a tick.

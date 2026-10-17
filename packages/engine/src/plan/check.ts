@@ -303,7 +303,19 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // D7 §8.3 clause 1 (G6): a `screens` key the approved design lacks.
   const approvedScreens = baseline.design?.approved_screens ?? null;
   const screenKeys = new Set((approvedScreens ?? []).map((x) => x.key));
-  add('PLAN_SCREEN_UNKNOWN', plan.stages.flatMap((st) => (st.screens ?? []).filter((k) => !screenKeys.has(k)).map((k) => `stage ${st.number}:${k}`)));
+  // A key of a screen of a target the stage does not serve (a non-UI
+  // stage serves none) is refused too, never dropped (the slice-44 review).
+  add(
+    'PLAN_SCREEN_UNKNOWN',
+    plan.stages.flatMap((st) =>
+      (st.screens ?? []).flatMap((k) => {
+        if (!screenKeys.has(k)) return [`stage ${st.number}:${k}`];
+        const served = stageTargets(a.modules, st.modules);
+        const targets = (approvedScreens ?? []).filter((x) => x.key === k).map((x) => x.target);
+        return targets.some((t) => served.includes(t)) ? [] : [`stage ${st.number}:${k} (its target ${targets.join(', ')} is not served by the stage's modules)`];
+      }),
+    ),
+  );
   const dup = stageNumbers.filter((n, i) => stageNumbers.indexOf(n) !== i);
   // A kept stage listed with other inputs would be a second stage under
   // its number: the replacement keeps the stage as it is (D6 §5.7; the

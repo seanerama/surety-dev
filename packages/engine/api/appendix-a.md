@@ -567,7 +567,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `qualification_approval`: enabled; manifest attempt_status, binary_sha256, help_sha256, template, template_version, model, auth_mode, host_qualification, host_eligibility, fixture_project, candidate_egress, canary_deadlines, spend
 - `trust_activation`: enabled; manifest entry_status, binary_sha256, help_sha256, template, template_version, capabilities, profile_fingerprint, host_id, host_eligibility, evidence, evidence_fingerprint
 - `design_approval`: enabled; manifest design_version, architecture_version, design_check, asset_manifest_version, selection, tree_blobs, spec_version, spec_change_diff_hash, inventory_digest, roadmap_version, plan_versions
-- `design_due`: enabled; manifest stage, held_stages, stale_screens, policy_revision, inventory_failure
+- `design_due`: enabled; manifest stage, held_stages, stale_screens, policy_revision, inventory_failure, reason
 - `design_verdicts`: enabled; manifest review, review_blob, evidence
 
 ## A.9 Configuration

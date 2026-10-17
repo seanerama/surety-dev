@@ -2111,6 +2111,11 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
   if (typeof args.option !== 'string' || !offered.some((o) => o.key === args.option)) {
     throw new Refusal(400, 'invalid_value', `"option" must be one of ${offered.map((o) => o.key).join(', ')}.`, 'Answer with an option the decision offers.', { field: 'option' });
   }
+  // `until` belongs to design_due's `later` alone (D7 §11; the slice-44
+  // review): sent with any other answer it is refused, nothing consumed.
+  if (args.until !== undefined && !(d.kind === 'design_due' && args.option === 'later')) {
+    throw new Refusal(422, 'invalid_value', '"until" is the time of design_due\'s later answer, and of no other.', 'Leave "until" out of this answer; nothing was changed.', { field: 'until' });
+  }
   const facts = args.facts ?? {};
   const now = spec.preview(tx, d, facts);
   if (typeof args.preview_hash !== 'string' || args.preview_hash !== d.preview_hash || now === null || previewOf(d, now) !== d.preview_hash) throw stale(d);

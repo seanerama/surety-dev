@@ -13,7 +13,7 @@ import type { Database } from 'better-sqlite3';
 import { type AssetManifest, placeholderManifest } from './assets.js';
 import { reviewDesignDue } from './due.js';
 import { recordMetMilestones } from '../scheduler/milestones.js';
-import { inventoryDesignClass, staleScreens } from './stale.js';
+import { allScreensUnknown, inventoryDesignClass, staleScreens } from './stale.js';
 import { type Inventory, deriveInventory, fixtureFiles, inventoryText } from './inventory.js';
 import { approvedModuleMap, designPolicyOf, holdsBeforeBuild, inventoryInputs, isUiStage, publishedStages } from './policy.js';
 
@@ -176,21 +176,35 @@ export function recordInventory(tx: Tx, args: { id: string }): { recorded: boole
   });
   // An architecture revision that moved the inventory stales the screens
   // whose interfaces, technology or target moved (D7 §9.1; G8).
-  if (drawnAgainst !== null) staleScreens(tx, { project: row.project, screens: inventoryDesignClass(tx.db, { project: row.project, from: drawnAgainst, to: inventory }), cause: { design_inventory: row.id, inventory_digest: row.inventory_digest } });
+  inventoryStale(tx, row.project, drawnAgainst, inventory, { design_inventory: row.id, inventory_digest: row.inventory_digest });
   reviewDesignDue(tx, row.project);
   return { recorded: true };
 }
 
 // The inventory the approved design names (its `inventory_digest`), else
-// the project's last recorded one; null with neither.
-function designInventoryBefore(db: Database, project: string): Inventory | null {
-  const digest = (db.prepare(`SELECT "inventory_digest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as { inventory_digest: string | null } | undefined)?.inventory_digest ?? null;
-  const row = (
-    digest !== null
-      ? db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(project, digest)
-      : db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "recorded_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1').get(project)
-  ) as { inventory: string } | undefined;
+// the project's last recorded one; null with neither. With an approved
+// design whose inventory cannot be read, unknown: never read as fresh (the
+// review's S7).
+function designInventoryBefore(db: Database, project: string): Inventory | { unknown: string } | null {
+  const approved = db.prepare(`SELECT "id", "inventory_digest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as
+    | { id: string; inventory_digest: string | null }
+    | undefined;
+  if (approved) {
+    if (approved.inventory_digest === null) return { unknown: `the approved design ${approved.id} names no inventory` };
+    const row = db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(project, approved.inventory_digest) as { inventory: string } | undefined;
+    const inv = parseJson<Inventory>(row?.inventory ?? null);
+    return inv ?? { unknown: `the inventory ${approved.inventory_digest.slice(0, 12)} the approved design was drawn against cannot be read` };
+  }
+  const row = db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "recorded_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1').get(project) as { inventory: string } | undefined;
   return parseJson<Inventory>(row?.inventory ?? null);
+}
+
+// What an inventory's change stales, from the inventory the design was
+// drawn against; every screen of the design when that one is unknown.
+function inventoryStale(tx: Tx, project: string, drawnAgainst: Inventory | { unknown: string } | null, to: Inventory, cause: Record<string, unknown>): void {
+  if (drawnAgainst === null) return;
+  const screens = 'unknown' in drawnAgainst ? allScreensUnknown(tx.db, project, drawnAgainst.unknown) : inventoryDesignClass(tx.db, { project, from: drawnAgainst, to });
+  staleScreens(tx, { project, screens, cause });
 }
 
 // An inventory recorded before made current again (its inputs returned to
@@ -210,7 +224,7 @@ function reselectInventory(tx: Tx, row: InventoryRow): { recorded: boolean } {
     obligations: inventory.obligations.length,
     again: true,
   });
-  if (drawnAgainst !== null) staleScreens(tx, { project: row.project, screens: inventoryDesignClass(tx.db, { project: row.project, from: drawnAgainst, to: inventory }), cause: { design_inventory: row.id, inventory_digest: row.inventory_digest } });
+  inventoryStale(tx, row.project, drawnAgainst, inventory, { design_inventory: row.id, inventory_digest: row.inventory_digest });
   reviewDesignDue(tx, row.project);
   return { recorded: true };
 }
