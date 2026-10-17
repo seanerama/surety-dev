@@ -44,7 +44,12 @@ export function inventoryDue(db: Database, args: { project: string; incarnation:
   const inputs = inventoryInputs(db, args.project);
   if ('unknown' in inputs) return null;
   const inventory = deriveInventory(inputs);
-  if (db.prepare('SELECT 1 FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(args.project, inventory.inventory_digest)) return null;
+  // Nothing due while the project's inventory is this one. An inventory the
+  // project had before and moved away from (a target added, then removed)
+  // is committed again and made current again (D7 §9.1): its row is kept.
+  const current = (db.prepare('SELECT "design_inventory_digest" FROM "projects" WHERE "id" = ?').get(args.project) as { design_inventory_digest: string | null } | undefined)?.design_inventory_digest ?? null;
+  if (current === inventory.inventory_digest) return null;
+  if (current === null && db.prepare('SELECT 1 FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(args.project, inventory.inventory_digest)) return null;
   const name = (db.prepare('SELECT "name" FROM "projects" WHERE "id" = ?').get(args.project) as { name: string }).name;
   const targets = [...new Set(inventory.targets.map((t) => t.target))];
   return { derive: { project: args.project, digest: inventory.inventory_digest, inventory, text: inventoryText(inventory), fixtures: fixtureFiles(inventory), placeholders: placeholderManifest(name, targets) } };
@@ -117,7 +122,12 @@ export interface InventoryRefInputs {
 // is on the integration branch; it is recorded by recordInventory.
 export function finalizeInventoryRef(tx: Tx, op: { id: string; project: string }, inputs: InventoryRefInputs): Record<string, unknown> {
   const existing = tx.db.prepare('SELECT "id" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(op.project, inputs.inventory_digest) as { id: string } | undefined;
-  if (existing) return { design_inventory: existing.id };
+  if (existing) {
+    // Committed again (its inputs returned to it): the row names the commit
+    // that now holds it and the placeholders recorded with it.
+    tx.db.prepare('UPDATE "design_inventories" SET "revision" = ?, "manifest" = ? WHERE "id" = ?').run(inputs.new_oid, JSON.stringify(inputs.manifest), existing.id);
+    return { design_inventory: existing.id };
+  }
   const spec = tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(op.project) as { id: string } | undefined;
   const arch = tx.db.prepare('SELECT "id" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(op.project) as { id: string } | undefined;
   const id = tx.newId('dinv_');
@@ -135,7 +145,8 @@ export function finalizeInventoryRef(tx: Tx, op: { id: string; project: string }
 // and design_due (§1 step 4a).
 export function recordInventory(tx: Tx, args: { id: string }): { recorded: boolean } {
   const row = tx.db.prepare('SELECT * FROM "design_inventories" WHERE "id" = ?').get(args.id) as InventoryRow | undefined;
-  if (!row || row.recorded_at !== null) return { recorded: false };
+  if (!row) return { recorded: false };
+  if (row.recorded_at !== null) return reselectInventory(tx, row);
   // The inventory the approved design was drawn against (else the one this
   // replaces), read before this one is recorded (D7 §9.1).
   const drawnAgainst = designInventoryBefore(tx.db, row.project);
@@ -182,9 +193,37 @@ function designInventoryBefore(db: Database, project: string): Inventory | null 
   return parseJson<Inventory>(row?.inventory ?? null);
 }
 
-// The project's recorded inventory (the latest by insertion), or null.
+// An inventory recorded before made current again (its inputs returned to
+// it, D7 §9.1): the project's digest, the staleness of what moved since the
+// design was drawn, the event and design_due, once.
+function reselectInventory(tx: Tx, row: InventoryRow): { recorded: boolean } {
+  const current = (tx.db.prepare('SELECT "design_inventory_digest" FROM "projects" WHERE "id" = ?').get(row.project) as { design_inventory_digest: string | null }).design_inventory_digest;
+  if (current === row.inventory_digest) return { recorded: false };
+  const drawnAgainst = designInventoryBefore(tx.db, row.project);
+  tx.db.prepare('UPDATE "projects" SET "design_inventory_digest" = ? WHERE "id" = ?').run(row.inventory_digest, row.project);
+  const inventory = parseJson<Inventory>(row.inventory)!;
+  tx.emit('design.inventory_derived', { project: row.project, design_inventory: row.id }, {
+    inventory_digest: row.inventory_digest,
+    revision: row.revision,
+    targets: inventory.targets.map((t) => ({ module: t.module, target: t.target, preview_capability: t.preview_capability })),
+    ui_requirements: inventory.ui_requirements.map((r) => r.key),
+    obligations: inventory.obligations.length,
+    again: true,
+  });
+  if (drawnAgainst !== null) staleScreens(tx, { project: row.project, screens: inventoryDesignClass(tx.db, { project: row.project, from: drawnAgainst, to: inventory }), cause: { design_inventory: row.id, inventory_digest: row.inventory_digest } });
+  reviewDesignDue(tx, row.project);
+  return { recorded: true };
+}
+
+// The project's current inventory: the recorded one its digest names, else
+// the latest recorded by insertion; or null.
 export function currentInventory(db: Database, project: string): { row: InventoryRow; inventory: Inventory } | null {
-  const row = db.prepare('SELECT * FROM "design_inventories" WHERE "project" = ? AND "recorded_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1').get(project) as InventoryRow | undefined;
+  const row = db
+    .prepare(
+      `SELECT i.* FROM "design_inventories" i JOIN "projects" p ON p."id" = i."project" WHERE i."project" = ? AND i."recorded_at" IS NOT NULL
+       ORDER BY (i."inventory_digest" = COALESCE(p."design_inventory_digest", '')) DESC, i.rowid DESC LIMIT 1`,
+    )
+    .get(project) as InventoryRow | undefined;
   if (!row) return null;
   const inventory = parseJson<Inventory>(row.inventory);
   return inventory ? { row, inventory } : null;
