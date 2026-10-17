@@ -2936,6 +2936,9 @@
         },
         "criterion_ids": {
           "required": false
+        },
+        "criterion_map": {
+          "required": false
         }
       }
     },

@@ -50,6 +50,7 @@ import { designReview, driveReview, reviewJson, REVIEW_FILE } from './harness/de
 import {
   answerWith,
   batchOf,
+  builderScript,
   cli,
   designEvents,
   designScripts,
@@ -103,15 +104,36 @@ function decisionInterval(home, d) {
   const closed = answered ?? rows(home, `SELECT "created_at" FROM "events" WHERE "type" = 'decision.invalidated' AND json_extract("subject", '$.decision') = ? ORDER BY "seq" LIMIT 1`, d.id)[0]?.created_at ?? null;
   return closed ? [ms(d.raised_at), ms(closed)] : { unknown: 'no end recorded' };
 }
-// The expected human wait of `kinds` within a stage's lifetime, from the store.
-function expectedWait(home, project, kinds, from) {
+// A UI stage's design holds (`design_pending`, `design_stale`) from its
+// work item's hold record, each cut to the stage's lifetime: its creation to
+// its completion or cancellation (the review's S1, upheld by the driver;
+// SEAM.md §§540, 546).
+function designHolds(home, w) {
+  const born = ms(w.created_at);
+  const ended = rows(home, `SELECT "created_at" FROM "events" WHERE "type" IN ('work.complete', 'work.cancelled') AND json_extract("subject", '$.work_item') = ? ORDER BY "seq" LIMIT 1`, w.id)[0]?.created_at ?? null;
+  const end = ended ? ms(ended) : Date.now();
+  return (w.held_intervals ?? [])
+    .filter((i) => i.reason === 'design_pending' || i.reason === 'design_stale')
+    .map((i) => {
+      const to = i.to ?? i.end ?? null;
+      return [Math.max(ms(i.from ?? i.start), born), Math.min(to === null ? end : ms(to), end)];
+    })
+    .filter(([a, b]) => b > a);
+}
+// The expected human wait of `kinds` for a UI stage, from the store: each
+// decision's open interval counted only where it overlaps the stage's design
+// holds; {unknown} when one is still open while the stage is held.
+function expectedWait(home, project, kinds, holds) {
   const ds = rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" IN (${kinds.map(() => '?').join(', ')}) ORDER BY "seq"`, project, ...kinds);
   const iv = [];
   for (const d of ds) {
     const i = decisionInterval(home, d);
-    if (i === null) return { unknown: `a ${d.kind} is open` };
+    if (i === null) {
+      if (holds.some(([, b]) => ms(d.raised_at) < b)) return { unknown: `a ${d.kind} is open while the stage is held` };
+      continue;
+    }
     if (!Array.isArray(i)) return i;
-    iv.push([Math.max(i[0], from), i[1]]);
+    for (const [a, b] of holds) if (Math.min(i[1], b) > Math.max(i[0], a)) iv.push([Math.max(i[0], a), Math.min(i[1], b)]);
   }
   return { seconds: unionSeconds(iv), count: ds.length, intervals: iv };
 }
@@ -127,13 +149,36 @@ describe('M539 (a), (b), (d), (e) the design figures after a design journey on t
     const ctx = journeyContext(fx, p, { lane: 'kernel' });
     ctx.answerKinds = [...KERNEL_KINDS];
     await qualifyByFixture(fx.engine);
-    // The API stage builds while the UI stages are held.
-    await pump(fx, ctx, () => (fx.scripted.launches({ work_item: stageWork(fx.home, p.id, 1)?.id }).length > 0 ? true : undefined), { what: 'the API stage dispatched while the UI stages are held', max: 40 });
+    // The API stage builds while the UI stages are held. Its first build
+    // holds until the Designer session is open and its first turn settled,
+    // so a one-shot certainly runs beside the session (G12; objection 203).
+    const api = stageWork(fx.home, p.id, 1);
+    assert.ok(api, 'the API stage\'s work item');
+    const build = builderScript(1);
+    fx.scripted.script(api.id, [{ steps: [step.hold('gate', { heartbeat_ms: 250 }), ...build.steps] }, builderScript(1), builderScript(1)]);
+    const dispatched = pump(fx, ctx, () => (fx.scripted.launches({ work_item: api.id }).length > 0 ? true : undefined), { what: 'the API stage dispatched while the UI stages are held', max: 40 });
+    // The pump is awaited below, after the release; until then a failure of it ends the wait for the hold.
+    let seenHeld = false;
+    const ended = dispatched.then(() => {
+      if (!seenHeld) throw new Error('the API stage\'s first build was not seen held before the pump returned');
+    });
+    ended.catch(() => {});
+    await Promise.race([fx.scripted.waitForHolding({ work_item: api.id }, 'gate', { timeoutMs: 120_000 }).then(() => (seenHeld = true)), ended]);
     // One Designer session: a turn that records its usage and writes the design; saved; a preview of the checkpoint; closed.
     const run = await openDesigner(fx, p.id);
     const write = turnThatWrites(validDesign(p), { reply: 'The design is written.', done: true });
     scriptTurns(fx, run.id, [{ steps: [step.usage(USAGE), ...write.steps] }]);
-    await sayAndSettle(fx, p.id, run.id, 'Draw Pantry for the web and Android.');
+    // The turn waits for the project's runs to end, the held build among them: it
+    // is awaited after the release, which comes once the session has started
+    // (its run's started_at, set when its first turn launches).
+    const turn = sayAndSettle(fx, p.id, run.id, 'Draw Pantry for the web and Android.');
+    const turnFailed = turn.then(() => undefined);
+    turnFailed.catch(() => {});
+    await Promise.race([waitFor(() => one(fx.home, 'SELECT "started_at" FROM "runs" WHERE "id" = ?', run.id)?.started_at ?? undefined, { timeoutMs: 60_000, what: 'the Designer session to start' }), turnFailed]);
+    // The session has started: the held build is released and ends beside it.
+    fx.scripted.release(api.id, 'gate');
+    await turn;
+    await dispatched;
     J.save = await postSaveRaw(fx, p.id, run.id);
     J.preview = await previewOnKernel(fx, p.id, { revision: 'checkpoint' });
     const closed = await fx.engine.post(`/v1/projects/${p.id}/sessions/${run.id}/close`, {});
@@ -277,10 +322,12 @@ describe('M539 (a), (b), (d), (e) the design figures after a design journey on t
   test('(d) the human wait of design_due and design_approval: each kind from its decisions\' intervals, a question the engine closed included; their union with the overlap counted once', () => {
     const { fx, p } = J;
     const w = stageWork(fx.home, p.id, 2);
-    const from = ms(w.created_at);
-    const due = expectedWait(fx.home, p.id, ['design_due'], from);
-    const appr = expectedWait(fx.home, p.id, ['design_approval'], from);
-    const both = expectedWait(fx.home, p.id, ['design_due', 'design_approval'], from);
+    // Counted only while the decisions overlap the stage's design holds (the review's S1).
+    const holds = designHolds(fx.home, w);
+    assert.ok(holds.length > 0, `the fixture is live: stage 2 was held for the design (${show(w.held_intervals)})`);
+    const due = expectedWait(fx.home, p.id, ['design_due'], holds);
+    const appr = expectedWait(fx.home, p.id, ['design_approval'], holds);
+    const both = expectedWait(fx.home, p.id, ['design_due', 'design_approval'], holds);
     assert.ok(due.count > 0 && appr.count > 0, `the fixture is live: both kinds were raised (${show({ due, appr })})`);
     assert.ok(typeof both.seconds === 'number' && both.seconds + TOL < due.seconds + appr.seconds, `the fixture is live: the two kinds' waits overlapped (union ${show(both)}; design_due ${show(due)}; design_approval ${show(appr)})`);
     const f = (D().ui_stages ?? []).find((x) => x.work_item === w.id)?.human_wait ?? {};
@@ -342,7 +389,8 @@ describe('M539 (c) a review with no evidence: its evidence by provenance unknown
     const d = await designedPantry(fx, { name: 'pantry-m539-review' });
     await pump(fx, d.ctx, () => candidatesOfProject(fx.home, d.p.id).at(-1), { what: 'a candidate of the built stages', max: 120 });
     await waitForIdle(fx.home, d.p.id);
-    const res = designReview(fx, d.p.id, { target: 'android', build: 'pantry 3.0 (60)', observedOn: 'device' });
+    // No --observed-on: it says where evidence was seen, and this review carries none (objection 200).
+    const res = designReview(fx, d.p.id, { target: 'android', build: 'pantry 3.0 (60)' });
     assert.equal(res.status, 0, `surety design review with no evidence exits 0 (${res.stdout.slice(0, 400)} ${res.stderr.slice(0, 400)})`);
     const review = res.body?.review?.id ?? res.body?.review;
     const screens = [{ target: 'android', key: 'S2', verdict: 'matches', observed_on: 'device', evidence: [], deltas: [] }];

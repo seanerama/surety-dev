@@ -46,6 +46,7 @@ import { latestCheck } from './records.js';
 import { disputedInterfaces } from './findings.js';
 import { bindStageScreensTo } from './stage-screens.js';
 import { slotCarried } from './asset-bindings.js';
+import { criterionMapAtApplication } from './criterion-map.js';
 
 type Db = Database.Database;
 
@@ -702,6 +703,14 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   if (args.specRevision !== null && rev.spec_change_request) {
     const added = parseJson<{ added_criteria?: string[] }>(requestRow(tx.db, rev.spec_change_request)?.impact_value ?? null)?.added_criteria ?? [];
     tx.db.prepare('UPDATE "design_revisions" SET "criterion_ids" = ? WHERE "id" = ?').run(JSON.stringify([...added].sort()), rev.id);
+    // Each design criterion's specification id, by its index (the slice-46
+    // review's B1): what the packages and the review read; one that cannot
+    // be mapped is kept with id null and why, and stated as unmatched.
+    const map = criterionMapAtApplication(tx.db, { specRevision: args.specRevision, request: rev.spec_change_request, content });
+    tx.db.prepare('UPDATE "design_revisions" SET "criterion_map" = ? WHERE "id" = ?').run(JSON.stringify(map), rev.id);
+  } else if (rev.scope === 'asset_only' && prior) {
+    // An asset-only revision changes no criterion (§6.4): it keeps the map of the one it supersedes.
+    tx.db.prepare('UPDATE "design_revisions" SET "criterion_map" = (SELECT "criterion_map" FROM "design_revisions" WHERE "id" = ?) WHERE "id" = ?').run(prior.id, rev.id);
   }
   // The screens, and the slots as this revision holds them.
   for (const s of content?.screens.screens ?? []) {

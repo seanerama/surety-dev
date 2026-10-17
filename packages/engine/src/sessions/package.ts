@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import type { Claim } from '../store/transitions/runs.js';
 import { canaryPromptText } from '../trust/canaries.js';
 import { type PackageName, type ReadsElement, architectElements, readsIds, readsText, specElements, statedElements } from '../packages/reads.js';
+import { designerTurnResultSchema } from '../packages/design-reads.js';
 
 // The role's artifact as the session's workspace holds it before the turn
 // (D6 §2.2: "the current state of the role's artifact"), read by the main
@@ -36,7 +37,8 @@ export interface SessionContextFacts {
   // The approved inputs the role reads by their bindings (D6 §3.5; B02): the
   // Spec Writer the accepted idea record, the Architect the approved
   // specification; never a newer checkpoint of the same file.
-  approved: { name: string; blob: string; what: string }[];
+  // `text`: an input the engine gives as it holds it, not a blob.
+  approved: { name: string; blob: string; what: string; text?: string }[];
   // D6 §8.2: an adopted project's sessions run in retrofit mode.
   retrofit?: { pinned_revision: string; mode: string | null; paths: string[]; total: number | { unknown: string } } | null;
   // The Architect's: what its plan must name in `prepared_against`
@@ -73,6 +75,8 @@ const TASK: Record<string, string> = {
   vision: 'You are the Vision role in a conversation with the project owner. Help the owner clarify the idea, then rewrite `.surety/idea.md` into the project identity: the idea brief\'s sections, closing with one fenced block whose info string is `yaml surety-identity` holding exactly the keys name, one_line, users, non_goals, success_measures, sensitive_areas, tier_recommendation and environments.',
   spec_writer:
     'You are the Spec Writer role in a conversation with the project owner. Turn the accepted idea record into `.surety/spec/spec.md`, in exactly the forms the engine reads (below). You may not approve your own specification.',
+  designer:
+    "You are the Designer role in a conversation with the project owner. From the interface inventory, draw the design of the product's user interface under `.surety/design/` (design.json, tokens.json, flows.json, screens.json, navigation.json, criteria.json, the mockups and the asset manifest), in exactly the forms the engine reads (below). The inventory and its fixtures are the engine's: read them, never change them. You may not approve your own design.",
   architect:
     'You are the Architect role in a conversation with the project owner. From the approved specification write the architecture (`.surety/architecture/architecture.md`, prose), the module map, the ADRs, the roadmap and the next phase\'s plan, in exactly the forms the engine reads (below). You may not approve your own proposals.',
 };
@@ -120,8 +124,9 @@ export function writeSessionPackage(
   texts: Map<string, string | null> = new Map(),
   artifact: ArtifactState | null = null,
   canary: Record<string, unknown> | null = null,
-  // A review-mode Designer session's design files (D7 §10.2; design/package.ts).
-  design: { files: { path: string; content: Buffer }[]; prompt: string[] } | null = null,
+  // A Designer session's design files and what its package states of what
+  // the engine reads (D7 §3.4, §10.2; design/package.ts).
+  design: { files: { path: string; content: Buffer }[]; prompt: string[]; reads?: { pkg: PackageName; elements: ReadsElement[] } } | null = null,
 ): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files: { path: string; kind: string; source: string | null; sha256: string }[] = [];
@@ -131,7 +136,7 @@ export function writeSessionPackage(
     files.push({ path, kind, source: null, sha256: createHash('sha256').update(content).digest('hex') });
   };
   const last = facts.transcript === null ? undefined : facts.transcript.filter((e) => e.speaker === 'owner').at(-1);
-  const reads = canary ? { pkg: null, elements: [] } : sessionReads(facts);
+  const reads: { pkg: PackageName | null; elements: ReadsElement[] } = canary ? { pkg: null, elements: [] } : (design?.reads ?? sessionReads(facts));
   put(
     'prompt.md',
     'prompt',
@@ -182,7 +187,7 @@ export function writeSessionPackage(
   put('transcript.json', 'transcript', `${JSON.stringify(facts.transcript === null ? { unknown: 'the transcript record cannot be read' } : facts.transcript, null, 2)}\n`);
   put('notes.json', 'instructions', `${JSON.stringify({ findings: facts.findings }, null, 2)}\n`);
   for (const a of facts.approved) {
-    const text = texts.get(a.blob) ?? null;
+    const text = a.text ?? texts.get(a.blob) ?? null;
     put(`approved/${a.name}`, 'approved', text ?? `The ${a.what} (blob ${a.blob}) could not be read; it is unknown to this package.\n`);
   }
   // The artifact's current state (D6 §2.2; M416 (f)): each file of the
@@ -198,6 +203,7 @@ export function writeSessionPackage(
     writeFileSync(join(dir, f.path), f.content);
     files.push({ path: f.path, kind: 'design', source: null, sha256: createHash('sha256').update(f.content).digest('hex') });
   }
-  put('result-schema.json', 'result_schema', `${JSON.stringify(TURN_RESULT_SCHEMA, null, 2)}\n`);
+  // A Designer's turn result carries its findings (B.12).
+  put('result-schema.json', 'result_schema', `${JSON.stringify(facts.role === 'designer' ? designerTurnResultSchema(TURN_RESULT_SCHEMA) : TURN_RESULT_SCHEMA, null, 2)}\n`);
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: null, run: claim.run, role: facts.role, kind: 'session', turn: facts.turn, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
 }

@@ -26,6 +26,7 @@ import { type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, pha
 import { canaryPromptText } from '../../trust/canaries.js';
 import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
+import { type DesignCatalogueFacts, type DesignChangeFacts, designChangeElements, verifierDesignElements } from '../../packages/design-reads.js';
 import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
 import { CHANGE_SPEC_CATEGORIES, DISPOSITIONS } from '../../runs/report.js';
 
@@ -69,6 +70,11 @@ export type ContextFacts = {
   // For check_correction work: what its Verifier is told about writing the
   // project's checks (src/checks/guide.ts).
   check_writing?: CheckWritingFacts | null;
+  // For check_authoring and check_correction work: the design criteria it
+  // covers (M537 (a2); src/packages/design-reads.ts).
+  design_catalogue?: DesignCatalogueFacts | null;
+  // For a design batch's spec_change: the design's criteria and human tests.
+  design_change?: DesignChangeFacts | null;
   // For check_authoring work: the phase-authoring package (D6 §6.2; N04).
   authoring?: PhaseAuthoringFacts | null;
   // For check_authoring and check_correction work after its last proposal
@@ -123,14 +129,18 @@ export function environmentText(envs: NonNullable<ContextFacts['environments']>)
 // (row M442; src/packages/reads.ts): the role package by the run's role and
 // work, its elements less any the test seam omits. A qualification attempt
 // states none.
+// The design catalogue's facts with the programs the governed values name.
+const designCatalogue = (facts: ContextFacts): DesignCatalogueFacts | null =>
+  facts.design_catalogue ? { ...facts.design_catalogue, programs: facts.check_writing?.governed ? Object.keys(facts.check_writing.governed.check_commands).sort() : null } : null;
+
 export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt' | 'base_revision'>, facts: ContextFacts | null): { pkg: PackageName | null; elements: ReadsElement[] } {
   if (claim.attempt || facts === null) return { pkg: null, elements: [] };
   const retrofit = facts.adopted === true;
   const pick = (pkg: PackageName, built: Parameters<typeof statedElements>[1]) => ({ pkg, elements: statedElements(pkg, built) });
   if (claim.role === 'verifier' && claim.work_kind === 'check_authoring' && facts.authoring) {
-    return pick(retrofit ? 'verifier_authoring_retrofit' : 'verifier_authoring', verifierElements(facts.check_writing ?? null, { authoring: true, retrofit }));
+    return pick(retrofit ? 'verifier_authoring_retrofit' : 'verifier_authoring', { ...verifierElements(facts.check_writing ?? null, { authoring: true, retrofit }), ...verifierDesignElements(designCatalogue(facts)) });
   }
-  if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', verifierElements(facts.check_writing, { authoring: false, retrofit }));
+  if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', { ...verifierElements(facts.check_writing, { authoring: false, retrofit }), ...verifierDesignElements(designCatalogue(facts)) });
   if (claim.role === 'architect' && facts.replan) {
     // A replan's plan names the approved versions and the head it started
     // from (plan/bundle.ts replanBaseline): from its package's generation.
@@ -139,7 +149,7 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
     return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit, prepared_against: prepared, kind: 'replan' }));
   }
   if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
-  if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', specElements({ retrofit }));
+  if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', { ...specElements({ retrofit }), ...designChangeElements(facts.design_change ?? null) });
   if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));
   return { pkg: null, elements: [] };
 }

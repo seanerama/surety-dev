@@ -189,7 +189,9 @@ test("a check_correction Verifier's package: the roots, the definitions director
     if (ELEMENT_MEMBERS.includes(m)) assert.ok(!prompt.includes(`- \`"${m}"\` (`), `the member "${m}" is not restated in prose`);
     else assert.ok(prompt.includes(`- \`"${m}"\` (`), `the member "${m}"`);
   }
-  assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables'], 'the correction package states the check elements');
+  assert.deepEqual(Object.keys(blocks), ['verifier.kinds', 'verifier.gate_kinds_floor', 'verifier.requires', 'verifier.covers', 'verifier.secrets', 'verifier.post_deploy', 'verifier.target_variables', 'verifier.design_catalogue'], 'the correction package states the check elements, and the design criteria it covers (none here: no design)');
+  assert.deepEqual(blocks['verifier.design_catalogue'].criteria, []);
+  assert.deepEqual(blocks['verifier.design_catalogue'].command.programs, ['node'], "the governed file's programs, by name");
   assert.equal(blocks['verifier.kinds'].member, 'kind');
   assert.equal(blocks['verifier.covers'].criteria, 'criteria');
   assert.deepEqual(blocks['verifier.gate_kinds_floor'], { tier: 'T1', floor: ['acceptance', 'smoke'], gate_kinds: ['stage', 'alpha_authorize'], member: 'gate_kinds', allowed: ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'], non_empty: true, no_repeats: true });

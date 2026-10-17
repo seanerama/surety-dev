@@ -372,7 +372,14 @@ export function elementProblems(id, v, facts = {}) {
       break;
     }
     case 'designer.review': {
-      need(isObj(v.files) && ['review', 'approved', 'source', 'check_results', 'observations', 'evidence'].every((k) => text(v.files[k])), `files: review, approved, source, check_results, observations, evidence (got ${JSON.stringify(v.files)})`);
+      // Each file the package holds named, `null` for one the mode or the package lacks
+      // (objection 204; the slice-46 review's S4): an owner-invoked review has no
+      // observations and names its evidence; a review at Alpha has observations and no
+      // evidence file; no approved design or no source is `null` too.
+      const FILES = ['review', 'approved', 'source', 'check_results', 'observations', 'evidence'];
+      need(isObj(v.files) && FILES.every((k) => k in v.files && (v.files[k] === null || text(v.files[k]))) && text(v.files.review), `files: review (a file), approved, source, check_results, observations, evidence (each a file or null) (got ${JSON.stringify(v.files)})`);
+      if (isObj(v.files) && isObj(v.owner)) need(v.files.observations === null && text(v.files.evidence), `files of an owner-invoked review: observations null, evidence a file (got ${JSON.stringify(v.files)})`);
+      else if (isObj(v.files) && v.owner === null) need(text(v.files.observations) && v.files.evidence === null, `files of a review at Alpha: observations a file, evidence null (got ${JSON.stringify(v.files)})`);
       need(isObj(v.provenance) && ['engine_observed', 'owner_supplied', 'owner_reported'].every((k) => text(v.provenance[k])), 'provenance: engine_observed, owner_supplied, owner_reported, each what it means');
       need(text(v.verdicts) && /propos/i.test(v.verdicts), 'verdicts: proposals the owner confirms');
       need(text(v.simulation), 'simulation: a verdict on a simulation is never native evidence');
@@ -406,6 +413,10 @@ export function elementProblems(id, v, facts = {}) {
       }
       const ai = v.asset_inputs;
       need(isObj(ai) && ai.member === 'asset_inputs' && sameSet(Object.keys(ai.item ?? {}), ['slot', 'variant']) && ai.variable === 'SURETY_ASSET_<SLOT>_<VARIANT>', `asset_inputs {member: asset_inputs, item: {slot, variant}, variable: SURETY_ASSET_<SLOT>_<VARIANT>} (got ${JSON.stringify(ai)})`);
+      // The programs a design check's command names first (objection 201): the governed
+      // file's check_commands, or null where the governed values cannot be read.
+      const cmd = v.command;
+      need(isObj(cmd) && cmd.member === 'command' && (cmd.programs === null || (Array.isArray(cmd.programs) && cmd.programs.every((x) => typeof x === 'string' && x.length > 0))) && text(cmd.rule), `command {member: command, programs: [names] or null, rule} (got ${JSON.stringify(cmd)})`);
       const got = Array.isArray(v.criteria) ? v.criteria : null;
       need(got !== null, 'criteria: the design criteria with their implemented paths');
       if (facts.criteria && got) {
@@ -639,6 +650,9 @@ export function judgeDesignChecks(written, W) {
     const d = defs.find((x) => (x.covers?.criteria ?? []).includes(c.id));
     if (!d) out.push({ element: 'verifier.design_catalogue', problem: `a check covering ${c.id} (${c.kind})` });
     else if (c.slot && !(d.asset_inputs ?? []).some((a) => a.slot === c.slot && a.variant === c.variant)) out.push({ element: 'verifier.design_catalogue', problem: `${d.key} reads ${c.slot}/${c.variant} through asset_inputs` });
+    // Its command names first a program the catalogue states (objection 201).
+    const programs = W['verifier.design_catalogue']?.command?.programs;
+    if (d && Array.isArray(programs) && !programs.includes((d.command ?? [])[0])) out.push({ element: 'verifier.design_catalogue', problem: `${d.key}'s command names first one of the programs ${JSON.stringify(programs)} (got ${JSON.stringify((d.command ?? [])[0] ?? null)})` });
   }
   if ((W['verifier.design_catalogue']?.criteria ?? []).length === 0) out.push({ element: 'verifier.design_catalogue', problem: 'the design criteria the correction is to cover' });
   return out;

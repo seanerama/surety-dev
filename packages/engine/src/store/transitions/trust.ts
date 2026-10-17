@@ -827,6 +827,8 @@ const ROLE_KEY: Record<string, string> = {
   // D6 A.7 (M5 slice 33; SEAM.md §391).
   vision: 'backend_vision',
   spec_writer: 'backend_spec_writer',
+  // D7 A.7 (M6): the Designer's backend (the slice-46 rehearsal's finding).
+  designer: 'backend_designer',
 };
 
 // The backend a role of a project is dispatched to, or why it is refused,

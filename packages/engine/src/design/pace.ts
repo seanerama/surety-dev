@@ -8,6 +8,7 @@ import type { Database } from 'better-sqlite3';
 
 import { parseJson } from '../store/transitions/common.js';
 import { designPolicyOf } from './policy.js';
+import { nowMs } from '../clock.js';
 
 type Unknown = { unknown: string };
 type Figure<T> = T | Unknown;
@@ -50,14 +51,14 @@ export function designPace(db: Database, project: string): Record<string, unknow
   for (const e of effective) bySource[e.source] = (bySource[e.source] ?? 0) + 1;
   const bound = new Set((db.prepare('SELECT DISTINCT "slot" FROM "asset_bindings" WHERE "project" = ? AND "superseded_by" IS NULL').all(project) as { slot: string }[]).map((r) => r.slot));
   const slots = [...new Set(effective.map((e) => e.slot))];
-  const latestCheck = db.prepare(`SELECT "reasons" FROM "design_checks" WHERE "project" = ? AND "outcome" = 'passed' ORDER BY rowid DESC LIMIT 1`).get(project) as { reasons: string } | undefined;
-  const rev = db.prepare(`SELECT "content", "narrowings" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as
-    | { content: string | null; narrowings: string }
-    | undefined;
-  const content = parseJson<{ screens?: { screens?: { target: string; not_checkable_yet?: unknown[] }[] }; criteria?: { human_tests?: { target: string; not_checkable_yet?: unknown[] }[] } }>(rev?.content ?? null);
+  const rev = db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as { id: string } | undefined;
+  // The engine's record of what is not checkable yet (D7 §7.2, §7.3; A.3
+  // design_native_obligations), per target, of the latest approved
+  // revision: never the design's own human-test list, which may omit one.
   const notCheckable: Record<string, number> = {};
-  for (const h of content?.criteria?.human_tests ?? []) notCheckable[h.target] = (notCheckable[h.target] ?? 0) + (Array.isArray(h.not_checkable_yet) ? h.not_checkable_yet.length : 0);
-  void latestCheck;
+  if (rev) {
+    for (const o of db.prepare('SELECT "target", COUNT(*) AS n FROM "design_native_obligations" WHERE "design_revision" = ? GROUP BY "target" ORDER BY "target"').all(rev.id) as { target: string; n: number }[]) notCheckable[o.target] = o.n;
+  }
   const projectFigures = {
     policy,
     spec_approved_to_design_approved: spec && approved ? seconds(spec.at, approved.at, ['the specification approved', 'the design approved']) : unknown(spec ? 'no design was approved' : 'no specification was approved'),
@@ -77,9 +78,22 @@ export function designPace(db: Database, project: string): Record<string, unknow
   }[];
   const designer_sessions = runs.map((r) => {
     const turns = (db.prepare('SELECT COUNT(*) AS n FROM "turns" WHERE "run" = ?').get(r.id) as { n: number }).n;
-    const ledger = db.prepare('SELECT "billable_in", "cached_in", "out" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL').all(r.id) as { billable_in: number | null; cached_in: number | null; out: number | null }[];
+    const ledger = db.prepare('SELECT "billable_in", "cached_in", "out", "usage_complete" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL').all(r.id) as {
+      billable_in: number | null;
+      cached_in: number | null;
+      out: number | null;
+      usage_complete: number;
+    }[];
+    // Unknown when any turn's usage was not recorded whole (SEAM.md §540;
+    // the slice-46 review's S2), never the sum of the rows that were.
     const tok = (c: 'billable_in' | 'cached_in' | 'out'): Figure<number> =>
-      ledger.length === 0 ? unknown('the session has no ledger row') : ledger.some((l) => l[c] === null) ? unknown(`a ledger row has no ${c}`) : ledger.reduce((n, l) => n + (l[c] as number), 0);
+      ledger.length === 0
+        ? unknown('the session has no ledger row')
+        : ledger.some((l) => l.usage_complete !== 1)
+          ? unknown("a turn's usage was not recorded whole (usage_complete 0)")
+          : ledger.some((l) => l[c] === null)
+            ? unknown(`a ledger row has no ${c}`)
+            : ledger.reduce((n, l) => n + (l[c] as number), 0);
     const check = db.prepare('SELECT "tree_revision" FROM "design_checks" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(r.id) as { tree_revision: string } | undefined;
     const screens: Record<string, number> = {};
     const dsg = db.prepare('SELECT "content" FROM "design_revisions" WHERE "run" = ? ORDER BY rowid DESC LIMIT 1').get(r.id) as { content: string | null } | undefined;
@@ -101,25 +115,95 @@ export function designPace(db: Database, project: string): Record<string, unknow
   });
 
   // ---- per UI stage --------------------------------------------------------------------------
-  const items = db.prepare(`SELECT "id", "subject", "depends_on", "held_intervals" FROM "work_items" WHERE "project" = ? AND "kind" = 'stage_build' ORDER BY "seq"`).all(project) as {
+  const items = db.prepare(`SELECT "id", "created_at", "subject", "depends_on", "held_intervals" FROM "work_items" WHERE "project" = ? AND "kind" = 'stage_build' ORDER BY "seq"`).all(project) as {
     id: string;
+    created_at: string;
     subject: string;
     depends_on: string | null;
     held_intervals: string | null;
   }[];
-  const decisionsOf = (kind: string) =>
-    db.prepare(`SELECT "raised_at", "consumed_at", "answer", "status" FROM "decisions" WHERE "project" = ? AND "kind" = ? ORDER BY "seq"`).all(project, kind) as { raised_at: string; consumed_at: string | null; answer: string | null; status: string }[];
-  const humanWait = (kind: string): Figure<number> => {
-    const ds = decisionsOf(kind);
-    if (ds.length === 0) return 0;
-    const iv: [number, number][] = [];
+  // A decision's open interval (D6 §7.6): from its raise to its answer, its
+  // consumption, or the `decision.invalidated` event that closed it (the
+  // engine closes a design_due when nothing it names is held: counted,
+  // never dropped). An open decision has no interval yet; a closed one with
+  // no recorded end is unknown.
+  const intervalsOf = (kind: string): { closed: [number, number][]; open: number[] } | Unknown => {
+    const ds = db.prepare(`SELECT "id", "raised_at", "consumed_at", "answer", "status" FROM "decisions" WHERE "project" = ? AND "kind" = ? ORDER BY "seq"`).all(project, kind) as {
+      id: string;
+      raised_at: string;
+      consumed_at: string | null;
+      answer: string | null;
+      status: string;
+    }[];
+    const closed: [number, number][] = [];
+    const open: number[] = [];
     for (const d of ds) {
-      const end = parseJson<{ at?: string }>(d.answer)?.at ?? d.consumed_at;
-      if (d.status === 'open') return unknown(`a ${kind} is still open`);
-      if (!end) continue;
-      iv.push([Date.parse(d.raised_at), Date.parse(end)]);
+      const a = Date.parse(d.raised_at);
+      if (Number.isNaN(a)) return unknown(`a ${kind}'s raise was not recorded`);
+      if (d.status === 'open') {
+        open.push(a);
+        continue;
+      }
+      const end =
+        parseJson<{ at?: string }>(d.answer)?.at ??
+        d.consumed_at ??
+        (db.prepare(`SELECT "created_at" FROM "events" WHERE "type" = 'decision.invalidated' AND json_extract("subject", '$.decision') = ? ORDER BY "seq" LIMIT 1`).get(d.id) as { created_at: string } | undefined)?.created_at ??
+        null;
+      if (end === null) return unknown(`a ${kind} closed with no recorded end`);
+      const b = Date.parse(end);
+      if (Number.isNaN(b)) return unknown(`a ${kind}'s end was not recorded`);
+      closed.push([a, b]);
     }
-    return union(iv);
+    return { closed, open };
+  };
+  const kinds = { design_due: intervalsOf('design_due'), design_approval: intervalsOf('design_approval') };
+  const now = nowMs();
+  // The human wait of a UI stage (D6 §7.6, D7 §8.5; the slice-46 review's
+  // S1): each kind's decisions counted only while they held this stage,
+  // that is within its design_pending and design_stale holds, each cut to
+  // the stage's lifetime (its creation to its completion or cancellation,
+  // else now); and the union of both kinds, the overlap counted once. A
+  // decision still open while the stage is held makes the figure unknown.
+  const humanWait = (holds: [number, number][]): Record<string, Figure<number>> => {
+    const within = (iv: [number, number][]): [number, number][] => iv.flatMap(([a, b]) => holds.map(([x, y]): [number, number] => [Math.max(a, x), Math.min(b, y)]).filter(([p, q]) => q > p));
+    const out: Record<string, Figure<number>> = {};
+    const all: [number, number][] = [];
+    let unknownOf: Unknown | null = null;
+    for (const [k, v] of Object.entries(kinds)) {
+      if ('unknown' in v) {
+        out[k] = v;
+        unknownOf ??= v;
+        continue;
+      }
+      if (v.open.some((a) => holds.some(([, y]) => a < y))) {
+        out[k] = unknown(`a ${k} is still open while the stage is held`);
+        unknownOf ??= out[k] as Unknown;
+        continue;
+      }
+      const pieces = within(v.closed);
+      out[k] = union(pieces);
+      all.push(...pieces);
+    }
+    out.union = unknownOf ?? union(all);
+    return out;
+  };
+  const endOf = (w: { id: string }): number => {
+    const e = db.prepare(`SELECT "created_at" FROM "events" WHERE "type" IN ('work.complete', 'work.cancelled') AND json_extract("subject", '$.work_item') = ? ORDER BY "seq" LIMIT 1`).get(w.id) as { created_at: string } | undefined;
+    const t = e ? Date.parse(e.created_at) : NaN;
+    return Number.isNaN(t) ? now : t;
+  };
+  const designHolds = (w: { id: string; created_at: string }, intervals: { reason: string; from?: string; to?: string | null; start?: string; end?: string | null }[]): [number, number][] => {
+    const born = Date.parse(w.created_at);
+    const end = endOf(w);
+    return intervals
+      .filter((i) => i.reason === 'design_pending' || i.reason === 'design_stale')
+      .map((i): [number, number] => {
+        const a = Date.parse(i.from ?? i.start ?? '');
+        const to = i.to ?? i.end ?? null;
+        const b = to === null ? end : Date.parse(to);
+        return [Math.max(Number.isNaN(a) ? born : a, born), Math.min(Number.isNaN(b) ? end : b, end)];
+      })
+      .filter(([a, b]) => b > a);
   };
   const ui_stages = items
     .filter((w) => (parseJson<{ milestone?: string }[]>(w.depends_on) ?? []).some((d) => d && d.milestone === 'design_ready'))
@@ -140,7 +224,7 @@ export function designPace(db: Database, project: string): Record<string, unknow
         work_item: w.id,
         design_pending_seconds: held('design_pending'),
         design_stale_seconds: held('design_stale'),
-        human_wait: { design_due: humanWait('design_due'), design_approval: humanWait('design_approval') },
+        human_wait: humanWait(designHolds(w, intervals)),
       };
     });
 
@@ -196,7 +280,8 @@ export function designPace(db: Database, project: string): Record<string, unknow
       // its review is recorded.
       seconds: r.review_blob === null || r.recorded_at === null ? unknown('the review was not recorded') : seconds(r.run_at, r.recorded_at, ['the review session opened', 'the review recorded']),
       deltas,
-      evidence,
+      // Evidence by provenance; a review that recorded none is unknown, never zero.
+      evidence: Object.keys(evidence).length > 0 ? evidence : unknown('the review recorded no evidence'),
     };
   });
 

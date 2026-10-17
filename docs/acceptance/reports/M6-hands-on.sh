@@ -29,7 +29,9 @@
 # --harness-scripted`). The Designer, the Spec Writer's change one-shot and
 # the correction Verifier play the package-driven fakes
 # (harness/standin/package-fakes.cjs) with the Designer's content
-# (harness/design/packages46.mjs `designerContent`); the Spec Writer and
+# (harness/design/packages46.mjs `designerContent`, wrapped as the
+# rehearsal's content `{design, design_checks}`, the criteria and the checks'
+# programs harness/real/m6-content.mjs's for the whole Pantry); the Spec Writer and
 # Architect sessions, the Builders and the other Verifiers write the
 # reference project's own products (harness/design/reference.mjs,
 # harness/design/drive.mjs), as the kernel lane's design journey does. No
@@ -109,7 +111,8 @@ DRIVE_SOURCE=$ACC/harness/design/drive.mjs
 CONTENT_SOURCE=$ACC/harness/design/packages46.mjs
 SCRIPTED_SOURCE=$ACC/harness/scripted.mjs
 SESSIONS_SOURCE=$ACC/harness/sessions.mjs
-for f in "$FAKES_SOURCE" "$REFERENCE_SOURCE" "$DRIVE_SOURCE" "$CONTENT_SOURCE" "$SCRIPTED_SOURCE" "$SESSIONS_SOURCE"; do [ -f "$f" ] || die "$f is missing from this checkout. Nothing was started."; done
+M6_CONTENT_SOURCE=$ACC/harness/real/m6-content.mjs
+for f in "$FAKES_SOURCE" "$REFERENCE_SOURCE" "$DRIVE_SOURCE" "$CONTENT_SOURCE" "$SCRIPTED_SOURCE" "$SESSIONS_SOURCE" "$M6_CONTENT_SOURCE"; do [ -f "$f" ] || die "$f is missing from this checkout. Nothing was started."; done
 NODE=$(readlink -f "$(command -v node)")
 
 # ---- the work directory, the home, the prefix ---------------------------------------------
@@ -159,7 +162,7 @@ roles() { # action, args...
     import { mkdirSync, writeFileSync } from "node:fs";
     import { join } from "node:path";
     import { pathToFileURL } from "node:url";
-    const [refSrc, driveSrc, contentSrc, scriptedSrc, sessionsSrc, dir, home, action, ...rest] = process.argv.slice(1);
+    const [refSrc, driveSrc, contentSrc, scriptedSrc, sessionsSrc, m6ContentSrc, dir, home, action, ...rest] = process.argv.slice(1);
     const imp = (p) => import(pathToFileURL(p).href);
     const ref = await imp(refSrc);
     const put = (name, value) => writeFileSync(join(dir, "scripts", `${name}.json`), `${JSON.stringify(value, null, 2)}\n`);
@@ -171,7 +174,11 @@ roles() { # action, args...
       const { designerContent } = await imp(contentSrc);
       const s = new Scripted(dir);
       designScripts({ scripted: s, home });
-      s.packageFakes(designerContent({ name: ref.PROJECT_NAME }));
+      // The fakes read the content of the Designer at `design` and the programs of the
+      // design checks at `design_checks` (SEAM §539; objection 202): the criteria of
+      // the whole Pantry.
+      const { DESIGN_CHECKS, designCriteriaOf } = await imp(m6ContentSrc);
+      s.packageFakes({ design: designerContent({ name: ref.PROJECT_NAME, criteria: designCriteriaOf("M535") }), design_checks: DESIGN_CHECKS });
       // Which roles play the package-driven fakes (SEAM §455): the Designer (by its
       // run, below), the Spec Writer change one-shot of the batch and the correction
       // Verifier that authors the design criteria checks from its package.
@@ -190,7 +197,7 @@ roles() { # action, args...
         if (w) put(w.id, [0, 1, 2].map(() => builderScript(n)));
       }
     } else throw new Error(`no such action ${action}`);
-  ' "$REFERENCE_SOURCE" "$DRIVE_SOURCE" "$CONTENT_SOURCE" "$SCRIPTED_SOURCE" "$SESSIONS_SOURCE" "$SCRIPTED" "$SURETY_HOME" "$@" >> "$WORK/roles.log" 2>&1 || die "the scripted roles could not be written; see $WORK/roles.log"
+  ' "$REFERENCE_SOURCE" "$DRIVE_SOURCE" "$CONTENT_SOURCE" "$SCRIPTED_SOURCE" "$SESSIONS_SOURCE" "$M6_CONTENT_SOURCE" "$SCRIPTED" "$SURETY_HOME" "$@" >> "$WORK/roles.log" 2>&1 || die "the scripted roles could not be written; see $WORK/roles.log"
 }
 
 # ---- reading the prefix: before every act of the engine on a unit ---------------------------

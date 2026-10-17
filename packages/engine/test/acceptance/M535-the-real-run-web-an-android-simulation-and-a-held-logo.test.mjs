@@ -96,6 +96,15 @@ const kase = (label, fn) => async () => {
   }
 };
 const humanAnswers = (home, project, kind) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = ? AND "status" = 'consumed' ORDER BY rowid`, project, kind).map((d) => ({ ...d, answer: json(d.answer) }));
+// The files the held proposal changed (SEAM.md §546): each held variant whose
+// digest differs from the effective file of the same variant, the effective
+// file being of an earlier slot version than the held one. A variant the
+// proposal left unchanged keeps the earlier version's file (the
+// placeholder's) and is not the proposal's.
+const heldChanges = (d) => {
+  const effective = new Map(d.effective.filter((e) => e.slot === 'logo').map((e) => [e.variant, e]));
+  return (d.held ?? []).flatMap((a) => (a.variants ?? []).filter((v) => v.digest && v.digest !== effective.get(v.name)?.digest).map((v) => ({ slot: a.slot, slot_version: a.slot_version, variant: v.name, digest: v.digest })));
+};
 const passedResult = (r) => r.exit_status === 0 && r.execution_established === 1 && r.signaled === 0 && r.deadline_hit === 0 && !r.invalidated_at;
 
 describe('M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)', () => {
@@ -169,8 +178,12 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
       assert.deepEqual(d.ready.assets_held, ['logo'], 'the approved revision records the held slot');
       const logo = d.effective.filter((e) => e.slot === 'logo');
       assert.ok(logo.length > 0 && logo.every((e) => e.source === 'placeholder'), `the effective logo the placeholder (${show(logo)})`);
-      const held = d.held.flatMap((a) => (a.variants ?? []).map((v) => v.digest)).filter(Boolean);
-      assert.ok(held.length > 0 && logo.every((e) => !held.includes(e.digest)), 'never the held proposal');
+      const heldVersions = d.held.map((a) => a.slot_version);
+      assert.ok(heldVersions.length > 0 && logo.every((e) => typeof e.slot_version === 'number' && heldVersions.every((v) => e.slot_version < v)), `the effective logo of an earlier slot version than the held one (${show({ effective: logo.map((e) => [e.variant, e.slot_version]), held: heldVersions })})`);
+      const changed = heldChanges(d);
+      assert.ok(changed.length > 0, `the held proposal changes a variant of the logo (${show(d.held)})`);
+      const effectiveDigests = new Set(d.effective.map((e) => e.digest));
+      assert.ok(changed.every((c) => !effectiveDigests.has(c.digest)), `never the held proposal: no file it changed is in the effective set (${show(changed)})`);
     });
   }));
 
@@ -181,8 +194,9 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
       const d = stepValue(ctx, 'm6x_design');
       const b = stepValue(ctx, 'm6x_build');
       const effective = new Map(d.effective.filter((e) => e.slot === 'logo').map((e) => [e.variant, e]));
-      const held = new Set(d.held.flatMap((a) => (a.variants ?? []).map((v) => v.digest)).filter(Boolean));
+      const held = new Set(heldChanges(d).map((c) => c.digest));
       const heldVersions = new Set(d.held.map((a) => a.slot_version));
+      assert.ok(held.size > 0, `the held proposal changed a file (${show(d.held)})`);
       assert.ok(b.carried.length >= 2, `both UI Builders' packages recorded what they carried (${show(b.carried)})`);
       for (const c of b.carried) for (const e of c.effective.filter((x) => x.slot === 'logo')) {
         assert.equal(e.digest, effective.get(e.variant)?.digest, `run ${c.run}: logo/${e.variant} by digest the effective file`);

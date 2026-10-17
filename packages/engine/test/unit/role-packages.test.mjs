@@ -118,6 +118,36 @@ test("the Spec Writer's package states its forms as blocks, listed in the manife
   assert.equal(rp.representation.claims.length, 1, 'the claims table written from its block is read');
 });
 
+test("M6: the Spec Writer's package states the header's targets and the surface mark; a specification written from the blocks carries them", (t) => {
+  const s = session(t, 'spec_writer');
+  const b = s.reads['spec_writer.targets'];
+  assert.ok(b, 'the element is stated');
+  const base = specFromBlocks(s.reads).split('\n');
+  const after = (pred, extra) => {
+    const i = base.findIndex(pred);
+    base.splice(i + 1, 0, ...extra);
+  };
+  after((l) => l.startsWith('**Owner:**'), [`${b.targets.line} ${['web', 'android'].join(b.targets.separator)}`, `${b.cross_platform.line} ${b.cross_platform.value}`]);
+  after((l) => l === 'The greeter greets.', ['', b.surface.with_targets.replace('<targets>', 'web')]);
+  const parsed = parseSpecification(base.join('\n'));
+  assert.deepEqual(parsed.findings, []);
+  assert.deepEqual([parsed.representation.targets, parsed.representation.cross_platform], [['web', 'android'], true]);
+  const r1 = parsed.representation.requirements.find((r) => r.key === 'R1');
+  assert.deepEqual([r1.surface, r1.surface_targets], ['ui', ['web']]);
+  assert.ok(session(t, 'spec_writer', { retrofit: true }).reads['spec_writer.targets'], 'and in retrofit');
+});
+
+test("M6: a design batch's spec_change package states the design's criteria and human tests; any other change's does not", (t) => {
+  const design_change = { criteria: [{ requirement: 'R1', text: 'Given the page, then its colours are tokens.', kind: 'tokens_only', targets: ['web'], paths: ['web/app.css'] }], human_tests: [{ target: 'web', text: 'A person judges the web UI.', screens: ['S1'], not_checkable_yet: [], phase: 1 }] };
+  const d = oneShot(t, 'spec_writer', 'spec_change', { design_change });
+  assert.equal(d.manifest.package, 'spec_change');
+  const b = d.reads['spec_writer.design_change'];
+  assert.deepEqual([b.criteria, b.human_tests], [design_change.criteria, design_change.human_tests]);
+  assert.equal(b.human_test.mark, '**Human test.**');
+  assert.equal(b.human_test.surface, '**Surface:** ui (<target>)');
+  assert.equal(oneShot(t, 'spec_writer', 'spec_change', {}).reads['spec_writer.design_change'], undefined);
+});
+
 test("the Architect's package states B.3 to B.6 as closed JSON Schemas of the parsers' own fields, the plan check's reasons and the routing", (t) => {
   const a = session(t, 'architect');
   assert.equal(a.manifest.package, 'architect');
@@ -162,7 +192,8 @@ const authoring = { phase_plan: { id: 'pp_1', phase_number: 1, generation: 1 }, 
 function oneShot(t, role, work_kind, facts) {
   const dir = scratch(t);
   const claim = { run: 'run_1', role, work_item: 'wrk_1', work_kind, base_revision: 'b'.repeat(40), attempt: null, check_outputs: [] };
-  const base = { run: { id: 'run_1', role, base_revision: 'b'.repeat(40), content_hash: null }, work_item: { id: 'wrk_1', kind: work_kind, subject: '{}', project: 'prj_1' }, stage: null, requirements: [], modules: [], phase_plan: null, candidate: null, resumed: null };
+  // The store gives an authoring and a correction the design criteria they cover (M537; [] before any design).
+  const base = { run: { id: 'run_1', role, base_revision: 'b'.repeat(40), content_hash: null }, work_item: { id: 'wrk_1', kind: work_kind, subject: '{}', project: 'prj_1' }, stage: null, requirements: [], modules: [], phase_plan: null, candidate: null, resumed: null, design_catalogue: { criteria: [] } };
   writeContextPackage(dir, claim, { ...base, ...facts }, { probe: false });
   return { dir, prompt: read(dir, 'prompt.md'), reads: blocks(read(dir, 'prompt.md')), manifest: manifest(dir), schema: JSON.parse(read(dir, 'result-schema.json')) };
 }

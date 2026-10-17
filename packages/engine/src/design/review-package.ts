@@ -12,6 +12,11 @@ import { parseJson } from '../store/transitions/common.js';
 import { approvedModuleMap } from './policy.js';
 import { boundSubjectOfRun } from './review.js';
 import { ownerReviewOfRun } from './owner-review.js';
+import { currentInventory } from './store.js';
+import { projectEffective } from '../store/transitions/settings.js';
+import type { DesignCatalogueFacts, DesignChangeFacts, DesignerReadsFacts } from '../packages/design-reads.js';
+import { lastUiPhase } from './approval.js';
+import { mappedCriteria } from './criterion-map.js';
 
 type Db = Database.Database;
 
@@ -27,16 +32,10 @@ export interface ReviewPackageFacts {
   evidence: { id: string; provenance: string; format: string | null; target: string; observed_on: string | null; name: string | null; record: string | null; build_ref: string | null }[];
 }
 
-// The criterion ids of the approved design (by their text under their
-// requirement, as the Builder's package matches them).
-function designCriterionIds(db: Db, project: string, content: string | null): string[] {
-  const criteria = parseJson<{ criteria?: { criteria?: { requirement?: string; text?: string }[] } }>(content)?.criteria?.criteria ?? [];
-  const ids: string[] = [];
-  for (const c of criteria) {
-    const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, c.requirement ?? '') as { criteria_text: string | null } | undefined;
-    for (const t of parseJson<{ id: string; text: string }[]>(row?.criteria_text ?? null) ?? []) if (t.text.trim() === String(c.text ?? '').trim()) ids.push(t.id);
-  }
-  return [...new Set(ids)].sort();
+// The criterion ids of the approved design, as its approval mapped them
+// (criterion-map.ts; the slice-46 review's B1), never matched by text here.
+function designCriterionIds(db: Db, project: string): string[] {
+  return [...new Set((mappedCriteria(db, project)?.mapped ?? []).map((m) => m.id))].sort();
 }
 
 export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackageFacts | null {
@@ -64,7 +63,7 @@ export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackage
   const sourceAt = retrofit ? head : (named?.revision ?? null);
   const source = sourceAt !== null && uiPaths.length > 0 ? { revision: sourceAt, candidate: named?.id ?? null, paths: uiPaths } : null;
   // The design checks' latest results on the candidate (§10.2).
-  const ids = new Set(designCriterionIds(db, project, approved?.content ?? null));
+  const ids = new Set(designCriterionIds(db, project));
   const results: Record<string, unknown>[] = [];
   if (named && ids.size > 0) {
     const checks = db.prepare('SELECT DISTINCT c."id", c."key", c."criteria" FROM "check_results" r JOIN "checks" c ON c."id" = r."check" WHERE r."project" = ? AND r."candidate" = ?').all(project, named.id) as { id: string; key: string; criteria: string }[];
@@ -92,5 +91,76 @@ export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackage
     source,
     check_results: { candidate: named?.id ?? null, results },
     evidence,
+  };
+}
+
+// What every Designer session's package states of the project (D7 §3.4;
+// M537; src/packages/design-reads.ts): the current inventory as recorded,
+// and the policy values its elements name. null for a run that is not a
+// Designer's.
+export function designerReadsFacts(db: Db, args: { run: string }): DesignerReadsFacts | null {
+  const run = db.prepare('SELECT "project", "role" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; role: string } | undefined;
+  if (!run || run.role !== 'designer') return null;
+  const inv = currentInventory(db, run.project);
+  const options = projectEffective(db, run.project) as Record<string, unknown>;
+  const nums = (v: unknown): number[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'number') ? (v as number[]) : null);
+  const strs = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null);
+  const digest = (db.prepare('SELECT "design_inventory_digest" AS d FROM "projects" WHERE "id" = ?').get(run.project) as { d: string | null } | undefined)?.d ?? null;
+  return {
+    inventory: inv?.inventory ?? null,
+    inventory_digest: digest ?? inv?.inventory.inventory_digest ?? null,
+    // The defaults are the inventory derivation's (policy.ts inventoryInputs).
+    widths: nums(options.design_widths) ?? [360, 720, 1280],
+    orientations: strs(options.design_orientations) ?? ['portrait', 'landscape'],
+    allowlist: strs(options.design_external_urls) ?? [],
+  };
+}
+
+// A design batch's change request, as its Spec Writer's package states it
+// (D7 §7.1, §7.3; SEAM.md §486): the design's criteria and human tests, each
+// human test with the phase that holds its target's last UI stage (null when
+// none can be determined: never a guess). null for a request that is not a
+// design's.
+export function designChangeFacts(db: Db, request: string): DesignChangeFacts | null {
+  const row = db.prepare('SELECT "project", "source" FROM "spec_change_requests" WHERE "id" = ?').get(request) as { project: string; source: string } | undefined;
+  if (!row || row.source !== 'design') return null;
+  const rev = db.prepare('SELECT "content" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1').get(request) as { content: string | null } | undefined;
+  const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[]; human_tests?: Record<string, unknown>[] } }>(rev?.content ?? null);
+  if (!content) return null;
+  return {
+    criteria: content.criteria?.criteria ?? [],
+    human_tests: (content.criteria?.human_tests ?? []).map((h) => {
+      const at = lastUiPhase(db, row.project, String(h.target));
+      return { ...h, phase: at.phase, ...(at.phase === null ? { phase_reason: at.reason ?? 'the phase cannot be determined' } : {}) };
+    }),
+  };
+}
+
+// The design criteria a Verifier's authoring and correction packages state
+// (D7 §7.2, §8.4; M537 (a2)): each criterion of the latest approved design's
+// criteria.json, by its specification id (matched by its text under its
+// requirement, as the Builder's package matches it), with its targets'
+// technologies and the implemented paths it names. [] when no design is
+// approved.
+export function designCatalogueFacts(db: Db, project: string): DesignCatalogueFacts {
+  const m = mappedCriteria(db, project);
+  if (!m) return { criteria: [], unmatched: [] };
+  const inv = currentInventory(db, project)?.inventory ?? null;
+  const techOf = (t: string): string | null => inv?.targets.find((x) => x.target === t)?.ui_technology ?? null;
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  return {
+    criteria: m.mapped.map((e) => {
+      const technologies = [...new Set(e.targets.map(techOf).filter((x): x is string => x !== null))];
+      return {
+        id: e.id,
+        kind: e.kind,
+        targets: e.targets,
+        ...(technologies.length > 0 ? { technologies } : {}),
+        paths: strings(e.criterion.paths),
+        ...(typeof e.criterion.slot === 'string' ? { slot: e.criterion.slot } : {}),
+        ...(typeof e.criterion.variant === 'string' ? { variant: e.criterion.variant } : {}),
+      };
+    }),
+    unmatched: m.unmatched,
   };
 }

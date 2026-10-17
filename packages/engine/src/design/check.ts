@@ -61,17 +61,17 @@ export interface CheckOutcome {
 export const NOTICE_CODES = ['DESIGN_CONVENTION_UNKNOWN', 'DESIGN_INTERFACE_SHAPE_UNKNOWN'];
 
 // B.14's closed fields and values (D7 A.2).
-const REVIEW_FIELDS = {
+export const REVIEW_FIELDS = {
   file: ['design_version', 'subject', 'screens', 'revised_design', 'first_design'],
   subject: ['kind', 'candidate', 'target', 'build_ref'],
   screen: ['target', 'key', 'verdict', 'observed_on', 'not_observed_reason', 'evidence', 'deltas'],
   delta: ['state', 'owner_words', 'kind'],
 } as const;
-const REVIEW_VERDICTS = ['matches', 'deltas', 'not_observed'];
-const OBSERVED_ON = ['browser', 'simulator', 'emulator', 'device', 'simulation'];
-const NOT_OBSERVED = ['no_native_runtime', 'not_reached', 'owner_skipped'];
-const DELTA_KINDS = ['design', 'implementation', 'both'];
-const SUBJECT_KINDS = ['candidate', 'owner_build'];
+export const REVIEW_VERDICTS = ['matches', 'deltas', 'not_observed'];
+export const OBSERVED_ON = ['browser', 'simulator', 'emulator', 'device', 'simulation'];
+export const NOT_OBSERVED = ['no_native_runtime', 'not_reached', 'owner_skipped'];
+export const DELTA_KINDS = ['design', 'implementation', 'both'];
+export const SUBJECT_KINDS = ['candidate', 'owner_build'];
 
 // A file's git blob id (the id git gives the same bytes).
 export function gitBlobId(bytes: Buffer): string {
@@ -80,7 +80,7 @@ export function gitBlobId(bytes: Buffer): string {
 
 // D7 §7.2: the closed criterion catalogue with the targets and technologies
 // each kind applies to.
-const CSS_TECH = ['html_css', 'three_js'];
+export const CSS_TECH = ['html_css', 'three_js'];
 export const CRITERION_CATALOGUE: Record<string, { targets: string[] | 'all'; technologies: string[] | 'all'; reads: boolean }> = {
   tokens_only: { targets: ['web'], technologies: CSS_TECH, reads: true },
   layout_at_width: { targets: ['web'], technologies: CSS_TECH, reads: true },
@@ -95,16 +95,20 @@ export const CRITERION_CATALOGUE: Record<string, { targets: string[] | 'all'; te
 };
 // The kinds that read the implemented tokens: the CSS binding, or the
 // neutral tokens.json from named paths (§7.2).
-const NEUTRAL_TOKEN_KINDS = ['token_parity', 'contrast_aa'];
+export const NEUTRAL_TOKEN_KINDS = ['token_parity', 'contrast_aa'];
 // D7 A.2 NativeConvention: never a criterion in M6 (not_checkable_yet).
 export const NATIVE_CONVENTIONS = ['browser_back', 'keyboard_path', 'system_back', 'safe_area', 'permission_prompt', 'touch_interaction', 'platform_navigation', 'window_resize', 'menu_entries', 'keyboard_shortcuts'];
 
-export const MOCKUP_KINDS = ['static_html', 'scene_html', 'simulated_html', 'image', 'source_stub'] as const;
+// A screen's route: a request path the engine may ask the service for
+// (the slice-45 review's S1): "/" then printable ASCII, no space or control.
+export const ROUTE_PATTERN = /^\/[!-~]*$/;
+
+export const MOCKUP_KINDS =['static_html', 'scene_html', 'simulated_html', 'image', 'source_stub'] as const;
 export const NAV_KINDS = ['push', 'replace', 'modal', 'sheet', 'tab', 'back', 'deep_link', 'menu', 'shortcut', 'window'];
 export const DESIGN_FILES = ['design.json', 'tokens.json', 'flows.json', 'screens.json', 'navigation.json', 'criteria.json', 'assets/manifest.json'] as const;
 
 // B.10 to B.16's closed fields.
-const FIELDS = {
+export const FIELDS = {
   design: ['version', 'origin', 'inventory_digest', 'selection', 'targets', 'cross_platform', 'tokens_file', 'flows_file', 'screens_file', 'navigation_file', 'criteria_file', 'assets_file', 'mockups'],
   selection: ['themes', 'slots', 'layouts'],
   target: ['module', 'target', 'ui_technology', 'form_factors', 'preview_capability', 'layouts', 'window'],
@@ -132,7 +136,7 @@ const FIELDS = {
 } as const;
 
 // D7 §6.6, A.2 PackagingStatus in M6.
-const PACKAGING_STATUSES = ['recorded', 'not_checkable_yet'];
+export const PACKAGING_STATUSES = ['recorded', 'not_checkable_yet'];
 // A slot's files, as the version rules compare them (SEAM.md §505).
 const filesOf = (s: { variants?: unknown }): string =>
   JSON.stringify(
@@ -151,7 +155,7 @@ const canonicalJson = (v: unknown): string => {
 
 // Which convention fields apply to each target (B.12: a field not
 // applicable to the screen's target is refused).
-const CONVENTION_TARGETS: Record<string, string[]> = {
+export const CONVENTION_TARGETS: Record<string, string[]> = {
   web: ['route', 'transient', 'browser_back', 'keyboard_path', 'hover', 'context_menu'],
   android: ['back', 'permissions', 'gestures'],
   ios: ['container', 'edge_swipe_back', 'safe_area_edges', 'permissions', 'gestures'],
@@ -224,7 +228,7 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     if (isObj(s.conventions)) {
       closed('screens.json', `${at}.conventions`, s.conventions, FIELDS.conventions);
       // A route is a request path the engine may ask for (the slice-45 review's S1).
-      if (s.conventions.route !== undefined && (typeof s.conventions.route !== 'string' || !/^\/[!-~]*$/.test(s.conventions.route))) {
+      if (s.conventions.route !== undefined && (typeof s.conventions.route !== 'string' || !ROUTE_PATTERN.test(s.conventions.route))) {
         schema('screens.json', `${at}.conventions.route`, 'must be a request path: "/" then printable characters, no space, CR, LF or control');
       }
       const allowed = CONVENTION_TARGETS[String(s.target)] ?? [];
