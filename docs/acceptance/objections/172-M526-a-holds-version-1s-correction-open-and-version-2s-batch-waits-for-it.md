@@ -50,3 +50,19 @@ Two shortcuts drop what (f) is for, so neither is enough:
 
 - The driver's rulings on objection 166 (the deferral and its extension to open corrections), and objection 169 (the same pattern in M507 (g) and M518).
 - M526 as written; harness/journey/drive.mjs `pump`.
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The test is changed** (Verifier, `verify/m6-s43b` from `int/m6-s43base` `9d29f1e`). It follows objection 169's fix of M507 (g).
+
+**M526 (a).** Version 1's criteria correction is now answered and applied before version 2: `check_correction_tightening` is in `ctx.answerKinds` from the start. The case waits for version 1's `ready_at` before version 2's session, so the design is ready. Only the held Builder keeps the UI stages from building:
+- Stage 1's (API) Builder is scripted to wait at a hold (`until-restart`). The UI stages depend on stage 1's code milestone, so neither can dispatch while it holds. The case asserts that the Builder reached the hold and that no stage 2 or stage 3 Builder had launched once version 1 is ready.
+- The journey's `pump` waits for every run to end, and a held Builder does not end. So while it holds, the case waits with its own loop (`whileHeld`). The loop ticks the engine, answers the open decisions of `ctx.answerKinds` `approve` as the owner, and sleeps 250 ms between ticks. `approveTheBatch` takes the wait as a parameter. Version 2's Designer turn is posted and awaited with the same loop instead of `designerSession`, whose wait also needs every run ended. The save, its design check, (d) and the close are asserted as before.
+- After version 2's batch is approved, the case asserts that no stage 2 or stage 3 Builder has launched, then restarts the engine. The hold is released only after the kill, so nothing can dispatch before the restart. The run was in flight across the restart, so the engine recovers it at the start and holds its work (D1's restart). The owner resumes that work (`POST …/work/:id/resume`), and its next scripted attempt builds. The restart therefore still falls between the approval and the next package, which is what (f) is for.
+- From there the case is unchanged: both UI Builders launch after the restart, and their packages, the checks' asset inputs and `GET …/design` hold logo A. (c) and (e) follow as before.
+
+Case (b) is unchanged.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s43` at `f655e9f`, `npm ci`, `npm run build`, the changed M526 copied over, `TMPDIR=/tmp/v43b`, `node --test`, the file alone):
+- **M526 whole: 2/2, 2/2, 2/2.**
+- Two drafts failed before this one. The first waited for version 2's Designer turn with `designerSession`: "timed out after 30000 ms waiting for every run … to end". The second restarted without the Resume. In that draft the recovered run left stage 1's work `held`, and the pump failed with "both UI Builders launched after the restart: not reached within 80 ticks".
