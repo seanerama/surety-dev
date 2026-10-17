@@ -135,8 +135,18 @@ const REVIEW_TEXT = [
   'Write your review to `.surety/design/reviews/review-<n>.json`: per screen a verdict (`matches`, `differs` or `not_observed` with its reason), the evidence ids it rests on, and the deltas. Your verdicts are proposals; the owner confirms them.',
 ];
 
-// A review-mode Designer session's package (D7 §10.2; SEAM.md §489).
-async function reviewPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage> {
+const OWNER_REVIEW_TEXT = [
+  'This is a review of a build the owner names (D7 §10.5), not of a deployment: /surety/context/design/review.json holds its subject (the target and the build as he named it). The engine observed nothing of it and runs nothing of it; what you know of it is what the owner tells you in this session.',
+  'Write your review to `.surety/design/reviews/review-<n>.json`: per screen of that target a verdict (`matches`, `differs` or `not_observed` with its reason), `observed_on` as the owner says he saw it (`device`, `emulator`, `simulator` or `simulation`), and the deltas. A verdict on a simulation is never evidence about the native build. Your verdicts are proposals; the owner confirms them.',
+];
+
+// A review-mode Designer session's package (D7 §10.2; SEAM.md §489): for
+// an owner-invoked review (§10.5), its subject and no observation.
+async function reviewPackage(rt: Runtime, project: string, run: string, owner: { subject: Record<string, unknown>; design_revision: string | null } | null): Promise<DesignPackage> {
+  if (owner !== null) {
+    const review = { subject: owner.subject, design_revision: owner.design_revision, first_design: owner.design_revision === null };
+    return { files: [{ path: 'design/review.json', content: Buffer.from(`${JSON.stringify(review, null, 2)}\n`) }], prompt: ['', '## The review', '', ...OWNER_REVIEW_TEXT] };
+  }
   const o = await observationsFor(rt, project, run);
   const body = { observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) };
   return { files: [{ path: 'design/observations.json', content: Buffer.from(`${JSON.stringify(body, null, 2)}\n`) }], prompt: ['', '## The review', '', ...REVIEW_TEXT] };
@@ -144,8 +154,8 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
 
 // The package's design files, read from git (main thread).
 export async function designPackageFor(rt: Runtime, run: string): Promise<DesignPackage | null> {
-  const who = await rt.read<{ project: string; role: string; mode: string | null } | null>('design.run_facts', { run });
-  if (who?.role === 'designer') return who.mode === 'review' ? reviewPackage(rt, who.project, run) : null;
+  const who = await rt.read<{ project: string; role: string; mode: string | null; owner_review: { subject: Record<string, unknown>; design_revision: string | null } | null } | null>('design.run_facts', { run });
+  if (who?.role === 'designer') return who.mode === 'review' ? reviewPackage(rt, who.project, run, who.owner_review) : null;
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
   // What this package carries of the effective set, recorded for the

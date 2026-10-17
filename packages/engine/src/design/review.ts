@@ -139,15 +139,22 @@ export function recordObservation(
 // ---- the review recorded and its verdicts asked about ------------------------------------------
 
 export function recordReview(tx: Tx, args: ReviewArgs): { review: string; decision: string | null } {
-  const id = tx.newId('drv_');
-  tx.db
-    .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "review_blob", "verdicts") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, tx.at, args.project, args.design_revision, args.run, args.trigger, JSON.stringify(args.subject), args.review_blob, JSON.stringify(args.verdicts));
+  // An owner-invoked review's row was recorded at its opening, with the
+  // subject as he gave it (SEAM.md §522): its verdicts are written to it.
+  const opened = tx.db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "trigger" = 'owner_command' AND "review_blob" IS NULL ORDER BY rowid DESC LIMIT 1`).get(args.run) as { id: string } | undefined;
+  const id = opened?.id ?? tx.newId('drv_');
+  if (opened) {
+    tx.db.prepare('UPDATE "design_reviews" SET "review_blob" = ?, "verdicts" = ? WHERE "id" = ?').run(args.review_blob, JSON.stringify(args.verdicts), id);
+  } else {
+    tx.db
+      .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "review_blob", "verdicts") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, tx.at, args.project, args.design_revision, args.run, args.trigger, JSON.stringify(args.subject), args.review_blob, JSON.stringify(args.verdicts));
+  }
   tx.db.prepare('UPDATE "design_evidence" SET "review" = ? WHERE "run" = ? AND "review" IS NULL').run(id, args.run);
   tx.emit('design.review_recorded', { project: args.project, design_review: id }, { trigger: args.trigger, verdicts: args.verdicts.length, run: args.run });
   // The review design_due asked for is made (D7 §10.1).
   const state = designDueState(tx.db, args.project) as ReturnType<typeof designDueState> & { alpha_pending?: string; alpha_reviewed?: string };
-  if (state.stage === 'alpha_review') {
+  if (state.stage === 'alpha_review' && !opened) {
     const { stage: _stage, alpha_pending, ...rest } = state;
     writeDueState(tx, args.project, { ...rest, ...(alpha_pending ? { alpha_reviewed: alpha_pending } : {}) } as never);
   }

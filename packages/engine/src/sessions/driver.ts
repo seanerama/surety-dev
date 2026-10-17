@@ -516,7 +516,7 @@ export class SessionDriver {
     };
     const content = { design: read('design.json'), screens: read('screens.json'), navigation: read('navigation.json'), criteria: read('criteria.json'), manifest: read('assets/manifest.json') };
     const findings = await this.rt.read<Record<string, unknown>[]>('design.session_findings', { run: facts.run });
-    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, blobs: tree.blobs, content, check: check.id, findings } };
+    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, tree: tree.tree, blobs: tree.blobs, content, check: check.id, findings } };
   }
 
   // A review-mode close (D7 §10.3): the review file read from the head, its

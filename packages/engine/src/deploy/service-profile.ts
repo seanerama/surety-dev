@@ -42,6 +42,10 @@ export interface ServicePlanInput {
   node: string;
   initNodeCopy: string;
   initScript: string;
+  // Engine files the application runs, bound read-only (and not
+  // executable) at their own paths: the design preview's server (D7 §5.7;
+  // SEAM.md §499). None for any other service.
+  programs?: string[];
 }
 
 // `mountPoints`: the host's mount points the builder accounts for (the
@@ -59,6 +63,10 @@ export function buildServicePlan(input: ServicePlanInput, mountPoints: string[] 
   if (!inTree && input.runtime !== input.node) {
     for (const p of parents(input.runtime)) b.dir(p);
     b.bind(real, { target: input.runtime });
+  }
+  for (const program of input.programs ?? []) {
+    for (const p of parents(program)) b.dir(p);
+    b.bind(realpathSync(program), { target: program, noexec: true });
   }
   b.bind(input.ingress, { target: INGRESS_SOCKET, noexec: true });
   b.dir('/surety');

@@ -118,7 +118,7 @@ export function requestText(content: DesignContent): string {
 
 export function proposeDesign(
   tx: Tx,
-  args: { project: string; run: string | null; revision: string; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' },
+  args: { project: string; run: string | null; revision: string; tree?: string | null; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' },
 ): { revision: string; request: string | null } {
   const d = args.content.design;
   const inv = currentInventory(tx.db, args.project);
@@ -137,7 +137,11 @@ export function proposeDesign(
       args.project,
       typeof d.version === 'number' ? d.version : 1,
       scope,
-      args.blobs['design.json'] ?? null,
+      // The git tree of .surety/design/ at the revision (D7 A.3; SEAM.md
+      // §501); an asset-only revision of the same commit carries its own.
+      args.tree ??
+        (tx.db.prepare('SELECT "tree_blob" FROM "design_revisions" WHERE "project" = ? AND "revision" = ? AND "tree_blob" IS NOT NULL ORDER BY rowid DESC LIMIT 1').get(args.project, args.revision) as { tree_blob: string } | undefined)?.tree_blob ??
+        null,
       args.revision,
       JSON.stringify(args.blobs),
       d.origin === 'observed' ? 'observed' : 'intended',
