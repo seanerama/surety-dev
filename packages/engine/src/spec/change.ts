@@ -585,11 +585,12 @@ export function finalizeProposal(tx: Tx, op: { id: string; project: string }, in
     .prepare(`UPDATE "spec_change_requests" SET "status" = 'proposed', "proposal_revision" = ?, "proposal_blob" = ?, "side_ref" = ?, "impact" = ?, "impact_value" = ? WHERE "id" = ?`)
     .run(inputs.new_oid, inputs.blob, inputs.ref, inputs.impact_record, JSON.stringify(inputs.impact), r.id);
   tx.emit('spec.change_proposed', { project: op.project, spec_change_request: r.id }, { revision: inputs.new_oid, side_ref: inputs.ref, blob: inputs.blob, impact: inputs.impact_record, operation: op.id });
-  // A design's change (D7 §7.4) waits while an approved correction of the
-  // protected checks is not applied yet: its batch would be bound to a
-  // version about to be replaced (objection 166). The design's tick raises it.
+  // A design's change (D7 §7.4) waits while a correction of the protected
+  // checks is undecided, or approved and not applied yet: its batch would be
+  // bound to a version that may be replaced (objection 166). It is raised
+  // once none is pending.
   if (r.source === 'design') {
-    const pending = pendingCorrections(tx.db, op.project);
+    const pending = pendingCorrections(tx.db, op.project, r.id).map((c) => c.proposal);
     if (pending.length > 0) {
       deferDesignBatch(tx, getRequest(tx.db, r.id)!, pending);
       return { request: r.id, decision: null, deferred: pending };
@@ -638,9 +639,9 @@ function deferDesignBatch(tx: Tx, r: RequestRow, pending: string[]): void {
 // At the design's tick: with no correction pending any more, each deferred
 // batch is raised, bound to the version as it now is (objection 166).
 export function raiseDeferredBatches(tx: Tx, project: string): string[] {
-  if (pendingCorrections(tx.db, project).length > 0) return [];
   const raised: string[] = [];
   for (const b of deferredBatches(tx.db, project)) {
+    if (b.pending_corrections.length > 0) continue;
     const d = raiseDeferred(tx, b.spec_change_request);
     if (d) raised.push(d);
   }
@@ -662,9 +663,9 @@ function raiseDeferred(tx: Tx, request: string): string | null {
 export function settleDeferredBatch(tx: Tx, item: string): boolean {
   const w = getWorkItem(tx, item);
   if (!w || w.status !== 'awaiting_decision') return true;
-  if (pendingCorrections(tx.db, w.project).length > 0) return true;
   const blocker = parseJson<{ spec_change_request?: string }>(w.blocker);
-  const request = blocker?.spec_change_request ?? (tx.db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { id: string } | undefined)?.id;
+  const request = blocker?.spec_change_request ?? (tx.db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(item) as { id: string } | undefined)?.id ?? null;
+  if (pendingCorrections(tx.db, w.project, request).length > 0) return true;
   if (request && raiseDeferred(tx, request) !== null) return true;
   return getWorkItem(tx, item)?.status !== 'awaiting_decision';
 }
