@@ -330,13 +330,6 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
         .get(item.project) as { n: number }
     ).n;
     if (unapplied > 0) return 'depends on a protected proposal not yet applied or rejected';
-    // A design's change (D7 §7.4) is batched with the design's approval and
-    // bound to the protected version: it waits for a proposal the owner has
-    // still to answer too, so the batch is not raised on a version about to move.
-    const design = (db.prepare(`SELECT "source" FROM "spec_change_requests" WHERE "id" = ?`).get(request) as { source: string } | undefined)?.source === 'design';
-    if (design && (db.prepare(`SELECT COUNT(*) AS n FROM "protected_proposals" WHERE "project" = ? AND "status" = 'awaiting_human'`).get(item.project) as { n: number }).n > 0) {
-      return 'depends on a protected proposal not yet applied or rejected';
-    }
   }
   // A phase verification of a superseded candidate is never run (M545;
   // INK-2): the phase step retires it (plan/phase.ts
