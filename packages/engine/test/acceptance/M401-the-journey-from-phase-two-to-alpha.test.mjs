@@ -154,12 +154,38 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     // approval; then no obligation is owed for it, and its question names
     // what it was authored against and the criteria the change touched, so
     // the owner who approves it does so knowingly. Ordered by event seq.
+    // A third ordering (SEAM §472; the M401 (h) flake, 2026-10-16): the
+    // seed's switch can kill the kernel engine while phase 2's first
+    // authoring run is claimed; the run is recovered at the restart and its
+    // item held (D1 §8.4), CR-1's replan replaces phase 2 and cancels it, and
+    // the replacing plan's authoring runs and captures its proposal after
+    // CR-1's approval. That proposal is authored against version 2: no
+    // obligation is owed for it (lateObligations: captured after the
+    // approval) and no question of it names an earlier version.
     const firstR4 = withStore(fx.home, (db) => db.prepare(`SELECT c."protected_version", v."proposal" FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version" WHERE c."project" = ? AND c."key" = 'accept-r4' ORDER BY c.rowid LIMIT 1`).get(p.id));
     assert.ok(firstR4?.proposal, `the fixture is live: phase 2's authoring applied accept-r4 (${JSON.stringify(firstR4)})`);
     const r4Applied = eventsAbout(fx.home, 'protected.applied', p.id).find((e) => e.subject?.proposal === firstR4.proposal);
     assert.ok(r4Applied, 'its application recorded (protected.applied)');
+    const r4Captured = eventsAbout(fx.home, 'protected.proposed', p.id).find((e) => e.subject?.proposal === firstR4.proposal);
+    assert.ok(r4Captured, 'its capture recorded (protected.proposed)');
     if (r4Applied.seq < approved.seq) {
       assert.ok(obligations.some((o) => o.reason === 'spec_changed' && o.generation === 2 && (o.criteria ?? []).includes('R4.1')), `phase 2's authoring applied before CR-1's approval: an obligation for the checks covering R4.1 (${JSON.stringify(obligations)})`);
+    } else if (r4Captured.seq > approved.seq) {
+      // Authored against version 2: the run that captured it was created after
+      // the approval (Q2 lets no protected writer run beside a proposed change),
+      // its work is the authoring of the plan published after the approval, no
+      // question of it names an earlier version, and CR-1 owes nothing for R4.1.
+      const origin = withStore(fx.home, (db) =>
+        db.prepare(`SELECT r."id" AS "run", w."id" AS "work_item", w."kind", w."created_at" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" JOIN "work_items" w ON w."id" = r."work_item" WHERE p."id" = ?`).get(firstR4.proposal),
+      );
+      assert.equal(origin?.kind, 'check_authoring', `phase 2's authoring captured it (${JSON.stringify(origin)})`);
+      const created = eventsAbout(fx.home, 'run.created', p.id).find((e) => e.subject?.run === origin.run);
+      assert.ok(created && created.seq > approved.seq, `phase 2's authoring captured after CR-1's approval: its run created after it (run.created ${created?.seq ?? null}, approval ${approved.seq})`);
+      const published = eventsAbout(fx.home, 'plan.published', p.id).find((e) => e.payload?.check_authoring === origin.work_item);
+      assert.ok(published && published.payload?.phase === 2 && published.seq > approved.seq, `its work registered by phase 2's plan published after CR-1's approval (${JSON.stringify(published ?? null)})`);
+      const questions = withStore(fx.home, (db) => db.prepare('SELECT "id", "kind", "status", "question" FROM "decisions" WHERE "subject_id" = ? ORDER BY rowid').all(firstR4.proposal));
+      assert.deepEqual(questions.filter((d) => /authored against specification version/.test(d.question ?? '')).map((d) => d.id), [], `authored against version 2: no question of it names an earlier version (${JSON.stringify(questions)})`);
+      assert.deepEqual(obligations.filter((o) => (o.criteria ?? []).includes('R4.1')).map((o) => o.id), [], `authored against version 2: no obligation for R4.1 (${JSON.stringify(obligations)})`);
     } else {
       const questions = withStore(fx.home, (db) => db.prepare('SELECT "id", "kind", "status", "question" FROM "decisions" WHERE "subject_id" = ? ORDER BY rowid').all(firstR4.proposal));
       assert.ok(
@@ -352,9 +378,20 @@ describe('M401 the journey from an idea to Alpha, part 2: phase 2 published to a
     }
     for (const s of pace.stages) assert.equal(s.human_wait, 0, `stage ${s.number ?? s.id}: human wait a measured zero under phase (${JSON.stringify(s.human_wait)})`);
     assert.ok(Array.isArray(pace.project.decisions), 'the routed decisions at the project');
+    // The driver's ruling on M441 (SEAM §452; E148), read here too (SEAM §472):
+    // an open time whose recorded wall times run backwards (the host's clock
+    // stepped back between the raise and the answer) is {unknown:
+    // 'clock_stepped_back'}, and only where the store's two times are reversed.
     for (const kind of ['check_correction_unclassifiable', 'spec_change']) {
       const d = pace.project.decisions.find((x) => x.kind === kind);
-      assert.ok(d && typeof d.open_seconds === 'number' && d.open_seconds >= 0, `${kind}'s open time measured (${JSON.stringify(pace.project.decisions)})`);
+      assert.ok(d, `${kind} among the routed decisions (${JSON.stringify(pace.project.decisions)})`);
+      const row = withStore(J.fx.home, (db) => db.prepare('SELECT "raised_at", "consumed_at", "answer" FROM "decisions" WHERE "id" = ?').get(d.id));
+      const answeredAt = JSON.parse(row?.answer ?? 'null')?.at ?? row?.consumed_at ?? null;
+      if (row && answeredAt && Date.parse(answeredAt) < Date.parse(row.raised_at)) {
+        assert.equal(d.open_seconds?.unknown, 'clock_stepped_back', `${kind}: the recorded wall times run backwards (${row.raised_at} → ${answeredAt}), so {unknown: clock_stepped_back} (${JSON.stringify(d)})`);
+      } else {
+        assert.ok(typeof d.open_seconds === 'number' && d.open_seconds >= 0, `${kind}'s open time measured (${JSON.stringify(pace.project.decisions)})`);
+      }
     }
     assert.ok(typeof pace.project.created_to_alpha_deployed === 'number');
     assert.equal(pace.host.autonomy, 'phase');
