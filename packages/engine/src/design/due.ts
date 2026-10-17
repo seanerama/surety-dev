@@ -29,6 +29,7 @@ import { type DesignDueState, designDueState, heldStages } from './readiness.js'
 import { designPolicyOf } from './policy.js';
 import { currentStaleScreens } from './stale.js';
 import { deferredBatches } from './approval.js';
+import { currentInventory } from './store.js';
 
 export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision', 'inventory_failure', 'reason'];
 
@@ -69,7 +70,17 @@ function dueFacts(tx: Tx, project: string) {
   // What the question says beside its subjects, bound as one digest, so a
   // changed reason asks it again (the review's S5).
   const reason = sha256(canonical({ note: state.note ?? null, inventory_difference: state.inventory_difference ?? null, open_refused: state.open_refused ?? null, session, deferred_batches: deferred.map((b) => b.spec_change_request) }));
-  const manifest = { stage, held_stages: held, stale_screens: stale, policy_revision: policyRevision(tx.db, project), inventory_failure: failed, reason };
+  // At alpha_review, bound to the Alpha's candidate and deployment (D7 §10.1; SEAM.md §526).
+  const review = stage === 'alpha_review' ? (state.review as { candidate?: string; deployment?: string } | undefined) : undefined;
+  const manifest = {
+    stage,
+    held_stages: held,
+    stale_screens: stale,
+    policy_revision: policyRevision(tx.db, project),
+    inventory_failure: failed,
+    reason,
+    ...(review ? { alpha: { candidate: review.candidate ?? null, deployment: review.deployment ?? null } } : {}),
+  };
   return { state, stage, held, stale, session, deferred, manifest };
 }
 
@@ -80,13 +91,25 @@ export const DESIGN_DUE: KindSpec = {
     if (designPolicyOf(tx.db, project) === 'off' && stage !== 'alpha_review') return null;
     // Stale screens raise it whether or not a stage is held (D7 §9.1).
     if (stage !== 'alpha_review' && held.length === 0 && stale.length === 0) return null;
-    const command = stage === 'alpha_review' ? 'surety session open designer --review' : 'surety session open designer';
+    // A product with no web target has no Alpha to browse: its review is the
+    // owner's, on a build he runs (D7 §10.1, §10.5; SEAM.md §522).
+    const targets = (currentInventory(tx.db, project)?.inventory.targets ?? []).map((t) => t.target);
+    const native = targets.length > 0 && !targets.includes('web') ? [...new Set(targets)] : [];
+    const command =
+      stage !== 'alpha_review'
+        ? 'surety session open designer'
+        : native.length > 0
+          ? native.map((t) => `surety design review --target ${t} --build <id>`).join(' or ')
+          : 'surety session open designer --review';
+    // The review's subject: the Alpha's candidate and its deployment (§10.1).
+    const review = stage === 'alpha_review' ? (state.review as { candidate?: string; deployment?: string } | undefined) : undefined;
     const inventoryFailed = state.inventory_failure && state.inventory_failure.count >= INVENTORY_FAILURES_NAMED ? state.inventory_failure : null;
     const evidence = {
       stage,
       held_stages: held,
       stale_screens: manifest.stale_screens,
       command,
+      ...(review ? { candidate: review.candidate ?? null, deployment: review.deployment ?? null } : {}),
       ...(state.note ? { note: state.note } : {}),
       ...(inventoryFailed ? { inventory_failure: inventoryFailed } : {}),
       // The batch refused at raise (D7 §7.4; SEAM.md §519): what differs.

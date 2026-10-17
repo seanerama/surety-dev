@@ -39,7 +39,7 @@ import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
 import { proposeDesign } from '../design/approval.js';
 import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
-import { openOwnerReview } from '../design/owner-review.js';
+import { type OwnerEvidence, openOwnerReview } from '../design/owner-review.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -214,7 +214,19 @@ export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number;
 // template and model; no project backend key and no entry is consulted.
 export function openSession(
   tx: Tx,
-  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null; mode?: unknown; review?: Record<string, unknown> },
+  args: {
+    project: string;
+    role: unknown;
+    model?: unknown;
+    scripted: string | null;
+    incarnation: string;
+    parent?: string | null;
+    attempt?: string | null;
+    mode?: unknown;
+    review?: Record<string, unknown>;
+    evidence?: OwnerEvidence[];
+    observed_on?: string | null;
+  },
 ): { run: Record<string, unknown> } {
   const p = tx.db.prepare('SELECT "id", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; paused: number; registration_state: string } | undefined;
   if (!p) throw notFound('project', args.project);
@@ -316,8 +328,8 @@ export function openSession(
   // An owner-invoked review (D7 §10.5): its row and subject in this same
   // transaction, so no review-mode session exists without them.
   if (args.mode === 'review' && args.review !== undefined) {
-    const made = openOwnerReview(tx, { project: p.id, run, subject: args.review });
-    return { run: runSummary(tx.db, run), review: made.review } as { run: Record<string, unknown> };
+    const made = openOwnerReview(tx, { project: p.id, run, subject: args.review, evidence: args.evidence ?? [], observed_on: args.observed_on ?? null });
+    return { run: runSummary(tx.db, run), review: made.review, evidence: made.evidence } as { run: Record<string, unknown> };
   }
   return { run: runSummary(tx.db, run) };
 }
@@ -1119,7 +1131,7 @@ export interface SaveOutcome {
     identity?: Record<string, unknown> | null;
     spec?: { blob: string; digest: string | null; representation: SpecRepresentation | null; findings: SemanticFinding[]; readable: boolean } | null;
     // D7 §5.6: a Designer save's design check, as recorded.
-    design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: import('../design/check.js').DesignReason[] };
+    design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: import('../design/check.js').DesignReason[]; notices?: import('../design/check.js').DesignReason[] };
   };
   nothingToSave: boolean;
 }
@@ -1205,10 +1217,14 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
   if (args.raise.kind === 'design') proposeDesign(tx, args.raise.propose);
   if (args.raise.kind === 'review') {
     const { revised_design: _r, first_design: _f, ...review } = args.raise.review as Record<string, unknown>;
-    const made = recordReview(tx, review as unknown as Parameters<typeof recordReview>[1]);
-    if (made.decision) decisions.push({ id: made.decision, kind: 'design_verdicts', batch_key: null });
-    // The revised (or first) design of the review (D7 §10.3, §10.6).
-    if (args.raise.propose) proposeDesign(tx, args.raise.propose as Parameters<typeof proposeDesign>[1]);
+    // The revised (or first) design of the review (D7 §10.3, §10.6), first:
+    // the verdicts' question is batched with it.
+    const proposed = args.raise.propose ? proposeDesign(tx, args.raise.propose as Parameters<typeof proposeDesign>[1]) : null;
+    const made = recordReview(tx, { ...(review as unknown as Parameters<typeof recordReview>[1]), proposed_revision: proposed?.revision ?? null });
+    if (made.decision) {
+      const key = (tx.db.prepare('SELECT "batch_key" FROM "decisions" WHERE "id" = ?').get(made.decision) as { batch_key: string | null } | undefined)?.batch_key ?? null;
+      decisions.push({ id: made.decision, kind: 'design_verdicts', batch_key: key });
+    }
   }
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'closing' WHERE "id" = ?`).run(run.id);
   tx.emit('session.closed', { project: run.project, run: run.id }, { turns: run.turn_count, idle_generation: run.idle_generation, decisions: decisions.map((d) => d.kind), refused: args.raise.kind === 'none', ...(args.cause ? { cause: args.cause } : {}) });

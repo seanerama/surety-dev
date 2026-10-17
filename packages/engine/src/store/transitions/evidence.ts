@@ -259,6 +259,61 @@ const toScopeCheck = (c: CheckRow): ScopeCheck => ({
   sensitive_areas: JSON.parse(c.sensitive_areas) as string[],
 });
 
+// D7 §12 (objection 151, reading (a)): an observed design's criteria stay
+// under their requirements and are kept out of the conformance set's gates
+// (the conformance phase carries the adopted code unchanged; a criterion it
+// fails would block conformance on an aspiration); they are read at the
+// first change phase's gates. These are the criterion ids an approved
+// observed design gave, matched by their text under their requirement.
+export function observedDesignCriteria(db: Db, project: string): Set<string> {
+  const revs = db.prepare(`SELECT "content" FROM "design_revisions" WHERE "project" = ? AND "origin" = 'observed' AND "status" IN ('approved', 'approved_without_criteria', 'superseded') AND "approved_at" IS NOT NULL ORDER BY rowid`).all(project) as { content: string | null }[];
+  const out = new Set<string>();
+  for (const r of revs) {
+    type Content = { criteria?: { criteria?: { requirement?: unknown; text?: unknown }[] } };
+    let criteria: { requirement?: unknown; text?: unknown }[] = [];
+    try {
+      criteria = r.content === null ? [] : ((JSON.parse(r.content) as Content | null)?.criteria?.criteria ?? []);
+    } catch {
+      criteria = [];
+    }
+    for (const c of criteria) {
+      const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, String(c.requirement ?? '')) as { criteria_text: string | null } | undefined;
+      let texts: { id: string; text: string }[] = [];
+      try {
+        texts = row?.criteria_text ? (JSON.parse(row.criteria_text) as { id: string; text: string }[]) : [];
+      } catch {
+        texts = [];
+      }
+      for (const t of texts) if (t.text.trim() === String(c.text ?? '').trim()) out.add(t.id);
+    }
+  }
+  return out;
+}
+
+// Whether a gate's scope is the conformance set's: a conformance stage's,
+// the conformance phase's, or a deployment gate while the conformance plan
+// is the project's newest.
+function conformanceScope(db: Db, args: { project: string; kind: string; stage: string | null; phasePlan?: string | null }): boolean {
+  if (args.kind === 'stage') return (db.prepare('SELECT "conformance" FROM "stages" WHERE "id" = ?').get(args.stage ?? '') as { conformance: number } | undefined)?.conformance === 1;
+  if (args.kind === 'phase') return db.prepare('SELECT 1 FROM "stages" WHERE "phase_plan" = ? AND "conformance" = 1 LIMIT 1').get(args.phasePlan ?? '') !== undefined;
+  const newest = db.prepare(`SELECT "id" FROM "phase_plans" WHERE "project" = ? AND "active" = 1 AND "status" IN ('published', 'completed') ORDER BY "phase_number" DESC, rowid DESC LIMIT 1`).get(args.project) as { id: string } | undefined;
+  return newest !== undefined && db.prepare('SELECT 1 FROM "stages" WHERE "phase_plan" = ? AND "conformance" = 1 LIMIT 1').get(newest.id) !== undefined;
+}
+
+// The checks and requirements a scope reads, an observed design's criteria
+// taken out where the scope is the conformance set's.
+function scopeInputs(db: Db, args: { project: string; kind: string; stage: string | null; phasePlan?: string | null; version: string }): { rows: CheckRow[]; requirements: ScopeRequirement[] } {
+  const rows = checksOfVersion(db, args.version);
+  const requirements = requirementRows(db, args.project);
+  const excluded = conformanceScope(db, args) ? observedDesignCriteria(db, args.project) : new Set<string>();
+  if (excluded.size === 0) return { rows, requirements };
+  const criteriaOf = (c: CheckRow): string[] => (c.criteria ? (JSON.parse(c.criteria) as string[]) : []);
+  return {
+    rows: rows.filter((c) => !(criteriaOf(c).length > 0 && criteriaOf(c).every((k) => excluded.has(k)))),
+    requirements: requirements.map((r) => (r.criteria === null ? r : { ...r, criteria: r.criteria.filter((k) => !excluded.has(k)) })),
+  };
+}
+
 function requirementRows(db: Db, project: string): ScopeRequirement[] {
   return (db.prepare('SELECT "id", "key", "criteria", "sensitive_areas", "human_test" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as {
     id: string;
@@ -311,8 +366,8 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
       : [];
     const all = modulesOf(db, args.project);
     const modules = all.filter((m) => stageModules.includes(m.id)).map(scopeModule);
-    const rows = checksOfVersion(db, args.version);
-    const scope = computeScope({ kind: 'phase', projectTier, checks: rows.map(toScopeCheck), requirements: requirementRows(db, args.project), delivered: obligations, partial: [], stageImplements: obligations, modules });
+    const { rows, requirements } = scopeInputs(db, { project: args.project, kind: 'phase', stage: null, phasePlan: args.phasePlan ?? null, version: args.version });
+    const scope = computeScope({ kind: 'phase', projectTier, checks: rows.map(toScopeCheck), requirements, delivered: obligations, partial: [], stageImplements: obligations, modules });
     const ids = new Set(scope.required.map((c) => c.id));
     return { required: rows.filter((c) => ids.has(c.id)), obligations: scope.obligations, delivery, tier: scope.tier, scope: { ...scope, signoffs: [] } };
   }
@@ -322,7 +377,7 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
   // sign-offs and unread facts are those of the deployment scope.
   if (args.kind === 'alpha_complete') {
     const base = requiredSet(db, { ...args, kind: 'alpha_authorize' });
-    const rows = checksOfVersion(db, args.version);
+    const { rows } = scopeInputs(db, { project: args.project, kind: 'alpha_complete', stage: null, version: args.version });
     const required = rows.filter((c) => c.required === 1 && POST_DEPLOY_KINDS.includes(c.kind) && gateKindsOf(c).includes('alpha_complete'));
     const ids = new Set(required.map((c) => c.id));
     const behaviour = required.some((c) => c.kind === 'post_deploy_behavior');
@@ -343,12 +398,12 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
     const present = presenceOf(db, args.project, args.candidate);
     modules = present === null ? null : all.filter((m) => present.includes(m.id)).map(scopeModule);
   }
-  const rows = checksOfVersion(db, args.version);
+  const { rows, requirements } = scopeInputs(db, { project: args.project, kind: args.kind === 'stage' ? 'stage' : 'alpha_authorize', stage: args.stage, version: args.version });
   const scope = computeScope({
     kind: args.kind === 'stage' ? 'stage' : 'alpha_authorize',
     projectTier,
     checks: rows.map(toScopeCheck),
-    requirements: requirementRows(db, args.project),
+    requirements,
     delivered: delivery.delivered,
     partial: delivery.partial,
     stageImplements,
@@ -369,11 +424,12 @@ export function deliveredStageScope(db: Db, args: { project: string; stage: stri
   const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
   const ids = JSON.parse(stage.modules) as string[];
   const stageImplements = JSON.parse(stage.implements) as string[];
+  const { rows, requirements } = scopeInputs(db, { project: args.project, kind: 'stage', stage: args.stage, version: args.version });
   return computeScope({
     kind: 'stage',
     projectTier,
-    checks: checksOfVersion(db, args.version).map(toScopeCheck),
-    requirements: requirementRows(db, args.project),
+    checks: rows.map(toScopeCheck),
+    requirements,
     delivered: stageImplements,
     partial: [],
     stageImplements,

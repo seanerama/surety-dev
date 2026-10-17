@@ -13,7 +13,7 @@ import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
-import { designExport, parseDesignCommand, parseDesignExport } from './design/design-command.js';
+import { designExport, designVerdicts, parseDesignCommand, parseDesignExport, parseDesignVerdicts } from './design/design-command.js';
 import { deployTimeoutMs, parseDeploy } from './deploy/deploy-command.js';
 import { paceLines, parsePace, parseSession, settledText, turnOf } from './sessions/session-command.js';
 import { configureHarness, setHarnessSwitches, setPackageOmit, setProbeOverrides, setRealLane } from './testing/seam.js';
@@ -47,6 +47,7 @@ if (command === 'env') {
 }
 if (command === 'design') {
   if (args[0] === 'export') await designExportCommand(args.slice(1));
+  if (args[0] === 'verdicts') await designVerdictsCommand(args.slice(1));
   await envCommand(args, parseDesignCommand);
 }
 if (command === 'qualify-adapter') {
@@ -422,6 +423,23 @@ async function designExportCommand(argv: string[]): Promise<never> {
     process.exit(code);
   } catch (err) {
     process.stderr.write(`${JSON.stringify({ code: 'export_failed', reason: `The design could not be exported: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`);
+    process.exit(1);
+  }
+}
+
+// `surety design verdicts` (D7 §10.3, A.8; SEAM.md §525): the owner's answer
+// to the open design_verdicts about a review.
+async function designVerdictsCommand(argv: string[]): Promise<never> {
+  const parsed = parseDesignVerdicts(argv);
+  if (typeof parsed === 'string') usage(parsed);
+  const home = process.env.SURETY_HOME;
+  if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
+  try {
+    const { code, out } = await designVerdicts(home, parsed);
+    (code === 0 ? process.stdout : process.stderr).write(`${out}\n`);
+    process.exit(code);
+  } catch (err) {
+    process.stderr.write(`${JSON.stringify({ code: 'engine_unreachable', reason: `The engine could not be asked: ${(err as Error)?.message ?? String(err)}.`, what_to_do: 'Start the engine on this SURETY_HOME and ask again.', subject: {} })}\n`);
     process.exit(1);
   }
 }

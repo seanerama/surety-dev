@@ -8,6 +8,8 @@
 // the Designer wrote and judges no mockup's look. Each reason names its
 // subjects, the target among them.
 
+import { createHash } from 'node:crypto';
+
 import { isSlug } from './paths.js';
 import { fixtureProblem } from './shape.js';
 import { AA_RATIO, contrastRatio } from './contrast.js';
@@ -36,12 +38,44 @@ export interface CheckContext {
   // The engine's placeholders as the inventory records them (B2): a variant
   // holding one is the engine's, never approved by anyone.
   placeholders?: AssetManifest | null;
+  // The project's design policy: under `at_alpha` a convention the code
+  // does not show and an interface with no shape are shown, not refused
+  // (D7 §12; SEAM.md §528).
+  policy?: string;
+  // The evidence each review file may cite (B.14): a recorded review's own,
+  // by its file's blob; and the saving session's review's (its owner
+  // evidence and the engine's observations for its run).
+  reviews?: { held: Record<string, string[]>; run: string[] };
 }
 
 export interface CheckOutcome {
   outcome: 'passed' | 'refused';
   reasons: DesignReason[];
+  // What the check shows without refusing (SEAM.md §528).
+  notices: DesignReason[];
   design: Record<string, unknown> | null;
+}
+
+// The reasons `at_alpha` shows instead of refusing (D7 §12: "blocking
+// approval under before_build and shown under at_alpha").
+export const NOTICE_CODES = ['DESIGN_CONVENTION_UNKNOWN', 'DESIGN_INTERFACE_SHAPE_UNKNOWN'];
+
+// B.14's closed fields and values (D7 A.2).
+const REVIEW_FIELDS = {
+  file: ['design_version', 'subject', 'screens', 'revised_design', 'first_design'],
+  subject: ['kind', 'candidate', 'target', 'build_ref'],
+  screen: ['target', 'key', 'verdict', 'observed_on', 'not_observed_reason', 'evidence', 'deltas'],
+  delta: ['state', 'owner_words', 'kind'],
+} as const;
+const REVIEW_VERDICTS = ['matches', 'deltas', 'not_observed'];
+const OBSERVED_ON = ['browser', 'simulator', 'emulator', 'device', 'simulation'];
+const NOT_OBSERVED = ['no_native_runtime', 'not_reached', 'owner_skipped'];
+const DELTA_KINDS = ['design', 'implementation', 'both'];
+const SUBJECT_KINDS = ['candidate', 'owner_build'];
+
+// A file's git blob id (the id git gives the same bytes).
+export function gitBlobId(bytes: Buffer): string {
+  return createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest('hex');
 }
 
 // D7 §7.2: the closed criterion catalogue with the targets and technologies
@@ -266,6 +300,61 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     const problem = fixtureProblem(path.slice('mockups/data/'.length), bytes, inv);
     if (problem !== null) add('DESIGN_FIXTURE_INVALID', { file: path, why: problem });
   }
+  // The review files (B.14): closed, their values A.2's, never a verdict's
+  // `status` (every verdict in them is a proposal, D7 §10.3), and no
+  // evidence id the review does not hold.
+  for (const [path, bytes] of [...tree.files].filter(([p]) => p.startsWith('reviews/') && p.endsWith('.json')).sort((a, b) => a[0].localeCompare(b[0]))) {
+    const file = path;
+    let v: unknown;
+    try {
+      v = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      schema(file, null, 'is not JSON');
+      continue;
+    }
+    if (!isObj(v)) {
+      schema(file, null, 'is not a JSON object');
+      continue;
+    }
+    closed(file, '', v, REVIEW_FIELDS.file);
+    for (const k of ['revised_design', 'first_design']) if (typeof v[k] !== 'boolean') schema(file, k, 'must be true or false');
+    if (v.design_version !== undefined && v.design_version !== null && !(typeof v.design_version === 'number' && Number.isInteger(v.design_version) && v.design_version >= 1)) schema(file, 'design_version', 'must be the design version reviewed');
+    if (!isObj(v.subject)) schema(file, 'subject', 'must be an object');
+    else {
+      closed(file, 'subject', v.subject, REVIEW_FIELDS.subject);
+      if (!SUBJECT_KINDS.includes(String(v.subject.kind))) schema(file, 'subject.kind', `must be one of ${SUBJECT_KINDS.join(', ')}`);
+    }
+    const allowed = ctx.reviews ? (ctx.reviews.held[gitBlobId(bytes)] ?? ctx.reviews.run) : null;
+    if (!Array.isArray(v.screens)) schema(file, 'screens', 'must be a list');
+    for (const [i, x] of (Array.isArray(v.screens) ? v.screens : []).entries()) {
+      const at = `screens[${i}]`;
+      if (!isObj(x)) {
+        schema(file, at, 'must be an object');
+        continue;
+      }
+      closed(file, at, x, REVIEW_FIELDS.screen);
+      if (typeof x.target !== 'string' || typeof x.key !== 'string') schema(file, at, 'names its target and screen key');
+      if (!REVIEW_VERDICTS.includes(String(x.verdict))) schema(file, `${at}.verdict`, `must be one of ${REVIEW_VERDICTS.join(', ')}`);
+      if (x.observed_on !== undefined && !OBSERVED_ON.includes(String(x.observed_on))) schema(file, `${at}.observed_on`, `must be one of ${OBSERVED_ON.join(', ')}`);
+      if (x.not_observed_reason !== undefined && !NOT_OBSERVED.includes(String(x.not_observed_reason))) schema(file, `${at}.not_observed_reason`, `must be one of ${NOT_OBSERVED.join(', ')}`);
+      if (!strs(x.evidence)) schema(file, `${at}.evidence`, 'must be a list of evidence ids');
+      else if (allowed !== null) for (const e of x.evidence) if (!allowed.includes(e)) schema(file, `${at}.evidence`, `${e} is not evidence this review holds`);
+      if (!Array.isArray(x.deltas)) schema(file, `${at}.deltas`, 'must be a list');
+      for (const [j, d] of (Array.isArray(x.deltas) ? x.deltas : []).entries()) {
+        if (!isObj(d)) {
+          schema(file, `${at}.deltas[${j}]`, 'must be an object');
+          continue;
+        }
+        closed(file, `${at}.deltas[${j}]`, d, REVIEW_FIELDS.delta);
+        if (typeof d.owner_words !== 'string' || d.owner_words === '') schema(file, `${at}.deltas[${j}].owner_words`, "must be the owner's words");
+        if (!DELTA_KINDS.includes(String(d.kind))) schema(file, `${at}.deltas[${j}].kind`, `must be one of ${DELTA_KINDS.join(', ')}`);
+      }
+    }
+  }
+  // An interface the retrofit map could not shape (D7 §12): reported on
+  // every screen that uses it; nothing is derived from it.
+  const unshaped = new Set((inv?.interfaces ?? []).filter((i) => i.shape_known === false).map((i) => i.name));
+  for (const s of screens) for (const f of strs(s.interfaces) ? s.interfaces : []) if (unshaped.has(f)) add('DESIGN_INTERFACE_SHAPE_UNKNOWN', { target: String(s.target), screen: String(s.key), interface: f });
   // ---- clause 3: coverage, per target ----------------------------------------------------------
   const selection = isObj(design?.selection) ? (design!.selection as Record<string, unknown>) : {};
   const selectedLayouts = (target: string): unknown[] => {
@@ -543,7 +632,10 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     }
     for (const d of new Set(dropped)) add('DESIGN_SELECTION_BELOW_FLOOR', { dropped: d });
   }
-  return { outcome: reasons.length === 0 ? 'passed' : 'refused', reasons, design };
+  // Under `at_alpha` (D7 §12): shown, not refusing.
+  const shown = ctx.policy === 'at_alpha' ? reasons.filter((r) => NOTICE_CODES.includes(r.code)) : [];
+  const refusing = reasons.filter((r) => !shown.includes(r));
+  return { outcome: refusing.length === 0 ? 'passed' : 'refused', reasons: refusing, notices: shown, design };
 }
 
 // What a selection narrows below the inventory's defaults (§5.8), as the

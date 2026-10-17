@@ -21,7 +21,8 @@ import { designPackageFacts } from './package.js';
 import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
 import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
-import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
+import { reviewPackageFacts } from './review-package.js';
+import { noteAlphaReview, notObservedScreens, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
 import { bindingsView } from './asset-bindings.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
@@ -78,6 +79,8 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.export_facts': (d, a: { project: string; revision?: string }) => exportFacts(d, a),
   'design.owner_review_facts': (d, a: { project: string; target: string }) => ownerReviewFacts(d, a),
   'design.review_target': (d, a: { project: string }) => reviewTarget(d, a),
+  'design.not_observed': (d, a: { project: string }) => notObservedScreens(d, a),
+  'design.review_package_facts': (d, a: { run: string }) => reviewPackageFacts(d, a),
   'design.roadmap_assignment': (d, a: { request: string }) => roadmapAssignment(d, a),
   'design.run_facts': (d, a: { run: string }) => {
     const r = d.prepare('SELECT "project", "role", "session_notes" FROM "runs" WHERE "id" = ?').get(a.run) as { project: string; role: string; session_notes: string | null } | undefined;
@@ -97,7 +100,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   },
   'checks.asset_files': (d, a: { execution: string }) => executionAssetFiles(d, a),
   'design.answered_batches': (d, a: { decisions?: string[]; project?: string }) => answeredBatches(d, a),
-  'design.check_context': (d, a: { project: string }) => checkContext(d, a.project),
+  'design.check_context': (d, a: { project: string; run?: string }) => checkContext(d, a.project, a.run ?? null),
   'design.latest_check': (d, a: { project: string; run?: string }) => latestCheck(d, a),
   'design.session_mode': (d, a: { run: string }) => parseJson<{ mode?: string }>((d.prepare('SELECT "session_notes" FROM "runs" WHERE "id" = ?').get(a.run) as { session_notes: string | null } | undefined)?.session_notes ?? null)?.mode ?? null,
   // The findings a Designer session's turns returned (B.12).

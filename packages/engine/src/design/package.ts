@@ -19,6 +19,13 @@ import { approvedModuleMap, publishedStages, stageModuleNames, stageRequirementK
 import { blobAt } from './tree.js';
 import { DESIGN_ROOT } from './inventory.js';
 import { observationsFor } from './review-driver.js';
+import type { ReviewPackageFacts } from './review-package.js';
+import { SCREENSHOT_FORMATS } from './evidence.js';
+import { repoContext } from '../git/exec.js';
+import { listTree, treeOf } from '../git/repo.js';
+import { recordsDir } from '../records/files.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { isSafeRelative, isSlug } from './paths.js';
 
 export interface DesignPackageFacts {
@@ -131,31 +138,123 @@ export function designPackageFacts(db: Database.Database, args: { run: string })
 }
 
 const REVIEW_TEXT = [
-  'This is a review of the deployed build against the approved design (D7 §10). /surety/context/design/observations.json holds what the engine observed: for each web screen with a route, the HTTP response the engine fetched from the running service (`provenance: engine_observed`, its `record` and its `evidence` id); every native screen is listed under `not_observed` (`no_native_runtime`): nothing here runs it.',
-  'Write your review to `.surety/design/reviews/review-<n>.json`: per screen a verdict (`matches`, `differs` or `not_observed` with its reason), the evidence ids it rests on, and the deltas. Your verdicts are proposals; the owner confirms them.',
+  'This is a review of the deployed build against the approved design (D7 §10). /surety/context/design/ holds, read-only:',
+  "- `design/review.json`: the review's subject (the Alpha's candidate and its deployment), the approved design revision, and whether this review draws the first design (`first_design: true`: none is approved, so you draw it from what is observed and what the owner asks for, `origin: observed`).",
+  "- `design/approved/`: the approved design tree, if there is one; `design/source/`: the candidate's UI source; `design/check-results.json`: the latest result, on the candidate, of each check covering a design criterion.",
+  '- `design/observations.json`: what the engine observed: for each web screen with a route, the HTTP response the engine fetched from the running service (`provenance: engine_observed`, its `record` and its `evidence` id), its bytes under `design/observations/<evidence id>`; every native screen is listed under `not_observed` (`no_native_runtime`): nothing here runs it. The owner browses the web Alpha himself through his relay and tells you what he sees.',
+  "Write your review to `.surety/design/reviews/review-<n>.json` (B.14): per screen a verdict (`matches`, `deltas` or `not_observed` with its reason), `observed_on`, the evidence ids it rests on (only ids this review holds), and the deltas, each with the owner's words and whether it is a `design` change, an `implementation` defect, or `both`. Never a `status`: your verdicts are proposals; the owner confirms them. If the owner agrees a design change, revise the design in the same tree and say `revised_design: true`.",
 ];
 
 const OWNER_REVIEW_TEXT = [
-  'This is a review of a build the owner names (D7 §10.5), not of a deployment: /surety/context/design/review.json holds its subject (the target and the build as he named it). The engine observed nothing of it and runs nothing of it; what you know of it is what the owner tells you in this session.',
-  'Write your review to `.surety/design/reviews/review-<n>.json`: per screen of that target a verdict (`matches`, `differs` or `not_observed` with its reason), `observed_on` as the owner says he saw it (`device`, `emulator`, `simulator` or `simulation`), and the deltas. A verdict on a simulation is never evidence about the native build. Your verdicts are proposals; the owner confirms them.',
+  'This is a review of a build the owner names (D7 §10.5), not of a deployment: /surety/context/design/review.json holds its subject (the target and the build as he named it, and the candidate if he named one: his word, never verified). The engine observed nothing of it and runs nothing of it; what you know of it is what the owner tells you in this session and the evidence he supplied.',
+  "`design/evidence.json` lists his evidence, each `owner_supplied`, by its name: a screenshot's bytes are at its `file`; a recording is named only, never given to you.",
+  'Write your review to `.surety/design/reviews/review-<n>.json` (B.14): per screen of that target a verdict (`matches`, `deltas` or `not_observed` with its reason), `observed_on` as the owner says he saw it (`device`, `emulator`, `simulator` or `simulation`), the evidence ids it rests on, and the deltas. A verdict on a simulation is never evidence about the native build. Never a `status`: your verdicts are proposals; the owner confirms them.',
 ];
 
-// A review-mode Designer session's package (D7 §10.2; SEAM.md §489): for
-// an owner-invoked review (§10.5), its subject and no observation.
-async function reviewPackage(rt: Runtime, project: string, run: string, owner: { subject: Record<string, unknown>; design_revision: string | null } | null): Promise<DesignPackage> {
-  if (owner !== null) {
-    const review = { subject: owner.subject, design_revision: owner.design_revision, first_design: owner.design_revision === null };
-    return { files: [{ path: 'design/review.json', content: Buffer.from(`${JSON.stringify(review, null, 2)}\n`) }], prompt: ['', '## The review', '', ...OWNER_REVIEW_TEXT] };
+const RETROFIT_TEXT = [
+  '## Retrofit mode: capture the design of the adopted UI as observed (D7 §12)',
+  '',
+  'This project was adopted from an existing repository with a user interface. Its UI source is your input, read-only, under /surety/context/design/source/. Describe before you prescribe: write the design as the code shows it, `origin: observed` in design.json.',
+  '- Tokens extracted from the existing stylesheets or theme files; a screen inventory and navigation graph of the existing routes, mapped to the confirmed requirements; for web, mockups that are copies of the existing pages as static files.',
+  '- Conventions as the code shows them; where the code cannot tell you, write `unknown` (the design check reports it, DESIGN_CONVENTION_UNKNOWN). An interface the inventory lists with `shape_known: false` has no shape: never invent one (DESIGN_INTERFACE_SHAPE_UNKNOWN on every screen that uses it).',
+  "- An existing logo, icon or banner becomes a slot with provenance `observed`, status `proposed`; default slots with no file keep the engine's placeholders.",
+  '- Proposed criteria go through the consolidated specification change; they are scheduled to the first change phase, never to the conformance set.',
+];
+
+const SOURCE_FILES_MAX = 2000;
+const SOURCE_BYTES_MAX = 16 * 1024 * 1024;
+
+// A record's stored bytes (redacted at write), or null.
+async function readRecordBytes(rt: Runtime, record: string): Promise<Buffer | null> {
+  const row = await rt.read<{ path: string | null; published: number } | null>('record.row', { record });
+  if (!row || row.published !== 1 || row.path === null || !/^[A-Za-z0-9_]+$/.test(row.path)) return null;
+  try {
+    return await readFile(join(recordsDir(rt.home), row.path));
+  } catch {
+    return null;
+  }
+}
+
+// The design files of a review-mode or retrofit-mode Designer session's
+// package (D7 §3.4, §10.2, §10.5, §12; SEAM.md §§489, 523, 528).
+async function reviewPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage | null> {
+  const f = await rt.read<ReviewPackageFacts | null>('design.review_package_facts', { run });
+  if (!f) return null;
+  const json = (v: unknown) => Buffer.from(`${JSON.stringify(v, null, 2)}\n`);
+  const files: DesignPackage['files'] = [];
+  const prompt: string[] = [];
+  if (f.mode === 'review') {
+    files.push({ path: 'design/review.json', content: json({ subject: f.review.subject, design_revision: f.review.design_revision, first_design: f.review.first_design }) });
+  }
+  // The approved design, byte for byte.
+  if (f.approved) {
+    for (const p of f.approved.paths) {
+      if (!isSafeRelative(p)) continue;
+      const b = await blobAt(f.repo, f.approved.revision, `${DESIGN_ROOT}${p}`);
+      if (b) files.push({ path: `design/approved/${p}`, content: b });
+    }
+  }
+  // The UI source, read-only: every file under the ui modules' paths.
+  const omitted: string[] = [];
+  if (f.source) {
+    const ctx = repoContext(f.repo);
+    const tree = await treeOf(ctx, f.source.revision);
+    const entries = tree === null ? null : await listTree(ctx, tree);
+    let total = 0;
+    let count = 0;
+    for (const e of [...(entries?.values() ?? [])].sort((a, b) => a.path.localeCompare(b.path))) {
+      if (e.type !== 'blob' || !f.source.paths.some((m) => e.path === m || e.path.startsWith(m.endsWith('/') ? m : `${m}/`)) || !isSafeRelative(e.path)) continue;
+      if (count >= SOURCE_FILES_MAX || total >= SOURCE_BYTES_MAX) {
+        omitted.push(e.path);
+        continue;
+      }
+      const b = await blobAt(f.repo, f.source.revision, e.path);
+      if (!b) continue;
+      total += b.length;
+      count += 1;
+      files.push({ path: `design/source/${e.path}`, content: b });
+    }
+  }
+  const left = omitted.length > 0 ? ['', `Left out of design/source/ (past the package's bounds): ${omitted.length} file(s), the first ${omitted.slice(0, 20).join(', ')}.`] : [];
+  if (f.mode === 'retrofit') {
+    prompt.push('', ...RETROFIT_TEXT, ...left);
+    return { files, prompt };
+  }
+  files.push({ path: 'design/check-results.json', content: json(f.check_results) });
+  if (f.review.owner) {
+    const listed: Record<string, unknown>[] = [];
+    for (const e of f.evidence) {
+      const entry: Record<string, unknown> = { id: e.id, provenance: e.provenance, format: e.format, target: e.target, build_ref: e.build_ref, observed_on: e.observed_on, name: e.name };
+      // Screenshots as images; recordings by name only (D7 §10.5).
+      if (e.format !== null && SCREENSHOT_FORMATS.includes(e.format) && e.record) {
+        const bytes = await readRecordBytes(rt, e.record);
+        if (bytes) {
+          const path = `design/evidence/${e.id}.${e.format === 'jpeg' ? 'jpg' : e.format}`;
+          files.push({ path, content: bytes });
+          entry.file = path;
+        }
+      }
+      listed.push(entry);
+    }
+    files.push({ path: 'design/evidence.json', content: json({ evidence: listed }) });
+    prompt.push('', '## The review', '', ...OWNER_REVIEW_TEXT, ...left);
+    return { files, prompt };
   }
   const o = await observationsFor(rt, project, run);
-  const body = { observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) };
-  return { files: [{ path: 'design/observations.json', content: Buffer.from(`${JSON.stringify(body, null, 2)}\n`) }], prompt: ['', '## The review', '', ...REVIEW_TEXT] };
+  files.push({ path: 'design/observations.json', content: json({ observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) }) });
+  for (const ob of o.observations) {
+    if (!ob.record) continue;
+    const bytes = await readRecordBytes(rt, ob.record);
+    if (bytes) files.push({ path: `design/observations/${ob.evidence}`, content: bytes });
+  }
+  prompt.push('', '## The review', '', ...REVIEW_TEXT, ...left);
+  return { files, prompt };
 }
 
 // The package's design files, read from git (main thread).
 export async function designPackageFor(rt: Runtime, run: string): Promise<DesignPackage | null> {
-  const who = await rt.read<{ project: string; role: string; mode: string | null; owner_review: { subject: Record<string, unknown>; design_revision: string | null } | null } | null>('design.run_facts', { run });
-  if (who?.role === 'designer') return who.mode === 'review' ? reviewPackage(rt, who.project, run, who.owner_review) : null;
+  const who = await rt.read<{ project: string; role: string; mode: string | null } | null>('design.run_facts', { run });
+  if (who?.role === 'designer') return reviewPackage(rt, who.project, run);
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
   // What this package carries of the effective set, recorded for the

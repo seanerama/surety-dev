@@ -17,22 +17,30 @@ import type { Observation, ReviewTarget } from './review.js';
 const REVIEWS = '.surety/design/reviews/';
 
 // One GET of `route` from the application of `attempt`, through a tunnel:
-// {status, bytes, truncated}, or null when no tunnel opened.
-async function fetchRoute(rt: Runtime, attempt: string, route: string, maxBytes: number, timeoutMs: number): Promise<{ status: number | null; bytes: Buffer; truncated: boolean } | null> {
+// {status, bytes, truncated, reason}; `status` null with `reason` when no
+// answer came (no tunnel, a refusal, a timeout): never invented.
+async function fetchRoute(rt: Runtime, attempt: string, route: string, maxBytes: number, timeoutMs: number): Promise<{ status: number | null; bytes: Buffer; truncated: boolean; reason: string | null }> {
   const sock = await rt.deploy?.services?.openTunnel(attempt, timeoutMs);
-  if (!sock) return null;
+  if (!sock) return { status: null, bytes: Buffer.alloc(0), truncated: false, reason: 'no tunnel to the running application opened through the service link' };
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     let truncated = false;
+    let why: string | null = null;
+    let settled = false;
     const done = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       sock.destroy();
       const bytes = Buffer.concat(chunks);
       const m = /^HTTP\/1\.[01] (\d{3})/.exec(bytes.subarray(0, 64).toString('latin1'));
-      resolve({ status: m ? Number(m[1]) : null, bytes, truncated });
+      resolve({ status: m ? Number(m[1]) : null, bytes, truncated, reason: m ? null : (why ?? (bytes.length === 0 ? 'the application closed the connection without answering' : 'the answer is not an HTTP response')) });
     };
-    const timer = setTimeout(done, timeoutMs);
+    const timer = setTimeout(() => {
+      why = `no answer within ${Math.round(timeoutMs / 1000)} s`;
+      done();
+    }, timeoutMs);
     sock.on('data', (c: Buffer) => {
       if (size + c.length > maxBytes) {
         chunks.push(c.subarray(0, maxBytes - size));
@@ -45,7 +53,10 @@ async function fetchRoute(rt: Runtime, attempt: string, route: string, maxBytes:
       size += c.length;
     });
     sock.on('end', done);
-    sock.on('error', done);
+    sock.on('error', (err: NodeJS.ErrnoException) => {
+      why = `the connection failed (${err.code ?? err.message})`;
+      done();
+    });
     sock.write(`GET ${route} HTTP/1.1\r\nHost: localhost\r\nUser-Agent: surety-design-review\r\nAccept: */*\r\nConnection: close\r\n\r\n`);
   });
 }
@@ -55,28 +66,34 @@ export async function observationsFor(rt: Runtime, project: string, run: string)
   const made = await rt.read<Observation[]>('design.observations', { run });
   const target = await rt.read<ReviewTarget | null>('design.review_target', { project });
   if (made.length > 0) return { observations: made, not_observed: target?.not_observed ?? [], unobservable: null };
-  if (target === null) return { observations: [], not_observed: [], unobservable: 'no deployed service of this project runs supervised: nothing was observed' };
+  if (target === null) {
+    const not_observed = await rt.read<ReviewTarget['not_observed']>('design.not_observed', { project });
+    return { observations: [], not_observed, unobservable: 'no deployed service of this project runs supervised: nothing was observed' };
+  }
   await pausePoint('review.before_fetch');
   const timeoutMs = rt.config.values.service_link_connect_timeout * 1000;
+  // Bounded by the engine's adapter output bound (D7 §10.2; SEAM.md §526).
+  const maxBytes = rt.config.values.adapter_output_max_bytes;
   for (const r of target.routes) {
-    const got = await fetchRoute(rt, target.attempt, r.route, target.max_bytes, Math.max(timeoutMs, 5000)).catch((err) => {
+    const got = await fetchRoute(rt, target.attempt, r.route, maxBytes, Math.max(timeoutMs, 5000)).catch((err: Error) => {
       log('design review', err, { run, route: r.route });
-      return null;
+      return { status: null, bytes: Buffer.alloc(0), truncated: false, reason: `the fetch failed (${err.message})` };
     });
-    const bytes = got?.bytes ?? Buffer.alloc(0);
-    let record: string | null = null;
-    if (got !== null) record = await writeWholeRecord(rt, { project, run, kind: 'design_observation', content: bytes }).catch(() => null);
+    const bytes = got.bytes;
+    // Recorded through the redactor; the record holds what was answered, nothing else.
+    const record = bytes.length > 0 ? await writeWholeRecord(rt, { project, run, kind: 'design_observation', content: bytes }).catch(() => null) : null;
     await rt.engine('design.record_observation', {
       project,
       run,
       screen: r.screen,
       target: r.target,
       route: r.route,
-      status: got?.status ?? null,
+      status: got.status,
       bytes: bytes.length,
       digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
-      truncated: got?.truncated ?? false,
+      truncated: got.truncated,
       record,
+      reason: got.reason,
     });
   }
   await pausePoint('review.after_fetch');
