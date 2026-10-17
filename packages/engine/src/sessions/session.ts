@@ -1496,7 +1496,38 @@ function retrofitOf(db: Tx['db'], project: string): NonNullable<import('./packag
   return { pinned_revision: a.pinned_revision, mode: a.mode, paths: (a.tracked_paths ?? []).filter((p) => !p.startsWith('.surety/')), total: a.tracked_paths_total ?? { unknown: 'not recorded at adoption' } };
 }
 
-function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { name: string; blob: string; what: string }[] {
+function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { name: string; blob: string; what: string; text?: string }[] {
+  // D7 §3.4 (the slice-46 review's N8): the Designer works from the approved
+  // specification (its text, with its users and non-goals, and its
+  // representation), the approved architecture's module map, ADRs and prose,
+  // never a draft in the checkout; each target's runtime is in the inventory.
+  if (role === 'designer') {
+    const spec = db.prepare('SELECT v."version", v."git_blob", s."representation" FROM "spec_revisions" v LEFT JOIN "spec_semantics" s ON s."id" = v."semantics" WHERE v."project" = ? ORDER BY v."version" DESC LIMIT 1').get(project) as
+      | { version: number; git_blob: string; representation: string | null }
+      | undefined;
+    const arch = db.prepare('SELECT "version", "blobs" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number; blobs: string } | undefined;
+    const out: { name: string; blob: string; what: string; text?: string }[] = [];
+    if (spec) {
+      out.push({ name: 'spec.md', blob: spec.git_blob, what: `the approved specification, version ${spec.version}, its users and non-goals among it` });
+      out.push({
+        name: 'spec-representation.json',
+        blob: spec.git_blob,
+        what: `the approved specification's representation, version ${spec.version}, as the engine reads it`,
+        text: `${JSON.stringify(spec.representation === null ? { unknown: 'the representation of the approved specification was not recorded' } : JSON.parse(spec.representation), null, 2)}\n`,
+      });
+    }
+    let blobs: Record<string, string> = {};
+    try {
+      blobs = arch ? (JSON.parse(arch.blobs) as Record<string, string>) : {};
+    } catch {
+      blobs = {};
+    }
+    for (const [path, blob] of Object.entries(blobs).sort(([a], [b]) => a.localeCompare(b))) {
+      if (!/^\.surety\/(architecture|adrs)\/[A-Za-z0-9._/-]+$/.test(path) || path.includes('..')) continue;
+      out.push({ name: path.slice('.surety/'.length), blob, what: `the approved architecture, version ${arch!.version}: ${path}` });
+    }
+    return out;
+  }
   if (role === 'architect') {
     const spec = db.prepare('SELECT "version", "git_blob" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number; git_blob: string } | undefined;
     return spec ? [{ name: 'spec.md', blob: spec.git_blob, what: `the approved specification, version ${spec.version}` }] : [];

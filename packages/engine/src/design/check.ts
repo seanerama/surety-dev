@@ -99,7 +99,11 @@ export const NEUTRAL_TOKEN_KINDS = ['token_parity', 'contrast_aa'];
 // D7 A.2 NativeConvention: never a criterion in M6 (not_checkable_yet).
 export const NATIVE_CONVENTIONS = ['browser_back', 'keyboard_path', 'system_back', 'safe_area', 'permission_prompt', 'touch_interaction', 'platform_navigation', 'window_resize', 'menu_entries', 'keyboard_shortcuts'];
 
-export const MOCKUP_KINDS = ['static_html', 'scene_html', 'simulated_html', 'image', 'source_stub'] as const;
+// A screen's route: a request path the engine may ask the service for
+// (the slice-45 review's S1): "/" then printable ASCII, no space or control.
+export const ROUTE_PATTERN = /^\/[!-~]*$/;
+
+export const MOCKUP_KINDS =['static_html', 'scene_html', 'simulated_html', 'image', 'source_stub'] as const;
 export const NAV_KINDS = ['push', 'replace', 'modal', 'sheet', 'tab', 'back', 'deep_link', 'menu', 'shortcut', 'window'];
 export const DESIGN_FILES = ['design.json', 'tokens.json', 'flows.json', 'screens.json', 'navigation.json', 'criteria.json', 'assets/manifest.json'] as const;
 
@@ -224,7 +228,7 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     if (isObj(s.conventions)) {
       closed('screens.json', `${at}.conventions`, s.conventions, FIELDS.conventions);
       // A route is a request path the engine may ask for (the slice-45 review's S1).
-      if (s.conventions.route !== undefined && (typeof s.conventions.route !== 'string' || !/^\/[!-~]*$/.test(s.conventions.route))) {
+      if (s.conventions.route !== undefined && (typeof s.conventions.route !== 'string' || !ROUTE_PATTERN.test(s.conventions.route))) {
         schema('screens.json', `${at}.conventions.route`, 'must be a request path: "/" then printable characters, no space, CR, LF or control');
       }
       const allowed = CONVENTION_TARGETS[String(s.target)] ?? [];

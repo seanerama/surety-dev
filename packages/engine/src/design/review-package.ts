@@ -16,6 +16,7 @@ import { currentInventory } from './store.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import type { DesignCatalogueFacts, DesignChangeFacts, DesignerReadsFacts } from '../packages/design-reads.js';
 import { lastUiPhase } from './approval.js';
+import { mappedCriteria } from './criterion-map.js';
 
 type Db = Database.Database;
 
@@ -31,16 +32,10 @@ export interface ReviewPackageFacts {
   evidence: { id: string; provenance: string; format: string | null; target: string; observed_on: string | null; name: string | null; record: string | null; build_ref: string | null }[];
 }
 
-// The criterion ids of the approved design (by their text under their
-// requirement, as the Builder's package matches them).
-function designCriterionIds(db: Db, project: string, content: string | null): string[] {
-  const criteria = parseJson<{ criteria?: { criteria?: { requirement?: string; text?: string }[] } }>(content)?.criteria?.criteria ?? [];
-  const ids: string[] = [];
-  for (const c of criteria) {
-    const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, c.requirement ?? '') as { criteria_text: string | null } | undefined;
-    for (const t of parseJson<{ id: string; text: string }[]>(row?.criteria_text ?? null) ?? []) if (t.text.trim() === String(c.text ?? '').trim()) ids.push(t.id);
-  }
-  return [...new Set(ids)].sort();
+// The criterion ids of the approved design, as its approval mapped them
+// (criterion-map.ts; the slice-46 review's B1), never matched by text here.
+function designCriterionIds(db: Db, project: string): string[] {
+  return [...new Set((mappedCriteria(db, project)?.mapped ?? []).map((m) => m.id))].sort();
 }
 
 export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackageFacts | null {
@@ -68,7 +63,7 @@ export function reviewPackageFacts(db: Db, args: { run: string }): ReviewPackage
   const sourceAt = retrofit ? head : (named?.revision ?? null);
   const source = sourceAt !== null && uiPaths.length > 0 ? { revision: sourceAt, candidate: named?.id ?? null, paths: uiPaths } : null;
   // The design checks' latest results on the candidate (§10.2).
-  const ids = new Set(designCriterionIds(db, project, approved?.content ?? null));
+  const ids = new Set(designCriterionIds(db, project));
   const results: Record<string, unknown>[] = [];
   if (named && ids.size > 0) {
     const checks = db.prepare('SELECT DISTINCT c."id", c."key", c."criteria" FROM "check_results" r JOIN "checks" c ON c."id" = r."check" WHERE r."project" = ? AND r."candidate" = ?').all(project, named.id) as { id: string; key: string; criteria: string }[];
@@ -134,7 +129,10 @@ export function designChangeFacts(db: Db, request: string): DesignChangeFacts | 
   if (!content) return null;
   return {
     criteria: content.criteria?.criteria ?? [],
-    human_tests: (content.criteria?.human_tests ?? []).map((h) => ({ ...h, phase: lastUiPhase(db, row.project, String(h.target)).phase })),
+    human_tests: (content.criteria?.human_tests ?? []).map((h) => {
+      const at = lastUiPhase(db, row.project, String(h.target));
+      return { ...h, phase: at.phase, ...(at.phase === null ? { phase_reason: at.reason ?? 'the phase cannot be determined' } : {}) };
+    }),
   };
 }
 
@@ -145,28 +143,24 @@ export function designChangeFacts(db: Db, request: string): DesignChangeFacts | 
 // technologies and the implemented paths it names. [] when no design is
 // approved.
 export function designCatalogueFacts(db: Db, project: string): DesignCatalogueFacts {
-  const rev = db
-    .prepare(`SELECT "content" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`)
-    .get(project) as { content: string | null } | undefined;
-  const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[] } }>(rev?.content ?? null);
+  const m = mappedCriteria(db, project);
+  if (!m) return { criteria: [], unmatched: [] };
   const inv = currentInventory(db, project)?.inventory ?? null;
   const techOf = (t: string): string | null => inv?.targets.find((x) => x.target === t)?.ui_technology ?? null;
-  const out: DesignCatalogueFacts['criteria'] = [];
-  for (const c of content?.criteria?.criteria ?? []) {
-    const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, String(c.requirement ?? '')) as { criteria_text: string | null } | undefined;
-    const match = (parseJson<{ id: string; text: string }[]>(row?.criteria_text ?? null) ?? []).find((t) => t.text.trim() === String(c.text ?? '').trim());
-    if (!match) continue;
-    const targets = Array.isArray(c.targets) ? (c.targets as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-    const technologies = [...new Set(targets.map(techOf).filter((x): x is string => x !== null))];
-    out.push({
-      id: match.id,
-      kind: String(c.kind),
-      targets,
-      ...(technologies.length > 0 ? { technologies } : {}),
-      paths: Array.isArray(c.paths) ? (c.paths as unknown[]).filter((x): x is string => typeof x === 'string') : [],
-      ...(typeof c.slot === 'string' ? { slot: c.slot } : {}),
-      ...(typeof c.variant === 'string' ? { variant: c.variant } : {}),
-    });
-  }
-  return { criteria: out };
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  return {
+    criteria: m.mapped.map((e) => {
+      const technologies = [...new Set(e.targets.map(techOf).filter((x): x is string => x !== null))];
+      return {
+        id: e.id,
+        kind: e.kind,
+        targets: e.targets,
+        ...(technologies.length > 0 ? { technologies } : {}),
+        paths: strings(e.criterion.paths),
+        ...(typeof e.criterion.slot === 'string' ? { slot: e.criterion.slot } : {}),
+        ...(typeof e.criterion.variant === 'string' ? { variant: e.criterion.variant } : {}),
+      };
+    }),
+    unmatched: m.unmatched,
+  };
 }

@@ -27,6 +27,7 @@ import { recordsDir } from '../records/files.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeRelative, isSlug } from './paths.js';
+import { mappedCriteria } from './criterion-map.js';
 import { type PackageName, type ReadsElement, statedElements } from '../packages/reads.js';
 import { type DesignerReadsFacts, designerElements, designerRetrofitElement, designerReviewElement } from '../packages/design-reads.js';
 
@@ -42,6 +43,8 @@ export interface DesignPackageFacts {
   fixtures: string[];
   effective: { slot: string; variant: string; slot_version: number; source: string; digest: string; format: string; revision: string; file: string; declared_path?: string }[];
   criteria: { id: string; kind: string; targets: string[]; paths?: string[]; slot?: string; variant?: string }[];
+  // The design criteria of the stage's requirements the approval could not map.
+  unmatched?: { index: number; requirement: string; kind: string; text: string; why: string }[];
   // An asset_updated fix: what it is to update.
   asset_update?: Record<string, unknown> | null;
 }
@@ -119,27 +122,26 @@ export function designPackageFacts(db: Database.Database, args: { run: string })
       const d = declared.find((a) => a.slot === e.slot && a.variant === e.variant && targets.includes(a.target));
       return { slot: e.slot, variant: e.variant, slot_version: e.slot_version, source: e.source, digest: e.digest, format: e.format, revision: e.revision, file: e.file, ...(d ? { declared_path: d.path } : {}) };
     });
-  // The design criteria the stage's requirements carry, by their spec ids:
-  // each criterion of criteria.json under one of them, matched by its text.
-  const reqs = db.prepare('SELECT "key", "criteria_text" FROM "requirements" WHERE "project" = ?').all(run.project) as { key: string; criteria_text: string | null }[];
+  // The design criteria the stage's requirements carry, by the spec ids the
+  // approval mapped (criterion-map.ts; the slice-46 review's B1); those it
+  // could not map, stated as unmatched.
   const criteria: DesignPackageFacts['criteria'] = [];
-  for (const c of content.criteria?.criteria ?? []) {
-    const req = String(c.requirement);
-    if (fix || !requirementKeys.includes(req)) continue;
-    const texts = parseJson<{ id: string; text: string }[]>(reqs.find((r) => r.key === req)?.criteria_text ?? null) ?? [];
-    const match = texts.find((t) => t.text.trim() === String(c.text).trim());
-    if (!match) continue;
+  const mapped = fix ? null : mappedCriteria(db, run.project);
+  for (const e of mapped?.mapped ?? []) {
+    if (!requirementKeys.includes(e.requirement_key)) continue;
+    const c = e.criterion;
     criteria.push({
-      id: match.id,
-      kind: String(c.kind),
-      targets: Array.isArray(c.targets) ? (c.targets as string[]) : [],
+      id: e.id,
+      kind: e.kind,
+      targets: e.targets,
       ...(Array.isArray(c.paths) ? { paths: c.paths as string[] } : {}),
       ...(typeof c.slot === 'string' ? { slot: c.slot } : {}),
       ...(typeof c.variant === 'string' ? { variant: c.variant } : {}),
     });
   }
+  const unmatched = (mapped?.unmatched ?? []).filter((u) => u.requirement === 'new' || requirementKeys.includes(u.requirement));
   const repo = (db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(run.project) as { dev_repo_path: string }).dev_repo_path;
-  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(fix ? { asset_update: subject as Record<string, unknown> } : {}) };
+  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(unmatched.length > 0 ? { unmatched } : {}), ...(fix ? { asset_update: subject as Record<string, unknown> } : {}) };
 }
 
 const REVIEW_TEXT = [
@@ -248,7 +250,7 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     prompt.push('', '## The review', '', ...OWNER_REVIEW_TEXT, ...left);
     const build_ref = typeof f.review.subject.build_ref === 'string' ? f.review.subject.build_ref : null;
     const owner = { build_ref, evidence: listed.map((e) => ({ id: String(e.id), name: (e.name as string | null) ?? null, format: (e.format as string | null) ?? null, observed_on: (e.observed_on as string | null) ?? null, ...(typeof e.file === 'string' ? { file: e.file } : {}) })) };
-    return { files, prompt, mode: 'review', built: designerReviewElement({ owner, observations: [] }) };
+    return { files, prompt, mode: 'review', built: designerReviewElement({ owner, observations: [], present: { approved: f.approved !== null, source: included.length > 0 } }) };
   }
   const o = await observationsFor(rt, project, run);
   files.push({ path: 'design/observations.json', content: json({ observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) }) });
@@ -258,7 +260,7 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     if (bytes) files.push({ path: `design/observations/${ob.evidence}`, content: bytes });
   }
   prompt.push('', '## The review', '', ...REVIEW_TEXT, ...left);
-  return { files, prompt, mode: 'review', built: designerReviewElement({ owner: null, observations: o.observations as unknown as Record<string, unknown>[] }) };
+  return { files, prompt, mode: 'review', built: designerReviewElement({ owner: null, observations: o.observations as unknown as Record<string, unknown>[], present: { approved: f.approved !== null, source: included.length > 0 } }) };
 }
 
 // A Designer session's package (D7 §3.4; E151; M537): the elements every
@@ -304,7 +306,7 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
       const b = await at(p);
       if (b) files.push({ path: `design/${p}`, content: b });
     }
-    files.push({ path: 'design/criteria.json', content: json({ criteria: f.criteria }) });
+    files.push({ path: 'design/criteria.json', content: json({ criteria: f.criteria, ...(f.unmatched ? { unmatched: f.unmatched } : {}) }) });
   }
   const listed: Record<string, unknown>[] = [];
   for (const e of f.effective) {

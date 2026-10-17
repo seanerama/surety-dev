@@ -20,7 +20,7 @@ const dist = join(root, 'dist');
 const D = await import(join(dist, 'packages', 'design-reads.js'));
 const { statedElements } = await import(join(dist, 'packages', 'reads.js'));
 const { PACKAGE_ELEMENTS, elementListing } = await import(join(dist, 'packages', 'elements.js'));
-const { FIELDS, CONVENTION_TARGETS, CRITERION_CATALOGUE } = await import(join(dist, 'design', 'check.js'));
+const { FIELDS, CONVENTION_TARGETS, CRITERION_CATALOGUE, ROUTE_PATTERN } = await import(join(dist, 'design', 'check.js'));
 const { requiredConventions } = await import(join(dist, 'design', 'inventory.js'));
 const { writeSessionPackage } = await import(join(dist, 'sessions', 'package.js'));
 
@@ -134,4 +134,55 @@ test('the Verifier\'s design catalogue: the criteria with their paths, the progr
   assert.equal(d.asset_inputs.variable, 'SURETY_ASSET_<SLOT>_<VARIANT>');
   assert.deepEqual(d.kinds.map((k) => k.kind).sort(), Object.keys(CRITERION_CATALOGUE).sort());
   assert.equal(D.verifierDesignElements(null)['verifier.design_catalogue'], undefined);
+  assert.deepEqual(d.unmatched, [], 'unmatched stated, empty when every criterion was mapped');
+  const u = { index: 1, requirement: 'R9', kind: 'contrast_aa', text: 't', why: 'w' };
+  assert.deepEqual(D.verifierDesignElements({ criteria: [], unmatched: [u], programs: [] })['verifier.design_catalogue'].data.unmatched, [u]);
+});
+
+// ---- the slice-46 review's fixes ----------------------------------------------------------------
+
+test('S3: the route rule is stated, in the screens schema and in designer.conventions, as the check reads it', () => {
+  const b = D.designerElements(FACTS);
+  const screens = b['designer.schemas'].data.schemas.find((s) => s.file === '.surety/design/screens.json').schema;
+  const route = screens.properties.screens.items.properties.conventions.properties.route;
+  assert.deepEqual([route.type, route.pattern], ['string', ROUTE_PATTERN.source]);
+  assert.equal(b['designer.conventions'].data.route.pattern, ROUTE_PATTERN.source);
+  assert.ok(new RegExp(route.pattern).test('/items?x=1') && !new RegExp(route.pattern).test('/a b'));
+});
+
+test("S4: review mode: the owner's observed_on is his word; only the files the mode holds are named, null for the others", () => {
+  const owner = D.designerReviewElement({ owner: { build_ref: 'b 1', evidence: [{ id: 'dev_1', name: 'phone.png', format: 'png', observed_on: 'device', file: 'design/evidence/dev_1.png' }] }, observations: [], present: { approved: true, source: false } })['designer.review'].data;
+  assert.deepEqual(owner.owner.evidence[0].observed_on, { value: 'device', provenance: 'owner_reported' });
+  assert.equal(owner.owner.evidence[0].provenance, 'owner_supplied');
+  assert.deepEqual(owner.files, { review: 'design/review.json', approved: 'design/approved/', source: null, check_results: 'design/check-results.json', observations: null, evidence: 'design/evidence.json' });
+  const alpha = D.designerReviewElement({ owner: null, observations: [], present: { approved: false, source: true } })['designer.review'].data;
+  assert.deepEqual([alpha.files.approved, alpha.files.source, alpha.files.observations, alpha.files.evidence], [null, 'design/source/', 'design/observations.json', null]);
+});
+
+test("N1, N2: with no inventory what depends on it is unknown; the defaults are also stated in the selection's own shape, narrowing nothing", () => {
+  const none = D.designerElements({ ...FACTS, inventory: null });
+  for (const v of [none['designer.mockup_kinds'].data.capabilities, none['designer.layouts'].data.targets, none['designer.selection_floor'].data.defaults, none['designer.selection_floor'].data.floor.per_target]) assert.equal(typeof v.unknown, 'string');
+  const ios = { ...INVENTORY.targets[1], module: 'ios', target: 'ios', required_slots: [{ kind: 'logo', variants: ['full'] }, { kind: 'app_icon', variants: ['default'] }, { kind: 'splash', variants: ['default'] }] };
+  const android = { ...INVENTORY.targets[1], required_slots: [{ kind: 'logo', variants: ['full'] }, { kind: 'app_icon', variants: ['default', 'adaptive_foreground'] }] };
+  const sel = D.designerElements({ ...FACTS, inventory: { ...INVENTORY, targets: [android, ios] } })['designer.selection_floor'].data.defaults.selection;
+  assert.deepEqual(sel.slots, [{ kind: 'logo', variants: ['full'] }, { kind: 'app_icon', variants: ['default', 'adaptive_foreground'] }, { kind: 'splash', variants: ['default'] }]);
+  assert.deepEqual(sel.themes, ['light', 'dark']);
+});
+
+test('N3: the external URL and simulation rules say what the check reads, no more', () => {
+  const b = D.designerElements(FACTS);
+  assert.doesNotMatch(b['designer.external_urls'].data.rule, /https/);
+  assert.match(b['designer.external_urls'].data.rule, /external_urls/);
+  assert.match(b['designer.mockup_kinds'].data.simulation.rule, /simulates\.target/);
+  assert.match(b['designer.mockup_kinds'].data.kinds.find((k) => k.kind === 'scene_html').capability, /three_js/);
+});
+
+test('N5, N8: a human test with no phase says why; an approved input the engine gives as text is written as it is', (t) => {
+  const d = D.designChangeElements({ criteria: [], human_tests: [{ target: 'web', text: 'x', screens: [], not_checkable_yet: [], phase: null, phase_reason: 'the project has no roadmap yet' }] })['spec_writer.design_change'].data;
+  assert.equal(d.human_tests[0].phase_reason, 'the project has no roadmap yet');
+  const dir = scratch(t);
+  const facts = { run: 'run_d', project: 'prj_1', role: 'designer', turn: 1, paths: ['.surety/design/'], transcript: [], findings: [], approved: [{ name: 'spec-representation.json', blob: 'b1', what: 'the representation', text: '{"requirements":[]}\n' }, { name: 'architecture/modules.json', blob: 'b2', what: 'the module map' }], retrofit: null };
+  writeSessionPackage(dir, { run: 'run_d' }, facts, new Map([['b2', '{"version":1}\n']]), null, null, { files: [], prompt: [], reads: { pkg: 'designer', elements: [] } });
+  assert.equal(read(dir, 'approved/spec-representation.json'), '{"requirements":[]}\n');
+  assert.equal(read(dir, 'approved/architecture/modules.json'), '{"version":1}\n');
 });

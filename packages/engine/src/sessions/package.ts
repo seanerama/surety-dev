@@ -37,7 +37,8 @@ export interface SessionContextFacts {
   // The approved inputs the role reads by their bindings (D6 §3.5; B02): the
   // Spec Writer the accepted idea record, the Architect the approved
   // specification; never a newer checkpoint of the same file.
-  approved: { name: string; blob: string; what: string }[];
+  // `text`: an input the engine gives as it holds it, not a blob.
+  approved: { name: string; blob: string; what: string; text?: string }[];
   // D6 §8.2: an adopted project's sessions run in retrofit mode.
   retrofit?: { pinned_revision: string; mode: string | null; paths: string[]; total: number | { unknown: string } } | null;
   // The Architect's: what its plan must name in `prepared_against`
@@ -186,7 +187,7 @@ export function writeSessionPackage(
   put('transcript.json', 'transcript', `${JSON.stringify(facts.transcript === null ? { unknown: 'the transcript record cannot be read' } : facts.transcript, null, 2)}\n`);
   put('notes.json', 'instructions', `${JSON.stringify({ findings: facts.findings }, null, 2)}\n`);
   for (const a of facts.approved) {
-    const text = texts.get(a.blob) ?? null;
+    const text = a.text ?? texts.get(a.blob) ?? null;
     put(`approved/${a.name}`, 'approved', text ?? `The ${a.what} (blob ${a.blob}) could not be read; it is unknown to this package.\n`);
   }
   // The artifact's current state (D6 §2.2; M416 (f)): each file of the

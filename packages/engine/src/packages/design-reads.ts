@@ -24,6 +24,7 @@ import {
   PACKAGING_STATUSES,
   REVIEW_FIELDS,
   REVIEW_VERDICTS,
+  ROUTE_PATTERN,
   SUBJECT_KINDS,
 } from '../design/check.js';
 import { AA_RATIO } from '../design/contrast.js';
@@ -211,7 +212,11 @@ function schemas(): Record<string, Schema> {
   });
   const CONVENTIONS_SCHEMA = fieldsOf(
     FIELDS.conventions,
-    Object.fromEntries(FIELDS.conventions.map((c) => [c, free(`applies to ${Object.keys(CONVENTION_TARGETS).filter((t) => CONVENTION_TARGETS[t]!.includes(c)).join(', ')}`)])),
+    {
+      ...Object.fromEntries(FIELDS.conventions.map((c) => [c, free(`applies to ${Object.keys(CONVENTION_TARGETS).filter((t) => CONVENTION_TARGETS[t]!.includes(c)).join(', ')}`)])),
+      // The one convention value the check reads by form (S3).
+      route: { type: 'string', pattern: ROUTE_PATTERN.source, description: 'a request path: "/" then printable ASCII, no space or control (applies to web)' },
+    },
     [],
     "the screen's conventions: only those of its target (designer.conventions)",
   );
@@ -424,6 +429,9 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
   if (f === null) return {};
   const inv = f.inventory;
   const targets = inv?.targets ?? [];
+  // With no inventory, what depends on it is unknown, never empty (N1).
+  const noInventory = { unknown: 'the project has no interface inventory yet' };
+  const perTarget = <T>(make: () => T): T | typeof noInventory => (inv ? make() : noInventory);
   const out: Built = {};
   if (inv) {
     out['designer.inventory'] = {
@@ -467,6 +475,7 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
         const ifPermissions = withPerm.filter((c) => !without.includes(c));
         return { target: t, fields: [...(CONVENTION_TARGETS[t] ?? [])], required: without, ...(ifPermissions.length > 0 ? { if_permissions: ifPermissions[0] } : {}), not_checkable_yet: [...(NOT_CHECKABLE_CONVENTIONS[t] ?? [])] };
       }),
+      route: { field: 'route', type: 'string', pattern: ROUTE_PATTERN.source, rule: 'a web screen\'s route is a request path the engine may ask the service for: "/" then printable ASCII, no space or control (DESIGN_SCHEMA_INVALID otherwise)' },
       cross_platform: { difference: ['target', 'what', 'why'], reason: 'DESIGN_TARGET_DIVERGENCE_UNSTATED', rule: "In a cross-platform design every flow step has a screen on every target, or design.json's cross_platform.differences states, per target, what differs and why." },
     },
   };
@@ -487,7 +496,7 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
     data: {
       kinds: [
         { kind: 'static_html', what: 'an HTML page of a web screen', targets: ['web'], capability: 'native' },
-        { kind: 'scene_html', what: 'an HTML page of a three_js web scene', targets: ['web'], technologies: ['three_js'], capability: 'native' },
+        { kind: 'scene_html', what: 'an HTML page of a web scene', targets: ['web'], technologies: ['three_js'], capability: 'any: admitted for a web target whose technology is three_js' },
         { kind: 'simulated_html', what: 'an HTML drawing of a non-web screen, declared a simulation', capability: 'simulated' },
         { kind: 'image', what: 'an image of the screen', capability: 'any' },
         { kind: 'source_stub', what: 'a source file of the screen, never run', capability: 'any' },
@@ -497,17 +506,29 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
         kind: 'simulated_html',
         declares: 'simulates',
         reason: 'DESIGN_SIMULATION_UNDECLARED',
-        rule: 'An HTML mockup of a non-web target is a simulation and must be declared one: kind simulated_html, with simulates naming its target (and its form factor and layout). It is never the native behaviour.',
+        rule: "An HTML mockup of a non-web target is a simulation and must be declared one: a mockup of a non-web screen is simulated_html, image or source_stub, and a simulated_html mockup's simulates names its target (simulates.target; a form factor and a layout may follow, unchecked). It is never the native behaviour.",
       },
-      capabilities: targets.map((t) => ({ module: t.module, target: t.target, preview_capability: t.preview_capability })),
+      capabilities: perTarget(() => targets.map((t) => ({ module: t.module, target: t.target, preview_capability: t.preview_capability }))),
     },
   };
   out['designer.selection_floor'] = {
     id: 'designer.selection_floor',
     gloss: "design.json's selection starts from these defaults. You may narrow it, never below the floor; a narrowing is the owner's to accept at design_approval.",
     data: {
-      defaults: { themes: ['light', 'dark'], slots: targets.flatMap((t) => t.required_slots.map((s) => ({ target: t.target, kind: s.kind, variants: [...s.variants] }))) },
-      floor: { themes: 1, layouts_per_target: 1, logo_variants: 1, per_target: targets.map((t) => ({ target: t.target, kind: t.target === 'web' ? 'favicon' : 'app_icon', variants: 1 })) },
+      defaults: perTarget(() => ({
+        themes: ['light', 'dark'],
+        // Per target, as the inventory derives them.
+        slots: targets.flatMap((t) => t.required_slots.map((s) => ({ target: t.target, kind: s.kind, variants: [...s.variants] }))),
+        // The same defaults in design.json's own selection shape (per kind,
+        // the union over the targets; the layouts per target): written as
+        // it is, it narrows nothing.
+        selection: {
+          themes: ['light', 'dark'],
+          slots: [...new Set(targets.flatMap((t) => t.required_slots.map((s) => s.kind)))].map((kind) => ({ kind, variants: [...new Set(targets.flatMap((t) => t.required_slots.filter((s) => s.kind === kind).flatMap((s) => s.variants)))] })),
+          layouts: targets.map((t) => ({ target: t.target, layouts: [...t.layouts] })),
+        },
+      })),
+      floor: { themes: 1, layouts_per_target: 1, logo_variants: 1, per_target: perTarget(() => targets.map((t) => ({ target: t.target, kind: t.target === 'web' ? 'favicon' : 'app_icon', variants: 1 }))) },
       reason: 'DESIGN_SELECTION_BELOW_FLOOR',
       narrowing: 'Each theme, slot variant or layout the selection leaves out of the defaults is listed as a narrowing in the design approval; the owner accepts it by approving.',
     },
@@ -520,14 +541,14 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
       allowlist: [...f.allowlist],
       version_pattern: '@<major>.<minor>.<patch>',
       reason: 'DESIGN_EXTERNAL_URL_UNPINNED',
-      rule: `Each URL is https, its host in the allowlist (the project's design_external_urls${f.allowlist.length === 0 ? ': none, so no external URL is allowed' : ''}), and its path names an exact version, @<major>.<minor>.<patch>.`,
+      rule: `Every URL a mockup lists in its external_urls has its host in the allowlist (the project's design_external_urls${f.allowlist.length === 0 ? ': none, so no external URL is allowed' : ''}) and holds an exact version, @<major>.<minor>.<patch>; the check reads the list, not the mockup's markup.`,
     },
   };
   out['designer.layouts'] = {
     id: 'designer.layouts',
     gloss: "Each screen declares every selected layout of its target. These are the layouts the inventory derived from the project's widths and orientations.",
     data: {
-      targets: targets.map((t) => ({ module: t.module, target: t.target, layouts: [...t.layouts] })),
+      targets: perTarget(() => targets.map((t) => ({ module: t.module, target: t.target, layouts: [...t.layouts] }))),
       widths: [...f.widths],
       orientations: [...f.orientations],
       rule: "Every screen declares every selected layout of its target in its layouts (DESIGN_LAYOUT_UNCOVERED); web's are the widths, android's and ios's each form factor in each orientation, a desktop target's none until you declare its window.",
@@ -541,6 +562,8 @@ export function designerElements(f: DesignerReadsFacts | null): Built {
 export interface DesignerReviewFacts {
   owner: { build_ref: string | null; evidence: { id: string; name: string | null; format: string | null; observed_on: string | null; file?: string }[] } | null;
   observations: Record<string, unknown>[];
+  // Which of the mode's files this package holds (the slice-46 review's S4).
+  present: { approved: boolean; source: boolean };
 }
 export function designerReviewElement(f: DesignerReviewFacts): Built {
   return {
@@ -548,13 +571,16 @@ export function designerReviewElement(f: DesignerReviewFacts): Built {
       id: 'designer.review',
       gloss: 'A review session: what the package holds of the build, where each item came from, and what you write (B.14). Every verdict is a proposal; the owner confirms it.',
       data: {
+        // The files this package holds; null for one its mode does not have
+        // (an owner-invoked review has no engine observation, a review at
+        // Alpha no owner evidence; no approved design, no UI source).
         files: {
           review: 'design/review.json',
-          approved: 'design/approved/',
-          source: 'design/source/',
+          approved: f.present.approved ? 'design/approved/' : null,
+          source: f.present.source ? 'design/source/' : null,
           check_results: 'design/check-results.json',
-          observations: 'design/observations.json',
-          evidence: 'design/evidence.json',
+          observations: f.owner ? null : 'design/observations.json',
+          evidence: f.owner ? 'design/evidence.json' : null,
         },
         provenance: {
           engine_observed: 'the engine fetched it itself from the running service (a web screen with a route), and recorded the bytes',
@@ -566,7 +592,15 @@ export function designerReviewElement(f: DesignerReviewFacts): Built {
         owner: f.owner
           ? {
               build_ref: { value: f.owner.build_ref, provenance: 'owner_reported' },
-              evidence: f.owner.evidence.map((e) => ({ id: e.id, name: e.name, provenance: 'owner_supplied', format: e.format, observed_on: e.observed_on, ...(e.file ? { file: e.file } : {}) })),
+              // The file is the owner's (owner_supplied); where he says he saw it is his word (owner_reported).
+              evidence: f.owner.evidence.map((e) => ({
+                id: e.id,
+                name: e.name,
+                provenance: 'owner_supplied',
+                format: e.format,
+                observed_on: e.observed_on === null ? null : { value: e.observed_on, provenance: 'owner_reported' },
+                ...(e.file ? { file: e.file } : {}),
+              })),
             }
           : null,
         observations: f.observations,
@@ -598,6 +632,9 @@ export interface DesignCatalogueFacts {
   // The design criteria of the specification with their implemented paths,
   // [] when no design is approved.
   criteria: { id: string; kind: string; targets: string[]; technologies?: string[]; paths: string[]; slot?: string; variant?: string }[];
+  // The approved design's criteria its approval could not map to a
+  // specification id (criterion-map.ts), stated, never omitted.
+  unmatched?: { index: number; requirement: string; kind: string; text: string; why: string }[];
   // The programs the governed file's check_commands names, which a
   // definition's command names first; null when the governed values cannot
   // be read (unknown, never none).
@@ -613,6 +650,7 @@ export function verifierDesignElements(f: DesignCatalogueFacts | null): Built {
       data: {
         kinds: catalogueKinds(),
         criteria: f.criteria,
+        unmatched: f.unmatched ?? [],
         command: {
           member: 'command',
           programs: f.programs ?? null,
@@ -628,7 +666,7 @@ export function verifierDesignElements(f: DesignCatalogueFacts | null): Built {
 
 export interface DesignChangeFacts {
   criteria: Record<string, unknown>[];
-  human_tests: (Record<string, unknown> & { phase: number | null })[];
+  human_tests: (Record<string, unknown> & { phase: number | null; phase_reason?: string })[];
 }
 export function designChangeElements(f: DesignChangeFacts | null): Built {
   if (f === null) return {};
@@ -652,7 +690,7 @@ export function designChangeElements(f: DesignChangeFacts | null): Built {
           surface: `${SPEC_MARKS.surface} (<target>)`,
           mark: SPEC_MARKS.human_test,
           text: "the human test's text, after the mark; no criteria",
-          phase: "its Phase in the index: the human test's phase above (the phase that holds the target's last UI stage); empty where it is null",
+          phase: "its Phase in the index: the human test's phase above (the phase that holds the target's last UI stage); empty where it is null, phase_reason saying why",
           change_kind: 'added',
         },
       },
