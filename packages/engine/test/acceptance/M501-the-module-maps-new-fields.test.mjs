@@ -126,11 +126,11 @@ describe('M501 B.3\'s new fields', () => {
     const withBindings = await addItem(fx, p.id, 'fix');
     fx.scripted.script(withBindings, [roleThat([write(1)], { asset_bindings: [] })]);
     const a = await runToEnd(fx, p.id, withBindings);
-    assert.deepEqual([a.outcome, a.reason_class], ['completed', null], `with asset_bindings: accepted (${a.reason_text})`);
+    assert.deepEqual([a.outcome, a.reason_class], ['completed', 'none'], `with asset_bindings: accepted (${a.reason_text})`);
     const without = await addItem(fx, p.id, 'fix');
     fx.scripted.script(without, [roleThat([write(2)])]);
     const b = await runToEnd(fx, p.id, without);
-    assert.deepEqual([b.outcome, b.reason_class], ['completed', null], `without: accepted (${b.reason_text})`);
+    assert.deepEqual([b.outcome, b.reason_class], ['completed', 'none'], `without: accepted (${b.reason_text})`);
     const unknown = await addItem(fx, p.id, 'fix');
     fx.scripted.script(unknown, [roleThat([write(3)], { asset_bindings: [{ slot: 'logo', variant: 'full', target: 'web', path: 'src/f3.js', form: 'copy', colour: 'blue' }] })]);
     const c = await runToEnd(fx, p.id, unknown);

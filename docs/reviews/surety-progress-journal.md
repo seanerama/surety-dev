@@ -548,3 +548,73 @@ Main `360bd1a`; Builder `build/m3-s16` remains at `3f067d1`, with uncommitted fi
 
 - Builder now passes the scripted result's runner label explicitly through the transition while the harness supplies `test_fixture` (objection 025/E92); the unit expectation follows it. These are uncommitted edits, with no new recorded validation, and do not resolve the outstanding acceptance objections. Latest recorded unit evidence remains 345 passes.
 - The existing Builder cumulative log, still labelled slice 15, has advanced through M134 and into M135 without a final summary (`acceptance-slice15-2026-10-07T16-17-32-171Z.log`); no completed current-revision M206–M209 acceptance evidence observed. E93 remains the latest erratum; no new material conformance gap established. Existing slice-18 qualification/recovery and slice-22 real-role boundaries remain. Recorded logs were read only, not rerun; this brief review ran no tests, builds or model/backend calls.
+
+
+## 2026-10-16 23:25:07 CDT — 30-minute progress watcher
+
+- Baseline: main `06135a2`; recent commits: 06135a2 Merge verify/m6-s39 at f938b5f: M542 to M546 written, each failing on main for its defect; the shared seed's switch waits for live runs; M335's unit read confined to its home (SEAM §; e55bce2 Merge spec/m6-draft-1 at fd6de2e: the M6 build spec and acceptance plan, draft 2, adopted by Sean (E156); the runner's rows M501 to M546, the manifest's slices 39 to 46, COVERAGE's s; 065a2dc E155: D8 draft 2 with questions 1 to 11 decided as the reviewer recommended (Q12 and placement open); D7 §17 reconciled with D8; the brief; M6 begins.
+- Tracking 55 repository worktrees; later entries report changes since this baseline.
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-16 23:30:02 CDT — 30-minute progress watcher
+
+- Worktree activity: `verify/m6-s40` at `a4ec169` (0 dirty entries).
+- Reported issue/disposition updated: [125-M504-one-invalid-input-obligation-per-interface.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a8b97f58713e57284/docs/acceptance/objections/125-M504-one-invalid-input-obligation-per-interface.md) — 125: B.9 cannot hold one 'invalid_input' obligation per property; M504 (b) pins one per interface (`verify/m6-s40`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [126-M536-design-due-open-and-the-no-silent-hold-invariant.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a8b97f58713e57284/docs/acceptance/objections/126-M536-design-due-open-and-the-no-silent-hold-invariant.md) — 126: answering 'design_due' 'open' cannot both consume the question and keep a held stage named by an open one (`verify/m6-s40`; recorded claim, not independently verified).
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 00:00:03 CDT — 30-minute progress watcher
+
+- Main: `06135a2` → `4481e0c`; 1 commits: 4481e0c Merge verify/m6-s40 at a4ec169: slice 40's cases (M536 the design journey, M501 to M505, M507, M509), failing on main at the missing design policy and fields; objections 125 and 126….
+- Worktree activity: `main` at `4481e0c` (4 dirty entries); `build/m6-s40` at `4481e0c` (16 dirty entries, new worktree); `verify/m6-s41` at `4481e0c` (11 dirty entries, new worktree); `build/m6-s39` at `6f7a140` (0 dirty entries).
+- Reported issue/disposition updated: [130-M538-the-options-of-a-designer-finding.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a0b4a2d011b72653e/docs/acceptance/objections/130-M538-the-options-of-a-designer-finding.md) — 130: a Designer's 'contract_conflict' finding has no check to correct and no work item to retry; M538 (d) pins only 'change_spec' and 'architect' (`verify/m6-s41`; recorded claim, not independently verified).
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 00:30:00 CDT — 30-minute progress watcher
+
+- Main: `4481e0c` → `0119ac0`; 2 commits: 0119ac0 Merge verify/m6-s42 at 38469b0: slice 42's cases (M510, M511, M520 kernel and through the preview unit), failing on main at the design policy key and the reservation; objection 135; ee9af2f Merge verify/m6-s41 at 04dc0f2: slice 41's cases (M538, M532, M506, M521, M524, M533), failing on main at the design policy key; objection 130.
+- Worktree activity: `main` at `0119ac0` (4 dirty entries); `build/m6-s40` at `4481e0c` (40 dirty entries); `verify/m6-s42` at `38469b0` (0 dirty entries, new worktree); `verify/m6-s41` at `04dc0f2` (0 dirty entries); 2 more changed.
+- Reported issue/disposition updated: [135-M510-the-preview-unit-name-carries-no-project.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a322f09b8017937f1/docs/acceptance/objections/135-M510-the-preview-unit-name-carries-no-project.md) — 135: the preview's unit name 'surety-<h>-design-preview-g<n>.service' carries no project, so two projects' previews in one home share one name (`verify/m6-o135`; recorded claim, not independently verified).
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 01:00:01 CDT — 30-minute progress watcher
+
+- Main: `0119ac0` → `95e8185`; 2 commits: 95e8185 Merge verify/m6-o135 at 9f768bd: the preview's unit read from its design-preview environment's id (D4 §9.3), under the guard's env_ prefix; objection 135 decided (b); 604ab22 BS6 §4.1 rule 1 and the M6 plan: the preview's unit named from its environment's id as D4 §9.3 (objection 135, decided by the driver under Sean's delegation; E157 to record).
+- Worktree activity: `main` at `95e8185` (4 dirty entries); `build/m6-s40` at `c8257a6` (29 dirty entries); `build/m6-s39` at `e4044fa` (1 dirty entries); `verify/m6-o135` at `9f768bd` (0 dirty entries); 1 more changed.
+- Reported issue/disposition updated: [127-M503-the-unscripted-check-authoring-beside-the-designer.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a017265c6c8c59925/docs/acceptance/objections/127-M503-the-unscripted-check-authoring-beside-the-designer.md) — 127: M503 (a), (b) and (d) leave phase 1's check authoring unscripted; its launch holds forever beside the Designer (`build/m6-s40`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [128-M501-d-an-accepted-run-has-reason-class-none.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a017265c6c8c59925/docs/acceptance/objections/128-M501-d-an-accepted-run-has-reason-class-none.md) — 128: M501 (d) expects 'reason_class' null for an accepted run; the engine records 'none' (`build/m6-s40`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [129-M505-l-reads-a-checks-column-that-does-not-exist.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a017265c6c8c59925/docs/acceptance/objections/129-M505-l-reads-a-checks-column-that-does-not-exist.md) — 129: M505 (l) reads 'checks.covers', a column the store has never had (`build/m6-s40`; recorded claim, not independently verified).
+- 1 additional document versions changed; full fingerprint inventory is in the watcher state.
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 01:30:03 CDT — 30-minute progress watcher
+
+- Main: `95e8185` → `6f7b452`; 2 commits: 6f7b452 M6 plan M526 (c): the export is the owner's copy of the design tree, not a Builder or check input (objection 141, decided by the driver under Sean's delegation; E157 to record); 066e8bd Merge verify/m6-s43 at dd73bec: slice 43's cases (M522, M523, M525, M526, M527, M534), failing on main at the design policy key; objections 140, 141.
+- Worktree activity: `main` at `6f7b452` (4 dirty entries); `build/m6-s40` at `146f547` (0 dirty entries); `build/m6-s39` at `e4044fa` (0 dirty entries); `verify/m6-s44` at `6f7b452` (1 dirty entries, new worktree); 1 more changed.
+- Reported issue/disposition updated: [140-M522-where-a-raster-placeholders-size-comes-from.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a929912bdd7edc040/docs/acceptance/objections/140-M522-where-a-raster-placeholders-size-comes-from.md) — 140: where a raster placeholder's declared size comes from, when D7 §6.2's table names no sizes (`verify/m6-s43`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [141-M526-the-export-of-a-revision-with-a-held-proposal.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a929912bdd7edc040/docs/acceptance/objections/141-M526-the-export-of-a-revision-with-a-held-proposal.md) — 141: whether the export of an approved revision holding a held proposal carries its file (`verify/m6-s43`; recorded claim, not independently verified).
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 02:00:02 CDT — 30-minute progress watcher
+
+- Main: `6f7b452` → `a33c06d`; 3 commits: a33c06d Merge verify/m6-s44 at f25df41: slice 44's cases (M508, M512, M513, M514, M515, M517, M530), failing on main at the design policy key; objection 145; M512's open case pending object…; f151486 E157: slice 39 merged; the driver's decisions on objections 125, 130, 135, 140, 141; 126 open for Sean; dea04e2 Merge build/m6-s39 at e4044fa: slice 39, the corrections carried from M5 (M542 to M546); gate at e0ca344 plus the affected files 3/3 alone at 7b617b9 on mini-hp01.
+- Worktree activity: `main` at `a33c06d` (4 dirty entries); `build/m6-s40` at `d437054` (0 dirty entries); `verify/m6-s44` at `f25df41` (0 dirty entries); `verify/m6-s45` at `a33c06d` (0 dirty entries, new worktree).
+- Reported issue/disposition updated: [145-M512-later-and-the-no-silent-hold-invariant.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a7092a8303c389b94/docs/acceptance/objections/145-M512-later-and-the-no-silent-hold-invariant.md) — 145: during a 'later' deferral, is there an open question naming the held stages? (`verify/m6-s45`; recorded claim, not independently verified).
+- Evidence/decision document updated: [sdlc-foundations-v1.1-errata-draft.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a7092a8303c389b94/docs/foundations/sdlc-foundations-v1.1-errata-draft.md) — E157. Slice 39 merged: the corrections carried from M5; the driver's decisions on objections 125, 130, 135, 140, 141 (decided by the driver under Sean's delegation, 2026-10-17) (`verify/m6-s45`; recorded claim, not independently verified).
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
+
+
+## 2026-10-17 02:30:03 CDT — 30-minute progress watcher
+
+- Worktree activity: `build/m6-s40` at `4e660f1` (0 dirty entries); `verify/m6-s40b` at `a33c06d` (9 dirty entries, new worktree); `verify/m6-s45` at `a33c06d` (8 dirty entries).
+- Reported issue/disposition updated: [127-M503-the-unscripted-check-authoring-beside-the-designer.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a4efc3cea51d257a3/docs/acceptance/objections/127-M503-the-unscripted-check-authoring-beside-the-designer.md) — 127: M503 (a), (b) and (d) leave phase 1's check authoring unscripted; its launch holds forever beside the Designer (`verify/m6-s40b`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [128-M501-d-an-accepted-run-has-reason-class-none.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a4efc3cea51d257a3/docs/acceptance/objections/128-M501-d-an-accepted-run-has-reason-class-none.md) — 128: M501 (d) expects 'reason_class' null for an accepted run; the engine records 'none' (`verify/m6-s40b`; recorded claim, not independently verified).
+- Reported issue/disposition updated: [129a-M442-the-architects-module-schema-pins-m5s-b3.md](/home/smahoney/projects/sdlc-x/.claude/worktrees/agent-a017265c6c8c59925/docs/acceptance/objections/129a-M442-the-architects-module-schema-pins-m5s-b3.md) — 129a: M442 (a2), (a3) and (a4) pin M5's B.3 module and interface fields; D7 extends B.3 (`build/m6-s40`; recorded claim, not independently verified).
+- 1 additional document versions changed; full fingerprint inventory is in the watcher state.
+- Read-only metadata/document check; no tests or models run. Test claims require their original evidence; this is not an architectural review.
