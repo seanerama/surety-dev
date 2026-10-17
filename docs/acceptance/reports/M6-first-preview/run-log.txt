@@ -1,0 +1,92 @@
+Sat Oct 17 07:15:44 UTC 2026
+TAP version 13
+# Subtest: M536 the design journey on the scripted backend, a real preview unit and a real Alpha unit (project lane)
+    # Subtest: (a) create, the Vision, Spec Writer and Architect sessions and their approvals: the spec's targets in spec_semantics, the module map's surfaces, technologies and shapes on architecture_revisions 1
+    ok 1 - (a) create, the Vision, Spec Writer and Architect sessions and their approvals: the spec's targets in spec_semantics, the module map's surfaces, technologies and shapes on architecture_revisions 1
+      ---
+      duration_ms: 4131.181911
+      type: 'test'
+      ...
+    # Subtest: (b) publication: one design.inventory_derived; inventory.json, its fixtures and a placeholder for every default slot and variant committed as one engine intent revision before any Designer session; design_due raised naming both UI stages
+    ok 2 - (b) publication: one design.inventory_derived; inventory.json, its fixtures and a placeholder for every default slot and variant committed as one engine intent revision before any Designer session; design_due raised naming both UI stages
+      ---
+      duration_ms: 31.286636
+      type: 'test'
+      ...
+    # Subtest: (c) check authoring; the API stage verified while both UI stages' work is held design_pending with recorded intervals
+    ok 3 - (c) check authoring; the API stage verified while both UI stages' work is held design_pending with recorded intervals
+      ---
+      duration_ms: 47425.945856
+      type: 'test'
+      ...
+    # Subtest: (d) a Designer session of three turns: the first save refused by the design check, the reason the next turn's engine entry; a corrected save; surety design preview of the checkpoint on surety-<h>-<env id>-g1.service, two identity reads, no alpha_authorize; the relay opened and the preview read; --stop leaves nothing
+    ok 4 - (d) a Designer session of three turns: the first save refused by the design check, the reason the next turn's engine entry; a corrected save; surety design preview of the checkpoint on surety-<h>-<env id>-g1.service, two identity reads, no alpha_authorize; the relay opened and the preview read; --stop leaves nothing
+      ---
+      duration_ms: 5305.143738
+      type: 'test'
+      ...
+    # Subtest: (e) close and the batch: a Spec Writer one-shot writes the diff on its side ref; design_approval and spec_change (source design) under one batch_key; answered approve with the logo held; design_revisions 1 current against the spec version the change created; the logo still proposed; the effective logo the placeholder
+    ok 5 - (e) close and the batch: a Spec Writer one-shot writes the diff on its side ref; design_approval and spec_change (source design) under one batch_key; answered approve with the logo held; design_revisions 1 current against the spec version the change created; the logo still proposed; the effective logo the placeholder
+      ---
+      duration_ms: 1815.684454
+      type: 'test'
+      ...
+    # Subtest: (f) the spec change's effect: version 2 with the design criteria and two human-test requirements; the check correction applied; design_ready_at set, design.ready, the UI stages' work.dependency_met; no UI Builder launched before
+    ok 6 - (f) the spec change's effect: version 2 with the design criteria and two human-test requirements; the check correction applied; design_ready_at set, design.ready, the UI stages' work.dependency_met; no UI Builder launched before
+      ---
+      duration_ms: 2063.523493
+      type: 'test'
+      ...
+    # Subtest: (g) the two UI stages built: each UI Builder's package holds its target's screens and the effective set, the held proposal's digest in no Builder package and no check's asset inputs; bindings validated and recorded; the design checks engine-run on the candidates
+    ok 7 - (g) the two UI stages built: each UI Builder's package holds its target's screens and the effective set, the held proposal's digest in no Builder package and no check's asset inputs; bindings validated and recorded; the design checks engine-run on the candidates
+      ---
+      duration_ms: 108892.778464
+      type: 'test'
+      ...
+    # Subtest: (h) the held logo approved by surety design assets submit: the effective set moved to its slot@version; one asset_updated fix naming the old and new versions and the bound paths, integrated; asset_version_changed obligations; the parity checks passing with the new slot@version
+    ok 8 - (h) the held logo approved by surety design assets submit: the effective set moved to its slot@version; one asset_updated fix naming the old and new versions and the bound paths, integrated; asset_version_changed obligations; the parity checks passing with the new slot@version
+      ---
+      duration_ms: 102376.779763
+      type: 'test'
+      ...
+    # Subtest: (i) the phase gate and Alpha under policy: the phase complete once; one deployment_requests row requested_by policy; alpha_deployed on a real unit read by exact name
+    ok 9 - (i) the phase gate and Alpha under policy: the phase complete once; one deployment_requests row requested_by policy; alpha_deployed on a real unit read by exact name
+      ---
+      duration_ms: 120161.046328
+      type: 'test'
+      ...
+    # Subtest: (j) the review at Alpha: design_due stage alpha_review; a review-mode session whose package holds the engine's observed records of the web route; verdicts proposed; design_verdicts answered confirm; the web human test owner-accepted, android not_observed no_native_runtime and pending
+    ok 10 - (j) the review at Alpha: design_due stage alpha_review; a review-mode session whose package holds the engine's observed records of the web route; verdicts proposed; design_verdicts answered confirm; the web human test owner-accepted, android not_observed no_native_runtime and pending
+      ---
+      duration_ms: 2319.121806
+      type: 'test'
+      ...
+    # Subtest: (k) the pace read: BS6 §10's design figures present or unknown with their reasons
+    ok 11 - (k) the pace read: BS6 §10's design figures present or unknown with their reasons
+      ---
+      duration_ms: 20.81732
+      type: 'test'
+      ...
+    # Subtest: (l) teardown applied, nothing of the prefix left (Alpha's and the preview's); no check result from a fixture; no decision answered by a role; never a hold without an open design_due
+    ok 12 - (l) teardown applied, nothing of the prefix left (Alpha's and the preview's); no check result from a fixture; no decision answered by a role; never a hold without an open design_due
+      ---
+      duration_ms: 697.292203
+      type: 'test'
+      ...
+    1..12
+ok 1 - M536 the design journey on the scripted backend, a real preview unit and a real Alpha unit (project lane)
+  ---
+  duration_ms: 444853.418753
+  type: 'suite'
+  ...
+1..1
+# tests 12
+# suites 1
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 445212.31407
+rc=0
+Sat Oct 17 07:22:41 UTC 2026
