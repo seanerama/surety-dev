@@ -4499,3 +4499,115 @@ Slice 44's own:
 - the impact's design class, stale screens, `design.stale`, `stale_platforms`, the held `design_stale` stage, the covering revision;
 - the post-final-phase replan from a design change, under its built name;
 - the batch never staling itself, its refusal at raise, its roadmap window.
+
+## M6 slice 45: the review and retrofit (M6 plan §3.7; BS6 §§3, 8, 9; D7 §§10, 12, 14, A.2 to A.8; G7, G13; Q4; E153 item 1 (d); E156 Q2)
+
+2026-10-17, by the Verifier of slice 45, on `verify/m6-s45` cut from `main` `a33c06d`. Five rows, five files under the manifest's slice `45`:
+- **M516**, project lane, also in the `sandbox` list;
+- **M518, M528, M529, M531**, kernel lane.
+
+SEAM §§521 to 529 pin the names; slices 40 to 44's names (§§480 to 520) are reused as pinned.
+
+Harness:
+- `harness/design/review45.mjs`: evidence bytes with valid headers, the owner's review and verdict commands, a review session driven by turns, the reads, M517's criterion and delivery replan, Pantry carried to Alpha with no design, Pantry with no web target, and M516's own Pantry;
+- `harness/design/retrofit45.mjs`: "Shelf", BS6 §8's retrofit fixture with a UI, its retrofit products and its observed design.
+
+No accepted file and no earlier slice's harness changed.
+
+| Row | Lane | File | Cases | Status |
+|---|---|---|---|---|
+| M516 | project | `M516-the-review-at-alpha.test.mjs` (7) | **Seed** (SEAM §357's way): Pantry under `both`, designModel's design plus R2.2 and two more web screens (S3, the 1.5 MiB `/web/big.html`; S4, `/gone`), approved through the owner's routes, built and phase 1 complete on the kernel lane; the home switched to the project lane; `alpha` by `surety qualify-adapter` and the owner's configuration; Alpha by the policy's request on a real unit. **(a)** `design_due` `alpha_review` naming the candidate and its deploy operation; the candidate stays `alpha_deployed`. **(b) with (c)**: a synthetic secret held; the owner's relay opened, the host's control read through it, the page carrying the secret. The review session's first turn dumps its package and tries the Alpha's port from its domain by a guarded probe. The package holds the approved design, the candidate's UI source (not the API's), the design checks' results and one engine observation per web route (`design_observation` records, the secret redacted, the recorded bytes in the package). The role's attempts all fail, its guard read first. **(i)** S3's observation truncated at `adapter_output_max_bytes`; S4's recorded as the 404 it was. **(d) with (e)**: the review file (S1 an implementation delta, S3 matches, S4 a design delta, S2 `not_observed` `no_native_runtime`) and a revised design; every verdict `proposed`; `design.review_recorded`; nothing confirmed; the web human test pending; `design_verdicts` raised. **(h)** `design_verdicts`, `design_approval` and `spec_change` under one `batch_key`, `approve` blocked `DESIGN_VERDICTS_UNCONFIRMED`. **(f)** confirmed with an edit (S1's words) and a strike (S3): the statuses, the decision, `design.verdicts_confirmed`; the web human test's evidence S1 and S4 only, bound to design version 1, the candidate, `web`, `browser`, labelled `owner accepted`, never `verified`; no check result made of it; (h)'s `approve` then unblocked. **(g)** one finding against the Alpha candidate (`defect`, Medium) with the edited words, none from S3 or S4; the owner's disposition `fix` makes `fix` work; the candidate still `alpha_deployed` | written; fails on `main` |
+| M518 | kernel | `M518-retrofit-the-observed-design.test.mjs` (2) | **(a), (e), (d) under `before_build`**: Shelf adopted and published. The inventory lists `history-feed` with `shape_known: false`, no shape, no obligation, no fixture, and `web` as its only target. A Designer session on the adopted project: `prompt.md` says retrofit, and `design/source/` holds the four adopted UI files byte for byte. The observed design with S2's `browser_back` `unknown` is refused, `DESIGN_CONVENTION_UNKNOWN` (S2, `browser_back`) and `DESIGN_INTERFACE_SHAPE_UNKNOWN` (S1 and S2, `history-feed`); the close 422 `design_check_failed`; `design_due` open; nothing approved. **(d), (e) under `at_alpha`, with (b), (c), (g), (f)**: the same design passes, both codes among the check's `notices` and not its reasons. The close's revision is `observed`, `proposed`. Its `design_assets`: the logo `observed`/`proposed`, the favicon `engine_placeholder`/`placeholder`. `design_approval` shows `origin` and the notices, with no blocker of theirs. Approved: the revision and `GET …/design` show `observed`; the repository's logo effective, the rest placeholders. Then, with R5.2's check failing on c-1, the conformance stage `conformed` and phase 1 complete; no unsatisfied gate evaluation names R5.2 or its check; R5.2 in no conformance stage's criteria | written; fails on `main` |
+| M528 | kernel | `M528-the-owner-invoked-review-of-a-native-build.test.mjs` (7) | **Shared** (Pantry designed, approved, built to a candidate): **(a) with (d), (f)**: `surety design review --target android --build "1.4.2 (37)" --observed-on device --evidence a.png b.webm`, exit 0. A review-mode session; the review row's subject verbatim, trigger `owner_command`, against the approved revision. Two evidence rows by digest; nothing observed, checked or operated. The package lists both `owner_supplied`: the PNG as a file of its bytes, the WebM by name only and nowhere else. The verdicts' preview, `GET …/design`'s `reviews` (`evidence_by_provenance`, `engine_observed` 0) and the android human test's evidence (his build, his runtime, `owner accepted`), none engine-observed. **(a)** `POST …/design/reviews` with a `candidate`: in the subject, unverified. **(b)** PNG, WebP, JPEG, MP4 and WebM each recorded (provenance, format, size, target, `observed_on`, build); refused `design_evidence_invalid` with `REVIEW_EVIDENCE_INVALID`, nothing opened or recorded, for a PNG named `.jpg`, a WebM named `.mp4`, a file past 1 MiB per file, and three files past 2 MiB per review. **(e)** `ios`: 422 `design_review_target_unknown`. **Separately**: **(c)** the defaults, 64 MiB and 512 MiB. **(g)** an android-only Pantry at Alpha under `at_alpha`: the `alpha_review` command names `surety design review --target android --build`. **(h)** under `off`: 409 `design_review_unavailable`, cause `design_off` | written; fails on `main` |
+| M529 | kernel | `M529-a-first-design-at-alpha.test.mjs` (6) | **Shared** (Pantry under `at_alpha`, built with no design and `alpha_deployed`): **(a) with (c)**: `alpha_review`; nothing approved; the review session's package says `design_revision: null`, `first_design: true`, and carries no approved design. A defective first design is refused `DESIGN_STATE_UNCOVERED` (web); the whole one, `origin: observed` with R3.2, passes; the review row has no `design_revision`; the close's revision is `observed`. **(d)** the batch: `scope` `initial_review`, `deltas` `[]`, the spec change and the verdicts in it, `approve` waiting on the verdicts; approved `initial_review`, `observed`, version 2 applied, every effective slot a placeholder, every manifest variant with a file. **(f)** one finding from the confirmed implementation delta against the Alpha candidate, Medium. **(e)** R3.2's check failing on the Alpha candidate: one replan, `trigger_source` `spec_change`, and no other after ticks. **Separately**: **(e)** the check passing: no replan. **(b)** under `both`, `design_due` answered `waive` before build: at Alpha the review opens with no `design_revision` | written; fails on `main` |
+| M531 | kernel | `M531-owner-verdicts-are-owner-acts.test.mjs` (4) | **Shared** (Pantry under `before_build` with R3.2 on android, built, R3.2's check failing on every candidate, the Android stage's gate evaluated): **(a), (b), (c), (d) reject**: a verdict with `status` refused `DESIGN_SCHEMA_INVALID` naming `status`. The review saved again without it, the owner saying "Confirmed. … I confirm them all." The close leaves every verdict `proposed`, no confirmer, no owner evidence, the human test pending. `reject`: none confirmed. **(d) confirm, (f)**: an owner build with his candidate, `matches`, confirmed: `confirmed_by`, the decision, the owner's actor; the android human test `owner_accepted`; after ticks R3.2's latest result still failing, the Android stage not verified, none of its stage gates satisfied; no gate or result made of the verdict. **(e), (d) by the CLI**: a review with a design and an implementation delta and a revised design: before confirmation, `approve` blocked and no finding; `surety design verdicts … confirm --edit '{"target":"android","screen":"S2","observed_on":"emulator"}'`: confirmed as edited, the finding filed (Medium), `approve` unblocked. **(g)** the review's batch approved, design version 2: the earlier confirmed verdict kept `confirmed`, bound to version 1's revision and its candidate; the android human test `pending` | written; fails on `main` |
+
+**On `main` `a33c06d`.** Run in this worktree after `npm ci` and `npm run build`, with `TMPDIR=/tmp/v45`, each file alone with `node --test`; nothing else of the suite was run. Every case fails at its fixture's first step, the project's policy: **"a valid policy change (body: {"code":"unknown_field","reason":"\"design\" is not a writable project policy key.", …}) 400 !== 200"**. This is the missing feature of slice 40, on which every row of this slice stands. The one exception, M528 (h), fails at the route: **"refused under off (→ 404 {"code":"not_found","reason":"No route /v1/projects/…/design/reviews exists in this engine.", …})"**.
+- **`M516` 0/7**: the `before` hook fails at the policy key, before any unit, so the seven cases are reported cancelled under it.
+- **`M518` 0/2**: at the policy key, which the adopted project's owner sets once the mode is answered (the adoption, with Shelf's UI files, succeeded).
+- **`M528` 0/7**: the shared fixture (4 cancelled), (c) and (g) at the policy key; (h) at the route.
+- **`M529` 0/6**: the shared fixture (4 cancelled), and the two separate cases, at the policy key.
+- **`M531` 0/4**: the shared fixture (4 cancelled), at the policy key.
+
+Each kernel file takes 2 to 5 s on `main`, and M516 2 s. No unit was started, none was left (`systemctl --user list-units 'surety-*'` read empty after the runs), and no engine or home of `/tmp/v45` was left.
+
+**The harness checked beyond the policy key.** On a scratch copy outside the repository: `git archive` of `build/m6-s40` at `348ad12` (the slice-40 Builder's work in progress), built, with this slice's five files and `harness/design/` copied in. Nothing from it is committed or claimed as a result; it shows only how far the fixtures reach before the features this slice and the earlier ones owe. Where a case was worked past a slice-45 name on the scratch copy only, it says so.
+- **M516**, 63 to 257 s, its units read empty before and after each run. The kernel seed, the switch, `alpha` by command and Alpha by the policy's request on a real unit all pass, and `design_due` `alpha_review` is raised. **(a) fails at the binding to the candidate** (not on that build). Past it (scratch only), the rest of (a) and **(b) with (c) pass** up to the slice-45 package files:
+  - the relay's control read, the secret served;
+  - the review session; one observation per route, engine-observed, a `design_observation` record holding the page, with the secret redacted;
+  - the guarded probe: contained, every target unreachable.
+
+  (b) fails at **`design/approved/`**, and past that at **`design/observations/<id>`**. **(i)** fails at S3's truncation: that build records all 1,573,165 bytes, `truncated: false`; S4's 404 passes. **(d) with (e) pass**. **(h)** fails: no `design_approval` batch from a review's design delta.
+- **M528**: the shared fixture reaches a candidate; (a), (b) fail at `surety design review` (not in that CLI's usage) and (a), (e) at `POST …/design/reviews` (404). (c) passes the per-file default and fails at the per-review key. (g)'s android-only Pantry reaches `alpha_deployed` and fails at `alpha_review` (not raised under `at_alpha` on the kernel lane on that build). (h) fails at the route.
+- **M529**: Pantry reaches `alpha_deployed` under `at_alpha` and under `both` with the design waived; each fails at `alpha_review`, as above.
+- **M531**: the shared fixture passes (R3.2 authored, its check failing on the Android stage's candidate, the stage gate evaluated); every case fails at `POST …/design/reviews` (404).
+- **M518**: the adoption, spec, confirmations and Architect session run; the close is refused `unknown_field` for `shape` (this slice's name, objection 150). With `history-feed` given a shape (scratch only):
+  - (a), (d), (e) under `before_build` fail at `shape_known` (by construction);
+  - under `at_alpha` the design passes the check but for `DESIGN_CONVENTION_UNKNOWN`, refused there and not a notice;
+  - with S2's convention given (scratch only), the case reaches (c) and fails at the close's `design_assets` (none written on that build).
+
+  Past (c) and (g)'s `evidence.origin` (scratch only): the approval, the revision's and `GET …/design`'s `origin`, and the effective logo pass. **(f) fails as the missing feature**: with R5.2's check failing, phase 1 never completes; with it passing, phase 1 completes but its earlier gate evaluations list R5.2's check as missing (objection 151).
+
+Four harness errors were found and fixed this way:
+- a review session driven twice re-scripted its first launch (`driveReview` now keeps the earlier launches' scripts, as `checkSession` does);
+- the Alpha is reachable from the host only through the owner's relay (M516 (b)'s control now opens it, D4 Q7);
+- M516 (b) asserted that the fetch was recorded before the first invocation's receipt, finer than the row's "at the review's start". It now asserts that the first turn's package holds it;
+- Shelf's conformance stage makes R1 to R3 UI requirements (objection 150), so the observed design maps them to the sum page.
+
+**Details of plan §2.6 fixed here** (each within D7's text; SEAM §§522 to 528):
+- **The review's fetch record**: §489's observation with a `reason` for a fetch that got no answer; truncation at the engine's `adapter_output_max_bytes`; a non-2xx answer recorded as answered; each observation's recorded bytes in the package at `design/observations/<evidence id>`.
+- **The review-mode package's layout**: `design/review.json`, `design/approved/`, `design/source/`, `design/check-results.json`, `design/evidence.json`.
+- **Reason and error codes**: `REVIEW_EVIDENCE_INVALID`, `design_evidence_invalid` and `design_review_target_unknown` are D7's. `design_review_unavailable` (cause `design_off`) and the blocker `DESIGN_VERDICTS_UNCONFIRMED:<review>` are the Verifier's.
+
+**Choices beyond §2.6 a Builder may object to:**
+- **The per-review evidence bound** as its own key, `design_review_evidence_max_review_bytes` (default 536870912, range not pinned). D7 A.7 gives one key two values, and §516 pinned the key's integer as the per-file bound.
+- **`--observed-on`** on `surety design review`: D7 §10.5 has the owner state `observed_on` for his evidence and A.8 names no flag.
+- **The review row recorded when the review is opened**, so evidence rows can name it; its verdicts are written at the close. **`design_reviews.project`**.
+- **The answer's `review` and `evidence`**, and the evidence files sent by the CLI only (the route's file transport is the Builder's, as for `asset add`).
+- **The confirmation's `edits`, `strikes` and `severity`**, and the `surety design verdicts` flags `--edit <json>`, `--strike <target>/<screen>` and `--severity`.
+- **`GET …/design`'s `reviews`, the human tests' `evidence`, and the labels** `engine-observed`, `owner-supplied`, `owner-reported`, `owner accepted`.
+- **`design_due` `alpha_review` naming the candidate and the deploy operation** anywhere in its `evidence` or `manifest`.
+- **A first design's approval evidence** `scope` `initial_review` and `deltas` `[]`.
+- **Retrofit mode opened by `{role: "designer"}` on an adopted project** with no `mode`.
+- **`shape: "unknown"`** on a retrofit map's interface (objection 150).
+- **`design_check.notices`** for the two retrofit reasons that do not block under `at_alpha`.
+- **`design_approval`'s `evidence.origin`**.
+
+**Cases written that the plan's wording could not reach as written:**
+- **M516 (h)'s approval is not answered.** The row pins one batch and its block until confirmation, and both are read. Answering it would start a spec change, a correction and a replan on the project lane, which M517 (slice 44) already pins on the kernel lane.
+- **M516 (c)'s "the role's reach"** is read as the review turn's own domain failing to connect to the Alpha's port on loopback and the host's addresses, while the owner's relay is open on that port.
+- **M518 (f)'s "scheduled to the first change phase"**: only "never the conformance set" is pinned (objection 151).
+- **M518 (e)'s interface "the retrofit module map cannot shape"** is declared by a marker this slice names (objection 150).
+- **M528 (a)'s candidate "recorded as his word, unverified"** is read as recorded in the subject with nothing observed, checked or operated. A candidate id the engine does not hold is not written: whether one is accepted is not pinned.
+- **M531 (c)'s transcript** is the owner's turn text "Confirmed. Every verdict is right; I confirm them all." in the review's own session.
+
+**Objections filed** (questions for Sean, not Builders' objections):
+- **150**: (1) how a retrofit map declares an interface it cannot shape, against G2's clause 5; (2) whether the retrofit conformance stage, over the `web` module, makes every conformance requirement a UI requirement of the inventory.
+- **151**: where an observed design's criteria are scheduled (three readings); slice 45 pins only that they are never in the conformance set.
+
+Objections 126 and 145 stay open; nothing here depends on how `design_due`'s `open` or `later` answers treat the question itself. M529 (b) answers `waive`, and every other case opens its Designer session by the owner's command.
+
+**What the earlier slices' Builders must provide for these to pass.** Each is an earlier row's, used here as its tests pin it.
+
+From slice 40:
+- the policy key `design`, Pantry's publication, the Designer session, the save's `design_check`, the close and the batch (M504, M505);
+- review mode and its observations (§489): on `348ad12` these already pass M516 (b)'s observation clauses and (d), (e);
+- **`design_due` `alpha_review` on `alpha_complete` under `at_alpha` on the kernel lane** (M529, M528 (g); slice 44's M512 (a), M530 (g)): on `348ad12` it is raised under `both` on the project lane, and under `at_alpha` on the kernel lane it is not, within 20 ticks.
+
+From slice 42: `POST …/design/reviews` (§502; 404 on `348ad12`).
+
+From slice 43: `design_assets` rows per revision (§505; none on `348ad12`); the effective set (§511).
+
+From slice 44:
+- the review's batch with its deltas (§518): M516 (h), M531 (e), (g);
+- a first design's `initial_review` (§519): M529;
+- `design_verdicts`' manifest (§517).
+
+Slice 45's own:
+- the owner-invoked review with evidence (§522);
+- the review-mode package (§523);
+- reviews, verdicts and their projections (§524);
+- confirmation with edits and strikes, the blocker, the findings (§525);
+- `alpha_review`'s binding, truncation, the role's reach (§526);
+- a first design (§527);
+- retrofit's mode, `shape: "unknown"`, notices, origin, and the conformance set (§528).
