@@ -18,15 +18,17 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { consume, decision } from './harness/decisions.mjs';
+import { consume, decision, decisionsOfKind } from './harness/decisions.mjs';
 import { eventsAbout, evaluationsOfKind, journeyContext, pump, specRevisions } from './harness/journey/drive.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
+import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, STAGES, specText } from './harness/design/reference.mjs';
 import {
   answerWith,
   assertNoSilentHold,
   batchOf,
+  builderScript,
   designRevisions,
   designScripts,
   designerSession,
@@ -163,12 +165,31 @@ describe('M507 design readiness and the third milestone', () => {
   test('(g) gates while the design criteria\'s checks do not exist: ACCEPTANCE_SCOPE_INCOMPLETE naming the design criteria', async (t) => {
     const fx = await scriptedEngine(t);
     const { p, ctx } = await project(fx, { policy: { ...BEFORE_BUILD, design: 'at_alpha' } });
-    // Nothing answered until the batch is approved, so no UI stage builds against no design.
+    // No UI stage builds against no design: the API stage's Builder waits at a hold until the
+    // batch is answered, and the UI stages wait on its code milestone (objection 169). Phase 1's
+    // correction is answered first, as the owner must: the batch is not raised while it is
+    // pending (objection 166). The design criteria's own correction stays unanswered.
+    const api = stageWork(fx.home, p.id, 1);
+    fx.scripted.script(api.id, [{ steps: [step.hold('until-batch'), ...builderScript(1).steps] }, builderScript(1), builderScript(1)]);
     ctx.answerKinds = [];
     await designed(fx, p);
-    const batch = await untilBatch(fx, ctx);
+    // The pump waits for every run to end, and the held Builder does not: this wait ticks, and
+    // answers phase 1's correction by hand, until the batch is raised.
+    let batch = null;
+    for (let i = 0; i < 160 && !batch; i++) {
+      for (const d of decisionsOfKind(fx.home, p.id, 'check_correction_unclassifiable').filter((x) => x.status === 'open')) await consume(fx, p.id, d, 'approve');
+      const b = batchOf(fx.home, p.id);
+      if (b?.spec_change) batch = b;
+      else {
+        await tick(fx.engine, p.id);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    assert.ok(batch, `the batch raised once phase 1's correction is answered (decisions: ${JSON.stringify(rows(fx.home, 'SELECT "kind", "status" FROM "decisions" WHERE "project" = ? ORDER BY rowid', p.id))})`);
     await consume(fx, p.id, batch.design_approval, 'approve');
     await consume(fx, p.id, batch.spec_change, 'approve');
+    for (const n of [2, 3]) assert.deepEqual(fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }), [], `no UI stage (${n}) launched before the batch is answered`);
+    fx.scripted.release(api.id, 'until-batch');
     const v2 = await pump(fx, ctx, () => specRevisions(fx.home, p.id).find((r) => r.version === 2), { what: 'version 2', max: 20 });
     void v2;
     const mark = rows(fx.home, 'SELECT COALESCE(MAX(rowid), 0) AS r FROM "gate_evaluations"')[0].r;
