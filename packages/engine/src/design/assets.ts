@@ -126,6 +126,48 @@ export function placeholderManifest(project: string, targets: string[]): { manif
   return { manifest: { version: 1, slots, packaging: [] }, files };
 }
 
+// The placeholders a re-derived inventory owes a manifest that exists (D7
+// §6.3: "when targets change"; SEAM.md §506): each default slot the manifest
+// lacks, added with its placeholder files; each existing slot of a kind a
+// new target uses gaining it in `platforms` (neither its slot_version nor
+// its files change); a variant a slot lacks added with its placeholder (a
+// change of its files: its slot_version one higher, its history extended).
+// The manifest's version is one higher when anything changed. Nothing an
+// existing slot holds is replaced.
+export function mergePlaceholders(head: AssetManifest, ph: { manifest: AssetManifest; files: Record<string, string> }): { manifest: AssetManifest; files: Record<string, string>; changed: boolean } {
+  const m: AssetManifest = structuredClone(head);
+  const files: Record<string, string> = {};
+  let changed = false;
+  for (const p of ph.manifest.slots) {
+    const s = m.slots.find((x) => x.key === p.key) ?? m.slots.find((x) => x.kind === p.kind);
+    if (!s) {
+      m.slots.push(structuredClone(p));
+      for (const v of p.variants) if (v.file && ph.files[v.file] !== undefined) files[v.file] = ph.files[v.file]!;
+      changed = true;
+      continue;
+    }
+    for (const t of p.platforms) {
+      if (!s.platforms.includes(t)) {
+        s.platforms.push(t);
+        changed = true;
+      }
+    }
+    const missing = p.variants.filter((v) => !s.variants.some((x) => x.name === v.name));
+    if (missing.length > 0) {
+      for (const v of missing) {
+        s.variants.push(structuredClone(v));
+        if (v.file && ph.files[v.file] !== undefined) files[v.file] = ph.files[v.file]!;
+      }
+      s.slot_version += 1;
+      const designVersion = (s.history ?? []).at(-1)?.design_version ?? 0;
+      s.history = [...(s.history ?? []), { slot_version: s.slot_version, design_version: designVersion, status: s.status, files: s.variants.filter((v) => typeof v.digest === 'string').map((v) => ({ variant: v.name, digest: v.digest! })) }];
+      changed = true;
+    }
+  }
+  if (changed) m.version += 1;
+  return { manifest: m, files, changed };
+}
+
 // ---- header checks (D7 §6.3, §14): format by magic bytes or SVG root ----------------------------
 
 export function formatOf(bytes: Buffer): string | null {
@@ -136,6 +178,107 @@ export function formatOf(bytes: Buffer): string | null {
   const head = bytes.subarray(0, 4096).toString('utf8').replace(/^﻿/, '').trimStart();
   if (/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(head)) return 'svg';
   return null;
+}
+
+// A raster's header (D7 §6.3; SEAM.md §507): its width, height and whether
+// it carries an alpha channel, read from the header alone (PNG's IHDR and
+// the chunk headers before its first IDAT, for a tRNS; WebP's VP8X, VP8L or
+// VP8 header; ICO's directory). No pixel is decoded and no image data is
+// inflated. null fields: the header does not say (it is cut off, or names
+// no such thing), which never counts as a match.
+export interface RasterHeader {
+  sizes: { w: number; h: number; alpha: boolean | null }[];
+  unreadable: string | null;
+}
+
+export function rasterHeader(bytes: Buffer, format: string): RasterHeader {
+  const cut = (why: string): RasterHeader => ({ sizes: [], unreadable: why });
+  if (format === 'png') {
+    if (bytes.length < 26 || bytes.subarray(12, 16).toString('latin1') !== 'IHDR') return cut('the PNG header ends before its IHDR');
+    const w = bytes.readUInt32BE(16);
+    const h = bytes.readUInt32BE(20);
+    const colorType = bytes[25]!;
+    let alpha: boolean | null = colorType === 4 || colorType === 6 ? true : null;
+    if (alpha === null) {
+      // The chunk headers up to the first IDAT: a tRNS gives an alpha
+      // channel; the chunks' data are skipped by their lengths, never read.
+      let off = 8;
+      while (alpha === null) {
+        if (off + 8 > bytes.length) break;
+        const len = bytes.readUInt32BE(off);
+        const type = bytes.subarray(off + 4, off + 8).toString('latin1');
+        if (type === 'tRNS') alpha = true;
+        else if (type === 'IDAT' || type === 'IEND') alpha = false;
+        off += 12 + len;
+      }
+    }
+    return { sizes: [{ w, h, alpha }], unreadable: null };
+  }
+  if (format === 'webp') {
+    if (bytes.length < 30) return cut('the WebP header is cut off');
+    const chunk = bytes.subarray(12, 16).toString('latin1');
+    if (chunk === 'VP8X') return { sizes: [{ w: bytes.readUIntLE(24, 3) + 1, h: bytes.readUIntLE(27, 3) + 1, alpha: (bytes[20]! & 0x10) !== 0 }], unreadable: null };
+    if (chunk === 'VP8L') {
+      if (bytes[20] !== 0x2f) return cut('the WebP VP8L header has no signature');
+      const bits = bytes.readUInt32LE(21);
+      return { sizes: [{ w: (bits & 0x3fff) + 1, h: ((bits >>> 14) & 0x3fff) + 1, alpha: ((bits >>> 28) & 1) === 1 }], unreadable: null };
+    }
+    if (chunk === 'VP8 ') {
+      if (bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) return cut('the WebP VP8 header has no start code');
+      return { sizes: [{ w: bytes.readUInt16LE(26) & 0x3fff, h: bytes.readUInt16LE(28) & 0x3fff, alpha: false }], unreadable: null };
+    }
+    return cut(`the WebP header's first chunk is ${JSON.stringify(chunk)}`);
+  }
+  if (format === 'ico') {
+    if (bytes.length < 6) return cut('the ICO header is cut off');
+    const count = bytes.readUInt16LE(4);
+    if (count === 0) return cut('the ICO directory is empty');
+    if (bytes.length < 6 + 16 * count) return cut('the ICO directory is cut off');
+    const sizes: RasterHeader['sizes'] = [];
+    for (let i = 0; i < count; i++) {
+      const e = 6 + 16 * i;
+      const bpp = bytes.readUInt16LE(e + 6);
+      sizes.push({ w: bytes[e] === 0 ? 256 : bytes[e]!, h: bytes[e + 1] === 0 ? 256 : bytes[e + 1]!, alpha: bpp === 32 ? true : bpp === 0 ? null : false });
+    }
+    return { sizes, unreadable: null };
+  }
+  return cut(`${format} is not a raster format`);
+}
+
+// The header checks of one file against the variant that declares it (D7
+// §6.3; SEAM.md §507): format by magic bytes or SVG root, a raster's size,
+// its alpha channel, and an SVG's activity. A file whose header cannot
+// establish what is declared is refused naming the file, never admitted.
+// Each reason's subjects name `subject` (the slot, the variant) and the file.
+export function headerReasons(bytes: Buffer, variant: { format?: unknown; size?: unknown; transparency?: unknown }, subject: Record<string, unknown>): { code: string; subjects: Record<string, unknown> }[] {
+  const out: { code: string; subjects: Record<string, unknown> }[] = [];
+  const add = (code: string, extra: Record<string, unknown>) => out.push({ code, subjects: { ...subject, ...extra } });
+  const found = formatOf(bytes);
+  if (found !== variant.format) {
+    add('DESIGN_ASSET_FORMAT_MISMATCH', { declared: variant.format ?? null, found });
+    return out;
+  }
+  if (found === 'svg') {
+    const active = svgActive(bytes.toString('utf8'));
+    if (active !== null) add('DESIGN_ASSET_SVG_ACTIVE', { what: active });
+    return out;
+  }
+  const header = rasterHeader(bytes, String(found));
+  if (header.unreadable !== null) {
+    add('DESIGN_ASSET_SIZE_MISMATCH', { why: header.unreadable });
+    return out;
+  }
+  const size = variant.size as { w?: unknown; h?: unknown } | undefined;
+  const declared = size && typeof size.w === 'number' && typeof size.h === 'number' ? { w: size.w, h: size.h } : null;
+  const matching = declared === null ? header.sizes : header.sizes.filter((s) => s.w === declared.w && s.h === declared.h);
+  if (declared !== null && matching.length === 0) add('DESIGN_ASSET_SIZE_MISMATCH', { declared, found: header.sizes.map((s) => ({ w: s.w, h: s.h })) });
+  const t = variant.transparency;
+  if (t === 'forbidden' || t === 'required') {
+    const alphas = (matching.length > 0 ? matching : header.sizes).map((s) => s.alpha);
+    const ok = t === 'forbidden' ? alphas.every((a) => a === false) : alphas.length > 0 && alphas.every((a) => a === true);
+    if (!ok) add('DESIGN_ASSET_TRANSPARENCY_MISMATCH', { declared: t, alpha_channel: alphas.some((a) => a === null) ? 'not established by the header' : alphas.some((a) => a) });
+  }
+  return out;
 }
 
 // An SVG that could run anything when opened: a script, an event attribute

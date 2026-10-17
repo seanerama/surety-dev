@@ -11,11 +11,21 @@ import type { Journal } from '../journal/driver.js';
 import { prepareCommit } from '../projects/commands.js';
 import { type Runtime, log } from '../runtime.js';
 import { pausePoint } from '../testing/seam.js';
-import { MANIFEST_FILE } from './assets.js';
+import { type AssetManifest, MANIFEST_FILE, mergePlaceholders } from './assets.js';
+
+const parseManifestText = (text: string): AssetManifest | null => {
+  try {
+    const v = JSON.parse(text) as AssetManifest;
+    return v && Array.isArray(v.slots) && typeof v.version === 'number' ? v : null;
+  } catch {
+    return null;
+  }
+};
 import { DESIGN_ROOT, INVENTORY_FILE } from './inventory.js';
 import type { InventoryDue } from './store.js';
 import { DesignPreviewer } from './preview.js';
 import { releaseAnsweredBatches } from '../decisions/answer.js';
+import { type AssetAddBody, addOwnerAsset } from './asset-commands.js';
 
 export class DesignDriver {
   // Projects whose inventory this incarnation is deriving now.
@@ -53,17 +63,31 @@ export class DesignDriver {
           const files: Record<string, string> = { [INVENTORY_FILE]: d.text };
           for (const [path, text] of Object.entries(d.fixtures)) files[`${DESIGN_ROOT}${path}`] = text;
           // The placeholders, for every default slot and variant that has
-          // none (§6.3): written with the manifest when the tree has none.
-          if ((await catBlob(ctx, facts.head, MANIFEST_FILE)) === null) {
+          // none (§6.3): written with the manifest when the tree has none;
+          // merged into the manifest it has when the targets changed
+          // (SEAM.md §506), nothing it holds replaced.
+          const existing = await catBlob(ctx, facts.head, MANIFEST_FILE);
+          let manifest = d.placeholders.manifest;
+          if (existing === null) {
             files[MANIFEST_FILE] = `${JSON.stringify(d.placeholders.manifest, null, 2)}\n`;
             for (const [path, text] of Object.entries(d.placeholders.files)) files[`${DESIGN_ROOT}${path}`] = text;
+          } else {
+            const head = parseManifestText(existing);
+            if (head !== null) {
+              const merged = mergePlaceholders(head, d.placeholders);
+              manifest = merged.manifest;
+              if (merged.changed) {
+                files[MANIFEST_FILE] = `${JSON.stringify(merged.manifest, null, 2)}\n`;
+                for (const [path, text] of Object.entries(merged.files)) files[`${DESIGN_ROOT}${path}`] = text;
+              }
+            }
           }
           const message = messageText({ title: 'surety: the interface inventory', trailers: [['Surety-Project', project], ['Surety-Kind', 'intent'], ['Surety-Inventory', d.digest]] });
           const commit = await prepareCommit(facts.repo, facts.head, files, message, this.rt.scratch);
           if (commit === null) throw new Error('the inventory commit could not be prepared');
           const made = await this.journal.intend(
             'design.intend_inventory',
-            { project, repo: facts.repo, head: facts.head, commit, digest: d.digest, inventory: d.inventory, manifest: d.placeholders.manifest, incarnation: this.rt.incarnation, deadlineSeconds: this.rt.setting('git_deadline') },
+            { project, repo: facts.repo, head: facts.head, commit, digest: d.digest, inventory: d.inventory, manifest, incarnation: this.rt.incarnation, deadlineSeconds: this.rt.setting('git_deadline') },
             'commit_tree',
           );
           if (!('operation' in made)) return false;
@@ -90,6 +114,12 @@ export class DesignDriver {
       // Each failed attempt counted; design_due names a failure that repeats.
       await this.rt.engine('design.inventory_attempt', { project, failure }).catch((err) => log('design inventory', err, { project }));
     }
+  }
+
+  // `surety design asset add` (D7 §6.3; SEAM.md §508): the owner's file,
+  // checked by its header and committed as an engine intent revision.
+  addAsset(project: string, body: AssetAddBody): Promise<{ status: number; body: Record<string, unknown> }> {
+    return addOwnerAsset(this.rt, this.journal, project, body);
   }
 
   // The design's part of a tick.

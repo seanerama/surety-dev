@@ -11,7 +11,7 @@
 import { isSlug } from './paths.js';
 import { fixtureProblem } from './shape.js';
 import { AA_RATIO, contrastRatio } from './contrast.js';
-import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, formatOf, svgActive, sha256hex } from './assets.js';
+import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, headerReasons, sha256hex } from './assets.js';
 import type { Inventory } from './inventory.js';
 
 export interface DesignReason {
@@ -30,6 +30,9 @@ export interface CheckContext {
   // The slots and digests the last approved revision approved (§6.4), to
   // judge a forged `approved` status.
   approved: { slot: string; slot_version: number; digests: Record<string, string> }[];
+  // The manifest the version rules compare a save with (SEAM.md §505): the
+  // current approved revision's, else the one the engine last committed.
+  base?: AssetManifest | null;
 }
 
 export interface CheckOutcome {
@@ -87,7 +90,27 @@ const FIELDS = {
   manifest: ['version', 'slots', 'packaging'],
   slot: ['key', 'kind', 'purpose', 'platforms', 'placement', 'screens', 'variants', 'alt_text', 'decorative', 'slot_version', 'status', 'provenance', 'status_since', 'history'],
   variant: ['name', 'format', 'size', 'transparency', 'file', 'digest'],
+  packaging: ['target', 'slot', 'requirement', 'guidance', 'status'],
+  guidance: ['source', 'read_on'],
 } as const;
+
+// D7 §6.6, A.2 PackagingStatus in M6.
+const PACKAGING_STATUSES = ['recorded', 'not_checkable_yet'];
+// A slot's files, as the version rules compare them (SEAM.md §505).
+const filesOf = (s: { variants?: unknown }): string =>
+  JSON.stringify(
+    (Array.isArray(s.variants) ? (s.variants as Record<string, unknown>[]) : [])
+      .filter(isObj)
+      .map((v) => [String(v.name), v.file ?? null, v.digest ?? null])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  );
+// The manifest less its version, canonically: a difference from the base's is a change.
+const manifestBody = (m: { slots?: unknown; packaging?: unknown }): string => canonicalJson({ slots: m.slots ?? null, packaging: m.packaging ?? [] });
+const canonicalJson = (v: unknown): string => {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+};
 
 // Which convention fields apply to each target (B.12: a field not
 // applicable to the screen's target is refused).
@@ -425,6 +448,22 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     if (spec.reads && !hasPaths && !pathsNamed) add('DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, missing: 'paths', why: 'a criterion that reads files names the implemented paths' });
   }
   // ---- clause 8: assets and the selection --------------------------------------------------------------
+  const base = ctx.base ?? null;
+  const baseSlots = new Map((base?.slots ?? []).map((s) => [s.key, s]));
+  if (manifest && Array.isArray(manifest.packaging)) {
+    // D7 §6.6: recorded or not_checkable_yet in M6; nothing is checked against guidance.
+    for (const [i, p] of manifest.packaging.entries()) {
+      if (!isObj(p)) {
+        schema('assets/manifest.json', `packaging[${i}]`, 'must be an object');
+        continue;
+      }
+      closed('assets/manifest.json', `packaging[${i}]`, p, FIELDS.packaging);
+      if (!PACKAGING_STATUSES.includes(String(p.status))) schema('assets/manifest.json', `packaging[${i}].status`, `"${String(p.status)}" is not a packaging status (recorded, not_checkable_yet)`);
+      if (typeof p.target !== 'string' || typeof p.requirement !== 'string') schema('assets/manifest.json', `packaging[${i}]`, 'names its target and requirement');
+      if (!isObj(p.guidance) || typeof p.guidance.source !== 'string' || typeof p.guidance.read_on !== 'string') schema('assets/manifest.json', `packaging[${i}].guidance`, 'names its source and the date it was read ({source, read_on})');
+      else closed('assets/manifest.json', `packaging[${i}].guidance`, p.guidance, FIELDS.guidance);
+    }
+  } else if (manifest && manifest.packaging !== undefined) schema('assets/manifest.json', 'packaging', 'must be a list');
   if (manifest && Array.isArray(manifest.slots)) {
     const slots = manifest.slots.filter(isObj);
     for (const s of slots) {
@@ -446,23 +485,34 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
         const digests = Object.fromEntries((s.variants ?? []).filter((v) => v.digest !== undefined).map((v) => [v.name, v.digest ?? '']));
         if (!was || was.slot_version !== s.slot_version || Object.entries(digests).some(([n, d]) => was.digests[n] !== undefined && was.digests[n] !== d)) add('DESIGN_ASSET_STATUS_FORGED', { slot: key });
       }
+      if (s.kind === 'illustration' && typeof s.placement !== 'string' && !(strs(s.screens) && s.screens.length > 0)) add('DESIGN_ASSET_PLACEMENT_MISSING', { slot: key });
+      // The status `placeholder` is the engine's alone (SEAM.md §505).
+      if (s.status === 'placeholder' && s.provenance !== 'engine_placeholder') add('DESIGN_ASSET_STATUS_FORGED', { slot: key, why: 'only an engine placeholder has the status placeholder' });
+      // The versions against the base (SEAM.md §505): a slot whose files
+      // differ from the base's carries a higher slot_version; a new slot starts at 1.
+      const was = baseSlots.get(key);
+      if (typeof s.slot_version !== 'number' || !Number.isInteger(s.slot_version) || s.slot_version < 1) add('DESIGN_ASSET_VERSION_INVALID', { slot: key, why: 'slot_version is a positive integer' });
+      else if (was && filesOf(s) !== filesOf(was) && !(s.slot_version > was.slot_version)) add('DESIGN_ASSET_VERSION_INVALID', { slot: key, slot_version: s.slot_version, base_slot_version: was.slot_version, why: 'the slot\'s files changed and its slot_version did not increase' });
+      const selectedVariants = new Set((Array.isArray(selection.slots) ? selection.slots : []).filter(isObj).filter((x) => x.kind === s.kind).flatMap((x) => (strs(x.variants) ? x.variants : [])));
       for (const v of (Array.isArray(s.variants) ? s.variants : []).filter(isObj)) {
         if (!(ASSET_VARIANTS as readonly string[]).includes(String(v.name))) schema('assets/manifest.json', `slots (${key}).variants.name`, `"${String(v.name)}" is not an asset variant`);
         if (!(ASSET_FORMATS as readonly string[]).includes(String(v.format))) schema('assets/manifest.json', `slots (${key}).variants.format`, `"${String(v.format)}" is not an asset format`);
-        if (typeof v.file !== 'string') continue;
+        if (typeof v.file !== 'string') {
+          if (selectedVariants.has(String(v.name))) add('DESIGN_ASSET_FILE_MISSING', { slot: key, variant: String(v.name), why: 'the selected variant names no file' });
+          continue;
+        }
         const file = tree.files.get(v.file);
         if (!file) {
           add('DESIGN_ASSET_FILE_MISSING', { slot: key, variant: String(v.name), file: v.file });
           continue;
         }
-        const fmt = formatOf(file);
-        if (fmt !== v.format) add('DESIGN_ASSET_FORMAT_MISMATCH', { slot: key, variant: String(v.name), declared: v.format, found: fmt });
-        if (fmt === 'svg') {
-          const active = svgActive(file.toString('utf8'));
-          if (active !== null) add('DESIGN_ASSET_SVG_ACTIVE', { slot: key, variant: String(v.name), what: active });
-        }
+        for (const r of headerReasons(file, v, { slot: key, variant: String(v.name), file: v.file })) add(r.code, r.subjects);
         if (typeof v.digest === 'string' && v.digest !== sha256hex(file)) add('DESIGN_ASSET_VERSION_INVALID', { slot: key, variant: String(v.name), why: 'the digest is not the file\'s' });
       }
+    }
+    // The manifest's version against the base's (SEAM.md §505).
+    if (base && manifestBody(manifest) !== manifestBody(base) && !(typeof manifest.version === 'number' && manifest.version > base.version)) {
+      add('DESIGN_ASSET_VERSION_INVALID', { version: manifest.version ?? null, base_version: base.version, why: 'the manifest changed and its version did not increase' });
     }
     // The selection: each selected slot and variant in the manifest (§6.2), and the floor (§5.8).
     for (const sel of (Array.isArray(selection.slots) ? selection.slots : []).filter(isObj)) {

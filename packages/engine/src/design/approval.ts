@@ -32,6 +32,7 @@ import { policyRevision } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { recordMetMilestones } from '../scheduler/milestones.js';
+import { barrier } from '../testing/seam.js';
 import type { SpecRepresentation } from '../spec/semantics.js';
 import { liveRepresentation } from '../spec/semantics.js';
 import type { AssetManifest } from './assets.js';
@@ -43,6 +44,7 @@ import { designDueState } from './readiness.js';
 import { blobsHash, currentInventory } from './store.js';
 import { latestCheck } from './records.js';
 import { disputedInterfaces } from './findings.js';
+import { slotCarried } from './asset-bindings.js';
 
 type Db = Database.Database;
 
@@ -158,6 +160,7 @@ export function proposeDesign(
       JSON.stringify(args.findings),
       JSON.stringify(args.content),
     );
+  recordRevisionAssets(tx, { revision: id, project: args.project, manifest: args.content.manifest ?? null });
   tx.emit('design.proposed', { project: args.project, design_revision: id }, { version: d.version ?? null, scope, revision: args.revision, design_check: args.check });
   if (scope === 'asset_only') {
     raiseQuestion(tx, { project: args.project, kind: 'design_approval', subjectType: 'design_revision', subjectId: id });
@@ -609,22 +612,12 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   }
   const held = new Set(parseJson<string[]>(rev.assets_held) ?? []);
   const manifest = parseJson<AssetManifest>(rev.asset_manifest);
+  // The slots as this revision holds them (recorded at its proposal): every
+  // pending proposal approved, except those held, which stay proposed (§6.4).
+  recordRevisionAssets(tx, { revision: rev.id, project: rev.project, manifest });
   for (const slot of manifest?.slots ?? []) {
-    tx.db
-      .prepare(`INSERT OR IGNORE INTO "design_assets" ("id", "created_at", "design_revision", "slot", "slot_version", "kind", "platforms", "status", "provenance", "variants", "held") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(
-        tx.newId('dast_'),
-        tx.at,
-        rev.id,
-        slot.key,
-        slot.slot_version,
-        slot.kind,
-        JSON.stringify(slot.platforms),
-        slot.status === 'proposed' && !held.has(slot.key) ? 'approved' : slot.status,
-        slot.provenance,
-        JSON.stringify(slot.variants.map((v) => ({ name: v.name, format: v.format, digest: v.digest ?? null }))),
-        held.has(slot.key) ? 1 : 0,
-      );
+    if (held.has(slot.key)) tx.db.prepare(`UPDATE "design_assets" SET "held" = 1 WHERE "design_revision" = ? AND "slot" = ?`).run(rev.id, slot.key);
+    else tx.db.prepare(`UPDATE "design_assets" SET "status" = 'approved' WHERE "design_revision" = ? AND "slot" = ? AND "status" = 'proposed'`).run(rev.id, slot.key);
   }
   const moved = moveEffective(tx, rev, manifest, held);
   // The human tests' assignment (E156 Q3), with the change's effect; an
@@ -638,11 +631,44 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
   if (moved.length > 0) {
     tx.emit('design.assets_approved', { project: rev.project, design_revision: rev.id }, { moved });
+    // SEAM.md §510: after the move, before its work's registration (one
+    // transaction: a kill here leaves neither).
+    barrier('design.effective_moved');
     registerAssetUpdates(tx, rev, moved);
   }
   if (args.withoutCriteria) {
     tx.emit('design.ready', { project: rev.project, design_revision: rev.id }, { without_criteria: true });
     recordMetMilestones(tx, rev.project);
+  }
+}
+
+// A revision's slots, recorded when it is proposed (SEAM.md §508): each
+// with its slot@version and status, `approved` where the effective set
+// already holds that slot@version from an approval at the same digests,
+// `placeholder` for the engine's, else `proposed` (a pending proposal, a
+// slot held at an earlier approval included). Idempotent per revision.
+export function recordRevisionAssets(tx: Tx, args: { revision: string; project: string; manifest: AssetManifest | null }): void {
+  for (const slot of args.manifest?.slots ?? []) {
+    const approvedRows = tx.db.prepare(`SELECT "variant", "slot_version", "digest" FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "source" = 'approved'`).all(args.project, slot.key) as { variant: string; slot_version: number; digest: string }[];
+    const withFiles = slot.variants.filter((v) => typeof v.digest === 'string');
+    const effective =
+      withFiles.length > 0 &&
+      withFiles.every((v) => approvedRows.some((e) => e.variant === v.name && e.slot_version === slot.slot_version && e.digest === v.digest));
+    const status = slot.status === 'placeholder' && slot.provenance === 'engine_placeholder' ? 'placeholder' : effective || slot.status === 'approved' ? 'approved' : 'proposed';
+    tx.db
+      .prepare(`INSERT OR IGNORE INTO "design_assets" ("id", "created_at", "design_revision", "slot", "slot_version", "kind", "platforms", "status", "provenance", "variants", "held") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`)
+      .run(
+        tx.newId('dast_'),
+        tx.at,
+        args.revision,
+        slot.key,
+        slot.slot_version,
+        slot.kind,
+        JSON.stringify(slot.platforms),
+        status,
+        slot.provenance,
+        JSON.stringify(slot.variants.map((v) => ({ name: v.name, format: v.format, digest: v.digest ?? null }))),
+      );
   }
 }
 
@@ -811,14 +837,9 @@ function registerAssetUpdates(tx: Tx, rev: RevisionRow, moved: { slot: string; v
     // A slot an integrated stage carried: bound, or carried and unbound.
     // (A stage's package carried the effective set when it was built under
     // the design: its work waited on design_ready.)
-    const carried =
-      bindings.length > 0 ||
-      tx.db
-        .prepare(
-          `SELECT 1 FROM "stages" s JOIN "work_items" w ON w."id" = s."work_item" WHERE s."project" = ? AND s."status" IN ('integrated', 'verified')
-             AND EXISTS (SELECT 1 FROM json_each(w."depends_on") j WHERE json_extract(j.value, '$.milestone') = 'design_ready') LIMIT 1`,
-        )
-        .get(rev.project) !== undefined;
+    // (What a package carried is recorded when it is built: a slot no
+    // integrated stage's package carried needs no work, SEAM.md §510.)
+    const carried = bindings.length > 0 || slotCarried(tx.db, rev.project, slot);
     if (carried) {
       const candidate = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(rev.project) as { id: string } | undefined;
       observeTrigger(

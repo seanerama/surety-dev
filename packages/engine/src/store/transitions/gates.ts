@@ -29,6 +29,8 @@ import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './wor
 import { findingVerifiable, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
+import { assetFixStages } from '../../design/asset-bindings.js';
+import { assetInputsCurrent } from '../../design/asset-inputs.js';
 
 type Db = Tx['db'];
 
@@ -268,6 +270,10 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
   const matching = all.filter(
     (r) =>
       r.invalidated_at === null &&
+      // A result of a check reading assets is evidence about the slot@version
+      // it read only (D7 §6.5; G14): never counted once that slot's effective
+      // version has moved, reused or not.
+      assetInputsCurrent(db, project, (r as { asset_inputs?: string | null }).asset_inputs ?? null) &&
       (r.reused || r.source_revision === scope.candidate.revision) &&
       r.protected_version === scope.effective.id &&
       r.runner_class === check.runner_class &&
@@ -1127,6 +1133,21 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
         .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
         .get(c.id, stage) as { stale: number } | undefined;
       if (!latest || latest.stale === 1) out.push({ candidate: c.id, stage });
+    }
+    // An `asset_updated` fix held by the candidate (D7 §6.5): the stage gates
+    // of the stages it updates, on this candidate, as for any work.
+    for (const w of heldByAncestry(db, c)) {
+      const item = db.prepare('SELECT "kind", "status", "subject" FROM "work_items" WHERE "id" = ?').get(w) as { kind: string; status: string; subject: string } | undefined;
+      if (!item || item.kind !== 'fix' || item.status !== 'verifying') continue;
+      const subject = parseJson<{ cause?: string; slot?: unknown; bindings?: unknown }>(item.subject) ?? {};
+      if (subject.cause !== 'asset_updated') continue;
+      for (const stage of assetFixStages(db, args.project, subject)) {
+        if (out.some((o) => o.candidate === c.id && o.stage === stage)) continue;
+        const latest = db
+          .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
+          .get(c.id, stage) as { stale: number } | undefined;
+        if (!latest || latest.stale === 1) out.push({ candidate: c.id, stage });
+      }
     }
     // A conformance stage's gate (K11): due through its own lifecycle.
     for (const stage of dueConformanceGates(db, c)) out.push({ candidate: c.id, stage });

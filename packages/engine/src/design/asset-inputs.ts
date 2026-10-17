@@ -11,6 +11,8 @@ import type Database from 'better-sqlite3';
 import { parseJson } from '../store/transitions/common.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, transitionWork } from '../store/transitions/work.js';
+import { getCandidate, heldByAncestry } from '../store/transitions/evidence.js';
+import { assetFixStages } from './asset-bindings.js';
 
 export interface AssetInput {
   slot: string;
@@ -78,19 +80,41 @@ export function recordResultAssets(tx: Tx, args: { result: string; execution: st
   }
 }
 
-// An `asset_updated` fix (D7 §6.5) is verified when every check reading its
-// slot has passed with the new slot@version: its `asset_version_changed`
-// obligations resolved (a fix has no finding whose resolution would end
-// it). One whose slot no check reads is done once integrated and verifying.
+// Whether a result's asset inputs are the effective versions now (D7 §6.5;
+// G14): a result that read none is not about assets; one naming a slot whose
+// effective version has moved (or that has none) is about an older version.
+export function assetInputsCurrent(db: Database.Database, project: string, inputs: string | null): boolean {
+  const list = parseJson<AssetInput[]>(inputs);
+  if (!Array.isArray(list) || list.length === 0) return true;
+  return list.every((i) => {
+    const e = db.prepare('SELECT "slot_version" FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(project, i.slot, i.variant) as { slot_version: number } | undefined;
+    return e !== undefined && e.slot_version === i.slot_version;
+  });
+}
+
+// An `asset_updated` fix (D7 §6.5) is verified as any work is, by the gate:
+// every stage it answers to (its bindings' stages and the stages that
+// carried its slot) has a satisfied, current stage gate on a candidate that
+// holds it, and every check reading its slot has passed with the new
+// slot@version (its `asset_version_changed` obligations resolved). A fix
+// has no finding whose resolution would end it.
 export function completeAssetFixes(tx: Tx, project: string): void {
   const fixes = tx.db.prepare(`SELECT "id", "subject" FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND "status" = 'verifying' AND json_extract("subject", '$.cause') = 'asset_updated' ORDER BY "seq"`).all(project) as { id: string; subject: string }[];
   for (const f of fixes) {
-    const slot = parseJson<{ slot?: string }>(f.subject)?.slot;
+    const subject = parseJson<{ slot?: string; bindings?: unknown }>(f.subject) ?? {};
+    const slot = subject.slot;
     if (typeof slot !== 'string') continue;
     const open = (tx.db.prepare(`SELECT o."id", c."definition" FROM "check_obligations" o LEFT JOIN "checks" c ON c."id" = o."check" WHERE o."project" = ? AND o."reason" = 'asset_version_changed' AND o."resolved_at" IS NULL`).all(project) as { id: string; definition: string | null }[]).filter((o) =>
       (parseJson<{ asset_inputs?: { slot: string }[] }>(o.definition)?.asset_inputs ?? []).some((a) => a.slot === slot),
     );
     if (open.length > 0) continue;
+    const gated = assetFixStages(tx.db, project, subject).every((stage) =>
+      (tx.db.prepare(`SELECT "candidate" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? AND "outcome" = 'satisfied' AND "stale" = 0 ORDER BY rowid DESC`).all(project, stage) as { candidate: string }[]).some((e) => {
+        const c = getCandidate(tx.db, e.candidate);
+        return c !== undefined && heldByAncestry(tx.db, c).includes(f.id);
+      }),
+    );
+    if (!gated) continue;
     const item = getWorkItem(tx, f.id);
     if (item) transitionWork(tx, item, 'complete', {}, { cause: 'asset_updated', slot });
   }

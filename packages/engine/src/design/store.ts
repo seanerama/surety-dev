@@ -121,10 +121,17 @@ export function recordInventory(tx: Tx, args: { id: string }): { recorded: boole
   tx.db.prepare('UPDATE "projects" SET "design_inventory_digest" = ? WHERE "id" = ?').run(row.inventory_digest, row.project);
   const inventory = parseJson<Inventory>(row.inventory)!;
   const manifest = parseJson<AssetManifest>(row.manifest);
-  if (manifest && !tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? LIMIT 1').get(row.project)) {
+  // Before any approval every default slot and variant is selected, so each
+  // one the set lacks (a target added later, SEAM.md §506) gets its
+  // placeholder; after one, the approved selection decides (approval.ts).
+  // A slot's platforms follow the manifest's.
+  const approvedDesign = tx.db.prepare(`SELECT 1 FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') LIMIT 1`).get(row.project) !== undefined;
+  for (const slot of manifest?.slots ?? []) tx.db.prepare('UPDATE "design_effective_assets" SET "platforms" = ? WHERE "project" = ? AND "slot" = ?').run(JSON.stringify(slot.platforms), row.project, slot.key);
+  if (manifest && !approvedDesign) {
     for (const slot of manifest.slots) {
       for (const v of slot.variants) {
         if (!v.file || !v.digest) continue;
+        if (tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(row.project, slot.key, v.name)) continue;
         tx.db
           .prepare(
             `INSERT INTO "design_effective_assets" ("id", "created_at", "project", "slot", "kind", "variant", "slot_version", "source", "digest", "format", "revision", "file", "platforms", "since_design_revision")
