@@ -11,7 +11,7 @@
 // open objections; and, on a repair, the reasons the last proposal was
 // refused.
 
-import { activeStages } from './active.js';
+import { activeStages, dependsOnNumbers } from './active.js';
 import { KEPT_STAGE_RULE, touchedCriteria } from './check.js';
 import { keptOf, replacementOf, subjectWorkOf } from './replace.js';
 import { gitOk, repoContext } from '../git/exec.js';
@@ -109,7 +109,9 @@ function planOf(db: Db, project: string, id: string | null | undefined): ReplanP
     // Every execution input a kept stage is compared by (plan/check.ts
     // executionInputsDigest), so it can be listed exactly as built.
     adrs: json(s.adrs),
-    depends_on: json(s.depends_on),
+    // As the plan schema has it (B.5: stage numbers), never the stage ids
+    // the row holds: a kept stage copied as built must pass the schema.
+    depends_on: dependsOnNumbers(db, s.depends_on),
     validation: json(s.validation),
     integration_obligations: json(s.integration_obligations),
     integrated_revision: (s.integrated_revision as string | null) ?? null,

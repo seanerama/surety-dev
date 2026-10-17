@@ -2,7 +2,7 @@
 
 import { designCatalogueFacts, designChangeFacts } from '../design/review-package.js';
 import { replanFacts } from '../plan/replan-package.js';
-import { activeStages } from '../plan/active.js';
+import { activeStages, dependsOnNumbers } from '../plan/active.js';
 import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
@@ -647,7 +647,8 @@ function authoringFacts(db: Database, project: string, planId: string | null, it
         goal: s.goal,
         modules: parse<string[]>(s.modules, []),
         implements: parse<string[]>(s.implements, []).map(keyOf),
-        depends_on: parse<unknown[]>(s.depends_on, []),
+        // Stage numbers, as the plan has them (B.5), never the row's ids.
+        depends_on: dependsOnNumbers(db, s.depends_on),
         validation: parse<unknown>(s.validation, null),
       }))
     : [];
