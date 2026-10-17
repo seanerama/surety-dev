@@ -97,4 +97,26 @@ export const currentApproval = (home, project) => {
   return row ? decision(home, row.id) : null;
 };
 
+// The integration head as the engine has it registered: what the rebind
+// compares a bundle's bound head with (plan/bundle.ts `rebindDue`).
+export const registeredHead = (home, project) =>
+  withStore(home, (db) => db.prepare(`SELECT r."expected_oid" FROM "ref_registry" r JOIN "projects" p ON p."id" = r."project" WHERE r."project" = ? AND r."ref" = 'refs/heads/' || p."integration_branch"`).get(project))?.expected_oid ?? null;
+
+// The open `plan_approval` once it is bound to the registered head (its
+// manifest's `baseline_revision`), or null once none is open. After a head
+// move the open generation is bound to the old head until a tick's rebind
+// re-raises it (or stales its bundle); an answer to it in that window races
+// the rebind and may be refused 409 `decision_invalidated` (objection 173).
+// Ticks, one round at a time and answering nothing, until the rebind has run.
+export async function boundApproval(fx, project, { max = 20 } = {}) {
+  for (let i = 0; ; i++) {
+    const row = currentApproval(fx.home, project);
+    const head = registeredHead(fx.home, project);
+    if (row === null || (head !== null && row.manifest?.baseline_revision === head)) return row;
+    if (i >= max) throw new Error(`the open plan_approval ${row.id} still bound to ${row.manifest?.baseline_revision} after ${max} rounds; the registered head is ${head}`);
+    await tick(fx.engine, project, { rounds: 1 });
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 export { stagesOfPlan };
