@@ -137,10 +137,13 @@ export class SessionDriver {
   // ---- the tick: admitted turns dispatched (D1 §15.1; SEAM.md §344) -------------------
 
   async dispatchTurns(): Promise<number> {
-    const pending = await this.rt.read<{ run: string; project: string; invocation: string; repo: string; branch: string }[]>('session.pending_turns', {});
+    const pending = await this.rt.read<{ run: string; project: string; invocation: string; repo: string; branch: string; held: boolean }[]>('session.pending_turns', {});
     let n = 0;
     for (const t of pending) {
       try {
+        // A Designer turn held on the day limits goes only once they clear
+        // without it (the driver's decision on objection 156).
+        if (t.held && !(await this.rt.engine<{ released: boolean }>('session.turn_release', { run: t.run, invocation: t.invocation })).released) continue;
         if (await this.launcher.dispatchTurn({ project: t.project, repo: t.repo, branch: t.branch }, { run: t.run, invocation: t.invocation })) n++;
       } catch (err) {
         log('turn dispatch', err, { run: t.run });
@@ -197,7 +200,8 @@ export class SessionDriver {
       let materializeFailure: string | null = null;
       const hold = handle.sandbox?.volatile ?? null;
       if (handle.sandbox !== null && hold !== null && hold.held && handle.workspacePath !== null && !handle.materialized) {
-        const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+        // (The read answers {effective, revision}: store/reads.ts.)
+        const p = await this.rt.read<{ effective: Record<string, number> }>('project.policy', { project }).then((r) => r.effective).catch(() => ({}) as Record<string, number>);
         const caps = { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
         const m = materialize({ hold, home: this.rt.home, workspace: handle.workspacePath, caps });
         if (m.state === 'refused') {

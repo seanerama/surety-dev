@@ -328,12 +328,14 @@ export function noteRunModel(tx: Tx, run: string, observed: string | null): void
 
 // The run's token limit as its receipt fixed it at dispatch, or the
 // project's current one where the receipt holds none.
-// A Designer session's receipt fixes the Designer's own budget beside it,
-// and that is the session's limit (D7 §3.2; SEAM.md §491).
+// A Designer session's receipt fixes the Designer's own budget beside it:
+// a Designer turn's limit is what the session has left of it, the most the
+// turn can spend before its budget check stops it (D7 §3.2; SEAM.md §491;
+// the driver's decision on objection 156, item 5: unknown is not zero).
 function runLimit(db: Db, invocation: string, project: string): number {
   const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
   const snapshot = row ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown; designer_session_budget_billable_tokens?: unknown }) : {};
-  if (typeof snapshot.designer_session_budget_billable_tokens === 'number') return snapshot.designer_session_budget_billable_tokens;
+  if (typeof snapshot.designer_session_budget_billable_tokens === 'number') return Math.max(0, snapshot.designer_session_budget_billable_tokens - sessionPriorSpend(db, invocation));
   return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
 }
 
@@ -620,7 +622,7 @@ interface DaySpend {
   runningAllowanceTokens: number;
 }
 
-function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: boolean }): DaySpend {
+function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: boolean; exclude?: string }): DaySpend {
   if (opts.check) seamBudgetRead(project);
   const day = today();
   const rows = db
@@ -641,6 +643,8 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     .all(project) as { id: string }[];
   let runningAllowanceTokens = 0;
   for (const u of underWay) {
+    // A held turn asking whether it may go is not its own reservation.
+    if (u.id === opts.exclude) continue;
     const so = observedSoFar(db, u.id);
     // An estimate is the price table's word on a charged invocation, kept on
     // its ledger row with the table's version: an invocation under way counts
@@ -677,7 +681,7 @@ function budgetDay(db: Db, project: string) {
 }
 
 // The day limits the project's current day has passed, sorted.
-export function exhaustedLimits(db: Db, project: string, opts: { check: boolean; dispatch?: boolean }): string[] {
+export function exhaustedLimits(db: Db, project: string, opts: { check: boolean; dispatch?: boolean; exclude?: string }): string[] {
   const policy = projectPolicy(db, project);
   const spend = daySpend(db, project, opts);
   const over: string[] = [];

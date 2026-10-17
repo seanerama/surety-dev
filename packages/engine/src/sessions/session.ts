@@ -372,7 +372,14 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   const resolved: Resolution = canaryOf ? { kind: 'scripted', backend: run.backend, version: run.backend_version, model: run.model_requested } : sessionBackend(tx.db, { project: run.project, role: run.role, scripted: args.scripted, model: run.model_requested });
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, resolved.subject);
   const exhausted = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true });
-  if (exhausted.length > 0) {
+  // A Designer turn is held on the day's limits, not refused, as a one-shot's
+  // dispatch is held (G12, "like any run"; the driver's decision on
+  // objection 156, option (a)): admitted and recorded here, dispatched by a
+  // later tick once the reservations clear (releaseHeldTurn). Only the
+  // session's own budget closes it. Vision, Spec Writer and Architect turns
+  // keep M5's refusal.
+  const dayHeld = exhausted.length > 0 && run.role === 'designer' && canaryOf === null;
+  if (exhausted.length > 0 && !dayHeld) {
     throw new Refusal(409, 'budget_exhausted', `Project ${run.project} has passed ${exhausted.join(', ')}; the session admits no further turn.`, 'Raise the limit or wait for the day to pass.', { run: run.id, limits: exhausted });
   }
   // The session's cumulative run budget (D6 §2.4; D1 §13.3): every earlier
@@ -453,22 +460,89 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   const deadlineSeconds = policy[`deadline_${run.role}`]!;
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'turn_running', "turn_count" = ?, "deadline_at" = ? WHERE "id" = ?`).run(turn, addSeconds(tx.at, deadlineSeconds), run.id);
   tx.emit('session.turn_started', { project: run.project, run: run.id, invocation }, { turn, idle_generation: run.idle_generation });
+  if (dayHeld) {
+    // The hold, visible (rule 25): on the turn, in the transcript, and on
+    // the session's, the turn's and the project's reads.
+    tx.db.prepare('UPDATE "turns" SET "day_hold" = ? WHERE "id" = ?').run(JSON.stringify({ limits: exhausted, since: tx.at }), turnId);
+    appendTranscript(tx, run, {
+      turn,
+      speaker: 'engine',
+      text: `The turn is held: the project's day has passed ${exhausted.join(', ')} with the runs in flight reserved. It is dispatched, before any work that became eligible after it, once their reservations clear; nothing of the session is closed by it.`,
+      text_ref: null,
+    });
+    tx.emit('session.turn_held', { project: run.project, run: run.id, invocation }, { turn, limits: exhausted });
+  }
   return { run: run.id, turn, session_state: 'turn_running', invocation };
 }
 
+// A Designer turn held on the day limits now (the driver's decision on
+// objection 156): {limits, since}, or null.
+export interface DayHold {
+  limits: string[];
+  since: string;
+}
+export function heldTurnOf(db: Tx['db'], run: string): ({ turn: number; invocation: string } & DayHold) | null {
+  const row = db
+    .prepare(`SELECT "number", "invocation", "day_hold" FROM "turns" WHERE "run" = ? AND "day_hold" IS NOT NULL AND "day_hold_released_at" IS NULL AND "settled_at" IS NULL ORDER BY "number" DESC LIMIT 1`)
+    .get(run) as { number: number; invocation: string; day_hold: string } | undefined;
+  if (!row) return null;
+  const hold = JSON.parse(row.day_hold) as DayHold;
+  return { turn: row.number, invocation: row.invocation, limits: hold.limits, since: hold.since };
+}
+
+// The Designer turns of a project held on the day limits now, oldest first.
+export function heldTurns(db: Tx['db'], project: string): ({ run: string; turn: number; invocation: string } & DayHold)[] {
+  return (
+    db
+      .prepare(`SELECT "run", "number", "invocation", "day_hold" FROM "turns" WHERE "project" = ? AND "day_hold" IS NOT NULL AND "day_hold_released_at" IS NULL AND "settled_at" IS NULL ORDER BY "created_at", rowid`)
+      .all(project) as { run: string; number: number; invocation: string; day_hold: string }[]
+  ).map((r) => ({ run: r.run, turn: r.number, invocation: r.invocation, ...(JSON.parse(r.day_hold) as DayHold) }));
+}
+
+// A held turn's release, asked by the tick before it dispatches turns: the
+// day's limits read again with every reservation but the turn's own; still
+// passed, the hold stays (its limits brought up to date); cleared, the hold
+// is released, and the turn's deadline and run lease start from now (the
+// turn has not run). Turns that hold no hold answer released.
+export function releaseHeldTurn(tx: Tx, args: { run: string; invocation: string }): { released: boolean; limits?: string[] } {
+  const row = tx.db.prepare('SELECT "id", "number", "day_hold", "day_hold_released_at", "settled_at" FROM "turns" WHERE "run" = ? AND "invocation" = ?').get(args.run, args.invocation) as
+    | { id: string; number: number; day_hold: string | null; day_hold_released_at: string | null; settled_at: string | null }
+    | undefined;
+  if (!row || row.day_hold === null || row.day_hold_released_at !== null || row.settled_at !== null) return { released: true };
+  const run = getRun(tx, args.run) as SessionRow | undefined;
+  if (!run) return { released: false };
+  const hold = JSON.parse(row.day_hold) as DayHold;
+  const limits = exhaustedLimits(tx.db, run.project, { check: true, dispatch: true, exclude: args.invocation });
+  if (limits.length > 0) {
+    if (limits.join(',') !== hold.limits.join(',')) tx.db.prepare('UPDATE "turns" SET "day_hold" = ? WHERE "id" = ?').run(JSON.stringify({ limits, since: hold.since }), row.id);
+    return { released: false, limits };
+  }
+  tx.db.prepare('UPDATE "turns" SET "day_hold_released_at" = ? WHERE "id" = ?').run(tx.at, row.id);
+  const policy = projectPolicy(tx.db, run.project);
+  tx.db.prepare('UPDATE "runs" SET "deadline_at" = ? WHERE "id" = ?').run(addSeconds(tx.at, policy[`deadline_${run.role}`]!), run.id);
+  tx.db.prepare(`UPDATE "leases" SET "renewed_at" = ?, "expires_at" = ? WHERE "resource_kind" = 'run' AND "resource_id" = ? AND "released_at" IS NULL`).run(tx.at, addSeconds(tx.at, engineSettings().lease_ttl), run.id);
+  tx.emit('session.turn_released', { project: run.project, run: run.id, invocation: args.invocation }, { turn: row.number, held_since: hold.since, limits: hold.limits });
+  return { released: true };
+}
+
 // The turns admitted and not yet dispatched (D1 §15.1: the choke point
-// dispatches; SEAM.md §344: a tick launches it in the kernel lane).
-export function pendingTurns(db: Tx['db'], project: string | null): { run: string; project: string; invocation: string; repo: string; branch: string }[] {
-  return db
-    .prepare(
-      `SELECT r."id" AS "run", r."project", d."invocation", p."dev_repo_path" AS "repo", p."integration_branch" AS "branch"
-       FROM "runs" r JOIN "execution_domains" d ON d."run" = r."id" AND d."status" = 'allocated' JOIN "projects" p ON p."id" = r."project"
-       WHERE r."kind" = 'session' AND r."session_state" = 'turn_running' AND r."state" IN ('claimed', 'executing') AND (? IS NULL OR r."project" = ?)
-         AND r."qualification_attempt" IS NULL
-         AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = d."invocation")
-       ORDER BY r.rowid`,
-    )
-    .all(project, project) as { run: string; project: string; invocation: string; repo: string; branch: string }[];
+// dispatches; SEAM.md §344: a tick launches it in the kernel lane). Oldest
+// admission first, so a turn held longest goes first.
+export function pendingTurns(db: Tx['db'], project: string | null): { run: string; project: string; invocation: string; repo: string; branch: string; held: boolean }[] {
+  return (
+    db
+      .prepare(
+        `SELECT r."id" AS "run", r."project", d."invocation", p."dev_repo_path" AS "repo", p."integration_branch" AS "branch",
+           (t."day_hold" IS NOT NULL AND t."day_hold_released_at" IS NULL) AS "held"
+         FROM "runs" r JOIN "execution_domains" d ON d."run" = r."id" AND d."status" = 'allocated' JOIN "projects" p ON p."id" = r."project"
+           LEFT JOIN "turns" t ON t."invocation" = d."invocation"
+         WHERE r."kind" = 'session' AND r."session_state" = 'turn_running' AND r."state" IN ('claimed', 'executing') AND (? IS NULL OR r."project" = ?)
+           AND r."qualification_attempt" IS NULL
+           AND NOT EXISTS (SELECT 1 FROM "invocation_status_observations" o WHERE o."invocation" = d."invocation")
+         ORDER BY COALESCE(t."created_at", r."created_at"), r.rowid`,
+      )
+      .all(project, project) as { run: string; project: string; invocation: string; repo: string; branch: string; held: number }[]
+  ).map((t) => ({ ...t, held: t.held === 1 }));
 }
 
 // The claim of an admitted turn, rebuilt from its rows for the launcher.
@@ -1138,7 +1212,7 @@ function offerWorkspace(tx: Tx, args: { project: string; run: string; workspace:
 export function sessionView(db: Tx['db'], project: string, runId: string): Record<string, unknown> {
   const run = db.prepare('SELECT * FROM "runs" WHERE "id" = ? AND "project" = ? AND "kind" = ?').get(runId, project, 'session') as Record<string, unknown> | undefined;
   if (!run) throw notFound('session', runId);
-  const turns = db.prepare('SELECT "id", "number", "invocation", "started_at", "finished_at", "settled_at", "usage_status", "outcome", "reply" FROM "turns" WHERE "run" = ? ORDER BY "number"').all(runId) as Record<string, unknown>[];
+  const turns = db.prepare('SELECT "id", "number", "invocation", "started_at", "finished_at", "settled_at", "usage_status", "outcome", "reply", "day_hold", "day_hold_released_at" FROM "turns" WHERE "run" = ? ORDER BY "number"').all(runId) as Record<string, unknown>[];
   const ledger = db.prepare('SELECT "id", "invocation", "billable_in", "cached_in", "out", "cost_status", "cost_usd", "usage_complete", "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid').all(runId) as Record<string, unknown>[];
   const byInvocation = new Map(ledger.map((l) => [l.invocation as string, l]));
   let notes: { findings?: SaveFinding[] } | null = null;
@@ -1176,6 +1250,10 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
       base_revision: run.base_revision,
       backend: run.backend,
       model_requested: run.model_requested,
+      held: (() => {
+        const h = heldTurnOf(db, runId);
+        return h ? { reason: 'day_limit', turn: h.turn, limits: h.limits, since: h.since } : null;
+      })(),
     },
     turns: turns.map((t) => {
       let reply: Record<string, unknown> | null = null;
@@ -1184,11 +1262,15 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
       } catch {
         reply = null;
       }
-      const state = t.settled_at === null ? 'running' : t.outcome === 'replied' ? 'settled' : t.outcome === 'failed' ? 'failed' : 'unknown';
+      // A turn held on the day limits is `held`, naming them (the driver's
+      // decision on objection 156; rule 25).
+      const hold = t.settled_at === null && typeof t.day_hold === 'string' && t.day_hold_released_at === null ? (JSON.parse(t.day_hold) as DayHold) : null;
+      const state = hold !== null ? 'held' : t.settled_at === null ? 'running' : t.outcome === 'replied' ? 'settled' : t.outcome === 'failed' ? 'failed' : 'unknown';
       return {
         turn: t.number,
         invocation: t.invocation,
         state,
+        ...(hold !== null ? { held: { reason: 'day_limit', limits: hold.limits, since: hold.since } } : {}),
         reply: state === 'settled' ? (reply?.reply ?? null) : null,
         artifact_changed: state === 'settled' ? (reply?.artifact_changed ?? null) : null,
         done: state === 'settled' ? (reply?.done ?? false) : null,

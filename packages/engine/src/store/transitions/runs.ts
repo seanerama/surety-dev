@@ -463,6 +463,17 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
   // A project whose day has passed a day limit is not dispatched (D1 §13.3;
   // SEAM.md §55). The check reads the ledger; a read that fails throws, and
   // nothing is dispatched on it (D1 §6.6).
+  // A Designer turn held on the day limits goes before any one-shot of its
+  // project that has not yet been dispatched (the driver's decision on
+  // objection 156, item 3): one-shots already in flight run out, and those
+  // still eligible wait until the turn is released.
+  const heldTurn = db
+    .prepare(
+      `SELECT t."run" FROM "turns" t JOIN "runs" r ON r."id" = t."run"
+       WHERE t."project" = ? AND t."day_hold" IS NOT NULL AND t."day_hold_released_at" IS NULL AND t."settled_at" IS NULL AND r."state" <> 'ended' LIMIT 1`,
+    )
+    .get(item.project) as { run: string } | undefined;
+  if (heldTurn) return `depends on the Designer turn of session ${heldTurn.run}, held on the day limit and dispatched first`;
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
   // One Builder per failure (real loop run 3, L3-1): a fix waits while the
   // stage's own Builder is being sent back for its finding's check at its
@@ -1077,6 +1088,9 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
       `SELECT r."id" AS "run", r."project", r."state" FROM "leases" l JOIN "runs" r ON r."id" = l."resource_id"
        WHERE l."resource_kind" = 'run' AND l."released_at" IS NULL AND l."expires_at" <= ?
          AND NOT (r."kind" = 'session' AND r."session_state" IN ('allocated', 'open_idle', 'saving'))
+         -- A Designer turn held on the day limits owns no process: its
+         -- lease starts again at its release (sessions/session.ts).
+         AND NOT EXISTS (SELECT 1 FROM "turns" t WHERE t."run" = r."id" AND t."day_hold" IS NOT NULL AND t."day_hold_released_at" IS NULL AND t."settled_at" IS NULL)
        ORDER BY r.rowid, r."id"`,
     )
     .all(at) as { run: string; project: string; state: RunState }[];

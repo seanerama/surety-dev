@@ -300,6 +300,13 @@ export function readProject(db: Db, args: { project: string }) {
       adoption: parseJson<unknown>((db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption),
       // The work held now, with what each waits on (M543 (f)).
       held_work: heldWork(db, args.project),
+      // The Designer turns held on the day limits, oldest first (the
+      // driver's decision on objection 156; rule 25).
+      held_turns: (
+        db
+          .prepare(`SELECT "run", "number", "day_hold" FROM "turns" WHERE "project" = ? AND "day_hold" IS NOT NULL AND "day_hold_released_at" IS NULL AND "settled_at" IS NULL ORDER BY "created_at", rowid`)
+          .all(args.project) as { run: string; number: number; day_hold: string }[]
+      ).map((t) => ({ run: t.run, turn: t.number, reason: 'day_limit', ...(parseJson<{ limits: string[]; since: string }>(t.day_hold) ?? { limits: null, since: null }) })),
     },
   };
 }

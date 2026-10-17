@@ -182,6 +182,7 @@ import {
   intendCheckpointIntegration,
   openSession,
   pendingTurns,
+  releaseHeldTurn,
   sessionContextFacts,
   sessionExists,
   sessionView,
@@ -788,6 +789,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.turn_reply': (tx, a) => turnReply(tx, a),
   'session.turn_usage': (tx, a) => turnUsage(tx, a),
   'session.turn_open': (tx, a) => turnStillOpen(tx, a),
+  'session.turn_release': (tx, a) => releaseHeldTurn(tx, a),
   // D6 §2.1, §2.4 (M5 slice 33; SEAM.md §394): a session's run, grant and
   // lease (its workspace is made after, through the journal), and a new run
   // continuing an ended session.

@@ -50,3 +50,12 @@ CREATE TABLE design_native_obligations (
   requirement TEXT REFERENCES requirements(id),
   UNIQUE (design_revision, target, screen, convention)
 );
+
+-- A Designer turn held on the project's day limits (the driver's decision
+-- on objection 156, option (a): G12's "like any run"): admitted and
+-- recorded, its dispatch held as a one-shot's is, released on a later tick
+-- once the day's reservations clear. `day_hold` is {limits, since} as the
+-- hold began (its limits brought up to date while it lasts); the hold is
+-- current while `day_hold_released_at` is null and the turn unsettled.
+ALTER TABLE turns ADD COLUMN day_hold TEXT;
+ALTER TABLE turns ADD COLUMN day_hold_released_at TEXT;

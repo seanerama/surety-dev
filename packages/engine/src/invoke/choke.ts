@@ -1255,7 +1255,8 @@ export class Launcher {
 
   // The snapshot's caps of a project's policy (D1 §7.3; M19).
   private async snapshotCaps(project: string): Promise<{ files: number; bytes: number; fileBytes: number }> {
-    const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+    // (The read answers {effective, revision}: store/reads.ts.)
+    const p = await this.rt.read<{ effective: Record<string, number> }>('project.policy', { project }).then((r) => r.effective).catch(() => ({}) as Record<string, number>);
     return { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
   }
 
