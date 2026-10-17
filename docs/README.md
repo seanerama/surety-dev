@@ -30,6 +30,12 @@ The documents moved here from the repository root on 2026-10-01 with their file 
 | [foundations/sdlc-framework-foundations-v1.0.md](foundations/sdlc-framework-foundations-v1.0.md) | Principles, roles, state model, testing rules. |
 | [foundations/sdlc-foundations-v1.1-errata-draft.md](foundations/sdlc-foundations-v1.1-errata-draft.md) | Sean's decisions E1 to E151 amending the foundations. |
 
+## Product direction before detailed design
+
+| Document | Purpose |
+|---|---|
+| [design/sdlc-portfolio-and-idea-intake-brief.md](design/sdlc-portfolio-and-idea-intake-brief.md) | Architect reference for project navigation, application Integrations, potential projects, authenticated idea intake and nightly interactive briefings. Product direction and proposed boundaries; not implementation authorization or an addition to an existing milestone. |
+
 ## Background and record
 
 | Location | Contents |

@@ -2388,3 +2388,12 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 6. **Known defects carried to M6** (the report's list): `runs.model_observed` never set; M444F-1, the plan check counting unknown dependency results as incomplete and spending the replan's repairs; M444's parked blocker left open; the shared test seed not waiting for live runs; `engine_version` reading `0.0.0`; INK-2, a stale `phase_verification` for a superseded candidate; INK2-2, a redundant Reviewer proposal question.
 7. **Not run:** the hands-on (M446), available to Sean at any time.
 8. **Next:** M6. D7, the Designer (decided, E153 item 2), and D8, portfolio and idea intake (draft 2, its questions open), are its designs; its build spec is not yet written.
+
+## E155. D8's questions 1 to 11 decided; D7 reconciled with D8; M6 begins (decided by Sean, 2026-10-16)
+
+**Status: decided by Sean** ("adopt the reviewer's recommendations for all eleven questions … lets begin").
+
+1. **D8** (`docs/design/sdlc-design-D8-portfolio-and-intake.md`, draft 2, from `docs/design/sdlc-portfolio-and-idea-intake-brief.md`): questions 1 to 11 decided as the reviewer recommended (D8's closing section). Open: question 12 (the curator and third-party text; §3.7's withholding stands until decided) and §16's milestone placement. D8 is not M6 scope.
+2. **D7's reconciliation with D8** (D7 §17, the §4.1 sentence that `consumed_by` names modules of the same project only, and an integration's interface identity including its module) recorded; no D7 decision reopened.
+3. **M6 begins:** D7 draft 3 as decided (E153 item 2); the M6 build spec and acceptance plan are drafted next, against D7's Appendix C.
+4. **The deployed play apps** of the M5 real runs (ports 45201 to 45211) stopped at Sean's instruction.
