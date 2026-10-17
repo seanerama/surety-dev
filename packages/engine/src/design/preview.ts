@@ -1,14 +1,17 @@
 // The design preview (D7 §5.7, A.7; SEAM.md §§488, 499, 500): `surety design
 // preview --project <p> [--revision checkpoint|approved|<sha>]`, `POST
-// …/design/preview`. The engine seals the design tree at the revision with
-// its own static server, index and frames, and deploys it on the project's
+// …/design/preview`. The engine seals the design tree at the revision (its
+// files and nothing else) and deploys it, served by the engine's own static
+// file server (design/preview/server.ts, a file of the engine's install run
+// by the engine's node, its hash recorded), on the project's
 // reserved environment `design-preview` through the same attempt, frozen
 // intent, capability check, launch and reconcile reads as any deployment,
 // verified by two identity reads. It is not a release: no deployment
 // authorization, no candidate, no alpha_authorize. Its unit is named as D4
 // §9.3 names every unit, from the reserved environment's id (objection 135):
 // `surety-<h>-env_<ULID>-g<n>.service`. `--stop` (`DELETE …/design/preview`)
-// tears it down; so does its time running out (`design_preview_ttl`).
+// tears it down; so does its time running out (`design_preview_ttl` past
+// the close of the project's Designer session), and a newer approved design.
 //
 // SAFETY: every unit is created and stopped only by the adapter's own effect
 // from a capability minted for a recorded attempt intent of the reserved
@@ -29,11 +32,11 @@ import { pausePoint } from '../testing/seam.js';
 import { type Capability, type IdentityRead, adapterFor, effectCall, readCall } from '../deploy/adapter.js';
 import { homeFreeBytes, sealArtifact } from '../deploy/artifact.js';
 import { configIdentity, homeHash, validateConfig } from '../deploy/config.js';
-import { checkStart } from '../deploy/commands.js';
 import { adapterVersion } from '../deploy/qualification.js';
 import type { ReleaseOperator } from '../deploy/release-operator.js';
 import type { PreviewFacts } from './preview-facts.js';
-import { previewSite } from './preview-site.js';
+import { previewServerPath } from './preview/path.js';
+import { engineMockups, servedTable } from './preview-mockups.js';
 import { designTreeAt } from './tree.js';
 
 const ADAPTER = 'local_service';
@@ -46,6 +49,13 @@ function nodeSha256(): string {
   const key = process.execPath;
   if (runtimeHash?.key !== key) runtimeHash = { key, sha256: createHash('sha256').update(readFileSync(key)).digest('hex') };
   return runtimeHash.sha256;
+}
+
+// The tree's digest before its seal (the sealed artifact's digest replaces
+// it on the preview's row once the tree is sealed).
+const sha256hex = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
+function treeDigest(files: Map<string, Buffer>): string {
+  return `sha256:${sha256hex(JSON.stringify([...files.keys()].sort().map((p) => [p, sha256hex(files.get(p)!)])))}`;
 }
 
 // A port on 127.0.0.1 nothing listens on now: the relay's, and so the URL's.
@@ -116,25 +126,30 @@ export class DesignPreviewer {
     const facts = await this.rt.read<PreviewFacts>('design.preview_facts', { project, revision: (b.revision as string | undefined) ?? 'checkpoint' });
     const tree = await designTreeAt(facts.repo, facts.revision);
     if (tree === null || tree.files.size === 0) throw new Refusal(404, 'not_found', `The design tree at ${facts.revision} could not be read.`, 'Name another revision.', { revision: facts.revision });
-    const site = previewSite(tree.files, { targets: facts.targets, design_preview: facts.design_preview, revision: facts.revision });
+    const table = engineMockups(tree.files, { targets: facts.targets, design_preview: facts.design_preview });
+    const server = previewServerPath();
+    const serverDigest = `sha256:${createHash('sha256').update(readFileSync(server)).digest('hex')}`;
     const version = adapterVersion(ADAPTER);
-    if (version === null) throw new Refusal(409, 'adapter_unqualified', 'No local_service adapter is known to this engine.', 'Qualify the adapter first.', {});
+    if (version === null) throw new Refusal(409, 'design_preview_unavailable', 'No local_service adapter is known to this engine, so the preview cannot be deployed.', 'Export the design with surety design export instead.', { project, cause: 'adapter_unqualified' });
     const port = await freePort();
     const content = validateConfig({
       adapter: ADAPTER,
       adapter_version: version,
       targets: ['app'],
       runtime: { path: process.execPath, sha256: nodeSha256() },
-      start: [process.execPath, 'server.js'],
+      start: [process.execPath, server],
       port,
+      // The engine's table of mockups (preview-mockups.ts): what the server
+      // shows as native, and nothing the Designer declared.
+      env: servedTable(table),
       identity_method: 'tree_digest',
     });
-    const mockups = site.mockups.map((m) => ({ path: m.path, target: m.target, capability: m.capability }));
+    const mockups = table.mockups.map((m) => ({ path: m.path, target: m.target, preview_capability: m.capability }));
     const begun = await this.rt.engine<{ preview: string; environment: string; prefix: string; generation: number; port: number }>('design.preview_begin', {
       project,
       revision: facts.revision,
-      tree_digest: site.tree_digest,
-      server_digest: site.server_digest,
+      tree_digest: treeDigest(tree.files),
+      server_digest: serverDigest,
       mockups,
       homeHash: homeHash(this.rt.home),
       content,
@@ -142,7 +157,7 @@ export class DesignPreviewer {
     });
     let artifact: { digest: string; path: string };
     try {
-      const commit = await this.commit(project, site.files, begun.preview);
+      const commit = await this.commit(project, tree.files, begun.preview);
       artifact = await this.seal(project, begun.preview, commit);
     } catch (err) {
       await this.rt.engine('design.preview_failed', { preview: begun.preview, reason: (err as Error).message }).catch(() => undefined);
@@ -156,7 +171,7 @@ export class DesignPreviewer {
   }
 
   // DELETE …/design/preview: the reserved environment torn down, in the background.
-  async stop(project: string, reason = 'command'): Promise<{ status: number; body: Record<string, unknown> }> {
+  async stop(project: string, reason = 'stop'): Promise<{ status: number; body: Record<string, unknown> }> {
     void this.ro;
     const state = await this.rt.read<{ environment: { id: string; prefix: string } | null; busy: boolean }>('design.preview_state', { project });
     if (state.environment === null) throw new Refusal(404, 'not_found', 'This project has no design preview.', 'Ask for one with surety design preview first.', { project });
@@ -172,22 +187,26 @@ export class DesignPreviewer {
     return { status: 202, body: { preview: { environment: 'design-preview', environment_id: env.id, stopping: true } } };
   }
 
-  // At a tick: a deployed preview past its time is torn down (D7 A.7); so
-  // is a failed one at once, whose unit may still run (its launch granted,
-  // its identity reads not matched, or the engine stopped mid-deploy): the
-  // teardown stops only the units the environment's intents name, by exact
-  // name, and none it cannot positively own (the slice-40 review's B2; E64).
+  // At a tick (D7 §5.7, A.7; SEAM.md §499): a deployed preview is torn down
+  // when the engine's clock passes the close of the project's Designer
+  // session (or the preview's deployment, if later) plus the
+  // `design_preview_ttl` in force, never while a Designer session is open
+  // (`ttl`), or when a design approval's effect is recorded after its
+  // deployment (`approved`); a failed one at once, whose unit may still run
+  // (its launch granted, its identity reads not matched, or the engine
+  // stopped mid-deploy): the teardown stops only the units the
+  // environment's intents name, by exact name, and none it cannot
+  // positively own (the slice-40 review's B2; E64).
   async expire(project: string): Promise<void> {
     if (this.driving.has(project) || !this.rt.deploy) return;
-    const state = await this.rt.read<{ environment: { id: string } | null; busy: boolean; latest: { status: string; ttl_until: string | null } | null }>('design.preview_state', { project });
+    const state = await this.rt.read<{ environment: { id: string } | null; busy: boolean; latest: { status: string } | null; end: 'ttl' | 'approved' | null }>('design.preview_state', { project, now: nowIso() });
     if (state.environment === null || state.busy || state.latest === null) return;
     if (state.latest.status === 'failed') {
       await this.stop(project, 'failed_preview');
       return;
     }
-    if (state.latest.status !== 'deployed' || state.latest.ttl_until === null) return;
-    if (Date.parse(state.latest.ttl_until) > Date.parse(nowIso())) return;
-    await this.stop(project, 'ttl');
+    if (state.latest.status !== 'deployed' || state.end === null) return;
+    await this.stop(project, state.end);
   }
 
   // Every preview operation this incarnation drives, awaited (engine stop).
@@ -236,7 +255,9 @@ export class DesignPreviewer {
         startedMs: nowMs(),
         freeBytes: () => homeFreeBytes(this.rt.home),
         admission: (digest) => this.rt.read('deploy.artifact_admission', { project, digest }),
-        inspect: (paths) => checkStart([process.execPath, 'server.js'], paths),
+        // The server is the engine's file, not the tree's: nothing of the
+        // tree is a program.
+        inspect: () => undefined,
       },
     });
     const { spec: _spec, created: _created, ...artifact } = sealed;

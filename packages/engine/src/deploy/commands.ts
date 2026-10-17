@@ -11,7 +11,7 @@ import { gateFacts } from '../gates/prepare.js';
 import { log } from '../runtime.js';
 import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
-import type { ConfigContent, SealedArtifact } from '../store/transitions/deploy.js';
+import { type ConfigContent, DESIGN_PREVIEW_ENV, type SealedArtifact, environmentReserved } from '../store/transitions/deploy.js';
 import { seamArtifactFreeBytes } from '../testing/seam.js';
 import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded, sealArtifact } from './artifact.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
@@ -23,6 +23,8 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) {
     throw new Refusal(422, 'config_invalid', `"${name}" is not an environment name.`, 'Name the environment with lower-case letters, digits, "-" and "_".', { field: 'environment' });
   }
+  // The design preview's environment is the engine's (D7 §5.7; G4).
+  if (name === DESIGN_PREVIEW_ENV) throw environmentReserved(project);
   const content: ConfigContent = validateConfig(body);
   const digests = secretDigests(rt.home, content);
   return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home) };
@@ -33,6 +35,7 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
 // version's content written again with the digests of the values the engine
 // holds now. Unchanged, the same version answers (200); otherwise a new one.
 export async function prepareResolveSecrets(rt: Runtime, project: string, name: string, body: unknown): Promise<Record<string, unknown>> {
+  if (name === DESIGN_PREVIEW_ENV) throw environmentReserved(project);
   if (body !== undefined && (!isObject(body) || Object.keys(body).length > 0)) {
     const [extra] = isObject(body) ? Object.keys(body) : [];
     throw new Refusal(400, extra === undefined ? 'invalid_value' : 'unknown_field', 'This command takes no fields.', 'Send {} or no body.', { field: extra ?? null });

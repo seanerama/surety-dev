@@ -24,6 +24,8 @@ import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/comm
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
+import { exportEntries, ustar } from '../design/export.js';
+import { ownerReview } from '../design/owner-review.js';
 import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { redactText } from '../records/redact.js';
 import type { RecordRow } from '../store/transitions/records.js';
@@ -700,6 +702,31 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         };
         if (post) return { kind: 'prepared', name: 'design.preview_answer', prepare: async (b) => designer().preview.request(project, b) };
         return { kind: 'prepared', name: 'design.preview_answer', prepare: async () => designer().preview.stop(project) };
+      }
+      // D7 §5.7, A.8 (SEAM.md §501): the design tree at a revision, as a
+      // ustar archive with SIMULATIONS.txt; a read, no host call.
+      if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'export' && get) {
+        return {
+          kind: 'direct',
+          handler: async (r) => {
+            const revision = new URLSearchParams(r.query).get('revision') ?? 'checkpoint';
+            const entries = await exportEntries(runtime(), project, revision);
+            return { status: 200, body: null, raw: ustar(entries), type: 'application/x-tar' };
+          },
+        };
+      }
+      // D7 §10.5, A.8 (SEAM.md §§502, 522): the owner-invoked review of a
+      // build he names, in a Designer session in review mode.
+      if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'reviews' && post) {
+        return {
+          kind: 'prepared',
+          name: 'session.reply',
+          prepare: async (b) => {
+            const sessions = runtime().sessions;
+            if (!sessions) throw new Refusal(503, 'engine_starting', 'The sessions are not available yet.', 'Wait for startup to finish.', { step: state.step });
+            return ownerReview(runtime(), sessions, project, b, seamBackends().find((x) => x.id === 'scripted')?.version ?? null);
+          },
+        };
       }
       // D7 §6.4 (SEAM.md §487): the held assets submitted on their own.
       if (rest.length === 3 && rest[0] === 'design' && rest[1] === 'assets' && rest[2] === 'submit' && post) {
