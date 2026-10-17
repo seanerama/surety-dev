@@ -19,7 +19,6 @@
 //   from (`phase_complete`, <plan>, 1) when the roadmap has a next phase.
 // Phase completion establishes nothing about deployment.
 
-import { designBoundHumanTests } from '../design/human-tests.js';
 import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
@@ -358,14 +357,16 @@ export function buildComplete(db: Db, project: string): boolean {
 export function unplannedRequirements(db: Db, planId: string): string[] {
   const plan = db.prepare('SELECT "project", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(planId) as { project: string; phase_number: number } | undefined;
   if (!plan) return [];
-  const active = activeStages<{ id: string; implements: string }>(db, planId);
-  const implemented = new Set(active.flatMap((s) => parseJson<string[]>(s.implements) ?? []));
-  // A design's human test (E156 Q3), assigned to the phase holding its
-  // target's last UI stage and bound to that stage of this plan: planned.
-  for (const k of designBoundHumanTests(db, plan.project, planId, new Set(active.map((s) => s.id)))) implemented.add(k);
+  const implemented = new Set(activeStages<{ implements: string }>(db, planId).flatMap((s) => parseJson<string[]>(s.implements) ?? []));
   return (
     db
-      .prepare(`SELECT "id", "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" = ? AND "withdrawn_at" IS NULL AND "status" <> 'descriptive_unverified' ORDER BY "key"`)
+      // A human-only requirement with no executable criterion imposes no
+      // build obligation on a stage (E156 Q3; BS6 §11.5): its human test is
+      // pending, owed by a person, never planned or passed by a stage.
+      .prepare(
+        `SELECT "id", "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" = ? AND "withdrawn_at" IS NULL AND "status" <> 'descriptive_unverified'
+           AND NOT ("human_test" = 1 AND ("criteria" IS NULL OR "criteria" = '[]')) ORDER BY "key"`,
+      )
       .all(plan.project, plan.phase_number) as { id: string; key: string }[]
   )
     .filter((r) => !implemented.has(r.id) && !implemented.has(r.key))

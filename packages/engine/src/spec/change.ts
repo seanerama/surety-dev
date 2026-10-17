@@ -835,6 +835,9 @@ export interface AppliedInputs {
   // (D1 correction 14): the finalizer recomputes it and falls back to this,
   // never to the proposal's (the 31b review's M1).
   impact: Impact;
+  // A design's change (E156 Q3): the roadmap file the same commit writes,
+  // with the human tests' engine assignment, as the next roadmap version.
+  roadmap?: { blob: string; path: string; version: number; from_version: number };
 }
 
 // An application that cannot be made as approved (a precondition unread, a
@@ -858,7 +861,10 @@ export function refuseApplication(tx: Tx, args: { intent: string; reason: string
 // The intent begins (decisions/effects.ts): its preconditions read again,
 // then the integration branch moved to the proposal (or its rebase onto the
 // head, committed first) by a journaled compare-and-swap.
-export function beginApplication(tx: Tx, args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string } | null; deadlineSeconds: number }): IntentResult | null {
+export function beginApplication(
+  tx: Tx,
+  args: { intent: string; head: string; commit: { sha: string; tree: string; content: string; parent?: string; blob?: string; roadmap?: AppliedInputs['roadmap'] } | null; deadlineSeconds: number },
+): IntentResult | null {
   if (!revalidateIntent(tx, args.intent, {})) return null;
   const facts = applicationFacts(tx, { intent: args.intent });
   if (!facts || facts.revision === null) {
@@ -902,7 +908,7 @@ export function beginApplication(tx: Tx, args: { intent: string; head: string; c
     payload: { repo: facts.repo, ref: facts.ref, old_oid: args.head, new_oid: target },
     target: { repo: facts.repo, ref: facts.ref },
     subject: { spec_change_request: facts.request, old_oid: args.head, new_oid: target },
-    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
+    finalizer: { purpose: 'spec_applied', ref: facts.ref, ref_kind: 'integration', new_oid: target, request: facts.request, intent: args.intent, impact, ...(args.commit?.blob ? { blob: args.commit.blob } : {}), ...(args.commit?.roadmap ? { roadmap: args.commit.roadmap } : {}) } satisfies AppliedInputs as unknown as Record<string, unknown>,
     deadlineSeconds: args.deadlineSeconds,
   };
   const made = args.commit === null
@@ -979,7 +985,7 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
   // applies n+1; its human tests are placed by the engine's assignment, so
   // it registers no replan.
   const design = r.source === 'design' ? revisionOfRequest(tx.db, r.id) : undefined;
-  if (design) approveDesign(tx, { revision: design.id, specRevision: made.spec_revision, withoutCriteria: false });
+  if (design) approveDesign(tx, { revision: design.id, specRevision: made.spec_revision, withoutCriteria: false, ...(inputs.roadmap ? { roadmap: inputs.roadmap } : {}) });
   // A requirement the change adds that the engine's assignment did not
   // place (a human test whose phase cannot be determined, a criterion with
   // requirement "new", an ordinary new requirement) goes the normal way

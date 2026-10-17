@@ -505,7 +505,7 @@ export const DESIGN_VERDICTS_KEYS = ['review', 'review_blob', 'evidence'];
 
 // ---- the effect (D7 §7.4, §6.4; E156 Q3) ------------------------------------------------------------
 
-export function approveDesign(tx: Tx, args: { revision: string; specRevision: string | null; withoutCriteria: boolean }): void {
+export function approveDesign(tx: Tx, args: { revision: string; specRevision: string | null; withoutCriteria: boolean; roadmap?: { blob: string; path: string; version: number; from_version: number } }): void {
   const rev = getRevision(tx.db, args.revision);
   if (!rev || rev.status !== 'proposed') return;
   const content = contentOf(rev);
@@ -548,7 +548,7 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   const moved = moveEffective(tx, rev, manifest, held);
   // The human tests' assignment (E156 Q3), with the change's effect; an
   // asset-only revision keeps the one it supersedes.
-  if (!args.withoutCriteria && rev.spec_change_request) assignHumanTests(tx, rev);
+  if (!args.withoutCriteria && rev.spec_change_request) assignHumanTests(tx, rev, args.roadmap ?? null);
   else if (rev.scope === 'asset_only' && prior) tx.db.prepare('UPDATE "design_revisions" SET "assignments" = (SELECT "assignments" FROM "design_revisions" WHERE "id" = ?) WHERE "id" = ?').run(prior.id, rev.id);
   bindStageScreens(tx, rev);
   tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
@@ -599,7 +599,7 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
 
 // The engine's assignment of the design's human tests (E156 Q3): a roadmap
 // revision placing each in the phase holding its target's last UI stage.
-function assignHumanTests(tx: Tx, rev: RevisionRow): void {
+function assignHumanTests(tx: Tx, rev: RevisionRow, file: { blob: string; path: string; version: number; from_version: number } | null): void {
   const assignments = humanTestAssignments(tx.db, rev).filter((a) => a.requirement !== null && a.phase !== null) as { target: string; requirement: string; phase: number }[];
   const all = humanTestAssignments(tx.db, rev);
   tx.db.prepare('UPDATE "design_revisions" SET "assignments" = ? WHERE "id" = ?').run(JSON.stringify(all), rev.id);
@@ -619,11 +619,14 @@ function assignHumanTests(tx: Tx, rev: RevisionRow): void {
     moves.push({ key: a.requirement, from: had?.assigned_phase ?? null, to: a.phase });
   }
   const id = tx.newId('road_');
-  // The roadmap's file is unchanged in git: the engine's assignment is a
-  // revision of the store's roadmap, its blob the file's as approved.
+  // The roadmap file the application's commit wrote (effects.ts): the next
+  // version, derived from this one. A file written against another version
+  // is not this assignment's: the store's revision then names the file as
+  // it was, and the next Architect's roadmap places the tests.
+  const written = file !== null && file.from_version === road.version && file.version === road.version + 1;
   tx.db
     .prepare('INSERT INTO "roadmap_revisions" ("id", "created_at", "project", "version", "architecture_revision", "git_path", "git_blob", "phases", "moved_requirements", "approved_by", "approved_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tx.at, rev.project, road.version + 1, road.architecture_revision, road.git_path, road.git_blob, JSON.stringify(phases), JSON.stringify(moves), 'engine:design_approval', tx.at);
+    .run(id, tx.at, rev.project, road.version + 1, road.architecture_revision, written ? file!.path : road.git_path, written ? file!.blob : road.git_blob, JSON.stringify(phases), JSON.stringify(moves), 'engine:design_approval', tx.at);
   for (const m of moves) tx.db.prepare('UPDATE "requirements" SET "assigned_phase" = ? WHERE "project" = ? AND "key" = ?').run(m.to, rev.project, m.key);
   // Each assignment bound to the roadmap and plan versions it was made against (E156 Q3).
   tx.db.prepare('UPDATE "design_revisions" SET "assignments" = ? WHERE "id" = ?').run(JSON.stringify(all.map((a) => (a.requirement !== null && a.phase !== null ? { ...a, roadmap_version: road.version + 1 } : a))), rev.id);
@@ -733,3 +736,17 @@ export { DESIGN_VERDICTS } from './review.js';
 
 export type { Inventory };
 void policyRevision;
+
+// What the application's commit of a design's change writes into the
+// roadmap file (E156 Q3): each human test's requirement moved to the phase
+// holding its target's last UI stage, against the current roadmap version.
+// null: nothing to assign (not a design's change, or no roadmap).
+export function roadmapAssignment(db: Db, args: { request: string }): { path: string; version: number; moves: { requirement: string; phase: number }[] } | null {
+  const rev = revisionOfRequest(db, args.request);
+  if (!rev) return null;
+  const road = db.prepare('SELECT "version", "git_path" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(rev.project) as { version: number; git_path: string } | undefined;
+  if (!road) return null;
+  const moves = humanTestAssignments(db, rev).filter((a) => a.requirement !== null && a.phase !== null).map((a) => ({ requirement: a.requirement!, phase: a.phase! }));
+  if (moves.length === 0) return null;
+  return { path: road.git_path || '.surety/roadmap/roadmap.json', version: road.version, moves };
+}

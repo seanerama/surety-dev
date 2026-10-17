@@ -301,7 +301,10 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     const implemented = new Set([...plan.stages.flatMap((s) => s.implements), ...kept.filter((k) => !stageNumbers.includes(k.number)).flatMap((k) => k.implements)]);
     // A `descriptive_unverified` requirement is no obligation of the phase
     // (D6 §8.2, K10; the driver's ruling 7): still held to the roadmap.
-    add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k) && reqs.get(k)?.descriptive_unverified !== true));
+    // Nor is a human-only requirement with no executable criterion (E156 Q3;
+    // BS6 §11.5): its human test is a person's, pending, never a stage's.
+    const humanOnly = (k: string) => reqs.get(k)?.human_test === true && (reqs.get(k)?.criteria.length ?? 0) === 0;
+    add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k) && reqs.get(k)?.descriptive_unverified !== true && !humanOnly(k)));
     add('PLAN_DEPENDENCY_INCOMPLETE', phase.depends_on.filter((d) => !baseline.completed_phases.includes(d)).map((d) => (baseline.phase_unknown?.[d] ? `phase ${d} (${baseline.phase_unknown[d]!.join('; ')})` : `phase ${d}`)));
     // A stage may implement only what the roadmap assigns to the phase.
     add('PLAN_MODULE_OUTSIDE_PHASE', plan.stages.flatMap((s) => s.implements.filter((k) => reqs.has(k) && !phase.requirement_ids.includes(k)).map((k) => `stage ${s.number}:${k}`)));

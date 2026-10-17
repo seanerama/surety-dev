@@ -13,7 +13,7 @@ import type { AssetManifest } from './assets.js';
 import { reviewDesignDue } from './due.js';
 import type { Inventory } from './inventory.js';
 import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
-import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch } from './approval.js';
+import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
 import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
 import { designPackageFacts } from './package.js';
@@ -68,6 +68,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.preview_facts': (d, a: { project: string; revision?: string }) => previewFacts(d, a),
   'design.preview_state': (d, a: { project: string }) => previewState(d, a),
   'design.review_target': (d, a: { project: string }) => reviewTarget(d, a),
+  'design.roadmap_assignment': (d, a: { request: string }) => roadmapAssignment(d, a),
   'design.run_facts': (d, a: { run: string }) => {
     const r = d.prepare('SELECT "project", "role", "session_notes" FROM "runs" WHERE "id" = ?').get(a.run) as { project: string; role: string; session_notes: string | null } | undefined;
     return r ? { project: r.project, role: r.role, mode: parseJson<{ mode?: string }>(r.session_notes)?.mode ?? null } : null;
