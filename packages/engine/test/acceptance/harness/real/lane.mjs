@@ -289,15 +289,31 @@ function applyRerun(ctx, order = null) {
   saveState(ctx, state);
 }
 
+// A step that ended in an intentional wait (D7 §11 as corrected by Sean,
+// E162 item 1; BS6 §4.1 rule 25 as amended; SEAM.md §547): a deferral the
+// owner chose, or his Designer session still open, accounting for a design
+// hold. Recorded `waiting`, never `done`: never a passed step.
+export class StepWaiting extends Error {
+  constructor(message, waits = []) {
+    super(message);
+    this.name = 'StepWaiting';
+    this.waiting = true;
+    this.waits = waits;
+  }
+}
+
 // A paid or engine-starting step, at most once per run directory. A step
 // already recorded returns its recorded value (or fails again with its
 // recorded failure) and starts nothing. A halted run directory fails every
-// step that has not run. A step that throws halts the run directory.
+// step that has not run. A step that throws halts the run directory; one
+// that ends in an intentional wait (StepWaiting) is recorded `waiting`, not
+// `done` and not passed, and halts it likewise.
 export async function realStep(ctx, name, fn) {
   let state = loadState(ctx);
   const done = state.steps[name];
   if (done?.status === 'done') return done.value;
   if (done?.status === 'failed') throw new Error(`step ${name} failed earlier and is not run again (${done.reason}); it is rerun only if Sean names it in ${ENV.rerun}`);
+  if (done?.status === 'waiting') throw new StepWaiting(`step ${name} ended earlier in an intentional wait and is not passed (${done.reason}); it is rerun only if Sean names it in ${ENV.rerun}`, done.waits ?? []);
   if (state.halted) throw new Error(`the run directory is halted by step ${state.halted.step} (${state.halted.reason}); nothing was started. Sean clears it by naming that step in ${ENV.rerun}.`);
   state.steps[name] = { status: 'started', at: new Date().toISOString() };
   saveState(ctx, state);
@@ -310,8 +326,9 @@ export async function realStep(ctx, name, fn) {
   } catch (err) {
     state = loadState(ctx);
     const reason = String(err?.message ?? err).slice(0, 2000);
-    state.steps[name] = { status: 'failed', at: new Date().toISOString(), reason: redactKey(ctx, reason) };
-    state.halted = { step: name, reason: redactKey(ctx, reason).slice(0, 400), at: new Date().toISOString() };
+    const waiting = err?.waiting === true;
+    state.steps[name] = waiting ? { status: 'waiting', at: new Date().toISOString(), reason: redactKey(ctx, reason), waits: err.waits ?? [] } : { status: 'failed', at: new Date().toISOString(), reason: redactKey(ctx, reason) };
+    state.halted = { step: name, reason: redactKey(ctx, `${waiting ? 'waiting (an intentional wait, not a pass): ' : ''}${reason}`).slice(0, 400), at: new Date().toISOString() };
     saveState(ctx, state);
     throw err;
   }

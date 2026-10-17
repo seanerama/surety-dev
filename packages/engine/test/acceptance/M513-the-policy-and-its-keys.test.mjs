@@ -21,7 +21,7 @@ import { decisionsOfKind } from './harness/decisions.mjs';
 import { changePolicy, getPolicy, policyRevisions } from './harness/journal.mjs';
 import { alphaDeployed, alphaReady, journeyContext, phaseCompleted, planOfPhase, pump } from './harness/journey/drive.mjs';
 import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
-import { assertNoSilentHold, createPantry, designEvents, designScripts, openDesignDue, readDesign, replanScriptFor, scriptBuilders, stageRow, stageWork, toPublished, variantSpec } from './harness/design/drive.mjs';
+import { assertHoldsAccounted, createPantry, designEvents, designScripts, openDesignDue, readDesign, replanScriptFor, scriptBuilders, stageRow, stageWork, toPublished, variantSpec } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS } from './harness/design/check41.mjs';
 import { API_ONLY, authoringByPhase, designWithCriterion, designedPantry, stageIdsOf, waivedEvents } from './harness/design/plan44.mjs';
 
@@ -136,7 +136,7 @@ describe('M513 the policy and its keys', () => {
     assert.equal(designHeld(stageWork(fx.home, p.id, 2)), false, 'and is never held for design');
     assert.deepEqual(openDesignDue(fx.home, p.id)?.evidence?.held_stages, [s3], 'design_due names the Android stage only');
     assert.ok(s2, 'stage 2 exists');
-    assertNoSilentHold(fx.home, p.id, '(a)');
+    await assertHoldsAccounted(fx, p.id, '(a)');
     // (e) off: applied directly, not a widening (E143 item 1 unchanged); the hold released with a waiver.
     const off = await fx.engine.post(`/v1/projects/${p.id}/policy`, { design: 'off' });
     assert.equal(off.status, 200, `design: off applied directly, not a widening of autonomy (E143 item 1) (→ ${off.status} ${off.text})`);
@@ -144,7 +144,7 @@ describe('M513 the policy and its keys', () => {
     assert.deepEqual(decisionsOfKind(fx.home, p.id, 'policy_widening'), [], 'still no policy_widening');
     await pump(fx, ctx, () => (launchesOf(fx, p, 3, 2).length > 0 ? true : undefined), { what: 'the Android stage released and dispatched', max: 30 });
     assert.deepEqual(waivedEvents(fx.home, p.id).map((e) => e.subject?.stage), [s3], 'design.waived on the released stage');
-    assertNoSilentHold(fx.home, p.id, '(e)');
+    await assertHoldsAccounted(fx, p.id, '(e)');
   });
 
   test('(b) off with the UI stages held and the design\'s human tests approved: the holds released, design.waived per stage, the human tests pending', async (t) => {
@@ -159,7 +159,7 @@ describe('M513 the policy and its keys', () => {
     assert.deepEqual(sortedIds(waivedEvents(fx.home, p.id).map((e) => e.subject?.stage)), sortedIds(ui), 'design.waived once per released stage (D7 §2)');
     const design = await readDesign(fx, p.id);
     for (const target of ['web', 'android']) assert.equal((design.human_tests ?? []).find((h) => h.target === target)?.status, 'pending', `${target}'s design human test stays visibly pending (D7 §2)`);
-    assertNoSilentHold(fx.home, p.id, '(b)');
+    await assertHoldsAccounted(fx, p.id, '(b)');
   });
 
   test('(c) at_alpha with the UI stages held: the holds released, the review at Alpha kept', async (t) => {
@@ -173,7 +173,7 @@ describe('M513 the policy and its keys', () => {
     await alphaReady(fx, ctx);
     await changePolicy(fx.engine, p.id, { design: 'at_alpha' });
     await pump(fx, ctx, () => ([2, 3].every((n) => launchesOf(fx, p, n).length > 0) ? true : undefined), { what: 'both UI stages released and dispatched', max: 40 });
-    assertNoSilentHold(fx.home, p.id, '(c) released');
+    await assertHoldsAccounted(fx, p.id, '(c) released');
     await alphaDeployed(fx, ctx, { max: 200 });
     const due = await pump(fx, ctx, () => (openDesignDue(fx.home, p.id)?.evidence?.stage === 'alpha_review' ? openDesignDue(fx.home, p.id) : undefined), { what: 'design_due alpha_review on alpha_complete', max: 20 });
     assert.ok(due, 'the review at Alpha kept (D7 §2)');
