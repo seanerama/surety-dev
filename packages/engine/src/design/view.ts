@@ -12,6 +12,7 @@ import { approvedModuleMap, designPolicyOf } from './policy.js';
 import { currentInventory } from './store.js';
 import { heldStages } from './readiness.js';
 import type { AssetManifest } from './assets.js';
+import { deferredBatches } from './approval.js';
 
 // The selected slots and their selected variants (D7 §5.8, §6.2): the
 // current approved revision's manifest under its selection; before any
@@ -103,6 +104,8 @@ export function designView(db: Database.Database, args: { project: string }): Re
     human_tests,
     not_checkable_yet,
     holds: heldStages(db, args.project),
+    // A design batch the engine is holding back, and why (objection 166; rule 25).
+    batches_deferred: deferredBatches(db, args.project),
     design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
   };
 }

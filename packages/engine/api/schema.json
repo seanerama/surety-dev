@@ -34,6 +34,14 @@
     "AssessmentsProvenance": [
       "claimed"
     ],
+    "AssetBindingForm": [
+      "copy",
+      "derived"
+    ],
+    "BindingDeclaredBy": [
+      "builder",
+      "architect"
+    ],
     "BaselineTextsKind": [
       "adr",
       "constraint"
@@ -78,7 +86,8 @@
     "CheckObligationsReason": [
       "spec_changed",
       "deferred_authoring",
-      "authoring_pending"
+      "authoring_pending",
+      "asset_version_changed"
     ],
     "RunnerClass": [
       "direct",
@@ -146,7 +155,10 @@
       "reactivate",
       "policy_widening",
       "qualification_approval",
-      "trust_activation"
+      "trust_activation",
+      "design_approval",
+      "design_due",
+      "design_verdicts"
     ],
     "DecisionStatus": [
       "open",
@@ -201,6 +213,103 @@
       "later_attempt",
       "generation_superseded",
       "round_superseded"
+    ],
+    "AssetStatus": [
+      "placeholder",
+      "proposed",
+      "approved"
+    ],
+    "AssetProvenance": [
+      "engine_placeholder",
+      "designer",
+      "owner",
+      "observed"
+    ],
+    "DesignChecksOutcome": [
+      "passed",
+      "refused"
+    ],
+    "EffectiveSource": [
+      "approved",
+      "placeholder"
+    ],
+    "EvidenceProvenance": [
+      "engine_observed",
+      "owner_supplied",
+      "owner_reported"
+    ],
+    "DesignFindingCategory": [
+      "requirement_conflict",
+      "contract_conflict",
+      "defect"
+    ],
+    "Severity": [
+      "critical",
+      "high",
+      "medium",
+      "low"
+    ],
+    "DesignFindingStatus": [
+      "open",
+      "routed",
+      "recorded"
+    ],
+    "DesignFindingRoute": [
+      "change_spec",
+      "architect"
+    ],
+    "Target": [
+      "web",
+      "android",
+      "ios",
+      "macos",
+      "windows",
+      "linux"
+    ],
+    "NativeConvention": [
+      "browser_back",
+      "keyboard_path",
+      "system_back",
+      "safe_area",
+      "permission_prompt",
+      "touch_interaction",
+      "platform_navigation",
+      "window_resize",
+      "menu_entries",
+      "keyboard_shortcuts"
+    ],
+    "NativeObligationStatus": [
+      "not_checkable_yet"
+    ],
+    "DesignPreviewsStatus": [
+      "deploying",
+      "deployed",
+      "failed",
+      "torn_down"
+    ],
+    "ReviewTrigger": [
+      "alpha_complete",
+      "owner_command"
+    ],
+    "DesignRevisionScope": [
+      "full",
+      "asset_only",
+      "initial_review"
+    ],
+    "DesignOrigin": [
+      "intended",
+      "observed"
+    ],
+    "DesignRevisionStatus": [
+      "proposed",
+      "approved",
+      "approved_without_criteria",
+      "rejected",
+      "superseded"
+    ],
+    "ScreenStatus": [
+      "current",
+      "stale"
     ],
     "IntentStatus": [
       "pending",
@@ -260,12 +369,6 @@
       "security",
       "hygiene"
     ],
-    "Severity": [
-      "critical",
-      "high",
-      "medium",
-      "low"
-    ],
     "FindingStatus": [
       "open",
       "dispositioned",
@@ -318,7 +421,8 @@
       "verifier",
       "reviewer",
       "release_operator",
-      "mechanic"
+      "mechanic",
+      "designer"
     ],
     "CostStatus": [
       "reported",
@@ -488,7 +592,11 @@
       "deploy_precondition_manifest",
       "session_transcript",
       "spec_impact",
-      "plan_check"
+      "plan_check",
+      "design_check",
+      "design_inventory",
+      "design_observation",
+      "design_evidence"
     ],
     "PostScan": [
       "pending",
@@ -575,7 +683,9 @@
     "SpecChangeRequestsSource": [
       "owner",
       "finding",
-      "replan"
+      "replan",
+      "design",
+      "design_review"
     ],
     "SpecChangeRequestsStatus": [
       "requested",
@@ -683,7 +793,9 @@
       "authoring_readiness",
       "open_decision",
       "session_busy",
-      "prerequisite_results"
+      "prerequisite_results",
+      "design_pending",
+      "design_stale"
     ],
     "WorkspaceDisposition": [
       "active",
@@ -852,6 +964,8 @@
       "plan.generation_refused",
       "session.allocated",
       "session.turn_started",
+      "session.turn_held",
+      "session.turn_released",
       "session.turn_ended",
       "session.turn_settled",
       "session.saved",
@@ -872,7 +986,25 @@
       "requirement.confirmed",
       "conformance.source_bound",
       "stage.conformance_integrated",
-      "conformance.alpha_barrier_opened"
+      "conformance.alpha_barrier_opened",
+      "design.inventory_derived",
+      "design.checked",
+      "design.proposed",
+      "design.approved",
+      "design.rejected",
+      "design.ready",
+      "design.stale",
+      "design.waived",
+      "design.asset_added",
+      "design.assets_approved",
+      "design.preview_deployed",
+      "design.preview_torn_down",
+      "design.preview_requested",
+      "design.preview_failed",
+      "design.review_recorded",
+      "design.review_requested",
+      "design.verdicts_confirmed",
+      "design.asset_bound"
     ],
     "EngineMode": [
       "restricted",
@@ -1359,6 +1491,58 @@
         }
       }
     },
+    "asset_bindings": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "stage": {
+          "required": false,
+          "references": "stages"
+        },
+        "work_item": {
+          "required": false,
+          "references": "work_items"
+        },
+        "revision": {
+          "required": true
+        },
+        "target": {
+          "required": true
+        },
+        "slot": {
+          "required": true
+        },
+        "variant": {
+          "required": true
+        },
+        "path": {
+          "required": true
+        },
+        "form": {
+          "required": true,
+          "enum": "AssetBindingForm"
+        },
+        "source_slot_version": {
+          "required": true
+        },
+        "declared_by": {
+          "required": true,
+          "enum": "BindingDeclaredBy"
+        },
+        "superseded_by": {
+          "required": false,
+          "references": "asset_bindings"
+        }
+      }
+    },
     "attempt_intents": {
       "fields": {
         "id": {
@@ -1640,6 +1824,9 @@
         },
         "spec_generation": {
           "required": false
+        },
+        "asset_inputs": {
+          "required": false
         }
       }
     },
@@ -1788,6 +1975,9 @@
           "required": false
         },
         "invalidated_reason": {
+          "required": false
+        },
+        "asset_inputs": {
           "required": false
         }
       }
@@ -2183,6 +2373,583 @@
         "invalidated_reason": {
           "required": false,
           "enum": "VerificationInvalidation"
+        }
+      }
+    },
+    "design_assets": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "design_revision": {
+          "required": true,
+          "references": "design_revisions"
+        },
+        "slot": {
+          "required": true
+        },
+        "slot_version": {
+          "required": true
+        },
+        "kind": {
+          "required": true
+        },
+        "platforms": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "AssetStatus"
+        },
+        "provenance": {
+          "required": true,
+          "enum": "AssetProvenance"
+        },
+        "variants": {
+          "required": true
+        },
+        "held": {
+          "required": true
+        }
+      }
+    },
+    "design_checks": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "tree_revision": {
+          "required": true
+        },
+        "inventory_digest": {
+          "required": false
+        },
+        "outcome": {
+          "required": true,
+          "enum": "DesignChecksOutcome"
+        },
+        "reasons": {
+          "required": true
+        },
+        "hash": {
+          "required": true
+        },
+        "blobs": {
+          "required": true
+        }
+      }
+    },
+    "design_effective_assets": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "slot": {
+          "required": true
+        },
+        "kind": {
+          "required": true
+        },
+        "variant": {
+          "required": true
+        },
+        "slot_version": {
+          "required": true
+        },
+        "source": {
+          "required": true,
+          "enum": "EffectiveSource"
+        },
+        "digest": {
+          "required": true
+        },
+        "format": {
+          "required": true
+        },
+        "revision": {
+          "required": true
+        },
+        "file": {
+          "required": true
+        },
+        "platforms": {
+          "required": true
+        },
+        "since_design_revision": {
+          "required": false,
+          "references": "design_revisions"
+        }
+      }
+    },
+    "design_evidence": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "review": {
+          "required": false,
+          "references": "design_reviews"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "provenance": {
+          "required": true,
+          "enum": "EvidenceProvenance"
+        },
+        "format": {
+          "required": false
+        },
+        "digest": {
+          "required": false
+        },
+        "bytes": {
+          "required": false
+        },
+        "target": {
+          "required": true
+        },
+        "screen": {
+          "required": false
+        },
+        "route": {
+          "required": false
+        },
+        "status": {
+          "required": false
+        },
+        "truncated": {
+          "required": false
+        },
+        "observed_on": {
+          "required": false
+        },
+        "record": {
+          "required": false,
+          "references": "records"
+        }
+      }
+    },
+    "design_findings": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "turn": {
+          "required": true
+        },
+        "category": {
+          "required": true,
+          "enum": "DesignFindingCategory"
+        },
+        "severity": {
+          "required": true,
+          "enum": "Severity"
+        },
+        "message": {
+          "required": true
+        },
+        "interface": {
+          "required": false
+        },
+        "requirement": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "DesignFindingStatus"
+        },
+        "decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "route": {
+          "required": false,
+          "enum": "DesignFindingRoute"
+        },
+        "spec_change_request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "routed_at": {
+          "required": false
+        }
+      }
+    },
+    "design_inventories": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "inventory_digest": {
+          "required": true
+        },
+        "spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "architecture_revision": {
+          "required": false,
+          "references": "architecture_revisions"
+        },
+        "revision": {
+          "required": true
+        },
+        "inventory": {
+          "required": true
+        },
+        "manifest": {
+          "required": true
+        },
+        "incarnation": {
+          "required": false
+        },
+        "recorded_at": {
+          "required": false
+        }
+      }
+    },
+    "design_native_obligations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "design_revision": {
+          "required": true,
+          "references": "design_revisions"
+        },
+        "target": {
+          "required": true,
+          "enum": "Target"
+        },
+        "screen": {
+          "required": true
+        },
+        "convention": {
+          "required": true,
+          "enum": "NativeConvention"
+        },
+        "status": {
+          "required": true,
+          "enum": "NativeObligationStatus"
+        },
+        "requirement": {
+          "required": false,
+          "references": "requirements"
+        }
+      }
+    },
+    "design_package_carried": {
+      "fields": {
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "created_at": {
+          "required": true
+        },
+        "effective": {
+          "required": true
+        }
+      }
+    },
+    "design_previews": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "generation": {
+          "required": true
+        },
+        "revision": {
+          "required": true
+        },
+        "tree_digest": {
+          "required": true
+        },
+        "server_digest": {
+          "required": true
+        },
+        "unit": {
+          "required": false
+        },
+        "port": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "DesignPreviewsStatus"
+        },
+        "mockups": {
+          "required": true
+        },
+        "deployed_at": {
+          "required": false
+        },
+        "torn_down_at": {
+          "required": false
+        },
+        "ttl_until": {
+          "required": false
+        },
+        "memory_peak": {
+          "required": false
+        }
+      }
+    },
+    "design_reviews": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "design_revision": {
+          "required": false,
+          "references": "design_revisions"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "trigger": {
+          "required": true,
+          "enum": "ReviewTrigger"
+        },
+        "subject": {
+          "required": true
+        },
+        "review_blob": {
+          "required": false
+        },
+        "verdicts": {
+          "required": true
+        },
+        "confirmed_by": {
+          "required": false
+        },
+        "confirmation_decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "change_request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "findings": {
+          "required": true
+        }
+      }
+    },
+    "design_revisions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "version": {
+          "required": true
+        },
+        "scope": {
+          "required": true,
+          "enum": "DesignRevisionScope"
+        },
+        "git_path": {
+          "required": true
+        },
+        "tree_blob": {
+          "required": false
+        },
+        "revision": {
+          "required": true
+        },
+        "blobs": {
+          "required": true
+        },
+        "origin": {
+          "required": true,
+          "enum": "DesignOrigin"
+        },
+        "targets": {
+          "required": true
+        },
+        "asset_manifest_version": {
+          "required": false
+        },
+        "asset_manifest": {
+          "required": false
+        },
+        "selection": {
+          "required": false
+        },
+        "narrowings": {
+          "required": true
+        },
+        "current_against_spec": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "spec_change_request": {
+          "required": false,
+          "references": "spec_change_requests"
+        },
+        "architecture_revision": {
+          "required": false,
+          "references": "architecture_revisions"
+        },
+        "inventory_digest": {
+          "required": false
+        },
+        "design_check": {
+          "required": false,
+          "references": "design_checks"
+        },
+        "run": {
+          "required": false,
+          "references": "runs"
+        },
+        "batch_key": {
+          "required": false
+        },
+        "status": {
+          "required": true,
+          "enum": "DesignRevisionStatus"
+        },
+        "assets_held": {
+          "required": true
+        },
+        "assignments": {
+          "required": false
+        },
+        "approved_by": {
+          "required": false
+        },
+        "approved_at": {
+          "required": false
+        },
+        "ready_at": {
+          "required": false
+        },
+        "supersedes": {
+          "required": false,
+          "references": "design_revisions"
+        },
+        "findings": {
+          "required": true
+        },
+        "content": {
+          "required": false
+        },
+        "batch_released_at": {
+          "required": false
+        }
+      }
+    },
+    "design_screens": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "design_revision": {
+          "required": true,
+          "references": "design_revisions"
+        },
+        "key": {
+          "required": true
+        },
+        "target": {
+          "required": true
+        },
+        "requirements": {
+          "required": true
+        },
+        "interfaces": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "ScreenStatus"
+        },
+        "stale_reason": {
+          "required": false
         }
       }
     },
@@ -3968,6 +4735,12 @@
         },
         "spec_evidence_generation": {
           "required": true
+        },
+        "design_inventory_digest": {
+          "required": false
+        },
+        "design_due": {
+          "required": false
         }
       }
     },
@@ -4677,6 +5450,40 @@
         }
       }
     },
+    "session_held_turns": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "run": {
+          "required": true,
+          "references": "runs"
+        },
+        "number": {
+          "required": true
+        },
+        "limits": {
+          "required": true
+        },
+        "waiting_on": {
+          "required": true
+        },
+        "released_at": {
+          "required": false
+        },
+        "released_turn": {
+          "required": false,
+          "references": "turns"
+        }
+      }
+    },
     "session_transcripts": {
       "fields": {
         "id": {
@@ -4927,6 +5734,30 @@
         },
         "readable": {
           "required": true
+        }
+      }
+    },
+    "stage_screens": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "stage": {
+          "required": true,
+          "references": "stages"
+        },
+        "screen": {
+          "required": true
+        },
+        "target": {
+          "required": true
+        },
+        "design_revision": {
+          "required": true,
+          "references": "design_revisions"
         }
       }
     },
@@ -6271,6 +7102,43 @@
         "evidence_fingerprint"
       ],
       "target_seconds": 172800
+    },
+    "design_approval": {
+      "enabled": true,
+      "manifest": [
+        "design_version",
+        "architecture_version",
+        "design_check",
+        "asset_manifest_version",
+        "selection",
+        "tree_blobs",
+        "spec_version",
+        "spec_change_diff_hash",
+        "inventory_digest",
+        "roadmap_version",
+        "plan_versions"
+      ],
+      "target_seconds": 172800
+    },
+    "design_due": {
+      "enabled": true,
+      "manifest": [
+        "stage",
+        "held_stages",
+        "stale_screens",
+        "policy_revision",
+        "inventory_failure"
+      ],
+      "target_seconds": 172800
+    },
+    "design_verdicts": {
+      "enabled": true,
+      "manifest": [
+        "review",
+        "review_blob",
+        "evidence"
+      ],
+      "target_seconds": 172800
     }
   },
   "events": {
@@ -6754,6 +7622,12 @@
     "session.turn_started": {
       "owner": "sessions/session.ts"
     },
+    "session.turn_held": {
+      "owner": "sessions/session.ts"
+    },
+    "session.turn_released": {
+      "owner": "sessions/session.ts"
+    },
     "session.turn_ended": {
       "owner": "sessions/session.ts"
     },
@@ -6816,6 +7690,60 @@
     },
     "conformance.alpha_barrier_opened": {
       "owner": "plan/phase.ts"
+    },
+    "design.inventory_derived": {
+      "owner": "design/store.ts"
+    },
+    "design.checked": {
+      "owner": "design/store.ts"
+    },
+    "design.proposed": {
+      "owner": "design/store.ts"
+    },
+    "design.approved": {
+      "owner": "design/approval.ts"
+    },
+    "design.rejected": {
+      "owner": "design/approval.ts"
+    },
+    "design.ready": {
+      "owner": "design/approval.ts"
+    },
+    "design.stale": {
+      "owner": "design/store.ts"
+    },
+    "design.waived": {
+      "owner": "design/due.ts"
+    },
+    "design.asset_added": {
+      "owner": "design/approval.ts"
+    },
+    "design.assets_approved": {
+      "owner": "design/approval.ts"
+    },
+    "design.preview_deployed": {
+      "owner": "design/preview.ts"
+    },
+    "design.preview_torn_down": {
+      "owner": "design/preview.ts"
+    },
+    "design.preview_requested": {
+      "owner": "design/preview.ts"
+    },
+    "design.preview_failed": {
+      "owner": "design/preview.ts"
+    },
+    "design.review_recorded": {
+      "owner": "design/review.ts"
+    },
+    "design.review_requested": {
+      "owner": "design/review.ts"
+    },
+    "design.verdicts_confirmed": {
+      "owner": "design/review.ts"
+    },
+    "design.asset_bound": {
+      "owner": "design/approval.ts"
     }
   },
   "config": {
@@ -6942,7 +7870,10 @@
           "plan_approval": 172800,
           "spec_change": 259200,
           "adoption_mode": 172800,
-          "requirement_confirm": 172800
+          "requirement_confirm": 172800,
+          "design_approval": 172800,
+          "design_due": 172800,
+          "design_verdicts": 172800
         }
       },
       "ui_bootstrap": {
@@ -7393,6 +8324,54 @@
         "max": 16777216,
         "integer": true
       },
+      "deadline_designer": {
+        "default": 1800,
+        "min": 300,
+        "max": 10800,
+        "integer": true
+      },
+      "designer_session_budget_billable_tokens": {
+        "default": 3000000,
+        "min": 250000,
+        "max": 20000000,
+        "integer": true
+      },
+      "design_tree_max_bytes": {
+        "default": 33554432,
+        "min": 1048576,
+        "max": 134217728,
+        "integer": true
+      },
+      "design_tree_max_files": {
+        "default": 800,
+        "min": 50,
+        "max": 8000,
+        "integer": true
+      },
+      "preview_memory_max": {
+        "default": 268435456,
+        "min": 67108864,
+        "max": 68719476736,
+        "integer": true
+      },
+      "design_preview_ttl": {
+        "default": 86400,
+        "min": 3600,
+        "max": 1209600,
+        "integer": true
+      },
+      "design_due_max_defer": {
+        "default": 604800,
+        "min": 3600,
+        "max": 2592000,
+        "integer": true
+      },
+      "design_review_evidence_max_bytes": {
+        "default": 67108864,
+        "min": 1048576,
+        "max": 2147483648,
+        "integer": true
+      },
       "budget_run_boundary": {
         "default": "invocation",
         "type": "enum",
@@ -7546,6 +8525,85 @@
           "one_shot_headless",
           "session_headless"
         ],
+        "widening": "never"
+      },
+      "design": {
+        "default": "off",
+        "type": "enum",
+        "values": [
+          "off",
+          "before_build",
+          "at_alpha",
+          "both"
+        ],
+        "widening": "never"
+      },
+      "design_preview": {
+        "default": "static",
+        "type": "enum",
+        "values": [
+          "off",
+          "static"
+        ],
+        "widening": "never"
+      },
+      "design_widths": {
+        "default": [
+          360,
+          720,
+          1280
+        ],
+        "type": "int_list",
+        "range": {
+          "min": 240,
+          "max": 3840
+        },
+        "widening": "never"
+      },
+      "design_orientations": {
+        "default": [
+          "portrait",
+          "landscape"
+        ],
+        "type": "subset",
+        "values": [
+          "portrait",
+          "landscape"
+        ],
+        "widening": "never"
+      },
+      "design_external_urls": {
+        "default": [
+          "cdn.jsdelivr.net",
+          "unpkg.com",
+          "cdnjs.cloudflare.com"
+        ],
+        "type": "host_names",
+        "widening": "added"
+      },
+      "assets_required_for": {
+        "default": "live",
+        "type": "enum",
+        "values": [
+          "none",
+          "beta",
+          "live"
+        ],
+        "widening": "never"
+      },
+      "backend_designer": {
+        "default": "scripted",
+        "type": "enum",
+        "values": [
+          "scripted",
+          "claude",
+          "codex"
+        ],
+        "widening": "never"
+      },
+      "model_designer": {
+        "default": "opus",
+        "type": "model",
         "widening": "never"
       }
     }

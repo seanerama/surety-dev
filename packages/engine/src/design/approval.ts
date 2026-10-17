@@ -213,6 +213,75 @@ export function raiseDesignBatch(tx: Tx, args: { request: string; rep: SpecRepre
   return { refused: null };
 }
 
+// ---- a batch deferred behind a pending correction (objection 166) ---------------------------------
+//
+// The driver's rulings on objection 166: the engine raises no decision whose
+// binding is known to be about to move. A design batch's `spec_change` binds
+// the effective protected-check version. A correction of the protected
+// checks that is undecided (captured, classified, awaiting the owner: its
+// question open or about to be raised) or approved and not yet applied may
+// move that version. So the batch is not raised while one is pending: the
+// change's work waits `awaiting_decision` with the blocker
+// `design_batch_deferred`, and the batch is raised once none is pending
+// (applied, rejected or withdrawn), bound to the version then current. The
+// owner answers the correction first and the batch once. The design read
+// names the deferral and the corrections (BS6 §4.1 rule 25).
+//
+// No cycle: a correction caused by this design's own batch never defers it.
+// Such a correction is the proposal of a `check_correction` item the
+// change's obligations registered (trigger `spec_obligation`, its subject's
+// `request` this request), which exists only after the batch is approved and
+// applied; it is excluded by that identity. Nothing else pending waits on the
+// batch: while the request is proposed no protected writer is dispatched
+// (store/transitions/runs.ts, the ruling on Q2), and a pending correction's
+// classification, question, answer and application do not read the batch.
+//
+// A correction raised after the batch was raised is not this case: the
+// effect's revalidation (D1 §10.5) refuses it and the batch is asked again.
+
+export const DESIGN_BATCH_DEFERRED = 'design_batch_deferred';
+
+export interface PendingCorrection {
+  proposal: string;
+  status: string;
+  // The open check_correction_* question about it, if one stands.
+  question: string | null;
+}
+
+// The project's protected proposals undecided, or approved and not yet
+// applied, except those `request`'s own obligations caused.
+export function pendingCorrections(db: Db, project: string, request: string | null = null): PendingCorrection[] {
+  return db
+    .prepare(
+      `SELECT p."id" AS "proposal", p."status",
+         (SELECT d."id" FROM "decisions" d WHERE d."subject_type" = 'protected_proposal' AND d."subject_id" = p."id" AND d."status" = 'open' AND d."kind" LIKE 'check_correction_%' ORDER BY d."seq" DESC LIMIT 1) AS "question"
+       FROM "protected_proposals" p LEFT JOIN "runs" u ON u."id" = p."run" LEFT JOIN "work_items" w ON w."id" = u."work_item"
+       WHERE p."project" = ? AND p."status" IN ('captured', 'classified', 'awaiting_human', 'approved')
+         AND COALESCE(w."kind" = 'check_correction' AND w."trigger_source" = 'spec_obligation' AND json_extract(w."subject", '$.request') = ?, 0) = 0
+       ORDER BY p."seq", p."id"`,
+    )
+    .all(project, request) as PendingCorrection[];
+}
+
+// The design batches the engine is holding back, with what holds them.
+export function deferredBatches(db: Db, project: string): { spec_change_request: string; design_revision: string | null; work_item: string; since: string | null; reason: string; pending_corrections: PendingCorrection[] }[] {
+  const items = db
+    .prepare(`SELECT "id", "blocker" FROM "work_items" WHERE "project" = ? AND "kind" = 'spec_change' AND "status" = 'awaiting_decision' AND json_extract("blocker", '$.reason') = ? ORDER BY "seq"`)
+    .all(project, DESIGN_BATCH_DEFERRED) as { id: string; blocker: string }[];
+  return items.map((w) => {
+    const blocker = parseJson<{ raised_at?: string; spec_change_request?: string }>(w.blocker) ?? {};
+    const request = blocker.spec_change_request ?? (db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(w.id) as { id: string } | undefined)?.id ?? '';
+    return {
+      spec_change_request: request,
+      design_revision: revisionOfRequest(db, request)?.id ?? null,
+      work_item: w.id,
+      since: blocker.raised_at ?? null,
+      reason: 'a correction of the protected checks is undecided, or approved and not applied yet: the batch would be bound to a version that may be replaced; answer the correction first',
+      pending_corrections: pendingCorrections(db, project, request),
+    };
+  });
+}
+
 // Whether a design request's application may begin (SEAM.md §486): 'none'
 // for a request that is not a design's; 'wait' while its design_approval is
 // open or the batch is not released; 'go'; or 'refuse' when the design was

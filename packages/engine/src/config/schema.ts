@@ -197,6 +197,10 @@ export const DECISION_KINDS = [
   // D2 A.2, A.7.
   'qualification_approval',
   'trust_activation',
+  // D7 A.2 (M6): the design's decisions.
+  'design_approval',
+  'design_due',
+  'design_verdicts',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
