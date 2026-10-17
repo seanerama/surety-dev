@@ -298,11 +298,17 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(preview('checkpoint').status, 0, 'the third preview asked');
     const d3 = await deployedNth(3, 'the third preview to be deployed');
     assert.equal(d3.payload?.generation, 3);
+    // The unit's g<n> is D4's deployment generation, which the --stop teardown
+    // also took (objection 160, upheld): read from the event, not built from 3.
+    const unit3 = d3.payload?.unit;
+    const g3 = new RegExp(`^${previewPrefix(fx.home, J.env.id)}g([1-9][0-9]*)\\.service$`).exec(typeof unit3 === 'string' ? unit3 : '');
+    assert.ok(g3, `the third preview's unit, as design.preview_deployed names it, is surety-<h>-<the project's design-preview id>-g<n>.service (${JSON.stringify(unit3)})`);
+    assert.ok(Number(g3[1]) > 2, `its generation is past the second preview's g2 (${unit3})`);
     const closed = await fx.engine.post(`/v1/projects/${p.id}/sessions/${J.session.id}/close`, {});
     assert.equal(closed.status, 200, `the Designer session closed (${closed.text?.slice(0, 300)})`);
     await pump(fx, J.ctx, () => (batchOf(fx.home, p.id)?.spec_change ? true : undefined), { what: 'the close\'s batch to be raised', projectMs: 600_000 });
     await tick(fx.engine, p.id, { rounds: 2 });
-    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [previewUnitName(fx.home, J.env.id, 3)], 'not torn down at the close itself');
+    assert.deepEqual(previewUnits(fx.home, J.env.id).map((u) => u.unit), [unit3], 'not torn down at the close itself');
     await advanceClock(fx.engine, PREVIEW_TTL_MIN + 60);
     await waitFor(async () => {
       await tick(fx.engine, p.id, { rounds: 1 });
