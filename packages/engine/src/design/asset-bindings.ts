@@ -13,9 +13,10 @@ import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 
 import { git, repoContext } from '../git/exec.js';
-import { parseJson } from '../store/transitions/common.js';
+import { notFound, parseJson } from '../store/transitions/common.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { designPackageFacts } from './package.js';
+import { approvedModuleMap, stageModuleNames } from './policy.js';
 
 export interface AssetBinding {
   slot: string;
@@ -85,3 +86,74 @@ export const bindingsOfResult = (resultValue: string | null): AssetBinding[] => 
   const v = parseJson<{ asset_bindings?: AssetBinding[]; report?: { asset_bindings?: AssetBinding[] } }>(resultValue);
   return v?.report?.asset_bindings ?? v?.asset_bindings ?? [];
 };
+
+// The integrated UI stages and what their Builders' packages carried of the
+// effective set (D7 §6.5; SEAM.md §508): each stage integrated or verified,
+// its targets, and every slot and variant a package of a run of its work
+// carried (the record made when the package was built).
+export function stagesCarried(db: Database.Database, project: string): { stage: string; targets: string[]; carried: { slot: string; variant: string }[] }[] {
+  const map = approvedModuleMap(db, project)?.map ?? null;
+  const stages = db.prepare(`SELECT "id", "modules", "work_item" FROM "stages" WHERE "project" = ? AND "status" IN ('integrated', 'verified') AND "work_item" IS NOT NULL ORDER BY rowid`).all(project) as { id: string; modules: string; work_item: string }[];
+  const out: { stage: string; targets: string[]; carried: { slot: string; variant: string }[] }[] = [];
+  for (const st of stages) {
+    const rows = db.prepare(`SELECT c."effective" FROM "design_package_carried" c JOIN "runs" r ON r."id" = c."run" WHERE r."work_item" = ? ORDER BY c.rowid`).all(st.work_item) as { effective: string }[];
+    if (rows.length === 0) continue;
+    const carried = new Map<string, { slot: string; variant: string }>();
+    for (const r of rows) for (const e of parseJson<{ slot: string; variant: string }[]>(r.effective) ?? []) carried.set(`${e.slot}/${e.variant}`, { slot: e.slot, variant: e.variant });
+    const modules = stageModuleNames(db, project, st.modules);
+    const targets = [...new Set((map?.modules ?? []).filter((m) => m.surface === 'ui' && modules.includes(m.name)).flatMap((m) => (m.targets ?? []).map((t) => t.target)))];
+    out.push({ stage: st.id, targets, carried: [...carried.values()] });
+  }
+  return out;
+}
+
+// GET …/design's `unbound` (D7 §6.5; SEAM.md §508): each slot and variant an
+// integrated UI stage's package carried and no current binding of that stage
+// (or of a fix that bound it since) names, per target of the stage the slot
+// applies to.
+export function unboundAssets(db: Database.Database, project: string): { slot: string; variant: string; target: string; stage: string }[] {
+  const platforms = new Map(
+    (db.prepare('SELECT "slot", "variant", "platforms" FROM "design_effective_assets" WHERE "project" = ?').all(project) as { slot: string; variant: string; platforms: string }[]).map((e) => [`${e.slot}/${e.variant}`, parseJson<string[]>(e.platforms) ?? []]),
+  );
+  const current = db.prepare('SELECT "stage", "target", "slot", "variant" FROM "asset_bindings" WHERE "project" = ? AND "superseded_by" IS NULL').all(project) as { stage: string | null; target: string; slot: string; variant: string }[];
+  const out: { slot: string; variant: string; target: string; stage: string }[] = [];
+  for (const st of stagesCarried(db, project)) {
+    for (const c of st.carried) {
+      const on = platforms.get(`${c.slot}/${c.variant}`);
+      for (const target of st.targets.filter((t) => on === undefined || on.includes(t))) {
+        if (current.some((b) => (b.stage === st.stage || b.stage === null) && b.target === target && b.slot === c.slot && b.variant === c.variant)) continue;
+        out.push({ slot: c.slot, variant: c.variant, target, stage: st.stage });
+      }
+    }
+  }
+  return out;
+}
+
+// The stages an `asset_updated` fix answers to (D7 §6.5: "the gate waits on
+// the asset_updated candidate's results as on any obligation"): the stages
+// of the bindings it updates and every integrated UI stage whose package
+// carried its slot. Their stage gates are evaluated on its candidate.
+export function assetFixStages(db: Database.Database, project: string, subject: { slot?: unknown; bindings?: unknown }): string[] {
+  const bound = (Array.isArray(subject.bindings) ? (subject.bindings as { stage?: unknown }[]) : []).map((b) => b.stage).filter((s): s is string => typeof s === 'string');
+  const all = stagesCarried(db, project);
+  const carried = typeof subject.slot === 'string' ? all.filter((s) => s.carried.some((c) => c.slot === subject.slot)).map((s) => s.stage) : [];
+  const stages = [...new Set([...bound, ...carried])];
+  if (stages.length > 0) return stages;
+  // Bindings a fix recorded before any stage did (their stage null): the
+  // integrated UI stages serving their targets.
+  const targets = new Set((Array.isArray(subject.bindings) ? (subject.bindings as { target?: unknown }[]) : []).map((b) => b.target).filter((t): t is string => typeof t === 'string'));
+  return all.filter((s) => s.targets.some((t) => targets.has(t))).map((s) => s.stage);
+}
+
+// Whether any integrated UI stage's package carried `slot`.
+export const slotCarried = (db: Database.Database, project: string, slot: string): boolean => stagesCarried(db, project).some((s) => s.carried.some((c) => c.slot === slot));
+
+// GET /v1/projects/:p/design/bindings (D7 A.8; SEAM.md §508): every binding
+// by insertion, superseded ones included.
+export function bindingsView(db: Database.Database, args: { project: string }): { bindings: Record<string, unknown>[] } {
+  if (!db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
+  const bindings = db
+    .prepare('SELECT "id", "created_at", "stage", "work_item", "revision", "target", "slot", "variant", "path", "form", "source_slot_version", "declared_by", "superseded_by" FROM "asset_bindings" WHERE "project" = ? ORDER BY rowid')
+    .all(args.project) as Record<string, unknown>[];
+  return { bindings };
+}

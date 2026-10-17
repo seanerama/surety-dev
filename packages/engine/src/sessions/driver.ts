@@ -21,7 +21,7 @@ import type { Launcher } from '../invoke/choke.js';
 import { materialize } from '../invoke/sandbox/materialize.js';
 import type { Journal } from '../journal/driver.js';
 import { commitId } from '../journal/effects.js';
-import { type BundleArtifacts, type PlanCheckResult, artifactDiff, checkPlan, specChangeRoute } from '../plan/check.js';
+import { type BundleArtifacts, type PlanCheckResult, artifactDiff, checkPlan, interfaceShapesMissing, specChangeRoute } from '../plan/check.js';
 import type { BaselineFacts, BundleContent } from '../plan/bundle.js';
 import { type Finding, architectFindings, ideaFindings, specFindings } from '../plan/findings.js';
 import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE, planPath } from '../plan/schemas.js';
@@ -519,7 +519,17 @@ export class SessionDriver {
     }
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
     const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys });
-    return { blobs, findings: r.findings, products: {} };
+    // Told before close (D7 §4.1; SEAM.md §513): an interface a `ui` module
+    // consumes without its shapes, under any design policy but off; the
+    // close's plan check then refuses it.
+    const shapes = (base.baseline.design?.policy ?? 'off') !== 'off' && r.parsed.modules ? interfaceShapesMissing(r.parsed.modules) : [];
+    const told = shapes.map((subject) => ({
+      code: 'ARCH_INTERFACE_SHAPE_MISSING',
+      path: MODULES_FILE,
+      subject: { interface: subject },
+      message: `${MODULES_FILE}: the interface ${subject} is consumed by a ui module and lacks request, response or errors (D7 §4.1); the plan check refuses the close until each is given`,
+    }));
+    return { blobs, findings: [...r.findings, ...told], products: {} };
   }
 
   // A Designer's save (D7 §5.6; SEAM.md §483): the design check over the
@@ -548,8 +558,37 @@ export class SessionDriver {
   private async designRaise(facts: SaveFacts): Promise<Record<string, unknown>> {
     const check = await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; tree_revision: string; blobs: Record<string, string> } | null>('design.latest_check', { project: facts.project, run: facts.run });
     const mode = await this.rt.read<string | null>('design.session_mode', { run: facts.run });
-    if (mode === 'review') return this.reviewRaise(facts);
+    if (mode === 'review') {
+      const review = await this.reviewRaise(facts);
+      // A review whose file says it revised the design, or drew the first
+      // one (D7 §10.3, §10.6; SEAM.md §§518, 519): the design in the same
+      // tree is proposed with its consolidated change, as any close's, its
+      // approval blocked until the review's verdicts are confirmed.
+      const r = review.kind === 'review' ? (review.review as { revised_design?: unknown; first_design?: unknown; design_revision?: unknown }) : null;
+      if (r && (r.revised_design === true || r.first_design === true)) {
+        // A design the review says it drew, never saved through the design
+        // check: refused, naming why (the slice-44 review's S9).
+        if (check === null) {
+          throw new Refusal(422, 'design_check_failed', `The review of session ${facts.run} says it ${r.first_design === true ? 'drew the first design' : 'revised the design'}, but no save of the session ran the design check on it.`, 'Save the design in the session (the check runs at each save), then close again; or close with refuse.', {
+            run: facts.run,
+            design_check: null,
+            reasons: [],
+          });
+        }
+        const made = await this.designProposal(facts, check);
+        // The scope is the engine's: a first design when no design is
+        // approved, whatever the role's flag says (D7 §10.6).
+        return { ...review, propose: { ...made, scope: r.design_revision === null || r.design_revision === undefined ? 'initial_review' : 'full' } };
+      }
+      return review;
+    }
     if (check === null) return { kind: 'none' };
+    return { kind: 'design', propose: await this.designProposal(facts, check) };
+  }
+
+  // The design a close proposes: refused 422 `design_check_failed` while the
+  // session's last check refuses; else the tree read at the checked revision.
+  private async designProposal(facts: SaveFacts, check: { id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; tree_revision: string; blobs: Record<string, string> }): Promise<Record<string, unknown>> {
     if (check.outcome !== 'passed') {
       throw new Refusal(422, 'design_check_failed', `The design of session ${facts.run} does not pass the design check: ${check.reasons.map((r) => r.code).join(', ')}.`, 'Correct the design in the session, save, and close again; or close with refuse, which records the product and raises nothing.', {
         run: facts.run,
@@ -570,7 +609,7 @@ export class SessionDriver {
     };
     const content = { design: read('design.json'), screens: read('screens.json'), navigation: read('navigation.json'), criteria: read('criteria.json'), manifest: read('assets/manifest.json') };
     const findings = await this.rt.read<Record<string, unknown>[]>('design.session_findings', { run: facts.run });
-    return { kind: 'design', propose: { project: facts.project, run: facts.run, revision: check.tree_revision, tree: tree.tree, blobs: tree.blobs, content, check: check.id, findings } };
+    return { project: facts.project, run: facts.run, revision: check.tree_revision, tree: tree.tree, blobs: tree.blobs, content, check: check.id, findings };
   }
 
   // A review-mode close (D7 §10.3): the review file read from the head, its

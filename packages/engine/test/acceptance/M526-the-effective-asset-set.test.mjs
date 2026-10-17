@@ -22,21 +22,25 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume } from './harness/decisions.mjs';
-import { journeyContext, pump } from './harness/journey/drive.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { journeyContext, openDecisions, pump } from './harness/journey/drive.mjs';
+import { resumeWork, scriptedEngine, tick } from './harness/runs.mjs';
+import { step } from './harness/scripted.mjs';
+import { postTurn, readSession, scriptTurns } from './harness/sessions.mjs';
 import { CRITERIA, HUMAN_TEST_KEYS, LOGO_SVG, REQUIREMENTS_V2, TOKENS, designFiles, specText } from './harness/design/reference.mjs';
 import {
   answerWith,
   batchOf,
+  builderScript,
   designEvents,
   designRevisions,
   designScripts,
+  designTurn,
   designerSession,
   dumpedPackage,
   effectiveAssets,
   inventoryOf,
   manifestOf,
-  openOfKind,
+  openDesigner,
   readDesign,
   scriptBuilders,
   specChangeScriptFor,
@@ -53,14 +57,28 @@ const LOGO_B_SVG = passiveSvg(120, 40, 'Pantry B');
 const LOGO_B = sha256hex(LOGO_B_SVG);
 const PARITY = Object.freeze(['parity-web', 'parity-android']);
 
-// The batch raised and both members approved; `held` the slots held.
-async function approveTheBatch(fx, ctx, project, held = []) {
-  const batch = await pump(fx, ctx, () => (batchOf(fx.home, project)?.spec_change ? batchOf(fx.home, project) : undefined), { what: 'the batch', max: 40 });
+// While the API stage's Builder waits at its hold (objection 172). The pump waits for every
+// run to end, and a held Builder does not: this ticks the engine itself and answers the open
+// decisions of `ctx.answerKinds` as the owner, until `done` answers.
+async function whileHeld(fx, ctx, done, { what = 'the expected state', max = 160 } = {}) {
+  for (let i = 0; ; i++) {
+    const value = await done();
+    if (value !== undefined && value !== null && value !== false) return value;
+    if (i >= max) throw new Error(`${what}: not reached within ${max} ticks while the API Builder holds (open decisions: ${JSON.stringify(openDecisions(fx.home, ctx.project).map((d) => d.kind))})`);
+    for (const d of openDecisions(fx.home, ctx.project).filter((x) => ctx.answerKinds.includes(x.kind))) await consume(fx, ctx.project, d, 'approve');
+    await tick(fx.engine, ctx.project);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+// The batch raised and both members approved; `held` the slots held; `wait` the pump, or
+// `whileHeld` while a Builder holds.
+async function approveTheBatch(fx, ctx, project, held = [], wait = pump) {
+  const batch = await wait(fx, ctx, () => (batchOf(fx.home, project)?.spec_change ? batchOf(fx.home, project) : undefined), { what: 'the batch', max: 40 });
   const a = await answerWith(fx, project, batch.design_approval, 'approve', held.length > 0 ? { assets_held: held } : {});
   assert.equal(a.status, 200, `design_approval approved${held.length ? ` with ${held.join(', ')} held` : ''} (${a.text})`);
   await consume(fx, project, batch.spec_change, 'approve');
   // The newest design revision (by insertion) is the one the batch is about.
-  return pump(fx, ctx, () => {
+  return wait(fx, ctx, () => {
     const latest = designRevisions(fx.home, project).at(-1);
     return latest?.status === 'approved' ? latest : undefined;
   }, { what: 'the design revision approved', max: 30 });
@@ -89,16 +107,23 @@ describe('M526 the effective asset set', () => {
     const { p } = await toPublished(fx, { policy: BEFORE_BUILD });
     designScripts(fx);
     scriptBuilders(fx, p.id, { dump: [2, 3] });
+    // No UI stage builds before the restart: the API stage's Builder waits at a hold, and the UI
+    // stages wait on its code milestone (objection 172). Version 1's criteria correction is
+    // answered, as the owner must: version 2's batch is not raised while it is pending
+    // (objection 166's extended rule).
+    const api = stageWork(fx.home, p.id, 1);
+    fx.scripted.script(api.id, [{ steps: [step.hold('until-restart'), ...builderScript(1).steps] }, builderScript(1), builderScript(1)]);
     const ctx = journeyContext(fx, p, { lane: 'kernel' });
-    ctx.answerKinds = [...OWNER];
+    ctx.answerKinds = [...OWNER, 'check_correction_tightening'];
     const inventory = inventoryOf(p);
     const placeholders = manifestOf(p);
-    // Version 1: the logo A proposed and approved; the criteria's correction left unanswered, so no UI stage builds yet.
+    // Version 1: the logo A proposed and approved, and the criteria's correction applied: the design is ready.
     await designerSession(fx, p.id, [{ files: designFiles(inventory, placeholders), say: 'Draw Pantry with its logo.', result: { done: true } }]);
-    const v1 = await approveTheBatch(fx, ctx, p.id);
-    const logo1 = await pump(fx, ctx, () => effectiveAssets(fx.home, p.id).find((e) => e.slot === 'logo' && e.variant === 'full' && e.source === 'approved') ?? undefined, { what: 'logo A effective', max: 20 });
+    const v1 = await approveTheBatch(fx, ctx, p.id, [], whileHeld);
+    const logo1 = await whileHeld(fx, ctx, () => effectiveAssets(fx.home, p.id).find((e) => e.slot === 'logo' && e.variant === 'full' && e.source === 'approved') ?? undefined, { what: 'logo A effective', max: 20 });
     assert.equal(logo1.digest, LOGO_A, 'logo A effective after version 1');
-    await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'check_correction_tightening')[0], { what: 'the criteria\'s correction captured', max: 40 });
+    await whileHeld(fx, ctx, () => designRevisions(fx.home, p.id).find((r) => r.id === v1.id && r.ready_at) ?? undefined, { what: 'version 1 ready (its criteria\'s correction applied)', max: 60 });
+    assert.ok(await fx.scripted.waitForHolding({ work_item: api.id }, 'until-restart'), 'the API stage\'s Builder waits at its hold');
     for (const n of [2, 3]) assert.deepEqual(fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }), [], `no stage ${n} Builder yet`);
 
     // Version 2: another accent and logo B, its human tests revised (so the batch carries a change).
@@ -121,24 +146,44 @@ describe('M526 the effective asset set', () => {
     };
     fx.scripted.kindScript('spec_change', specChangeScriptFor(v3));
     const effBefore = effectiveAssets(fx.home, p.id);
-    const s2 = await designerSession(fx, p.id, [{ files: files2, say: 'A green accent and a new logo.' }], { close: null });
+    // Version 2's session, its turn waited on while the API Builder holds (designerSession's wait needs every run ended).
+    const s2 = await openDesigner(fx, p.id);
+    scriptTurns(fx, s2.id, [designTurn(files2)]);
+    const turn2 = await postTurn(fx, p.id, s2.id, 'A green accent and a new logo.');
+    const read2 = await whileHeld(
+      fx,
+      ctx,
+      async () => {
+        const body = await readSession(fx, p.id, s2.id);
+        const turn = (body.turns ?? []).find((x) => x.turn === turn2.turn);
+        return turn && ['settled', 'failed', 'unknown'].includes(turn.state) ? body : undefined;
+      },
+      { what: 'version 2\'s turn settled', max: 24 },
+    );
+    assert.equal(read2.turns.find((x) => x.turn === turn2.turn).state, 'settled', `version 2's turn settled (${JSON.stringify(read2.turns)})`);
+    const save2 = await fx.engine.post(`/v1/projects/${p.id}/sessions/${s2.id}/save`, {});
     // (d) A save proposing a new logo file: the effective set unchanged.
-    assert.equal(s2.saves[0]?.body?.design_check?.outcome, 'passed', `version 2 saved and checked (${s2.saves[0]?.text?.slice(0, 600)})`);
+    assert.equal(save2.body?.design_check?.outcome, 'passed', `version 2 saved and checked (${save2.text?.slice(0, 600)})`);
     assert.deepEqual(effectiveAssets(fx.home, p.id), effBefore, '(d) the effective set unchanged by a save');
     assert.ok(!JSON.stringify((await readDesign(fx, p.id)).effective_assets ?? []).includes(LOGO_B), '(d) GET …/design does not show the pending proposal as effective');
-    const closed = await fx.engine.post(`/v1/projects/${p.id}/sessions/${s2.run.id}/close`, {});
+    const closed = await fx.engine.post(`/v1/projects/${p.id}/sessions/${s2.id}/close`, {});
     assert.equal(closed.status, 200, `the close (${closed.text?.slice(0, 400)})`);
-    const v2 = await approveTheBatch(fx, ctx, p.id, ['logo']);
+    const v2 = await approveTheBatch(fx, ctx, p.id, ['logo'], whileHeld);
     assert.notEqual(v2.id, v1.id, 'design revision 2 approved');
     const held = effectiveAssets(fx.home, p.id).find((e) => e.slot === 'logo' && e.variant === 'full');
     assert.deepEqual([held.source, held.digest, held.slot_version], ['approved', LOGO_A, logo1.slot_version], `logo B held: logo A stays effective, by slot@version and digest (${JSON.stringify(held)})`);
     assertOneRowPerSelected(fx, p.id, v2);
     assert.equal(slotOf(manifestOf(p), 'logo').variants.find((v) => v.name === 'full').digest, LOGO_B, 'the fixture is live: the manifest\'s latest at the head is logo B');
 
-    // (f) A restart between the approval and the next package.
+    // (f) A restart between the approval and the next package: no UI Builder launched before it.
+    for (const n of [2, 3]) assert.deepEqual(fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }), [], `no stage ${n} Builder before the restart`);
     await fx.engine.kill();
+    // The held Builder released only once the engine is down, so nothing dispatches before the
+    // restart. Its run is recovered at the start and its work held (D1's restart); the owner
+    // resumes it, and its next attempt builds.
+    fx.scripted.release(api.id, 'until-restart');
     await fx.start();
-    ctx.answerKinds = [...OWNER, 'check_correction_tightening'];
+    await resumeWork(fx.engine, p.id, api.id);
     await pump(fx, ctx, () => ([2, 3].every((n) => fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }).length > 0) ? true : undefined), { what: 'both UI Builders launched after the restart', max: 80 });
     for (const n of [2, 3]) {
       const got = packageLogo(fx, p.id, n);

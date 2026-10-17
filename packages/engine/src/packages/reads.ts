@@ -280,6 +280,7 @@ export const PHASE_PLAN_SCHEMA = closedObject(B5.file, {
       validation: closedObject(B5.validation, { criteria: { type: 'array', items: { type: 'string', pattern: CRITERION_PATTERN } }, kinds: { type: 'array', items: { enum: [...CHECK_KINDS] } }, sensitive_areas: areas }),
       integration_obligations: strings,
       conformance: { type: 'boolean', description: 'true only on an adopted project\'s conformance stage, whose tasks are []' },
+      screens: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'optional: keys of the approved design\'s screens this stage implements (D7 §8.1); a key the approved design lacks is refused' },
     }),
   },
   conformance: { enum: [...B5.conformance_values] },
@@ -321,6 +322,10 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   ARCH_TARGET_UNCOVERED: "under a design policy other than off: a target of the approved specification's **Targets:** is served by no ui module",
   ARCH_TECHNOLOGY_TARGET_MISMATCH:
     'under a design policy other than off: a ui module serves a target with a UI technology that cannot build for it (html_css, three_js, streamlit: web; react_native: android, ios; flutter, other: any target; swiftui: ios, macos; compose: android)',
+  ARCH_INTERFACE_SHAPE_MISSING: 'under a design policy other than off: an interface a ui module consumes (consumed_by) lacks request, response or errors (named <module>:<interface>)',
+  PLAN_SCREEN_UNKNOWN: "a stage's screens names a key the approved design does not have",
+  PLAN_DESIGN_UNCOVERED:
+    'under design before_build or both, with an approved design: a ui stage implements a UI requirement that no approved screen of a target its modules serve covers (named <requirement>:<target>); a new design, not a plan, covers it',
 };
 const RETROFIT_REASONS: readonly string[] = ['PLAN_DESCRIPTIVE_MODULE_TOUCHED', 'PLAN_CONFORMANCE_MISPLACED'];
 

@@ -24,7 +24,7 @@
 import { existsSync, readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { effectiveProfileMax, projectPolicy } from './settings.js';
+import { effectivePreviewMax, effectiveProfileMax, projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -301,7 +301,7 @@ export function envelopeHold(db: Db, admitting: Admitting = { kind: 'role' }): E
 export function serviceAdmissionHold(db: Db, args: { project: string; preview?: boolean }): { admission: 'granted' | 'held'; hold: EnvelopeHold | null } {
   const p = projectPolicy(db, args.project) as Record<string, number>;
   const h = args.preview
-    ? envelopeHold(db, { kind: 'service', memory: p.preview_memory_max!, writable: p.service_writable_bytes!, project: args.project, checkCapacity: false })
+    ? envelopeHold(db, { kind: 'service', memory: effectivePreviewMax(db, args.project), writable: p.service_writable_bytes!, project: args.project, checkCapacity: false })
     : envelopeHold(db, { kind: 'service', memory: p.service_memory_max!, writable: p.service_writable_bytes!, project: args.project });
   return { admission: h === null ? 'granted' : 'held', hold: h };
 }

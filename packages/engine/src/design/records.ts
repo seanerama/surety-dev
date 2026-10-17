@@ -9,6 +9,7 @@ import type Database from 'better-sqlite3';
 import { canonical, parseJson, sha256 } from '../store/transitions/common.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
+import type { AssetManifest } from './assets.js';
 import type { CheckContext, DesignReason } from './check.js';
 import { currentInventory } from './store.js';
 
@@ -33,7 +34,24 @@ export function checkContext(db: Database.Database, project: string): CheckConte
     inventory: inv?.inventory ?? null,
     externalHosts: Array.isArray(options.design_external_urls) ? (options.design_external_urls as string[]) : [],
     approved: [...bySlot.values()],
+    base: baseManifest(db, project),
+    placeholders: parseJson<AssetManifest>(inv?.row.manifest ?? null),
   };
+}
+
+// The base of the asset manifest's version rules (SEAM.md §505): the
+// manifest of the project's current approved design revision; before any
+// approval, the one the engine last committed (its inventory's placeholders
+// or an owner's `asset add`), the latest by event sequence. A Designer
+// checkpoint is never the base.
+export function baseManifest(db: Database.Database, project: string): AssetManifest | null {
+  const approved = db.prepare(`SELECT "asset_manifest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as { asset_manifest: string | null } | undefined;
+  if (approved) return parseJson<AssetManifest>(approved.asset_manifest);
+  const ev = db
+    .prepare(`SELECT "type", "payload" FROM "events" WHERE "type" IN ('design.asset_added', 'design.inventory_derived') AND json_extract("subject", '$.project') = ? ORDER BY "seq" DESC LIMIT 1`)
+    .get(project) as { type: string; payload: string } | undefined;
+  if (ev?.type === 'design.asset_added') return parseJson<{ manifest?: AssetManifest }>(ev.payload)?.manifest ?? null;
+  return parseJson<AssetManifest>(currentInventory(db, project)?.row.manifest ?? null);
 }
 
 export interface CheckRecord {

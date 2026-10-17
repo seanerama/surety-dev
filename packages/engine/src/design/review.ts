@@ -21,6 +21,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import { designPolicyOf } from './policy.js';
 import { designDueState } from './readiness.js';
 import { writeDueState } from './due.js';
+import { latestCheck } from './records.js';
 
 type Db = Database.Database;
 
@@ -50,8 +51,9 @@ export function noteAlphaReview(tx: Tx, project: string): void {
   if (!alpha) return;
   const state = designDueState(tx.db, project) as ReturnType<typeof designDueState> & { alpha_pending?: string; alpha_reviewed?: string };
   if (state.alpha_pending === alpha.id || state.alpha_reviewed === alpha.id) return;
-  const approved = tx.db.prepare(`SELECT 1 FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') LIMIT 1`).get(project);
-  if (!approved) return;
+  // With no approved design (under `at_alpha`, or `both` with the design
+  // before build waived) the review is a first design at Alpha (D7 §10.6;
+  // SEAM.md §514): asked all the same.
   writeDueState(tx, project, { ...state, stage: 'alpha_review', alpha_pending: alpha.id } as never);
   tx.emit('design.review_requested', { project }, { trigger: 'alpha_complete', gate_evaluation: alpha.id, candidate: alpha.candidate });
 }
@@ -174,6 +176,19 @@ interface ReviewRow {
   confirmation_decision: string | null;
 }
 
+// The review file's blob as the project's latest design save left it (D7
+// §10.3; SEAM.md §517: design_verdicts binds the review file's hash): the
+// blob recorded at close until a later save changes the file at its path,
+// which stales the question.
+function reviewFileBlob(db: Db, r: Pick<ReviewRow, 'project' | 'run' | 'review_blob'>): string | null {
+  if (r.review_blob === null) return null;
+  const own = r.run ? latestCheck(db, { project: r.project, run: r.run }) : null;
+  const path = Object.entries(own?.blobs ?? {}).find(([, b]) => b === r.review_blob)?.[0];
+  if (path === undefined) return r.review_blob;
+  const latest = latestCheck(db, { project: r.project });
+  return latest?.blobs[path] ?? r.review_blob;
+}
+
 export const DESIGN_VERDICTS: KindSpec = {
   preview(tx, d: Subject) {
     const r = tx.db.prepare('SELECT * FROM "design_reviews" WHERE "id" = ?').get(d.subject_id) as ReviewRow | undefined;
@@ -181,7 +196,7 @@ export const DESIGN_VERDICTS: KindSpec = {
     const verdicts = parseJson<Record<string, unknown>[]>(r.verdicts) ?? [];
     const evidence = tx.db.prepare('SELECT "id", "provenance", "target", "screen", "route", "status", "record" FROM "design_evidence" WHERE "review" = ? ORDER BY rowid').all(r.id);
     return {
-      manifest: { review: r.id, review_blob: r.review_blob, evidence: (evidence as { id: string }[]).map((e) => e.id) },
+      manifest: { review: r.id, review_blob: reviewFileBlob(tx.db, r), evidence: (evidence as { id: string }[]).map((e) => e.id) },
       question: `The design review of ${r.trigger === 'alpha_complete' ? 'the Alpha' : 'the build'} proposes ${verdicts.length} verdict(s): ${verdicts.map((v) => `${String(v.target)} ${String(v.screen)} ${String(v.verdict)}`).join('; ')}. Confirm them as yours?`,
       options: [
         { key: 'confirm', label: 'Confirm', consequence: 'The verdicts become yours: a web screen that matches carries its human test as owner_accepted (never verified); a target not observed stays pending.', effect: { design_review: r.id } },
@@ -193,7 +208,7 @@ export const DESIGN_VERDICTS: KindSpec = {
   manifest(tx, d) {
     const r = tx.db.prepare('SELECT "id", "review_blob" FROM "design_reviews" WHERE "id" = ?').get(d.subject_id) as { id: string; review_blob: string | null } | undefined;
     const evidence = r ? (tx.db.prepare('SELECT "id" FROM "design_evidence" WHERE "review" = ? ORDER BY rowid').all(r.id) as { id: string }[]).map((e) => e.id) : [];
-    return { review: r?.id ?? null, review_blob: r?.review_blob ?? null, evidence };
+    return { review: r?.id ?? null, review_blob: r ? reviewFileBlob(tx.db, r as ReviewRow) : null, evidence };
   },
   reraise: false,
   answer(tx, d, option, note) {

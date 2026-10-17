@@ -43,9 +43,11 @@ import { ADR_FILE } from '../plan/schemas.js';
 import { type SemanticsRow, approveSpec, approvedRepresentation, recordSemantics, specBlockers, vanishedKeys } from './approval.js';
 import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
-import { DESIGN_BATCH_DEFERRED, approveDesign, deferredBatches, designBatchState, designBindingsChanged, getRevision, pendingCorrections, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
+import { DESIGN_BATCH_DEFERRED, requestVerdictBlockers, approveDesign, deferredBatches, designBatchState, designBindingsChanged, getRevision, pendingCorrections, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
 import { blobsHash } from '../design/store.js';
 import { latestCheck } from '../design/records.js';
+import { type DesignClass, specDesignClass, staleScreens } from '../design/stale.js';
+import { reviewDesignDue } from '../design/due.js';
 
 const designTreeHash = (db: Db, project: string): string | null => {
   const c = latestCheck(db, { project });
@@ -237,6 +239,9 @@ export interface Impact {
   adrs: { key: string; class: 'textual'; cites: string[] }[];
   modules: { name: string; class: 'structural' }[];
   uncertain_scope: { key: string; reason: string }[];
+  // D7 §9.1 (G8; SEAM.md §515): the design class, the approved screens the
+  // change stales and the requirements it makes newly UI.
+  design?: DesignClass;
   claimed: unknown;
   dependency_manifest: DependencyManifest;
 }
@@ -435,6 +440,7 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     adrs,
     modules,
     uncertain_scope: uncertain,
+    design: specDesignClass(db, { project: args.project, changes: requirements, before: approved, after: liveRepresentation(args.proposed) }),
     claimed: args.claimed,
     dependency_manifest: dependencyManifest(db, { project: args.project, phases, stages: stages.map((s) => s.stage), keys: affectedKeys, checks: listedChecks, findings, results, work }),
   };
@@ -805,7 +811,9 @@ export function specChangeKind(): KindSpec {
             effect: { request: r.id, revision: r.proposal_revision, spec_version: Number(manifest.spec_version) + 1 },
             // What could not be approved as a specification cannot be approved
             // as a change of one (D6 §3.4; the 31b review's S1).
-            blockers: specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }),
+            // And a review's design change, until its verdicts are the
+            // owner's (the driver's decision on the slice-44 review's S9).
+            blockers: [...specBlockers(proposalSemantics(tx.db, r), approvedRepresentation(tx.db, r.project), { questions: false }), ...(r.source === 'design' ? requestVerdictBlockers(tx.db, r.id) : [])],
           },
           { key: 'reject', label: 'Reject', consequence: 'The proposal stays on its side ref as history; nothing of the specification changes.', effect: { request: r.id } },
         ],
@@ -1089,6 +1097,13 @@ export function finalizeApplied(tx: Tx, op: { id: string; project: string }, inp
       { spec_change_request: r.id },
     );
   }
+  // The design class (D7 §9.1; G8): the screens the change stales, marked
+  // in this transaction; never by a design's own batched change (§7.4).
+  if (r.source !== 'design' && r.source !== 'design_review') {
+    const staled = staleScreens(tx, { project: op.project, screens: impact.design?.screens ?? [], cause: { spec_change_request: r.id, spec_revision: made.spec_revision } });
+    // A new cause: design_due asked again at once, a deferral included (D7 §11).
+    if (staled.length > 0) reviewDesignDue(tx, op.project);
+  }
   settleWork(tx, getRequest(tx.db, r.id)!, 'approved');
   // The approval's intent is done with its effect (the 31b review's S8).
   completeIntent(tx, inputs.intent);
@@ -1125,14 +1140,24 @@ export function deliveryVerdict(db: Db, project: string, request: string): Deliv
     resolved_by: string | null;
     resolved_at: string | null;
   }[];
-  if (obligations.length === 0 || obligations.some((o) => o.resolved_at === null || o.resolved_by === null)) return null;
+  // The criteria the change added that no check covered (D6 §4.5's
+  // uncovered criteria; a design's criteria, D7 §10.4): their checks are
+  // the correction's to author, and are evidence once it is applied.
+  const added = addedCriteriaChecks(db, project, request);
+  if (obligations.length === 0 && added !== null && added.length === 0) return null;
+  // What is not established yet (an obligation unresolved, an added
+  // criterion's check not applied, a result to come) is unknown: never read
+  // as passing. But an established failure is failing whatever else is
+  // unknown (the slice-44 review's S8).
+  const resolved = obligations.filter((o) => o.resolved_at !== null && o.resolved_by !== null);
+  let unknown = resolved.length < obligations.length || added === null;
   const last = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
   if (!last) return null;
   // Fresh evidence (D6 §4.5): a result under the protected version the
   // correction made effective, or the one effective now.
-  const versions = uniq([...obligations.map((o) => o.resolved_by!), ...(effectiveVersion(db, project) ? [effectiveVersion(db, project)!.id] : [])]);
+  const versions = uniq([...resolved.map((o) => o.resolved_by!), ...(effectiveVersion(db, project) ? [effectiveVersion(db, project)!.id] : [])]);
   const results: DeliveryVerdict['results'] = [];
-  for (const key of uniq(obligations.map((o) => o.key)).sort()) {
+  for (const key of uniq([...resolved.map((o) => o.key), ...(added ?? [])]).sort()) {
     const r = db
       .prepare(
         `SELECT r."id", r."execution_established", r."signaled", r."deadline_hit", r."orphans", r."exit_status" FROM "check_results" r JOIN "checks" c ON c."id" = r."check"
@@ -1140,12 +1165,41 @@ export function deliveryVerdict(db: Db, project: string, request: string): Deliv
          ORDER BY r."execution_seq" DESC LIMIT 1`,
       )
       .get(project, last.id, key, JSON.stringify(versions)) as { id: string; execution_established: number; signaled: number; deadline_hit: number; orphans: number | null; exit_status: number | null } | undefined;
-    if (!r) return null;
+    if (!r) {
+      unknown = true;
+      continue;
+    }
     const state = resultState(r);
-    if (state === 'skipped') return null;
+    if (state === 'skipped') {
+      unknown = true;
+      continue;
+    }
     results.push({ key, result: r.id, state });
   }
-  return { verdict: results.some((r) => r.state === 'failed') ? 'failing' : 'passing', candidate: last.id, results };
+  if (results.some((r) => r.state === 'failed')) return { verdict: 'failing', candidate: last.id, results };
+  if (unknown || results.length === 0) return null;
+  return { verdict: 'passing', candidate: last.id, results };
+}
+
+// The keys of the effective checks covering the criteria `request` added
+// uncovered ([] when it added none); null while they are not established
+// yet: its correction not applied, or a criterion still uncovered (unknown,
+// never read as passing or failing).
+function addedCriteriaChecks(db: Db, project: string, request: string): string[] | null {
+  const r = db.prepare('SELECT "impact_value" FROM "spec_change_requests" WHERE "id" = ?').get(request) as { impact_value: string | null } | undefined;
+  const uncovered = parseJson<Impact>(r?.impact_value ?? null)?.checks?.uncovered ?? [];
+  if (uncovered.length === 0) return [];
+  if (db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(project, request)) return null;
+  const version = effectiveVersion(db, project);
+  if (!version) return null;
+  const checks = checksOfVersion(db, version.id);
+  const keys: string[] = [];
+  for (const c of uncovered) {
+    const covering = checks.filter((k) => (parseJson<string[]>((k as { criteria?: string }).criteria ?? null) ?? []).includes(c));
+    if (covering.length === 0) return null;
+    keys.push(...covering.map((k) => k.key));
+  }
+  return uniq(keys).sort();
 }
 
 // E153 item 1: an approved change that leaves an implementation obligation
@@ -1172,7 +1226,8 @@ export function registerDeliveryReplans(tx: Tx, args: { project: string }): stri
     .prepare(
       `SELECT r."id", r."seq", r."impact", r."approved_revision", r."impact_value" FROM "spec_change_requests" r
        WHERE r."project" = ? AND r."status" = 'approved'
-         AND EXISTS (SELECT 1 FROM "check_obligations" o WHERE o."request" = r."id" AND o."reason" = 'spec_changed')
+         AND (EXISTS (SELECT 1 FROM "check_obligations" o WHERE o."request" = r."id" AND o."reason" = 'spec_changed')
+              OR COALESCE(json_array_length(json_extract(r."impact_value", '$.checks.uncovered')), 0) > 0)
          AND NOT EXISTS (SELECT 1 FROM "work_items" w WHERE w."project" = r."project" AND w."kind" = 'replan' AND w."trigger_source" = 'spec_change' AND w."trigger_id" = r."id")
          AND EXISTS (SELECT 1 FROM "events" e WHERE e."type" = 'spec.change_approved' AND json_extract(e."subject", '$.spec_change_request') = r."id" AND e."seq" > ?)
        ORDER BY r."seq"`,

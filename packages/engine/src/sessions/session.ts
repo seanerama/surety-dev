@@ -1167,7 +1167,7 @@ export interface CloseArgs extends Admission {
     // D7 §5a, §7.1: a Designer's design proposed, its change requested.
     | { kind: 'design'; propose: Parameters<typeof proposeDesign>[1] }
     // D7 §10.3: a review recorded, its verdicts proposed.
-    | { kind: 'review'; review: Record<string, unknown> };
+    | { kind: 'review'; review: Record<string, unknown>; propose?: Record<string, unknown> };
   // A close the engine makes by the idle protocol (D6 §2.4): `idle_timeout`
   // or `budget_exhausted`; absent for the owner's.
   cause?: 'idle_timeout' | 'budget_exhausted';
@@ -1204,8 +1204,11 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
   }
   if (args.raise.kind === 'design') proposeDesign(tx, args.raise.propose);
   if (args.raise.kind === 'review') {
-    const made = recordReview(tx, args.raise.review as unknown as Parameters<typeof recordReview>[1]);
+    const { revised_design: _r, first_design: _f, ...review } = args.raise.review as Record<string, unknown>;
+    const made = recordReview(tx, review as unknown as Parameters<typeof recordReview>[1]);
     if (made.decision) decisions.push({ id: made.decision, kind: 'design_verdicts', batch_key: null });
+    // The revised (or first) design of the review (D7 §10.3, §10.6).
+    if (args.raise.propose) proposeDesign(tx, args.raise.propose as Parameters<typeof proposeDesign>[1]);
   }
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'closing' WHERE "id" = ?`).run(run.id);
   tx.emit('session.closed', { project: run.project, run: run.id }, { turns: run.turn_count, idle_generation: run.idle_generation, decisions: decisions.map((d) => d.kind), refused: args.raise.kind === 'none', ...(args.cause ? { cause: args.cause } : {}) });

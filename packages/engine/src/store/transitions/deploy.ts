@@ -32,7 +32,7 @@ import { type AlphaGapState, gapAuthoringUnderWay, gapReason, queueAlphaGapAutho
 import { cancelExecution, readDue, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { quarantineDomain } from './runs.js';
-import { effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
+import { effectivePreviewMax, effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
@@ -2280,7 +2280,7 @@ export function startDeployAttempt(
     // The check capacity it reserves: its project's effective check maximum
     // (D6 K2, E126; B09), no longer the ceiling.
     // A design preview reserves none (D7 §5.7: no check runs on a preview).
-    const reservation = { memory: (frozen.preview ? policy.preview_memory_max : policy.service_memory_max) ?? null, check_capacity: frozen.preview ? 0 : args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
+    const reservation = { memory: (frozen.preview ? effectivePreviewMax(tx.db, op.project) : policy.service_memory_max) ?? null, check_capacity: frozen.preview ? 0 : args.service ? effectiveProfileMax(tx.db, op.project, 'check') : null };
     const runtimeDir = args.service ? serviceRuntimeDir(args.service.home, env.id, g) : null;
     tx.db
       .prepare(
@@ -2429,7 +2429,7 @@ export function launchLookup(db: Db, args: { attempt: string }) {
     env: (content?.env as Record<string, string> | undefined) ?? {},
     secrets: content?.secrets ?? {},
     limits: {
-      memory_max: (frozen.preview ? policy.preview_memory_max : policy.service_memory_max) ?? null,
+      memory_max: (frozen.preview ? effectivePreviewMax(db, op.project) : policy.service_memory_max) ?? null,
       memory_swap_max: 0,
       pids_max: policy.service_tasks_max ?? null,
       writable_bytes: policy.service_writable_bytes ?? null,
