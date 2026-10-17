@@ -36,7 +36,7 @@ import { adapterVersion } from '../deploy/qualification.js';
 import type { ReleaseOperator } from '../deploy/release-operator.js';
 import type { PreviewFacts } from './preview-facts.js';
 import { previewServerPath } from './preview/path.js';
-import { siteMockups } from './preview/server.js';
+import { engineMockups, servedTable } from './preview-mockups.js';
 import { designTreeAt } from './tree.js';
 
 const ADAPTER = 'local_service';
@@ -126,6 +126,7 @@ export class DesignPreviewer {
     const facts = await this.rt.read<PreviewFacts>('design.preview_facts', { project, revision: (b.revision as string | undefined) ?? 'checkpoint' });
     const tree = await designTreeAt(facts.repo, facts.revision);
     if (tree === null || tree.files.size === 0) throw new Refusal(404, 'not_found', `The design tree at ${facts.revision} could not be read.`, 'Name another revision.', { revision: facts.revision });
+    const table = engineMockups(tree.files, { targets: facts.targets, design_preview: facts.design_preview });
     const server = previewServerPath();
     const serverDigest = `sha256:${createHash('sha256').update(readFileSync(server)).digest('hex')}`;
     const version = adapterVersion(ADAPTER);
@@ -138,9 +139,12 @@ export class DesignPreviewer {
       runtime: { path: process.execPath, sha256: nodeSha256() },
       start: [process.execPath, server],
       port,
+      // The engine's table of mockups (preview-mockups.ts): what the server
+      // shows as native, and nothing the Designer declared.
+      env: servedTable(table),
       identity_method: 'tree_digest',
     });
-    const mockups = siteMockups(tree.files.get('design.json') ?? null, tree.files.get('screens.json') ?? null).map((m) => ({ path: m.path, target: m.target, preview_capability: m.capability }));
+    const mockups = table.mockups.map((m) => ({ path: m.path, target: m.target, preview_capability: m.capability }));
     const begun = await this.rt.engine<{ preview: string; environment: string; prefix: string; generation: number; port: number }>('design.preview_begin', {
       project,
       revision: facts.revision,

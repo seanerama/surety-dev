@@ -20,33 +20,43 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const server = join(root, 'dist', 'design', 'preview', 'server.js');
-const { siteMockups, bannerText, frameHtml, indexHtml, simulationsText, RAW_PREFIX } = await import(server);
+const server = join(root, 'dist', 'design', 'preview', 'server.mjs');
+const { bannerText, frameHtml, indexHtml, servedMockups, RAW_PREFIX, MOCKUPS_VARIABLE } = await import(server);
+const { engineMockups, servedTable, simulationsText } = await import(join(root, 'dist', 'design', 'preview-mockups.js'));
 const { previewServerPath } = await import(join(root, 'dist', 'design', 'preview', 'path.js'));
 const { ustar, readUstar, writeEntries } = await import(join(root, 'dist', 'design', 'export.js'));
 const { parseDesignCommand, parseDesignExport } = await import(join(root, 'dist', 'design', 'design-command.js'));
 
 const WEB = Buffer.from('<!doctype html><title>S1</title><p>list</p>\n');
 const ANDROID = Buffer.from('<!doctype html><title>S2</title><script>1</script>\n');
+const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>\n');
 const DESIGN = {
+  // What the Designer declares is never what the engine serves by: android here claims native.
   targets: [
     { target: 'web', preview_capability: 'native' },
-    { target: 'android', preview_capability: 'simulated' },
+    { target: 'android', preview_capability: 'native' },
   ],
   mockups: [
     { path: 'mockups/web/s1.html', kind: 'static_html', screens: ['S1'] },
-    { path: 'mockups/android/s2.html', kind: 'simulated_html', screens: ['S2'], simulates: { target: 'android', form_factor: 'phone', layout: 'portrait' } },
-    { path: 'mockups/android/s3.png', kind: 'image', screens: ['S3'] },
+    { path: 'mockups/./android/s2.html', kind: 'simulated_html', screens: ['S2'], simulates: { target: 'android', form_factor: 'phone', layout: 'portrait' } },
+    { path: 'mockups/android/s3.html', kind: 'static_html', screens: ['S3'] },
+    { path: 'mockups/android/s4.svg', kind: 'image', screens: ['S3'] },
+    { path: 'mockups/tv/s5.html', kind: 'static_html', screens: ['S5'] },
+    { path: '../outside.html', kind: 'static_html', screens: ['S1'] },
   ],
 };
-const SCREENS = { screens: [{ key: 'S1', target: 'web' }, { key: 'S2', target: 'android' }, { key: 'S3', target: 'android' }] };
+const SCREENS = { screens: [{ key: 'S1', target: 'web' }, { key: 'S2', target: 'android' }, { key: 'S3', target: 'android' }, { key: 'S5', target: 'tv' }] };
 const tree = new Map([
   ['design.json', Buffer.from(JSON.stringify(DESIGN))],
   ['screens.json', Buffer.from(JSON.stringify(SCREENS))],
   ['mockups/web/s1.html', WEB],
+  ['mockups/web/other.html', WEB],
   ['mockups/android/s2.html', ANDROID],
-  ['mockups/android/s3.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  ['mockups/android/s3.html', ANDROID],
+  ['mockups/android/s4.svg', SVG],
+  ['mockups/tv/s5.html', WEB],
 ]);
+const FACTS = { targets: [{ target: 'web', technology: 'html_css' }, { target: 'android', technology: 'react_native' }], design_preview: 'static' };
 
 const freePort = () =>
   new Promise((resolve) => {
@@ -66,48 +76,54 @@ const get = (port, path, method = 'GET', headers = {}) =>
     req.end();
   });
 
-test('the mockups: target, capability, framed; the frame; the index; SIMULATIONS.txt', () => {
-  const m = siteMockups(tree.get('design.json'), tree.get('screens.json'));
-  assert.deepEqual(
-    m.map((x) => [x.path, x.target, x.capability, x.framed]),
-    [
-      ['mockups/web/s1.html', 'web', 'native', false],
-      ['mockups/android/s2.html', 'android', 'simulated', true],
-      ['mockups/android/s3.png', 'android', 'simulated', false],
-    ],
-  );
-  // An HTML mockup of a target that is not native is framed even when it does not say what it simulates.
-  const undeclared = siteMockups(JSON.stringify({ ...DESIGN, mockups: [{ path: 'mockups/android/x.html', kind: 'static_html', screens: ['S2'] }] }), JSON.stringify(SCREENS));
-  assert.deepEqual([undeclared[0].capability, undeclared[0].framed], ['simulated', true]);
-  assert.deepEqual(siteMockups('not json', null), []);
-  const frame = frameHtml(m[1]);
+test('the engine\'s table: capability from the engine\'s facts, never the Designer\'s; paths normalised; unknown recorded as unknown', () => {
+  const t = engineMockups(tree, FACTS);
+  const row = (p) => t.mockups.find((m) => m.path === p);
+  assert.deepEqual([row('mockups/web/s1.html').target, row('mockups/web/s1.html').capability, row('mockups/web/s1.html').simulates], ['web', 'native', null]);
+  assert.deepEqual([row('mockups/android/s2.html').capability, row('mockups/android/s2.html').simulates], ['simulated', { target: 'android', form_factor: 'phone', layout: 'portrait' }], 'normalised, simulated');
+  assert.equal(row('mockups/android/s3.html').capability, 'simulated', 'android claims native in design.json: simulated by the engine');
+  assert.equal(row('mockups/android/s4.svg').simulates, null);
+  assert.deepEqual(row('mockups/tv/s5.html').target, { unknown: 'tv is not a UI target of the approved module map' });
+  assert.ok('unknown' in row('mockups/tv/s5.html').capability);
+  assert.equal(row('../outside.html'), undefined, 'a path out of the tree is left out');
+  assert.deepEqual(engineMockups(new Map(), FACTS), { mockups: [], unread: { unknown: 'design.json is missing or does not parse: no mockup could be read' } });
+  const records = simulationsText(t).split('\n').filter((l) => l !== '' && !l.startsWith('#'));
+  assert.deepEqual(records.map((r) => r.split('\t')[0]), ['mockups/android/s2.html', 'mockups/android/s3.html', 'mockups/tv/s5.html']);
+  const served = servedMockups(servedTable(t)[MOCKUPS_VARIABLE]);
+  assert.equal(served.mockups.find((m) => m.path === 'mockups/tv/s5.html').capability, null);
+  assert.deepEqual(servedMockups('not json').mockups, []);
+  const frame = frameHtml('mockups/android/s2.html', { target: 'android', form_factor: 'phone', layout: 'portrait' });
   assert.ok(frame.includes(bannerText({ target: 'android', form_factor: 'phone', layout: 'portrait' })));
   assert.match(frame, /<iframe src="\/__surety\/raw\/mockups\/android\/s2.html" sandbox="allow-scripts"/);
   assert.equal((frame.match(/<iframe/g) ?? []).length, 1);
-  const index = indexHtml(m, null);
-  assert.match(index, /data-path="mockups\/web\/s1.html" data-target="web" data-capability="native"/);
-  assert.match(index, /data-path="mockups\/android\/s2.html" data-target="android" data-capability="simulated"/);
-  const records = simulationsText(m)
-    .split('\n')
-    .filter((l) => l !== '' && !l.startsWith('#'));
-  assert.deepEqual(records, ['mockups/android/s2.html\tandroid\tphone\tportrait']);
+  assert.match(indexHtml(served.mockups, null), /data-path="mockups\/web\/s1.html" data-target="web" data-capability="native"/);
 });
 
-test('the export archive: ustar, a long path by pax, read back; written under a directory and never outside it', (t) => {
+test('the export archive: ustar, a long path by pax, read back; a malformed archive refused; written only into a new or empty directory', (t) => {
   const long = `mockups/${'a'.repeat(120)}.html`;
   const entries = new Map([...tree, [long, Buffer.from('x')], ['SIMULATIONS.txt', Buffer.from('# s\n')]]);
-  const back = readUstar(ustar(entries));
+  const archive = ustar(entries);
+  const back = readUstar(archive);
   assert.deepEqual([...back.keys()], [...entries.keys()]);
   for (const [p, b] of entries) assert.ok(back.get(p).equals(b), p);
+  assert.throws(() => readUstar(archive.subarray(0, archive.length - 1024)), /two zero blocks/);
+  assert.throws(() => readUstar(archive.subarray(0, 1024)), /past the archive's end|two zero blocks/);
+  const bad = Buffer.from(archive);
+  bad[0] ^= 1;
+  assert.throws(() => readUstar(bad), /checksum/);
   const dir = mkdtempSync(join(tmpdir(), 'design-export-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeEntries(join(dir, 'out'), back);
   assert.ok(readFileSync(join(dir, 'out', 'mockups', 'web', 's1.html')).equals(WEB));
+  assert.throws(() => writeEntries(join(dir, 'out'), new Map([['a.txt', Buffer.from('x')]])), /not empty/);
+  mkdirSync(join(dir, 'real'));
+  symlinkSync(join(dir, 'real'), join(dir, 'link'));
+  assert.throws(() => writeEntries(join(dir, 'link'), new Map([['a.txt', Buffer.from('x')]])), /symbolic link/);
   assert.throws(() => writeEntries(join(dir, 'bad'), new Map([['../escape', Buffer.from('x')]])), /not a path under/);
-  assert.throws(() => writeEntries(join(dir, 'bad'), new Map([['/etc/x', Buffer.from('x')]])), /not a path under/);
+  assert.throws(() => writeEntries(join(dir, 'bad2'), new Map([['/etc/x', Buffer.from('x')]])), /not a path under/);
 });
 
-test('the engine\'s server, a file of its install, serves the design tree and nothing else', async (t) => {
+test('the engine\'s server, a file of its install, frames every HTML path the engine did not list as native', async (t) => {
   assert.equal(previewServerPath(), server, 'the server is the install\'s file');
   const base = mkdtempSync(join(tmpdir(), 'preview-site-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -119,7 +135,8 @@ test('the engine\'s server, a file of its install, serves the design tree and no
   writeFileSync(join(base, 'secret.txt'), 'outside');
   symlinkSync(join(base, 'secret.txt'), join(dir, 'link.txt'));
   const port = await freePort();
-  const child = spawn(process.execPath, [server], { cwd: dir, env: { PATH: '/usr/bin:/bin', PORT: String(port) }, stdio: 'ignore' });
+  const env = { PATH: '/usr/bin:/bin', PORT: String(port), ...servedTable(engineMockups(tree, FACTS)) };
+  const child = spawn(process.execPath, [server], { cwd: dir, env, stdio: 'ignore' });
   // Ended through its own handle, once its command line reads back as the server this test started.
   t.after(() => {
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -138,17 +155,23 @@ test('the engine\'s server, a file of its install, serves the design tree and no
   assert.match(index.bytes.toString(), /data-capability="simulated"/);
   const web = await get(port, '/mockups/web/s1.html');
   assert.ok(web.bytes.equals(WEB), 'a native mockup: its bytes');
-  const android = await get(port, '/mockups/android/s2.html');
-  assert.equal(android.status, 200);
-  assert.ok(!android.bytes.equals(ANDROID), 'a simulated mockup\'s path: never its bytes bare');
-  assert.match(android.bytes.toString(), /Simulation of android/);
+  for (const p of ['/mockups/android/s2.html', '/mockups/android/s3.html', '/mockups/tv/s5.html', '/mockups/web/other.html']) {
+    const r = await get(port, p);
+    assert.equal(r.status, 200, p);
+    assert.ok(!r.bytes.equals(ANDROID) && !r.bytes.equals(WEB), `${p}: never its bytes bare`);
+    assert.match(r.bytes.toString(), /id="surety-simulation-banner"/, `${p}: the frame`);
+  }
   const raw = await get(port, `${RAW_PREFIX}mockups/android/s2.html`, 'GET', { 'sec-fetch-dest': 'iframe' });
   assert.ok(raw.bytes.equals(ANDROID));
   assert.equal(raw.headers['content-security-policy'], 'sandbox allow-scripts');
-  const navigated = await get(port, `${RAW_PREFIX}mockups/android/s2.html`, 'GET', { 'sec-fetch-dest': 'document' });
-  assert.match(navigated.bytes.toString(), /Simulation of android/, 'a top-level navigation to the raw path: the frame');
+  assert.equal(raw.headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.equal(raw.headers['access-control-allow-origin'], 'null');
+  for (const h of [{ 'sec-fetch-dest': 'document' }, {}]) assert.match((await get(port, `${RAW_PREFIX}mockups/android/s2.html`, 'GET', h)).bytes.toString(), /Simulation of android/, `the raw path to ${JSON.stringify(h)}: the frame`);
+  const svg = await get(port, '/mockups/android/s4.svg');
+  assert.ok(svg.bytes.equals(SVG));
+  assert.equal(svg.headers['content-security-policy'], 'sandbox');
   assert.ok((await get(port, '/design.json')).bytes.equals(tree.get('design.json')));
-  for (const p of ['/../secret.txt', '/%2e%2e/secret.txt', '/mockups/..%2f..%2fsecret.txt', '/link.txt', '/mockups', '/nothing.html']) assert.equal((await get(port, p)).status, 404, p);
+  for (const p of ['/../secret.txt', '/%2e%2e/secret.txt', '/mockups/..%2f..%2fsecret.txt', '/link.txt', '/mockups', '/nothing.html', '/mockups/./web/s1.html']) assert.equal((await get(port, p)).status, 404, p);
   assert.equal((await get(port, '/%E0%A4%A')).status, 400);
   for (const m of ['POST', 'PUT', 'DELETE']) assert.equal((await get(port, '/design.json', m)).status, 405, m);
   assert.equal((await get(port, '/', 'HEAD')).status, 200);

@@ -19,7 +19,7 @@ import { designView } from './view.js';
 import { designPackageFacts } from './package.js';
 import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
-import { openOwnerReview, ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
+import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
 import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { submitAssets } from './assets-submit.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
@@ -120,7 +120,6 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
   'design.record_carried': (tx, a: { run: string; effective: unknown[] }) => recordCarried(tx, a),
   'design.preview_interrupt': (tx, a: { incarnation: string }) => interruptPreviews(tx, a),
   'design.record_observation': (tx, a) => recordObservation(tx, a),
-  'design.owner_review_open': (tx, a: { project: string; run: string; subject: Record<string, unknown> }) => openOwnerReview(tx, a),
   'design.preview_artifact': (tx, a) => previewArtifact(tx, a),
   'design.preview_intend': (tx, a) => intendPreviewOp(tx, a),
   'design.preview_deployed': (tx, a) => previewDeployed(tx, a),

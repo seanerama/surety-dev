@@ -64,10 +64,6 @@ export function buildServicePlan(input: ServicePlanInput, mountPoints: string[] 
     for (const p of parents(input.runtime)) b.dir(p);
     b.bind(real, { target: input.runtime });
   }
-  for (const program of input.programs ?? []) {
-    for (const p of parents(program)) b.dir(p);
-    b.bind(realpathSync(program), { target: program, noexec: true });
-  }
   b.bind(input.ingress, { target: INGRESS_SOCKET, noexec: true });
   b.dir('/surety');
   b.bind(input.sealed, { target: APP_DIR });
@@ -80,6 +76,13 @@ export function buildServicePlan(input: ServicePlanInput, mountPoints: string[] 
   const first = { skeleton: b.skeleton, fstab: b.fstab };
   b.second();
   b.entry({ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' });
+  // The engine's programs, bound in the second phase, after the volatile
+  // /tmp, /surety/home and /surety/state are mounted: at its own path the
+  // bind is then on top whatever mount holds that path, so an install under
+  // /tmp is not hidden by the domain's /tmp (the slice-42 review). Its
+  // directories are made where that path lies (in the volatile filesystem
+  // under /tmp, in the root otherwise).
+  for (const program of input.programs ?? []) b.bind(realpathSync(program), { target: program, noexec: true });
   return {
     stage,
     vol,

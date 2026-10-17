@@ -71,9 +71,9 @@ export function ownerReviewOfRun(db: Database.Database, run: string): { id: stri
 export async function ownerReview(rt: Runtime, sessions: SessionDriver, project: string, b: unknown, scripted: string | null): Promise<{ status: number; body: unknown }> {
   const body = bodyOf(b);
   await rt.read('design.owner_review_facts', { project, target: body.target });
-  const opened = await sessions.open(project, { role: 'designer', mode: 'review', scripted });
-  const run = (opened.body as { run: { id: string } }).run;
   const subject = { kind: 'owner_build', target: body.target, build_ref: body.build_ref, ...(body.candidate !== null ? { candidate: body.candidate } : {}) };
-  const made = await rt.engine<{ review: string }>('design.owner_review_open', { project, run: run.id, subject });
-  return { status: 201, body: { run: { ...run, mode: 'review' }, review: { id: made.review, subject }, evidence: [] } };
+  // The session, the review's row and its subject in one transaction (S3).
+  const opened = await sessions.open(project, { role: 'designer', mode: 'review', scripted, review: subject });
+  const made = opened.body as { run: Record<string, unknown>; review: { id: string; subject: Record<string, unknown> } };
+  return { status: 201, body: { run: { ...made.run, mode: 'review' }, review: made.review, evidence: [] } };
 }

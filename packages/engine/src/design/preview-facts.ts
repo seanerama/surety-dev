@@ -50,6 +50,13 @@ export function designRevisionOf(db: Database.Database, project: string, asked: 
   throw new Refusal(400, 'invalid_value', 'revision must be checkpoint, approved or a 40-character commit.', 'Send {"revision": "checkpoint"}.', { field: 'revision' });
 }
 
+// The approved module map's UI targets with their technologies: the
+// engine's facts for each mockup's capability (preview-mockups.ts).
+function uiTargets(db: Database.Database, project: string): { target: string; technology: string }[] {
+  const map = approvedModuleMap(db, project)?.map ?? null;
+  return (map?.modules ?? []).filter((m) => m.surface === 'ui').flatMap((m) => (m.targets ?? []).map((t) => ({ target: t.target, technology: t.ui_technology })));
+}
+
 export function previewFacts(db: Database.Database, args: { project: string; revision?: string | null }): PreviewFacts {
   const proj = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string } | undefined;
   if (!proj) throw notFound('project', args.project);
@@ -71,18 +78,16 @@ export function previewFacts(db: Database.Database, args: { project: string; rev
   if (!adapterQualified(db, 'local_service')) {
     throw previewUnavailable(args.project, 'adapter_unqualified', 'The local_service adapter has no current qualification on this host, so the preview cannot be deployed.', 'Qualify it (surety qualify-adapter local_service), or export the design with surety design export.');
   }
-  const map = approvedModuleMap(db, args.project)?.map ?? null;
-  const targets = (map?.modules ?? []).filter((m) => m.surface === 'ui').flatMap((m) => (m.targets ?? []).map((t) => ({ target: t.target, technology: t.ui_technology })));
-  return { repo: proj.dev_repo_path, revision, asked, design_preview: preview, targets };
+  return { repo: proj.dev_repo_path, revision, asked, design_preview: preview, targets: uiTargets(db, args.project) };
 }
 
 // What an export reads (SEAM.md §501): the repository and the revision as
 // a commit. No adapter, policy or qualification: an export always works.
-export function exportFacts(db: Database.Database, args: { project: string; revision?: string | null }): { repo: string; revision: string } {
+export function exportFacts(db: Database.Database, args: { project: string; revision?: string | null }): { repo: string; revision: string; targets: { target: string; technology: string }[] } {
   const proj = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string } | undefined;
   if (!proj) throw notFound('project', args.project);
   const asked = args.revision ?? 'checkpoint';
   const revision = designRevisionOf(db, args.project, asked);
   if (revision === null) throw new Refusal(404, 'not_found', `This project has no ${asked === 'approved' ? 'approved design revision' : 'design checkpoint'} to export.`, 'Name another revision.', { project: args.project, revision: asked });
-  return { repo: proj.dev_repo_path, revision };
+  return { repo: proj.dev_repo_path, revision, targets: uiTargets(db, args.project) };
 }
