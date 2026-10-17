@@ -30,6 +30,28 @@ export async function designTreeAt(repo: string, rev: string): Promise<DesignTre
   return { files, blobs };
 }
 
+// The design tree's size in a git tree (D7 §5.5; SEAM.md §493): every blob
+// under `.surety/design/` (inventory, placeholders and binary files
+// included), counted and summed from git's own sizes; nothing is read
+// from a workspace. null when git could not say.
+export async function designTreeSize(repo: string, tree: string): Promise<{ files: number; bytes: number } | null> {
+  const r = await git(repoContext(repo), ['ls-tree', '-r', '-l', '-z', '--full-tree', tree, '--', DESIGN_ROOT]);
+  if (r.code !== 0) return null;
+  let files = 0;
+  let bytes = 0;
+  for (const record of r.stdout.split('\0')) {
+    if (record === '') continue;
+    const tab = record.indexOf('\t');
+    const [, type, , size] = record.slice(0, tab).trim().split(/\s+/);
+    if (type !== 'blob') continue;
+    const n = Number(size);
+    if (!Number.isSafeInteger(n) || n < 0) return null;
+    files += 1;
+    bytes += n;
+  }
+  return { files, bytes };
+}
+
 // One blob's bytes at a revision, or null.
 export async function blobAt(repo: string, rev: string, path: string): Promise<Buffer | null> {
   const r = await git(repoContext(repo), ['cat-file', 'blob', `${rev}:${path}`]);

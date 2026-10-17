@@ -18,7 +18,7 @@ import { preparedAgainstFacts } from '../plan/bundle.js';
 import { envelopeHold } from '../store/transitions/envelope.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
-import { chargeInvocation, exhaustedLimits } from '../store/transitions/ledger.js';
+import { chargeInvocation, exhaustedLimits, runBudgetOf } from '../store/transitions/ledger.js';
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import { attemptProfileMax, effectiveProfileMax, engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
@@ -38,6 +38,7 @@ import { effectiveVersion } from '../store/transitions/protected.js';
 import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
 import { proposeDesign } from '../design/approval.js';
 import { recordReview } from '../design/review.js';
+import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -378,17 +379,19 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   // turn's billable tokens, an unknown remainder counted at its allowance;
   // a turn whose usage is unknown with no allowance cannot be judged, and no
   // turn is admitted on it (never read as zero).
-  const policyNow = projectPolicy(tx.db, run.project);
+  // A Designer session's is designer_session_budget_billable_tokens in its
+  // place (D7 §3.2; SEAM.md §491).
+  const sessionBudget = runBudgetOf(tx.db, { project: run.project, kind: 'session', role: run.role });
   // (The scripted backend's invocation with nothing observed carries no
   // allowance by D2's policy, as on any run: it is charged nothing.)
   const spent = sessionSpent(tx.db, run.id);
   if (spent === null) {
     throw new Refusal(409, 'budget_exhausted', `Session ${run.id}'s spend so far cannot be judged: a turn's usage is unknown and no allowance was charged for it.`, 'Close the session; open another once the usage is known.', { run: run.id, limits: ['budget_usage_unknown'] });
   }
-  if (spent >= policyNow.budget_run_billable_tokens!) {
-    throw new Refusal(409, 'budget_exhausted', `Session ${run.id} has spent ${spent} billable tokens, at or over budget_run_billable_tokens (${policyNow.budget_run_billable_tokens}); it admits no further turn.`, 'Close the session, or raise the limit.', {
+  if (spent >= sessionBudget.limit) {
+    throw new Refusal(409, 'budget_exhausted', `Session ${run.id} has spent ${spent} billable tokens, at or over ${sessionBudget.key} (${sessionBudget.limit}); it admits no further turn.`, 'Close the session, or raise the limit.', {
       run: run.id,
-      limits: ['budget_run_billable_tokens'],
+      limits: [sessionBudget.key],
       spent,
     });
   }
@@ -420,7 +423,12 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   const invocation = tx.newId('inv_');
   const domain = tx.newId('dom_');
   const policy = projectPolicy(tx.db, run.project);
-  const budget = { budget_run_billable_tokens: policy.budget_run_billable_tokens, budget_day_verified_usd: policy.budget_day_verified_usd, budget_day_unknown_tokens: policy.budget_day_unknown_tokens };
+  const budget = {
+    budget_run_billable_tokens: policy.budget_run_billable_tokens,
+    ...(sessionBudget.key === 'designer_session_budget_billable_tokens' ? { designer_session_budget_billable_tokens: sessionBudget.limit } : {}),
+    budget_day_verified_usd: policy.budget_day_verified_usd,
+    budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
+  };
   const session = TEMPLATES[run.backend]?.sessionIdOf?.(invocation) ?? null;
   tx.db
     .prepare('INSERT INTO "turns" ("id", "created_at", "project", "run", "number", "invocation", "domain", "started_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -648,6 +656,24 @@ export function parseSessionReply(value: unknown, role?: string): SessionReply |
   };
 }
 
+// Why a value is not a turn's result, for the engine's entry of the turn
+// (D7 B.12; SEAM.md §491: a field outside the closed form is named); null
+// when it is one. Field names only, never the role's values.
+export function sessionReplyProblem(value: unknown, role?: string): string | null {
+  if (parseSessionReply(value, role) !== null) return null;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'it is not a JSON object';
+  const v = value as Record<string, unknown>;
+  const allowed = ['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...(role === 'designer' ? ['findings'] : []), ...OWNER_ONLY_FIELDS, ...ENGINE_ONLY_FIELDS];
+  const unknown = Object.keys(v).filter((k) => !allowed.includes(k));
+  if (unknown.length > 0) return `${unknown.map((k) => JSON.stringify(k)).join(', ')} ${unknown.length === 1 ? 'is not a field' : 'are not fields'} of a turn's result (${allowed.filter((k) => !ENGINE_ONLY_FIELDS.includes(k) && !OWNER_ONLY_FIELDS.includes(k)).join(', ')})`;
+  if (v.status !== 'completed') return '"status" is not "completed"';
+  if (typeof v.summary !== 'string') return '"summary" is not a string';
+  if (typeof v.reply !== 'string') return '"reply" is not a string';
+  if (typeof v.artifact_changed !== 'boolean') return '"artifact_changed" is not a boolean';
+  if (role === 'designer' && v.findings !== undefined && !designerFindings(v.findings)) return '"findings" is not a list of findings ({category, severity, message, interface?, requirement?})';
+  return '"questions_for_owner" or "done" is not of its form';
+}
+
 // B.12's findings: D3 X2's {category, severity, message} with `interface`
 // or `requirement` naming its subject (SEAM.md §486).
 function designerFindings(v: unknown): boolean {
@@ -783,13 +809,20 @@ export function settleTurn(tx: Tx, args: { run: string; invocation: string }): {
   const generation = run.idle_generation + 1;
   const policy = projectPolicy(tx.db, run.project);
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'open_idle', "idle_generation" = ?, "deadline_at" = ? WHERE "id" = ?`).run(generation, addSeconds(tx.at, policy.session_idle_timeout!), run.id);
-  const done = (() => {
+  const reply = (() => {
     try {
-      return (JSON.parse((tx.db.prepare('SELECT "reply" FROM "turns" WHERE "id" = ?').get(turn.id) as { reply: string | null }).reply ?? 'null') as { done?: unknown } | null)?.done === true;
+      return JSON.parse((tx.db.prepare('SELECT "reply" FROM "turns" WHERE "id" = ?').get(turn.id) as { reply: string | null }).reply ?? 'null') as { done?: unknown; findings?: unknown } | null;
     } catch {
-      return false;
+      return null;
     }
   })();
+  const done = reply?.done === true;
+  // A Designer's findings, routed at the settlement (D7 §3.5, §4.5; SEAM.md
+  // §491); the session is told so in the turn's engine entry.
+  if (run.role === 'designer' && outcome === 'replied' && Array.isArray(reply?.findings) && reply.findings.length > 0) {
+    const told = recordDesignFindings(tx, { project: run.project, run: run.id, turn: turn.number, findings: reply.findings as DesignFindingInput[] });
+    if (told !== null) appendTranscript(tx, run, { turn: turn.number, speaker: 'engine', text: told, text_ref: null });
+  }
   tx.emit('session.turn_ended', { project: run.project, run: run.id, invocation: args.invocation }, { turn: turn.number, outcome });
   tx.emit('session.turn_settled', { project: run.project, run: run.id, invocation: args.invocation }, { turn: turn.number, outcome, idle_generation: generation, usage_status: usageStatus, done });
   return { settled: true, turn: turn.number, idle_generation: generation, outcome };
@@ -1181,9 +1214,9 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
 export function dueCloses(db: Tx['db'], at: string): { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] {
   const idle = db
     .prepare(
-      `SELECT "id", "project", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') AND "qualification_attempt" IS NULL ORDER BY rowid`,
+      `SELECT "id", "project", "kind", "role", "deadline_at" FROM "runs" WHERE "kind" = 'session' AND "state" IN ('claimed', 'executing') AND "session_state" IN ('allocated', 'open_idle') AND "qualification_attempt" IS NULL ORDER BY rowid`,
     )
-    .all() as { id: string; project: string; deadline_at: string }[];
+    .all() as { id: string; project: string; kind: string; role: string | null; deadline_at: string }[];
   const out: { run: string; project: string; cause: 'idle_timeout' | 'budget_exhausted' }[] = [];
   for (const r of idle) {
     if (r.deadline_at > at) continue;
@@ -1192,7 +1225,7 @@ export function dueCloses(db: Tx['db'], at: string): { run: string; project: str
     // (A turn refused on an exhausted budget closes the session at once,
     // api/server.ts.)
     const spent = sessionSpent(db, r.id);
-    const limit = projectPolicy(db, r.project).budget_run_billable_tokens!;
+    const limit = runBudgetOf(db, r).limit;
     out.push({ run: r.id, project: r.project, cause: spent === null || spent >= limit ? 'budget_exhausted' : 'idle_timeout' });
   }
   return out;
@@ -1276,10 +1309,12 @@ export function markSessionHolds(tx: Tx): number {
 }
 
 // Whether the session's cumulative budget is spent (D1 §13.3): its spend at
-// or past budget_run_billable_tokens, or a spend that cannot be judged.
+// or past budget_run_billable_tokens (a Designer session's
+// designer_session_budget_billable_tokens, D7 §3.2), or a spend that
+// cannot be judged.
 export function budgetSpent(db: Tx['db'], run: string): boolean {
-  const r = db.prepare('SELECT "project" FROM "runs" WHERE "id" = ?').get(run) as { project: string } | undefined;
+  const r = db.prepare('SELECT "project", "kind", "role" FROM "runs" WHERE "id" = ?').get(run) as { project: string; kind: string; role: string | null } | undefined;
   if (!r) return false;
   const spent = sessionSpent(db, run);
-  return spent === null || spent >= projectPolicy(db, r.project).budget_run_billable_tokens!;
+  return spent === null || spent >= runBudgetOf(db, r).limit;
 }

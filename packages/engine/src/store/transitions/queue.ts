@@ -58,6 +58,7 @@ import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN
 import { DESIGN_DUE, DESIGN_DUE_KEYS } from '../../design/due.js';
 import { designBatchKeyOf } from '../../design/batch-key.js';
 import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
+import { DESIGN_CONFLICT, DESIGN_CONFLICT_SCOPE } from '../../design/findings.js';
 
 type Db = Tx['db'];
 
@@ -1350,7 +1351,8 @@ const DISPOSITION_OWED: KindSpec = {
 // Reviewer proposed beyond its authority, (scope alpha_exception) an Alpha
 // exception (D2 §5 C1), and (scope disposition_owed) a disposition no one
 // gave.
-const byScope = (d: Pick<Subject, 'scope'>): KindSpec => (d.scope === ALPHA_SCOPE ? ALPHA_EXCEPTION : d.scope === OWED_SCOPE ? DISPOSITION_OWED : DISPOSITION_PROPOSED);
+const byScope = (d: Pick<Subject, 'scope'>): KindSpec =>
+  d.scope === ALPHA_SCOPE ? ALPHA_EXCEPTION : d.scope === OWED_SCOPE ? DISPOSITION_OWED : d.scope === DESIGN_CONFLICT_SCOPE ? DESIGN_CONFLICT : DISPOSITION_PROPOSED;
 const DISPOSITION: KindSpec = {
   preview: (tx, d, facts) => byScope(d).preview(tx, d, facts),
   manifest: (tx, d, facts) => byScope(d).manifest(tx, d, facts),

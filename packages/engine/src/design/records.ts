@@ -2,12 +2,12 @@
 // row per save and per close's check, with its reasons and the design tree's
 // blobs, and `design.checked`; and what the check reads of the store (the
 // recorded inventory, the allowed external hosts, what the last approval
-// approved, the tree's bounds).
+// approved).
 
 import type Database from 'better-sqlite3';
 
 import { canonical, parseJson, sha256 } from '../store/transitions/common.js';
-import { projectEffective, projectPolicy } from '../store/transitions/settings.js';
+import { projectEffective } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { CheckContext, DesignReason } from './check.js';
 import { currentInventory } from './store.js';
@@ -15,7 +15,6 @@ import { currentInventory } from './store.js';
 export function checkContext(db: Database.Database, project: string): CheckContext {
   const inv = currentInventory(db, project);
   const options = projectEffective(db, project) as Record<string, unknown>;
-  const policy = projectPolicy(db, project);
   // What an owner's approval made effective (§6.4): a manifest may mark only
   // these `approved`, with the same versions and digests.
   const effective = db.prepare(`SELECT "slot", "variant", "slot_version", "digest" FROM "design_effective_assets" WHERE "project" = ? AND "source" = 'approved' ORDER BY "slot", "variant"`).all(project) as {
@@ -34,8 +33,6 @@ export function checkContext(db: Database.Database, project: string): CheckConte
     inventory: inv?.inventory ?? null,
     externalHosts: Array.isArray(options.design_external_urls) ? (options.design_external_urls as string[]) : [],
     approved: [...bySlot.values()],
-    ...(policy.design_tree_max_bytes !== undefined ? { maxBytes: policy.design_tree_max_bytes } : {}),
-    ...(policy.design_tree_max_files !== undefined ? { maxFiles: policy.design_tree_max_files } : {}),
   };
 }
 

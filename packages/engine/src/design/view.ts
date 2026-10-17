@@ -47,6 +47,23 @@ export function designView(db: Database.Database, args: { project: string }): Re
     return { target: h.target, requirement: h.requirement, phase: h.phase, status: accepted ? 'owner_accepted' : 'pending' };
   });
   const due = db.prepare(`SELECT "id", "evidence" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { id: string; evidence: string } | undefined;
+  // The native conventions the current approved revision leaves not
+  // checkable yet, counted per target (D7 §7.2, A.8; SEAM.md §494).
+  const current = db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(args.project) as { id: string } | undefined;
+  const not_checkable_yet = Object.fromEntries(
+    (current
+      ? (db.prepare(`SELECT "target", COUNT(*) AS "n" FROM "design_native_obligations" WHERE "design_revision" = ? AND "status" = 'not_checkable_yet' GROUP BY "target" ORDER BY "target"`).all(current.id) as { target: string; n: number }[])
+      : []
+    ).map((r) => [r.target, r.n]),
+  );
+  // The release hook's count (D7 §6.7, A.8; SEAM.md §496), inert until D5:
+  // every selected slot (the inventory's defaults before the first
+  // approval, as the effective set holds them) whose effective source is
+  // not `approved`.
+  const bySlot = new Map<string, boolean>();
+  for (const e of effective as { slot: string; source: string }[]) bySlot.set(e.slot, (bySlot.get(e.slot) ?? true) && e.source === 'approved');
+  const notApproved = [...bySlot].filter(([, approvedAll]) => !approvedAll).map(([slot]) => slot).sort();
+  const assets_required = { for: (projectEffective(db, args.project) as Record<string, unknown>).assets_required_for ?? 'live', not_approved: notApproved, count: notApproved.length };
   return {
     policy,
     design_preview: (projectEffective(db, args.project) as Record<string, unknown>).design_preview ?? 'static',
@@ -55,7 +72,9 @@ export function designView(db: Database.Database, args: { project: string }): Re
     inventory: inv?.inventory ?? null,
     revisions,
     effective_assets: effective,
+    assets_required,
     human_tests,
+    not_checkable_yet,
     holds: heldStages(db, args.project),
     design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
   };

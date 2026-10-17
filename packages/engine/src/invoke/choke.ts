@@ -59,7 +59,7 @@ import { designPackageFor } from '../design/package.js';
 import { domainArea } from './sandbox/prepare.js';
 import { recordsDir } from '../records/files.js';
 import { writeTurnPackage } from '../sessions/turn-package.js';
-import { parseSessionReply } from '../sessions/session.js';
+import { parseSessionReply, sessionReplyProblem } from '../sessions/session.js';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -1350,12 +1350,19 @@ export class Launcher {
       // A session turn's file is a turn's reply (D6 B.7; SEAM.md §343), taken
       // by the turn's settlement as on the kernel lane, never a run's result.
       let reply: ReturnType<typeof parseSessionReply> = null;
+      let problem: string | null = 'it is not JSON';
       try {
-        reply = parseSessionReply(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
+        const sent = redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)));
+        reply = parseSessionReply(sent, claim.role);
+        problem = reply === null ? sessionReplyProblem(sent, claim.role) : null;
       } catch {
         reply = null;
       }
-      if (handle.sessionReply === null) handle.sessionReply = reply ?? 'invalid';
+      if (handle.sessionReply === null) {
+        handle.sessionReply = reply ?? 'invalid';
+        // What the turn's engine entry names (D7 B.12; SEAM.md §491).
+        if (reply === null && problem !== null) handle.invalidDetail = redactText(problem);
+      }
       verdict = reply === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     } else {
       try {
@@ -1635,7 +1642,12 @@ export class Launcher {
       // settlement, never recorded as a run's result (the run goes on).
       if (handle.claim.session) {
         if (handle.sessionReply !== null || handle.ending) return;
-        handle.sessionReply = parseSessionReply(redactValue(m.result), handle.claim.role) ?? 'invalid';
+        const sent = redactValue(m.result);
+        handle.sessionReply = parseSessionReply(sent, handle.claim.role) ?? 'invalid';
+        if (handle.sessionReply === 'invalid') {
+          const problem = sessionReplyProblem(sent, handle.claim.role);
+          if (problem !== null) handle.invalidDetail = redactText(problem);
+        }
         return;
       }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
