@@ -34,7 +34,7 @@ import { withStore } from './harness/store.mjs';
 import { MANIFEST_PATH } from './harness/design/reference.mjs';
 import { answerWith, assertNoSilentHold, gitJson, head, inventoryOf, openDesignDue, openDesigner, openOfKind, stageRow } from './harness/design/drive.mjs';
 import { checkSession, variantOf } from './harness/design/check41.mjs';
-import { assetAdd, blobBytes, pngOf, sha256hex } from './harness/design/assets43.mjs';
+import { assetAdd, blobBytes, passiveSvg, sha256hex } from './harness/design/assets43.mjs';
 import { gitQuiet } from './harness/repos.mjs';
 import {
   TWO_DAYS,
@@ -82,7 +82,8 @@ describe('M514 the design decisions\' bindings', () => {
   test('(b) the asset manifest\'s version moved by the owner\'s asset add between the preview and the answer: the approval stale', async (t) => {
     const fx = await scriptedEngine(t);
     const { p, batch } = await designedPantry(fx, { name: 'pantry-bind-assets', approve: false });
-    const added = assetAdd(fx, p.id, 'favicon', 'default', 'favicon.png', pngOf(48, 48));
+    // The owner's file in the variant's declared format: the placeholder favicon is declared SVG (objection 182).
+    const added = assetAdd(fx, p.id, 'favicon', 'default', 'owner-favicon.svg', Buffer.from(passiveSvg(48, 48, 'P')));
     assert.equal(added.status, 0, `surety design asset add (SEAM.md §508) (${added.stdout} ${added.stderr})`);
     assert.notEqual(gitJson(p, MANIFEST_PATH).version, batch.design_approval.manifest?.asset_manifest_version, 'the fixture is live: the manifest\'s version moved');
     refusedStale(await answerWith(fx, p.id, batch.design_approval, 'approve'), 'design_approval after the asset manifest moved');
