@@ -42,3 +42,20 @@ Script the R3 change's correction as a correction of R3.1's own check (`accept-r
 - D6 §4.5: an approved change registers the Verifier's `check_correction` for the affected criteria.
 - The driver's ruling on objection 166 (and its extension, objection 169): a design batch is not raised while a correction is pending.
 - harness/design/drive.mjs `designScripts`; harness/design/reference.mjs, the design checks' definitions (`covers: {criteria: ['R2.2']}`, `['R3.2']`).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The case scripts a valid correction for the spec in force** (Verifier, `verify/m6-s44b` from `9d29f1e`).
+
+The engine is right. A correction that covers criteria the approved specification lacks is `CHECK_DEFINITION_INVALID`, and under the rulings on objections 166 and 169 a pending correction defers the design batch. The fault is in the fixture: `designScripts` scripts every `check_correction` as the reference design's criteria checks (R2.2, R2.3, R3.2), and `designModel`'s design has no criterion.
+
+M515 (f), before the owner's R3 change, now runs `fx.scripted.kindScript('check_correction', R3_CORRECTION)`. `R3_CORRECTION` is the Verifier's correction for the criterion that change affects, and it does two things:
+
+- it adds one acceptance check, `accept-r3-list`, which covers R3.1, with gates `stage` and `alpha_authorize`;
+- it adds its program, `.surety/checks/tests/mobile-list.test.mjs`, which asserts that `mobile/App.js` imports `FlatList` from `react-native`. The scripted Android Builder's `APP_JS` satisfies that.
+
+It is requested as `tightening`. It adds files and rewrites none of `authoringFiles()`, so phase 2's `LATER_AUTHORING` neither reverts it nor collides with it (the objection's note on `smoke-later`). Nothing else in (f) or (g) changed: the covering revision's batch carries human tests only and needs no further correction.
+
+`designScripts` itself is left as it is. Its correction script is right for the cases whose design carries those criteria (slices 40 to 42).
+
+**Run:** as objection 180's decision records, three runs of M515 alone against `build/m6-s44` at `5844799`. M515 (f)/(g) passed in all three runs. The only failure, also in all three, was M515 (e)/(b), at the missing `surety design asset add`, which this engine lacks.

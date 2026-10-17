@@ -29,7 +29,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { definitionText } from './harness/checks/fixtures.mjs';
+import { roleThat } from './harness/gitruns.mjs';
 import { phaseCompleted, planOfPhase, pump, stagesOfPlan } from './harness/journey/drive.mjs';
+import { step } from './harness/scripted.mjs';
 import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { MODULES_JSON } from './harness/design/reference.mjs';
 import { answerWith, assertNoSilentHold, designEvents, inventoryOf, manifestOf, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, variantSpec } from './harness/design/drive.mjs';
@@ -76,6 +79,8 @@ async function fourDesigned(t, name) {
   const fx = await scriptedEngine(t);
   const d = await designedPantry(fx, { name, variant: FOUR, model: fourScreenModel });
   await pump(fx, d.ctx, () => ([1, 2, 3].every((n) => stageRow(fx.home, d.p.id, n)?.status === 'verified') ? true : undefined), { what: 'the three stages verified', max: 200 });
+  // The phase complete: its phase-gate checks' results recorded before any change binds them (objection 180).
+  await phaseCompleted(fx, d.ctx, 1, { max: 200 });
   await waitForIdle(fx.home, d.p.id);
   const rev = currentRevision(fx.home, d.p.id);
   assert.deepEqual(Object.keys(screenStatus(fx.home, rev.id)).sort(), ['S1', 'S2', 'S3', 'S4'], 'the fixture is live: four approved screens');
@@ -223,7 +228,10 @@ describe('M515 staleness: the design class', () => {
     const d = await designedPantry(fx, { name: 'pantry-held-stale', variant: late });
     const { p, ctx, v2, model } = d;
     const rev = currentRevision(fx.home, p.id);
-    // R3 reworded during phase 1: S2 stale before phase 2 is planned.
+    // R3 reworded during phase 1: S2 stale before phase 2 is planned. The
+    // change's correction (D6 §4.5) is the Verifier's for the specification
+    // in force: one more check of R3.1 (objection 181).
+    fx.scripted.kindScript('check_correction', R3_CORRECTION);
     const v3reqs = v2.requirements.map((r) => (r.key === 'R3' ? { ...r, statement: 'A user sees every item of the pantry, with its quantity, in the Android app.' } : r));
     await ownerChange(fx, ctx, { text: specOf({ version: 3, requirements: v3reqs }), changes: [{ key: 'R3', kind: 'text_changed', reason: 'quantities on Android' }], say: 'Show quantities on Android.' });
     await pump(fx, ctx, () => (staleKeys(fx.home, rev.id).includes('S2') ? true : undefined), { what: 'S2 stale', max: 6 });
@@ -259,6 +267,14 @@ describe('M515 staleness: the design class', () => {
     void KERNEL_KINDS;
   });
 });
+
+// The R3 change's correction (objection 181): an acceptance check of R3.1,
+// the criterion the change affects, read from mobile/App.js; a tightening.
+const R3_LIST_TEST = '.surety/checks/tests/mobile-list.test.mjs';
+const R3_CORRECTION = roleThat([
+  step.write(R3_LIST_TEST, `import assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nimport { test } from 'node:test';\n\ntest('R3.1: the app module renders its list from react-native', () => {\n  assert.match(readFileSync('mobile/App.js', 'utf8'), /import \\{[^}]*FlatList[^}]*\\} from 'react-native'/);\n});\n`),
+  step.write('.surety/checks/defs/accept-r3-list.json', definitionText('accept-r3-list', { inputs: [R3_LIST_TEST], kind: 'acceptance', command: ['node', '--test', R3_LIST_TEST], timeout_s: 120, gate_kinds: ['stage', 'alpha_authorize'], covers: { criteria: ['R3.1'] } })),
+], { proposal: { rationale: 'R3 reworded: one more check of R3.1, the list from react-native.', requested_change_kind: 'tightening' } });
 
 // The late variant's requirements (R1 phase 1; R2, R3 phase 2) and its phase-2 stages.
 function LATE_REQUIREMENTS() {

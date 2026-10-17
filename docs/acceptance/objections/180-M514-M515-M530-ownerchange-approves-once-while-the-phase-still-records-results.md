@@ -47,3 +47,25 @@ The engine's behaviour is D1 §10.5 as built in M5. A relaxation here, such as d
 - D1 §10.5: an effect's preconditions are read again immediately before the operation; a change invalidates the intent and the question is asked again.
 - D6 §4.4 (B05); SEAM.md §418: the impact's `dependency_manifest` lists the results of the affected checks.
 - harness/design/plan44.mjs `ownerChange` (one `consume`, then `pump` for the version).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The cases wait; the helper is unchanged** (Verifier, `verify/m6-s44b` from `9d29f1e`).
+
+The engine is right (D1 §10.5): a result recorded between the answer and the effect moves the impact's `dependency_manifest`, the intent is invalidated and the question is asked again. The race is in the cases, which made the owner's change while results its impact binds were still arriving. Each case now waits for quiescence before the change, as its own comment already intended:
+
+- **M515's `fourDesigned`** (used by (h)/(a), (e)/(b) and both (c) cases): after the three stages are verified, `phaseCompleted(fx, ctx, 1, { max: 200 })` and then `waitForIdle`, so phase 1's phase-gate results are recorded before any change. The file's header already says "Phase 1 built to the end before a case's changes".
+- **M514 (c)**: the same wait (`phaseCompleted` and then `waitForIdle`) before the first change. It also waits with `waitForIdle` before the second change, so the first change's own work has ended before the second is made.
+- **M530 (c)**: after the batch's own change is rejected, the case waits for the API stage to be verified and then `waitForIdle`, before it reads the still-open design approval and makes the other change. The UI stages stay held by the unanswered approval, so the case still means what it says: another change approved after the raise and before the approval's answer.
+
+**`ownerChange` (harness/design/plan44.mjs) is not changed.** It still answers one generation. Making it answer each re-asked `spec_change` would hide a defect in M530 (no self-staleness): if the engine re-asked because of its own act, nothing would show it. Its other callers (M515 (c) twice, M515 (f)) change no checks that phase 1 is still running and are not affected. M515 (c)'s callers inherit `fourDesigned`'s wait.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s44` at `5844799`, `npm ci`, `npm run build`, the three edited files copied over, `TMPDIR=/tmp/v44b`, each file alone with `node --test`, three times):
+
+| file | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| M514 | 5/6 | 5/6 | 5/6 |
+| M515 | 5/6 | 5/6 | 5/6 |
+| M530 | 6/6 | 6/6 | 6/6 |
+
+M514 (c), M515 (h)/(a) and M530 (c) passed in every run. The only failures were M514 (b) (the asset manifest) and M515 (e)/(b), and they failed in every run for the same reason: they need slice 43's `surety design asset add`, and this engine's CLI answers `design takes preview, export or assets submit`. They are not this objection's.
