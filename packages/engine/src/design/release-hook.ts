@@ -17,9 +17,10 @@ import { Refusal } from '../refusal.js';
 import { parseJson } from '../store/transitions/common.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import type { AssetManifest } from './assets.js';
-import { currentInventory } from './store.js';
+import { type PlaceholderRecord, currentInventory, laterDefaults } from './store.js';
 
 export const RELEASE_TIERS = ['beta', 'live'] as const;
+export const ASSETS_REQUIRED_FOR = ['none', 'beta', 'live'] as const;
 export type ReleaseTier = (typeof RELEASE_TIERS)[number];
 // Who evaluated it: `design_view` here; the seam names its own caller.
 export type HookCaller = string;
@@ -42,24 +43,35 @@ const record = (e: HookEvaluation): void => recorder?.(e);
 // The selected slots and their selected variants with their platforms (D7
 // §5.8, §6.2): the current approved revision's manifest under its
 // selection; before any approval, every default slot and variant of the
-// recorded inventory's manifest. A default kind the selection leaves out is
-// not selected; a kind the design adds is its own.
+// inventory's placeholder record. A default kind the selection leaves out is
+// not selected; a kind the design adds is its own; a default slot or variant
+// a later target added (one the approved manifest could not have selected)
+// is selected (S3). A default slot's platforms include the derivation's.
 export function selectedSlots(db: Database.Database, project: string): { key: string; variants: string[]; platforms: string[] }[] {
   const inv = currentInventory(db, project);
-  const invSlots = parseJson<AssetManifest>(inv?.row.manifest ?? null)?.slots ?? [];
+  const record = parseJson<PlaceholderRecord>(inv?.row.manifest ?? null);
+  const invSlots = record?.slots ?? [];
   const rev = db.prepare(`SELECT "selection", "asset_manifest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as
     | { selection: string | null; asset_manifest: string | null }
     | undefined;
   if (!rev) return invSlots.map((s) => ({ key: s.key, variants: s.variants.map((v) => v.name), platforms: [...s.platforms] }));
   const selection = parseJson<{ slots?: { kind: string; variants: string[] }[] }>(rev.selection);
   const defaults = new Set(invSlots.map((s) => s.kind));
-  return (parseJson<AssetManifest>(rev.asset_manifest)?.slots ?? [])
-    .map((s) => {
-      const chosen = selection?.slots?.find((x) => x.kind === s.kind);
-      const variants = chosen ? s.variants.map((v) => v.name).filter((n) => chosen.variants.includes(n)) : Array.isArray(selection?.slots) && defaults.has(s.kind) ? [] : s.variants.map((v) => v.name);
-      return { key: s.key, variants, platforms: [...s.platforms] };
-    })
-    .filter((s) => s.variants.length > 0);
+  const manifest = parseJson<AssetManifest>(rev.asset_manifest);
+  const out = new Map<string, { key: string; variants: string[]; platforms: string[] }>();
+  for (const s of manifest?.slots ?? []) {
+    const chosen = selection?.slots?.find((x) => x.kind === s.kind);
+    const variants = chosen ? s.variants.map((v) => v.name).filter((n) => chosen.variants.includes(n)) : Array.isArray(selection?.slots) && defaults.has(s.kind) ? [] : s.variants.map((v) => v.name);
+    const derived = invSlots.find((x) => x.key === s.key)?.platforms ?? [];
+    out.set(s.key, { key: s.key, variants, platforms: [...new Set([...s.platforms, ...derived])] });
+  }
+  for (const { slot, variant } of laterDefaults(manifest, record)) {
+    const has = out.get(slot.key) ?? { key: slot.key, variants: [], platforms: [...slot.platforms] };
+    if (!has.variants.includes(variant)) has.variants.push(variant);
+    has.platforms = [...new Set([...has.platforms, ...slot.platforms])];
+    out.set(slot.key, has);
+  }
+  return [...out.values()].filter((s) => s.variants.length > 0);
 }
 
 // The selected slots of `targets` (every target when null) one of whose
@@ -71,6 +83,18 @@ export function slotsNotApproved(db: Database.Database, project: string, targets
     .filter((s) => !s.variants.every((v) => effective.some((e) => e.slot === s.key && e.variant === v)))
     .map((s) => s.key)
     .sort();
+}
+
+// The project's `assets_required_for` (S3): the effective policy's value,
+// unless the recorded policy holds a value outside the range, which the
+// effective read would replace with the default: that is unknown, returned
+// as recorded so that the caller refuses it rather than assume `live`.
+function assetsRequiredFor(db: Database.Database, project: string): unknown {
+  const row = db.prepare('SELECT r."effective" FROM "projects" p JOIN "policy_revisions" r ON r."id" = p."policy_revision" WHERE p."id" = ?').get(project) as { effective: string } | undefined;
+  const recorded = row ? (parseJson<Record<string, unknown>>(row.effective) ?? null) : undefined;
+  if (row && recorded === null) return undefined;
+  if (recorded && Object.hasOwn(recorded, 'assets_required_for') && !(ASSETS_REQUIRED_FOR as readonly unknown[]).includes(recorded.assets_required_for)) return recorded.assets_required_for ?? null;
+  return (projectEffective(db, project) as Record<string, unknown>).assets_required_for;
 }
 
 // D7 §6.7's condition for a tier's authorization, evaluated and counted.
@@ -89,7 +113,15 @@ export function evaluateReleaseHook(
   if (!db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw new Refusal(404, 'not_found', `No project ${String(args.project)}.`, 'Name a project of this engine.', { project: args.project ?? null });
   const tier = args.tier as ReleaseTier;
   record({ caller, project: args.project, tier });
-  const policy = String((projectEffective(db, args.project) as Record<string, unknown>).assets_required_for ?? 'live');
+  // A policy the engine cannot read, or a value outside the range, is
+  // unknown: the hook answers nothing rather than `met` (S3).
+  const policy = assetsRequiredFor(db, args.project);
+  if (typeof policy !== 'string' || !(ASSETS_REQUIRED_FOR as readonly string[]).includes(policy)) {
+    throw new Refusal(409, 'policy_unknown', `The project's assets_required_for is ${policy === undefined ? 'not readable' : `not one of ${ASSETS_REQUIRED_FOR.join(', ')} (${JSON.stringify(policy)})`}: the release condition is unknown.`, 'Set assets_required_for to none, beta or live.', {
+      key: 'assets_required_for',
+      value: policy ?? null,
+    });
+  }
   // `none` requires nothing; `beta` from Beta on; `live` Live alone.
   const applies = policy === 'beta' || (policy === 'live' && tier === 'live');
   const inventoryTargets = [...new Set((currentInventory(db, args.project)?.inventory.targets ?? []).map((t) => t.target))];
@@ -106,7 +138,7 @@ export function assetsRequired(db: Database.Database, project: string): { for: s
   const notApproved = slotsNotApproved(db, project, null);
   // The policy read gives every key its value or default; a value it lacks
   // is unknown, never assumed (the review's N5).
-  const requiredFor = (projectEffective(db, project) as Record<string, unknown>).assets_required_for;
-  if (typeof requiredFor !== 'string') return { for: { unknown: 'assets_required_for could not be read from the effective policy' }, not_approved: notApproved, count: notApproved.length };
+  const requiredFor = assetsRequiredFor(db, project);
+  if (typeof requiredFor !== 'string' || !(ASSETS_REQUIRED_FOR as readonly string[]).includes(requiredFor)) return { for: { unknown: 'assets_required_for could not be read from the effective policy' }, not_approved: notApproved, count: notApproved.length };
   return { for: requiredFor, not_approved: notApproved, count: notApproved.length, text: `required for ${requiredFor}: ${notApproved.length} slots not approved` };
 }

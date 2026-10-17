@@ -22,10 +22,20 @@ import type { Journal } from '../journal/driver.js';
 import { prepareCommit } from '../projects/commands.js';
 import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
-import { type AssetManifest, MANIFEST_FILE, headerReasons, sha256hex } from './assets.js';
+import { ASSET_FORMATS, ASSET_VARIANTS, type AssetManifest, MANIFEST_FILE, headerReasons, sha256hex } from './assets.js';
+import { isSlug } from './paths.js';
 import { type CheckContext, checkDesign } from './check.js';
 import { DESIGN_ROOT } from './inventory.js';
 import { designTreeAt, designTreeSize } from './tree.js';
+
+// The upload's own body cap: a file as large as the largest design tree
+// bound (D7 A.7: design_tree_max_bytes up to 128 MiB), base64, and its JSON.
+const TREE_BYTES_MAX = 128 * 1024 * 1024;
+export const ASSET_BODY_CAP = Math.ceil(TREE_BYTES_MAX / 3) * 4 + 64 * 1024;
+export const assetTooLarge = (cap: number, limit?: { key: string; max: number; bytes: number }) =>
+  limit
+    ? new Refusal(413, 'design_asset_too_large', `The asset is ${limit.bytes} bytes, more than ${limit.key} (${limit.max} bytes). Nothing was committed.`, `Supply a file of at most ${limit.max} bytes, or raise ${limit.key}.`, { limit: limit.key, max: limit.max, bytes: limit.bytes })
+    : new Refusal(413, 'design_asset_too_large', `The asset upload exceeds ${cap} bytes, its body's limit (a file of at most ${TREE_BYTES_MAX} bytes, base64).`, `Supply a file of at most ${TREE_BYTES_MAX} bytes.`, { limit: 'body', max: cap });
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Send {"slot": <slot key>, "variant": <variant>, "content_base64": <the file, base64>, "name"?: <its file name>}.', { field });
 
@@ -71,6 +81,10 @@ export async function addOwnerAsset(rt: Runtime, journal: Journal, project: stri
       const tree = await designTreeAt(facts.repo, facts.head);
       const manifest = parseManifest(tree?.files.get('assets/manifest.json'));
       if (tree === null || manifest === null) throw new Refusal(409, 'design_unreadable', 'The asset manifest at the integration head cannot be read.', 'Let the engine derive the inventory and its placeholders first.', { project, revision: facts.head });
+      const info = await rt.read<{ design_version: number; policy: Record<string, unknown> }>('design.asset_facts', { project });
+      const maxBytes = Number(info.policy.design_tree_max_bytes);
+      if (!Number.isFinite(maxBytes)) throw new Error('the design_tree_max_bytes of the project could not be read');
+      if (body.bytes.length > maxBytes) throw assetTooLarge(ASSET_BODY_CAP, { key: 'design_tree_max_bytes', max: maxBytes, bytes: body.bytes.length });
       const slot = manifest.slots.find((s) => s.key === body.slot);
       const variant = slot?.variants.find((v) => v.name === body.variant);
       const subject = { slot: body.slot, variant: body.variant, file: body.name ?? `${body.slot}/${body.variant}` };
@@ -84,7 +98,15 @@ export async function addOwnerAsset(rt: Runtime, journal: Journal, project: stri
       }
       const digest = sha256hex(body.bytes);
       if (variant.digest === digest) throw new Refusal(409, 'design_asset_unchanged', `${body.slot}/${body.variant} already is this file (${digest}).`, 'Supply a different file.', { slot: body.slot, variant: body.variant, digest });
-      const info = await rt.read<{ design_version: number; policy: Record<string, unknown> }>('design.asset_facts', { project });
+      // The slot key and the variant name make the file's path: a slug and a
+      // variant of the closed list, nothing else (the review's note).
+      if (!isSlug(slot.key) || !(ASSET_VARIANTS as readonly string[]).includes(variant.name) || !(ASSET_FORMATS as readonly string[]).includes(variant.format)) {
+        throw new Refusal(422, 'design_asset_invalid', `${slot.key}/${variant.name} cannot name a file: its key, variant or format is not one the engine writes. Nothing was committed.`, 'Correct the manifest in a Designer session first.', {
+          slot: body.slot,
+          variant: body.variant,
+          reasons: [{ code: 'DESIGN_SCHEMA_INVALID', subjects: { slot: body.slot, variant: body.variant, why: 'a slot key is a slug, a variant one of D7 6.1, a format svg, png, webp or ico' } }],
+        });
+      }
       // The new manifest: the slot proposed by the owner at its next version.
       const slotVersion = slot.slot_version + 1;
       const file = `assets/${slot.key}/owner-${variant.name}-${slotVersion}.${variant.format}`;

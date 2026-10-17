@@ -12,7 +12,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import type { AssetManifest } from './assets.js';
 import { inventoryAttempt, reviewDesignDue } from './due.js';
 import type { Inventory } from './inventory.js';
-import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
+import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, placeholderRecord, recordInventory } from './store.js';
 import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
 import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
@@ -69,6 +69,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.bindings': (d, a: { project: string }) => bindingsView(d, a),
   'design.approved_revision': (d, a: { project: string }) => approvedRevisionFacts(d, a),
   'design.asset_facts': (d, a: { project: string }) => assetFacts(d, a),
+  'design.placeholder_record': (d, a: { project: string }) => placeholderRecord(d, a.project),
   'design.package_facts': (d, a: { run: string }) => designPackageFacts(d, a),
   'design.carried_effective': (d, a: { run: string }) => carriedEffective(d, a.run),
   'design.preview_facts': (d, a: { project: string; revision?: string }) => previewFacts(d, a),

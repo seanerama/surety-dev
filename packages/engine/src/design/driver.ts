@@ -11,18 +11,9 @@ import type { Journal } from '../journal/driver.js';
 import { prepareCommit } from '../projects/commands.js';
 import { type Runtime, log } from '../runtime.js';
 import { pausePoint } from '../testing/seam.js';
-import { type AssetManifest, MANIFEST_FILE, mergePlaceholders } from './assets.js';
-
-const parseManifestText = (text: string): AssetManifest | null => {
-  try {
-    const v = JSON.parse(text) as AssetManifest;
-    return v && Array.isArray(v.slots) && typeof v.version === 'number' ? v : null;
-  } catch {
-    return null;
-  }
-};
+import { MANIFEST_FILE, placeholderPlan, sha256hex } from './assets.js';
 import { DESIGN_ROOT, INVENTORY_FILE } from './inventory.js';
-import type { InventoryDue } from './store.js';
+import { type InventoryDue, type PlaceholderRecord, placeholderSource } from './store.js';
 import { DesignPreviewer } from './preview.js';
 import { releaseAnsweredBatches } from '../decisions/answer.js';
 import { type AssetAddBody, addOwnerAsset } from './asset-commands.js';
@@ -66,22 +57,38 @@ export class DesignDriver {
           // none (§6.3): written with the manifest when the tree has none;
           // merged into the manifest it has when the targets changed
           // (SEAM.md §506), nothing it holds replaced.
+          //
+          // What is recorded is the engine's placeholders alone (the review's
+          // B2): every default slot and variant of this derivation, its
+          // platforms the derivation's, its bytes where git holds them (this
+          // commit, or an earlier derivation's), never the head manifest's
+          // proposals.
           const existing = await catBlob(ctx, facts.head, MANIFEST_FILE);
-          let manifest = d.placeholders.manifest;
-          if (existing === null) {
-            files[MANIFEST_FILE] = `${JSON.stringify(d.placeholders.manifest, null, 2)}\n`;
-            for (const [path, text] of Object.entries(d.placeholders.files)) files[`${DESIGN_ROOT}${path}`] = text;
-          } else {
-            const head = parseManifestText(existing);
-            if (head !== null) {
-              const merged = mergePlaceholders(head, d.placeholders);
-              manifest = merged.manifest;
-              if (merged.changed) {
-                files[MANIFEST_FILE] = `${JSON.stringify(merged.manifest, null, 2)}\n`;
-                for (const [path, text] of Object.entries(merged.files)) files[`${DESIGN_ROOT}${path}`] = text;
+          const plan = placeholderPlan(existing, d.placeholders, facts.head);
+          for (const [path, text] of Object.entries(plan.files)) files[`${DESIGN_ROOT}${path}`] = text;
+          const headManifest = plan.head_manifest;
+          const previous = await this.rt.read<{ revision: string; manifest: PlaceholderRecord | null } | null>('design.placeholder_record', { project });
+          const sources: Record<string, { revision: string; file: string }> = {};
+          for (const slot of d.placeholders.manifest.slots) {
+            for (const v of slot.variants) {
+              if (!v.file || !v.digest) continue;
+              const path = `${DESIGN_ROOT}${v.file}`;
+              if (files[path] !== undefined) continue;
+              const atHead = await catBlob(ctx, facts.head, path);
+              if (atHead !== null && sha256hex(atHead) === v.digest) continue;
+              const earlier = previous ? placeholderSource(previous.manifest, previous.revision, slot.key, v.name, v.digest) : null;
+              if (earlier) {
+                sources[`${slot.key}/${v.name}`] = earlier;
+                continue;
               }
+              // No commit known to hold it: written now, at its own path when
+              // that is free, else beside the design's files.
+              const own = atHead === null ? v.file : `assets/placeholders/${slot.key}/${v.name}.svg`;
+              files[`${DESIGN_ROOT}${own}`] = d.placeholders.files[v.file]!;
+              if (own !== v.file) sources[`${slot.key}/${v.name}`] = { revision: '', file: own };
             }
           }
+          const manifest: PlaceholderRecord = { ...d.placeholders.manifest, sources, head_manifest: headManifest };
           const message = messageText({ title: 'surety: the interface inventory', trailers: [['Surety-Project', project], ['Surety-Kind', 'intent'], ['Surety-Inventory', d.digest]] });
           const commit = await prepareCommit(facts.repo, facts.head, files, message, this.rt.scratch);
           if (commit === null) throw new Error('the inventory commit could not be prepared');

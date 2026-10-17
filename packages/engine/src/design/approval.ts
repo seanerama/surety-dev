@@ -41,7 +41,7 @@ import { writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
 import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
 import { designDueState } from './readiness.js';
-import { blobsHash, currentInventory } from './store.js';
+import { type PlaceholderRecord, blobsHash, currentInventory, placeholderDigest, placeholderSource, slotStanding } from './store.js';
 import { latestCheck } from './records.js';
 import { disputedInterfaces } from './findings.js';
 import { slotCarried } from './asset-bindings.js';
@@ -615,9 +615,11 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   // The slots as this revision holds them (recorded at its proposal): every
   // pending proposal approved, except those held, which stay proposed (§6.4).
   recordRevisionAssets(tx, { revision: rev.id, project: rev.project, manifest });
+  // A slot the selection narrowed away is not approved by it (the review's note).
+  const selected = selectionOf(tx.db, rev);
   for (const slot of manifest?.slots ?? []) {
     if (held.has(slot.key)) tx.db.prepare(`UPDATE "design_assets" SET "held" = 1 WHERE "design_revision" = ? AND "slot" = ?`).run(rev.id, slot.key);
-    else tx.db.prepare(`UPDATE "design_assets" SET "status" = 'approved' WHERE "design_revision" = ? AND "slot" = ? AND "status" = 'proposed'`).run(rev.id, slot.key);
+    else if (slot.variants.some((v) => selected(slot.kind, v.name))) tx.db.prepare(`UPDATE "design_assets" SET "status" = 'approved' WHERE "design_revision" = ? AND "slot" = ? AND "status" = 'proposed'`).run(rev.id, slot.key);
   }
   const moved = moveEffective(tx, rev, manifest, held);
   // The human tests' assignment (E156 Q3), with the change's effect; an
@@ -649,12 +651,8 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
 // slot held at an earlier approval included). Idempotent per revision.
 export function recordRevisionAssets(tx: Tx, args: { revision: string; project: string; manifest: AssetManifest | null }): void {
   for (const slot of args.manifest?.slots ?? []) {
-    const approvedRows = tx.db.prepare(`SELECT "variant", "slot_version", "digest" FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "source" = 'approved'`).all(args.project, slot.key) as { variant: string; slot_version: number; digest: string }[];
-    const withFiles = slot.variants.filter((v) => typeof v.digest === 'string');
-    const effective =
-      withFiles.length > 0 &&
-      withFiles.every((v) => approvedRows.some((e) => e.variant === v.name && e.slot_version === slot.slot_version && e.digest === v.digest));
-    const status = slot.status === 'placeholder' && slot.provenance === 'engine_placeholder' ? 'placeholder' : effective || slot.status === 'approved' ? 'approved' : 'proposed';
+    const standing = slotStanding(tx.db, args.project, slot);
+    const status = standing === 'placeholder' || (slot.status === 'placeholder' && slot.provenance === 'engine_placeholder') ? 'placeholder' : standing === 'approved' ? 'approved' : 'proposed';
     tx.db
       .prepare(`INSERT OR IGNORE INTO "design_assets" ("id", "created_at", "design_revision", "slot", "slot_version", "kind", "platforms", "status", "provenance", "variants", "held") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`)
       .run(
@@ -676,29 +674,46 @@ export function recordRevisionAssets(tx: Tx, args: { revision: string; project: 
 // variant, the approved slot@version where the slot was proposed and not
 // held, else what was effective (the placeholder or an earlier approval).
 // Returns each move.
-function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null, held: Set<string>): { slot: string; variant: string; from_version: number | null; to_version: number }[] {
-  if (!manifest) return [];
+// What a revision selects (§5.8, §6.2; SEAM.md §496): a default kind the
+// selection leaves out is narrowed away; a kind the design adds beyond the
+// defaults (a banner, an illustration) is the design's own.
+function selectionOf(db: Db, rev: RevisionRow): (kind: string, variant: string) => boolean {
   const selection = parseJson<{ slots?: { kind: string; variants: string[] }[] }>(rev.selection);
-  // A default kind the selection leaves out is narrowed away (§5.8: "slots
-  // and variants only as selected"; SEAM.md §496); a kind the design adds
-  // beyond the defaults (a banner, an illustration) is the design's own.
-  const defaults = new Set((currentInventory(tx.db, rev.project)?.inventory.targets ?? []).flatMap((t) => t.required_slots.map((s) => s.kind)));
-  const selected = (kind: string, variant: string): boolean => {
+  const defaults = new Set((currentInventory(db, rev.project)?.inventory.targets ?? []).flatMap((t) => t.required_slots.map((s) => s.kind)));
+  return (kind: string, variant: string): boolean => {
     const s = selection?.slots?.find((x) => x.kind === kind);
     if (s) return s.variants.includes(variant);
     return !(Array.isArray(selection?.slots) && defaults.has(kind));
   };
+}
+
+function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null, held: Set<string>): { slot: string; variant: string; from_version: number | null; to_version: number }[] {
+  if (!manifest) return [];
+  const selected = selectionOf(tx.db, rev);
+  // The engine's placeholders, as the inventory records them (the review's
+  // B2): never a Designer's or the owner's file.
+  const inv = currentInventory(tx.db, rev.project);
+  const record = parseJson<PlaceholderRecord>(inv?.row.manifest ?? null);
   const moved: { slot: string; variant: string; from_version: number | null; to_version: number }[] = [];
   for (const slot of manifest.slots) {
     for (const v of slot.variants) {
-      const now = tx.db.prepare('SELECT * FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name) as { slot_version: number; source: string } | undefined;
+      const now = tx.db.prepare('SELECT * FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name) as { slot_version: number; source: string; digest: string } | undefined;
       if (!selected(slot.kind, v.name)) {
         if (now) tx.db.prepare('DELETE FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(rev.project, slot.key, v.name);
         continue;
       }
-      const approve = slot.status === 'proposed' && !held.has(slot.key) && typeof v.file === 'string' && typeof v.digest === 'string';
+      // An approval never approves an engine placeholder (S2): a variant
+      // whose file is the placeholder's stays the placeholder.
+      const isPlaceholder = typeof v.digest === 'string' && v.digest === placeholderDigest(record, slot.key, v.name);
+      const approve = slot.status === 'proposed' && !held.has(slot.key) && typeof v.file === 'string' && typeof v.digest === 'string' && !isPlaceholder;
       if (!approve) continue;
       if (now && now.source === 'approved' && now.slot_version === slot.slot_version) continue;
+      // The same file at a later slot_version (the engine added variants to
+      // the slot): its version follows, and nothing moved, so no work (S2).
+      if (now && now.source === 'approved' && now.digest === v.digest) {
+        tx.db.prepare('UPDATE "design_effective_assets" SET "slot_version" = ? WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(slot.slot_version, rev.project, slot.key, v.name);
+        continue;
+      }
       tx.db.prepare('DELETE FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').run(rev.project, slot.key, v.name);
       tx.db
         .prepare(
@@ -711,19 +726,20 @@ function moveEffective(tx: Tx, rev: RevisionRow, manifest: AssetManifest | null,
   }
   // A selected slot and variant with no effective row (narrowed away by an
   // earlier design, selected again by this one): its engine placeholder,
-  // from the recorded inventory's manifest, is its effective version again
-  // (§6.4: "else the slot's engine placeholder"; the slice-41 review's S3).
-  const inv = currentInventory(tx.db, rev.project);
-  for (const slot of parseJson<AssetManifest>(inv?.row.manifest ?? null)?.slots ?? []) {
+  // from the inventory's placeholder record alone, is its effective version
+  // again (§6.4: "else the slot's engine placeholder"; the slice-41 review's
+  // S3), its platforms the derivation's.
+  for (const slot of record?.slots ?? []) {
     for (const v of slot.variants) {
       if (!selected(slot.kind, v.name) || typeof v.file !== 'string' || typeof v.digest !== 'string') continue;
       if (tx.db.prepare('SELECT 1 FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "variant" = ?').get(rev.project, slot.key, v.name)) continue;
+      const at = placeholderSource(record, inv!.row.revision, slot.key, v.name)!;
       tx.db
         .prepare(
           `INSERT INTO "design_effective_assets" ("id", "created_at", "project", "slot", "kind", "variant", "slot_version", "source", "digest", "format", "revision", "file", "platforms", "since_design_revision")
            VALUES (?, ?, ?, ?, ?, ?, ?, 'placeholder', ?, ?, ?, ?, ?, ?)`,
         )
-        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, inv!.row.revision, v.file, JSON.stringify(slot.platforms), rev.id);
+        .run(tx.newId('deff_'), tx.at, rev.project, slot.key, slot.kind, v.name, slot.slot_version, v.digest, v.format, at.revision, at.file, JSON.stringify(slot.platforms), rev.id);
     }
   }
   return moved;

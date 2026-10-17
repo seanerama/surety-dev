@@ -135,8 +135,14 @@ export function unboundAssets(db: Database.Database, project: string): { slot: s
 // carried its slot. Their stage gates are evaluated on its candidate.
 export function assetFixStages(db: Database.Database, project: string, subject: { slot?: unknown; bindings?: unknown }): string[] {
   const bound = (Array.isArray(subject.bindings) ? (subject.bindings as { stage?: unknown }[]) : []).map((b) => b.stage).filter((s): s is string => typeof s === 'string');
-  const carried = typeof subject.slot === 'string' ? stagesCarried(db, project).filter((s) => s.carried.some((c) => c.slot === subject.slot)).map((s) => s.stage) : [];
-  return [...new Set([...bound, ...carried])];
+  const all = stagesCarried(db, project);
+  const carried = typeof subject.slot === 'string' ? all.filter((s) => s.carried.some((c) => c.slot === subject.slot)).map((s) => s.stage) : [];
+  const stages = [...new Set([...bound, ...carried])];
+  if (stages.length > 0) return stages;
+  // Bindings a fix recorded before any stage did (their stage null): the
+  // integrated UI stages serving their targets.
+  const targets = new Set((Array.isArray(subject.bindings) ? (subject.bindings as { target?: unknown }[]) : []).map((b) => b.target).filter((t): t is string => typeof t === 'string'));
+  return all.filter((s) => s.targets.some((t) => targets.has(t))).map((s) => s.stage);
 }
 
 // Whether any integrated UI stage's package carried `slot`.

@@ -33,6 +33,9 @@ export interface CheckContext {
   // The manifest the version rules compare a save with (SEAM.md §505): the
   // current approved revision's, else the one the engine last committed.
   base?: AssetManifest | null;
+  // The engine's placeholders as the inventory records them (B2): a variant
+  // holding one is the engine's, never approved by anyone.
+  placeholders?: AssetManifest | null;
 }
 
 export interface CheckOutcome {
@@ -481,9 +484,14 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
       if (['logo', 'banner', 'illustration'].includes(String(s.kind)) && (typeof s.alt_text !== 'string' || s.alt_text === '')) add('DESIGN_ASSET_ALT_MISSING', { slot: key });
       if (s.kind === 'banner' && typeof s.placement !== 'string') add('DESIGN_ASSET_PLACEMENT_MISSING', { slot: key });
       if (s.status === 'approved') {
+        // Approved means the owner approved these files (§6.4): every file of
+        // the slot's own (the engine's placeholder variants aside, which no
+        // approval approves: a target added later extends an approved slot
+        // with them, S2) is effective from an approval at the same digest.
         const was = ctx.approved.find((a) => a.slot === key);
-        const digests = Object.fromEntries((s.variants ?? []).filter((v) => v.digest !== undefined).map((v) => [v.name, v.digest ?? '']));
-        if (!was || was.slot_version !== s.slot_version || Object.entries(digests).some(([n, d]) => was.digests[n] !== undefined && was.digests[n] !== d)) add('DESIGN_ASSET_STATUS_FORGED', { slot: key });
+        const placeholder = (variant: string) => ctx.placeholders?.slots.find((p) => p.key === key)?.variants.find((x) => x.name === variant)?.digest;
+        const own = (s.variants ?? []).filter((v) => typeof v.digest === 'string' && v.digest !== placeholder(String(v.name)));
+        if (!was || own.length === 0 || own.some((v) => was.digests[String(v.name)] !== v.digest)) add('DESIGN_ASSET_STATUS_FORGED', { slot: key });
       }
       if (s.kind === 'illustration' && typeof s.placement !== 'string' && !(strs(s.screens) && s.screens.length > 0)) add('DESIGN_ASSET_PLACEMENT_MISSING', { slot: key });
       // The status `placeholder` is the engine's alone (SEAM.md §505).

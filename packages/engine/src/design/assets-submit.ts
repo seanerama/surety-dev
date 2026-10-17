@@ -27,6 +27,7 @@ import { type DesignContent, type RevisionRow, proposeDesign } from './approval.
 import type { AssetManifest } from './assets.js';
 import type { DesignReason } from './check.js';
 import { recordCheck } from './records.js';
+import { slotStanding } from './store.js';
 
 const approvedRow = (db: Database.Database, project: string): RevisionRow | undefined =>
   db.prepare(`SELECT * FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as RevisionRow | undefined;
@@ -43,10 +44,7 @@ export function pendingProposals(db: Database.Database, project: string, manifes
   const out: string[] = [];
   for (const slot of manifest.slots ?? []) {
     if (slot.status !== 'proposed') continue;
-    const rows = db.prepare(`SELECT "variant", "slot_version", "digest" FROM "design_effective_assets" WHERE "project" = ? AND "slot" = ? AND "source" = 'approved'`).all(project, slot.key) as { variant: string; slot_version: number; digest: string }[];
-    const withFiles = slot.variants.filter((v) => typeof v.digest === 'string');
-    const effective = withFiles.length > 0 && withFiles.every((v) => rows.some((e) => e.variant === v.name && e.slot_version === slot.slot_version && e.digest === v.digest));
-    if (!effective) out.push(slot.key);
+    if (slotStanding(db, project, slot) === 'pending') out.push(slot.key);
   }
   return out;
 }

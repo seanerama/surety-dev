@@ -35,6 +35,7 @@ export function checkContext(db: Database.Database, project: string): CheckConte
     externalHosts: Array.isArray(options.design_external_urls) ? (options.design_external_urls as string[]) : [],
     approved: [...bySlot.values()],
     base: baseManifest(db, project),
+    placeholders: parseJson<AssetManifest>(inv?.row.manifest ?? null),
   };
 }
 

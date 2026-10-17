@@ -108,7 +108,15 @@ export function completeAssetFixes(tx: Tx, project: string): void {
       (parseJson<{ asset_inputs?: { slot: string }[] }>(o.definition)?.asset_inputs ?? []).some((a) => a.slot === slot),
     );
     if (open.length > 0) continue;
-    const gated = assetFixStages(tx.db, project, subject).every((stage) =>
+    const stages = assetFixStages(tx.db, project, subject);
+    // No stage to answer to: never completed by an empty condition. Held,
+    // naming why, for the owner to resume or cancel (the review's note).
+    if (stages.length === 0) {
+      const item = getWorkItem(tx, f.id);
+      if (item) transitionWork(tx, item, 'held', { blocker: JSON.stringify({ reason: 'asset_fix_ungated', slot, why: 'no integrated UI stage carried or binds this slot: no stage gate can verify the fix' }) }, { cause: 'asset_updated', slot, reason: 'asset_fix_ungated' });
+      continue;
+    }
+    const gated = stages.every((stage) =>
       (tx.db.prepare(`SELECT "candidate" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'stage' AND "stage" = ? AND "outcome" = 'satisfied' AND "stale" = 0 ORDER BY rowid DESC`).all(project, stage) as { candidate: string }[]).some((e) => {
         const c = getCandidate(tx.db, e.candidate);
         return c !== undefined && heldByAncestry(tx.db, c).includes(f.id);

@@ -26,7 +26,7 @@ import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { ownerReview } from '../design/owner-review.js';
-import { parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
+import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
 import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { redactText } from '../records/redact.js';
 import type { RecordRow } from '../store/transitions/records.js';
@@ -166,8 +166,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       r.awaitingContinue = false;
       r.res.writeContinue();
     }
-    return readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+    const cap = capFor(r.method, r.path);
+    if (cap === bodyCap) return readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+    try {
+      return await readJsonBody(r.req, cap, bodyDeadlineMs);
+    } catch (err) {
+      throw err instanceof Refusal && err.code === 'payload_too_large' ? assetTooLarge(cap) : err;
+    }
   };
+  // The owner's asset upload (D7 §6.3; SEAM.md §508) carries a file, base64:
+  // its own cap, so that a file up to the largest design tree bound fits.
+  const capFor = (method: string, path: string): number => (method === 'POST' && /^\/v1\/projects\/[^/]+\/design\/assets$/.test(path) ? Math.max(bodyCap, ASSET_BODY_CAP) : bodyCap);
   const store = () => {
     if (!state.store) throw storeError(new Error('the store is not open'));
     return state.store;
@@ -933,7 +942,8 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     }
     // 4. Declared length: refused before any of the body is read.
     const declared = req.headers['content-length'];
-    if (declared !== undefined && Number(declared) > bodyCap) return refuseAudited(payloadTooLarge(bodyCap));
+    const cap = capFor(method, target.path);
+    if (declared !== undefined && Number(declared) > cap) return refuseAudited(cap === bodyCap ? payloadTooLarge(bodyCap) : assetTooLarge(cap));
     if (expect === 'refuse') {
       const value = String(req.headers.expect ?? '');
       return refuseAudited(
