@@ -177,82 +177,28 @@ export function currentStaleScreens(db: Db, project: string): { screen: string; 
 }
 
 // A target removed (§9.1; SEAM.md §515): each slot whose `platforms` hold a
-// target the inventory no longer has, for the Designer to tidy: the slots of
-// the approved design's asset manifest, and of the manifest the engine
-// recorded with the inventory (where a target added put its slots).
-export function stalePlatforms(db: Db, project: string, inventory: Inventory | null, recorded: string | null = null): { slot: string; target: string }[] {
+// target the current inventory no longer has, for the Designer to tidy: the
+// slots of the approved design's asset manifest, and of the engine's
+// placeholder records of the project's earlier inventories (where a target
+// once added put its slots; the record of each holds only the engine's
+// placeholders, their platforms that derivation's, slice 43's B2).
+export function stalePlatforms(db: Db, project: string, inventory: Inventory | null): { slot: string; target: string }[] {
   if (inventory === null) return [];
   const targets = new Set(inventory.targets.map((t) => t.target));
   const manifest = db
     .prepare(`SELECT "asset_manifest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') AND "asset_manifest" IS NOT NULL ORDER BY rowid DESC LIMIT 1`)
     .get(project) as { asset_manifest: string } | undefined;
+  const records = (db.prepare(`SELECT "manifest" FROM "design_inventories" WHERE "project" = ? AND "recorded_at" IS NOT NULL ORDER BY rowid`).all(project) as { manifest: string }[]).map((r) => r.manifest);
   const seen = new Set<string>();
   const out: { slot: string; target: string }[] = [];
-  for (const text of [manifest?.asset_manifest ?? null, recorded]) {
-    for (const s of parseJson<{ slots?: { key: string; platforms?: string[] }[] }>(text)?.slots ?? []) {
+  for (const text of [manifest?.asset_manifest ?? null, ...records]) {
+    for (const s of parseJson<Pick<AssetManifest, 'slots'>>(text)?.slots ?? []) {
       for (const t of s.platforms ?? []) {
         if (targets.has(t) || seen.has(`${s.key}\u0000${t}`)) continue;
         seen.add(`${s.key}\u0000${t}`);
         out.push({ slot: s.key, target: t });
       }
     }
-  }
-  return out;
-}
-
-// A target added (D7 §9.1, §6.3; SEAM.md §515): the engine's placeholders
-// for the default slots of the inventory's targets merged into the tree's
-// asset manifest, the Designer's slots kept as they are: a missing default
-// slot added whole (its placeholder files with it), a target added to the
-// `platforms` of the slot of its kind, and a placeholder slot given the
-// placeholder variants a new target needs. Nothing is removed (a removed
-// target's platforms stay, marked stale on the design read). null when
-// nothing changes; otherwise the manifest, its version advanced, and the
-// placeholder files to write.
-export function mergeTargetSlots(tree: AssetManifest, placeholders: { manifest: AssetManifest; files: Record<string, string> }): { manifest: AssetManifest; files: Record<string, string> } | null {
-  const out = structuredClone(tree);
-  const files: Record<string, string> = {};
-  let changed = false;
-  const add = (file: string | undefined) => {
-    if (file !== undefined && placeholders.files[file] !== undefined) files[file] = placeholders.files[file]!;
-  };
-  for (const ps of placeholders.manifest.slots) {
-    const slot = out.slots.find((s) => s.key === ps.key) ?? out.slots.find((s) => s.kind === ps.kind);
-    if (!slot) {
-      out.slots.push(structuredClone(ps));
-      for (const v of ps.variants) add(v.file);
-      changed = true;
-      continue;
-    }
-    for (const t of ps.platforms) {
-      if (slot.platforms.includes(t)) continue;
-      slot.platforms.push(t);
-      changed = true;
-    }
-    if (slot.status !== 'placeholder') continue;
-    for (const v of ps.variants) {
-      if (slot.variants.some((x) => x.name === v.name)) continue;
-      slot.variants.push(structuredClone(v));
-      add(v.file);
-      changed = true;
-    }
-  }
-  if (!changed) return null;
-  out.version = tree.version + 1;
-  return { manifest: out, files };
-}
-
-// The placeholder manifest recorded with an inventory: the engine's
-// placeholders for its targets, with the platforms the tree's manifest
-// still holds for those slots (so a target removed stays named, for
-// stale_platforms, until the Designer tidies the manifest).
-export function recordedPlaceholders(placeholders: AssetManifest, tree: AssetManifest | null): AssetManifest {
-  const out = structuredClone(placeholders);
-  for (const s of tree?.slots ?? []) {
-    const mine = out.slots.find((x) => x.key === s.key);
-    if (mine) {
-      for (const t of s.platforms) if (!mine.platforms.includes(t)) mine.platforms.push(t);
-    } else if (s.provenance === 'engine_placeholder' && s.status === 'placeholder') out.slots.push(structuredClone(s));
   }
   return out;
 }

@@ -13,7 +13,7 @@ import type { AssetManifest } from './assets.js';
 import { inventoryAttempt, openRefused, reviewDesignDue, writeDueState } from './due.js';
 import { designDueState } from './readiness.js';
 import type { Inventory } from './inventory.js';
-import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
+import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, placeholderRecord, recordInventory } from './store.js';
 import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
 import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
@@ -22,7 +22,8 @@ import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { exportFacts, previewFacts } from './preview-facts.js';
 import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
 import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
-import { submitAssets } from './assets-submit.js';
+import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
+import { bindingsView } from './asset-bindings.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
 import { raiseDeferredBatches } from '../spec/change.js';
 import { beginPreview, interruptPreviews, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
@@ -66,6 +67,10 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
   'design.inventory_for_policy': (d, a: { project: string; effective: Record<string, unknown> }) => inventoryForPolicy(d, a),
   'design.batch_state': (d, a: { request: string }) => designBatchState(d, a.request),
   'design.view': (d, a: { project: string }) => designView(d, a),
+  'design.bindings': (d, a: { project: string }) => bindingsView(d, a),
+  'design.approved_revision': (d, a: { project: string }) => approvedRevisionFacts(d, a),
+  'design.asset_facts': (d, a: { project: string }) => assetFacts(d, a),
+  'design.placeholder_record': (d, a: { project: string }) => placeholderRecord(d, a.project),
   'design.package_facts': (d, a: { run: string }) => designPackageFacts(d, a),
   'design.carried_effective': (d, a: { run: string }) => carriedEffective(d, a.run),
   'design.preview_facts': (d, a: { project: string; revision?: string }) => previewFacts(d, a),
@@ -107,6 +112,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
 
 export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'design.intend_inventory': (tx, a) => intendInventory(tx, a),
+  'design.intend_asset': (tx, a) => intendAsset(tx, a),
   'design.record_inventory': (tx, a: { id?: string; project?: string; digest?: string }) => {
     const id = a.id ?? (tx.db.prepare('SELECT "id" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(a.project, a.digest) as { id: string } | undefined)?.id;
     return id ? recordInventory(tx, { id }) : { recorded: false };
@@ -149,5 +155,7 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
 export const DESIGN_COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // The preview's answers (SEAM.md §488): what the main thread prepared, audited here.
   'design.preview_answer': (_tx, a: { status: number; body: Record<string, unknown> }) => ({ status: a.status, body: a.body }),
-  'design.assets_submit': (tx, a: { project: string }) => submitAssets(tx, a),
+  'design.assets_submit': (tx, a) => submitAssets(tx, a),
+  // The owner's asset added (SEAM.md §508): the main thread's answer, audited here.
+  'design.asset_answer': (_tx, a: { status: number; body: Record<string, unknown> }) => ({ status: a.status, body: a.body }),
 };

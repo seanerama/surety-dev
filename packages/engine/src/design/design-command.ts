@@ -6,10 +6,13 @@
 //   surety design preview --project <p> [--revision checkpoint|approved|<sha>]   POST   …/design/preview
 //   surety design preview --stop --project <p>                                   DELETE …/design/preview
 //   surety design assets submit --project <p>                                    POST   …/design/assets/submit
+//   surety design asset add --project <p> <slot> <variant> <file>                POST   …/design/assets
+//   surety design bindings --project <p>                                         GET    …/design/bindings
 //   surety design export --project <p> [--revision checkpoint|approved|<sha>] <dir>  GET …/design/export, written to <dir>
 
 import http from 'node:http';
-import { isAbsolute, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, isAbsolute, resolve } from 'node:path';
 
 import { loadEngineConfig } from '../config/engine-config.js';
 import type { EnvRequest } from '../deploy/env-command.js';
@@ -18,11 +21,45 @@ import { readToken } from '../token.js';
 import { readUstar, writeEntries } from './export.js';
 
 const USAGE =
-  'design takes preview, export or assets submit: surety design preview --project <p> [--revision <r>] [--stop] | surety design export --project <p> [--revision <r>] <dir> | surety design assets submit --project <p>';
+  'design takes preview, export, asset add, assets submit or bindings: surety design preview --project <p> [--revision <r>] [--stop] | surety design export --project <p> [--revision <r>] <dir> | surety design asset add --project <p> <slot> <variant> <file> | surety design assets submit --project <p> | surety design bindings --project <p>';
+
+// `surety design asset add --project <p> <slot> <variant> <file>`: the file
+// read here and sent as its bytes; its name is data, never a command.
+function parseAssetAdd(argv: string[]): EnvRequest | string {
+  let project: string | null = null;
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === '--project') {
+      const value = argv[++i];
+      if (value === undefined) return '--project needs a value';
+      project = value;
+    } else if (a.startsWith('--')) return `unknown flag ${a} for design asset add`;
+    else positional.push(a);
+  }
+  if (project === null) return 'design asset add needs --project <project>';
+  if (positional.length !== 3) return 'design asset add takes <slot> <variant> <file>';
+  const [slot, variant, file] = positional as [string, string, string];
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(isAbsolute(file) ? file : resolve(process.cwd(), file));
+  } catch (err) {
+    return `design asset add could not read ${file}: ${(err as Error).message}`;
+  }
+  return { method: 'POST', path: `/v1/projects/${encodeURIComponent(project)}/design/assets`, body: { slot, variant, name: basename(file), content_base64: bytes.toString('base64') } };
+}
 
 export function parseDesignCommand(argv: string[]): EnvRequest | string {
   const [sub, ...rest0] = argv;
   let rest = rest0;
+  if (sub === 'asset') {
+    if (rest[0] !== 'add') return USAGE;
+    return parseAssetAdd(rest.slice(1));
+  }
+  if (sub === 'bindings') {
+    if (rest.length !== 2 || rest[0] !== '--project') return 'design bindings takes --project <project>';
+    return { method: 'GET', path: `/v1/projects/${encodeURIComponent(rest[1]!)}/design/bindings`, body: null };
+  }
   if (sub === 'assets') {
     if (rest[0] !== 'submit') return USAGE;
     rest = rest.slice(1);

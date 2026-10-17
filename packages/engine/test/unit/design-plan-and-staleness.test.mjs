@@ -12,7 +12,6 @@ import { fileURLToPath } from 'node:url';
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const { checkPlan, interfaceShapesMissing, stageTargets } = await import(join(dist, 'plan', 'check.js'));
 const { parsePhasePlan } = await import(join(dist, 'plan', 'schemas.js'));
-const { mergeTargetSlots, recordedPlaceholders } = await import(join(dist, 'design', 'stale.js'));
 const { placeholderManifest } = await import(join(dist, 'design', 'assets.js'));
 
 const ITEM = { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 40 } }, required: ['name'] };
@@ -106,26 +105,6 @@ test("B.5's stage takes `screens`, a list of keys; anything else is refused nami
   assert.equal(bad.ok, false);
   assert.match(bad.finding.field, /screens/);
 });
-
-test('a target added: its default slots merged into the tree manifest as placeholders, the Designer\'s slots kept, the version advanced; nothing changes twice', () => {
-  const two = placeholderManifest('Pantry', ['web', 'android']);
-  const tree = structuredClone(two.manifest);
-  tree.slots.find((s) => s.key === 'logo').status = 'approved';
-  const three = placeholderManifest('Pantry', ['web', 'android', 'ios']);
-  const merged = mergeTargetSlots(tree, three);
-  assert.ok(merged);
-  assert.equal(merged.manifest.version, tree.version + 1);
-  const splash = merged.manifest.slots.find((s) => s.kind === 'splash');
-  assert.deepEqual([splash.platforms, splash.status], [['ios'], 'placeholder']);
-  assert.ok(Object.keys(merged.files).some((f) => f.startsWith('assets/splash/')), 'its placeholder files written');
-  const logo = merged.manifest.slots.find((s) => s.key === 'logo');
-  assert.ok(logo.platforms.includes('ios') && logo.status === 'approved', 'the approved logo keeps its status, its platforms gain ios');
-  assert.equal(mergeTargetSlots(merged.manifest, three), null, 'nothing to merge again');
-  // Removed again: the recorded placeholders keep ios's platforms for stale_platforms.
-  const recorded = recordedPlaceholders(two.manifest, merged.manifest);
-  assert.ok(recorded.slots.find((s) => s.key === 'splash').platforms.includes('ios'));
-});
-
 // ---- the slice-44 review: a scratch store ---------------------------------------------------------
 
 const { mkdtempSync, rmSync } = await import('node:fs');
@@ -134,7 +113,8 @@ const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { designUnmet } = await import(join(dist, 'design', 'readiness.js'));
-const { staleScreens, specDesignClass, inventoryDesignClass } = await import(join(dist, 'design', 'stale.js'));
+const staleModule = await import(join(dist, 'design', 'stale.js'));
+const { staleScreens, specDesignClass, inventoryDesignClass } = staleModule;
 const { bindStageScreensTo, designInForce } = await import(join(dist, 'design', 'stage-screens.js'));
 const { untilTime } = await import(join(dist, 'design', 'due.js'));
 const { default: Database } = await import('better-sqlite3');
@@ -285,4 +265,20 @@ test('S9: a review\'s design is blocked UNCONFIRMED until its verdicts are answe
   ).run(at, P, at, JSON.stringify({ option: 'reject' }));
   assert.deepEqual(reviewVerdictBlockers(db, 'run_r'), ['DESIGN_VERDICTS_REJECTED:drv_1']);
   assert.deepEqual(reviewVerdictBlockers(db, null), []);
+});
+
+test('a target removed: the slots an earlier inventory\'s placeholder record gave it are named on stale_platforms, no other target\'s', (t) => {
+  const { db, at } = scratch(t);
+  const { stalePlatforms } = { stalePlatforms: staleModule.stalePlatforms };
+  const record = (id, targets) =>
+    db
+      .prepare(`INSERT INTO "design_inventories" ("id", "created_at", "project", "inventory_digest", "revision", "inventory", "manifest", "recorded_at") VALUES (?, ?, ?, ?, 'r', '{}', ?, ?)`)
+      .run(id, at, P, id, JSON.stringify(placeholderManifest('Pantry', targets).manifest), at);
+  record('inv_a', ['web', 'android']);
+  record('inv_b', ['web', 'android', 'ios']);
+  const now = { targets: [{ target: 'web' }, { target: 'android' }] };
+  const marked = stalePlatforms(db, P, now);
+  assert.ok(marked.some((x) => x.slot === 'splash' && x.target === 'ios'), JSON.stringify(marked));
+  assert.ok(marked.every((x) => x.target === 'ios'));
+  assert.deepEqual(stalePlatforms(db, P, { targets: [{ target: 'web' }, { target: 'android' }, { target: 'ios' }] }), []);
 });

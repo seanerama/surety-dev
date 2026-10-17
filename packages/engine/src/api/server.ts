@@ -26,6 +26,7 @@ import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { ownerReview } from '../design/owner-review.js';
+import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
 import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { redactText } from '../records/redact.js';
 import type { RecordRow } from '../store/transitions/records.js';
@@ -165,8 +166,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       r.awaitingContinue = false;
       r.res.writeContinue();
     }
-    return readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+    const cap = capFor(r.method, r.path);
+    if (cap === bodyCap) return readJsonBody(r.req, bodyCap, bodyDeadlineMs);
+    try {
+      return await readJsonBody(r.req, cap, bodyDeadlineMs);
+    } catch (err) {
+      throw err instanceof Refusal && err.code === 'payload_too_large' ? assetTooLarge(cap) : err;
+    }
   };
+  // The owner's asset upload (D7 §6.3; SEAM.md §508) carries a file, base64:
+  // its own cap, so that a file up to the largest design tree bound fits.
+  const capFor = (method: string, path: string): number => (method === 'POST' && /^\/v1\/projects\/[^/]+\/design\/assets$/.test(path) ? Math.max(bodyCap, ASSET_BODY_CAP) : bodyCap);
   const store = () => {
     if (!state.store) throw storeError(new Error('the store is not open'));
     return state.store;
@@ -729,16 +739,34 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
-      // D7 §6.4 (SEAM.md §487): the held assets submitted on their own.
+      // D7 §6.4 (SEAM.md §§487, 508): the pending assets submitted on their
+      // own, the asset-only tree checked on the main thread first.
       if (rest.length === 3 && rest[0] === 'design' && rest[1] === 'assets' && rest[2] === 'submit' && post) {
         return {
-          kind: 'command',
+          kind: 'prepared',
           name: 'design.assets_submit',
-          args: (b) => {
+          prepare: async (b) => {
             onlyFields(b ?? {}, []);
-            return { project };
+            return prepareAssetsSubmit(runtime(), project);
           },
         };
+      }
+      // D7 §6.3, A.8 (SEAM.md §508): the owner's asset file, checked by its
+      // header and committed by the engine as an intent revision.
+      if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'assets' && post) {
+        return {
+          kind: 'prepared',
+          name: 'design.asset_answer',
+          prepare: async (b) => {
+            const d = runtime().design;
+            if (!d) throw new Refusal(503, 'engine_starting', 'The design subsystem is not running yet.', 'Wait for startup to finish.', { step: state.step });
+            return d.addAsset(project, parseAssetAdd(b));
+          },
+        };
+      }
+      // D7 A.8 (SEAM.md §508): every asset binding, superseded ones included.
+      if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'bindings' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'design.bindings', args: { project } }) }) };
       }
       if (rest.length === 1 && rest[0] === 'pace' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };
@@ -915,7 +943,8 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     }
     // 4. Declared length: refused before any of the body is read.
     const declared = req.headers['content-length'];
-    if (declared !== undefined && Number(declared) > bodyCap) return refuseAudited(payloadTooLarge(bodyCap));
+    const cap = capFor(method, target.path);
+    if (declared !== undefined && Number(declared) > cap) return refuseAudited(cap === bodyCap ? payloadTooLarge(bodyCap) : assetTooLarge(cap));
     if (expect === 'refuse') {
       const value = String(req.headers.expect ?? '');
       return refuseAudited(
