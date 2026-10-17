@@ -23,6 +23,7 @@ import { ownerReviewFacts, ownerReviewOfRun } from './owner-review.js';
 import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { submitAssets } from './assets-submit.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
+import { raiseDeferredBatches } from '../spec/change.js';
 import { beginPreview, interruptPreviews, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
 
 type Db = Database.Database;
@@ -106,6 +107,8 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
     return id ? recordInventory(tx, { id }) : { recorded: false };
   },
   'design.tick': (tx, a: { project: string }) => {
+    // A batch held behind a correction, raised once it is applied (objection 166).
+    raiseDeferredBatches(tx, a.project);
     designReadiness(tx, a.project);
     noteAlphaReview(tx, a.project);
     completeAssetFixes(tx, a.project);

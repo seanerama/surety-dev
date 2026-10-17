@@ -225,6 +225,18 @@ const COLUMN_ENUMS: Record<string, string> = {
   'stages.conformance_state': 'ConformanceStageState',
   'releases.state': 'ReleaseStateFact',
   'environments.origin': 'EnvironmentOrigin',
+  // D7 A.2 (M6 slice 40).
+  'design_revisions.status': 'DesignRevisionStatus',
+  'design_revisions.scope': 'DesignRevisionScope',
+  'design_revisions.origin': 'DesignOrigin',
+  'design_screens.status': 'ScreenStatus',
+  'design_assets.status': 'AssetStatus',
+  'design_assets.provenance': 'AssetProvenance',
+  'design_effective_assets.source': 'EffectiveSource',
+  'asset_bindings.form': 'AssetBindingForm',
+  'asset_bindings.declared_by': 'BindingDeclaredBy',
+  'design_evidence.provenance': 'EvidenceProvenance',
+  'design_reviews.trigger': 'ReviewTrigger',
 };
 
 const pascal = (text: string): string =>

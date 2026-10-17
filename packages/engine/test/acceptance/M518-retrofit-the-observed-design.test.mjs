@@ -135,8 +135,11 @@ describe('M518 retrofit: the observed design', () => {
     assert.ok(named(reasonOf(check, 'DESIGN_CONVENTION_UNKNOWN', 'notices'), 'S2', 'browser_back'), `(d) shown: DESIGN_CONVENTION_UNKNOWN among the check's notices (${JSON.stringify(check?.notices)})`);
     assert.ok(named(reasonOf(check, 'DESIGN_INTERFACE_SHAPE_UNKNOWN', 'notices'), 'S1', 'history-feed') && named(reasonOf(check, 'DESIGN_INTERFACE_SHAPE_UNKNOWN', 'notices'), 'S2', 'history-feed'), '(e) shown on both screens');
     assert.ok(!codesOf(check).includes('DESIGN_CONVENTION_UNKNOWN') && !codesOf(check).includes('DESIGN_INTERFACE_SHAPE_UNKNOWN'), 'and not among the reasons that refuse');
-    // The close and its batch; the build's own routed decisions held back until (f).
-    ctx.answerKinds = [];
+    // The close and its batch; the build's own routed decisions held back until (f), except the
+    // conformance phase's check correction: the owner answers it first, since the batch is not
+    // raised while a correction is pending (objections 166, 169). The design criterion's own
+    // correction comes after version 2 and stays unanswered until (f).
+    ctx.answerKinds = ['check_correction_unclassifiable', 'check_correction_tightening', 'check_correction_loosening'];
     const closed = await postCloseRaw(fx, p.id, run.id, {});
     assert.equal(closed.status, 200, `the close (${closed.text?.slice(0, 400)})`);
     const batch = await pump(fx, ctx, () => designRevisions(fx.home, p.id).filter((r) => r.status === 'proposed').at(-1), { what: 'the close\'s product recorded', max: 10 });
@@ -150,6 +153,7 @@ describe('M518 retrofit: the observed design', () => {
     assert.deepEqual([favicon?.provenance, favicon?.status], ['engine_placeholder', 'placeholder'], `(c) a default slot with no file: its placeholder (${JSON.stringify(favicon)})`);
     // (g) the approval with its origin shown; the notices shown, not blocking.
     const approval = await pump(fx, ctx, () => decisionsOfKind(fx.home, p.id, 'design_approval').filter((d) => d.status === 'open').at(-1), { what: 'design_approval raised', max: 40 });
+    ctx.answerKinds = [];
     assert.equal(approval.evidence?.origin, 'observed', `(g) the approval shows the origin (${JSON.stringify(approval.evidence)?.slice(0, 400)})`);
     assert.match(JSON.stringify(approval.evidence), /DESIGN_CONVENTION_UNKNOWN/, '(d) shown on the approval');
     assert.ok(!blockersOf(approval).some((b) => /DESIGN_CONVENTION_UNKNOWN|DESIGN_INTERFACE_SHAPE_UNKNOWN/.test(String(b))), '(d), (e) and not blocking it');
