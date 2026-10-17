@@ -1,0 +1,273 @@
+=== M444 start 2026-10-16T22:55:23Z at 5bf01a4  ===
+
+==============================================================================
+SURETY REAL LANE, M5 (row M444): what this run can cost, before anything starts.
+Expected: about 3 USD in Claude Code's own estimates (BS5 §12; E139 item 7, E140 N3), drawn from your subscription's usage limits, which your own Claude use shares.
+  Two sessions on Opus (the Spec Writer and the Architect in retrofit mode), three or four one-shot runs on Sonnet (the conformance authoring, phase verification, the replan, one Builder and its checks' roles).
+  The qualification attempts, once per run directory and per model: Opus with the continuation canary, Sonnet; under 0.50 USD (E146 item 5's was 0.088 USD).
+At most: each run (a session is one run) is bounded by 2000000 billable tokens; the project's day limit of 20 USD in estimates stops it earlier, and its day bound on unknown usage is 4000000 tokens, twice the run cap (caps of Sean's choice, 2026-10-14, the unknown-usage bound the driver's ruling under it; the estimate stays as above). A session turn whose usage Claude Code does not report reserves the run's whole allowance and closes the session (D1 §13.3). The only hard maximum is your subscription's own usage limits.
+An estimate, not a cap and not an authorization. Nothing paid starts before your qualification_approval and trust_activation.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's own command (the test will not run it): the adoption of the repository
+In another terminal:
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js project adopt m5-real-sums --repo /home/smahoney/s5-final/repos/sums --branch main --tier T1
+This test waits 360 minutes for its effect, then stops with nothing further started.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the adoption mode (full, D6 §8.5).
+Decision adoption_mode dec_01M53EWES29P1WRAHD1T8W3K2T (preview d6a22f43f477ee81b4adadf3f37d234ec8b036609d307916649f4fc43d2d2b3a); options: full, scoped.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:46275.
+  full: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46275/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53EWES29P1WRAHD1T8W3K2T/answer -d '{"option": "full", "preview_hash": "d6a22f43f477ee81b4adadf3f37d234ec8b036609d307916649f4fc43d2d2b3a"}'
+  scoped: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46275/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53EWES29P1WRAHD1T8W3K2T/answer -d '{"option": "scoped", "preview_hash": "d6a22f43f477ee81b4adadf3f37d234ec8b036609d307916649f4fc43d2d2b3a"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the widening of budget_run_billable_tokens, budget_day_unknown_tokens: a widening the owner confirms (E143 item 1).
+Decision policy_widening dec_01M53EXV630ENJY81ZTXQ9P7DF (preview d48c9410c58e670fb84745ae2e1b610d05cd1029abda0240fc6715bceed61d85); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:46275.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46275/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53EXV630ENJY81ZTXQ9P7DF/answer -d '{"option": "approve", "preview_hash": "d48c9410c58e670fb84745ae2e1b610d05cd1029abda0240fc6715bceed61d85"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:46275/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53EXV630ENJY81ZTXQ9P7DF/answer -d '{"option": "reject", "preview_hash": "d48c9410c58e670fb84745ae2e1b610d05cd1029abda0240fc6715bceed61d85"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: setup (the runner's, through the owner's route): the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000
+==============================================================================
+▶ M444 the real retrofit journey (real lane, paid)
+  ✔ (a) Sean's adoption: A pinned before the bootstrap, the signals, the mode he chose (full) (133734.770698ms)
+
+==============================================================================
+SURETY REAL LANE: your spec_writer session (the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval). In another terminal, as often as you like (the test waits for the approval):
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session open --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7 --role spec_writer
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session say '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7 --text '<what you say>'
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session show '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session save '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session close '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+Closing raises the decision your product calls for; the test then prints it for your answer.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP82NM68NDM7DQ7BFFEG (preview b5a3fe0e42ed88a303b39922fcd784954709e86a0a64b5c4b7f0f66ed0be6cb9); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEG/answer -d '{"option": "confirm", "preview_hash": "b5a3fe0e42ed88a303b39922fcd784954709e86a0a64b5c4b7f0f66ed0be6cb9"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEG/answer -d '{"option": "defect", "preview_hash": "b5a3fe0e42ed88a303b39922fcd784954709e86a0a64b5c4b7f0f66ed0be6cb9"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEG/answer -d '{"option": "withdraw", "preview_hash": "b5a3fe0e42ed88a303b39922fcd784954709e86a0a64b5c4b7f0f66ed0be6cb9"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP82NM68NDM7DQ7BFFEJ (preview a9d8de6e55908abfeca5598df0cc5fcbeaedfece7f276e437d03a0e386e09a0e); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEJ/answer -d '{"option": "confirm", "preview_hash": "a9d8de6e55908abfeca5598df0cc5fcbeaedfece7f276e437d03a0e386e09a0e"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEJ/answer -d '{"option": "defect", "preview_hash": "a9d8de6e55908abfeca5598df0cc5fcbeaedfece7f276e437d03a0e386e09a0e"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP82NM68NDM7DQ7BFFEJ/answer -d '{"option": "withdraw", "preview_hash": "a9d8de6e55908abfeca5598df0cc5fcbeaedfece7f276e437d03a0e386e09a0e"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP8314D4BWZW263RTSN3 (preview eeaa0cd2d218d2c0827ffcbea0436fe52614c10f2effe4b44b8915ff925f9802); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN3/answer -d '{"option": "confirm", "preview_hash": "eeaa0cd2d218d2c0827ffcbea0436fe52614c10f2effe4b44b8915ff925f9802"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN3/answer -d '{"option": "defect", "preview_hash": "eeaa0cd2d218d2c0827ffcbea0436fe52614c10f2effe4b44b8915ff925f9802"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN3/answer -d '{"option": "withdraw", "preview_hash": "eeaa0cd2d218d2c0827ffcbea0436fe52614c10f2effe4b44b8915ff925f9802"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP8314D4BWZW263RTSN5 (preview 0b4d3db20f46de9a623d9ba4fcd796a0c2320cf41dd2e3e3997c8f568625a792); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN5/answer -d '{"option": "confirm", "preview_hash": "0b4d3db20f46de9a623d9ba4fcd796a0c2320cf41dd2e3e3997c8f568625a792"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN5/answer -d '{"option": "defect", "preview_hash": "0b4d3db20f46de9a623d9ba4fcd796a0c2320cf41dd2e3e3997c8f568625a792"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP8314D4BWZW263RTSN5/answer -d '{"option": "withdraw", "preview_hash": "0b4d3db20f46de9a623d9ba4fcd796a0c2320cf41dd2e3e3997c8f568625a792"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP848PF8CT4FM9RV2TKA (preview 7847d08e18a74cc0b81a60ea22b876a364229985c1a3a8731ba86b8d88c350b4); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKA/answer -d '{"option": "confirm", "preview_hash": "7847d08e18a74cc0b81a60ea22b876a364229985c1a3a8731ba86b8d88c350b4"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKA/answer -d '{"option": "defect", "preview_hash": "7847d08e18a74cc0b81a60ea22b876a364229985c1a3a8731ba86b8d88c350b4"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKA/answer -d '{"option": "withdraw", "preview_hash": "7847d08e18a74cc0b81a60ea22b876a364229985c1a3a8731ba86b8d88c350b4"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP848PF8CT4FM9RV2TKC (preview 59389dd08bcb369a1d5555b9296f5d5a614ce80f69148bcc7fbb31b539258bd1); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKC/answer -d '{"option": "confirm", "preview_hash": "59389dd08bcb369a1d5555b9296f5d5a614ce80f69148bcc7fbb31b539258bd1"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKC/answer -d '{"option": "defect", "preview_hash": "59389dd08bcb369a1d5555b9296f5d5a614ce80f69148bcc7fbb31b539258bd1"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP848PF8CT4FM9RV2TKC/answer -d '{"option": "withdraw", "preview_hash": "59389dd08bcb369a1d5555b9296f5d5a614ce80f69148bcc7fbb31b539258bd1"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP85VHDTAZHJ91KJQ355 (preview e6493d3e62ec586dd75a7aa81f57effc63e2f9ce0a029f9d1baa086debeeaa8b); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ355/answer -d '{"option": "confirm", "preview_hash": "e6493d3e62ec586dd75a7aa81f57effc63e2f9ce0a029f9d1baa086debeeaa8b"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ355/answer -d '{"option": "defect", "preview_hash": "e6493d3e62ec586dd75a7aa81f57effc63e2f9ce0a029f9d1baa086debeeaa8b"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ355/answer -d '{"option": "withdraw", "preview_hash": "e6493d3e62ec586dd75a7aa81f57effc63e2f9ce0a029f9d1baa086debeeaa8b"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP85VHDTAZHJ91KJQ357 (preview 5264ebec5daf688ba01c06d9599776d0fe975f72639e42270415629344544dc8); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ357/answer -d '{"option": "confirm", "preview_hash": "5264ebec5daf688ba01c06d9599776d0fe975f72639e42270415629344544dc8"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ357/answer -d '{"option": "defect", "preview_hash": "5264ebec5daf688ba01c06d9599776d0fe975f72639e42270415629344544dc8"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP85VHDTAZHJ91KJQ357/answer -d '{"option": "withdraw", "preview_hash": "5264ebec5daf688ba01c06d9599776d0fe975f72639e42270415629344544dc8"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP86FW4E767V7NEQK55T (preview 01294df9091f294c312ce2e424a772a76c425ef89526393c070cad7a95d25997); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55T/answer -d '{"option": "confirm", "preview_hash": "01294df9091f294c312ce2e424a772a76c425ef89526393c070cad7a95d25997"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55T/answer -d '{"option": "defect", "preview_hash": "01294df9091f294c312ce2e424a772a76c425ef89526393c070cad7a95d25997"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55T/answer -d '{"option": "withdraw", "preview_hash": "01294df9091f294c312ce2e424a772a76c425ef89526393c070cad7a95d25997"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP86FW4E767V7NEQK55W (preview 9fcc4dd145e3fdc486f41bae767fac9981e80c775896090b6c843983660985fc); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55W/answer -d '{"option": "confirm", "preview_hash": "9fcc4dd145e3fdc486f41bae767fac9981e80c775896090b6c843983660985fc"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55W/answer -d '{"option": "defect", "preview_hash": "9fcc4dd145e3fdc486f41bae767fac9981e80c775896090b6c843983660985fc"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP86FW4E767V7NEQK55W/answer -d '{"option": "withdraw", "preview_hash": "9fcc4dd145e3fdc486f41bae767fac9981e80c775896090b6c843983660985fc"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision requirement_confirm dec_01M53FWP87DKVRFXX75CJ1ZWEK (preview 83cfac5aa13297a364538ee5eead59564905e2604d83aefe43c5bb6dbf20d96f); options: confirm, defect, withdraw.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  confirm: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP87DKVRFXX75CJ1ZWEK/answer -d '{"option": "confirm", "preview_hash": "83cfac5aa13297a364538ee5eead59564905e2604d83aefe43c5bb6dbf20d96f"}'
+  defect: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP87DKVRFXX75CJ1ZWEK/answer -d '{"option": "defect", "preview_hash": "83cfac5aa13297a364538ee5eead59564905e2604d83aefe43c5bb6dbf20d96f"}'
+  withdraw: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP87DKVRFXX75CJ1ZWEK/answer -d '{"option": "withdraw", "preview_hash": "83cfac5aa13297a364538ee5eead59564905e2604d83aefe43c5bb6dbf20d96f"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the specification of the repository as it is, with the claims table; then your answer to each requirement_confirm (confirm, defect or withdraw) and the approval.
+Decision spec_approval dec_01M53FWP80TNJG917P3YEJ2XM2 (preview a8c73c0ab5c9820d36ba0bbc9a7257dc4107a5051e4b72542a880195a11d9a38); options: approve (blocked: REQUIREMENT_UNANSWERED:R1, REQUIREMENT_UNANSWERED:R10, REQUIREMENT_UNANSWERED:R11, REQUIREMENT_UNANSWERED:R2, REQUIREMENT_UNANSWERED:R3, REQUIREMENT_UNANSWERED:R4, REQUIREMENT_UNANSWERED:R5, REQUIREMENT_UNANSWERED:R6, REQUIREMENT_UNANSWERED:R7, REQUIREMENT_UNANSWERED:R8, REQUIREMENT_UNANSWERED:R9), reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44687.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP80TNJG917P3YEJ2XM2/answer -d '{"option": "approve", "preview_hash": "a8c73c0ab5c9820d36ba0bbc9a7257dc4107a5051e4b72542a880195a11d9a38"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44687/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53FWP80TNJG917P3YEJ2XM2/answer -d '{"option": "reject", "preview_hash": "a8c73c0ab5c9820d36ba0bbc9a7257dc4107a5051e4b72542a880195a11d9a38"}'
+==============================================================================
+  ✔ (b) the retrofit Spec Writer's claims recorded; each produced requirement answered by Sean with his option (1025344.287728ms)
+
+==============================================================================
+SURETY REAL LANE: setup (the runner's, through the owner's route): alpha's configuration (PUT /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/environments/alpha/config): local_service, target app, `node server.mjs` on port 45707, the disposable secret deploy/ref_secret (also allowed its checks)
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: your architect session (the architecture as it is and the conformance plan). In another terminal, as often as you like (the test waits for the approval):
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session open --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7 --role architect
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session say '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7 --text '<what you say>'
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session show '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session save '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js session close '<run>' --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+Closing raises the decision your product calls for; the test then prints it for your answer.
+==============================================================================
+  ✔ (c) one conformance stage registered for the approved conformance set (229147.201401ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the conformance phase: the authoring with adoption, the conformance stage against A, phase verification.
+Decision check_correction_unclassifiable dec_01M53G47ZEXSCBGASDPB8DZ532 (preview a48f8d806d28282b106544271f984ebdbc429136d829931988aaca7ffc8227a1); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:45417.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45417/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53G47ZEXSCBGASDPB8DZ532/answer -d '{"option": "approve", "preview_hash": "a48f8d806d28282b106544271f984ebdbc429136d829931988aaca7ffc8227a1"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45417/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53G47ZEXSCBGASDPB8DZ532/answer -d '{"option": "reject", "preview_hash": "a48f8d806d28282b106544271f984ebdbc429136d829931988aaca7ffc8227a1"}'
+==============================================================================
+  ✔ (d) the real Verifier's authoring: adopted tests with their dependency boundary on the proposal where any were adopted, copies under the protected root; the toolchain approved (360501.231355ms)
+  ✔ (e) conformance: no stage_build in phase 1; c-1's application source A; its checks engine-run; the gate as the checks decide (448.999264ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's own command (the test will not run it): the adapter's qualification (D4 §2.6): no model, nothing paid
+In another terminal:
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js qualify-adapter local_service
+This test waits 360 minutes for its effect, then stops with nothing further started.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's own command (the test will not run it): the deployment of c-1 (cand_01M53G58KFR255K7KGNGTT9T33), whose application source is A, to alpha (refused authorization_not_issued while a check of the alpha_authorize scope has not yet run: ask again once it has)
+In another terminal:
+  SURETY_HOME=/home/smahoney/s5-final/home /home/smahoney/.nvm/versions/node/v22.22.0/bin/node /tmp/claude-1000/-home-smahoney-projects-sdlc-x/8f676358-4009-4e63-8db1-3daf0a9334f2/scratchpad/run-m4/packages/engine/dist/cli.js deploy cand_01M53G58KFR255K7KGNGTT9T33 --env alpha --project proj_01M53EWEQ1XRM3T8K6DD6ESXS7
+This test waits 360 minutes for its effect, then stops with nothing further started.
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): c-1 alpha_deployed.
+Decision check_correction_tightening dec_01M53H7NY222CGVDPF5A0X9PQ9 (preview 0e06f4152fa5415eda41a276f4dee628cca1483caf88a38e3974c19aa15c88f0) (not one this step expects: read it before answering); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44911.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44911/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53H7NY222CGVDPF5A0X9PQ9/answer -d '{"option": "approve", "preview_hash": "0e06f4152fa5415eda41a276f4dee628cca1483caf88a38e3974c19aa15c88f0"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44911/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53H7NY222CGVDPF5A0X9PQ9/answer -d '{"option": "reject", "preview_hash": "0e06f4152fa5415eda41a276f4dee628cca1483caf88a38e3974c19aa15c88f0"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the change-phase replan after alpha_complete, phase 2 published.
+Decision finding_disposition dec_01M53HF2YQXG6K9MMKPHN7T13C (preview b38ce87e5b240d90b1514b9eccc77727d0eeaede34365f86ea1d874159f4abd6) (not one this step expects: read it before answering); options: change_spec, accept.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:45955.
+  change_spec: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45955/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HF2YQXG6K9MMKPHN7T13C/answer -d '{"option": "change_spec", "preview_hash": "b38ce87e5b240d90b1514b9eccc77727d0eeaede34365f86ea1d874159f4abd6"}'
+  accept: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45955/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HF2YQXG6K9MMKPHN7T13C/answer -d '{"option": "accept", "preview_hash": "b38ce87e5b240d90b1514b9eccc77727d0eeaede34365f86ea1d874159f4abd6"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): the change-phase replan after alpha_complete, phase 2 published.
+Decision finding_disposition dec_01M53HF2YSRB34P8RE2E7P2M46 (preview ac195f433b494ff966921f2b6d13bc3363f9f530ce5c08c2c9d7b6a16ceb661c) (not one this step expects: read it before answering); options: change_spec, lower_and_accept.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:45955.
+  change_spec: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45955/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HF2YSRB34P8RE2E7P2M46/answer -d '{"option": "change_spec", "preview_hash": "ac195f433b494ff966921f2b6d13bc3363f9f530ce5c08c2c9d7b6a16ceb661c"}'
+  lower_and_accept: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:45955/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HF2YSRB34P8RE2E7P2M46/answer -d '{"option": "lower_and_accept", "preview_hash": "ac195f433b494ff966921f2b6d13bc3363f9f530ce5c08c2c9d7b6a16ceb661c"}'
+==============================================================================
+  ✔ (f) Sean's deploy of c-1: alpha_deployed, the pending requirements shown; the replan created only after alpha_complete (1187812.167529ms)
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 2's stage built by a real Builder and verified.
+Decision spec_change dec_01M53HJN74CZG1VA42H5CXX8Z3 (preview d960731b026d421dfbbaa7a61c497d7b353524ab6d6101eaf63d95bc310a759e) (not one this step expects: read it before answering); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44745.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HJN74CZG1VA42H5CXX8Z3/answer -d '{"option": "approve", "preview_hash": "d960731b026d421dfbbaa7a61c497d7b353524ab6d6101eaf63d95bc310a759e"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HJN74CZG1VA42H5CXX8Z3/answer -d '{"option": "reject", "preview_hash": "d960731b026d421dfbbaa7a61c497d7b353524ab6d6101eaf63d95bc310a759e"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 2's stage built by a real Builder and verified.
+Decision check_correction_tightening dec_01M53HMM9FYT0ENRNWSQT574M7 (preview 3264fa32af2c67298079a2768c48851c4ce907f3d5ba38454ebf9c496602921d); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44745.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HMM9FYT0ENRNWSQT574M7/answer -d '{"option": "approve", "preview_hash": "3264fa32af2c67298079a2768c48851c4ce907f3d5ba38454ebf9c496602921d"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HMM9FYT0ENRNWSQT574M7/answer -d '{"option": "reject", "preview_hash": "3264fa32af2c67298079a2768c48851c4ce907f3d5ba38454ebf9c496602921d"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 2's stage built by a real Builder and verified.
+Decision spec_change dec_01M53HPJC5ASVMB6PCD0QBB5J4 (preview 4510bf02390ec512bc0e143766e6bd1f0069929c27b7302be6c4cb6649533eb4) (not one this step expects: read it before answering); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44745.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HPJC5ASVMB6PCD0QBB5J4/answer -d '{"option": "approve", "preview_hash": "4510bf02390ec512bc0e143766e6bd1f0069929c27b7302be6c4cb6649533eb4"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HPJC5ASVMB6PCD0QBB5J4/answer -d '{"option": "reject", "preview_hash": "4510bf02390ec512bc0e143766e6bd1f0069929c27b7302be6c4cb6649533eb4"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 2's stage built by a real Builder and verified.
+Decision check_correction_unclassifiable dec_01M53HR99Q5WVSE78CRT0F4YPF (preview 3b44e663f16ca301101f35ef1055b434a24e8ea5805c85598e776d352b883286); options: approve, reject.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44745.
+  approve: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HR99Q5WVSE78CRT0F4YPF/answer -d '{"option": "approve", "preview_hash": "3b44e663f16ca301101f35ef1055b434a24e8ea5805c85598e776d352b883286"}'
+  reject: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53HR99Q5WVSE78CRT0F4YPF/answer -d '{"option": "reject", "preview_hash": "3b44e663f16ca301101f35ef1055b434a24e8ea5805c85598e776d352b883286"}'
+==============================================================================
+
+==============================================================================
+SURETY REAL LANE: waiting for Sean's answer (the test will not answer it): phase 2's stage built by a real Builder and verified.
+Decision blocker dec_01M53J0X8P42FV5V1B99CHSEDX (preview 4b556e96393f5b9ce16527738efedb119b078ee27ca5eafaa501411cce594b41) (not one this step expects: read it before answering); options: retry, cancel.
+The full preview: GET /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions on http://127.0.0.1:44745.
+  retry: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53J0X8P42FV5V1B99CHSEDX/answer -d '{"option": "retry", "preview_hash": "4b556e96393f5b9ce16527738efedb119b078ee27ca5eafaa501411cce594b41"}'
+  cancel: curl -sS -H "X-Surety-Token: $(cat /home/smahoney/s5-final/home/api.token)" -H 'Content-Type: application/json' -X POST http://127.0.0.1:44745/v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/decisions/dec_01M53J0X8P42FV5V1B99CHSEDX/answer -d '{"option": "cancel", "preview_hash": "4b556e96393f5b9ce16527738efedb119b078ee27ca5eafaa501411cce594b41"}'
+==============================================================================
+  ✔ (g) one phase-2 stage built by a real Builder and verified (499336.284154ms)
+  ✔ (h) the teardown applied, nothing left; the claims and confirmations kept; the token absent; the run's scale stated as small (4044.452147ms)
+✔ M444 the real retrofit journey (real lane, paid) (3440371.188464ms)
+ℹ tests 8
+ℹ suites 1
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3440749.37435
+M444 exit 0

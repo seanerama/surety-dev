@@ -1,0 +1,74 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s5-final/home/store.db, read only",
+  "id": "str_01M53D1HVC14P9RTNSJMWJF0NP",
+  "created_at": "2026-10-16T22:24:10.089Z",
+  "project": "proj_01M53C9CP71558J8MFCQ1NAFER",
+  "project_name": "m5-real-mechanica",
+  "run": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+  "role": "spec_writer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-16T22:24:10.089Z",
+      "text_ref": "rec_01M53D1HVJD6FXQ0EVGBVSWP0C",
+      "text": "Please write the specification from the accepted idea (Mechanica). Keep every requirement, range and tolerance the idea states, R6 and R7 as human tests, and the phases as the idea gives them. Ask me anything you need; otherwise produce the specification product."
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-16T22:25:59.137Z",
+      "text_ref": "rec_01M53D4WARYJYBWEDJK53HX9SJ",
+      "text": "I've written the specification at .surety/spec/spec.md.\n\nWhat it contains:\n- R1–R7 are taken from your idea word for word, with every tolerance kept. R1, R2 and R5 are in phase 1 and R3, R4, R6 and R7 are in phase 2. R6 and R7 are marked as human tests.\n- Your idea also states ranges and behaviour that R1–R7 don't cover. So that each can be checked, I added four requirements and put each one in the phase of the lab it belongs to:\n  - R8 (phase 1): the momentum lab's input ranges, plus the perfectly inelastic outcome.\n  - R9 (phase 1): the friction lab's ranges, and saying \"never stops\" instead of refusing the input.\n  - R10 (phase 2): the trajectory lab's ranges, and drag that is quadratic, optional and off by default.\n  - R11 (phase 1): server.mjs on 127.0.0.1:PORT serves the page, `POST /api/momentum` works, and the physics modules import in Node without three.js.\n  I didn't add any tolerance the idea doesn't state. If you'd rather keep only R1–R7, say so and I'll move this material into the scope text.\n- Modules: Server (server.mjs), Game page (public/index.html, public/ui/) and Physics (public/physics/). No sensitive areas, since nothing about players is stored.\n- The alpha environment runs `node server.mjs` on the engine's Node at PORT on 127.0.0.1. Its post-deploy check sends R1.3's elastic case to `POST /api/momentum` (expecting 1 and 4 m/s) and checks that `GET /` answers 200.\n- Open question Q1 (phase 2, blocks R10): exactly how the drag coefficient of 0 to 0.5 is defined.\n\nI couldn't put three questions in section 10, because they touch phase-1 requirements and an open question can't block phase 1. I've listed them below. Your answers will shape R5, R8 and R9 before approval."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-16T22:26:06.504Z",
+      "text_ref": "rec_01M53D53HFAPKHN76NS9C5XFHE",
+      "text": "Answers: (1) On the incline the block is launched down the slope with kinetic friction only (one μ); it stops at v0²/(2g(μ cos θ − sin θ)) when tan θ < μ, and when tan θ >= μ (including equality, decided within floating-point rounding) it never stops and the lab says so. 'Never stops' is a prediction the player can choose, scored 100 if right and 0 if wrong; a distance predicted for a block that never stops scores 0. (2) The momentum player predicts both carts' velocities after the collision; the lab's score is the mean of the two scores. The trajectory player predicts the range at launch height. (3) For every scored value the relative error's denominator is max(|simulated|, 1 unit), so the 10% band is at least 0.1 m/s or 0.1 m; scores stay unrounded. A relative tolerance on a quantity whose reference is zero (R1.1 with zero total momentum) is measured against Σ|mᵢvᵢ|. (4) Drag acceleration is −k|v|v with k from 0 to 0.5 per metre (1/m); launch and landing at ground level. (5) Carts not approaching each other (v1 <= v2, cart 1 on the left) means no collision and unchanged velocities, reported as such. (6) Add requirements for the input ranges with refusal of out-of-range input, and for the HTTP API (POST /api/momentum and /api/friction answer what the physics modules compute; invalid input gets 400 with a JSON error naming the problem; GET / serves the page), each in the phase of its lab; keep any requirements you already added. Record these, leave no open question, and produce the final product."
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-16T22:28:30.214Z",
+      "text_ref": "rec_01M53D9FVWTG4ZRSKA5J405FJW",
+      "text": "I've recorded all six answers in .surety/spec/spec.md. There are no open questions left, and every key from R1 to R11 still means what it did before. Your answers are written out in a new part of section 3, \"Definitions and decisions\". The criteria I added are:\n\n- R2.3 (phase 1): the incline formula v₀²/(2g(μ cos θ − sin θ)) along the slope, checked with one case. For μ = 0.8, 5 m/s and 30°, the block stops at 6.61 m ± 0.02 m. That uses the same tolerance as R2.1. The R2 statement also makes clear that R2.2 compares inputs at the same speed and incline.\n- R5.2–R5.4 (phase 1): the error is divided by max(|simulated|, 1 unit), and scores aren't rounded. The momentum score is the mean of the two velocity scores. For R1.3's case, predicting 1 and 4.2 m/s scores 75. \"Never stops\" scores 100 if right and 0 if wrong, and a distance predicted for a block that never stops scores 0.\n- R8.3 and R8.4 (phase 1): if v₁ ≤ v₂ there is no collision, and the lab reports the velocities unchanged. Input outside the range is refused.\n- R9.3 and R9.4 (phase 1): the block never stops when tan θ ≥ μ, with equality judged within floating-point rounding. This matters because tan 45° in floating point is 0.9999999999999999, so 45° with μ = 1.0 has to count as never stopping. Input outside the range is refused.\n- R10.4–R10.6 (phase 2): drag is −k|v|v with k in 1/m, and with k = 0 the range equals the no-drag range within 0.5%. The player predicts the range at launch height, scored with a 1 m unit. Input outside the range is refused. These replace Q1.\n- R11.4 and R11.5 (phase 1): `POST /api/friction` answers with what the physics module computes. Invalid JSON, a missing input or an out-of-range input gets a 400 whose JSON `error` field names the problem. R11.1 already covers `GET /` and R11.2 covers `/api/momentum`.\n\nI made some choices you didn't specify, so please check them before you approve:\n- **What refusal means:** range end values are accepted. A value that is missing or not a finite number is refused too. The physics module throws an error that names the input, and the page shows that message instead of running.\n- **The zero-reference rule:** for a momentum-lab velocity (R8.2's common velocity, and R4.1), I scaled it to Σ|mᵢvᵢ|/(m₁ + m₂). \"Zero\" means zero within floating-point rounding.\n- **R4.1's \"final state\":** I defined it as the result each lab reports. That is the momentum lab's two velocities, the friction lab's stopping distance or \"never stops\" (which must match at both time steps), and the trajectory lab's range.\n- **No trajectory endpoint:** you only named `/api/momentum` and `/api/friction`, so I didn't add `/api/trajectory`.\n- **Request and response fields:** I didn't fix the field names, so the design can choose them.\n\nI didn't change the modules or the alpha environment. I can't approve the specification myself, so it's ready for you to review and approve."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M53D1HVJD6FXQ0EVGBVSWP0C",
+      "sha256": "bae6d79bf0c5a4b5702e156d3ab273b0ad30936c6ccb52fe3e3c3b8d0feb9a92",
+      "bytes": 263,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M53D4WARYJYBWEDJK53HX9SJ",
+      "sha256": "d6fca9b9711fa7b53c933c26a4e66493036fd73eafc060989de4816cb8ef8c4f",
+      "bytes": 1720,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M53D53HFAPKHN76NS9C5XFHE",
+      "sha256": "21343702d103bdf12924a22150f04ddf7c7cb3510d91a07840422c75f4d76d5c",
+      "bytes": 1539,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M53D9FVWTG4ZRSKA5J405FJW",
+      "sha256": "5d5febcb1737e5c47f3d4539f35a443896d8a370e004434a8266076ff93584bb",
+      "bytes": 2943,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

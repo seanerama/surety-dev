@@ -1,0 +1,3247 @@
+{
+  "version": 1,
+  "created_at": "2026-10-16T22:05:41.403Z",
+  "steps": {
+    "m5_attempt_opus": {
+      "status": "done",
+      "at": "2026-10-16T22:08:17.076Z",
+      "value": {
+        "path": "attempt",
+        "attempt": "qa_01M53BZVZ0FTZ8AW7CXEYS5YBC",
+        "status": "succeeded",
+        "entry": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+        "rehearsal_expected": null,
+        "drained": {
+          "paused": [],
+          "waited_only": [
+            "proj_01M53BZSQPRVCSR1Z1BX645X10"
+          ],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5_attempt_sonnet": {
+      "status": "done",
+      "at": "2026-10-16T22:09:52.423Z",
+      "value": {
+        "path": "attempt",
+        "attempt": "qa_01M53C4KR7BNP37XDVV8YXQG7X",
+        "status": "succeeded",
+        "entry": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6",
+        "rehearsal_expected": null,
+        "drained": {
+          "paused": [],
+          "waited_only": [
+            "proj_01M53BZSQPRVCSR1Z1BX645X10"
+          ],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5_activation": {
+      "status": "done",
+      "at": "2026-10-16T22:10:55.339Z",
+      "value": {
+        "opus": {
+          "entry": "trust_01M53C4F0A46S09TVPV2VAC2SG",
+          "already": true
+        },
+        "sonnet": {
+          "entry": "trust_01M53C7AMQS9TK2ZGQWBSGDDD6"
+        },
+        "drained": {
+          "paused": [],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 0,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_create": {
+      "status": "done",
+      "at": "2026-10-16T22:11:44.688Z",
+      "value": {
+        "project": "proj_01M53C9CP71558J8MFCQ1NAFER",
+        "name": "m5-real-mechanica",
+        "repo": "/home/smahoney/s5-final/repos/mechanica",
+        "idea_from": "Sean's /home/smahoney/surety-m5-physics-idea.md",
+        "policy": {
+          "setup": "policy",
+          "what": "the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000, alpha_deploy \"on_phase_complete\"",
+          "detail": {
+            "change": {
+              "budget_day_verified_usd": 30,
+              "deadline_builder": 900,
+              "deadline_verifier": 600,
+              "deadline_reviewer": 600,
+              "model_vision": "claude-opus-5-5",
+              "model_spec_writer": "claude-opus-5-5",
+              "model_architect": "claude-opus-5-5",
+              "model_builder": "claude-sonnet-5-5",
+              "model_verifier": "claude-sonnet-5-5",
+              "model_reviewer": "claude-sonnet-5-5",
+              "backend_builder": "claude",
+              "backend_verifier": "claude",
+              "backend_reviewer": "claude",
+              "backend_architect": "claude",
+              "backend_spec_writer": "claude",
+              "backend_vision": "claude",
+              "phase_size": {
+                "min": 1,
+                "max": 5
+              }
+            },
+            "widen": {
+              "budget_run_billable_tokens": 2000000,
+              "budget_day_unknown_tokens": 4000000,
+              "alpha_deploy": "on_phase_complete"
+            },
+            "ordinary": {
+              "status": 200,
+              "confirmed": false
+            },
+            "widened": {
+              "status": 409,
+              "confirmed": true
+            }
+          }
+        },
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_vision": {
+      "status": "done",
+      "at": "2026-10-16T22:11:44.690Z",
+      "value": {
+        "skipped": true,
+        "by": "SURETY_REAL_VISION=skip (D6 §1 step 2: the project was created with the brief)"
+      }
+    },
+    "m5a_spec": {
+      "status": "done",
+      "at": "2026-10-16T22:28:33.997Z",
+      "value": {
+        "value": {
+          "id": "spec_01M53D9J0PTDH8BWG6WQTBD6ST",
+          "version": 1,
+          "approved_by": "engine"
+        },
+        "shown": [],
+        "runs": [
+          {
+            "id": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          }
+        ],
+        "spec": [
+          {
+            "id": "spec_01M53D9J0PTDH8BWG6WQTBD6ST",
+            "version": 1,
+            "approved_by": "engine"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 7,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_architecture": {
+      "status": "done",
+      "at": "2026-10-16T22:36:59.232Z",
+      "value": {
+        "value": {
+          "id": "plan_01M53DFVF6Q6Z9GZC2BTSPRHE5",
+          "created_at": "2026-10-16T22:31:58.688Z",
+          "project": "proj_01M53C9CP71558J8MFCQ1NAFER",
+          "phase_number": 1,
+          "prepared_against_revision": "e958838e93dd7b5bec02f12476626578a377354a",
+          "git_path": ".surety/phases/phase-1.json",
+          "approved_by": "human",
+          "approved_at": "2026-10-16T22:31:58.688Z",
+          "prepared_against_spec": "spec_01M53D9J0PTDH8BWG6WQTBD6ST",
+          "prepared_against_architecture": "arch_01M53DFVF1V37JVK7DHQE26GKB",
+          "prepared_against_roadmap": "road_01M53DFVF439ECNVJ8NVYQC8AN",
+          "roadmap_revision": "road_01M53DFVF439ECNVJ8NVYQC8AN",
+          "generation": 1,
+          "active": 1,
+          "bundle": "rec_01M53DFV2CENG63TB75MKQWZ9C",
+          "check": "pchk_01M53DFV4YZKD86M98H5W847N8",
+          "routing": "human",
+          "status": "published",
+          "published_at": "2026-10-16T22:31:58.688Z",
+          "authoring_ready_at": null,
+          "authoring_ready_by": null,
+          "completed_at": null,
+          "completion_binding": null,
+          "planned_obligations": "rec_01M53DFV46ZD9GV52QNX6M5MTV",
+          "verification": null,
+          "replaced_by": null,
+          "check_authoring": "wi_01M53DFVF8WCQT3A6P5ZSM8G2T",
+          "replacement": null
+        },
+        "shown": [],
+        "runs": [
+          {
+            "id": "run_01M53D9VZ9R567YWKDBHME8714",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          }
+        ],
+        "setup": {
+          "setup": "alpha",
+          "what": "alpha's configuration (PUT /v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/environments/alpha/config): local_service, target app, `node server.mjs` on port 46221, the disposable secret deploy/ref_secret (also allowed its checks)",
+          "detail": {
+            "environment": "env_01M53D9J0R83BD7WWG9ZED09KK",
+            "config": "envc_01M53D9PNM6KVA7J1T0WB4G00E",
+            "config_identity": "sha256:e5b517f99534306fb3d5c83eb1e82ca19b875182a5d0d9830de1707c787c1382",
+            "port": 46221
+          }
+        },
+        "plan": {
+          "id": "plan_01M53DFVF6Q6Z9GZC2BTSPRHE5",
+          "generation": 1
+        },
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M53DFVXMPXJCFKXQR924NR60",
+              "kind": "one_shot",
+              "role": "verifier"
+            }
+          ],
+          "waited_ms": 291727,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_phase1": {
+      "status": "done",
+      "at": "2026-10-16T22:47:03.039Z",
+      "value": {
+        "value": {
+          "phase1": "plan_01M53DFVF6Q6Z9GZC2BTSPRHE5",
+          "phase2": "plan_01M53E88VBGVF30VWZR7QH4FZZ"
+        },
+        "shown": [
+          {
+            "kind": "check_correction_unclassifiable",
+            "id": "dec_01M53DRZRAFAA4MZCS5MMZZ9QH",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T22:37:02.600Z"
+          },
+          {
+            "kind": "blocker",
+            "id": "dec_01M53DX8N8P3RRW41RRJ38MYE5",
+            "options": [
+              "correct_check",
+              "change_spec",
+              "retry",
+              "replan",
+              "cancel"
+            ],
+            "at": "2026-10-16T22:39:32.215Z"
+          },
+          {
+            "kind": "check_correction_unclassifiable",
+            "id": "dec_01M53DZD22TKPRZ1NVGZ6K1ZZW",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T22:40:32.416Z"
+          }
+        ],
+        "setup": {
+          "setup": "alpha",
+          "already": true,
+          "environment": "env_01M53D9J0R83BD7WWG9ZED09KK"
+        },
+        "stages": [
+          {
+            "number": 1,
+            "status": "verified"
+          },
+          {
+            "number": 2,
+            "status": "verified"
+          },
+          {
+            "number": 1,
+            "status": "planned"
+          },
+          {
+            "number": 2,
+            "status": "planned"
+          }
+        ],
+        "runs": [
+          {
+            "id": "run_01M53D1HH4F7NGKS00KDF8XCQ7",
+            "kind": "session",
+            "role": "spec_writer",
+            "work_item": null,
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          },
+          {
+            "id": "run_01M53D9VZ9R567YWKDBHME8714",
+            "kind": "session",
+            "role": "architect",
+            "work_item": null,
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          },
+          {
+            "id": "run_01M53DFVXMPXJCFKXQR924NR60",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53DFVF8WCQT3A6P5ZSM8G2T",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53DSJ0DDCHTP4ZJ35S5YQZC",
+            "kind": "one_shot",
+            "role": "builder",
+            "work_item": "wi_01M53DFVF8WCQT3A6P5ZSM8G2P",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53DVPN26FACR6GP09FPEMZP",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53DVP0SBDWVXGWEYWP7K3JD",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53DVQB51THTM8HAYKK70K46",
+            "kind": "one_shot",
+            "role": "builder",
+            "work_item": "wi_01M53DFVF8WCQT3A6P5ZSM8G2R",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53DXMF8BGYV04DPFWZ9GQKX",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53DXKT52MCH2QCEEEV64RJV",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53DYSG16PPXJBYKH41S2948",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53DYRWQK7D0FXW16MR3MSWH",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53E084SD5NDAVETZBX1XATV",
+            "kind": "one_shot",
+            "role": "reviewer",
+            "work_item": "wi_01M53E07PN8F0RQE1X1ZJ29MST",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53E2W6FRDSQ8S6QJK5A2RMK",
+            "kind": "one_shot",
+            "role": "reviewer",
+            "work_item": "wi_01M53E2VN2Q1FR19YXHGNJ73TH",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53E624V4K04F6YKB8D0FXN3",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53E61QVXSHNMMV4WEBXYYC4",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          },
+          {
+            "id": "run_01M53E6FBPCD2KYKKHKTGK0548",
+            "kind": "one_shot",
+            "role": "architect",
+            "work_item": "wi_01M53E6EYYXPKA0PXVGJ3ZQASF",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          },
+          {
+            "id": "run_01M53E89KHZ69YMQKABWD0W7RM",
+            "kind": "one_shot",
+            "role": "verifier",
+            "work_item": "wi_01M53E88VCG98H4TVEWR5CWPYV",
+            "state": "executing",
+            "outcome": null,
+            "reason_class": null,
+            "model_requested": "claude-sonnet-5-5"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M53E89KHZ69YMQKABWD0W7RM",
+              "kind": "one_shot",
+              "role": "verifier"
+            }
+          ],
+          "waited_ms": 90400,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_change": {
+      "status": "done",
+      "at": "2026-10-16T22:51:39.416Z",
+      "value": {
+        "cli": null,
+        "value": true,
+        "shown": [
+          {
+            "kind": "check_correction_tightening",
+            "id": "dec_01M53EB7RZ9QBZN1XTK7Q2JBBK",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T22:47:06.324Z"
+          },
+          {
+            "kind": "spec_change",
+            "id": "dec_01M53ED8AZQCY1K9MNK92CQ31F",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T22:48:06.009Z"
+          },
+          {
+            "kind": "check_correction_unclassifiable",
+            "id": "dec_01M53EEHMESTDKG4JBCHFN64G7",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T22:48:50.664Z"
+          }
+        ],
+        "spec": [
+          {
+            "id": "spec_01M53D9J0PTDH8BWG6WQTBD6ST",
+            "version": 1,
+            "approved_by": "engine"
+          },
+          {
+            "id": "spec_01M53EDNDXJNSD0P4MB05RXFZ2",
+            "version": 2,
+            "approved_by": "engine"
+          }
+        ],
+        "requests": [
+          {
+            "id": "scr_01M53EC8CPV7EWTZGYG01YHDE3",
+            "seq": 1,
+            "status": "approved"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M53EFJW3BR0MK0FNMH1B1RAP",
+              "kind": "one_shot",
+              "role": "verifier"
+            },
+            {
+              "id": "cx_01M53EF6DJ0NQX1RJNABQRD4D3",
+              "kind": "check_execution",
+              "role": "int-sim-scoring"
+            }
+          ],
+          "waited_ms": 140287,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_qualify": {
+      "status": "done",
+      "at": "2026-10-16T22:52:12.659Z",
+      "value": {
+        "by": "Sean's command",
+        "cli": null,
+        "row": {
+          "id": "aq_01M53EMTZH1R9P2PT4AGE949JW",
+          "status": "current",
+          "adapter": "local_service",
+          "cases": [
+            {
+              "case": "deploy_read_back",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMGVNQADQPF26439NMEYG",
+                "attempt": "att_01M53EMGX4ACXXRB3EH86WYT1K",
+                "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+                "generation": 2,
+                "receipt": "issued",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "one launch granted, the init instance recorded at the grant",
+                    "held": true,
+                    "read": {
+                      "grants": 1,
+                      "init": {
+                        "pid": 2564870,
+                        "start_time": 13010184
+                      }
+                    }
+                  },
+                  {
+                    "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 2564918,
+                        "start_time": 13010195,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "disagreement": null
+                    }
+                  },
+                  {
+                    "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4",
+                        "generation": 2,
+                        "at": "2026-10-16T22:52:00.959Z",
+                        "read": "sha256:e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "b217eef7546d4a95b55a4b6b9490a7ee",
+                          "pid": 2564918,
+                          "start_time": 13010195
+                        },
+                        "detail": null,
+                        "duration_ms": 166
+                      }
+                    ]
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same read, expecting B's digest, differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:c5f6f83165d4383e3c22521e5dee4f6c110409be5a705855cc68235bba177d90",
+                        "generation": 2,
+                        "at": "2026-10-16T22:52:01.137Z",
+                        "read": "unread",
+                        "match": "differs",
+                        "instance": {
+                          "pid": 2564918,
+                          "start_time": 13010195
+                        },
+                        "detail": {
+                          "field": "mounts",
+                          "expected": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/c5f6f83165d4383e3c22521e5dee4f6c110409be5a705855cc68235bba177d90"
+                          },
+                          "read": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4"
+                          }
+                        },
+                        "duration_ms": 112
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "case": "replace",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMJ8Y4F74ZEPZEZ60PEWC",
+                "attempt": "att_01M53EMJAKWGVQ568KN2EPENJW",
+                "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g3.service",
+                "generation": 3,
+                "replaced": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service is gone",
+                    "held": true,
+                    "read": "not-found"
+                  },
+                  {
+                    "what": "verify reads B's digest",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:c5f6f83165d4383e3c22521e5dee4f6c110409be5a705855cc68235bba177d90",
+                        "generation": 3,
+                        "at": "2026-10-16T22:52:02.560Z",
+                        "read": "sha256:c5f6f83165d4383e3c22521e5dee4f6c110409be5a705855cc68235bba177d90",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "b2234de8644a46a58bc0b9fca429622f",
+                          "pid": 2565416,
+                          "start_time": 13010355
+                        },
+                        "detail": null,
+                        "duration_ms": 163
+                      }
+                    ]
+                  },
+                  {
+                    "what": "the new generation is recorded current",
+                    "held": true,
+                    "read": {
+                      "recorded": 3,
+                      "attempt": 3
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service read loaded and active before the replacement",
+                    "held": true,
+                    "read": {
+                      "load": "loaded",
+                      "active": "active"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "receipt_lost",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "incarnation": "inc_01M53EKWZZEHYFBPBDTKHH7NGP",
+                "scope": "in_process",
+                "engine_crash": false,
+                "dropped_receipt": {
+                  "result": "issued",
+                  "bound": null,
+                  "refused": null
+                },
+                "operation": "op_01M53EMK9FT2BWYC5YE5T7XTXM",
+                "attempt": "att_01M53EMKBDENZ78R28CSTBCZEA",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied with no receipt recorded",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "the attempt holds no receipt",
+                    "held": true,
+                    "read": null
+                  },
+                  {
+                    "what": "the attempt succeeded",
+                    "held": true,
+                    "read": "succeeded"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the effect, the same read answered absent",
+                    "held": true,
+                    "read": "absent"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "not_issued",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMM4QEWXCJ3SC7KHRX5B5",
+                "attempt": "att_01M53EMM6T7BQC695WCTT5ENFP",
+                "assertions": [
+                  {
+                    "what": "reconcile answers absent",
+                    "held": true,
+                    "read": "absent"
+                  },
+                  {
+                    "what": "no launch was granted",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the running deployment's attempt read the same way answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "late_launcher",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMGDQ3NR74FCDYV6Z5162",
+                "attempt": "att_01M53EMGF0PK0KGEFMQRHCWKX8",
+                "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g1.service",
+                "assertions": [
+                  {
+                    "what": "the launcher asked and was refused because its launch is closed",
+                    "held": true,
+                    "read": {
+                      "reason": "the launch is closed",
+                      "refusals": [
+                        {
+                          "reason": "the launch is closed",
+                          "at": "2026-10-16T22:51:59.976Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "no launch was granted: nothing of the application ran",
+                    "held": true,
+                    "read": 0
+                  },
+                  {
+                    "what": "while the unit was loaded, reconcile did not answer absent",
+                    "held": true,
+                    "read": {
+                      "unit": {
+                        "load": "loaded",
+                        "active": "active"
+                      },
+                      "outcome": "unknown"
+                    }
+                  },
+                  {
+                    "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                    "held": true,
+                    "read": {
+                      "gone": true,
+                      "before_cleanup": "partial",
+                      "outcome": "absent"
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "another attempt's launcher, its launch authorizable, was granted once",
+                    "held": true,
+                    "read": {
+                      "attempt": "att_01M53EMSC283SZYEG90JZE4EDZ",
+                      "grants": 1
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "out_of_band",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "stopped": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+                "restarted": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+                "changed": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service",
+                "assertions": [
+                  {
+                    "what": "the stop by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl stop surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service: exit 0"
+                  },
+                  {
+                    "what": "detected: the environment down, surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service recorded stopped out of band after the stop",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T22:52:06.453Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M53EMPXPQ014B0HWMDBHNE6G",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T22:52:06.453Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the restart by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl restart surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service: exit 0"
+                  },
+                  {
+                    "what": "a new invocation of the unit",
+                    "held": true,
+                    "read": {
+                      "before": "f8d73d3c989f4d42b7039ffe9929cad8",
+                      "after": "eb0b20215a454176b751ca491647a44a"
+                    }
+                  },
+                  {
+                    "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                    "held": true,
+                    "read": {
+                      "reason": "a launch connection of this attempt has already proved its peer",
+                      "grants": 1
+                    }
+                  },
+                  {
+                    "what": "nothing of the application runs again: the original instance is gone",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 2566890,
+                        "start_time": 13010819,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "gone": true
+                    }
+                  },
+                  {
+                    "what": "detected: surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service recorded restarted out of band after the restart",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T22:52:08.590Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M53EMPXPQ014B0HWMDBHNE6G",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+                          "closed_at": "2026-10-16T22:52:07.179Z",
+                          "detected_at": "2026-10-16T22:52:06.453Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M53EMS0FZANPP32SJAR5584S",
+                          "change": "restarted",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T22:52:08.590Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "one byte of the sealed copy changed",
+                    "held": true,
+                    "read": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4/server.js: its last byte changed"
+                  },
+                  {
+                    "what": "an identity read differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4",
+                        "generation": 9,
+                        "at": "2026-10-16T22:52:09.857Z",
+                        "read": "sha256:6535da686781aaf2dd981d8da3ab1b793967b7168bf29945f2063a2114863ab8",
+                        "match": "differs",
+                        "instance": {
+                          "invocation_id": "8744dc50fff746928c0c9c457e5ad2d0",
+                          "pid": 2567663,
+                          "start_time": 13011064
+                        },
+                        "detail": {
+                          "field": "tree",
+                          "expected": "sha256:e68c32fd6064589f95d845e7e77c8ff2aa519b4c8ee33719a9ff73e7268c42a4",
+                          "read": "sha256:6535da686781aaf2dd981d8da3ab1b793967b7168bf29945f2063a2114863ab8"
+                        },
+                        "duration_ms": 97
+                      }
+                    ]
+                  },
+                  {
+                    "what": "detected: surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service recorded with an identity that differs, after the change",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "degraded",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T22:52:10.117Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M53EMPXPQ014B0HWMDBHNE6G",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+                          "closed_at": "2026-10-16T22:52:07.179Z",
+                          "detected_at": "2026-10-16T22:52:06.453Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M53EMS0FZANPP32SJAR5584S",
+                          "change": "restarted",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+                          "closed_at": "2026-10-16T22:52:08.935Z",
+                          "detected_at": "2026-10-16T22:52:08.590Z"
+                        },
+                        {
+                          "seq": 3,
+                          "id": "oob_01M53EMSB9FY898QC3P7NAYC65",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+                          "closed_at": "2026-10-16T22:52:09.648Z",
+                          "detected_at": "2026-10-16T22:52:08.935Z"
+                        },
+                        {
+                          "seq": 4,
+                          "id": "oob_01M53EMTG7XBY3WGR43GTFP3V1",
+                          "change": "identity_differs",
+                          "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T22:52:10.117Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the byte restored",
+                    "held": true,
+                    "read": null
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the stop: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T22:52:05.316Z"
+                    }
+                  },
+                  {
+                    "what": "before the restart: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T22:52:07.377Z"
+                    }
+                  },
+                  {
+                    "what": "before the byte is changed: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T22:52:09.848Z"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "unreadable",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "bus": "/home/smahoney/s5-final/home/run/qualify-hjy4w0atrsvh-no-bus",
+                "bus_existed": false,
+                "assertions": [
+                  {
+                    "what": "status is unread (a failure), never an empty or complete inventory",
+                    "held": true,
+                    "read": {
+                      "failure": "unavailable"
+                    }
+                  },
+                  {
+                    "what": "verify reads nothing: every identity unread",
+                    "held": true,
+                    "read": [
+                      "unread"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers unknown, never absent or applied",
+                    "held": true,
+                    "read": "unknown"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "with the engine's own bus, status reads the running unit",
+                    "held": true,
+                    "read": {
+                      "resource": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+                      "kind": "unit",
+                      "recorded": true,
+                      "state": "active",
+                      "pendingJob": false,
+                      "generation": 2,
+                      "invocation_id": "b217eef7546d4a95b55a4b6b9490a7ee",
+                      "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service"
+                    }
+                  },
+                  {
+                    "what": "verify matches",
+                    "held": true,
+                    "read": [
+                      "match"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "refused",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMMDAYKG4FNDMV0G9Z6M0",
+                "attempt": "att_01M53EMMF3QB2A7J6HYBZ9CPP3",
+                "stale_attempt": "att_01M53EMM6T7BQC695WCTT5ENFP",
+                "assertions": [
+                  {
+                    "what": "a capability forged in environment is refused naming environment",
+                    "held": true,
+                    "read": {
+                      "member": "environment",
+                      "refused": "environment",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                    "held": true,
+                    "read": {
+                      "member": "artifact_digest",
+                      "refused": "artifact_digest",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in create_units is refused naming create_units",
+                    "held": true,
+                    "read": {
+                      "member": "create_units",
+                      "refused": "create_units",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in attempt is refused naming attempt",
+                    "held": true,
+                    "read": {
+                      "member": "attempt",
+                      "refused": "attempt",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in lease_generation is refused naming lease_generation",
+                    "held": true,
+                    "read": {
+                      "member": "lease_generation",
+                      "refused": "lease_generation",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "the adapter's effect entry was never reached",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the minted capability passes the same check",
+                    "held": true,
+                    "read": null
+                  }
+                ]
+              }
+            },
+            {
+              "case": "teardown",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53EMTHM8RKBKB09FVRXTBSB",
+                "at": "2026-10-16T22:52:10.595Z",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": {
+                      "receipt": "issued",
+                      "outcome": "applied"
+                    }
+                  },
+                  {
+                    "what": "no unit of the environment is listed",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no cgroup of it",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no socket or runtime directory of it under run/, each read",
+                    "held": true,
+                    "read": {
+                      "dirs": [],
+                      "files": []
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same reads before it found units of the environment",
+                    "held": true,
+                    "read": {
+                      "units": [
+                        "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service"
+                      ],
+                      "cgroups": [
+                        "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service"
+                      ],
+                      "dirs": [
+                        {
+                          "path": "/home/smahoney/s5-final/home/run/env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9",
+                          "state": "present"
+                        }
+                      ],
+                      "files": [
+                        "env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "runs": [
+          {
+            "id": "aqr_01M53EMGA2A8V3HJY4W0ATRSVH",
+            "status": "qualified"
+          }
+        ],
+        "environment": null,
+        "left": [],
+        "drained": {
+          "paused": [
+            "proj_01M53C9CP71558J8MFCQ1NAFER"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5a_phase2": {
+      "status": "done",
+      "at": "2026-10-16T22:55:13.480Z",
+      "value": {
+        "value": "2026-10-16T22:54:58.959Z",
+        "shown": [],
+        "stages": [
+          {
+            "number": 1,
+            "status": "verified"
+          },
+          {
+            "number": 2,
+            "status": "verified"
+          },
+          {
+            "number": 1,
+            "status": "verified"
+          },
+          {
+            "number": 2,
+            "status": "verified"
+          }
+        ]
+      }
+    },
+    "m5a_alpha": {
+      "status": "done",
+      "at": "2026-10-16T22:55:13.523Z",
+      "value": {
+        "candidate": {
+          "id": "cand_01M53EFJAJX3BB82TQQ0J1MXC5",
+          "progress": "alpha_deployed"
+        },
+        "requests": [
+          {
+            "id": "dreq_01M53EMVHD4GEAJ1ST5BRPY755",
+            "requested_by": "policy",
+            "request_key": {
+              "candidate": "cand_01M53DXKT14NF9HFT1EZ9XN01B",
+              "completion_binding": {
+                "acceptance_hash": "8fdf91c924b60880a2535e4a95460deb6be78071cb479fd650e26742c475ecc2",
+                "candidate": "cand_01M53DXKT14NF9HFT1EZ9XN01B",
+                "evaluation": "gate_01M53E61P9GFTKBE6F88PA0G2A",
+                "generation": 1,
+                "protected_version": "pv_01M53E09NQNBPTMP11ESQ2V7DJ",
+                "spec_revision": "spec_01M53D9J0PTDH8BWG6WQTBD6ST"
+              },
+              "environment_configuration": "envc_01M53D9PNM6KVA7J1T0WB4G00E",
+              "project": "proj_01M53C9CP71558J8MFCQ1NAFER"
+            }
+          },
+          {
+            "id": "dreq_01M53ESZSPYT3HMYAKWDEQEFP6",
+            "requested_by": "policy",
+            "request_key": {
+              "candidate": "cand_01M53EFJAJX3BB82TQQ0J1MXC5",
+              "completion_binding": {
+                "acceptance_hash": "aafacb9b433f4132673a0f13e9026545790b7781bdba7b599a41161239d2ebca",
+                "candidate": "cand_01M53EFJAJX3BB82TQQ0J1MXC5",
+                "evaluation": "gate_01M53ESGZNY1QFHW7YD5MJ42M5",
+                "generation": 1,
+                "protected_version": "pv_01M53EF6924Z5CWBZD444ABQZR",
+                "spec_revision": "spec_01M53EDNDXJNSD0P4MB05RXFZ2"
+              },
+              "environment_configuration": "envc_01M53D9PNM6KVA7J1T0WB4G00E",
+              "project": "proj_01M53C9CP71558J8MFCQ1NAFER"
+            }
+          }
+        ],
+        "alpha_authorize": {
+          "id": "gate_01M53ESZSN506K28VWSGKEMAQ0",
+          "created_at": "2026-10-16T22:54:59.362Z",
+          "project": "proj_01M53C9CP71558J8MFCQ1NAFER",
+          "scope": "scope_01M53ESZSN506K28VWSGKEMAPY",
+          "candidate": "cand_01M53EFJAJX3BB82TQQ0J1MXC5",
+          "gate_kind": "alpha_authorize",
+          "computed_at": "2026-10-16T22:54:59.362Z",
+          "inputs_hash": "6194861dd03fd82e11757be5e6856841abcdb82acd6aa42fbc18054aecf6f810",
+          "inputs_snapshot": "{\"results\":{\"chk_01M53EF6935WP679JCAC394YWW\":\"cr_01M53EP0P16R4196GFVV33D26K\",\"chk_01M53EF6935WP679JCAC394YWX\":\"cr_01M53EP8CXKYTZ287QQ7MPN3C5\",\"chk_01M53EF6935WP679JCAC394YWY\":\"cr_01M53EPG6M781JYXS5NAW0R89N\",\"chk_01M53EF6935WP679JCAC394YX0\":\"cr_01M53EPSD3AT8YHNXD0T9781G2\",\"chk_01M53EF6935WP679JCAC394YX1\":\"cr_01M53EQ11AXA3SEYQ1BM8CM49K\",\"chk_01M53EF6935WP679JCAC394YX2\":\"cr_01M53EQ927BYRQ179MVVM21KZH\",\"chk_01M53EF6935WP679JCAC394YX3\":\"cr_01M53EQJBAC1WF26RRG99HFE0G\",\"chk_01M53EF6935WP679JCAC394YX4\":\"cr_01M53EQTPM2FZ6EEFG7HQHKS50\",\"chk_01M53EF6935WP679JCAC394YX5\":\"cr_01M53ER67ZGXHJD9GGJC54GAZ8\",\"chk_01M53EF6935WP679JCAC394YX6\":\"cr_01M53EREKFNXNZF50QRNP0WC2Q\",\"chk_01M53EF6935WP679JCAC394YX7\":\"cr_01M53ERQZXSQPPJ38V2BX1185G\",\"chk_01M53EF6935WP679JCAC394YX8\":\"cr_01M53ES04V0SN2PDJ3XB4209M1\",\"chk_01M53EF6935WP679JCAC394YX9\":\"cr_01M53ES8JMEGBZPNWTB9AK1801\",\"chk_01M53EF6935WP679JCAC394YXA\":\"cr_01M53ESGV3M2PNQVQPHFR1VTSC\"},\"findings\":[],\"signoffs\":[\"so_01M53ENS1DG0JHVQZ9T7X5FB1R\",\"so_01M53ESZ4VEPW66NEY85R8CEWR\"],\"head_fingerprint\":\"c76b004692c3768e2b5be76bfc230bf84f3ee3d57c3b6602fd4c714cc8999d1c\"}",
+          "check_states": "{\"chk_01M53EF6935WP679JCAC394YWW\":\"passed\",\"chk_01M53EF6935WP679JCAC394YWX\":\"passed\",\"chk_01M53EF6935WP679JCAC394YWY\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX0\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX1\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX2\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX3\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX4\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX5\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX6\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX7\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX8\":\"passed\",\"chk_01M53EF6935WP679JCAC394YX9\":\"passed\",\"chk_01M53EF6935WP679JCAC394YXA\":\"passed\"}",
+          "outcome": "satisfied",
+          "reasons": [],
+          "satisfiers": "[]",
+          "stale": 1,
+          "stage": null,
+          "authorization": "dauth_01M53ESZS4H8B9JFAF9FHR0BB5",
+          "checks": "{\"chk_01M53EF6935WP679JCAC394YWW\":{\"key\":\"int-service-api\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9XKBZ4NVFC4N6MXG9Q\",\"result\":\"cr_01M53EP0P16R4196GFVV33D26K\",\"execution_seq\":89},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJANKHSS29AZV8SMXGVC\",\"execution_seq\":75,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YWX\":{\"key\":\"int-sim-scoring\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MH\",\"result\":\"cr_01M53EP8CXKYTZ287QQ7MPN3C5\",\"execution_seq\":90},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250Z9\",\"execution_seq\":76,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YWY\":{\"key\":\"int-trajectory-scoring\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MK\",\"result\":\"cr_01M53EPG6M781JYXS5NAW0R89N\",\"execution_seq\":91},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250ZB\",\"execution_seq\":77,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX0\":{\"key\":\"r1-momentum-conservation\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MN\",\"result\":\"cr_01M53EPSD3AT8YHNXD0T9781G2\",\"execution_seq\":92},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250ZD\",\"execution_seq\":78,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX1\":{\"key\":\"r10-trajectory-lab\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MQ\",\"result\":\"cr_01M53EQ11AXA3SEYQ1BM8CM49K\",\"execution_seq\":93},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250ZF\",\"execution_seq\":79,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX2\":{\"key\":\"r11-service\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MS\",\"result\":\"cr_01M53EQ927BYRQ179MVVM21KZH\",\"execution_seq\":94},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250ZH\",\"execution_seq\":80,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX3\":{\"key\":\"r2-friction-theory\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MV\",\"result\":\"cr_01M53EQJBAC1WF26RRG99HFE0G\",\"execution_seq\":95},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAP5B2CAS9YPZK250ZK\",\"execution_seq\":81,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX4\":{\"key\":\"r3-trajectory-range\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9YWPN2SM33REWJA0MX\",\"result\":\"cr_01M53EQTPM2FZ6EEFG7HQHKS50\",\"execution_seq\":96},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z848\",\"execution_seq\":82,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX5\":{\"key\":\"r4-step-stability\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SQR\",\"result\":\"cr_01M53ER67ZGXHJD9GGJC54GAZ8\",\"execution_seq\":97},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84A\",\"execution_seq\":83,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX6\":{\"key\":\"r5-scoring\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SQT\",\"result\":\"cr_01M53EREKFNXNZF50QRNP0WC2Q\",\"execution_seq\":98},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84C\",\"execution_seq\":84,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX7\":{\"key\":\"r8-momentum-lab\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SQW\",\"result\":\"cr_01M53ERQZXSQPPJ38V2BX1185G\",\"execution_seq\":99},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84E\",\"execution_seq\":85,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX8\":{\"key\":\"r9-friction-lab\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SQY\",\"result\":\"cr_01M53ES04V0SN2PDJ3XB4209M1\",\"execution_seq\":100},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84G\",\"execution_seq\":86,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YX9\":{\"key\":\"security-lint\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SR0\",\"result\":\"cr_01M53ES8JMEGBZPNWTB9AK1801\",\"execution_seq\":101},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84J\",\"execution_seq\":87,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}},\"chk_01M53EF6935WP679JCAC394YXA\":{\"key\":\"smoke-physics\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ENS9ZFC47TAT9BBZX5SR2\",\"result\":\"cr_01M53ESGV3M2PNQVQPHFR1VTSC\",\"execution_seq\":102},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":1,\"executions\":[{\"execution\":\"cx_01M53EFJAQTMGGYH2DGEG5Z84M\",\"execution_seq\":88,\"trigger\":{\"source\":\"nomination\",\"id\":\"cand_01M53EFJAJX3BB82TQQ0J1MXC5\",\"generation\":1},\"status\":\"recorded\",\"state\":\"passed\"}],\"link\":\"/v1/projects/proj_01M53C9CP71558J8MFCQ1NAFER/candidates/cand_01M53EFJAJX3BB82TQQ0J1MXC5/checks\"}}}",
+          "missing_verifications": "[]",
+          "phase_plan": null,
+          "plan_generation": null
+        },
+        "alpha_complete": {
+          "id": "gate_01M53ET8S66EEQ8GKQ50JKF8NM",
+          "created_at": "2026-10-16T22:55:08.572Z",
+          "project": "proj_01M53C9CP71558J8MFCQ1NAFER",
+          "scope": "scope_01M53ET8S510GWDN6GZKFAKKCP",
+          "candidate": "cand_01M53EFJAJX3BB82TQQ0J1MXC5",
+          "gate_kind": "alpha_complete",
+          "computed_at": "2026-10-16T22:55:08.572Z",
+          "inputs_hash": "5075b66ed4aebe7b79de1d053533d97c0e51cf4452bc14a8e1d64a67f0278bbf",
+          "inputs_snapshot": "{\"results\":{\"chk_01M53EF6935WP679JCAC394YWZ\":\"cr_01M53ET8B2Y9VW8FBX1BDFX2B9\"},\"findings\":[],\"signoffs\":[\"so_01M53ENS1DG0JHVQZ9T7X5FB1R\",\"so_01M53ESZ4VEPW66NEY85R8CEWR\"],\"head_fingerprint\":\"c76b004692c3768e2b5be76bfc230bf84f3ee3d57c3b6602fd4c714cc8999d1c\"}",
+          "check_states": "{\"chk_01M53EF6935WP679JCAC394YWZ\":\"passed\"}",
+          "outcome": "satisfied",
+          "reasons": [],
+          "satisfiers": "[]",
+          "stale": 0,
+          "stage": null,
+          "authorization": null,
+          "checks": "{\"chk_01M53EF6935WP679JCAC394YWZ\":{\"key\":\"post-deploy-alpha\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53ET0QR24HBEPZKJA0CNMJ6\",\"result\":\"cr_01M53ET8B2Y9VW8FBX1BDFX2B9\",\"execution_seq\":103},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":null}}",
+          "missing_verifications": "[]",
+          "phase_plan": null,
+          "plan_generation": null
+        },
+        "host": [
+          {
+            "unit": "surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service",
+            "props": {
+              "MainPID": "2589066",
+              "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service",
+              "Delegate": "yes",
+              "LoadState": "loaded",
+              "ActiveState": "active"
+            },
+            "token_hits": 0
+          }
+        ],
+        "shown": []
+      }
+    },
+    "m5a_teardown": {
+      "status": "done",
+      "at": "2026-10-16T22:55:19.316Z",
+      "value": {
+        "environment": "env_01M53D9J0R83BD7WWG9ZED09KK",
+        "deploys": [
+          "op_01M53ESZTBQJXYTRYJ6E5H4Z2E"
+        ],
+        "loaded_before": [
+          "surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service"
+        ],
+        "request": {
+          "status": 202,
+          "preempt": false,
+          "code": null
+        },
+        "applied": true,
+        "attempt": {
+          "id": "att_01M53ETDSZ6W7CB1725YM7DZQ3",
+          "status": "succeeded",
+          "last_read": "applied"
+        },
+        "left": {
+          "units": [],
+          "cgroups": [],
+          "run_files": []
+        },
+        "journal_search": [
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g1.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g3.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g4.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g5.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g6.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service",
+            "status": 0,
+            "hits": 0
+          }
+        ]
+      }
+    },
+    "m5r_adopt": {
+      "status": "done",
+      "at": "2026-10-16T22:57:35.308Z",
+      "value": {
+        "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+        "source": {
+          "source": "the M4 real run's Builder repository",
+          "from": "/home/smahoney/surety-m4-real-20261012/repos/real-deployment-journey-3",
+          "recorded_head": "5fcd423b0bd333273344c23725b23b8e836d3255",
+          "prepared": "f427c7fc19d2056dcfcc02d22bc934909182189a",
+          "repo": "/home/smahoney/s5-final/repos/sums"
+        },
+        "cli": null,
+        "adoption": {
+          "pinned_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a",
+          "branch": "main",
+          "signals": {
+            "files": 3,
+            "bytes": 1251,
+            "commits": 6,
+            "languages": [
+              "JavaScript",
+              "Markdown"
+            ],
+            "test_files": [],
+            "ci_files": [],
+            "deploy_files": []
+          },
+          "recommended_mode": "full",
+          "threshold": 2000,
+          "source_digest": "e321368e8f332c36d85f7b2cfdb41967705c8cc33fa789f591ea1c1d57e6465b",
+          "idea_given": false,
+          "tracked_paths": [
+            "README.md",
+            "server.mjs",
+            "src/sum.mjs"
+          ],
+          "tracked_paths_total": 3,
+          "idea_first_version": [],
+          "environments": [],
+          "mode": "full",
+          "mode_reason": null,
+          "mode_decision": "dec_01M53EWES29P1WRAHD1T8W3K2T",
+          "adopted_at": "2026-10-16T22:56:20.255Z"
+        },
+        "mode": "full",
+        "shown": [
+          {
+            "kind": "adoption_mode",
+            "id": "dec_01M53EWES29P1WRAHD1T8W3K2T",
+            "options": [
+              "full",
+              "scoped"
+            ],
+            "at": "2026-10-16T22:56:21.418Z"
+          }
+        ],
+        "setup": {
+          "setup": "policy",
+          "what": "the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000",
+          "detail": {
+            "change": {
+              "budget_day_verified_usd": 20,
+              "deadline_builder": 900,
+              "deadline_verifier": 600,
+              "deadline_reviewer": 600,
+              "model_vision": "claude-opus-5-5",
+              "model_spec_writer": "claude-opus-5-5",
+              "model_architect": "claude-opus-5-5",
+              "model_builder": "claude-sonnet-5-5",
+              "model_verifier": "claude-sonnet-5-5",
+              "model_reviewer": "claude-sonnet-5-5",
+              "backend_builder": "claude",
+              "backend_verifier": "claude",
+              "backend_reviewer": "claude",
+              "backend_architect": "claude",
+              "backend_spec_writer": "claude",
+              "backend_vision": "claude",
+              "phase_size": {
+                "min": 1,
+                "max": 5
+              }
+            },
+            "widen": {
+              "budget_run_billable_tokens": 2000000,
+              "budget_day_unknown_tokens": 4000000
+            },
+            "ordinary": {
+              "status": 200,
+              "confirmed": false
+            },
+            "widened": {
+              "status": 409,
+              "confirmed": true
+            }
+          }
+        },
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_spec": {
+      "status": "done",
+      "at": "2026-10-16T23:14:23.232Z",
+      "value": {
+        "value": {
+          "id": "spec_01M53FXERG54362W2EZJR5TEJ0",
+          "version": 1,
+          "approved_by": "engine"
+        },
+        "shown": [
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP82NM68NDM7DQ7BFFEG",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.718Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP82NM68NDM7DQ7BFFEJ",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.718Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP8314D4BWZW263RTSN3",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.719Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP8314D4BWZW263RTSN5",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.719Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP848PF8CT4FM9RV2TKA",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.720Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP848PF8CT4FM9RV2TKC",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.720Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP85VHDTAZHJ91KJQ355",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.721Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP85VHDTAZHJ91KJQ357",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.721Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP86FW4E767V7NEQK55T",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.722Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP86FW4E767V7NEQK55W",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.723Z"
+          },
+          {
+            "kind": "requirement_confirm",
+            "id": "dec_01M53FWP87DKVRFXX75CJ1ZWEK",
+            "options": [
+              "confirm",
+              "defect",
+              "withdraw"
+            ],
+            "at": "2026-10-16T23:14:08.724Z"
+          },
+          {
+            "kind": "spec_approval",
+            "id": "dec_01M53FWP80TNJG917P3YEJ2XM2",
+            "options": [
+              "approve (blocked: REQUIREMENT_UNANSWERED:R1, REQUIREMENT_UNANSWERED:R10, REQUIREMENT_UNANSWERED:R11, REQUIREMENT_UNANSWERED:R2, REQUIREMENT_UNANSWERED:R3, REQUIREMENT_UNANSWERED:R4, REQUIREMENT_UNANSWERED:R5, REQUIREMENT_UNANSWERED:R6, REQUIREMENT_UNANSWERED:R7, REQUIREMENT_UNANSWERED:R8, REQUIREMENT_UNANSWERED:R9)",
+              "reject"
+            ],
+            "at": "2026-10-16T23:14:08.724Z"
+          }
+        ],
+        "runs": [
+          {
+            "id": "run_01M53FNDJYRT0C19ZPY2864B77",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          }
+        ],
+        "claims": [
+          {
+            "id": "claim_01M53FXERKVB920391913B4PFE",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 1,
+            "claim_source": "README.md:1",
+            "claim": "The repository is a \"fixture\" (the README's only content is the heading `# fixture`). It makes no behavioural claim.",
+            "observed": "No behaviour to compare. The README does not document startup, routes, `REF_SECRET` or `PORT`.",
+            "requirement": null
+          },
+          {
+            "id": "claim_01M53FXERKVB920391913B4PFF",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 2,
+            "claim_source": "server.mjs:5",
+            "claim": "The stderr message says \"REF_SECRET must be set and not empty\".",
+            "observed": "Matches: an unset or empty value exits 1 with that message. A whitespace-only value counts as non-empty and is accepted.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ1"
+          },
+          {
+            "id": "claim_01M53FXERKVB920391913B4PFG",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 3,
+            "claim_source": "server.mjs:33",
+            "claim": "The 400 body says \"a and b must be numbers\".",
+            "observed": "Mostly matches, but \"numbers\" means finite numbers convertible by `Number()`. `Infinity` and `NaN` are rejected, while hex, octal, binary and exponent forms are accepted.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ6"
+          },
+          {
+            "id": "claim_01M53FXERKVB920391913B4PFH",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 4,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It refuses to start without REF_SECRET.",
+            "observed": "Matches for unset or empty. After the check the secret is otherwise unused.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ1"
+          },
+          {
+            "id": "claim_01M53FXERMTEG2CKYQAM7T3YCY",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 5,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It listens on 127.0.0.1 at PORT.",
+            "observed": "Matches for a valid PORT. An unset or invalid PORT crashes; PORT empty or 0 listens on a random port.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ2"
+          },
+          {
+            "id": "claim_01M53FXERMTEG2CKYQAM7T3YCZ",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 6,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It answers GET /health.",
+            "observed": "Matches: 200 `{\"ok\":true}`. Only GET, and only the exact path.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ4"
+          },
+          {
+            "id": "claim_01M53FXERMTEG2CKYQAM7T3YD0",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 7,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It answers GET /sum with numeric a and b.",
+            "observed": "Matches: 200 `{\"sum\":a+b}`. Overflow gives `{\"sum\":null}`.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ5"
+          },
+          {
+            "id": "claim_01M53FXERMTEG2CKYQAM7T3YD1",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 8,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It returns 400 for non-numeric input.",
+            "observed": "Matches, including missing, empty and non-finite values.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ6"
+          },
+          {
+            "id": "claim_01M53FXERMTEG2CKYQAM7T3YD2",
+            "created_at": "2026-10-16T23:14:21.583Z",
+            "spec_revision": "spec_01M53FXERG54362W2EZJR5TEJ0",
+            "ordinal": 9,
+            "claim_source": "Owner, transcript turn 1",
+            "claim": "It returns 404 otherwise.",
+            "observed": "Matches for well-formed requests, including non-GET methods on known paths. An unparseable target crashes the process instead.",
+            "requirement": "req_01M53FXERG54362W2EZJR5TEJ7"
+          }
+        ],
+        "confirms": [
+          {
+            "id": "dec_01M53FWP82NM68NDM7DQ7BFFEG",
+            "key": "R1",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:09.454Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP82NM68NDM7DQ7BFFEJ",
+            "key": "R2",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:09.574Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP8314D4BWZW263RTSN3",
+            "key": "R3",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:09.714Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP8314D4BWZW263RTSN5",
+            "key": "R4",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:09.845Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP848PF8CT4FM9RV2TKA",
+            "key": "R5",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:09.960Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP848PF8CT4FM9RV2TKC",
+            "key": "R6",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.101Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP85VHDTAZHJ91KJQ355",
+            "key": "R7",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.228Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP85VHDTAZHJ91KJQ357",
+            "key": "R8",
+            "status": "consumed",
+            "answer": {
+              "option": "defect",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.595Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP86FW4E767V7NEQK55T",
+            "key": "R9",
+            "status": "consumed",
+            "answer": {
+              "option": "defect",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.708Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP86FW4E767V7NEQK55W",
+            "key": "R10",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.346Z"
+            }
+          },
+          {
+            "id": "dec_01M53FWP87DKVRFXX75CJ1ZWEK",
+            "key": "R11",
+            "status": "consumed",
+            "answer": {
+              "option": "confirm",
+              "note": null,
+              "actor": "human",
+              "at": "2026-10-16T23:14:10.481Z"
+            }
+          }
+        ],
+        "requirements": [
+          {
+            "key": "R1",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP82NM68NDM7DQ7BFFEG"
+          },
+          {
+            "key": "R10",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP86FW4E767V7NEQK55W"
+          },
+          {
+            "key": "R11",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP87DKVRFXX75CJ1ZWEK"
+          },
+          {
+            "key": "R2",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP82NM68NDM7DQ7BFFEJ"
+          },
+          {
+            "key": "R3",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP8314D4BWZW263RTSN3"
+          },
+          {
+            "key": "R4",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP8314D4BWZW263RTSN5"
+          },
+          {
+            "key": "R5",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP848PF8CT4FM9RV2TKA"
+          },
+          {
+            "key": "R6",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP848PF8CT4FM9RV2TKC"
+          },
+          {
+            "key": "R7",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 0,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP85VHDTAZHJ91KJQ355"
+          },
+          {
+            "key": "R8",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 1,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP85VHDTAZHJ91KJQ357"
+          },
+          {
+            "key": "R9",
+            "status": "pending",
+            "origin": "observed",
+            "defect": 1,
+            "reverse_engineered": 1,
+            "confirmed_by": "dec_01M53FWP86FW4E767V7NEQK55T"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_architecture": {
+      "status": "done",
+      "at": "2026-10-16T23:18:08.010Z",
+      "value": {
+        "value": {
+          "id": "plan_01M53G0CSFMZMVQKRT51PZMNX9",
+          "created_at": "2026-10-16T23:15:57.868Z",
+          "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+          "phase_number": 1,
+          "prepared_against_revision": "384bc12481bf3224f0abf0c6f91cbee1a9e86115",
+          "git_path": ".surety/phases/phase-1.json",
+          "approved_by": "human",
+          "approved_at": "2026-10-16T23:15:57.868Z",
+          "prepared_against_spec": "spec_01M53FXERG54362W2EZJR5TEJ0",
+          "prepared_against_architecture": "arch_01M53G0CSDJ3AM10AQDN7DWW49",
+          "prepared_against_roadmap": "road_01M53G0CSE7HD11W31KP3J8BQ0",
+          "roadmap_revision": "road_01M53G0CSE7HD11W31KP3J8BQ0",
+          "generation": 1,
+          "active": 1,
+          "bundle": "rec_01M53G0CET38R0A98DXN6TW8CC",
+          "check": "pchk_01M53G0CFYPB87SWKQY12JAYDS",
+          "routing": "human",
+          "status": "published",
+          "published_at": "2026-10-16T23:15:57.868Z",
+          "authoring_ready_at": null,
+          "authoring_ready_by": null,
+          "completed_at": null,
+          "completion_binding": null,
+          "planned_obligations": "rec_01M53G0CF96V51VK2N11PC9FHB",
+          "verification": null,
+          "replaced_by": null,
+          "check_authoring": "wi_01M53G0CSGPFX1V5XV49ZAZ9E8",
+          "replacement": null
+        },
+        "shown": [],
+        "runs": [
+          {
+            "id": "run_01M53FXRP3MEJJ60B76BDA6FAV",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-opus-5-5"
+          }
+        ],
+        "setup": {
+          "setup": "alpha",
+          "what": "alpha's configuration (PUT /v1/projects/proj_01M53EWEQ1XRM3T8K6DD6ESXS7/environments/alpha/config): local_service, target app, `node server.mjs` on port 45707, the disposable secret deploy/ref_secret (also allowed its checks)",
+          "detail": {
+            "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG",
+            "config": "envc_01M53FXKZ0XBSKKQ35943ZFH0K",
+            "config_identity": "sha256:fb1bc63bb657dd9ed92b5936353b4022b63cd6ce48db483b1037b764cf3b1780",
+            "port": 45707
+          }
+        },
+        "conformance_stages": [
+          {
+            "id": "stage_01M53G0CSGPFX1V5XV49ZAZ9E5",
+            "number": 1,
+            "implements": [
+              "req_01M53FXERG54362W2EZJR5TEJ1",
+              "req_01M53FXERG54362W2EZJR5TEJ2",
+              "req_01M53FXERG54362W2EZJR5TEJ3",
+              "req_01M53FXERG54362W2EZJR5TEJ4",
+              "req_01M53FXERG54362W2EZJR5TEJ5",
+              "req_01M53FXERG54362W2EZJR5TEJ6",
+              "req_01M53FXERG54362W2EZJR5TEJ7",
+              "req_01M53FXERG54362W2EZJR5TEJA",
+              "req_01M53FXERG54362W2EZJR5TEJB"
+            ],
+            "conformance_state": "source_bound",
+            "source_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M53G0DBWWRZHGH6FZN868Y4J",
+              "kind": "one_shot",
+              "role": "verifier"
+            }
+          ],
+          "waited_ms": 120291,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_conformance": {
+      "status": "done",
+      "at": "2026-10-16T23:24:01.879Z",
+      "value": {
+        "value": {
+          "plan": "plan_01M53G0CSFMZMVQKRT51PZMNX9",
+          "state": "conformed"
+        },
+        "shown": [
+          {
+            "kind": "check_correction_unclassifiable",
+            "id": "dec_01M53G47ZEXSCBGASDPB8DZ532",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T23:18:12.699Z"
+          }
+        ],
+        "setup": {
+          "setup": "alpha",
+          "already": true,
+          "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG"
+        },
+        "proposals": [
+          {
+            "id": "prop_01M53G47HHTPQ1HZ2ZVB7JE9EM",
+            "status": "applied",
+            "classified_change_kind": "unclassifiable"
+          }
+        ],
+        "stages": [
+          {
+            "number": 1,
+            "status": "verified",
+            "conformance": 1,
+            "conformance_state": "conformed",
+            "source_revision": "f427c7fc19d2056dcfcc02d22bc934909182189a"
+          }
+        ],
+        "builds": 0,
+        "candidates": [
+          {
+            "id": "cand_01M53G58KFR255K7KGNGTT9T33",
+            "seq": 1,
+            "revision": "9250a80c3c5bb80fb115a785cfd9a5d0d5592764",
+            "progress": "developing"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "cx_01M53GB36JT3RC6GDXDYGQ3PRC",
+              "kind": "check_execution",
+              "role": "floor-authentication"
+            }
+          ],
+          "waited_ms": 130344,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_qualify": {
+      "status": "done",
+      "at": "2026-10-16T23:24:40.493Z",
+      "value": {
+        "by": "Sean's command",
+        "cli": null,
+        "row": {
+          "id": "aq_01M53GGB1GSW2XH9JFHRP6EST1",
+          "status": "current",
+          "adapter": "local_service",
+          "cases": [
+            {
+              "case": "deploy_read_back",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GG16BBVKYKVCQ3C092YKN",
+                "attempt": "att_01M53GG17ZWZN1CACZSVKKYW9E",
+                "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+                "generation": 2,
+                "receipt": "issued",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "one launch granted, the init instance recorded at the grant",
+                    "held": true,
+                    "read": {
+                      "grants": 1,
+                      "init": {
+                        "pid": 2783225,
+                        "start_time": 13208607
+                      }
+                    }
+                  },
+                  {
+                    "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 2783256,
+                        "start_time": 13208618,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "disagreement": null
+                    }
+                  },
+                  {
+                    "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                        "generation": 2,
+                        "at": "2026-10-16T23:24:31.012Z",
+                        "read": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "d5338b33f1c8466e9b10e71c562f887c",
+                          "pid": 2783256,
+                          "start_time": 13208618
+                        },
+                        "detail": null,
+                        "duration_ms": 187
+                      }
+                    ]
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same read, expecting B's digest, differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                        "generation": 2,
+                        "at": "2026-10-16T23:24:31.211Z",
+                        "read": "unread",
+                        "match": "differs",
+                        "instance": {
+                          "pid": 2783256,
+                          "start_time": 13208618
+                        },
+                        "detail": {
+                          "field": "mounts",
+                          "expected": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c"
+                          },
+                          "read": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3"
+                          }
+                        },
+                        "duration_ms": 100
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "case": "replace",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GG2KRN9DBKF7YGXSEAHMR",
+                "attempt": "att_01M53GG2NB89X5PNJBBXDNBRZC",
+                "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g3.service",
+                "generation": 3,
+                "replaced": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service is gone",
+                    "held": true,
+                    "read": "not-found"
+                  },
+                  {
+                    "what": "verify reads B's digest",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                        "generation": 3,
+                        "at": "2026-10-16T23:24:32.564Z",
+                        "read": "sha256:f4b345bc0e252f130575daccfee7e9d2befc0dff0519bfbcaa937bee1d7f6c4c",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "6601cf84ce0f4b7cad4d0761afe4fe1d",
+                          "pid": 2783600,
+                          "start_time": 13208776
+                        },
+                        "detail": null,
+                        "duration_ms": 176
+                      }
+                    ]
+                  },
+                  {
+                    "what": "the new generation is recorded current",
+                    "held": true,
+                    "read": {
+                      "recorded": 3,
+                      "attempt": 3
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service read loaded and active before the replacement",
+                    "held": true,
+                    "read": {
+                      "load": "loaded",
+                      "active": "active"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "receipt_lost",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "incarnation": "inc_01M53GF69DSDKK6RHD6CEME1TN",
+                "scope": "in_process",
+                "engine_crash": false,
+                "dropped_receipt": {
+                  "result": "issued",
+                  "bound": null,
+                  "refused": null
+                },
+                "operation": "op_01M53GG3KFJCX4FY71P80Q85X9",
+                "attempt": "att_01M53GG3NBFQTC48EFMA4WXMHW",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied with no receipt recorded",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "the attempt holds no receipt",
+                    "held": true,
+                    "read": null
+                  },
+                  {
+                    "what": "the attempt succeeded",
+                    "held": true,
+                    "read": "succeeded"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the effect, the same read answered absent",
+                    "held": true,
+                    "read": "absent"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "not_issued",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GG4EN48M8WS5YV1B7RCR0",
+                "attempt": "att_01M53GG4GF4NCZ8GMR923VTYRY",
+                "assertions": [
+                  {
+                    "what": "reconcile answers absent",
+                    "held": true,
+                    "read": "absent"
+                  },
+                  {
+                    "what": "no launch was granted",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the running deployment's attempt read the same way answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "late_launcher",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GG0RCKFF4Z3JZ6YK4ZN3W",
+                "attempt": "att_01M53GG0SJ8WRPTJHYRJQD6763",
+                "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g1.service",
+                "assertions": [
+                  {
+                    "what": "the launcher asked and was refused because its launch is closed",
+                    "held": true,
+                    "read": {
+                      "reason": "the launch is closed",
+                      "refusals": [
+                        {
+                          "reason": "the launch is closed",
+                          "at": "2026-10-16T23:24:30.015Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "no launch was granted: nothing of the application ran",
+                    "held": true,
+                    "read": 0
+                  },
+                  {
+                    "what": "while the unit was loaded, reconcile did not answer absent",
+                    "held": true,
+                    "read": {
+                      "unit": {
+                        "load": "loaded",
+                        "active": "active"
+                      },
+                      "outcome": "unknown"
+                    }
+                  },
+                  {
+                    "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                    "held": true,
+                    "read": {
+                      "gone": true,
+                      "before_cleanup": "partial",
+                      "outcome": "absent"
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "another attempt's launcher, its launch authorizable, was granted once",
+                    "held": true,
+                    "read": {
+                      "attempt": "att_01M53GG9CQQ49GWF2FVEAH48PJ",
+                      "grants": 1
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "out_of_band",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "stopped": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                "restarted": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                "changed": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+                "assertions": [
+                  {
+                    "what": "the stop by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl stop surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service: exit 0"
+                  },
+                  {
+                    "what": "detected: the environment down, surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service recorded stopped out of band after the stop",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T23:24:36.174Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 5,
+                          "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T23:24:36.174Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the restart by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl restart surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service: exit 0"
+                  },
+                  {
+                    "what": "a new invocation of the unit",
+                    "held": true,
+                    "read": {
+                      "before": "193748d8d94d43799c8a230a50e5fa89",
+                      "after": "1be87fe96156463f9a4c3a4adaada9df"
+                    }
+                  },
+                  {
+                    "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                    "held": true,
+                    "read": {
+                      "reason": "a launch connection of this attempt has already proved its peer",
+                      "grants": 1
+                    }
+                  },
+                  {
+                    "what": "nothing of the application runs again: the original instance is gone",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 2784320,
+                        "start_time": 13209209,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "gone": true
+                    }
+                  },
+                  {
+                    "what": "detected: surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service recorded restarted out of band after the restart",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T23:24:38.321Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 5,
+                          "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                          "closed_at": "2026-10-16T23:24:36.885Z",
+                          "detected_at": "2026-10-16T23:24:36.174Z"
+                        },
+                        {
+                          "seq": 6,
+                          "id": "oob_01M53GG91JYHGYRRX2E9QCJ5BA",
+                          "change": "restarted",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T23:24:38.321Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "one byte of the sealed copy changed",
+                    "held": true,
+                    "read": "/home/smahoney/s5-final/home/artifacts/proj_01M53BZSQPRVCSR1Z1BX645X10/20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3/server.js: its last byte changed"
+                  },
+                  {
+                    "what": "an identity read differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                        "generation": 9,
+                        "at": "2026-10-16T23:24:39.538Z",
+                        "read": "sha256:392bf661c2da34e068d564cb921ece78a69baeacc4fab2a721f5744cb21635c6",
+                        "match": "differs",
+                        "instance": {
+                          "invocation_id": "0864a1187149432aaa1eeea2ced42e7d",
+                          "pid": 2784665,
+                          "start_time": 13209452
+                        },
+                        "detail": {
+                          "field": "tree",
+                          "expected": "sha256:20bcd59fd54b66014239d2b8c7b2d314468243797ace45ddfeb3eebabace76b3",
+                          "read": "sha256:392bf661c2da34e068d564cb921ece78a69baeacc4fab2a721f5744cb21635c6"
+                        },
+                        "duration_ms": 127
+                      }
+                    ]
+                  },
+                  {
+                    "what": "detected: surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service recorded with an identity that differs, after the change",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "degraded",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-16T23:24:39.821Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 5,
+                          "id": "oob_01M53GG6YG7KZ0NHBH05PJ04QB",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+                          "closed_at": "2026-10-16T23:24:36.885Z",
+                          "detected_at": "2026-10-16T23:24:36.174Z"
+                        },
+                        {
+                          "seq": 6,
+                          "id": "oob_01M53GG91JYHGYRRX2E9QCJ5BA",
+                          "change": "restarted",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                          "closed_at": "2026-10-16T23:24:38.662Z",
+                          "detected_at": "2026-10-16T23:24:38.321Z"
+                        },
+                        {
+                          "seq": 7,
+                          "id": "oob_01M53GG9C8H3VMK0AW5T6E1RWM",
+                          "change": "stopped",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+                          "closed_at": "2026-10-16T23:24:39.321Z",
+                          "detected_at": "2026-10-16T23:24:38.662Z"
+                        },
+                        {
+                          "seq": 8,
+                          "id": "oob_01M53GGAGEFPQC63Q2ZMMTPKRA",
+                          "change": "identity_differs",
+                          "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-16T23:24:39.821Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the byte restored",
+                    "held": true,
+                    "read": null
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the stop: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T23:24:35.031Z"
+                    }
+                  },
+                  {
+                    "what": "before the restart: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T23:24:37.114Z"
+                    }
+                  },
+                  {
+                    "what": "before the byte is changed: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-16T23:24:39.529Z"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "unreadable",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "bus": "/home/smahoney/s5-final/home/run/qualify-wbknnym9y0ce-no-bus",
+                "bus_existed": false,
+                "assertions": [
+                  {
+                    "what": "status is unread (a failure), never an empty or complete inventory",
+                    "held": true,
+                    "read": {
+                      "failure": "unavailable"
+                    }
+                  },
+                  {
+                    "what": "verify reads nothing: every identity unread",
+                    "held": true,
+                    "read": [
+                      "unread"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers unknown, never absent or applied",
+                    "held": true,
+                    "read": "unknown"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "with the engine's own bus, status reads the running unit",
+                    "held": true,
+                    "read": {
+                      "resource": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+                      "kind": "unit",
+                      "recorded": true,
+                      "state": "active",
+                      "pendingJob": false,
+                      "generation": 2,
+                      "invocation_id": "d5338b33f1c8466e9b10e71c562f887c",
+                      "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service"
+                    }
+                  },
+                  {
+                    "what": "verify matches",
+                    "held": true,
+                    "read": [
+                      "match"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "refused",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GG4Q867W8EJJ5BNC3TCZB",
+                "attempt": "att_01M53GG4RVQVTS469XHEG6YS6B",
+                "stale_attempt": "att_01M53GG4GF4NCZ8GMR923VTYRY",
+                "assertions": [
+                  {
+                    "what": "a capability forged in environment is refused naming environment",
+                    "held": true,
+                    "read": {
+                      "member": "environment",
+                      "refused": "environment",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                    "held": true,
+                    "read": {
+                      "member": "artifact_digest",
+                      "refused": "artifact_digest",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in create_units is refused naming create_units",
+                    "held": true,
+                    "read": {
+                      "member": "create_units",
+                      "refused": "create_units",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in attempt is refused naming attempt",
+                    "held": true,
+                    "read": {
+                      "member": "attempt",
+                      "refused": "attempt",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in lease_generation is refused naming lease_generation",
+                    "held": true,
+                    "read": {
+                      "member": "lease_generation",
+                      "refused": "lease_generation",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "the adapter's effect entry was never reached",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the minted capability passes the same check",
+                    "held": true,
+                    "read": null
+                  }
+                ]
+              }
+            },
+            {
+              "case": "teardown",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M53GGAHYD8MY8VK7ZNY2T26V",
+                "at": "2026-10-16T23:24:40.342Z",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": {
+                      "receipt": "issued",
+                      "outcome": "applied"
+                    }
+                  },
+                  {
+                    "what": "no unit of the environment is listed",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no cgroup of it",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no socket or runtime directory of it under run/, each read",
+                    "held": true,
+                    "read": {
+                      "dirs": [],
+                      "files": []
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same reads before it found units of the environment",
+                    "held": true,
+                    "read": {
+                      "units": [
+                        "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service"
+                      ],
+                      "cgroups": [
+                        "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service"
+                      ],
+                      "dirs": [
+                        {
+                          "path": "/home/smahoney/s5-final/home/run/env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9",
+                          "state": "present"
+                        }
+                      ],
+                      "files": [
+                        "env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "runs": [
+          {
+            "id": "aqr_01M53GG0NCBMZHWBKNNYM9Y0CE",
+            "status": "qualified"
+          }
+        ],
+        "environment": null,
+        "left": [],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 7,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_deploy": {
+      "status": "done",
+      "at": "2026-10-16T23:41:35.249Z",
+      "value": {
+        "cli": null,
+        "candidate": "cand_01M53G58KFR255K7KGNGTT9T33",
+        "progress": "alpha_deployed",
+        "alpha_complete": {
+          "id": "gate_01M53HCC0A8G1339CGC4T4A7MK",
+          "created_at": "2026-10-16T23:39:58.849Z",
+          "project": "proj_01M53EWEQ1XRM3T8K6DD6ESXS7",
+          "scope": "scope_01M53HCC09XM7A7MD55NXED3QZ",
+          "candidate": "cand_01M53G58KFR255K7KGNGTT9T33",
+          "gate_kind": "alpha_complete",
+          "computed_at": "2026-10-16T23:39:58.849Z",
+          "inputs_hash": "5b6302bfbc100433579263433dea8e815b96afd31ed9e5495dacfc7f50cea22a",
+          "inputs_snapshot": "{\"results\":{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":\"cr_01M53HCBGXTJ9DP3FJSTE38S8E\"},\"findings\":[],\"signoffs\":[],\"head_fingerprint\":\"b4594bff08329ae218945ae2c4d92d3f115043aac9e3cc627468f65688c5eefc\"}",
+          "check_states": "{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":\"passed\"}",
+          "outcome": "satisfied",
+          "reasons": [],
+          "satisfiers": "[]",
+          "stale": 0,
+          "stage": null,
+          "authorization": null,
+          "checks": "{\"chk_01M53H8EJQAH639RJKVVEXRVPW\":{\"key\":\"post-deploy-user-operation\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M53HC3KQ1Y65TDFZ94W7D4X2\",\"result\":\"cr_01M53HCBGXTJ9DP3FJSTE38S8E\",\"execution_seq\":37},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":null}}",
+          "missing_verifications": "[]",
+          "phase_plan": null,
+          "plan_generation": null
+        },
+        "replans_before_complete": [],
+        "host": [
+          {
+            "unit": "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+            "props": {
+              "MainPID": "2868522",
+              "ControlGroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+              "Delegate": "yes",
+              "LoadState": "loaded",
+              "ActiveState": "active"
+            },
+            "token_hits": 0
+          }
+        ]
+      }
+    },
+    "m5r_teardown": {
+      "status": "done",
+      "at": "2026-10-16T23:40:16.369Z",
+      "value": {
+        "environment": "env_01M53FXKYZD7RD0VFGG0TX0DAG",
+        "deploys": [
+          "op_01M53HC2QT5FR50GQAPS4PA5EF"
+        ],
+        "loaded_before": [
+          "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service"
+        ],
+        "request": {
+          "status": 202,
+          "preempt": false,
+          "code": null
+        },
+        "applied": true,
+        "attempt": {
+          "id": "att_01M53HCRP7YJ2E6WWP017B483D",
+          "status": "succeeded",
+          "last_read": "applied"
+        },
+        "left": {
+          "units": [],
+          "cgroups": [],
+          "run_files": []
+        },
+        "journal_search": [
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g1.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g2.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g3.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g4.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g5.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g6.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g7.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g8.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53EMGA2A8V3HJY4W0ATRSVJ-g9.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53D9J0R83BD7WWG9ZED09KK-g1.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g1.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g2.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g3.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g4.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g5.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g6.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g7.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g8.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53GG0NCBMZHWBKNNYM9Y0CF-g9.service",
+            "status": 0,
+            "hits": 0
+          },
+          {
+            "unit": "surety-20541a92d32d-env_01M53FXKYZD7RD0VFGG0TX0DAG-g1.service",
+            "status": 0,
+            "hits": 0
+          }
+        ]
+      }
+    },
+    "m5r_replan": {
+      "status": "done",
+      "at": "2026-10-16T23:43:26.144Z",
+      "value": {
+        "plan": {
+          "id": "plan_01M53HH0T05D541WBNES8M434V",
+          "routing": "registered"
+        },
+        "replans": [
+          {
+            "id": "wi_01M53HCRM69S9MCQNEFJQERGWG",
+            "created_at": "2026-10-16T23:40:11.781Z",
+            "status": "complete"
+          }
+        ],
+        "alpha_complete": [
+          {
+            "id": "gate_01M53HCC0A8G1339CGC4T4A7MK",
+            "outcome": "satisfied",
+            "created_at": "2026-10-16T23:39:58.849Z"
+          }
+        ],
+        "shown": [
+          {
+            "kind": "finding_disposition",
+            "id": "dec_01M53HF2YQXG6K9MMKPHN7T13C",
+            "options": [
+              "change_spec",
+              "accept"
+            ],
+            "at": "2026-10-16T23:41:38.582Z"
+          },
+          {
+            "kind": "finding_disposition",
+            "id": "dec_01M53HF2YSRB34P8RE2E7P2M46",
+            "options": [
+              "change_spec",
+              "lower_and_accept"
+            ],
+            "at": "2026-10-16T23:41:38.582Z"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M53HFWE38YNS5MQ28T1X8R95",
+              "kind": "one_shot",
+              "role": "spec_writer"
+            }
+          ],
+          "waited_ms": 50118,
+          "still_live": []
+        }
+      }
+    },
+    "m5r_phase2": {
+      "status": "done",
+      "at": "2026-10-16T23:51:35.071Z",
+      "value": {
+        "stages": [
+          {
+            "number": 1,
+            "status": "verified"
+          }
+        ],
+        "builds": [
+          {
+            "id": "run_01M53HXD5P8AX6649CGFMHKH04",
+            "kind": "one_shot",
+            "role": "builder",
+            "work_item": "wi_01M53HXCM6H9W1935DH64JMTMF",
+            "state": "ended",
+            "outcome": "completed",
+            "reason_class": "none",
+            "model_requested": "claude-sonnet-5-5"
+          }
+        ],
+        "shown": [
+          {
+            "kind": "spec_change",
+            "id": "dec_01M53HJN74CZG1VA42H5CXX8Z3",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T23:43:29.771Z"
+          },
+          {
+            "kind": "check_correction_tightening",
+            "id": "dec_01M53HMM9FYT0ENRNWSQT574M7",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T23:44:43.499Z"
+          },
+          {
+            "kind": "spec_change",
+            "id": "dec_01M53HPJC5ASVMB6PCD0QBB5J4",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T23:45:42.156Z"
+          },
+          {
+            "kind": "check_correction_unclassifiable",
+            "id": "dec_01M53HR99Q5WVSE78CRT0F4YPF",
+            "options": [
+              "approve",
+              "reject"
+            ],
+            "at": "2026-10-16T23:46:40.872Z"
+          },
+          {
+            "kind": "blocker",
+            "id": "dec_01M53J0X8P42FV5V1B99CHSEDX",
+            "options": [
+              "retry",
+              "cancel"
+            ],
+            "at": "2026-10-16T23:51:19.997Z"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M53EWEQ1XRM3T8K6DD6ESXS7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 5,
+          "still_live": []
+        }
+      }
+    }
+  },
+  "halted": null,
+  "rehearsal": false
+}
