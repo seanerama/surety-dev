@@ -372,7 +372,14 @@ export function elementProblems(id, v, facts = {}) {
       break;
     }
     case 'designer.review': {
-      need(isObj(v.files) && ['review', 'approved', 'source', 'check_results', 'observations', 'evidence'].every((k) => text(v.files[k])), `files: review, approved, source, check_results, observations, evidence (got ${JSON.stringify(v.files)})`);
+      // Each file the package holds named, `null` for one the mode or the package lacks
+      // (objection 204; the slice-46 review's S4): an owner-invoked review has no
+      // observations and names its evidence; a review at Alpha has observations and no
+      // evidence file; no approved design or no source is `null` too.
+      const FILES = ['review', 'approved', 'source', 'check_results', 'observations', 'evidence'];
+      need(isObj(v.files) && FILES.every((k) => k in v.files && (v.files[k] === null || text(v.files[k]))) && text(v.files.review), `files: review (a file), approved, source, check_results, observations, evidence (each a file or null) (got ${JSON.stringify(v.files)})`);
+      if (isObj(v.files) && isObj(v.owner)) need(v.files.observations === null && text(v.files.evidence), `files of an owner-invoked review: observations null, evidence a file (got ${JSON.stringify(v.files)})`);
+      else if (isObj(v.files) && v.owner === null) need(text(v.files.observations) && v.files.evidence === null, `files of a review at Alpha: observations a file, evidence null (got ${JSON.stringify(v.files)})`);
       need(isObj(v.provenance) && ['engine_observed', 'owner_supplied', 'owner_reported'].every((k) => text(v.provenance[k])), 'provenance: engine_observed, owner_supplied, owner_reported, each what it means');
       need(text(v.verdicts) && /propos/i.test(v.verdicts), 'verdicts: proposals the owner confirms');
       need(text(v.simulation), 'simulation: a verdict on a simulation is never native evidence');

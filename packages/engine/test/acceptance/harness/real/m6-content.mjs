@@ -267,5 +267,7 @@ export async function m6Content(row) {
     design: designerContent({ name: 'Pantry', criteria: designCriteria(v) }),
     design_checks: DESIGN_CHECKS,
     asset_paths: assetPaths,
+    // Where the web UI Builder places the package's design/tokens.css (the tokens_only criterion reads it).
+    tokens_paths: { web: 'web/tokens.css' },
   };
 }

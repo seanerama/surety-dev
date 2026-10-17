@@ -348,6 +348,12 @@ export async function driveM6(ctx, fx, project, done, { expect = [], answer = ()
     for (const d of open) {
       if (shownIds.has(d.id)) continue;
       const option = answer(d);
+      // A kind the rehearsal leaves to the engine (`answer` null): under the
+      // rehearsal the harness opens each Designer session itself, so a
+      // design_due raised beside it (or beside the batch after its close) is
+      // never answered `open`, which would open a second, empty session; the
+      // engine closes it when a session opens or nothing it names is held.
+      if (ctx.rehearsal && (option === null || option === undefined) && expect.includes(d.kind)) continue;
       const options = (d.options ?? []).map((o) => `${o.key}${(o.blockers ?? []).length > 0 ? ` (blocked: ${(o.blockers ?? []).join(', ')})` : ''}`);
       if (ctx.rehearsal && blockedOf(d) && open.some((x) => x.id !== d.id && !shownIds.has(x.id))) continue;
       shownIds.add(d.id);
@@ -568,8 +574,10 @@ export async function m6Activation(ctx, row) {
 export async function m6Create(ctx, row) {
   const name = stepName(row, 'create');
   const projects = [];
-  return m6Step(ctx, name, () =>
+  return m6Step(ctx, name, ({ startedAt }) =>
     onEngine(ctx, `${row} ${name}`, { projects }, async (fx) => {
+      // The owner's acts of this step (the policy widening he confirms) recorded as every step's are (rule 26).
+      const sinceSeq = maxSeq(fx.home);
       const brief = briefOf(ctx, row);
       const { slug, name: title } = ideaName(brief.text);
       const projectName = `m6-${row.toLowerCase()}-${slug}`;
@@ -597,7 +605,8 @@ export async function m6Create(ctx, row) {
         designer_session_budget_billable_tokens: M6_BUDGET.designer_session_budget_billable_tokens,
         widen: { alpha_deploy: 'on_phase_complete' },
       });
-      const out = { project, name: projectName, repo, brief_from: brief.from, policy };
+      const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt });
+      const out = { project, name: projectName, repo, brief_from: brief.from, policy, acts };
       observe(ctx, row, 'create', out);
       return out;
     }),
@@ -806,7 +815,8 @@ export async function m6Design(ctx, row) {
       const sinceSeq = maxSeq(fx.home);
       let inspection = null;
       const extra = (d) => (row === 'M535' && d.kind === 'design_approval' ? { assets_held: ['logo'] } : {});
-      const answer = (d) => (d.kind === 'design_due' ? 'open' : 'approve');
+      // Under the rehearsal the harness opens the Designer session itself: design_due is left to the engine (driveM6).
+      const answer = (d) => (d.kind === 'design_due' ? (ctx.rehearsal ? null : 'open') : 'approve');
       const expect = ['design_due', 'design_approval', 'spec_change', ...CORRECTIONS, 'plan_approval'];
       // The session; the rehearsal previews between the Designer's last save and the close.
       const s = await (async () => {
@@ -1019,7 +1029,7 @@ async function reviewStep(ctx, row, fx, project) {
       words: [...REVIEW_WORDS],
       what: 'the review of the web Alpha (android not observed: no native runtime)',
       expect: ['design_due', 'design_verdicts', 'finding_disposition', 'design_approval', 'spec_change', ...CORRECTIONS, 'plan_approval'],
-      answer: (d) => (d.kind === 'design_due' ? 'open' : d.kind === 'design_verdicts' ? 'confirm' : d.kind === 'finding_disposition' ? 'accept' : 'approve'),
+      answer: (d) => (d.kind === 'design_due' ? (ctx.rehearsal ? null : 'open') : d.kind === 'design_verdicts' ? 'confirm' : d.kind === 'finding_disposition' ? 'accept' : 'approve'),
       done: () => {
         const review = rows(fx.home, 'SELECT * FROM "design_reviews" WHERE "project" = ? ORDER BY rowid', project).filter((r) => !reviewsBefore.has(r.id)).at(-1);
         if (!review?.confirmation_decision) return undefined;
