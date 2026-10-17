@@ -104,15 +104,36 @@ function decisionInterval(home, d) {
   const closed = answered ?? rows(home, `SELECT "created_at" FROM "events" WHERE "type" = 'decision.invalidated' AND json_extract("subject", '$.decision') = ? ORDER BY "seq" LIMIT 1`, d.id)[0]?.created_at ?? null;
   return closed ? [ms(d.raised_at), ms(closed)] : { unknown: 'no end recorded' };
 }
-// The expected human wait of `kinds` within a stage's lifetime, from the store.
-function expectedWait(home, project, kinds, from) {
+// A UI stage's design holds (`design_pending`, `design_stale`) from its
+// work item's hold record, each cut to the stage's lifetime: its creation to
+// its completion or cancellation (the review's S1, upheld by the driver;
+// SEAM.md §§540, 546).
+function designHolds(home, w) {
+  const born = ms(w.created_at);
+  const ended = rows(home, `SELECT "created_at" FROM "events" WHERE "type" IN ('work.complete', 'work.cancelled') AND json_extract("subject", '$.work_item') = ? ORDER BY "seq" LIMIT 1`, w.id)[0]?.created_at ?? null;
+  const end = ended ? ms(ended) : Date.now();
+  return (w.held_intervals ?? [])
+    .filter((i) => i.reason === 'design_pending' || i.reason === 'design_stale')
+    .map((i) => {
+      const to = i.to ?? i.end ?? null;
+      return [Math.max(ms(i.from ?? i.start), born), Math.min(to === null ? end : ms(to), end)];
+    })
+    .filter(([a, b]) => b > a);
+}
+// The expected human wait of `kinds` for a UI stage, from the store: each
+// decision's open interval counted only where it overlaps the stage's design
+// holds; {unknown} when one is still open while the stage is held.
+function expectedWait(home, project, kinds, holds) {
   const ds = rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "kind" IN (${kinds.map(() => '?').join(', ')}) ORDER BY "seq"`, project, ...kinds);
   const iv = [];
   for (const d of ds) {
     const i = decisionInterval(home, d);
-    if (i === null) return { unknown: `a ${d.kind} is open` };
+    if (i === null) {
+      if (holds.some(([, b]) => ms(d.raised_at) < b)) return { unknown: `a ${d.kind} is open while the stage is held` };
+      continue;
+    }
     if (!Array.isArray(i)) return i;
-    iv.push([Math.max(i[0], from), i[1]]);
+    for (const [a, b] of holds) if (Math.min(i[1], b) > Math.max(i[0], a)) iv.push([Math.max(i[0], a), Math.min(i[1], b)]);
   }
   return { seconds: unionSeconds(iv), count: ds.length, intervals: iv };
 }
@@ -301,10 +322,12 @@ describe('M539 (a), (b), (d), (e) the design figures after a design journey on t
   test('(d) the human wait of design_due and design_approval: each kind from its decisions\' intervals, a question the engine closed included; their union with the overlap counted once', () => {
     const { fx, p } = J;
     const w = stageWork(fx.home, p.id, 2);
-    const from = ms(w.created_at);
-    const due = expectedWait(fx.home, p.id, ['design_due'], from);
-    const appr = expectedWait(fx.home, p.id, ['design_approval'], from);
-    const both = expectedWait(fx.home, p.id, ['design_due', 'design_approval'], from);
+    // Counted only while the decisions overlap the stage's design holds (the review's S1).
+    const holds = designHolds(fx.home, w);
+    assert.ok(holds.length > 0, `the fixture is live: stage 2 was held for the design (${show(w.held_intervals)})`);
+    const due = expectedWait(fx.home, p.id, ['design_due'], holds);
+    const appr = expectedWait(fx.home, p.id, ['design_approval'], holds);
+    const both = expectedWait(fx.home, p.id, ['design_due', 'design_approval'], holds);
     assert.ok(due.count > 0 && appr.count > 0, `the fixture is live: both kinds were raised (${show({ due, appr })})`);
     assert.ok(typeof both.seconds === 'number' && both.seconds + TOL < due.seconds + appr.seconds, `the fixture is live: the two kinds' waits overlapped (union ${show(both)}; design_due ${show(due)}; design_approval ${show(appr)})`);
     const f = (D().ui_stages ?? []).find((x) => x.work_item === w.id)?.human_wait ?? {};
