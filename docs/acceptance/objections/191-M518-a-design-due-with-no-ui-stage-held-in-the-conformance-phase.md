@@ -33,3 +33,16 @@ I recommend (a). The first UI stage of the first change phase is held, and raise
 - B11's reasoning (D6), quoted in D7 §12.
 - BS6 §4.1 rule 25.
 - `src/design/readiness.ts` `heldStages` (holds read `stage_build` work with the `design_ready` milestone); `src/adopt/conformance.ts` (the conformance stage integrated at publication).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17, as option (a). **When nothing is held, nothing stalls, and no question is owed** (Verifier, `verify/m6-s45b` from `0619d36`).
+
+The driver's ruling was conditional: upheld unless the plan's M518 row explicitly requires `design_due` open after a refused retrofit close under `before_build`. It does not. The row's (a) reads "the package names the UI source as input", and its (d) reads "`DESIGN_CONVENTION_UNKNOWN` blocking approval; shown, not blocking". Neither mentions `design_due`, a refused close, or a hold on the conformance stage. So there is no open question for Sean here, and the test changes.
+
+M518 (a) no longer asserts `openDesignDue` after the refused close. It asserts the form of BS6 §4.1 rule 25 that applies:
+
+- **nothing is held**: `assertNoSilentHold(fx.home, p.id, …)` returns no `stage_build` item held `design_pending` or `design_stale`. The helper would also fail on a held item that no open `design_due` names, so the no-silent-stall check is kept;
+- **the session is still open**: the run's `outcome` is null and its `session_state` is `open_idle`, waiting on the owner's next turn.
+
+No test pins whether a `design_due` is raised at this point. The assertions on either side are unchanged: the refused close is 422 `design_check_failed`, and nothing is approved. SEAM.md §536 records this decision.

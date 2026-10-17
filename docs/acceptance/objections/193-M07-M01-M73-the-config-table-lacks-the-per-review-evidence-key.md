@@ -32,3 +32,17 @@ One note for the reader of the key: the review route's body cap (`src/design/evi
 - SEAM.md §522 (the key, its default, "its range not pinned"); §516.
 - D7 A.7 (`design_review_evidence_max_bytes`: "64 MiB per file, 512 MiB per review"; range "1 MiB to 2 GiB per file").
 - BS6 §11.1 (the table's `design_review_evidence_max_bytes` row, pinned by M528 (c)).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The key joins the Verifier's table with the Builder's range** (Verifier, `verify/m6-s45b` from `0619d36`).
+
+`contract/config.json`'s `project` table gains:
+
+```json
+"design_review_evidence_max_review_bytes": { "default": 536870912, "min": 1048576, "max": 17179869184, "unit": "bytes" }
+```
+
+That is the same form as `design_review_evidence_max_bytes`, which has `unit: "bytes"` and no `integer`. SEAM.md §522 left the range open, and the driver accepts the Builder's: 1 MiB to 16 GiB. The `$comment` now says slices 41 to 44 add no key and slice 45 adds this one, and no longer says the per-review bound has no key. SEAM.md §522 now gives the range, and §536 records this decision.
+
+No test pins the Builder's note on the transport cap. A body above the default 512 MiB is refused 413 at the transport, even where a raised key would admit it.

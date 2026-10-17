@@ -38,3 +38,11 @@ The notices are as the case expects; only the three refusals stand in the way. S
 - E158 item 8 (objection 150's decision, second half).
 - D7 §4.2 ("UI requirements: … that a UI stage implements, or whose subsection carries the mark"); §5.6 clause 2.
 - SEAM.md §528, last bullet.
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The observed design names only UI requirements** (Verifier, `verify/m6-s45b` from `0619d36`).
+
+Under objection 150's ruling (E158 item 8), in the conformance stage only requirements marked `**Surface:** ui` are UI requirements of the inventory. R1 to R3 are not, so a screen naming them is refused `DESIGN_UNKNOWN_REQUIREMENT` (D7 §5.6 clause 2). `observedDesign` (`harness/design/retrofit45.mjs`) now gives S1 `requirements: ['R5']`, as the Builder's scratch run did. S2 keeps `['R6']`. The flow `F1` keeps its list, which the check does not read against the inventory. The comment above the line now states the ruling.
+
+The cases mean what they meant: (d) and (e) still expect `DESIGN_CONVENTION_UNKNOWN` and `DESIGN_INTERFACE_SHAPE_UNKNOWN` as notices under `at_alpha`, and as reasons under `before_build`. SEAM.md §528's last bullet now states the ruling, and §536 records this decision.

@@ -50,3 +50,14 @@ And for the operations: count only the D4 kinds (`deploy`, `rollback`, `teardown
 - SEAM.md §522 (the counts), §521 (the shared fixture's names).
 - D7 §3.1, G12 (one-shot runs beside a Designer session); §10.5; D1 §7.3 and D6 §2.1 (a session's workspace and checkpoints through the journal).
 - harness/sessions.mjs `say` (ticks until the turn settles); harness/runs.mjs `waitForIdle`.
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17: option (a) for the check executions, and the D4 kinds for the operations (Verifier, `verify/m6-s45b` from `0619d36`).
+
+- **The build finishes first.** After the first candidate, the shared fixture's `before` now waits for `phaseCompleted(fx, d.ctx, 1, { max: 200 })` and then for `waitForIdle`. No build work is left to dispatch while a case drives a review, so a count that moves inside a review's window is the review's.
+- **"No check run" stays as written.** It counts every `check_executions` row of the home, before and after, now with the build finished.
+- **"No operation" counts only D4 operations.** These are the project's `operations` of `kind` `deploy`, `rollback`, `teardown` or `publish`. The review session also writes `git_worktree`, `git_commit` and `git_ref_update` rows for its workspace and saves. Those go through the git journal, as every session's do (D1 §7.3; D6 §2.1), and are not effects on the build he names.
+- The `design_observation` count is unchanged.
+
+Both (a) cases now take their counts through one helper, `countsOf`. SEAM.md §522's sentence now names the D4 kinds and the finished build, and §536 records this decision.
