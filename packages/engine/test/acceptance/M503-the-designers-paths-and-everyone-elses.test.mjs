@@ -70,6 +70,17 @@ async function refusedDesignerSave(fx, p, steps, { code = 'diff_violation', name
   await closeSession(fx, p.id, run.id, { refuse: true });
 }
 
+// Pantry published, with every launch that has no script of its own (phase
+// 1's check authoring, registered at publication and dispatched beside the
+// Designer under G12, and any repair of it) ending at once without a
+// candidate, so the project's runs settle around each Designer turn
+// (objection 127; SEAM.md §454's pattern, §521). Set before publication, so
+// no launch is ever unscripted.
+async function publishedPantry(fx) {
+  fx.scripted.defaultScript(script.crash());
+  return toPublished(fx);
+}
+
 // A one-shot of `kind` on `p` whose run writes under .surety/design/: failed diff_violation naming the path; nothing integrated.
 async function refusedOneShot(fx, p, kind, steps, path) {
   const item = await addWork(fx.engine, p.id, kind);
@@ -84,20 +95,20 @@ async function refusedOneShot(fx, p, kind, steps, path) {
 describe('M503 the Designer\'s paths and everyone else\'s', () => {
   test('(a) a Designer save touching source, .surety/spec/, architecture/, adrs/, roadmap/, phases/, checks/ or the policy beside its design: refused whole, diff_violation, the refusal the next turn\'s engine entry', async (t) => {
     const fx = await scriptedEngine(t);
-    const { p } = await toPublished(fx);
+    const { p } = await publishedPantry(fx);
     for (const [, path] of FORBIDDEN) await refusedDesignerSave(fx, p, [DESIGN_NOTE, step.write(path, '{"x": 1}\n')], { names: path });
   });
 
   test('(b) a Designer save touching .surety/design/inventory/: refused whole, DESIGN_INVENTORY_MODIFIED', async (t) => {
     const fx = await scriptedEngine(t);
-    const { p } = await toPublished(fx);
+    const { p } = await publishedPantry(fx);
     await refusedDesignerSave(fx, p, [DESIGN_NOTE, step.write(INVENTORY_PATH, '{"inventory_digest": "forged"}\n')], { code: 'DESIGN_INVENTORY_MODIFIED', names: INVENTORY_PATH });
     await refusedDesignerSave(fx, p, [DESIGN_NOTE, step.write('.surety/design/inventory/fixtures/extra.json', '{}\n')], { code: 'DESIGN_INVENTORY_MODIFIED', names: '.surety/design/inventory/fixtures/extra.json' });
   });
 
   test('(d) a Designer symlink under .surety/design/ resolving outside it: judged by where it resolves, refused', async (t) => {
     const fx = await scriptedEngine(t);
-    const { p } = await toPublished(fx);
+    const { p } = await publishedPantry(fx);
     await refusedDesignerSave(fx, p, [DESIGN_NOTE, step.symlink('.surety/design/spec-link.md', '../spec/spec.md')], { names: '.surety/design/spec-link.md' });
   });
 

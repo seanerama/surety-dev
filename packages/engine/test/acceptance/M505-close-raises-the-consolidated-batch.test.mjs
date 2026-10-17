@@ -76,13 +76,42 @@ async function published(fx, { variant = 'base', policy = BEFORE_BUILD, name, cr
   return { p, ctx, v2 };
 }
 // The Designer's one session: the whole design, saved, closed (`close` its body; null leaves it open).
-const design = (fx, p, { criteria = CRITERIA, result = {}, close = {} } = {}) => designerSession(fx, p.id, [{ files: validDesign(p, { criteria }), say: 'Draw Pantry.', result: { done: true, ...result } }], { close });
+// Each save of a Designer session answers 200 (SEAM §483), behind its base
+// too (rebased, G12; SEAM §§492, 521): a refused save fails here, naming why.
+const assertSaved = (s, what) => s.saves.forEach((r, i) => assert.equal(r?.status, 200, `${what}: save ${i + 1} answered 200 (${r?.status} ${r?.text?.slice(0, 400)})`));
+async function design(fx, p, { criteria = CRITERIA, result = {}, close = {} } = {}) {
+  const s = await designerSession(fx, p.id, [{ files: validDesign(p, { criteria }), say: 'Draw Pantry.', result: { done: true, ...result } }], { close });
+  assertSaved(s, 'the Designer\'s session');
+  return s;
+}
 // The batch, once raised.
 const untilBatch = (fx, ctx, { max = 40 } = {}) =>
   pump(fx, ctx, () => {
     const b = batchOf(fx.home, ctx.project);
     return b?.spec_change ? b : undefined;
   }, { what: 'the batch to be raised', max });
+// The batch answered on a settled phase authoring (M505 (i); SEAM.md §521):
+// the phase's check authoring and its protected proposal, which the pump
+// approves as the owner (`ctx.answerKinds`), move the protected version, and
+// a move between the batch's answer and its effect refuses the effect and
+// asks again (D6 §4.4; D1 §4.6), which no case here is about. So a case that
+// answers the batch for its effect first pumps until no check authoring is in
+// flight, no question the pump answers is open, and no effect of the
+// project's other decisions is pending; it then answers the batch open at
+// that moment.
+const AUTHORING_IN_FLIGHT = Object.freeze(['eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying', 'awaiting_decision']);
+function authoringSettled(home, ctx) {
+  const inFlight = count(home, 'work_items', `"project" = ? AND "kind" = 'check_authoring' AND "status" IN (${AUTHORING_IN_FLIGHT.map(() => '?').join(', ')})`, ctx.project, ...AUTHORING_IN_FLIGHT);
+  const asked = rows(home, 'SELECT "kind" FROM "decisions" WHERE "project" = ? AND "status" = \'open\'', ctx.project).filter((d) => ctx.answerKinds.includes(d.kind)).length;
+  const effects = count(home, 'effect_intents', `"project" = ? AND "status" IN ('pending', 'executing') AND "decision" IN (SELECT "id" FROM "decisions" WHERE "kind" NOT IN ('design_approval', 'spec_change'))`, ctx.project);
+  return inFlight === 0 && asked === 0 && effects === 0;
+}
+const settledBatch = (fx, ctx, { max = 40 } = {}) =>
+  pump(fx, ctx, () => {
+    if (!authoringSettled(fx.home, ctx)) return undefined;
+    const b = batchOf(fx.home, ctx.project);
+    return b?.spec_change ? b : undefined;
+  }, { what: 'the phase authoring settled and the batch open', max });
 const approvedRevision = (home, project) => designRevisions(home, project).find((r) => ['approved', 'approved_without_criteria'].includes(r.status)) ?? null;
 const blockersOf = (row, option) => ((row.options ?? []).find((o) => o.key === option)?.blockers ?? []).map((b) => (typeof b === 'string' ? b : JSON.stringify(b)));
 
@@ -137,7 +166,7 @@ describe('M505 close raises the consolidated batch', () => {
       const fx = await scriptedEngine(t);
       const { p, ctx } = await published(fx);
       await design(fx, p);
-      const batch = await untilBatch(fx, ctx);
+      const batch = await settledBatch(fx, ctx);
       const second = first === 'design_approval' ? 'spec_change' : 'design_approval';
       await consume(fx, p.id, batch[first], 'approve');
       await tick(fx.engine, p.id, { rounds: 2 });
@@ -210,7 +239,7 @@ describe('M505 close raises the consolidated batch', () => {
     const batch = await untilBatch(fx, ctx);
     const files = validDesign(p);
     files['.surety/design/design.md'] = '# Pantry: design\n\nA later note.\n';
-    await designerSession(fx, p.id, [{ files: { '.surety/design/design.md': files['.surety/design/design.md'] }, say: 'One more note.' }], { close: null });
+    assertSaved(await designerSession(fx, p.id, [{ files: { '.surety/design/design.md': files['.surety/design/design.md'] }, say: 'One more note.' }], { close: null }), 'the save after the preview');
     for (const kind of ['design_approval', 'spec_change']) {
       const res = await answerWith(fx, p.id, batch[kind], 'approve');
       assert.deepEqual([res.status, [CODES.stale, CODES.invalidated].includes(res.body?.code)], [409, true], `${kind} stale (${res.text})`);
@@ -221,7 +250,7 @@ describe('M505 close raises the consolidated batch', () => {
     const fx = await scriptedEngine(t);
     const { p, ctx, v2 } = await published(fx, { variant: 'late' });
     await design(fx, p);
-    const batch = await untilBatch(fx, ctx);
+    const batch = await settledBatch(fx, ctx);
     const assignments = batch.design_approval.evidence?.human_test_assignments ?? [];
     assert.deepEqual(assignments.map((a) => [a.target, a.requirement, a.phase]).sort(), [['android', v2.humanKeys.android, 2], ['web', v2.humanKeys.web, 2]].sort(), `each human test's proposed phase on the preview (${JSON.stringify(assignments)})`);
     const m = batch.design_approval.manifest ?? {};
@@ -240,7 +269,7 @@ describe('M505 close raises the consolidated batch', () => {
     const fx = await scriptedEngine(t);
     const { p, ctx, v2 } = await published(fx, { variant: 'noAndroidStage' });
     await design(fx, p);
-    const batch = await untilBatch(fx, ctx);
+    const batch = await settledBatch(fx, ctx);
     const android = (batch.design_approval.evidence?.human_test_assignments ?? []).find((a) => a.target === 'android');
     assert.equal(android?.phase ?? null, null, `no phase proposed for android (${JSON.stringify(android)})`);
     assert.ok(typeof android?.reason === 'string' && android.reason.length > 0, 'the preview says why');
@@ -289,7 +318,7 @@ describe('M505 close raises the consolidated batch', () => {
     const extra = [{ title: 'Items sorted by name', statement: 'The list is sorted by name.', criteria: ['Given items b and a, when GET /api/items is requested, then a is listed first.'] }];
     const { p, ctx, v2 } = await published(fx, { criteria, extra });
     await design(fx, p, { criteria });
-    const batch = await untilBatch(fx, ctx);
+    const batch = await settledBatch(fx, ctx);
     await consume(fx, p.id, batch.design_approval, 'approve');
     await consume(fx, p.id, batch.spec_change, 'approve');
     await pump(fx, ctx, () => approvedRevision(fx.home, p.id) ?? undefined, { what: 'the approval\'s effect', max: 10 });
@@ -309,7 +338,7 @@ describe('M505 close raises the consolidated batch', () => {
     await changePolicy(fx.engine, p.id, { design: 'before_build' });
     scriptBuilders(fx, p.id, { phase: 2, numbers: [3] });
     await design(fx, p, { criteria: androidOnly });
-    const batch = await untilBatch(fx, ctx, { max: 60 });
+    const batch = await settledBatch(fx, ctx, { max: 60 });
     const assigned = (batch.design_approval.evidence?.human_test_assignments ?? []).find((a) => a.target === 'web');
     assert.equal(assigned?.phase, 1, `web's human test proposed for phase 1, the phase of its last UI stage, completed (${JSON.stringify(batch.design_approval.evidence?.human_test_assignments)})`);
     const before = {
@@ -330,8 +359,12 @@ describe('M505 close raises the consolidated batch', () => {
     const design_ = await readDesign(fx, p.id);
     for (const target of ['web', 'android']) assert.equal((design_.human_tests ?? []).find((h) => h.target === target)?.status, 'pending', `${target}'s human test pending, never verified`);
     const humanKeys = Object.values(v2.humanKeys);
-    const covering = rows(fx.home, 'SELECT "covers" FROM "checks" WHERE "project" = ?', p.id).filter((c) => humanKeys.some((k) => (c.covers ?? '').includes(`"${k}.`)));
-    assert.deepEqual(covering, [], 'no check covers a human test');
+    // A check's `covers` (D3 A.4) is stored as its `criteria` (criterion ids), its `requirement_ids`, and whole in its `definition` (objection 129).
+    const names = (k, list) => (Array.isArray(list) ? list : []).some((x) => x === k || String(x).startsWith(`${k}.`));
+    const covering = rows(fx.home, 'SELECT "key", "criteria", "requirement_ids", "definition" FROM "checks" WHERE "project" = ?', p.id).filter((c) =>
+      humanKeys.some((k) => names(k, JSON.parse(c.criteria)) || names(k, JSON.parse(c.requirement_ids)) || names(k, JSON.parse(c.definition)?.covers?.criteria)),
+    );
+    assert.deepEqual(covering.map((c) => c.key), [], 'no check covers a human test');
     assert.equal(count(fx.home, 'acceptance_scopes'), before.scopes, 'no acceptance scope');
     assert.equal(count(fx.home, 'gate_evaluations', '"project" = ? AND "phase_plan" = ?', p.id, phase1.id), before.evaluations, 'no gate of the completed phase re-evaluated');
     assert.equal(rows(fx.home, 'SELECT s.* FROM "signoffs" s JOIN "candidates" k ON k."id" = s."candidate" WHERE k."project" = ?', p.id).length, before.signoffs, 'no sign-off');
