@@ -28,6 +28,16 @@
 //     records no `asset_version_changed` obligation;
 // (i) a retried approval (the owner's answer sent again, and a restart
 //     after it) duplicates neither the event nor the work.
+// Each approval's own set (E162 item 4 read strictly; SEAM.md §547), through
+// GET …/design and the event: every approved revision in `revisions` carries
+// the set its approval left effective (`effective_assets`, each entry
+// {slot, variant, slot_version, source, digest}) and its
+// `effective_assets_digest`, the same digest on that revision's one
+// `design.approved`; the top-level `effective_assets_digest` is the in-force
+// revision's. After two approvals in sequence both sets stay as recorded; an
+// approval changing nothing records the same set and digest (placeholders
+// and the unchanged logo included); a retry and a restart record nothing
+// twice.
 // The export of an approved revision is objection 141's (not asserted here).
 
 import assert from 'node:assert/strict';
@@ -126,6 +136,30 @@ function assertNothingMoved(fx, project, revision, obligationsBefore, how) {
   assert.deepEqual(assetUpdatesOf(fx, project, revision).map((w) => w.id), [], `${how}: no asset_updated work scheduled`);
   assert.equal(assetObligations(fx, project).length, obligationsBefore, `${how}: no asset_version_changed obligation recorded`);
 }
+// E162 item 4 read strictly: the set the approval of `revision` recorded, read through GET …/design
+// (the revision's `effective_assets` and `effective_assets_digest`) and its one `design.approved`
+// (the same digest). Entries compared as tuples; the digest is opaque (its formula is not pinned).
+async function recordedSet(fx, project, revision, how) {
+  const design = await readDesign(fx, project);
+  const rev = (design.revisions ?? []).find((r) => r.id === revision);
+  assert.ok(rev, `${how}: revision ${revision} in GET …/design revisions (${JSON.stringify((design.revisions ?? []).map((r) => r.id))})`);
+  assert.ok(Array.isArray(rev.effective_assets) && rev.effective_assets.length > 0, `${how}: the revision's effective_assets recorded (${JSON.stringify(rev.effective_assets)})`);
+  assert.match(String(rev.effective_assets_digest), /^[0-9a-f]{64}$/, `${how}: the revision's effective_assets_digest`);
+  for (const e of rev.effective_assets) {
+    assert.deepEqual(Object.keys(e).sort(), ['digest', 'slot', 'slot_version', 'source', 'variant'], `${how}: an entry is {slot, variant, slot_version, source, digest} (${JSON.stringify(e)})`);
+    assert.ok(['approved', 'placeholder'].includes(e.source) && Number.isInteger(e.slot_version) && /^[0-9a-f]{64}$/.test(e.digest), `${how}: ${e.slot}/${e.variant} its slot_version, source and digest (${JSON.stringify(e)})`);
+  }
+  const events = designEvents(fx.home, 'design.approved', project).filter((e) => e.subject?.design_revision === revision);
+  assert.equal(events.length, 1, `${how}: one design.approved for the revision (${events.length})`);
+  assert.equal(events[0].payload?.effective_assets_digest, rev.effective_assets_digest, `${how}: design.approved carries the revision's effective_assets_digest`);
+  return { tuples: tuples(rev.effective_assets), digest: rev.effective_assets_digest, design };
+}
+// The recorded set of `revision` exactly as `was`: nothing re-recorded, nothing lost.
+async function assertSetKept(fx, project, revision, was, how) {
+  const now = await recordedSet(fx, project, revision, how);
+  assert.deepEqual(now.tuples, was.tuples, `${how}: the revision's recorded set as it was`);
+  assert.equal(now.digest, was.digest, `${how}: the revision's digest as it was`);
+}
 // (i): the owner's answer to an approval sent again: refused as answered (or accepted as the same), changing nothing.
 async function retryApproval(fx, project, revision, extra = {}) {
   const row = decisionsOfKind(fx.home, project, 'design_approval').filter((d) => d.subject_id === revision && d.status !== 'open').at(-1);
@@ -159,6 +193,13 @@ describe('M526 the effective asset set', () => {
     // (g) the approval's full set recorded, the placeholders of the other slots included.
     assertOneRowPerSelected(fx, p.id, v1);
     assert.equal(approvedEventsOf(fx, p.id, v1.id).length, 1, 'version 1 moved the logo: one design.assets_approved');
+    // E162 item 4 read strictly: version 1's own set, through the read and the event.
+    const set1 = await recordedSet(fx, p.id, v1.id, 'version 1');
+    assert.deepEqual(set1.tuples, tuples(effectiveAssets(fx.home, p.id)), 'version 1 recorded the set its approval left effective, every row');
+    assert.deepEqual(set1.tuples, tuples(set1.design.effective_assets ?? []), 'version 1\'s recorded set is the set GET …/design shows effective');
+    assert.ok(set1.tuples.includes(`logo full approved ${logo1.slot_version} ${LOGO_A}`), `version 1's set holds logo A (${JSON.stringify(set1.tuples)})`);
+    assert.ok(set1.tuples.some((x) => x.split(' ')[2] === 'placeholder'), `version 1's set holds the other slots' placeholders (${JSON.stringify(set1.tuples)})`);
+    assert.equal(set1.design.effective_assets_digest, set1.digest, 'the current set\'s digest is version 1\'s');
     await whileHeld(fx, ctx, () => designRevisions(fx.home, p.id).find((r) => r.id === v1.id && r.ready_at) ?? undefined, { what: 'version 1 ready (its criteria\'s correction applied)', max: 60 });
     assert.ok(await fx.scripted.waitForHolding({ work_item: api.id }, 'until-restart'), 'the API stage\'s Builder waits at its hold');
     for (const n of [2, 3]) assert.deepEqual(fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }), [], `no stage ${n} Builder yet`);
@@ -212,8 +253,18 @@ describe('M526 the effective asset set', () => {
     // (g), (h) version 2 changes no effective version: its set recorded whole and unchanged; no event, no work.
     assert.deepEqual(tuples(effectiveAssets(fx.home, p.id)), tuples(effBeforeV2), '(g) the set after version 2: every row as before, the unchanged logo A and the placeholders included');
     assertNothingMoved(fx, p.id, v2.id, obligationsBeforeV2, '(h) version 2 (logo B held)');
+    // E162 item 4: version 2, changing nothing, records its own set: the same entries (logo A unchanged,
+    // the placeholders) and the same digest; version 1's set still identifiable as recorded.
+    const set2 = await recordedSet(fx, p.id, v2.id, 'version 2 (logo B held)');
+    assert.deepEqual(set2.tuples, set1.tuples, 'version 2 recorded its set: every entry as version 1 left it, logo A and the placeholders included');
+    assert.equal(set2.digest, set1.digest, 'an approval changing nothing records the same digest');
+    assert.ok(!set2.tuples.some((x) => x.includes(LOGO_B)), 'version 2\'s set does not hold the held logo B');
+    await assertSetKept(fx, p.id, v1.id, set1, 'version 1 after version 2\'s approval');
+    assert.equal(set2.design.effective_assets_digest, set2.digest, 'the current set\'s digest is version 2\'s');
     await retryApproval(fx, p.id, v2.id, { assets_held: ['logo'] });
     assertNothingMoved(fx, p.id, v2.id, obligationsBeforeV2, '(i) version 2 retried');
+    await assertSetKept(fx, p.id, v2.id, set2, '(i) version 2 retried');
+    await assertSetKept(fx, p.id, v1.id, set1, '(i) version 1 after version 2 retried');
     const held = effectiveAssets(fx.home, p.id).find((e) => e.slot === 'logo' && e.variant === 'full');
     assert.deepEqual([held.source, held.digest, held.slot_version], ['approved', LOGO_A, logo1.slot_version], `logo B held: logo A stays effective, by slot@version and digest (${JSON.stringify(held)})`);
     assertOneRowPerSelected(fx, p.id, v2);
@@ -228,6 +279,8 @@ describe('M526 the effective asset set', () => {
     fx.scripted.release(api.id, 'until-restart');
     await fx.start();
     assert.deepEqual(tuples(effectiveAssets(fx.home, p.id)), tuples(effBeforeV2), '(g) the recorded set the same across the restart');
+    await assertSetKept(fx, p.id, v1.id, set1, 'version 1 across the restart');
+    await assertSetKept(fx, p.id, v2.id, set2, 'version 2 across the restart');
     await resumeWork(fx.engine, p.id, api.id);
     await pump(fx, ctx, () => ([2, 3].every((n) => fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n).id }).length > 0) ? true : undefined), { what: 'both UI Builders launched after the restart', max: 80 });
     for (const n of [2, 3]) {
@@ -264,6 +317,16 @@ describe('M526 the effective asset set', () => {
     assert.equal(approvedEventsOf(fx, p.id, assetOnly).length, 1, 'one design.assets_approved for the asset-only approval');
     const fixes = assetUpdatesOf(fx, p.id, assetOnly);
     assert.equal(fixes.length, 1, `one asset_updated item (${JSON.stringify(fixes.map((w) => [w.id, w.trigger_id]))})`);
+    // E162 item 4: the asset-only approval's own set: logo B, every other entry as before; a new digest;
+    // both earlier revisions' sets still identifiable as recorded.
+    const set3 = await recordedSet(fx, p.id, assetOnly, 'the asset-only approval');
+    assert.deepEqual(set3.tuples, tuples(effectiveAssets(fx.home, p.id)), 'the asset-only approval recorded the set it left effective');
+    assert.deepEqual(set3.tuples.filter((x) => x.startsWith('logo full ')), [`logo full approved ${now.slot_version} ${LOGO_B}`], 'its set holds logo B');
+    assert.deepEqual(set3.tuples.filter((x) => !x.startsWith('logo ')), set1.tuples.filter((x) => !x.startsWith('logo ')), 'its set keeps every other entry, the placeholders included');
+    assert.notEqual(set3.digest, set1.digest, 'a changed set records a different digest');
+    await assertSetKept(fx, p.id, v1.id, set1, 'version 1 after the asset-only approval');
+    await assertSetKept(fx, p.id, v2.id, set2, 'version 2 after the asset-only approval');
+    assert.equal(set3.design.effective_assets_digest, set3.digest, 'the current set\'s digest is the asset-only approval\'s');
     const obligations = assetObligations(fx, p.id).length;
     await retryApproval(fx, p.id, assetOnly);
     await tick(fx.engine, p.id, { rounds: 2 });
@@ -274,6 +337,9 @@ describe('M526 the effective asset set', () => {
     assert.equal(approvedEventsOf(fx, p.id, assetOnly).length, 1, '(i) the retried approval and a restart: still one design.assets_approved');
     assert.deepEqual(assetUpdatesOf(fx, p.id, assetOnly).map((w) => w.id), fixes.map((w) => w.id), '(i) still the one asset_updated item');
     assert.equal(assetObligations(fx, p.id).length, obligations, '(i) no asset_version_changed obligation recorded again');
+    await assertSetKept(fx, p.id, assetOnly, set3, '(i) the asset-only approval retried and restarted');
+    await assertSetKept(fx, p.id, v1.id, set1, '(i) version 1 at the end');
+    await assertSetKept(fx, p.id, v2.id, set2, '(i) version 2 at the end');
   });
 
   test('(b), (c) a design approved with its logo held and no logo ever approved: the placeholder in every package, check input and projection', async (t) => {
@@ -296,8 +362,15 @@ describe('M526 the effective asset set', () => {
     const effAfter = effectiveAssets(fx.home, p.id);
     assert.deepEqual(tuples(effAfter), tuples(effAtDerivation.filter((e) => selected.has(`${e.slot}/${e.variant}`))), '(g) the set after the approval: every selected placeholder row recorded, unchanged');
     assertNothingMoved(fx, p.id, v1.id, 0, '(h) the first approval, the logo held');
+    // E162 item 4: the approval changing nothing records its set, every selected placeholder.
+    const set1 = await recordedSet(fx, p.id, v1.id, 'the first approval, the logo held');
+    assert.deepEqual(set1.tuples, tuples(effAfter), 'the first approval recorded its set: every selected placeholder');
+    assert.ok(set1.tuples.every((x) => x.split(' ')[2] === 'placeholder'), `its set is placeholders only (${JSON.stringify(set1.tuples)})`);
+    assert.ok(set1.tuples.includes(`logo full placeholder ${slotOf(placeholders, 'logo').slot_version} ${ph.digest}`), 'its set holds the logo\'s placeholder');
+    assert.equal(set1.design.effective_assets_digest, set1.digest, 'the current set\'s digest is the first approval\'s');
     await retryApproval(fx, p.id, v1.id, { assets_held: ['logo'] });
     assertNothingMoved(fx, p.id, v1.id, 0, '(i) the first approval retried');
+    await assertSetKept(fx, p.id, v1.id, set1, '(i) the first approval retried');
     const eff = effectiveAssets(fx.home, p.id).find((e) => e.slot === 'logo' && e.variant === 'full');
     assert.deepEqual([eff?.source, eff?.slot_version, eff?.digest], ['placeholder', slotOf(placeholders, 'logo').slot_version, ph.digest], `the placeholder effective (${JSON.stringify(eff)})`);
     assertOneRowPerSelected(fx, p.id, v1);
@@ -318,5 +391,6 @@ describe('M526 the effective asset set', () => {
     await fx.engine.kill();
     await fx.start();
     assert.deepEqual(tuples(effectiveAssets(fx.home, p.id)), tuples(effAfter), '(g) the recorded set the same across a restart');
+    await assertSetKept(fx, p.id, v1.id, set1, 'the first approval\'s set across the build and a restart');
   });
 });
