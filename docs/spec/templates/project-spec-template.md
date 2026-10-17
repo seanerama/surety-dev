@@ -13,6 +13,7 @@ The engine reads this document at every save, but only in the exact forms this t
 | Each acceptance criterion `R<n>.<m>` | A list item beginning with the key; the rest of the item is the criterion's text, also read. It is the statement one executable check must establish. The Verifier writes that check under `.surety/checks/`, naming the criterion and the requirement it covers; the gate counts the check's recorded execution, never a role's word. |
 | Sensitive areas on a requirement | The sensitivity floor (foundations section 5.6): the area's required checks apply whatever the tier. Values are from the closed list, by identifier (section 4). |
 | `**Human test.**` and `**Descriptive.**` | The marks for a requirement with no criteria. Without criteria or a mark the requirement is uncertain, cannot be validated and blocks approval; `**Human test.**` says the owner accepts a human test for it; `**Descriptive.**` is retrofit's mark for a requirement described from the code that has no criteria yet. |
+| `**Targets:**`, `**Cross-platform:**` and `**Surface:** ui` | The platforms the product is for (`web`, `android`, `ios`, `macos`, `windows`, `linux`), a product decision the approval fixes; whether they share branding and workflows; and which requirements are user-interface requirements, optionally for some targets only. With design on and a `ui` module, a spec without `**Targets:**` cannot be planned (D7 §4.1, G3). The Architect chooses the UI technology beneath each target, never the targets. |
 | Modules and their paths | The module map the Architect refines; sensitive areas on a module gate triage. |
 | Protected paths | Paths only the protected-check workflow may change (foundations section 5.3). |
 | Environments | The targets a deployment gate can name, each with the fields the deployment adapter needs (D4). |
@@ -31,6 +32,8 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 **Status:** draft | approved *[the engine records who approved it and when]*
 **Tier:** T2 *[T1 prototype, T2 standard, T3 critical; see foundations section 5.7. Pick the tier for the project as a whole; sensitive areas raise the floor regardless]*
 **Owner:** [name]
+**Targets:** web *[one or more of `web`, `android`, `ios`, `macos`, `windows`, `linux`, comma-separated; needed when the product has a user interface; the engine assumes none]*
+**Cross-platform:** yes *[optional; only with two or more targets: they share branding and workflows, and every platform-specific difference is stated in the design. Delete the line otherwise]*
 
 ## 1. Purpose
 
@@ -54,7 +57,8 @@ Copy everything below this line into `.surety/spec/spec.md` of the project and f
 - *the first paragraph under the heading is the requirement's **statement**: what must be true, written as behaviour someone can observe, not a design;*
 - *the line `**Sensitive areas:**` names the areas it touches, comma-separated, by identifier from the closed list of foundations section 5.6: `authentication`, `authorization`, `payments_financial_data` (payments and financial data), `personal_data`, `secrets_credentials` (secrets and credential handling), `data_migrations_destructive` (data migrations and destructive data operations), `irreversible_external_actions`. `none` is a valid value and must be stated;*
 - *each acceptance criterion is a list item beginning with its key `R<n>.<m>`, the rest of the item being the criterion: a single checkable statement that one check can establish;*
-- *a requirement with no criteria carries, on a line of its own, the mark `**Human test.**` (the owner accepts a human test for it; say in the prose after the mark what a person does and sees) or, in retrofit only, `**Descriptive.**` (described from the code, no criteria yet; see section 12). Without criteria or a mark the engine reports the requirement uncertain and blocks approval.*
+- *a requirement with no criteria carries, on a line of its own, the mark `**Human test.**` (the owner accepts a human test for it; say in the prose after the mark what a person does and sees) or, in retrofit only, `**Descriptive.**` (described from the code, no criteria yet; see section 12). Without criteria or a mark the engine reports the requirement uncertain and blocks approval;*
+- *a requirement whose behaviour the user sees on a screen may carry, on a line of its own, `**Surface:** ui`, or `**Surface:** ui (android, ios)` to name only some of the header's targets. It makes the requirement a user-interface requirement before any plan exists (D7 §4.2, G3); a requirement a UI stage implements is one anyway.*
 
 *The rationale and any other prose are for people and are not read.]*
 
