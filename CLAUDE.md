@@ -1,8 +1,8 @@
 # Surety
 
-Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. M1 (the engine kernel on a scripted adapter), M2 (Claude Code as a real backend under D2's isolation), M3 (the check runner of D3) and M4 (deployment to a real Alpha environment under D4) are accepted; M5, idea to Alpha under D6 (the Vision, Spec Writer and Architect sessions, the governed specification, phased planning, the engine driving a whole build, and retrofit), is being built now.
+Surety is an evidence-gated delivery engine for AI coding agents. This repository is its development home. M1 (the engine kernel on a scripted adapter), M2 (Claude Code as a real backend under D2's isolation), M3 (the check runner of D3), M4 (deployment to a real Alpha environment under D4) and M5 (idea to Alpha under D6: the Vision, Spec Writer and Architect sessions, the governed specification, phased planning, the engine driving a whole build, and retrofit) are accepted (M5: E154). M6 is next; its designs are D7, the Designer, and D8, portfolio and idea intake, and its build spec is not yet written.
 
-**Read `docs/spec/M5-build-spec.md` before changing anything** (M1 to M4 are accepted; their specs, `docs/spec/M1-build-spec.md` to `docs/spec/M4-build-spec.md`, still govern what they built). It says what is being built, which design documents govern, and who may write what.
+**Read `docs/spec/M5-build-spec.md` before changing anything** until M6's build spec exists (M1 to M5 are accepted; their specs, `docs/spec/M1-build-spec.md` to `docs/spec/M5-build-spec.md`, still govern what they built). It says what is being built, which design documents govern, and who may write what.
 
 ## Your role
 
