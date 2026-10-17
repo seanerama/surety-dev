@@ -257,7 +257,11 @@ test('S1: a later deferral asks nothing until its time, and is ended at once by 
 
 test('S9: a review\'s design is blocked UNCONFIRMED until its verdicts are answered, REJECTED once rejected', (t) => {
   const { db, at } = scratch(t);
-  db.prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "run", "trigger", "subject", "verdicts") VALUES ('drv_1', ?, ?, 'run_r', 'owner_command', '{}', '[]')`).run(at, P);
+  // A review with no verdict asks the owner nothing and holds nothing (slice 45).
+  db.prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "run", "trigger", "subject", "verdicts") VALUES ('drv_0', ?, ?, 'run_r', 'owner_command', '{}', '[]')`).run(at, P);
+  assert.deepEqual(reviewVerdictBlockers(db, 'run_r'), []);
+  const verdicts = JSON.stringify([{ target: 'android', screen: 'S2', verdict: 'matches', status: 'proposed', evidence: [], deltas: [] }]);
+  db.prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "run", "trigger", "subject", "verdicts") VALUES ('drv_1', ?, ?, 'run_r', 'owner_command', '{}', ?)`).run(at, P, verdicts);
   assert.deepEqual(reviewVerdictBlockers(db, 'run_r'), ['DESIGN_VERDICTS_UNCONFIRMED:drv_1']);
   db.prepare(
     `INSERT INTO "decisions" ("id", "created_at", "project", "seq", "kind", "subject_type", "subject_id", "semantic_generation", "scope", "question", "options", "dependency_manifest", "transition_schema_version", "preview_hash", "evidence", "blocked_while_open", "raised_at", "status", "answer")
