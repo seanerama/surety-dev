@@ -644,12 +644,12 @@ export function readWork(db: Db, args: { project: string }) {
 
 // An item's hold as it stands (work.ts setHold): its reason, since when,
 // and the results it waits on; null when it is not held.
-function heldOf(w: WorkRow): { reason: string; since: string | null; waits_on?: unknown[] } | null {
+function heldOf(w: WorkRow): { reason: string; since: string | null; pending?: unknown[] } | null {
   const row = w as WorkRow & { held?: string | null; held_intervals?: string | null };
   if (!row.held) return null;
-  const intervals = parseJson<{ from: string; to?: string; reason: string; results?: unknown[] }[]>(row.held_intervals ?? null) ?? [];
+  const intervals = parseJson<{ from: string; to?: string; reason: string; pending?: unknown[] }[]>(row.held_intervals ?? null) ?? [];
   const open = intervals.length > 0 && intervals[intervals.length - 1]!.to === undefined ? intervals[intervals.length - 1]! : null;
-  return { reason: row.held, since: open?.from ?? null, ...(open?.results ? { waits_on: open.results } : {}) };
+  return { reason: row.held, since: open?.from ?? null, ...(open?.pending ? { pending: open.pending } : {}) };
 }
 
 // The project's work held now (M543 (f)): each held item with its reason

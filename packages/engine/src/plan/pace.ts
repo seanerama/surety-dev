@@ -79,7 +79,7 @@ interface DecisionRow {
   blocked_while_open: string;
 }
 
-const HOLD_REASONS = ['resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy'] as const;
+const HOLD_REASONS = ['resource_envelope', 'chain_boundary', 'depends_on', 'authoring_readiness', 'open_decision', 'session_busy', 'prerequisite_results'] as const;
 
 // The work items a decision's `blocked_while_open` names; null when it
 // cannot be read (never "blocks nothing").
@@ -92,19 +92,15 @@ function blockedItems(d: DecisionRow): string[] | null {
 
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
-// A session's model per turn (M542 (b)), given only where its turns
-// observed different models (or one observed none): every turn of the run,
-// in order, with the model its ledger rows recorded or unknown.
-function turnModels(db: Database, run: string): { models_by_turn?: { turn: string; model: Figure<string> }[] } {
-  const turns = db.prepare('SELECT "id" FROM "turns" WHERE "run" = ? ORDER BY "number", rowid').all(run) as { id: string }[];
-  if (turns.length < 2) return {};
-  const per = turns.map((t) => {
-    const rows = db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "turn" = ? AND "model_observed" IS NOT NULL ORDER BY rowid').all(t.id) as { model_observed: string }[];
+// A session's model per turn (M542 (b)): every turn of the run in order,
+// by its number, with the model its ledger rows recorded or unknown.
+function turnModels(db: Database, run: string): { turn: number; model: Figure<string> }[] {
+  const turns = db.prepare('SELECT "id", "number" FROM "turns" WHERE "run" = ? ORDER BY "number", rowid').all(run) as { id: string; number: number }[];
+  return turns.map((t) => {
+    const rows = db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "turn" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL ORDER BY rowid').all(t.id) as { model_observed: string }[];
     const models = [...new Set(rows.flatMap((r) => r.model_observed.split(',').map((m) => m.trim()).filter((m) => m.length > 0)))];
-    return { turn: t.id, model: models.length === 0 ? unknown('no invocation of the turn recorded an observed model') : models.join(',') };
+    return { turn: t.number, model: models.length === 0 ? unknown('no invocation of the turn recorded an observed model') : models.join(',') };
   });
-  const distinct = new Set(per.map((p) => (typeof p.model === 'string' ? p.model : '\u0000unknown')));
-  return distinct.size > 1 ? { models_by_turn: per } : {};
 }
 
 export function paceView(db: Database, args: { project: string }) {
@@ -267,9 +263,9 @@ export function paceView(db: Database, args: { project: string }) {
       // The model the run observed, as its ledger rows recorded it (M542):
       // unknown with its reason, never the requested model in its place.
       model: r.model_observed ?? unknown(ledger.length === 0 ? 'the run has no ledger row' : 'no invocation of the run recorded an observed model'),
-      // A session's turns, where what they observed differs (M542 (b)):
-      // each turn's model, or unknown for a turn that observed none.
-      ...turnModels(db, id),
+      // A session run's turns (M542 (b); SEAM.md §474): each turn's model
+      // by its number, or unknown for a turn that observed none.
+      ...(r.kind === 'session' ? { model_per_turn: turnModels(db, id) } : {}),
       outcome: r.outcome ?? unknown('the run has not ended'),
       reason_class: r.reason_class ?? unknown('the run has not ended'),
       repair_ordinal: n,

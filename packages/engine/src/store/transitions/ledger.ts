@@ -316,7 +316,7 @@ export function chargeInvocation(
 // a comma as a ledger row joins an invocation's own. null while none of
 // them observed one: unknown, never the requested model in its place.
 export function noteRunModel(tx: Tx, run: string): void {
-  const rows = tx.db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "model_observed" IS NOT NULL ORDER BY rowid').all(run) as { model_observed: string }[];
+  const rows = tx.db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL AND "model_observed" IS NOT NULL ORDER BY rowid').all(run) as { model_observed: string }[];
   const models = [...new Set(rows.flatMap((r) => r.model_observed.split(',').map((m) => m.trim()).filter((m) => m.length > 0)))];
   tx.db.prepare('UPDATE "runs" SET "model_observed" = ? WHERE "id" = ?').run(models.length === 0 ? null : models.join(','), run);
 }
@@ -431,7 +431,6 @@ export function appendCorrection(tx: Tx, args: { invocation: unknown; correction
       args.correction_seq,
     );
   tx.emit('ledger.correction', { project: original.project, run: original.run, invocation: original.invocation }, { ledger_row: id, corrects: original.id, correction_seq: args.correction_seq });
-  if (typeof raw.model === 'string') noteRunModel(tx, original.run);
   return { id, created: true };
 }
 

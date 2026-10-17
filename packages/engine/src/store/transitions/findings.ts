@@ -268,11 +268,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // finding's disposition is unchanged.
       const standing = standingOwnerAnswer(tx.db, f, d);
       if (standing !== null) {
-        tx.emit(
-          'finding.disposition_proposed',
-          { project, finding: f.id, run: run.id },
-          { disposition: d.disposition, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null, question: null, standing_answer: standing },
-        );
+        tx.emit('finding.proposal_standing', { project, finding: f.id, run: run.id }, { disposition: d.disposition, decision: standing.decision, standing_answer: standing });
         continue;
       }
       // Beyond a Reviewer's authority (F §6.2): the human owner decides.

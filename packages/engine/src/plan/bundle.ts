@@ -296,7 +296,7 @@ export function phaseLacking(db: Db, project: string): Record<number, PhaseLack[
 // built. null when nothing is pending.
 export interface PendingPrerequisite {
   phase: number;
-  check: string;
+  key: string;
   candidate: string;
   execution: string;
   status: string;
@@ -310,7 +310,7 @@ export function pendingPrerequisites(db: Db, project: string, dependsOn: readonl
   for (const d of dependsOn) {
     for (const l of lacking[d] ?? []) {
       if (l.check === null || l.candidate === null || l.execution === null) return null;
-      pending.push({ phase: d, check: l.check, candidate: l.candidate, execution: l.execution.id, status: l.execution.status });
+      pending.push({ phase: d, key: l.check, candidate: l.candidate, execution: l.execution.id, status: l.execution.status });
     }
   }
   return pending.length > 0 ? pending : null;

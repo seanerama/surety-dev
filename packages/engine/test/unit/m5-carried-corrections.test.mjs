@@ -109,7 +109,7 @@ test('M542 (a), (c), (d): a one-shot run takes the model its ledger row observed
   assert.deepEqual(paceRun(db, 'run_none').model, { unknown: 'the run has no ledger row' });
 });
 
-test('M542 (b): a session run takes the models its turns observed; per turn only where they differ, a turn with none unknown', (t) => {
+test('M542 (b): a session run takes the models its turns observed, each once in first-observed order; model_per_turn by turn number, a turn with none unknown', (t) => {
   const db = scratch(t);
   const turn = (id, run, n) =>
     db.prepare(`INSERT INTO turns (id, created_at, project, run, number, invocation, domain, started_at) VALUES (?, ?, 'prj_1', ?, ?, ?, 'd', ?)`).run(id, AT, run, n, `inv_${id}`, AT);
@@ -119,7 +119,7 @@ test('M542 (b): a session run takes the models its turns observed; per turn only
   charge(db, 'run_s', 'inv_t1', [{ input_tokens: 1, model: 'm-x' }], 't1');
   charge(db, 'run_s', 'inv_t2', [{ input_tokens: 1, model: 'm-x' }], 't2');
   assert.equal(modelOf(db, 'run_s'), 'm-x');
-  assert.equal(paceRun(db, 'run_s').models_by_turn, undefined, 'every turn observed the same model: no per-turn figure');
+  assert.deepEqual(paceRun(db, 'run_s').model_per_turn, [{ turn: 1, model: 'm-x' }, { turn: 2, model: 'm-x' }]);
 
   runRow(db, 'run_d', { role: 'architect', kind: 'session' });
   turn('u1', 'run_d', 1);
@@ -129,10 +129,10 @@ test('M542 (b): a session run takes the models its turns observed; per turn only
   charge(db, 'run_d', 'inv_u2', [{ input_tokens: 1, model: 'm-y' }], 'u2');
   charge(db, 'run_d', 'inv_u3', [{ input_tokens: 1 }], 'u3');
   assert.equal(modelOf(db, 'run_d'), 'm-x,m-y', 'each model once, in the order first observed');
-  assert.deepEqual(paceRun(db, 'run_d').models_by_turn, [
-    { turn: 'u1', model: 'm-x' },
-    { turn: 'u2', model: 'm-y' },
-    { turn: 'u3', model: { unknown: 'no invocation of the turn recorded an observed model' } },
+  assert.deepEqual(paceRun(db, 'run_d').model_per_turn, [
+    { turn: 1, model: 'm-x' },
+    { turn: 2, model: 'm-y' },
+    { turn: 3, model: { unknown: 'no invocation of the turn recorded an observed model' } },
   ]);
 });
 
@@ -252,20 +252,20 @@ test('M543 (a), (f): a replan whose prerequisite results are queued on the newes
   assert.equal(dispatchBlocker(db, replan(), { check: false }), null);
   const [x] = register();
   const pending = pendingPrerequisites(db, 'prj_1', [1]);
-  assert.deepEqual(pending, [{ phase: 1, check: 'acc', candidate: 'cand_2', execution: x.id, status: 'queued' }]);
+  assert.deepEqual(pending, [{ phase: 1, key: 'acc', candidate: 'cand_2', execution: x.id, status: 'queued' }]);
   const blocker = dispatchBlocker(db, replan(), { check: false });
   assert.ok(blocker.startsWith(PREREQUISITES_PENDING), blocker);
-  assert.equal(holdReasonOf(blocker), 'depends_on');
+  assert.equal(holdReasonOf(blocker), 'prerequisite_results');
   transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
   const held = replan();
-  assert.deepEqual([held.status, held.held, held.repair_attempts], ['eligible', 'depends_on', 0]);
+  assert.deepEqual([held.status, held.held, held.repair_attempts], ['eligible', 'prerequisite_results', 0]);
   const [interval] = JSON.parse(held.held_intervals);
-  assert.deepEqual(interval.results, pending, 'the interval names the results it waits on');
+  assert.deepEqual(interval.pending, pending, 'the interval names the results it waits on');
   assert.equal(interval.to, undefined);
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'blocker'`).get().n, 0, 'no blocker raised');
   const listed = readWork(db, { project: 'prj_1' }).work_items.find((w) => w.id === 'wi_replan');
-  assert.deepEqual(listed.held, { reason: 'depends_on', since: interval.from, waits_on: pending });
-  assert.deepEqual(readProject(db, { project: 'prj_1' }).project.held_work, [{ work_item: 'wi_replan', kind: 'replan', reason: 'depends_on', since: interval.from, waits_on: pending }]);
+  assert.deepEqual(listed.held, { reason: 'prerequisite_results', since: interval.from, pending });
+  assert.deepEqual(readProject(db, { project: 'prj_1' }).project.held_work, [{ work_item: 'wi_replan', kind: 'replan', reason: 'prerequisite_results', since: interval.from, pending }]);
   // (e) the hold is read from the store: read again, as after a restart, it continues, one interval.
   transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
   assert.equal(JSON.parse(replan().held_intervals).length, 1);
@@ -276,7 +276,7 @@ test('M543 (b): recorded passed, the replan is released; recorded failed, it is 
     const { db, replan, register, result } = phased(t);
     register();
     transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
-    assert.equal(replan().held, 'depends_on');
+    assert.equal(replan().held, 'prerequisite_results');
     result(exit);
     assert.equal(pendingPrerequisites(db, 'prj_1', [1]), null, `exit ${exit}: nothing pending`);
     assert.equal(dispatchBlocker(db, replan(), { check: false }), null, `exit ${exit}: dispatchable`);
@@ -370,10 +370,11 @@ test("M546 (a): a Reviewer's accept on a finding the owner accepted raises no qu
   const run = review([{ finding: 'fnd_1', disposition: 'accept' }]);
   assert.deepEqual(questions(), [], 'no finding_disposition question');
   assert.deepEqual([finding().status, finding().disposition, finding().disposition_authority, finding().proposed_disposition], ['dispositioned', 'accept', 'human', null]);
-  const ev = db.prepare(`SELECT * FROM events WHERE type = 'finding.disposition_proposed'`).get();
+  const ev = db.prepare(`SELECT * FROM events WHERE type = 'finding.proposal_standing'`).get();
   assert.equal(JSON.parse(ev.subject).run, run);
   const payload = JSON.parse(ev.payload);
-  assert.equal(payload.question, null);
+  assert.equal(payload.disposition, 'accept');
+  assert.equal(payload.decision, null, 'the fixture set the answer in the store: no decision gave it');
   assert.deepEqual([payload.standing_answer.disposition, payload.standing_answer.authority], ['accept', 'human']);
 });
 
@@ -385,5 +386,5 @@ test('M546 (b), (c): another disposition than the owner\'s, or one on a finding 
   db.prepare(`UPDATE findings SET status = 'dispositioned', disposition = 'defer', disposition_authority = 'human', disposition_by = 'human', disposition_at = ?, proposed_disposition = NULL WHERE id = 'fnd_1'`).run(AT);
   review([{ finding: 'fnd_1', disposition: 'accept' }]);
   assert.equal(questions().length, 2, '(b) another disposition: asked');
-  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'finding.disposition_proposed'`).get().n, 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'finding.proposal_standing'`).get().n, 0);
 });

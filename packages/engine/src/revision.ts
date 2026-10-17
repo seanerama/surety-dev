@@ -10,6 +10,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { seamEngineRevisionUnread } from './testing/seam.js';
+
 export type EngineRevision = { revision: string } | { unknown: string };
 
 const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -78,6 +80,12 @@ let cached: EngineRevision | null = null;
 // engine's start (a later checkout in the same tree does not change what
 // this engine was started from).
 export function engineRevision(): EngineRevision {
-  if (cached === null) cached = readRevision(dirname(fileURLToPath(import.meta.url)));
+  if (cached === null) {
+    // `--harness-engine-revision-unread` (SEAM.md §474): read as an engine
+    // built outside any repository would read it.
+    cached = seamEngineRevisionUnread()
+      ? { unknown: 'the engine was started with its source revision unreadable (--harness-engine-revision-unread)' }
+      : readRevision(dirname(fileURLToPath(import.meta.url)));
+  }
   return cached;
 }

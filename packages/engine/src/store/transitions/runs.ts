@@ -402,7 +402,7 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     // result not yet observed. A lack no execution in flight will settle is
     // not held: the plan check refuses it as built.
     const pending = replanPendingPrerequisites(db, item);
-    if (pending !== null) return `${PREREQUISITES_PENDING}: ${pending.map((x) => `${x.check} (${x.status}) on ${x.candidate}`).join(', ')}`;
+    if (pending !== null) return `${PREREQUISITES_PENDING}: ${pending.map((x) => `${x.key} (${x.status}) on ${x.candidate}`).join(', ')}`;
   }
   if (PROTECTED_WRITERS.includes(item.kind)) {
     const writer = live(
@@ -1367,9 +1367,9 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       // held while they are in flight (dispatchBlocker), and checked again
       // once they are recorded.
       if (item.kind === 'replan' && run.reason_detail) {
-        const detail = JSON.parse(run.reason_detail) as { hold?: string; results?: unknown };
+        const detail = JSON.parse(run.reason_detail) as { hold?: string; pending?: unknown };
         if (detail.hold === 'prerequisite_results') {
-          transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'prerequisite_results_pending', results: detail.results ?? [] });
+          transitionWork(tx, item, 'eligible', { repair_due: 0 }, { ...cause, cause: 'prerequisite_results_pending', pending: detail.pending ?? [] });
           return;
         }
       }

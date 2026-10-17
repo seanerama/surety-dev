@@ -342,9 +342,9 @@ export class Acceptor {
           // Held for its prerequisite results (M543): not refused, no repair
           // spent; the run's end returns the item to wait for them.
           if (prepared !== null && 'held' in prepared) {
-            return failed('invalid_result', `${PREREQUISITES_PENDING}: the plan check's dependency clause reads ${prepared.held.map((x) => `${x.check} on ${x.candidate} (${x.status})`).join(', ')}; the replan waits for their results and is checked again after`, {
+            return failed('invalid_result', `${PREREQUISITES_PENDING}: the plan check's dependency clause reads ${prepared.held.map((x) => `${x.key} on ${x.candidate} (${x.status})`).join(', ')}; the replan waits for their results and is checked again after`, {
               hold: 'prerequisite_results',
-              results: prepared.held,
+              pending: prepared.held,
             });
           }
           if (prepared !== null) {
