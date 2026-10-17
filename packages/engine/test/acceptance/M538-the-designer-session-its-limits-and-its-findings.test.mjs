@@ -1,6 +1,6 @@
 // M538, the Designer session, its limits and its findings (slice 41; kernel
 // lane). M6 plan §3.3 M538; D7 §3.1, §3.2, §3.5, §4.5; B.12; A.7; BS6
-// §11.1; SEAM.md §§480, 483, 486, 491.
+// §11.1; SEAM.md §§480, 483, 486, 491, 531.
 //
 // (a) `surety session open --role designer` and `POST …/sessions` with role
 //     `designer`: a run of kind `session`, role `designer`, D6 §2's mechanism
@@ -8,7 +8,8 @@
 //     journal);
 // (b) a turn: a ledger row with the model requested `model_designer` (Opus
 //     by default) and the deadline `deadline_designer` (30 m); a setting
-//     changes both;
+//     changes both: the deadline at the open session's next turn, the model
+//     at the next session's first turn (objection 157; M420 (c));
 // (c) the cumulative budget at `designer_session_budget_billable_tokens`
 //     (lowered), in place of the run budget; exhausted between turns: closed
 //     `budget_exhausted` through the idle protocol, no turn after;
@@ -90,13 +91,19 @@ describe('M538 the Designer session, its limits and its findings', () => {
     // A setting changes both.
     await changePolicy(fx.engine, p.id, { model_designer: 'sonnet', deadline_designer: 600 });
     await sayAndSettle(fx, p.id, run.id, 'Anything else?');
-    const second = ledgerRowsOf(fx.home, p.id, run.id)[1];
-    assert.equal(second?.model_requested, 'sonnet', `model_designer set to sonnet: the next turn requests it (${JSON.stringify(second)})`);
     const r2 = invocationsOf(fx.home, run.id)[1];
     assert.ok(Math.abs((Date.parse(r2.deadline_at) - Date.parse(r2.created_at)) / 1000 - 600) <= 120, `deadline_designer set to 10 m: the next turn's deadline (${r2.deadline_at} from ${r2.created_at})`);
     const closed = await postCloseRaw(fx, p.id, run.id, { refuse: true });
     assert.equal(closed.status, 200, `closed (${closed.text?.slice(0, 300)})`);
     assert.equal((await endedRow(fx, run.id)).state, 'ended', 'the session run ended');
+    // The model is the session run's, chosen at its opening (objection 157;
+    // M420 (c)'s form): the setting is read by the next session's first turn.
+    const next = await openDesigner(fx, p.id);
+    scriptTurns(fx, next.id, [talk('Hello again.')]);
+    await sayAndSettle(fx, p.id, next.id, 'Hello.');
+    const [first] = ledgerRowsOf(fx.home, p.id, next.id);
+    assert.equal(first?.model_requested, 'sonnet', `model_designer set to sonnet: the next session's first turn requests it (${JSON.stringify(first)})`);
+    assert.equal((await postCloseRaw(fx, p.id, next.id, { refuse: true })).status, 200, 'the second session closed');
   });
 
   test('(c) the cumulative budget is designer_session_budget_billable_tokens, not the run budget; exhausted between turns: closed budget_exhausted, no turn after', async (t) => {

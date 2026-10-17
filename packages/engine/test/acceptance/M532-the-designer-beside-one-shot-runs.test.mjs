@@ -1,7 +1,7 @@
 // M532, G12: the Designer beside one-shot runs (slice 41; kernel lane,
 // MemAvailable scripted). M6 plan §3.3 M532; D7 §3.1; G12; Q5; D1 §7.5;
 // E147 item 4's M2 for the other roles; D6-S08 (M419); SEAM.md §§438, 483,
-// 492.
+// 492, 531.
 //
 // (a) a Designer session open, a Builder of the same project eligible:
 //     dispatched, each (the Builder, the Designer's turn) admitted by the
@@ -43,7 +43,7 @@ import { fileAt, gitQuiet, parentsOf, refOid } from './harness/repos.mjs';
 import { addWork, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { domainsOfRun, pauseAt, postCloseRaw, postSaveRaw, reached, release } from './harness/session-lane.mjs';
-import { openSession, runRow, sayAndSettle, scriptTurns, turnResult, turnThatWrites } from './harness/sessions.mjs';
+import { openSession, postTurn, readSession, runRow, sayAndSettle, scriptTurns, turnResult, turnThatWrites } from './harness/sessions.mjs';
 import { REQUIREMENTS, TOKENS, specText } from './harness/design/reference.mjs';
 import {
   createPantry,
@@ -83,10 +83,37 @@ async function heldBuilder(fx, project, before = []) {
   fx.scripted.script(item, [roleThatHolds(before)]);
   return item;
 }
-const launched = (fx, project, item, what) =>
-  tickUntil(fx.engine, project, () => fx.scripted.launches({ work_item: item })[0], { max: 8, what: `${what} (held: ${heldFor(fx, project, item)})` }).catch((err) => {
+// The held Builder's launch, in M419 (d)'s form: one tick, then wait for the
+// launch itself, never for every run of the project to end (the Builder holds
+// until the case releases it; objection 155; SEAM.md §531).
+const launched = async (fx, project, item, what) => {
+  await tick(fx.engine, project, { rounds: 1 });
+  return waitFor(() => fx.scripted.launches({ work_item: item })[0], { what }).catch((err) => {
     throw new Error(`${err.message}; the item: ${heldFor(fx, project, item)}`);
   });
+};
+// A Designer turn said beside a held Builder: poll that turn's settlement and
+// tick between polls, never waiting for the held Builder to end (objection 155;
+// SEAM.md §531). Asserts what `sayAndSettle` asserts.
+const TURN_ENDED = Object.freeze(['settled', 'failed', 'unknown']);
+async function sayBeside(fx, project, run, text, { max = 12 } = {}) {
+  const posted = await postTurn(fx, project, run, text);
+  const what = `turn ${posted.turn} of ${run} to settle beside the held Builder`;
+  const ended = async () => {
+    const read = await readSession(fx, project, run);
+    const turn = (read.turns ?? []).find((x) => x.turn === posted.turn);
+    return (turn && TURN_ENDED.includes(turn.state)) || read.run?.state === 'ended' ? { read, turn } : undefined;
+  };
+  for (let i = 0; i < max; i++) {
+    await tick(fx.engine, project, { rounds: 1 });
+    const done = await waitFor(ended, { timeoutMs: 2_000, what }).catch(() => undefined);
+    if (!done) continue;
+    assert.equal(done.turn?.state, 'settled', `turn ${posted.turn} settled (${JSON.stringify(done.turn ?? done.read.run)})`);
+    assert.equal(done.read.run.session_state, 'open_idle', 'the session is idle again');
+    return done;
+  }
+  throw new Error(`${what} was not reached after ${max} ticks`);
+}
 
 describe('M532 G12, the Designer beside one-shot runs', () => {
   test('(a) a Builder dispatched beside an open Designer session, each admitted as a role domain at role_memory_max; (b) a Designer session opened while a Builder runs', async (t) => {
@@ -101,7 +128,7 @@ describe('M532 G12, the Designer beside one-shot runs', () => {
     const builderDomain = await waitFor(() => domainOfItem(fx.home, item), { what: 'the Builder\'s domain' });
     assert.deepEqual([builderDomain.profile, builderDomain.memory_max], ['role', roleMax], `the Builder admitted as a role domain at role_memory_max (${JSON.stringify(builderDomain)})`);
     scriptTurns(fx, run.id, [talk('Looking at the inventory.')]);
-    await sayAndSettle(fx, p.id, run.id, 'Start while the Builder works.');
+    await sayBeside(fx, p.id, run.id, 'Start while the Builder works.');
     const [turnDomain] = domainsOfRun(fx.home, run.id);
     assert.deepEqual([turnDomain?.profile, turnDomain?.memory_max], ['role', roleMax], `the Designer's turn admitted as a role domain at role_memory_max (${JSON.stringify(turnDomain)})`);
     fx.scripted.release(item, 'gate');
@@ -113,7 +140,7 @@ describe('M532 G12, the Designer beside one-shot runs', () => {
     const res = await fx.engine.post(sessionsOf(p.id), { role: 'designer' });
     assert.equal(res.status, 201, `a Designer session opens while a Builder runs (→ ${res.status} ${res.text})`);
     scriptTurns(fx, res.body.run.id, [talk('Hello.')]);
-    await sayAndSettle(fx, p.id, res.body.run.id, 'Hello.');
+    await sayBeside(fx, p.id, res.body.run.id, 'Hello.');
     fx.scripted.release(second, 'gate');
     await endedRun(fx, p.id, second, 'the second Builder to end');
   });

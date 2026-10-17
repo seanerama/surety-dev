@@ -45,3 +45,9 @@ This is not a Builder's choice. Until it is decided, I have built none of them.
 - `sessions/session.ts` (turn admission, `exhaustedLimits(…, { check: true, dispatch: true })`); `api/server.ts` (a `budget_exhausted` refusal of a turn closes the session by the protocol, B01).
 - D7 §3.1 (G12): "each turn admitted by the envelope as a `role` domain at `role_memory_max` like any run"; §3.2 (the Designer's 3,000,000-token budget, double the run budget).
 - SEAM.md §491 (the Designer's budget in place of the run budget).
+
+## Decision
+
+Decided by the driver under the owner's delegation, 2026-10-17, as **option (a)**: a Designer turn's dispatch is held on the day limits as a one-shot's dispatch is held. The hold is visible, the held turn is dispatched ahead of one-shots that become eligible after it, and the session closes `budget_exhausted` only on its own budget (`designer_session_budget_billable_tokens`), never because the day's reservations refused a turn.
+
+**No test change** (Verifier, `verify/m6-s41b` from `main` `364367b`). M533 (e) and M532 (f) stay as they are: under option (a) their turns are held, then admitted, so they pass on an engine that builds it. SEAM.md §531 records the decision. M532 (a), as changed for objection 155, meets the same refusal: its turn is said beside phase 1's check authoring and the held Builder (objection 155's Decision), so it also relies on this hold.

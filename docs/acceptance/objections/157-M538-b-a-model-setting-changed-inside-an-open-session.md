@@ -25,3 +25,11 @@ The case should change the setting and then open a new Designer session, whose f
 - D7 §3.1 ("A run of kind `session`, role `designer` … D6 §2's mechanism unchanged").
 - `sessions/session.ts`: `openSession` (the run's `model_requested`), the turn's admission (`sessionBackend(…, { model: run.model_requested })`), and the resume (`model: old.model_requested`).
 - SEAM.md §391, and M420 (c) (`M420-session-backends-and-models.test.mjs`: the setting changed, then a new session opened).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The test is changed** (Verifier, `verify/m6-s41b` from `main` `364367b`).
+
+In M538's case (a)/(b), the deadline assertion stays inside the open session: after `model_designer: 'sonnet'` and `deadline_designer: 600` are set, the open session's next turn must carry the 10-minute deadline. The `model_designer: 'sonnet'` assertion moves, in M420 (c)'s form, to the first turn of a new Designer session. That session opens after the first one closes, and its first ledger row must request `sonnet`. The second session is then closed. Nothing else in M538 changed. SEAM.md §531 records it.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s41` at `8ad9030`, `npm install`, `npm run build`, `TMPDIR=/tmp/v41b`, the file alone with `node --test`): **M538 4/4**. On `main`, which has no Designer session yet, the file fails as before.
