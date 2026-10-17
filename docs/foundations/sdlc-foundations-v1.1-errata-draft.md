@@ -2444,3 +2444,34 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 9. **Upheld Builder objections, tests corrected:** 127, 128, 129, 146 (filed as 129a) for slice 40 (`68df5b2`). For slice 41, 155 (M532 waits for a held Builder's launch, not for every run to end) and 157 (M538 asserts a changed `model_designer` on a newly opened session, since a session's model is fixed at its opening), both in `46859c7`. For slice 42, 160 (M510 (e) reads the preview's unit from its event, because the unit's `g<n>` is D4's deployment generation and moves on every teardown; `e08206e`).
 10. **Objection 156** (M533, M532), decided as option (a): a Designer turn that would pass a day limit is accepted and held, never refused. It allocates nothing while held, is visible on the session and project reads, is released oldest first before any one-shot of the project, and survives a restart. The session closes `budget_exhausted` only on its own `designer_session_budget_billable_tokens`. A turn stopped mid-way by a day limit ends only that turn. Vision, Spec Writer and Architect turns keep M5's refusal. Built in slice 41. Known consequence under the defaults: a running Designer turn reserves its session's remaining budget (3,000,000) against `budget_day_unknown_tokens` (2,000,000), so one-shots run between the Designer's turns, not during them.
 11. **Open for Sean:** objections 126 and 145 (M512: does answering `design_due` with `open` or `later` keep the question open or consume it). Whether Vision, Spec Writer and Architect turns should also be held rather than refused on a day limit. And the snapshot caps: with the policy read corrected in slice 41, the real lane's materialization caps are the policy's 5,000 files, 100 MiB and 10 MiB per file, not the old fallbacks of 10,000, 64 MiB and 16 MiB. D1 §7.3 counts committable output, while E67's bound at materialization counts every upper-layer entry, including gitignored output. Unchanged; a refusal in M519 would be an M519 defect, fixed before M535 (E156 Q5).
+
+## E159. Slices 41 and 42 merged: the Designer session and the design check; the preview; objections 170 and 173 upheld (decided by the driver under Sean's delegation, 2026-10-17)
+
+**Status: decided by the driver** under Sean's standing instruction; Sean may overturn any item.
+
+1. **Slice 41 merged** (`09d99ba`; build `46b18ab`, cases `46859c7` and `a5c32f8`): M538, M532, M506, M521, M524, M533.
+   - **Built:** the Designer session's own budget; turn results with unknown fields refused; the Designer's findings (a `design_findings` table, not D3's, so they never touch gates); `DESIGN_INTERFACE_DISPUTED`; the tree bounds as 413 before commit; fixtures against the inventory's shapes; `not_checkable_yet`; native obligations at approval; plan check clause 5 (`SPEC_TARGETS_MISSING`, `ARCH_TARGET_UNKNOWN`, `ARCH_TARGET_UNCOVERED`, `ARCH_TECHNOLOGY_TARGET_MISMATCH`); objection 156's held turn (E158 item 10).
+   - **The Reviewer's blocking finding, fixed:** a Designer turn's unknown allowance subtracted prior session spend twice, so an incomplete real turn could be charged zero.
+   - **Its should-fix items, fixed:** a held turn allocated a domain and process ownership for the whole hold, and recovery ended its session. Findings with no subject were accepted, and the same finding raised a new question each turn. A slot narrowed away and then widened lost its placeholder. The clause 5 codes were missing from the Architect's package.
+   - **The policy read corrected:** the session save and the choke point read `effective`; see E158 item 11 for the snapshot caps.
+2. **Slice 41's gate,** at `f6287ea`: 413 files, 2,237 passed, 5 failed in M440, M430, M61 and M327. M61, M327 and M440 passed alone three times out of three. M430 failed 2 of 9 runs at the candidate and 0 of 6 on main. The Builder traced it to a race in the test that main has too (objection 173): S2 answers a `plan_approval` between the head's move and the tick that rebases the replanned bundle and re-raises it, as slice 34 ruled it should. The difference in rates is not significant (p ≈ 0.49).
+3. **Objection 170** (M538), upheld: `finding_disposition` lists `design_finding` among its subject types, and its options include `change_spec` and `architect` (`a5c32f8`). **Objection 173** (M430), upheld: S1 (a) and S2 wait until the open approval is bound to the current head before answering (`e898af6`).
+4. **Slice 42 merged** (`ceb3b7f`; build `25587ee`, cases `e08206e`): M510, M511, M520 (both files).
+   - **The preview server:** one file in the engine's install; GET and HEAD only; nothing outside the sealed `.surety/design/` tree served; bound to 127.0.0.1 (rule 24). It is bound read-only and non-executable into the service domain, after the domain's `/tmp` is mounted, so that an install under `/tmp` works.
+   - **The export:** `GET …/design/export` and `surety design export`, through the engine's own ustar writer and reader. The reader checks checksums, bounds and the closing blocks.
+   - **The owner-invoked review's route,** as far as M520 (f) needs it.
+5. **Slice 42's review: one blocking finding, fixed.** The simulation frame trusted the Designer's own `design.json` for each mockup's capability, so a declared `native` or a `./` path was served bare. The engine now computes each mockup's capability from its own facts and hands the table to the server. The server frames every HTML path the engine did not list as native, which fails closed.
+6. **Slice 42's review: should-fix items, fixed.**
+   - The raw path is served only to `Sec-Fetch-Dest: iframe`, and its CORS and CORP headers let the sandboxed frame load its own files.
+   - The owner review's session and row are written in one transaction.
+   - The pace read gives unknown for an unrecorded review.
+   - Deployment and teardown requests naming `design-preview` are refused `environment_reserved`.
+   - SVGs carry `content-security-policy: sandbox`.
+   - The export refuses a non-empty or symlinked target directory.
+   - A preview still deploying when an approval lands is torn down `approved`.
+7. **Recorded for the M6 report, not changed:**
+   - A native mockup is served from the same origin as the frame and could remove its banner.
+   - `previewState` scans `events` without an index.
+   - D7 §14 says the engine's API is a unix socket the browser cannot reach; as built since M1, it is TCP on 127.0.0.1 with a token and a host check. That is a wording question for Sean.
+8. **Slice 42's gate,** at `a286577` (slices 40 to 42): 417 files, 2,254 passed, 6 failed in M440, M338, M311 (h) and M424. M424, M338 and M440 passed alone three times out of three.
+9. **Recorded:** every gate since slice 40 leaves one `/var/tmp/surety-integ-*` home behind on `mini-hp01` ("homes after: 1"). It is not yet traced to a file.
