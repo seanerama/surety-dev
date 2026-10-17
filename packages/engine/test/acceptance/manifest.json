@@ -487,8 +487,20 @@
       "M507-design-readiness-and-the-third-milestone.test.mjs",
       "M509-the-ui-builders-package.test.mjs"
     ],
-    "41": [],
-    "42": [],
+    "41": [
+      "M538-the-designer-session-its-limits-and-its-findings.test.mjs",
+      "M532-the-designer-beside-one-shot-runs.test.mjs",
+      "M506-the-design-check.test.mjs",
+      "M521-target-scoped-criteria-and-native-obligations.test.mjs",
+      "M524-the-three-axes.test.mjs",
+      "M533-selection-and-its-floor.test.mjs"
+    ],
+    "42": [
+      "M510-the-preview-on-a-real-unit.test.mjs",
+      "M511-a-preview-is-never-evidence.test.mjs",
+      "M520-simulation-labelling.test.mjs",
+      "M520-simulation-labelling-through-the-preview-unit.test.mjs"
+    ],
     "43": [],
     "44": [],
     "45": [],
@@ -597,7 +609,9 @@
     "M439-memory-peak-recorded.test.mjs",
     "M451-the-qualified-profile-on-a-real-domain.test.mjs",
     "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
-    "M536-the-design-journey-on-the-scripted-backend.test.mjs"
+    "M536-the-design-journey-on-the-scripted-backend.test.mjs",
+    "M510-the-preview-on-a-real-unit.test.mjs",
+    "M520-simulation-labelling-through-the-preview-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
