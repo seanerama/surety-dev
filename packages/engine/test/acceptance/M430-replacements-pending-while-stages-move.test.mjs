@@ -23,16 +23,19 @@ import { describe, test } from 'node:test';
 import { answer } from './harness/decisions.mjs';
 import { builderScript, candidatesOfProject, phasePlansOf, pump, readPlan, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
 import { journey35, replan35 } from './harness/journey/plan35.mjs';
-import { HELD, NO_PLAN_ANSWER, S1, S2, S3, active, advanceHolding, changeTouching, changed, currentApproval, generationOf, openBlockerAbout, replacementPending, stageWorkOf } from './harness/journey/review35.mjs';
+import { HELD, NO_PLAN_ANSWER, S1, S2, S3, active, advanceHolding, boundApproval, changeTouching, changed, generationOf, openBlockerAbout, replacementPending, stageWorkOf } from './harness/journey/review35.mjs';
 import { pumpNoIdle, postChange } from './harness/journey/review31b.mjs';
 import { script } from './harness/scripted.mjs';
 import { tick } from './harness/runs.mjs';
 
 const replans = (home, project) => workOf(home, project, 'replan');
 // The owner approves the replacement as it is now: the open generation of its
-// decision, or none (`res` null) when no open decision binds the bundle.
+// decision once it is bound to the registered head, or none (`res` null) when
+// no open decision binds the bundle. A head move just before (S2's stage 1
+// integrated, S1 (a)'s stage 2) re-raises the open generation on the next
+// tick's rebind; an answer to the one before races it (objection 173).
 async function approveNow(fx, p) {
-  const row = currentApproval(fx.home, p.id);
+  const row = await boundApproval(fx, p.id);
   return row ? answer(fx.engine, p.id, row, 'approve') : null;
 }
 // After an approval refused for staleness: either the answer was 409
@@ -103,6 +106,7 @@ describe('M430 the review\'s pending replacements', () => {
     assert.ok(c1, 'stage 1 nominated');
     const res = await approveNow(fx, p);
     assert.equal(res?.status, 200, `the replacement approved while stage 1 is verifying (→ ${res?.status} ${res?.text})`);
+    assert.notEqual(stagesOfPlan(fx.home, plan.id)[0]?.status, 'verified', 'stage 1 not yet verified at the approval (its checks still queued)');
     await advanceHolding(fx, ctx, () => generationOf(fx.home, p.id, 1, 2)?.published_at ?? undefined, { exits: () => null, what: 'generation 2 published' });
     let failed = false;
     const exits = (x) => {
