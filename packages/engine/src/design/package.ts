@@ -47,6 +47,51 @@ export interface DesignPackageFacts {
   unmatched?: { index: number; requirement: string; kind: string; text: string; why: string }[];
   // An asset_updated fix: what it is to update.
   asset_update?: Record<string, unknown> | null;
+  // An asset_updated fix: each bound path with the file the engine expects
+  // there (the slice-46 rehearsal's finding).
+  asset_places?: AssetPlace[];
+}
+
+// What an asset_updated fix places at one bound path: the slot and variant
+// the binding recorded, and the effective slot@version and digest the
+// engine expects of the file there (D7 §6.5). `variant` null where no
+// recorded binding names the path; the rest null where the effective set
+// has no such variant: unknown, never guessed.
+export interface AssetPlace {
+  path: string;
+  target: string;
+  form: string;
+  slot: string;
+  variant: string | null;
+  slot_version: number | null;
+  digest: string | null;
+  // The package path of the effective file, where it is carried.
+  file: string | null;
+}
+
+// Each bound path of the fix with its variant (the latest recorded binding
+// of that slot, target and path) and the effective file it expects. Pure.
+export function assetPlaces(
+  slot: string,
+  bound: { path: string; target: string; form: string; stage?: string | null }[],
+  recorded: { stage: string | null; target: string; slot: string; variant: string; path: string }[],
+  effective: { slot: string; variant: string; slot_version: number; digest: string; format: string }[],
+): AssetPlace[] {
+  return bound.map((b) => {
+    const rows = recorded.filter((r) => r.slot === slot && r.path === b.path && r.target === b.target);
+    const row = rows.filter((r) => (b.stage ?? null) === null || r.stage === b.stage).at(-1) ?? rows.at(-1) ?? null;
+    const e = row ? effective.find((x) => x.slot === slot && x.variant === row.variant) : undefined;
+    return {
+      path: b.path,
+      target: b.target,
+      form: b.form,
+      slot,
+      variant: row?.variant ?? null,
+      slot_version: e?.slot_version ?? null,
+      digest: e?.digest ?? null,
+      file: e && isSlug(e.slot) && isSlug(e.variant) && isSlug(e.format) ? `design/assets/${e.slot}/${e.variant}.${e.format}` : null,
+    };
+  });
 }
 
 export interface DesignPackage {
@@ -141,7 +186,22 @@ export function designPackageFacts(db: Database.Database, args: { run: string })
   }
   const unmatched = (mapped?.unmatched ?? []).filter((u) => u.requirement === 'new' || requirementKeys.includes(u.requirement));
   const repo = (db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(run.project) as { dev_repo_path: string }).dev_repo_path;
-  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(unmatched.length > 0 ? { unmatched } : {}), ...(fix ? { asset_update: subject as Record<string, unknown> } : {}) };
+  // The fix's bound paths with the file each expects (from the recorded bindings, in insertion order).
+  const places = fix
+    ? assetPlaces(
+        String((subject as { slot?: unknown }).slot ?? ''),
+        ((subject as { bindings?: { path: string; target: string; form: string; stage?: string | null }[] }).bindings ?? []).filter((b) => b && typeof b.path === 'string'),
+        db.prepare('SELECT "stage", "target", "slot", "variant", "path" FROM "asset_bindings" WHERE "project" = ? AND "slot" = ? ORDER BY rowid').all(run.project, String((subject as { slot?: unknown }).slot ?? '')) as {
+          stage: string | null;
+          target: string;
+          slot: string;
+          variant: string;
+          path: string;
+        }[],
+        effective,
+      )
+    : [];
+  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(unmatched.length > 0 ? { unmatched } : {}), ...(fix ? { asset_update: subject as Record<string, unknown>, asset_places: places } : {}) };
 }
 
 const REVIEW_TEXT = [
@@ -323,6 +383,17 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
   if (f.asset_update) {
     const u = f.asset_update;
     prompt.push('', `This fix updates the asset slot ${String(u.slot)} from ${String(u.from_version)} to ${String(u.to_version)} (D7 §6.5): place the new effective file at every bound path below (re-deriving a derived one) and return the bindings anew.`, ...((u.bindings as { path: string; form: string; target: string }[] | undefined) ?? []).map((b) => `- \`${b.path}\` (${b.target}, ${b.form})`));
+    // Which file belongs at each path (design/asset-update.json holds the same).
+    const places = f.asset_places ?? [];
+    files.push({ path: 'design/asset-update.json', content: json({ slot: u.slot, from_version: u.from_version, to_version: u.to_version, places }) });
+    prompt.push(
+      '',
+      'At each bound path, the file the engine expects there (design/asset-update.json lists the same):',
+      ...places.map(
+        (p) =>
+          `  * ${p.path}: ${p.slot}/${p.variant ?? 'variant unknown (no recorded binding names this path)'}, ${p.slot_version === null ? 'its effective version unknown' : `${p.slot}@${p.slot_version}`}, sha256 ${p.digest ?? 'unknown'}${p.file ? `, the file ${p.file}` : ''}${p.form === 'derived' ? ' (derived from it)' : ' (a copy, byte for byte)'}`,
+      ),
+    );
   }
   return { files, prompt };
 }

@@ -139,6 +139,33 @@ test('the Verifier\'s design catalogue: the criteria with their paths, the progr
   assert.deepEqual(D.verifierDesignElements({ criteria: [], unmatched: [u], programs: [] })['verifier.design_catalogue'].data.unmatched, [u]);
 });
 
+test("an asset_updated fix is told, for each bound path, the slot, the variant, the slot version and the digest the engine expects there", async () => {
+  const { assetPlaces } = await import(join(dist, 'design', 'package.js'));
+  const bound = [
+    { stage: 'stg_2', target: 'web', path: 'web/logo.svg', form: 'copy' },
+    { stage: 'stg_2', target: 'web', path: 'web/logo-mono.svg', form: 'derived' },
+    { stage: 'stg_3', target: 'android', path: 'mobile/logo.svg', form: 'copy' },
+    { stage: 'stg_9', target: 'web', path: 'web/nowhere.svg', form: 'copy' },
+  ];
+  const recorded = [
+    { stage: 'stg_2', target: 'web', slot: 'logo', variant: 'compact', path: 'web/logo.svg' },
+    // A later binding of the same path wins (insertion order).
+    { stage: 'stg_2', target: 'web', slot: 'logo', variant: 'full', path: 'web/logo.svg' },
+    { stage: 'stg_2', target: 'web', slot: 'logo', variant: 'monochrome', path: 'web/logo-mono.svg' },
+    { stage: 'stg_3', target: 'android', slot: 'logo', variant: 'full', path: 'mobile/logo.svg' },
+    { stage: 'stg_3', target: 'android', slot: 'favicon', variant: 'default', path: 'mobile/logo.svg' },
+  ];
+  const effective = [
+    { slot: 'logo', variant: 'full', slot_version: 3, digest: 'a'.repeat(64), format: 'svg' },
+    { slot: 'logo', variant: 'monochrome', slot_version: 3, digest: 'b'.repeat(64), format: 'svg' },
+  ];
+  const places = assetPlaces('logo', bound, recorded, effective);
+  assert.deepEqual(places[0], { path: 'web/logo.svg', target: 'web', form: 'copy', slot: 'logo', variant: 'full', slot_version: 3, digest: 'a'.repeat(64), file: 'design/assets/logo/full.svg' });
+  assert.deepEqual([places[1].variant, places[1].digest, places[1].form], ['monochrome', 'b'.repeat(64), 'derived']);
+  assert.deepEqual([places[2].variant, places[2].file], ['full', 'design/assets/logo/full.svg'], "another slot's binding of the same path is not this slot's");
+  assert.deepEqual([places[3].variant, places[3].slot_version, places[3].digest, places[3].file], [null, null, null, null], 'no recorded binding: unknown, never guessed');
+});
+
 // ---- the slice-46 review's fixes ----------------------------------------------------------------
 
 test('S3: the route rule is stated, in the screens schema and in designer.conventions, as the check reads it', () => {
