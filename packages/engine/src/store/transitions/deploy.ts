@@ -4434,7 +4434,7 @@ export function previewFailed(tx: Tx, args: { preview: string; reason: string })
 // The preview torn down (`--stop`, or its time ran out): nothing of its unit left.
 export function previewTornDown(tx: Tx, args: { project: string; operation: string; reason: string }): void {
   const env = previewEnvOf(tx.db, args.project);
-  const rows = tx.db.prepare(`SELECT "id", "generation" FROM "design_previews" WHERE "project" = ? AND "status" IN ('deployed', 'deploying')`).all(args.project) as { id: string; generation: number }[];
+  const rows = tx.db.prepare(`SELECT "id", "generation" FROM "design_previews" WHERE "project" = ? AND "status" IN ('deployed', 'deploying', 'failed')`).all(args.project) as { id: string; generation: number }[];
   for (const r of rows) tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "id" = ?`).run(tx.at, r.id);
   tx.emit('design.preview_torn_down', { project: args.project, operation: args.operation, ...(env ? { environment: env.id } : {}) }, { reason: args.reason, previews: rows.map((r) => r.id) });
 }
@@ -4455,4 +4455,42 @@ export function previewState(db: Db, args: { project: string }) {
 // Projects with a deployed preview past its time (D7 A.7 `design_preview_ttl`).
 export function previewsExpired(db: Db, args: { now: string }): string[] {
   return (db.prepare(`SELECT DISTINCT "project" FROM "design_previews" WHERE "status" = 'deployed' AND "ttl_until" IS NOT NULL AND "ttl_until" < ?`).all(args.now) as { project: string }[]).map((r) => r.project);
+}
+
+// At start (the slice-40 review's B2): every design-preview operation an
+// earlier incarnation left under way is ended as an interrupted
+// qualification's are (endRunOperations): its launch closed, an attempt
+// still `started` ambiguous, a confirmed one finalized (its service
+// recorded running), any other failed; its environment lease released. Its
+// preview still `deploying` is recorded `failed`. A unit it may have
+// started stays where it is, for the next teardown, which stops only the
+// units the environment's intents name, by exact name (design/preview.ts).
+export function interruptPreviews(tx: Tx, args: { incarnation: string }): { interrupted: string[] } {
+  const ops = (
+    tx.db
+      .prepare(`SELECT * FROM "operations" WHERE json_extract("finalizer_inputs", '$.preview') IS NOT NULL AND ("orchestration_stage" IS NULL OR "orchestration_stage" <> 'ended') ORDER BY "seq"`)
+      .all() as OpRow[]
+  ).filter((op) => {
+    const lease = tx.db.prepare('SELECT "owner_incarnation" FROM "leases" WHERE "id" = ?').get(frozenOf(op).lease.id) as { owner_incarnation: string } | undefined;
+    return lease?.owner_incarnation !== args.incarnation;
+  });
+  const projects = new Set<string>();
+  for (const op of ops) {
+    projects.add(op.project);
+    for (const a of attemptsOf(tx.db, op.id)) {
+      closeAttemptLaunch(tx, a, 'design_preview_interrupted');
+      if (a.status === 'started') setAttempt(tx, a, 'ambiguous');
+    }
+    const j = journalOf(tx.db, op.id)!;
+    if (j.state === 'confirmed') endQualificationOp(tx, { operation: op.id, detail: { code: 'design_preview_interrupted' } });
+    else if (j.state === 'failed' || j.state === 'finalized') endOperation(tx, op, 'none', 'design_preview_interrupted');
+    else failOperation(tx, op, { code: 'design_preview_interrupted' });
+    releaseOperationLeases(tx, getOp(tx.db, op.id)!);
+  }
+  for (const project of projects) {
+    for (const r of tx.db.prepare(`SELECT "id" FROM "design_previews" WHERE "project" = ? AND "status" = 'deploying'`).all(project) as { id: string }[]) {
+      previewFailed(tx, { preview: r.id, reason: 'the engine stopped while the preview was being deployed' });
+    }
+  }
+  return { interrupted: ops.map((o) => o.id) };
 }

@@ -41,6 +41,7 @@ export class DesignDriver {
       return;
     }
     this.inFlight.add(project);
+    let failure: string | null = null;
     try {
       const d = due.derive;
       const committed = await this.journal.withProject(
@@ -74,12 +75,20 @@ export class DesignDriver {
         },
         'design:inventory',
       );
-      if (!committed) return;
+      if (!committed) {
+        failure = 'the inventory commit or the branch move to it did not finalize';
+        return;
+      }
       // After the engine's commit, before its record (SEAM.md §484).
       await pausePoint('design.inventory_committed');
       await this.rt.engine('design.record_inventory', { project, digest: d.digest });
+    } catch (err) {
+      failure = (err as Error).message;
+      throw err;
     } finally {
       this.inFlight.delete(project);
+      // Each failed attempt counted; design_due names a failure that repeats.
+      await this.rt.engine('design.inventory_attempt', { project, failure }).catch((err) => log('design inventory', err, { project }));
     }
   }
 

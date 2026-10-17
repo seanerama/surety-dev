@@ -79,7 +79,40 @@ export class DesignPreviewer {
     for (const k of Object.keys(b)) if (k !== 'revision') throw new Refusal(400, 'unknown_field', `"${k}" is not a field of this command.`, 'Send {"revision": "checkpoint"}.', { field: k });
     if (b.revision !== undefined && typeof b.revision !== 'string') throw new Refusal(400, 'invalid_value', 'revision must be a string.', 'Send {"revision": "checkpoint"}.', { field: 'revision' });
     void this.ro;
-    if (this.driving.has(project)) throw new Refusal(409, 'environment_busy', 'A preview of this project is being deployed or torn down.', 'Wait for it to end, then ask again.', { project });
+    // Checked and taken in one synchronous step (the slice-40 review's m7):
+    // a second request finds the project taken before either awaits.
+    const slot = this.take(project);
+    if (slot === null) throw new Refusal(409, 'environment_busy', 'A preview of this project is being deployed or torn down.', 'Wait for it to end, then ask again.', { project });
+    try {
+      return await this.requestTaken(project, b, slot);
+    } catch (err) {
+      slot.done();
+      throw err;
+    }
+  }
+
+  // The project taken for one preview operation: a placeholder until the
+  // operation's own promise replaces it; `done` frees the project.
+  private take(project: string): { done: () => void; hand: (p: Promise<void>) => void } | null {
+    if (this.driving.has(project)) return null;
+    let resolve!: () => void;
+    const placeholder = new Promise<void>((r) => (resolve = r));
+    this.driving.set(project, placeholder);
+    let freed = false;
+    const done = () => {
+      if (freed) return;
+      freed = true;
+      if (this.driving.get(project) === placeholder) this.driving.delete(project);
+      resolve();
+      this.rt.services?.requestTick();
+    };
+    const hand = (p: Promise<void>) => {
+      void p.finally(done);
+    };
+    return { done, hand };
+  }
+
+  private async requestTaken(project: string, b: Record<string, unknown>, slot: { done: () => void; hand: (p: Promise<void>) => void }): Promise<{ status: number; body: Record<string, unknown> }> {
     const facts = await this.rt.read<PreviewFacts>('design.preview_facts', { project, revision: (b.revision as string | undefined) ?? 'checkpoint' });
     const tree = await designTreeAt(facts.repo, facts.revision);
     if (tree === null || tree.files.size === 0) throw new Refusal(404, 'not_found', `The design tree at ${facts.revision} could not be read.`, 'Name another revision.', { revision: facts.revision });
@@ -115,13 +148,7 @@ export class DesignPreviewer {
       await this.rt.engine('design.preview_failed', { preview: begun.preview, reason: (err as Error).message }).catch(() => undefined);
       throw err;
     }
-    const p = this.deploy(project, begun.preview, artifact.digest)
-      .catch((err) => log('design preview', err, { project }))
-      .finally(() => {
-        this.driving.delete(project);
-        this.rt.services?.requestTick();
-      });
-    this.driving.set(project, p);
+    slot.hand(this.deploy(project, begun.preview, artifact.digest).catch((err) => log('design preview', err, { project })));
     return {
       status: 202,
       body: { preview: { design_preview: begun.preview, environment: 'design-preview', environment_id: begun.environment, generation: begun.generation, revision: facts.revision, url: `http://127.0.0.1:${begun.port}/`, mockups } },
@@ -133,24 +160,32 @@ export class DesignPreviewer {
     void this.ro;
     const state = await this.rt.read<{ environment: { id: string; prefix: string } | null; busy: boolean }>('design.preview_state', { project });
     if (state.environment === null) throw new Refusal(404, 'not_found', 'This project has no design preview.', 'Ask for one with surety design preview first.', { project });
-    const running = this.driving.get(project);
-    if (running) await running;
+    // Whatever runs for the project ends first; the check and the taking
+    // are then one synchronous step (m7).
+    let slot = this.take(project);
+    while (slot === null) {
+      await this.driving.get(project);
+      slot = this.take(project);
+    }
     const env = state.environment;
-    const p = this.teardown(project, env.id, reason)
-      .catch((err) => log('design preview', err, { project }))
-      .finally(() => {
-        this.driving.delete(project);
-        this.rt.services?.requestTick();
-      });
-    this.driving.set(project, p);
+    slot.hand(this.teardown(project, env.id, reason).catch((err) => log('design preview', err, { project })));
     return { status: 202, body: { preview: { environment: 'design-preview', environment_id: env.id, stopping: true } } };
   }
 
-  // At a tick: a deployed preview past its time is torn down (D7 A.7).
+  // At a tick: a deployed preview past its time is torn down (D7 A.7); so
+  // is a failed one at once, whose unit may still run (its launch granted,
+  // its identity reads not matched, or the engine stopped mid-deploy): the
+  // teardown stops only the units the environment's intents name, by exact
+  // name, and none it cannot positively own (the slice-40 review's B2; E64).
   async expire(project: string): Promise<void> {
     if (this.driving.has(project) || !this.rt.deploy) return;
-    const state = await this.rt.read<{ environment: { id: string } | null; latest: { status: string; ttl_until: string | null } | null }>('design.preview_state', { project });
-    if (state.environment === null || state.latest?.status !== 'deployed' || state.latest.ttl_until === null) return;
+    const state = await this.rt.read<{ environment: { id: string } | null; busy: boolean; latest: { status: string; ttl_until: string | null } | null }>('design.preview_state', { project });
+    if (state.environment === null || state.busy || state.latest === null) return;
+    if (state.latest.status === 'failed') {
+      await this.stop(project, 'failed_preview');
+      return;
+    }
+    if (state.latest.status !== 'deployed' || state.latest.ttl_until === null) return;
     if (Date.parse(state.latest.ttl_until) > Date.parse(nowIso())) return;
     await this.stop(project, 'ttl');
   }

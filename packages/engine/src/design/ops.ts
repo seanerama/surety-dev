@@ -10,19 +10,19 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { AssetManifest } from './assets.js';
-import { reviewDesignDue } from './due.js';
+import { inventoryAttempt, reviewDesignDue } from './due.js';
 import type { Inventory } from './inventory.js';
 import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
 import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
 import { checkContext, latestCheck, recordCheck } from './records.js';
 import { designView } from './view.js';
 import { designPackageFacts } from './package.js';
-import { carriedEffective } from './asset-bindings.js';
+import { carriedEffective, recordCarried } from './asset-bindings.js';
 import { previewFacts } from './preview-facts.js';
 import { noteAlphaReview, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { submitAssets } from './assets-submit.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
-import { beginPreview, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
+import { beginPreview, interruptPreviews, intendPreviewOp, previewArtifact, previewDeployed, previewFailed, previewState, previewTornDown } from '../store/transitions/deploy.js';
 
 type Db = Database.Database;
 
@@ -112,6 +112,9 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
   'design.record_check': (tx, a) => recordCheck(tx, a),
   'design.propose': (tx, a) => proposeDesign(tx, a),
   'design.preview_begin': (tx, a) => beginPreview(tx, a),
+  'design.inventory_attempt': (tx, a: { project: string; failure: string | null }) => inventoryAttempt(tx, a),
+  'design.record_carried': (tx, a: { run: string; effective: unknown[] }) => recordCarried(tx, a),
+  'design.preview_interrupt': (tx, a: { incarnation: string }) => interruptPreviews(tx, a),
   'design.record_observation': (tx, a) => recordObservation(tx, a),
   'design.preview_artifact': (tx, a) => previewArtifact(tx, a),
   'design.preview_intend': (tx, a) => intendPreviewOp(tx, a),

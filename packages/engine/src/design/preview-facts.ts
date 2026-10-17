@@ -17,7 +17,9 @@ export interface PreviewFacts {
   targets: { target: string; technology: string }[];
 }
 
-// `revision`: `checkpoint` (the newest checkpoint the design check read),
+// `revision`: `checkpoint` (the newest checkpoint, the design check's
+// outcome on it whatever it was: D7 §1 step 5a and §5.7 preview "the
+// checkpoint" the owner is working on, not the newest that passed),
 // `approved` (the newest approved design revision) or a commit.
 export function previewFacts(db: Database.Database, args: { project: string; revision?: string | null }): PreviewFacts {
   const proj = db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string } | undefined;
@@ -31,7 +33,7 @@ export function previewFacts(db: Database.Database, args: { project: string; rev
   let revision: string | null = null;
   if (asked === 'checkpoint') {
     revision =
-      (db.prepare(`SELECT "tree_revision" FROM "design_checks" WHERE "project" = ? ORDER BY ("outcome" = 'passed') DESC, rowid DESC LIMIT 1`).get(args.project) as { tree_revision: string } | undefined)?.tree_revision ?? null;
+      (db.prepare(`SELECT "tree_revision" FROM "design_checks" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1`).get(args.project) as { tree_revision: string } | undefined)?.tree_revision ?? null;
     if (revision === null) throw new Refusal(404, 'not_found', 'No design checkpoint of this project has been saved.', 'Save the Designer session first, or name --revision approved.', { project: args.project, revision: asked });
   } else if (asked === 'approved') {
     revision =

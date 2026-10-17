@@ -19,6 +19,7 @@
 //   from (`phase_complete`, <plan>, 1) when the roadmap has a next phase.
 // Phase completion establishes nothing about deployment.
 
+import { designAssignedHumanTests } from '../design/policy.js';
 import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
@@ -358,17 +359,20 @@ export function unplannedRequirements(db: Db, planId: string): string[] {
   const plan = db.prepare('SELECT "project", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(planId) as { project: string; phase_number: number } | undefined;
   if (!plan) return [];
   const implemented = new Set(activeStages<{ implements: string }>(db, planId).flatMap((s) => parseJson<string[]>(s.implements) ?? []));
+  const designTests = designAssignedHumanTests(db, plan.project);
   return (
     db
-      // A human-only requirement with no executable criterion imposes no
-      // build obligation on a stage (E156 Q3; BS6 §11.5): its human test is
-      // pending, owed by a person, never planned or passed by a stage.
       .prepare(
-        `SELECT "id", "key" FROM "requirements" WHERE "project" = ? AND "assigned_phase" = ? AND "withdrawn_at" IS NULL AND "status" <> 'descriptive_unverified'
-           AND NOT ("human_test" = 1 AND ("criteria" IS NULL OR "criteria" = '[]')) ORDER BY "key"`,
+        `SELECT "id", "key", "human_test", "criteria" FROM "requirements" WHERE "project" = ? AND "assigned_phase" = ? AND "withdrawn_at" IS NULL AND "status" <> 'descriptive_unverified' ORDER BY "key"`,
       )
-      .all(plan.project, plan.phase_number) as { id: string; key: string }[]
+      .all(plan.project, plan.phase_number) as { id: string; key: string; human_test: number; criteria: string | null }[]
   )
+    // A design's per-target human-only requirement the engine assigned
+    // through the design approval, with no executable criterion, imposes no
+    // build obligation on a stage (E156 Q3; BS6 §11.5): its human test is
+    // pending, a person's, never planned or passed by a stage. Any other
+    // requirement, a hand-written human test included, keeps D6's rule.
+    .filter((r) => !(r.human_test === 1 && (r.criteria === null || r.criteria === '[]') && designTests.has(r.key)))
     .filter((r) => !implemented.has(r.id) && !implemented.has(r.key))
     .map((r) => `phase ${plan.phase_number}:${r.key}`);
 }

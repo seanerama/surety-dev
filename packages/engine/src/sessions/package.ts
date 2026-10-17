@@ -5,6 +5,7 @@
 // is launched; the workspace itself holds the role's artifact (D6 §2.5).
 // Pure but for the files it writes.
 
+import { within } from '../design/paths.js';
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -190,6 +191,8 @@ export function writeSessionPackage(
   put('artifact.json', 'artifact', `${JSON.stringify({ files: art.files.map((f) => f.path), omitted: art.omitted, ...(art.unknown ? { unknown: art.unknown } : {}) }, null, 2)}\n`);
   if (canary) put('canary.json', 'instructions', `${JSON.stringify(canary, null, 2)}\n`);
   for (const f of design?.files ?? []) {
+    // Confirmed inside the package (the slice-40 review's B1).
+    if (!f.path.startsWith('design/') || within(dir, f.path) === null) throw new Error(`the design file ${JSON.stringify(f.path)} would be written outside the context package`);
     mkdirSync(dirname(join(dir, f.path)), { recursive: true, mode: 0o755 });
     writeFileSync(join(dir, f.path), f.content);
     files.push({ path: f.path, kind: 'design', source: null, sha256: createHash('sha256').update(f.content).digest('hex') });

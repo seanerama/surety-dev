@@ -8,6 +8,7 @@
 // the Designer wrote and judges no mockup's look. Each reason names its
 // subjects, the target among them.
 
+import { isSlug } from './paths.js';
 import { AA_RATIO, contrastRatio } from './contrast.js';
 import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, formatOf, svgActive, sha256hex } from './assets.js';
 import type { Inventory } from './inventory.js';
@@ -401,6 +402,12 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
     const slots = manifest.slots.filter(isObj);
     for (const s of slots) {
       const key = String(s.key);
+      // A slot key names directories the engine makes (the Builder's
+      // package, a check's domain): a slug, nothing else (the slice-40 review's B1).
+      if (!isSlug(s.key)) {
+        add('DESIGN_ASSET_SLOT_KEY_INVALID', { slot: key, why: 'a slot key is a slug: a lower-case letter, then up to 63 lower-case letters, digits, _ or -' });
+        continue;
+      }
       if (!(ASSET_KINDS as readonly string[]).includes(String(s.kind))) schema('assets/manifest.json', `slots (${key}).kind`, `"${String(s.kind)}" is not an asset kind`);
       if (!(ASSET_STATUSES as readonly string[]).includes(String(s.status))) schema('assets/manifest.json', `slots (${key}).status`, 'not an asset status');
       if (!(ASSET_PROVENANCES as readonly string[]).includes(String(s.provenance))) schema('assets/manifest.json', `slots (${key}).provenance`, 'not an asset provenance');

@@ -30,7 +30,7 @@ export interface PlanReason {
 export interface BundleBaseline {
   spec_version: number;
   // The approved requirements: key → criteria ids, areas, withdrawn.
-  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean; human_test?: boolean }[];
+  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean; human_test?: boolean; design_human_test?: boolean }[];
   // TPL §10's open questions of the bundle's specification (B04; D6-P07),
   // each with the keys it blocks and its `(phase n)` hint.
   questions?: { id: string; blocks: string[]; phase_hint: number | null }[];
@@ -301,9 +301,11 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     const implemented = new Set([...plan.stages.flatMap((s) => s.implements), ...kept.filter((k) => !stageNumbers.includes(k.number)).flatMap((k) => k.implements)]);
     // A `descriptive_unverified` requirement is no obligation of the phase
     // (D6 §8.2, K10; the driver's ruling 7): still held to the roadmap.
-    // Nor is a human-only requirement with no executable criterion (E156 Q3;
-    // BS6 §11.5): its human test is a person's, pending, never a stage's.
-    const humanOnly = (k: string) => reqs.get(k)?.human_test === true && (reqs.get(k)?.criteria.length ?? 0) === 0;
+    // Nor is a design's per-target human-only requirement the engine
+    // assigned through the design approval, with no executable criterion
+    // (E156 Q3; BS6 §11.5): its human test is a person's, pending, never a
+    // stage's. A hand-written human test keeps D6's rule.
+    const humanOnly = (k: string) => reqs.get(k)?.design_human_test === true && (reqs.get(k)?.criteria.length ?? 0) === 0;
     add('PLAN_REQUIREMENT_UNPLANNED', phase.requirement_ids.filter((k) => !implemented.has(k) && reqs.get(k)?.descriptive_unverified !== true && !humanOnly(k)));
     add('PLAN_DEPENDENCY_INCOMPLETE', phase.depends_on.filter((d) => !baseline.completed_phases.includes(d)).map((d) => (baseline.phase_unknown?.[d] ? `phase ${d} (${baseline.phase_unknown[d]!.join('; ')})` : `phase ${d}`)));
     // A stage may implement only what the roadmap assigns to the phase.

@@ -19,6 +19,7 @@ import { approvedModuleMap, publishedStages, stageModuleNames, stageRequirementK
 import { blobAt } from './tree.js';
 import { DESIGN_ROOT } from './inventory.js';
 import { observationsFor } from './review-driver.js';
+import { isSafeRelative, isSlug } from './paths.js';
 
 export interface DesignPackageFacts {
   // The approved design revision's commit and the files the package reads of it.
@@ -147,6 +148,9 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
   if (who?.role === 'designer') return who.mode === 'review' ? reviewPackage(rt, who.project, run) : null;
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
+  // What this package carries of the effective set, recorded for the
+  // validation of the run's bindings at integration (m4).
+  await rt.engine('design.record_carried', { run, effective: f.effective.map((e) => ({ slot: e.slot, variant: e.variant, slot_version: e.slot_version, digest: e.digest })) });
   const files: DesignPackage['files'] = [];
   const at = async (path: string): Promise<Buffer | null> => blobAt(f.repo, f.revision, `${DESIGN_ROOT}${path}`);
   const json = (v: unknown) => Buffer.from(`${JSON.stringify(v, null, 2)}\n`);
@@ -166,6 +170,8 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
     files.push({ path: 'design/navigation.json', content: json({ targets: f.navigation }) });
     files.push({ path: 'design/mockups.json', content: json(f.mockups) });
     for (const p of [...f.mockups.map((m) => m.path), ...f.fixtures]) {
+      // A Designer-written path: only a safe relative one is read and placed.
+      if (!isSafeRelative(p)) continue;
       const b = await at(p);
       if (b) files.push({ path: `design/${p}`, content: b });
     }
@@ -173,6 +179,9 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
   }
   const listed: Record<string, unknown>[] = [];
   for (const e of f.effective) {
+    // Slot, variant and format are slugs (the design check refuses any
+    // other slot key): anything else is left out, never written.
+    if (!isSlug(e.slot) || !isSlug(e.variant) || !isSlug(e.format)) continue;
     const path = `design/assets/${e.slot}/${e.variant}.${e.format}`;
     const b = await blobAt(f.repo, e.revision, `${DESIGN_ROOT}${e.file}`);
     if (b) files.push({ path, content: b });

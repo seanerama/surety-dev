@@ -20,7 +20,7 @@
 
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { createDomainCgroup, verifyLimits } from '../boundary/cgroup.js';
@@ -48,6 +48,7 @@ import { type CheckTree, MaterializationFailed, listTrees, materialize, projecti
 import { checkLimits } from './limits.js';
 import { ASSETS_MOUNT, LINK_SOCKET, buildCheckPlan, inputMountConflict, inputOverlayOverlong, inputTargetConflict } from './profile.js';
 import { assetVariable } from '../design/asset-inputs.js';
+import { isSlug, within } from '../design/paths.js';
 import { blobAt } from '../design/tree.js';
 import { DESIGN_ROOT } from '../design/inventory.js';
 import { protectedSetAt } from '../protected/set.js';
@@ -478,6 +479,7 @@ export class Supervisor implements DomainHolder {
       if (got.files === null) return this.notRun('mount_plan_refused', `an asset input cannot be placed: ${got.missing ?? 'the execution names no asset inputs'}`);
       const files: { slot: string; variant: string; format: string; bytes: Buffer }[] = [];
       for (const f of got.files) {
+        if (!isSlug(f.slot) || !isSlug(f.variant) || !isSlug(f.format)) return this.notRun('mount_plan_refused', `the asset input ${JSON.stringify(`${f.slot}/${f.variant}.${f.format}`)} is not a slot, variant and format the engine places`);
         const bytes = await blobAt(got.repo, f.revision, `${DESIGN_ROOT}${f.file}`);
         if (bytes === null || createHash('sha256').update(bytes).digest('hex') !== f.digest.replace(/^sha256:/, '')) return this.notRun('mount_plan_refused', `the effective file of ${f.slot}/${f.variant} could not be read as recorded`);
         files.push({ slot: f.slot, variant: f.variant, format: f.format, bytes });
@@ -643,8 +645,10 @@ export class Supervisor implements DomainHolder {
     if (this.assetFiles !== null) {
       assets = join(area, 'assets');
       for (const f of this.assetFiles) {
-        mkdirSync(join(assets, f.slot), { recursive: true, mode: 0o755 });
-        writeFileSync(join(assets, f.slot, `${f.variant}.${f.format}`), f.bytes, { mode: 0o444 });
+        const target = within(assets, `${f.slot}/${f.variant}.${f.format}`);
+        if (target === null) throw new Error(`the asset input ${f.slot}/${f.variant} would be placed outside the domain's assets`);
+        mkdirSync(dirname(target), { recursive: true, mode: 0o755 });
+        writeFileSync(target, f.bytes, { mode: 0o444 });
       }
     }
     const plan = buildCheckPlan({

@@ -15,6 +15,7 @@
 // The package scopes the initial context and hides nothing the role may
 // inspect: the workspace and the repository's objects stay readable.
 
+import { within } from '../../design/paths.js';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -814,7 +815,11 @@ export function writeContextPackage(
   // A UI Builder's result declares its asset bindings (D7 §6.5, B.17).
   const withBindings = opts.design ? { ...authored, properties: { ...(authored.properties as Record<string, unknown>), asset_bindings: ASSET_BINDINGS_SCHEMA } } : authored;
   put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : withBindings, null, 2)}\n`);
-  for (const f of opts.design?.files ?? []) put(f.path, 'design', null, f.content);
+  // The design's files, each confirmed inside the package (the slice-40 review's B1).
+  for (const f of opts.design?.files ?? []) {
+    if (!f.path.startsWith('design/') || within(dir, f.path) === null) throw new Error(`the design file ${JSON.stringify(f.path)} would be written outside the context package`);
+    put(f.path, 'design', null, f.content);
+  }
   if (authoring) put('authoring.json', 'instructions', authoring.phase_plan?.id ?? null, `${JSON.stringify(authoring, null, 2)}\n`);
   if (review) {
     if (diff) put('candidate.diff', 'diff', facts!.candidate!.id, diff.text);

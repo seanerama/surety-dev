@@ -25,10 +25,23 @@ export interface AssetBinding {
   form: 'copy' | 'derived';
 }
 
-// What a run's package carried of the effective set (null: no design).
+// What a run's package carried of the effective set, as recorded when the
+// package was built (the slice-40 review's m4: an approval moving the set
+// while the Builder runs changes nothing it was given); null: no design. A
+// run whose package recorded nothing (an earlier build) is read as now.
 export function carriedEffective(db: Database.Database, run: string): { slot: string; variant: string; slot_version: number; digest: string }[] | null {
+  const row = db.prepare('SELECT "effective" FROM "design_package_carried" WHERE "run" = ?').get(run) as { effective: string } | undefined;
+  if (row) return parseJson<{ slot: string; variant: string; slot_version: number; digest: string }[]>(row.effective);
   const f = designPackageFacts(db, { run });
   return f ? f.effective.map((e) => ({ slot: e.slot, variant: e.variant, slot_version: e.slot_version, digest: e.digest })) : null;
+}
+
+// The effective set a run's package was built with, recorded (the latest
+// package of the run is what its result answers to).
+export function recordCarried(tx: Tx, args: { run: string; effective: unknown[] }): void {
+  tx.db
+    .prepare('INSERT INTO "design_package_carried" ("run", "created_at", "effective") VALUES (?, ?, ?) ON CONFLICT ("run") DO UPDATE SET "effective" = excluded."effective", "created_at" = excluded."created_at"')
+    .run(args.run, tx.at, JSON.stringify(args.effective));
 }
 
 // The main thread's validation against the tree to integrate: null when

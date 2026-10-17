@@ -125,3 +125,13 @@ export function inventoryInputs(db: Database, project: string, opts: { rep?: Spe
     exclude: opts.exclude ?? designHumanTestKeys(db, project),
   };
 }
+
+// The per-target human-only requirements a design approval generated and
+// the engine assigned (E156 Q3; BS6 §11.5): every key a roadmap revision
+// `approved_by: engine:design_approval` moved. Only these are no stage's
+// obligation; any other requirement, a hand-written human test included,
+// keeps D6's planning rules.
+export function designAssignedHumanTests(db: Database, project: string): Set<string> {
+  const rows = db.prepare(`SELECT "moved_requirements" FROM "roadmap_revisions" WHERE "project" = ? AND "approved_by" = 'engine:design_approval'`).all(project) as { moved_requirements: string | null }[];
+  return new Set(rows.flatMap((r) => (parseJson<{ key: string }[]>(r.moved_requirements) ?? []).map((m) => m.key)));
+}

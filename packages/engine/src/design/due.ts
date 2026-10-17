@@ -23,7 +23,23 @@ import { raiseQuestion } from '../store/transitions/queue.js';
 import { type DesignDueState, designDueState, heldStages } from './readiness.js';
 import { designPolicyOf } from './policy.js';
 
-export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision'];
+export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision', 'inventory_failure'];
+
+// How many failed attempts at the inventory's commit design_due names.
+export const INVENTORY_FAILURES_NAMED = 3;
+
+// One attempt at the inventory's commit: a failure counted, a success
+// clearing the count (design/driver.ts).
+export function inventoryAttempt(tx: Tx, args: { project: string; failure: string | null }): void {
+  const state = designDueState(tx.db, args.project);
+  if (args.failure === null) {
+    if (!state.inventory_failure) return;
+    const { inventory_failure: _f, ...rest } = state;
+    writeDueState(tx, args.project, rest);
+    return;
+  }
+  writeDueState(tx, args.project, { ...state, inventory_failure: { count: (state.inventory_failure?.count ?? 0) + 1, reason: args.failure.slice(0, 500), at: tx.at } });
+}
 
 export function writeDueState(tx: Tx, project: string, state: DesignDueState): void {
   tx.db.prepare('UPDATE "projects" SET "design_due" = ? WHERE "id" = ?').run(JSON.stringify(state), project);
@@ -33,7 +49,8 @@ function dueFacts(tx: Tx, project: string) {
   const state = designDueState(tx.db, project);
   const stage = state.stage ?? 'before_build';
   const held = heldStages(tx.db, project);
-  const manifest = { stage, held_stages: held, stale_screens: [] as { screen: string; target: string }[], policy_revision: policyRevision(tx.db, project) };
+  const failed = state.inventory_failure && state.inventory_failure.count >= INVENTORY_FAILURES_NAMED ? state.inventory_failure.reason : null;
+  const manifest = { stage, held_stages: held, stale_screens: [] as { screen: string; target: string }[], policy_revision: policyRevision(tx.db, project), inventory_failure: failed };
   return { state, stage, held, manifest };
 }
 
@@ -44,9 +61,18 @@ export const DESIGN_DUE: KindSpec = {
     if (designPolicyOf(tx.db, project) === 'off' && stage !== 'alpha_review') return null;
     if (stage !== 'alpha_review' && held.length === 0) return null;
     const command = stage === 'alpha_review' ? 'surety session open designer --review' : 'surety session open designer';
-    const evidence = { stage, held_stages: held, stale_screens: manifest.stale_screens, command, ...(state.note ? { note: state.note } : {}) };
-    const what =
-      stage === 'alpha_review'
+    const inventoryFailed = state.inventory_failure && state.inventory_failure.count >= INVENTORY_FAILURES_NAMED ? state.inventory_failure : null;
+    const evidence = {
+      stage,
+      held_stages: held,
+      stale_screens: manifest.stale_screens,
+      command,
+      ...(state.note ? { note: state.note } : {}),
+      ...(inventoryFailed ? { inventory_failure: inventoryFailed } : {}),
+    };
+    const what = inventoryFailed
+      ? `${held.length} UI stage(s) wait for a design, and the engine could not commit the interface inventory a Designer session needs (${inventoryFailed.count} attempts; the last: ${inventoryFailed.reason}).`
+      : stage === 'alpha_review'
         ? 'The Alpha is deployed: review it against the design.'
         : stage === 'revise'
           ? `The design was sent back for revision${state.note ? ` ("${state.note}")` : ''}; ${held.length} UI stage(s) wait on it.`
@@ -101,8 +127,11 @@ export const DESIGN_DUE: KindSpec = {
 // decisions' review when nothing it names is held. Idempotent.
 export function reviewDesignDue(tx: Tx, project: string): void {
   const digest = (tx.db.prepare('SELECT "design_inventory_digest" FROM "projects" WHERE "id" = ?').get(project) as { design_inventory_digest: string | null } | undefined)?.design_inventory_digest ?? null;
-  if (digest === null) return;
   const state = designDueState(tx.db, project);
+  // No inventory yet: no question while its derivation is under way; one
+  // naming the failure once its commit has failed repeatedly (no silent
+  // stall, D7 §11; BS6 §4.1 rule 25).
+  if (digest === null && (state.inventory_failure?.count ?? 0) < INVENTORY_FAILURES_NAMED) return;
   if (state.later_until && Date.parse(state.later_until) > Date.parse(tx.at)) return;
   if (state.later_until) {
     const { later_until: _done, ...rest } = state;

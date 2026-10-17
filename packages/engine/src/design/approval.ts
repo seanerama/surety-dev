@@ -319,7 +319,11 @@ const roadmapVersion = (db: Db, project: string): number | null => (db.prepare('
 export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown> {
   const r = requestRow(db, rev.spec_change_request);
   const current = (db.prepare('SELECT "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(rev.project) as { version: number } | undefined)?.version ?? null;
-  const arch = rev.architecture_revision ? (db.prepare('SELECT "version" FROM "architecture_revisions" WHERE "id" = ?').get(rev.architecture_revision) as { version: number } | undefined)?.version ?? null : null;
+  // The architecture version and the inventory as they are now (the
+  // slice-40 review's m5): the approval's answer is compared with them at
+  // the effect, so a change between the two is seen.
+  const arch = approvedModuleMap(db, rev.project)?.version ?? null;
+  const inventoryNow = (db.prepare('SELECT "design_inventory_digest" FROM "projects" WHERE "id" = ?').get(rev.project) as { design_inventory_digest: string | null } | undefined)?.design_inventory_digest ?? null;
   const latest = latestCheck(db, { project: rev.project });
   return {
     design_version: rev.version,
@@ -333,7 +337,7 @@ export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown
     // In a batch, the version its own change creates (§7.4).
     spec_version: r && (r.status === 'proposed' || r.status === 'requested') ? (current ?? 0) + 1 : current,
     spec_change_diff_hash: r?.proposal_blob ?? null,
-    inventory_digest: rev.inventory_digest,
+    inventory_digest: inventoryNow,
     roadmap_version: roadmapVersion(db, rev.project),
     plan_versions: planVersions(db, rev.project).map((p) => ({ id: p.id, generation: p.generation })),
   };

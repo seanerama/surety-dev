@@ -119,6 +119,9 @@ export class ReleaseOperator {
     const copies = await this.rt.read<{ run: string; digest: string; path: string; manifest: ManifestEntry[] }[]>('qualify.run_artifacts', { incarnation: this.rt.incarnation });
     const rehashed = copies.map((c) => ({ run: c.run, digest: c.digest, path: c.path, rehash: rehash(c.path, c.manifest) }));
     await this.rt.engine('qualify.interrupt', { incarnation: this.rt.incarnation, rehashed });
+    // A design preview's operations an earlier incarnation left under way,
+    // ended and their environment's lease released (the slice-40 review's B2).
+    await this.rt.engine('design.preview_interrupt', { incarnation: this.rt.incarnation });
     const configs = await this.rt.read<{ config: string; refs: string[]; digests: { ref: string; digest: string }[] }[]>('deploy.configs_with_secrets');
     const changed = configs.map((c) => {
       const now = heldDigests(this.rt.home, c.refs);

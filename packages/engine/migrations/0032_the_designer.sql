@@ -408,6 +408,16 @@ CREATE TABLE design_effective_assets (
   UNIQUE (project, slot, variant)
 );
 
+-- What a UI Builder's package carried of the effective set, recorded when
+-- the package is built: its bindings are validated against it at
+-- integration, whatever an approval moved meanwhile (D7 §6.5).
+CREATE TABLE design_package_carried (
+  run TEXT PRIMARY KEY REFERENCES runs(id),
+  created_at TEXT NOT NULL,
+  -- [{slot, variant, slot_version, digest}]
+  effective TEXT NOT NULL
+);
+
 -- ---- asset bindings (D7 §6.5; G15; A.3 asset_bindings) -------------------------------------
 
 CREATE TABLE asset_bindings (
