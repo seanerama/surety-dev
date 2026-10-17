@@ -136,7 +136,31 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   // D6 §8.3 (B.7): an Architect's replan in retrofit asks for criteria of
   // descriptive requirements its phase touches; each an ordinary request.
   spec_change_requests: (v) => listOf(v, (r) => Array.isArray(r.keys) && r.keys.every(isString) && isString(r.text) && Object.keys(r).every((k) => k === 'keys' || k === 'text')),
+  // D7 §6.5, B.17 (G15): a Builder's bindings, each closed.
+  asset_bindings: (v) => assetBindingsProblem(v) === null,
 };
+
+// B.17's binding: `{slot, variant, target, path, form}`, `form` copy or
+// derived, every other field refused by name (SEAM.md §481).
+export const ASSET_BINDING_FIELDS = ['slot', 'variant', 'target', 'path', 'form'] as const;
+export function assetBindingsProblem(v: unknown): string | null {
+  if (!Array.isArray(v)) return 'asset_bindings must be an array of {slot, variant, target, path, form}';
+  for (const [i, b] of v.entries()) {
+    if (!isObject(b)) return `asset_bindings[${i}] is not an object`;
+    for (const k of Object.keys(b)) if (!(ASSET_BINDING_FIELDS as readonly string[]).includes(k)) return `"${k}" is not a field of asset_bindings[${i}] (B.17: slot, variant, target, path, form)`;
+    for (const k of ['slot', 'variant', 'target', 'path'] as const) if (!isString(b[k]) || b[k] === '') return `asset_bindings[${i}].${k} must be a non-empty string`;
+    if (b.form !== 'copy' && b.form !== 'derived') return `asset_bindings[${i}].form must be copy or derived`;
+  }
+  return null;
+}
+
+// Why a result's report is not one the engine may take, where a field
+// names its own reason (the binding's unknown field, SEAM.md §481); null
+// otherwise.
+export function reportProblem(result: unknown): string | null {
+  if (!isObject(result) || result.asset_bindings === undefined) return null;
+  return assetBindingsProblem(result.asset_bindings);
+}
 
 // Not built: objections from any role but the Builder; a Verifier reports a
 // conflict as a finding of category requirement_conflict or contract_conflict.
@@ -157,6 +181,7 @@ const ROLE_ONLY: Record<string, string> = {
   governed_changes: 'verifier',
   spec_applicability: 'verifier',
   spec_change_requests: 'architect',
+  asset_bindings: 'builder',
 };
 
 // Fields no role's result may carry: no role registers a check execution or

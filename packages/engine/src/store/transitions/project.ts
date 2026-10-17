@@ -170,6 +170,8 @@ export interface PolicyCommit {
   effective: Policy;
   change: Policy;
   deadlineSeconds: number;
+  // D7 §2, §4.4: the inventory committed with a policy turning design on.
+  design_inventory?: { digest: string; inventory: unknown; manifest: unknown; incarnation: string };
 }
 
 export interface GovernedEdit {
@@ -261,6 +263,7 @@ export function intendPolicyCommit(tx: Tx, args: { project: string; repo: string
       effective: pr.effective,
       change: pr.change,
       widens: args.widens,
+      ...(pr.design_inventory ? { design_inventory: pr.design_inventory } : {}),
       ...(args.decision ? { decision: args.decision } : {}),
       ...(args.intent ? { intent: args.intent } : {}),
     },

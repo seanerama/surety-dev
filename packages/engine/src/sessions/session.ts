@@ -36,8 +36,10 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import { recordSemantics } from '../spec/approval.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
 import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
+import { proposeDesign } from '../design/approval.js';
+import { recordReview } from '../design/review.js';
 
-export const SESSION_ROLES = ['vision', 'spec_writer', 'architect'] as const;
+export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
 
 // The paths each interactive role may write (D6 §2.5; F §4.1).
@@ -45,6 +47,8 @@ export const SESSION_PATHS: Record<SessionRole, readonly string[]> = {
   vision: ['.surety/idea.md'],
   spec_writer: ['.surety/spec/'],
   architect: ['.surety/architecture/', '.surety/adrs/', '.surety/roadmap/', '.surety/phases/'],
+  // D7 §3.3, G9: `.surety/design/` less `inventory/` (git/snapshot.ts refuses that).
+  designer: ['.surety/design/'],
 };
 
 export type SpeakerKind = 'owner' | 'role' | 'engine';
@@ -208,7 +212,7 @@ export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number;
 // template and model; no project backend key and no entry is consulted.
 export function openSession(
   tx: Tx,
-  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null },
+  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null; mode?: unknown },
 ): { run: Record<string, unknown> } {
   const p = tx.db.prepare('SELECT "id", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; paused: number; registration_state: string } | undefined;
   if (!p) throw notFound('project', args.project);
@@ -221,8 +225,16 @@ export function openSession(
   if (p.registration_state !== 'registered') throw illegal('a session on a project that is not registered', { project: p.id, registration_state: p.registration_state });
   if (p.paused === 1) throw illegal('a session on a paused project', { project: p.id });
   // One open session per project, and no session beside a one-shot run
-  // (D6 §2.7; D6-S08): no run counter, the project's own exclusivity.
-  const live = tx.db.prepare(`SELECT "id", "kind", "role" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ORDER BY "seq" LIMIT 1`).get(p.id) as { id: string; kind: string; role: string } | undefined;
+  // (D6 §2.7; D6-S08): no run counter, the project's own exclusivity. A
+  // Designer session opens beside one-shot runs (D7 §3.1, G12): only another
+  // session refuses it.
+  const designer = args.role === 'designer';
+  if (args.mode !== undefined && (args.role !== 'designer' || args.mode !== 'review')) {
+    throw new Refusal(400, 'invalid_value', '"mode" is "review", for a Designer session only.', 'Leave mode out, or open a Designer session in review mode.', { field: 'mode' });
+  }
+  const live = tx.db
+    .prepare(`SELECT "id", "kind", "role" FROM "runs" WHERE "project" = ? AND "state" <> 'ended' ${designer ? `AND "kind" = 'session'` : ''} ORDER BY "seq" LIMIT 1`)
+    .get(p.id) as { id: string; kind: string; role: string } | undefined;
   if (live) {
     throw new Refusal(409, 'session_busy', `Project ${p.id} has a ${live.kind} run (${live.id}, ${live.role}) that has not ended; one session at a time, and none beside a one-shot run.`, 'Wait for it to end, or close the open session.', {
       project: p.id,
@@ -243,6 +255,10 @@ export function openSession(
   if (resolved.kind === 'refused') throw new Refusal(409, resolved.code, resolved.reason, resolved.what_to_do, { ...resolved.subject, role });
   if (role === 'architect' && !tx.db.prepare('SELECT 1 FROM "spec_revisions" WHERE "project" = ?').get(p.id)) {
     throw illegal('an Architect session on a project with no approved specification', { project: p.id, role });
+  }
+  // D7 §4.4: the inventory is committed before any Designer session opens.
+  if (role === 'designer' && !(tx.db.prepare('SELECT "design_inventory_digest" FROM "projects" WHERE "id" = ?').get(p.id) as { design_inventory_digest: string | null }).design_inventory_digest) {
+    throw new Refusal(409, 'design_inventory_missing', `Project ${p.id} has no interface inventory yet: it is derived when design is on and the architecture is approved and published.`, 'Turn design on, or wait for the publication of the first plan.', { project: p.id });
   }
   const repo = projectRepoRow(tx, p.id);
   const head = registryRow(tx, p.id, integrationRef(repo.integration_branch));
@@ -292,7 +308,9 @@ export function openSession(
       idle,
     );
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
-  tx.emit('session.allocated', subject, { role, idle_deadline_at: idle });
+  // A Designer session in review mode (D7 §10.2): its notes say so.
+  if (args.mode === 'review') tx.db.prepare('UPDATE "runs" SET "session_notes" = ? WHERE "id" = ?').run(JSON.stringify({ mode: 'review' }), run);
+  tx.emit('session.allocated', subject, { role, idle_deadline_at: idle, ...(args.mode === 'review' ? { mode: 'review' } : {}) });
   return { run: runSummary(tx.db, run) };
 }
 
@@ -589,6 +607,9 @@ export interface SessionReply {
   artifact_changed: boolean;
   questions_for_owner?: string[];
   done?: boolean;
+  // D7 §3.5, B.12: a Designer's findings (D3 X2's form, with the interface
+  // or requirement it is about).
+  findings?: { category: string; severity: string; message: string; interface?: string; requirement?: string }[];
   // Fields the reply carried that answer an owner's decision (D6 §8.1 step
   // 2; SEAM.md §379): read as the role's claim, answering nothing, and
   // named in the engine's entry of the transcript.
@@ -605,11 +626,13 @@ const ENGINE_ONLY_FIELDS = ['speaker', 'turn'];
 // The role's reply in B.7's form (SEAM.md §343: §68's `status` and `summary`
 // beside B.7's fields), or null. A `speaker` or `turn` field is role text
 // and assigns nothing (B01): it is ignored, and the engine writes both.
-export function parseSessionReply(value: unknown): SessionReply | null {
+export function parseSessionReply(value: unknown, role?: string): SessionReply | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
   if (v.status !== 'completed' || typeof v.summary !== 'string') return null;
-  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...OWNER_ONLY_FIELDS, ...ENGINE_ONLY_FIELDS].includes(k)) return null;
+  const designer = role === 'designer';
+  for (const k of Object.keys(v)) if (!['status', 'summary', 'reply', 'artifact_changed', 'questions_for_owner', 'done', ...(designer ? ['findings'] : []), ...OWNER_ONLY_FIELDS, ...ENGINE_ONLY_FIELDS].includes(k)) return null;
+  if (designer && v.findings !== undefined && !designerFindings(v.findings)) return null;
   const answeredNothing = OWNER_ONLY_FIELDS.filter((k) => v[k] !== undefined);
   if (typeof v.reply !== 'string') return null;
   if (typeof v.artifact_changed !== 'boolean') return null;
@@ -620,8 +643,23 @@ export function parseSessionReply(value: unknown): SessionReply | null {
     artifact_changed: v.artifact_changed,
     ...(v.questions_for_owner ? { questions_for_owner: v.questions_for_owner as string[] } : {}),
     ...(v.done !== undefined ? { done: v.done } : {}),
+    ...(designer && v.findings !== undefined ? { findings: v.findings as NonNullable<SessionReply['findings']> } : {}),
     ...(answeredNothing.length > 0 ? { answered_nothing: answeredNothing } : {}),
   };
+}
+
+// B.12's findings: D3 X2's {category, severity, message} with `interface`
+// or `requirement` naming its subject (SEAM.md §486).
+function designerFindings(v: unknown): boolean {
+  return (
+    Array.isArray(v) &&
+    v.every((f) => {
+      if (typeof f !== 'object' || f === null || Array.isArray(f)) return false;
+      const o = f as Record<string, unknown>;
+      if (Object.keys(o).some((k) => !['category', 'severity', 'message', 'interface', 'requirement'].includes(k))) return false;
+      return ['requirement_conflict', 'contract_conflict', 'defect'].includes(o.category as string) && ['critical', 'high', 'medium', 'low'].includes(o.severity as string) && typeof o.message === 'string' && (o.interface === undefined || typeof o.interface === 'string') && (o.requirement === undefined || typeof o.requirement === 'string');
+    })
+  );
 }
 
 // ---- the four facts, in order (D6 §2.1, §2.4; B01; D6-S10; SEAM.md §389) ----------------
@@ -884,7 +922,12 @@ export interface SaveOutcome {
   // The engine's entry as a session_transcript record (the findings' text).
   notesRecord: string | null;
   // What the parse read of the products, for the decisions at close.
-  products: { identity?: Record<string, unknown> | null; spec?: { blob: string; digest: string | null; representation: SpecRepresentation | null; findings: SemanticFinding[]; readable: boolean } | null };
+  products: {
+    identity?: Record<string, unknown> | null;
+    spec?: { blob: string; digest: string | null; representation: SpecRepresentation | null; findings: SemanticFinding[]; readable: boolean } | null;
+    // D7 §5.6: a Designer save's design check, as recorded.
+    design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: import('../design/check.js').DesignReason[] };
+  };
   nothingToSave: boolean;
 }
 
@@ -896,7 +939,9 @@ export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number
   const generation = run.idle_generation;
   if (args.findings.length > 0 || args.refused) {
     const lines = [...(args.refused ? [`The save was refused (${args.refused.code}): ${args.refused.text} The workspace keeps the change.`] : []), ...args.findings.map((f) => `${f.code}${f.path ? ` (${f.path})` : ''}: ${f.message}`)];
-    appendTranscript(tx, run, { turn: run.turn_count, speaker: 'engine', text: lines.join('\n'), text_ref: args.notesRecord });
+    // A Designer's save is read at its next turn (D7 §5.6: "the engine's
+    // entry on the next turn"; SEAM.md §483).
+    appendTranscript(tx, run, { turn: run.role === 'designer' ? run.turn_count + 1 : run.turn_count, speaker: 'engine', text: lines.join('\n'), text_ref: args.notesRecord });
   }
   let semantics: string | null = null;
   if (args.products.spec && args.committed) {
@@ -907,7 +952,7 @@ export function finishSave(tx: Tx, args: SaveOutcome): { idle_generation: number
   // last checkpoint (SEAM.md §344).
   const prior = saveNotesOf(tx.db, run.id);
   const notes = args.committed
-    ? { at: tx.at, saved: args.committed.sha, blobs: args.committed.blobs, refused: args.refused, findings: args.findings, identity: args.products.identity ?? null, semantics }
+    ? { ...(prior.mode ? { mode: prior.mode } : {}), at: tx.at, saved: args.committed.sha, blobs: args.committed.blobs, refused: args.refused, findings: args.findings, identity: args.products.identity ?? null, semantics }
     : { ...prior, at: tx.at, refused: args.refused, findings: args.refused || args.findings.length > 0 ? args.findings : (prior.findings ?? []) };
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'open_idle', "session_notes" = ?, "current_base" = COALESCE(?, "current_base") WHERE "id" = ?`).run(JSON.stringify(notes), args.committed?.sha ?? null, run.id);
   tx.emit('session.saved', { project: run.project, run: run.id }, { idle_generation: generation, revision: args.committed?.sha ?? null, refused: args.refused?.code ?? null, nothing_to_save: args.nothingToSave, findings: args.findings.length });
@@ -921,7 +966,15 @@ export interface CloseArgs extends Admission {
   run: string;
   // What the close raises: nothing (refuse), the role's decision, or the
   // architecture bundle prepared by the main thread (plan/bundle.ts).
-  raise: { kind: 'none' } | { kind: 'idea_accept' } | { kind: 'spec_approval' } | { kind: 'bundle'; bundle: string; withPlan: boolean };
+  raise:
+    | { kind: 'none' }
+    | { kind: 'idea_accept' }
+    | { kind: 'spec_approval' }
+    | { kind: 'bundle'; bundle: string; withPlan: boolean }
+    // D7 §5a, §7.1: a Designer's design proposed, its change requested.
+    | { kind: 'design'; propose: Parameters<typeof proposeDesign>[1] }
+    // D7 §10.3: a review recorded, its verdicts proposed.
+    | { kind: 'review'; review: Record<string, unknown> };
   // A close the engine makes by the idle protocol (D6 §2.4): `idle_timeout`
   // or `budget_exhausted`; absent for the owner's.
   cause?: 'idle_timeout' | 'budget_exhausted';
@@ -955,6 +1008,11 @@ export function closeSession(tx: Tx, args: CloseArgs): { run: SessionRow; decisi
     tx.db.prepare('UPDATE "plan_bundles" SET "batch_key" = ? WHERE "id" = ?').run(args.raise.bundle, args.raise.bundle);
     if (arch) decisions.push({ id: arch.id, kind: arch.kind, batch_key: args.raise.bundle });
     if (plan) decisions.push({ id: plan.id, kind: plan.kind, batch_key: args.raise.bundle });
+  }
+  if (args.raise.kind === 'design') proposeDesign(tx, args.raise.propose);
+  if (args.raise.kind === 'review') {
+    const made = recordReview(tx, args.raise.review as unknown as Parameters<typeof recordReview>[1]);
+    if (made.decision) decisions.push({ id: made.decision, kind: 'design_verdicts', batch_key: null });
   }
   tx.db.prepare(`UPDATE "runs" SET "session_state" = 'closing' WHERE "id" = ?`).run(run.id);
   tx.emit('session.closed', { project: run.project, run: run.id }, { turns: run.turn_count, idle_generation: run.idle_generation, decisions: decisions.map((d) => d.kind), refused: args.raise.kind === 'none', ...(args.cause ? { cause: args.cause } : {}) });
@@ -1141,7 +1199,7 @@ export function dueCloses(db: Tx['db'], at: string): { run: string; project: str
 }
 
 // The notes of the last save (sessions/decisions.ts reads the products).
-export function saveNotesOf(db: Tx['db'], run: string): { saved?: string | null; blobs?: Record<string, string>; identity?: Record<string, unknown> | null; semantics?: string | null; findings?: SaveFinding[] } {
+export function saveNotesOf(db: Tx['db'], run: string): { saved?: string | null; blobs?: Record<string, string>; identity?: Record<string, unknown> | null; semantics?: string | null; findings?: SaveFinding[]; mode?: string } {
   const row = db.prepare('SELECT "session_notes" FROM "runs" WHERE "id" = ?').get(run) as { session_notes: string | null } | undefined;
   try {
     return row?.session_notes ? (JSON.parse(row.session_notes) as Record<string, unknown>) : {};
@@ -1211,7 +1269,7 @@ function approvedInputs(db: Tx['db'], project: string, role: SessionRole): { nam
 // cleared when the session has ended (and at the item's claim). No status
 // changes, and no run counter is behind it (K2).
 export function markSessionHolds(tx: Tx): number {
-  const open = `SELECT "project" FROM "runs" WHERE "kind" = 'session' AND "state" <> 'ended'`;
+  const open = `SELECT "project" FROM "runs" WHERE "kind" = 'session' AND "state" <> 'ended' AND "role" <> 'designer'`;
   const held = tx.db.prepare(`UPDATE "work_items" SET "held" = 'session_busy' WHERE "status" = 'eligible' AND "held" IS NULL AND "project" IN (${open})`).run().changes;
   tx.db.prepare(`UPDATE "work_items" SET "held" = NULL WHERE "held" = 'session_busy' AND ("status" <> 'eligible' OR "project" NOT IN (${open}))`).run();
   return held;

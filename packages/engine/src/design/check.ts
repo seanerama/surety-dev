@@ -1,0 +1,489 @@
+// The design check (D7 §5.6; A.4; SEAM.md §483): `checkDesign(tree,
+// inventory)`, a pure function run at every save and again at close, over
+// clauses 1 to 8: the closed schemas and the inventory's digest; references;
+// coverage per target; navigation and conventions; tokens and WCAG AA on
+// declared pairs; axes and mockup kinds; criteria scoped by target and
+// technology (§7.2); assets and the selection's floor. It reads JSON, SVG as
+// text and raster files by their headers, and computes; it executes nothing
+// the Designer wrote and judges no mockup's look. Each reason names its
+// subjects, the target among them.
+
+import { isSlug } from './paths.js';
+import { AA_RATIO, contrastRatio } from './contrast.js';
+import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, formatOf, svgActive, sha256hex } from './assets.js';
+import type { Inventory } from './inventory.js';
+
+export interface DesignReason {
+  code: string;
+  subjects: Record<string, unknown>;
+}
+
+export interface DesignTree {
+  // path relative to .surety/design/ → bytes.
+  files: Map<string, Buffer>;
+}
+
+export interface CheckContext {
+  inventory: Inventory | null;
+  externalHosts: string[];
+  // The slots and digests the last approved revision approved (§6.4), to
+  // judge a forged `approved` status.
+  approved: { slot: string; slot_version: number; digests: Record<string, string> }[];
+  maxBytes?: number;
+  maxFiles?: number;
+}
+
+export interface CheckOutcome {
+  outcome: 'passed' | 'refused';
+  reasons: DesignReason[];
+  design: Record<string, unknown> | null;
+}
+
+// D7 §7.2: the closed criterion catalogue with the targets and technologies
+// each kind applies to.
+const CSS_TECH = ['html_css', 'three_js'];
+export const CRITERION_CATALOGUE: Record<string, { targets: string[] | 'all'; technologies: string[] | 'all'; reads: boolean }> = {
+  tokens_only: { targets: ['web'], technologies: CSS_TECH, reads: true },
+  layout_at_width: { targets: ['web'], technologies: CSS_TECH, reads: true },
+  label_with_unit: { targets: ['web'], technologies: CSS_TECH, reads: true },
+  focus_visible: { targets: ['web'], technologies: CSS_TECH, reads: true },
+  reduced_motion: { targets: ['web'], technologies: CSS_TECH, reads: true },
+  token_parity: { targets: 'all', technologies: 'all', reads: true },
+  contrast_aa: { targets: 'all', technologies: 'all', reads: true },
+  state_marker_present: { targets: 'all', technologies: 'all', reads: true },
+  asset_parity: { targets: 'all', technologies: 'all', reads: true },
+  human: { targets: 'all', technologies: 'all', reads: false },
+};
+// D7 A.2 NativeConvention: never a criterion in M6 (not_checkable_yet).
+export const NATIVE_CONVENTIONS = ['browser_back', 'keyboard_path', 'system_back', 'safe_area', 'permission_prompt', 'touch_interaction', 'platform_navigation', 'window_resize', 'menu_entries', 'keyboard_shortcuts'];
+
+export const MOCKUP_KINDS = ['static_html', 'scene_html', 'simulated_html', 'image', 'source_stub'] as const;
+export const NAV_KINDS = ['push', 'replace', 'modal', 'sheet', 'tab', 'back', 'deep_link', 'menu', 'shortcut', 'window'];
+export const DESIGN_FILES = ['design.json', 'tokens.json', 'flows.json', 'screens.json', 'navigation.json', 'criteria.json', 'assets/manifest.json'] as const;
+
+// B.10 to B.16's closed fields.
+const FIELDS = {
+  design: ['version', 'origin', 'inventory_digest', 'selection', 'targets', 'cross_platform', 'tokens_file', 'flows_file', 'screens_file', 'navigation_file', 'criteria_file', 'assets_file', 'mockups'],
+  selection: ['themes', 'slots', 'layouts'],
+  target: ['module', 'target', 'ui_technology', 'form_factors', 'preview_capability', 'layouts', 'window'],
+  mockup: ['path', 'kind', 'screens', 'simulates', 'external_urls'],
+  tokens: ['unit', 'themes', 'type', 'space', 'radius', 'duration', 'pairs'],
+  flows: ['flows'],
+  flow: ['key', 'title', 'requirements', 'steps'],
+  step: ['key', 'title', 'requirement', 'interfaces'],
+  screens: ['screens'],
+  screen: ['key', 'target', 'title', 'flow_steps', 'requirements', 'interfaces', 'states', 'layouts', 'inputs', 'conventions', 'notes'],
+  state: ['obligation', 'mockup', 'fixture'],
+  input: ['interface', 'property', 'label', 'unit'],
+  conventions: ['route', 'transient', 'browser_back', 'keyboard_path', 'back', 'container', 'edge_swipe_back', 'safe_area_edges', 'permissions', 'gestures', 'window_min', 'menu_entries', 'shortcuts', 'hover', 'context_menu'],
+  navigation: ['targets'],
+  navTarget: ['target', 'entries', 'edges'],
+  edge: ['from', 'to', 'trigger', 'kind'],
+  criteria: ['criteria', 'human_tests'],
+  criterion: ['requirement', 'text', 'kind', 'targets', 'paths', 'width', 'slot', 'variant'],
+  humanTest: ['target', 'text', 'screens', 'not_checkable_yet'],
+  manifest: ['version', 'slots', 'packaging'],
+  slot: ['key', 'kind', 'purpose', 'platforms', 'placement', 'screens', 'variants', 'alt_text', 'decorative', 'slot_version', 'status', 'provenance', 'status_since', 'history'],
+  variant: ['name', 'format', 'size', 'transparency', 'file', 'digest'],
+} as const;
+
+// Which convention fields apply to each target (B.12: a field not
+// applicable to the screen's target is refused).
+const CONVENTION_TARGETS: Record<string, string[]> = {
+  web: ['route', 'transient', 'browser_back', 'keyboard_path', 'hover', 'context_menu'],
+  android: ['back', 'permissions', 'gestures'],
+  ios: ['container', 'edge_swipe_back', 'safe_area_edges', 'permissions', 'gestures'],
+  macos: ['window_min', 'menu_entries', 'shortcuts', 'hover', 'context_menu', 'permissions'],
+  windows: ['window_min', 'menu_entries', 'shortcuts', 'hover', 'context_menu'],
+  linux: ['window_min', 'menu_entries', 'shortcuts', 'hover', 'context_menu'],
+};
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
+  const reasons: DesignReason[] = [];
+  const add = (code: string, subjects: Record<string, unknown>) => reasons.push({ code, subjects });
+  const schema = (file: string, field: string | null, why: string) => add('DESIGN_SCHEMA_INVALID', { file, field, why });
+  const closed = (file: string, at: string, o: Record<string, unknown>, fields: readonly string[]): boolean => {
+    let ok = true;
+    for (const k of Object.keys(o)) {
+      if (!fields.includes(k)) {
+        schema(file, at === '' ? k : `${at}.${k}`, `"${k}" is not a field of ${at === '' ? 'the file' : at}`);
+        ok = false;
+      }
+    }
+    return ok;
+  };
+  // The tree's bounds (§5.5).
+  let bytes = 0;
+  for (const b of tree.files.values()) bytes += b.length;
+  if (ctx.maxBytes !== undefined && bytes > ctx.maxBytes) add('DESIGN_SCHEMA_INVALID', { field: 'design_tree_max_bytes', bytes, max: ctx.maxBytes, why: 'the design tree is larger than its bound' });
+  if (ctx.maxFiles !== undefined && tree.files.size > ctx.maxFiles) add('DESIGN_SCHEMA_INVALID', { field: 'design_tree_max_files', files: tree.files.size, max: ctx.maxFiles, why: 'the design tree has more files than its bound' });
+  const json = (path: string): Record<string, unknown> | null => {
+    const b = tree.files.get(path);
+    if (!b) {
+      schema(path, null, 'the file is missing');
+      return null;
+    }
+    try {
+      const v = JSON.parse(b.toString('utf8')) as unknown;
+      if (!isObj(v)) {
+        schema(path, null, 'is not a JSON object');
+        return null;
+      }
+      return v;
+    } catch {
+      schema(path, null, 'is not JSON');
+      return null;
+    }
+  };
+  const inv = ctx.inventory;
+  // ---- clause 1: the closed schemas; the inventory's digest --------------------------------
+  const design = json('design.json');
+  const tokens = json('tokens.json');
+  const flows = json('flows.json');
+  const screensFile = json('screens.json');
+  const nav = json('navigation.json');
+  const criteriaFile = json('criteria.json');
+  const manifest = json('assets/manifest.json') as AssetManifest | null;
+  if (design) {
+    closed('design.json', '', design, FIELDS.design);
+    if (!inv) add('DESIGN_INVENTORY_STALE', { inventory_digest: design.inventory_digest ?? null, current: null, why: 'the project has no recorded inventory' });
+    else if (design.inventory_digest !== inv.inventory_digest) add('DESIGN_INVENTORY_STALE', { inventory_digest: design.inventory_digest ?? null, current: inv.inventory_digest });
+    if (design.origin !== 'intended' && design.origin !== 'observed') schema('design.json', 'origin', 'must be intended or observed');
+    if (isObj(design.selection)) closed('design.json', 'selection', design.selection, FIELDS.selection);
+    else schema('design.json', 'selection', 'must be an object');
+  }
+  const screens = (isObj(screensFile) && Array.isArray(screensFile.screens) ? screensFile.screens : []).filter(isObj) as Record<string, unknown>[];
+  if (screensFile) closed('screens.json', '', screensFile, FIELDS.screens);
+  for (const [i, s] of screens.entries()) {
+    const at = `screens[${i}] (${String(s.key)})`;
+    closed('screens.json', at, s, FIELDS.screen);
+    for (const [j, st] of (Array.isArray(s.states) ? s.states : []).entries()) if (isObj(st)) closed('screens.json', `${at}.states[${j}]`, st, FIELDS.state);
+    for (const [j, inp] of (Array.isArray(s.inputs) ? s.inputs : []).entries()) if (isObj(inp)) closed('screens.json', `${at}.inputs[${j}]`, inp, FIELDS.input);
+    if (isObj(s.conventions)) {
+      closed('screens.json', `${at}.conventions`, s.conventions, FIELDS.conventions);
+      const allowed = CONVENTION_TARGETS[String(s.target)] ?? [];
+      for (const k of Object.keys(s.conventions)) if ((FIELDS.conventions as readonly string[]).includes(k) && !allowed.includes(k)) schema('screens.json', `${at}.conventions.${k}`, `"${k}" is not a convention of the target ${String(s.target)}`);
+    } else schema('screens.json', `${at}.conventions`, 'must be an object');
+  }
+  if (tokens) closed('tokens.json', '', tokens, FIELDS.tokens);
+  if (flows) {
+    closed('flows.json', '', flows, FIELDS.flows);
+    for (const [i, f] of (Array.isArray(flows.flows) ? flows.flows : []).entries()) {
+      if (!isObj(f)) continue;
+      closed('flows.json', `flows[${i}]`, f, FIELDS.flow);
+      for (const [j, st] of (Array.isArray(f.steps) ? f.steps : []).entries()) if (isObj(st)) closed('flows.json', `flows[${i}].steps[${j}]`, st, FIELDS.step);
+    }
+  }
+  if (nav) {
+    closed('navigation.json', '', nav, FIELDS.navigation);
+    for (const [i, t] of (Array.isArray(nav.targets) ? nav.targets : []).entries()) {
+      if (!isObj(t)) continue;
+      closed('navigation.json', `targets[${i}]`, t, FIELDS.navTarget);
+      for (const [j, e] of (Array.isArray(t.edges) ? t.edges : []).entries()) if (isObj(e)) closed('navigation.json', `targets[${i}].edges[${j}]`, e, FIELDS.edge);
+    }
+  }
+  const criteria = (isObj(criteriaFile) && Array.isArray(criteriaFile.criteria) ? criteriaFile.criteria : []).filter(isObj) as Record<string, unknown>[];
+  const humanTests = (isObj(criteriaFile) && Array.isArray(criteriaFile.human_tests) ? criteriaFile.human_tests : []).filter(isObj) as Record<string, unknown>[];
+  if (criteriaFile) {
+    closed('criteria.json', '', criteriaFile, FIELDS.criteria);
+    criteria.forEach((c, i) => closed('criteria.json', `criteria[${i}]`, c, FIELDS.criterion));
+    humanTests.forEach((h, i) => closed('criteria.json', `human_tests[${i}]`, h, FIELDS.humanTest));
+  }
+  if (manifest) {
+    closed('assets/manifest.json', '', manifest as unknown as Record<string, unknown>, FIELDS.manifest);
+    for (const [i, s] of (Array.isArray(manifest.slots) ? manifest.slots : []).entries()) {
+      if (!isObj(s)) continue;
+      closed('assets/manifest.json', `slots[${i}] (${String(s.key)})`, s, FIELDS.slot);
+      for (const [j, v] of (Array.isArray(s.variants) ? s.variants : []).entries()) if (isObj(v)) closed('assets/manifest.json', `slots[${i}].variants[${j}]`, v, FIELDS.variant);
+    }
+  }
+  // ---- clause 2: references ----------------------------------------------------------------
+  const invTargets = new Set((inv?.targets ?? []).map((t) => t.target));
+  const invInterfaces = new Set((inv?.interfaces ?? []).map((i) => i.name));
+  const uiReqFor = (target: string) => new Set((inv?.ui_requirements ?? []).filter((r) => r.targets.includes(target)).map((r) => r.key));
+  const mockups = (isObj(design) && Array.isArray(design.mockups) ? design.mockups : []).filter(isObj) as Record<string, unknown>[];
+  mockups.forEach((m, i) => closed('design.json', `mockups[${i}]`, m, FIELDS.mockup));
+  const screenKeys = new Set(screens.map((s) => String(s.key)));
+  const named = new Set<string>();
+  for (const s of screens) {
+    const target = String(s.target);
+    const key = String(s.key);
+    if (!invTargets.has(target)) add('DESIGN_UNKNOWN_TARGET', { screen: key, target });
+    const reqs = uiReqFor(target);
+    for (const r of strs(s.requirements) ? s.requirements : []) if (!reqs.has(r)) add('DESIGN_UNKNOWN_REQUIREMENT', { screen: key, target, requirement: r });
+    for (const f of strs(s.interfaces) ? s.interfaces : []) if (!invInterfaces.has(f)) add('DESIGN_UNKNOWN_INTERFACE', { screen: key, target, interface: f });
+    for (const st of (Array.isArray(s.states) ? s.states : []).filter(isObj)) {
+      if (typeof st.mockup === 'string') {
+        named.add(st.mockup);
+        if (!tree.files.has(st.mockup)) add('DESIGN_MOCKUP_MISSING', { screen: key, target, mockup: st.mockup });
+      }
+      if (typeof st.fixture === 'string' && !tree.files.has(st.fixture)) add('DESIGN_MOCKUP_MISSING', { screen: key, target, fixture: st.fixture });
+    }
+  }
+  for (const m of mockups) {
+    const path = String(m.path);
+    if (!tree.files.has(path)) add('DESIGN_MOCKUP_MISSING', { mockup: path });
+    if (!strs(m.screens) || m.screens.length === 0 || !m.screens.some((k) => screenKeys.has(k))) add('DESIGN_MOCKUP_ORPHAN', { mockup: path });
+    for (const k of strs(m.screens) ? m.screens : []) if (!screenKeys.has(k)) add('DESIGN_MOCKUP_MISSING', { mockup: path, screen: k });
+  }
+  for (const path of tree.files.keys()) {
+    if (!path.startsWith('mockups/') || path.startsWith('mockups/data/')) continue;
+    if (!mockups.some((m) => m.path === path) && !named.has(path)) add('DESIGN_MOCKUP_ORPHAN', { mockup: path });
+  }
+  // ---- clause 3: coverage, per target ----------------------------------------------------------
+  const selection = isObj(design?.selection) ? (design!.selection as Record<string, unknown>) : {};
+  const selectedLayouts = (target: string): unknown[] => {
+    const l = (Array.isArray(selection.layouts) ? selection.layouts : []).filter(isObj).find((x) => x.target === target);
+    return Array.isArray(l?.layouts) ? l!.layouts : (inv?.targets.find((t) => t.target === target)?.layouts ?? []);
+  };
+  for (const r of inv?.ui_requirements ?? []) {
+    for (const target of r.targets) {
+      if (!invTargets.has(target)) continue;
+      if (!screens.some((s) => s.target === target && strs(s.requirements) && s.requirements.includes(r.key))) add('DESIGN_REQUIREMENT_UNCOVERED', { requirement: r.key, target });
+    }
+  }
+  for (const o of inv?.obligations ?? []) {
+    const covered = screens.some(
+      (s) =>
+        s.target === o.target &&
+        (o.interface === undefined || (strs(s.interfaces) && s.interfaces.includes(o.interface))) &&
+        (Array.isArray(s.states) ? s.states : []).filter(isObj).some((st) => isObj(st.obligation) && st.obligation.state === o.state && (st.obligation.interface ?? null) === (o.interface ?? null) && (st.obligation.permission ?? null) === (o.permission ?? null)),
+    );
+    if (!covered) add('DESIGN_STATE_UNCOVERED', { target: o.target, ...(o.interface ? { interface: o.interface } : {}), ...(o.permission ? { permission: o.permission } : {}), state: o.state });
+  }
+  for (const s of screens) {
+    const target = String(s.target);
+    const layouts = Array.isArray(s.layouts) ? s.layouts.map(String) : [];
+    for (const l of selectedLayouts(target)) if (!layouts.includes(String(l))) add('DESIGN_LAYOUT_UNCOVERED', { screen: String(s.key), target, layout: l });
+    for (const name of strs(s.interfaces) ? s.interfaces : []) {
+      const iface = inv?.interfaces.find((i) => i.name === name);
+      for (const [prop, shape] of Object.entries(iface?.request?.properties ?? {})) {
+        if (shape.unit === undefined) continue;
+        const input = (Array.isArray(s.inputs) ? s.inputs : []).filter(isObj).find((x) => x.interface === name && x.property === prop);
+        if (!input || typeof input.label !== 'string' || !input.label.includes(shape.unit)) add('DESIGN_INPUT_UNLABELLED', { screen: String(s.key), target, interface: name, property: prop, unit: shape.unit });
+      }
+    }
+  }
+  // ---- clause 4: navigation and conventions -----------------------------------------------------
+  const navTargets = (isObj(nav) && Array.isArray(nav.targets) ? nav.targets : []).filter(isObj) as Record<string, unknown>[];
+  for (const t of navTargets) {
+    const target = String(t.target);
+    const mine = new Set(screens.filter((s) => s.target === target).map((s) => String(s.key)));
+    const entries = strs(t.entries) ? t.entries : [];
+    const edges = (Array.isArray(t.edges) ? t.edges : []).filter(isObj);
+    for (const e of [...entries.map((x) => ({ from: x, to: x })), ...edges]) for (const k of [e.from, e.to]) if (!mine.has(String(k))) add('DESIGN_NAV_UNKNOWN_SCREEN', { target, screen: String(k) });
+    for (const e of edges) if (!NAV_KINDS.includes(String(e.kind))) schema('navigation.json', `edges.kind`, `"${String(e.kind)}" is not a NavKind`);
+    const reached = new Set(entries);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const e of edges) if (reached.has(String(e.from)) && !reached.has(String(e.to))) {
+        reached.add(String(e.to));
+        changed = true;
+      }
+    }
+    for (const k of mine) if (!reached.has(k)) add('DESIGN_SCREEN_UNREACHABLE', { target, screen: k });
+  }
+  for (const target of invTargets) {
+    if (!navTargets.some((t) => t.target === target) && screens.some((s) => s.target === target)) for (const s of screens.filter((x) => x.target === target)) add('DESIGN_SCREEN_UNREACHABLE', { target, screen: String(s.key) });
+  }
+  for (const s of screens) {
+    const target = String(s.target);
+    const key = String(s.key);
+    const conv = isObj(s.conventions) ? s.conventions : {};
+    const t = inv?.targets.find((x) => x.target === target);
+    const entry = navTargets.find((n) => n.target === target);
+    const root = strs(entry?.entries) && entry!.entries.includes(key);
+    for (const c of t?.required_conventions ?? []) {
+      if (c === 'route|transient') {
+        if (conv.route === undefined && conv.transient === undefined) add('DESIGN_CONVENTION_UNDECLARED', { target, screen: key, convention: 'route' });
+        continue;
+      }
+      if (c === 'back' && root) continue;
+      if (c === 'permissions') {
+        const declared = (Array.isArray(conv.permissions) ? conv.permissions : []).filter(isObj).map((p) => p.permission);
+        for (const p of t?.permissions ?? []) if (!declared.includes(p)) add('DESIGN_CONVENTION_UNDECLARED', { target, screen: key, convention: 'permissions', permission: p });
+        continue;
+      }
+      if (conv[c] === undefined) add('DESIGN_CONVENTION_UNDECLARED', { target, screen: key, convention: c });
+      if (conv[c] === 'unknown') add('DESIGN_CONVENTION_UNKNOWN', { target, screen: key, convention: c });
+    }
+    const keys = (Array.isArray(conv.shortcuts) ? conv.shortcuts : []).filter(isObj).map((x) => String(x.keys));
+    for (const k of new Set(keys.filter((x, i) => keys.indexOf(x) !== i))) add('DESIGN_SHORTCUT_DUPLICATE', { target, screen: key, keys: k });
+  }
+  const cross = isObj(design?.cross_platform) ? (design!.cross_platform as Record<string, unknown>) : null;
+  if (cross && inv?.cross_platform) {
+    const group = strs(cross.targets) ? cross.targets : [...invTargets];
+    const differences = (Array.isArray(cross.differences) ? cross.differences : []).filter(isObj);
+    for (const f of (isObj(flows) && Array.isArray(flows.flows) ? flows.flows : []).filter(isObj)) {
+      for (const st of (Array.isArray(f.steps) ? f.steps : []).filter(isObj)) {
+        for (const target of group) {
+          const has = screens.some((s) => s.target === target && strs(s.flow_steps) && s.flow_steps.includes(String(st.key)));
+          const stated = differences.some((d) => d.target === target && (d.flow_step === st.key || d.flow_step === undefined));
+          if (!has && !stated) add('DESIGN_TARGET_DIVERGENCE_UNSTATED', { target, flow_step: String(st.key) });
+        }
+      }
+    }
+  }
+  // ---- clause 5: tokens and contrast --------------------------------------------------------------
+  const themes = isObj(tokens?.themes) ? (tokens!.themes as Record<string, Record<string, string>>) : {};
+  const selectedThemes = strs(selection.themes) ? selection.themes : Object.keys(themes);
+  for (const p of (Array.isArray(tokens?.pairs) ? tokens!.pairs : []).filter(isObj)) {
+    for (const theme of selectedThemes) {
+      const vals = themes[theme] ?? {};
+      const fg = vals[String(p.text)];
+      const bg = vals[String(p.background)];
+      if (fg === undefined) add('DESIGN_TOKEN_UNDEFINED', { theme, token: String(p.text) });
+      if (bg === undefined) add('DESIGN_TOKEN_UNDEFINED', { theme, token: String(p.background) });
+      if (fg === undefined || bg === undefined) continue;
+      const ratio = contrastRatio(fg, bg);
+      if (ratio === null || ratio < AA_RATIO) add('DESIGN_CONTRAST_BELOW_AA', { theme, text: String(p.text), background: String(p.background), ratio: ratio === null ? null : Math.round(ratio * 100) / 100 });
+    }
+  }
+  // ---- clause 6: axes and mockups --------------------------------------------------------------------
+  for (const t of (Array.isArray(design?.targets) ? design!.targets : []).filter(isObj)) {
+    closed('design.json', `targets (${String(t.target)})`, t, FIELDS.target);
+    const it = inv?.targets.find((x) => x.target === t.target && x.module === t.module);
+    if (!it) add('DESIGN_UNKNOWN_TARGET', { target: String(t.target), module: String(t.module) });
+    else if (it.ui_technology !== t.ui_technology || it.preview_capability !== t.preview_capability) {
+      add('DESIGN_AXIS_MISMATCH', { target: String(t.target), module: String(t.module), ui_technology: t.ui_technology, preview_capability: t.preview_capability, inventory: { ui_technology: it.ui_technology, preview_capability: it.preview_capability } });
+    }
+  }
+  for (const m of mockups) {
+    const path = String(m.path);
+    const kind = String(m.kind);
+    if (!(MOCKUP_KINDS as readonly string[]).includes(kind)) {
+      schema('design.json', 'mockups.kind', `"${kind}" is not a mockup kind`);
+      continue;
+    }
+    for (const key of strs(m.screens) ? m.screens : []) {
+      const s = screens.find((x) => x.key === key);
+      if (!s) continue;
+      const target = String(s.target);
+      const it = inv?.targets.find((x) => x.target === target);
+      const cap = it?.preview_capability ?? 'none';
+      const admitted =
+        kind === 'image' || kind === 'source_stub' ? true : kind === 'static_html' ? target === 'web' && cap === 'native' : kind === 'scene_html' ? target === 'web' && it?.ui_technology === 'three_js' : cap === 'simulated';
+      if (!admitted) add('DESIGN_MOCKUP_KIND_MISMATCH', { mockup: path, kind, screen: key, target, preview_capability: cap });
+      if (target !== 'web' && kind !== 'simulated_html' && kind !== 'image' && kind !== 'source_stub') add('DESIGN_SIMULATION_UNDECLARED', { mockup: path, screen: key, target });
+    }
+    if (kind === 'simulated_html' && !(isObj(m.simulates) && typeof m.simulates.target === 'string')) add('DESIGN_SIMULATION_UNDECLARED', { mockup: path });
+    for (const u of strs(m.external_urls) ? m.external_urls : []) {
+      let host = '';
+      try {
+        host = new URL(u).hostname;
+      } catch {
+        host = '';
+      }
+      if (!ctx.externalHosts.includes(host) || !/@\d+\.\d+\.\d+/.test(u)) add('DESIGN_EXTERNAL_URL_UNPINNED', { mockup: path, url: u });
+    }
+  }
+  // ---- clause 7: criteria (§7.2) -----------------------------------------------------------------------
+  for (const [i, c] of criteria.entries()) {
+    const kind = String(c.kind);
+    const spec = CRITERION_CATALOGUE[kind];
+    if (!spec) {
+      add(NATIVE_CONVENTIONS.includes(kind) ? 'DESIGN_CRITERION_NOT_APPLICABLE' : 'DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, ...(NATIVE_CONVENTIONS.includes(kind) ? { hint: 'not_checkable_yet' } : {}) });
+      continue;
+    }
+    const onScreens = screens.filter((s) => c.requirement !== 'new' && strs(s.requirements) && s.requirements.includes(String(c.requirement)));
+    const targetsOf = strs(c.targets) ? c.targets : [];
+    for (const s of onScreens.filter((x) => targetsOf.length === 0 || targetsOf.includes(String(x.target)))) {
+      const target = String(s.target);
+      const tech = inv?.targets.find((x) => x.target === target)?.ui_technology ?? 'other';
+      if ((spec.targets !== 'all' && !spec.targets.includes(target)) || (spec.technologies !== 'all' && !spec.technologies.includes(tech))) add('DESIGN_CRITERION_NOT_APPLICABLE', { criterion: i, kind, target, technology: tech });
+    }
+    if (spec.reads && (!strs(c.paths) || c.paths.length === 0)) add('DESIGN_CRITERION_UNCHECKABLE', { criterion: i, kind, why: 'a criterion that reads files names the implemented paths' });
+  }
+  // ---- clause 8: assets and the selection --------------------------------------------------------------
+  if (manifest && Array.isArray(manifest.slots)) {
+    const slots = manifest.slots.filter(isObj);
+    for (const s of slots) {
+      const key = String(s.key);
+      // A slot key names directories the engine makes (the Builder's
+      // package, a check's domain): a slug, nothing else (the slice-40 review's B1).
+      if (!isSlug(s.key)) {
+        add('DESIGN_ASSET_SLOT_KEY_INVALID', { slot: key, why: 'a slot key is a slug: a lower-case letter, then up to 63 lower-case letters, digits, _ or -' });
+        continue;
+      }
+      if (!(ASSET_KINDS as readonly string[]).includes(String(s.kind))) schema('assets/manifest.json', `slots (${key}).kind`, `"${String(s.kind)}" is not an asset kind`);
+      if (!(ASSET_STATUSES as readonly string[]).includes(String(s.status))) schema('assets/manifest.json', `slots (${key}).status`, 'not an asset status');
+      if (!(ASSET_PROVENANCES as readonly string[]).includes(String(s.provenance))) schema('assets/manifest.json', `slots (${key}).provenance`, 'not an asset provenance');
+      for (const p of strs(s.platforms) ? s.platforms : []) if (!invTargets.has(p)) add('DESIGN_ASSET_PLATFORM_UNKNOWN', { slot: key, target: p });
+      if (['logo', 'banner', 'illustration'].includes(String(s.kind)) && (typeof s.alt_text !== 'string' || s.alt_text === '')) add('DESIGN_ASSET_ALT_MISSING', { slot: key });
+      if (s.kind === 'banner' && typeof s.placement !== 'string') add('DESIGN_ASSET_PLACEMENT_MISSING', { slot: key });
+      if (s.status === 'approved') {
+        const was = ctx.approved.find((a) => a.slot === key);
+        const digests = Object.fromEntries((s.variants ?? []).filter((v) => v.digest !== undefined).map((v) => [v.name, v.digest ?? '']));
+        if (!was || was.slot_version !== s.slot_version || Object.entries(digests).some(([n, d]) => was.digests[n] !== undefined && was.digests[n] !== d)) add('DESIGN_ASSET_STATUS_FORGED', { slot: key });
+      }
+      for (const v of (Array.isArray(s.variants) ? s.variants : []).filter(isObj)) {
+        if (!(ASSET_VARIANTS as readonly string[]).includes(String(v.name))) schema('assets/manifest.json', `slots (${key}).variants.name`, `"${String(v.name)}" is not an asset variant`);
+        if (!(ASSET_FORMATS as readonly string[]).includes(String(v.format))) schema('assets/manifest.json', `slots (${key}).variants.format`, `"${String(v.format)}" is not an asset format`);
+        if (typeof v.file !== 'string') continue;
+        const file = tree.files.get(v.file);
+        if (!file) {
+          add('DESIGN_ASSET_FILE_MISSING', { slot: key, variant: String(v.name), file: v.file });
+          continue;
+        }
+        const fmt = formatOf(file);
+        if (fmt !== v.format) add('DESIGN_ASSET_FORMAT_MISMATCH', { slot: key, variant: String(v.name), declared: v.format, found: fmt });
+        if (fmt === 'svg') {
+          const active = svgActive(file.toString('utf8'));
+          if (active !== null) add('DESIGN_ASSET_SVG_ACTIVE', { slot: key, variant: String(v.name), what: active });
+        }
+        if (typeof v.digest === 'string' && v.digest !== sha256hex(file)) add('DESIGN_ASSET_VERSION_INVALID', { slot: key, variant: String(v.name), why: 'the digest is not the file\'s' });
+      }
+    }
+    // The selection: each selected slot and variant in the manifest (§6.2), and the floor (§5.8).
+    for (const sel of (Array.isArray(selection.slots) ? selection.slots : []).filter(isObj)) {
+      const slot = slots.find((s) => s.kind === sel.kind);
+      for (const v of strs(sel.variants) ? sel.variants : []) if (!slot || !(slot.variants ?? []).some((x) => x.name === v)) add('DESIGN_ASSET_SLOT_MISSING', { kind: String(sel.kind), variant: v });
+    }
+  }
+  if (design && inv) {
+    const themesSel = strs(selection.themes) ? selection.themes : [];
+    const dropped: string[] = [];
+    if (themesSel.length === 0) dropped.push('every theme');
+    const slotSel = (Array.isArray(selection.slots) ? selection.slots : []).filter(isObj);
+    const logo = slotSel.find((s) => s.kind === 'logo');
+    if (!logo || !strs(logo.variants) || logo.variants.length === 0) dropped.push('the logo');
+    for (const t of inv.targets) {
+      const kind = t.target === 'web' ? 'favicon' : 'app_icon';
+      const s = slotSel.find((x) => x.kind === kind);
+      if (!s || !strs(s.variants) || s.variants.length === 0) dropped.push(`the ${kind} of ${t.target}`);
+      if (selectedLayouts(t.target).length === 0 && t.layouts.length > 0) dropped.push(`every layout of ${t.target}`);
+    }
+    for (const d of new Set(dropped)) add('DESIGN_SELECTION_BELOW_FLOOR', { dropped: d });
+  }
+  return { outcome: reasons.length === 0 ? 'passed' : 'refused', reasons, design };
+}
+
+// What a selection narrows below the inventory's defaults (§5.8), as the
+// approval lists it ("narrowed: dark theme; logo variants monochrome, on_dark").
+export function narrowings(design: Record<string, unknown> | null, inv: Inventory | null): string[] {
+  if (!design || !inv) return [];
+  const sel = isObj(design.selection) ? design.selection : {};
+  const out: string[] = [];
+  const themes = strs(sel.themes) ? sel.themes : [];
+  for (const t of ['light', 'dark']) if (!themes.includes(t)) out.push(`theme ${t}`);
+  const defaults = new Map<string, Set<string>>();
+  for (const t of inv.targets) for (const s of t.required_slots) defaults.set(s.kind, new Set([...(defaults.get(s.kind) ?? []), ...s.variants]));
+  const slots = (Array.isArray(sel.slots) ? sel.slots : []).filter(isObj);
+  for (const [kind, variants] of defaults) {
+    const chosen = slots.find((s) => s.kind === kind);
+    const kept = new Set(strs(chosen?.variants) ? chosen!.variants : []);
+    const lost = [...variants].filter((v) => !kept.has(v));
+    if (lost.length > 0) out.push(`${kind} variants ${lost.join(', ')}`);
+  }
+  const layouts = (Array.isArray(sel.layouts) ? sel.layouts : []).filter(isObj);
+  for (const t of inv.targets) {
+    const chosen = layouts.find((l) => l.target === t.target);
+    if (!chosen || !Array.isArray(chosen.layouts)) continue;
+    const lost = t.layouts.filter((l) => !(chosen.layouts as unknown[]).map(String).includes(String(l)));
+    if (lost.length > 0) out.push(`${t.target} layouts ${lost.join(', ')}`);
+  }
+  return out;
+}

@@ -10,6 +10,7 @@
 // A checkpoint invokes none of this; `finalizeIntegration` registers nothing
 // from one (B02).
 
+import { designAssignedHumanTests } from '../design/policy.js';
 import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
 import { type BundleArtifacts, type BundleBaseline, type PlanCheckResult, checkPlan, executionInputsDigest, specChangeRoute } from './check.js';
@@ -138,6 +139,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
     }
   }
   const blocked = new Map((representation?.requirements ?? []).map((r) => [r.key, r.blocked_by_questions]));
+  const designHumanTests = designAssignedHumanTests(db, args.project);
   const requirements = (
     db.prepare('SELECT "key", "criteria", "sensitive_areas", "withdrawn_at", "defect", "status", "human_test" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(args.project) as {
       key: string;
@@ -151,6 +153,7 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   ).map((r) => ({
     defect: r.defect === 1,
     human_test: r.human_test === 1,
+    ...(r.human_test === 1 && designHumanTests.has(r.key) ? { design_human_test: true } : {}),
     descriptive_unverified: r.status === 'descriptive_unverified',
     key: r.key,
     criteria: r.criteria === null ? [] : (JSON.parse(r.criteria) as string[]),

@@ -333,6 +333,8 @@ export function intendIntegration(
     plans: PlanInput[];
     // A replan's B.5 plan, checked on the main thread (runs/accept.ts).
     replan?: ReplanPrepared;
+    // D7 §6.5 (G15): a UI Builder's validated asset bindings.
+    asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived'; slot_version: number }[];
     deadlineSeconds: number;
   },
 ): IntentResult {
@@ -342,7 +344,7 @@ export function intendIntegration(
   const item = workItemOfRun(tx, run);
   const p = projectRepoRow(tx, run.project);
   const ref = integrationRef(p.integration_branch);
-  const subject = JSON.parse(item.subject) as { stage?: string; finding?: string };
+  const subject = JSON.parse(item.subject) as { stage?: string; finding?: string; cause?: string };
   // At a T2 or T3 scope tier the integration of a stage is a cadence point
   // (the scope tier, not the project's: B04; L3), and at every tier so is the
   // integration of a fix that names a finding: nothing else would nominate
@@ -353,6 +355,9 @@ export function intendIntegration(
   const cadence = cadenceOf(tx, { project: run.project, tier: p.tier, kind: item.kind, stage: subject.stage ?? null, namesFinding });
   let nominate: RefInputs['nominate'] = null;
   if (cadence.cadence) nominate = { by: 'engine_cadence' };
+  // D7 §6.5: an asset_updated fix's integration is a cadence point: its
+  // candidate is where the parity checks read the new slot@version.
+  else if (item.kind === 'fix' && subject.cause === 'asset_updated') nominate = { by: 'engine_cadence' };
   else if (p.tier === 'T1' && result?.nominate === true && (item.kind === 'stage_build' || item.kind === 'fix')) nominate = { by: 'builder_request' };
   const inputs: RefInputs & { fence: boolean; work_kind: string } = {
     purpose: 'integration',
@@ -365,6 +370,7 @@ export function intendIntegration(
     stage: subject.stage ?? null,
     plans: args.plans,
     ...(args.replan ? { replan: args.replan } : {}),
+    ...(args.asset_bindings && args.asset_bindings.length > 0 ? { asset_bindings: args.asset_bindings } : {}),
     architect: run.role === 'architect',
     nominate,
     chain: extra.chain,

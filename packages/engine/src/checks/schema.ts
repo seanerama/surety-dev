@@ -123,6 +123,8 @@ export interface Definition {
   // D4 §7.2, A.3: deployment secret references the check may receive, only
   // on a definition that requires an environment.
   secrets?: string[];
+  // D7 §6.5, G14: the asset slots the check reads (the effective files).
+  asset_inputs?: { slot: string; variant: string }[];
 }
 
 // ---- JSON with repeated members found ------------------------------------------------
@@ -496,6 +498,11 @@ export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = O
     required: 'optional',
     form: 'deployment secret references (`deploy/<name>`), no repeats, only on a definition whose `requires` names `environment`. At a deployment verification the check receives each one the environment\'s `check_secrets` also allows, as `SURETY_SECRET_<NAME>`; one it does not allow refuses the run (`secret_not_allowed`).',
   },
+  // D7 §6.5, G14 (SEAM.md §487).
+  asset_inputs: {
+    required: 'optional',
+    form: 'the design\'s asset slots the check reads, `[{"slot": <slot key>, "variant": <variant>}]`, no repeats. The check receives the effective file of each, read-only, at the path in `SURETY_ASSET_<SLOT>_<VARIANT>` (upper case, every other character `_`), and its result records the `slot@version` it read.',
+  },
 });
 const DEFINITION_FIELDS: readonly string[] = Object.keys(DEFINITION_REFERENCE);
 
@@ -691,6 +698,18 @@ export function parseDefinition(file: string, stem: string, text: string, govern
         else secrets.push(x);
       });
   }
+  // asset_inputs (D7 §6.5, G14): slot and variant names, no repeats.
+  const assetInputs: { slot: string; variant: string }[] = [];
+  if (v.asset_inputs !== undefined) {
+    if (!Array.isArray(v.asset_inputs)) e.at('/asset_inputs', 'invalid_value');
+    else
+      v.asset_inputs.forEach((x, n) => {
+        const ok = typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).every((k) => k === 'slot' || k === 'variant') && typeof (x as { slot?: unknown }).slot === 'string' && typeof (x as { variant?: unknown }).variant === 'string' && /^[a-z][a-z0-9_]*$/.test((x as { slot: string }).slot) && /^[a-z][a-z0-9_]*$/.test((x as { variant: string }).variant);
+        if (!ok) e.at(`/asset_inputs/${n}`, 'invalid_value');
+        else if (assetInputs.some((a) => a.slot === (x as { slot: string }).slot && a.variant === (x as { variant: string }).variant)) e.at(`/asset_inputs/${n}`, 'duplicate_entry');
+        else assetInputs.push({ slot: (x as { slot: string }).slot, variant: (x as { variant: string }).variant });
+      });
+  }
   // A link or a submodule among the inputs (B01) is an error of the version,
   // which then satisfies no gate; the definition is still discovered, so
   // nothing is dropped silently.
@@ -713,6 +732,7 @@ export function parseDefinition(file: string, stem: string, text: string, govern
     ...(inputs !== undefined ? { inputs } : {}),
     egress,
     ...(v.secrets !== undefined ? { secrets } : {}),
+    ...(v.asset_inputs !== undefined ? { asset_inputs: assetInputs } : {}),
   };
   return { definition, manifest, errors: e.list };
 }

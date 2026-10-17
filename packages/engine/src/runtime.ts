@@ -324,6 +324,8 @@ export class Runtime {
   deploy: import('./deploy/release-operator.js').ReleaseOperator | null = null;
   // The session driver (sessions/driver.ts), set once at startup.
   sessions: import('./sessions/driver.js').SessionDriver | null = null;
+  // The design's main-thread steps (design/driver.ts), set once at startup.
+  design: import('./design/driver.js').DesignDriver | null = null;
   // The adapter qualification by command (deploy/qualify.ts), set once at
   // startup.
   qualifier: import('./deploy/qualify.js').AdapterQualifier | null = null;

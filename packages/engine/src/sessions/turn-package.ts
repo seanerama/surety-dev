@@ -16,6 +16,7 @@ import { redactText } from '../records/redact.js';
 import type { Runtime } from '../runtime.js';
 import type { Claim } from '../store/transitions/runs.js';
 import { type ArtifactState, type SessionContextFacts, writeSessionPackage } from './package.js';
+import { designPackageFor } from '../design/package.js';
 
 // What of the artifact a package carries, at most.
 const ARTIFACT_FILE_MAX = 256 * 1024;
@@ -90,6 +91,6 @@ export async function writeTurnPackage(rt: Runtime, claim: Claim, dir: string, w
   const texts = new Map<string, string | null>();
   const repo = await rt.read<{ repo: string } | null>('project.repo', { project: claim.project });
   for (const a of facts.approved) texts.set(a.blob, repo === null ? null : await gitOk(repoContext(repo.repo), ['cat-file', 'blob', a.blob]));
-  writeSessionPackage(dir, claim, facts, texts, artifactState(workspace, facts.paths), canary);
+  writeSessionPackage(dir, claim, facts, texts, artifactState(workspace, facts.paths), canary, await designPackageFor(rt, claim.run));
   return true;
 }

@@ -24,6 +24,7 @@ import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
 import { type CandidateDiff, type ContextFacts, type EngineCommitsInRange, PROBE_PROGRAM, writeContextPackage } from './context.js';
+import { designPackageFor } from '../../design/package.js';
 import { isAncestor } from '../../git/repo.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
 import { writeTurnPackage } from '../../sessions/turn-package.js';
@@ -192,6 +193,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   } else writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
     diff,
+    design: await designPackageFor(rt, claim.run),
     probe: claim.profile === 'probe',
     readRecord: (id) => {
       if (outputBytes.has(id)) return outputBytes.get(id) ?? null;
