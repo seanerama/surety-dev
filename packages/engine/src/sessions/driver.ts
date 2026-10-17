@@ -28,7 +28,7 @@ import { MODULES_FILE, PLAN_FILE, ROADMAP_FILE, planPath } from '../plan/schemas
 import { writeWholeRecord } from '../records/files.js';
 import { redactText, redactValue } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
-import { pausePoint } from '../testing/seam.js';
+import { pausePoint, seamBackends } from '../testing/seam.js';
 import { type RunHandle, type Runtime, log } from '../runtime.js';
 import type { RunEnder } from '../runs/end.js';
 import { canonical } from '../store/transitions/common.js';
@@ -37,7 +37,7 @@ import { SESSION_PATHS, type SaveFacts, type SaveOutcome, type SessionRole } fro
 import { type CheckContext, type DesignReason, checkDesign } from '../design/check.js';
 import { DESIGN_ROOT } from '../design/inventory.js';
 import { reasonFinding } from '../design/records.js';
-import { designTreeAt } from '../design/tree.js';
+import { designTreeAt, designTreeSize } from '../design/tree.js';
 import { reviewRaise } from '../design/review-driver.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
@@ -137,6 +137,20 @@ export class SessionDriver {
   // ---- the tick: admitted turns dispatched (D1 §15.1; SEAM.md §344) -------------------
 
   async dispatchTurns(): Promise<number> {
+    // A Designer turn held on the day limits is started, oldest first, once
+    // the day admits it (the driver's decision on objection 156); then it is
+    // dispatched below with every other admitted turn.
+    const held = await this.rt.read<{ run: string }[]>('session.held_turns', {});
+    for (const h of held) {
+      await this.rt
+        .engine('session.turn_release', {
+          run: h.run,
+          incarnation: this.rt.incarnation,
+          scope: this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null,
+          scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null,
+        })
+        .catch((err) => log('turn release', err, { run: h.run }));
+    }
     const pending = await this.rt.read<{ run: string; project: string; invocation: string; repo: string; branch: string }[]>('session.pending_turns', {});
     let n = 0;
     for (const t of pending) {
@@ -197,7 +211,8 @@ export class SessionDriver {
       let materializeFailure: string | null = null;
       const hold = handle.sandbox?.volatile ?? null;
       if (handle.sandbox !== null && hold !== null && hold.held && handle.workspacePath !== null && !handle.materialized) {
-        const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+        // (The read answers {effective, revision}: store/reads.ts.)
+        const p = await this.rt.read<{ effective: Record<string, number> }>('project.policy', { project }).then((r) => r.effective).catch(() => ({}) as Record<string, number>);
         const caps = { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
         const m = materialize({ hold, home: this.rt.home, workspace: handle.workspacePath, caps });
         if (m.state === 'refused') {
@@ -213,14 +228,16 @@ export class SessionDriver {
         return;
       }
       // (3)
-      const reply = materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
+      const reply = handle.turnStop === null && materializeFailure === null && handle.sessionReply !== null && handle.sessionReply !== 'invalid' && handle.exit?.code === 0 ? handle.sessionReply : null;
       const failure =
         reply !== null
           ? null
-          : materializeFailure !== null
+          : handle.turnStop !== null
+            ? `the turn was stopped: the project's day passed ${handle.turnStop}; the session stays open, and the next turn waits until the day admits it`
+            : materializeFailure !== null
             ? materializeFailure
             : handle.sessionReply === 'invalid'
-              ? "the role's result is not a turn's result (D6 B.7)"
+              ? `the role's result is not a turn's result (D6 B.7)${handle.invalidDetail ? `: ${handle.invalidDetail}` : ''}`
               : handle.sessionReply === null
                 ? 'the role exited without a result'
                 : `the role exited with status ${String(handle.exit?.code ?? handle.exit?.signal ?? 'unknown')}`;
@@ -372,6 +389,13 @@ export class SessionDriver {
       commitTree = rebased.tree;
       parent = facts.head;
     }
+    // The design tree's bounds (D7 §5.5; SEAM.md §493): over the whole of
+    // `.surety/design/` at the checkpoint it would make, past either bound
+    // the save is refused whole, 413, before anything is committed.
+    if (facts.role === 'designer') {
+      const over = await this.designTreeOver(facts, commitTree);
+      if (over !== null) return over;
+    }
     const message = messageText({
       title: `session ${facts.run} (${facts.role}): checkpoint after turn ${facts.turn}`,
       trailers: [
@@ -410,6 +434,35 @@ export class SessionDriver {
     // the Designer's own again.
     if (parent !== ws.current_base) await this.followHead(facts.repo, metadata, ws.path, ws.current_base, parent, sha);
     return { sha };
+  }
+
+  private async designTreeOver(facts: SaveFacts, tree: string): Promise<{ refused: { code: string; text: string; refusal: Refusal } } | null> {
+    // (The read answers {effective, revision}: store/reads.ts.)
+    const policy = (await this.rt.read<{ effective: Record<string, unknown> }>('project.policy', { project: facts.project })).effective;
+    const size = await designTreeSize(facts.repo, tree);
+    if (size === null) throw new Error('the design tree of the save could not be measured: the repository could not be read');
+    const bounds: [string, number, number, string][] = [
+      ['design_tree_max_files', size.files, Number(policy.design_tree_max_files), 'files'],
+      ['design_tree_max_bytes', size.bytes, Number(policy.design_tree_max_bytes), 'bytes'],
+    ];
+    for (const [key, n, max, unit] of bounds) {
+      if (!Number.isFinite(max)) throw new Error(`the project's ${key} could not be read`);
+      if (n <= max) continue;
+      const text = `the design tree would hold ${n} ${unit}, more than ${key} (${max})`;
+      return {
+        refused: {
+          code: 'design_tree_too_large',
+          text,
+          refusal: new Refusal(413, 'design_tree_too_large', `The save of session ${facts.run} was refused: ${text}. Nothing was committed.`, `Keep .surety/design/ within ${key}; the workspace keeps the change.`, {
+            run: facts.run,
+            key,
+            [unit]: n,
+            max,
+          }),
+        },
+      };
+    }
+    return null;
   }
 
   // The paths the integration branch changed between the workspace's old
@@ -639,7 +692,7 @@ export class SessionDriver {
       run,
       cause === 'idle_timeout'
         ? { outcome: 'timed_out', reason: 'deadline', reasonText: 'session_idle_timeout passed with the session idle' }
-        : { outcome: 'stopped', reason: 'budget', reasonText: 'budget_run_billable_tokens' },
+        : { outcome: 'stopped', reason: 'budget', reasonText: facts.role === 'designer' ? 'designer_session_budget_billable_tokens' : 'budget_run_billable_tokens' },
     );
     return true;
   }
@@ -780,7 +833,10 @@ export function firstPlanMissing(plans: readonly number[], probe: { architecture
 // creates no request (D6 §5.4; the driver's ruling 5).
 function planRefused(run: string, reasons: { code: string; subjects: string[] }[], findings: Finding[], bundle: string | null = null, specChange: string | null = null): Refusal {
   const named = [...reasons.map((r) => `${r.code} (${r.subjects.join(', ')})`), ...findings.map((f) => `${f.code}: ${f.message}`)];
-  const offer = specChange === null ? '' : ` A requirement the plan implements is not in the approved specification: request the change through the spec-change workflow (${specChangeRoute(specChange)}), never through a plan.`;
+  const gap = reasons.some((r) => r.code === 'SPEC_TARGETS_MISSING' && !r.subjects.some((s) => s.startsWith('unknown:')))
+    ? 'The approved specification states no **Targets:** for its ui modules, and the engine assumes none (D7 §4.1)'
+    : 'A requirement the plan implements is not in the approved specification';
+  const offer = specChange === null ? '' : ` ${gap}: request the change through the spec-change workflow, change_spec (${specChangeRoute(specChange)}), never through a plan.`;
   return new Refusal(422, 'plan_refused', `The Architect's products of session ${run} are refused: ${named.join('; ')}.`, `Correct them in the session, save, and close again; or close with refuse, which records the products and raises nothing.${offer}`, {
     run,
     reasons,

@@ -5,7 +5,7 @@
 // owner's words reach the engine as the JSON body's text, never through a
 // shell (BS5 §5).
 //
-//   surety session open --project <p> --role <vision|spec_writer|architect> [--model <m>]
+//   surety session open --project <p> --role <vision|spec_writer|architect|designer> [--model <m>]
 //                                                     POST …/sessions
 //   surety session say <run> --project <p> (--text <t> | --file <path|->) [--no-wait] [--wait-minutes <n>]
 //                                                     POST …/sessions/:r/turns, then GET …/sessions/:r
@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import type { EnvRequest } from '../deploy/env-command.js';
 
 const SESSION_USAGE = 'session takes open, say, save, close, resume or show: surety session <command> [<run>] --project <p> [flags]';
-const ROLES = ['vision', 'spec_writer', 'architect'];
+const ROLES = ['vision', 'spec_writer', 'architect', 'designer'];
 
 export interface SessionCommand {
   request: EnvRequest;

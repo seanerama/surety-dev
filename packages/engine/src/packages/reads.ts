@@ -316,6 +316,11 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   PLAN_DESCRIPTIVE_MODULE_TOUCHED: 'scoped mode: a stage touches a module holding a descriptive requirement with no approved criteria',
   PLAN_CONFORMANCE_MISPLACED: "conformance: true outside the adopted project's first phase, or on a stage with tasks",
   PLAN_MODULE_PATH_INVALID: `a module of the module map has a path not in the module path form (${MODULE_PATH_FORM})`,
+  SPEC_TARGETS_MISSING: 'under a design policy other than off: the module map has a ui module and the approved specification states no **Targets:** (a specification change, not a plan, supplies them)',
+  ARCH_TARGET_UNKNOWN: "under a design policy other than off: a ui module serves a target the approved specification's **Targets:** does not list",
+  ARCH_TARGET_UNCOVERED: "under a design policy other than off: a target of the approved specification's **Targets:** is served by no ui module",
+  ARCH_TECHNOLOGY_TARGET_MISMATCH:
+    'under a design policy other than off: a ui module serves a target with a UI technology that cannot build for it (html_css, three_js, streamlit: web; react_native: android, ios; flutter, other: any target; swiftui: ios, macos; compose: android)',
 };
 const RETROFIT_REASONS: readonly string[] = ['PLAN_DESCRIPTIVE_MODULE_TOUCHED', 'PLAN_CONFORMANCE_MISPLACED'];
 

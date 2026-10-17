@@ -63,8 +63,13 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   // canary's session does not: its attempt is invalidated at this start, so
   // its session is ended now and the fixture project is not left busy
   // (D6 §2.7; the review's M6).
+  // A session whose only open turn is held on the day limits owns no process
+  // either: nothing of the turn was allocated, so it survives, still held
+  // (the driver's decision on objection 156; the slice-41 review's S1).
+  const held = new Set((await rt.read<{ run: string }[]>('session.held_turns', {})).map((h) => h.run));
   const runs = (await rt.engine<RunRow[]>('run.unended')).filter((run) => {
     const r = run as RunRow & { session_state?: string | null; qualification_attempt?: string | null };
+    if (r.kind === 'session' && (r.qualification_attempt ?? null) === null && r.session_state === 'turn_running' && held.has(r.id)) return false;
     return !(r.kind === 'session' && (r.qualification_attempt ?? null) === null && ['allocated', 'open_idle'].includes(r.session_state ?? ''));
   });
   const recovery = { recovery: rt.incarnation };

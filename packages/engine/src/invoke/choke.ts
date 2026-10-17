@@ -59,7 +59,7 @@ import { designPackageFor } from '../design/package.js';
 import { domainArea } from './sandbox/prepare.js';
 import { recordsDir } from '../records/files.js';
 import { writeTurnPackage } from '../sessions/turn-package.js';
-import { parseSessionReply } from '../sessions/session.js';
+import { parseSessionReply, sessionReplyProblem } from '../sessions/session.js';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -1255,7 +1255,8 @@ export class Launcher {
 
   // The snapshot's caps of a project's policy (D1 §7.3; M19).
   private async snapshotCaps(project: string): Promise<{ files: number; bytes: number; fileBytes: number }> {
-    const p = await this.rt.read<Record<string, number>>('project.policy', { project }).catch(() => ({}) as Record<string, number>);
+    // (The read answers {effective, revision}: store/reads.ts.)
+    const p = await this.rt.read<{ effective: Record<string, number> }>('project.policy', { project }).then((r) => r.effective).catch(() => ({}) as Record<string, number>);
     return { files: p.snapshot_max_files ?? 10_000, bytes: p.snapshot_max_bytes ?? 64 * 1024 * 1024, fileBytes: p.snapshot_max_file_bytes ?? 16 * 1024 * 1024 };
   }
 
@@ -1350,12 +1351,19 @@ export class Launcher {
       // A session turn's file is a turn's reply (D6 B.7; SEAM.md §343), taken
       // by the turn's settlement as on the kernel lane, never a run's result.
       let reply: ReturnType<typeof parseSessionReply> = null;
+      let problem: string | null = 'it is not JSON';
       try {
-        reply = parseSessionReply(redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes))), claim.role);
+        const sent = redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)));
+        reply = parseSessionReply(sent, claim.role);
+        problem = reply === null ? sessionReplyProblem(sent, claim.role) : null;
       } catch {
         reply = null;
       }
-      if (handle.sessionReply === null) handle.sessionReply = reply ?? 'invalid';
+      if (handle.sessionReply === null) {
+        handle.sessionReply = reply ?? 'invalid';
+        // What the turn's engine entry names (D7 B.12; SEAM.md §491).
+        if (reply === null && problem !== null) handle.invalidDetail = redactText(problem);
+      }
       verdict = reply === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
     } else {
       try {
@@ -1635,7 +1643,12 @@ export class Launcher {
       // settlement, never recorded as a run's result (the run goes on).
       if (handle.claim.session) {
         if (handle.sessionReply !== null || handle.ending) return;
-        handle.sessionReply = parseSessionReply(redactValue(m.result), handle.claim.role) ?? 'invalid';
+        const sent = redactValue(m.result);
+        handle.sessionReply = parseSessionReply(sent, handle.claim.role) ?? 'invalid';
+        if (handle.sessionReply === 'invalid') {
+          const problem = sessionReplyProblem(sent, handle.claim.role);
+          if (problem !== null) handle.invalidDetail = redactText(problem);
+        }
         return;
       }
       // D1 §4.3: duplicate terminal callbacks are idempotent on the invocation.
@@ -1704,6 +1717,17 @@ export class Launcher {
     // A budget stop decided on a usage line read while the lease was pending
     // its challenge is the run's end as decided (SEAM.md §130).
     const pending = handle.sandbox !== null && (handle.gate !== null || this.pausedPastLease(handle));
+    // A Designer turn stopped by a day's limit ends that turn only: its
+    // domain terminated, the turn settled failed naming the limit, the
+    // session left open (the driver's decision on objection 156: only the
+    // session's own budget closes it; the slice-41 review's N2).
+    if (limit !== null && handle.claim.session && handle.claim.role === 'designer' && DAY_LIMIT_KEYS.includes(limit)) {
+      if (handle.turnStop !== null) return;
+      handle.turnStop = limit;
+      if (!this.rt.services) return;
+      void this.rt.services.terminateDomains(run).catch((err) => log('turn stop', err, { run }));
+      return;
+    }
     if (limit !== null) this.rt.requestEnd(handle, { outcome: 'stopped', reason: 'budget', reasonText: limit, ...(pending ? { asIs: true } : {}) });
   }
 
@@ -1806,6 +1830,8 @@ const DRAIN_CAP_MS = 2000;
 // The waits between attempts to record a role's result: a few seconds in
 // all, well within a minute (SEAM.md §61).
 const RESULT_RETRY_MS = [100, 300, 1000, 2000, 4000];
+// The project's day limits (D1 §13.3), as budget.check names them.
+const DAY_LIMIT_KEYS: readonly string[] = ['budget_day_unknown_tokens', 'budget_day_verified_usd'];
 
 // The role's standard output, as protocol lines. When the engine stops
 // reading, at the end of the stream or after the role's exit, whatever it has

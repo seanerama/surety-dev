@@ -167,6 +167,9 @@ export interface RunHandle {
   // A session turn's settlement barrier `session.turn_settling.terminated`
   // has fired for it already (on the real boundary, before collection).
   terminatedFired: boolean;
+  // A Designer turn stopped by a day limit (the review's N2): the limit,
+  // its turn settled failed naming it, the session left open.
+  turnStop: string | null;
 }
 
 export function newHandle(claim: Claim): RunHandle {
@@ -225,6 +228,7 @@ export function newHandle(claim: Claim): RunHandle {
     helpChecked: null,
     sessionReply: null,
     terminatedFired: false,
+    turnStop: null,
   };
 }
 

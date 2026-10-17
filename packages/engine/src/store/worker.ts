@@ -182,6 +182,8 @@ import {
   intendCheckpointIntegration,
   openSession,
   pendingTurns,
+  releaseHeldTurn,
+  heldTurnsNow,
   sessionContextFacts,
   sessionExists,
   sessionView,
@@ -489,6 +491,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'dispatch.entry_probe': (d, a: { project: string; workItem: string }) => dispatchEntryProbe(d, a),
   // D6 §2 (M5 slice 31): the sessions' reads.
   'session.pending_turns': (d) => pendingTurns(d, null),
+  'session.held_turns': (d) => heldTurnsNow(d, null),
   'session.workspace': (d, a: { run: string }) => sessionWorkspace(d, a.run),
   'session.context': (d, a: { run: string }) => sessionContextFacts(d, a.run),
   'session.exists': (d, a: { project: string; run: string }) => sessionExists(d, a.project, a.run),
@@ -789,6 +792,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'session.turn_reply': (tx, a) => turnReply(tx, a),
   'session.turn_usage': (tx, a) => turnUsage(tx, a),
   'session.turn_open': (tx, a) => turnStillOpen(tx, a),
+  'session.turn_release': (tx, a) => releaseHeldTurn(tx, a),
   // D6 §2.1, §2.4 (M5 slice 33; SEAM.md §394): a session's run, grant and
   // lease (its workspace is made after, through the journal), and a new run
   // continuing an ended session.
