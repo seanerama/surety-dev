@@ -39,6 +39,7 @@ import { DESIGN_ROOT } from '../design/inventory.js';
 import { reasonFinding } from '../design/records.js';
 import { designTreeAt, designTreeSize } from '../design/tree.js';
 import { reviewRaise } from '../design/review-driver.js';
+import type { OwnerEvidence } from '../design/owner-review.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
 
@@ -48,7 +49,7 @@ export interface SaveAnswer {
   idle_generation: number;
   findings: Finding[];
   // D7 §5.6 (SEAM.md §483): a Designer's save answers its design check.
-  design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] } | null;
+  design_check?: { id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; notices?: DesignReason[] } | null;
 }
 
 export class SessionDriver {
@@ -67,12 +68,15 @@ export class SessionDriver {
   // workspace, a worktree of the project at the run's base made through the
   // journal as any run's is (D1 §7.3). A workspace that cannot be made ends
   // the run; the opening is refused.
-  async open(project: string, args: { role: unknown; model?: unknown; scripted: string | null; mode?: unknown; review?: Record<string, unknown> }): Promise<{ status: number; body: unknown }> {
+  async open(
+    project: string,
+    args: { role: unknown; model?: unknown; scripted: string | null; mode?: unknown; review?: Record<string, unknown>; evidence?: OwnerEvidence[]; observed_on?: string | null },
+  ): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
-    const made = await this.rt.engine<{ run: Record<string, unknown>; review?: string }>('session.open_tx', { project, ...args });
+    const made = await this.rt.engine<{ run: Record<string, unknown>; review?: string; evidence?: string[] }>('session.open_tx', { project, ...args });
     const answer = await this.withWorkspace(project, made.run.id as string);
-    return made.review === undefined ? answer : { status: answer.status, body: { ...(answer.body as object), review: { id: made.review, subject: args.review } } };
+    return made.review === undefined ? answer : { status: answer.status, body: { ...(answer.body as object), review: { id: made.review, subject: args.review }, evidence: made.evidence ?? [] } };
   }
 
   async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
@@ -322,8 +326,8 @@ export class SessionDriver {
     // what is wrong with it.
     const answer: SaveAnswer = { saved: done.saved, revision: outcome.committed?.sha ?? null, idle_generation: done.idle_generation, findings: outcome.nothingToSave ? (done.standing ?? []) : outcome.findings };
     if (facts.role === 'designer') {
-      const check = outcome.products.design_check ?? (await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] } | null>('design.latest_check', { project, run }));
-      answer.design_check = check ? { id: check.id, outcome: check.outcome, reasons: check.reasons } : null;
+      const check = outcome.products.design_check ?? (await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; notices?: DesignReason[] } | null>('design.latest_check', { project, run }));
+      answer.design_check = check ? { id: check.id, outcome: check.outcome, reasons: check.reasons, notices: check.notices ?? [] } : null;
     }
     return answer;
   }
@@ -518,7 +522,7 @@ export class SessionDriver {
       };
     }
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys });
+    const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys, adopted: base.baseline.adopted === true });
     // Told before close (D7 §4.1; SEAM.md §513): an interface a `ui` module
     // consumes without its shapes, under any design policy but off; the
     // close's plan check then refuses it.
@@ -537,15 +541,16 @@ export class SessionDriver {
   private async parseDesign(facts: SaveFacts, sha: string): Promise<{ blobs: Record<string, string>; findings: Finding[]; products: SaveOutcome['products'] }> {
     const tree = await designTreeAt(facts.repo, sha);
     if (tree === null) throw new Error(`the design tree at ${sha} could not be read`);
-    const ctx = await this.rt.read<CheckContext>('design.check_context', { project: facts.project });
+    const ctx = await this.rt.read<CheckContext>('design.check_context', { project: facts.project, run: facts.run });
     const result = checkDesign({ files: tree.files }, ctx);
-    const record = await this.rt.engine<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[] }>('design.record_check', {
+    const record = await this.rt.engine<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; notices?: DesignReason[] }>('design.record_check', {
       project: facts.project,
       run: facts.run,
       revision: sha,
       inventory_digest: ctx.inventory?.inventory_digest ?? null,
       outcome: result.outcome,
       reasons: result.reasons,
+      notices: result.notices,
       blobs: tree.blobs,
     });
     const blobs = Object.fromEntries(Object.entries(tree.blobs).map(([p, b]) => [`${DESIGN_ROOT}${p}`, b]));
@@ -559,6 +564,15 @@ export class SessionDriver {
     const check = await this.rt.read<{ id: string; outcome: 'passed' | 'refused'; reasons: DesignReason[]; tree_revision: string; blobs: Record<string, string> } | null>('design.latest_check', { project: facts.project, run: facts.run });
     const mode = await this.rt.read<string | null>('design.session_mode', { run: facts.run });
     if (mode === 'review') {
+      // A review is closed only on a passing check of the session's last
+      // save (the slice-45 review's B1): its review file included.
+      if (check !== null && check.outcome !== 'passed') {
+        throw new Refusal(422, 'design_check_failed', `The review of session ${facts.run} does not pass the design check: ${check.reasons.map((r) => r.code).join(', ')}.`, 'Correct the review in the session, save, and close again; or close with refuse.', {
+          run: facts.run,
+          design_check: check.id,
+          reasons: check.reasons,
+        });
+      }
       const review = await this.reviewRaise(facts);
       // A review whose file says it revised the design, or drew the first
       // one (D7 §10.3, §10.6; SEAM.md §§518, 519): the design in the same
@@ -776,7 +790,7 @@ export class SessionDriver {
     if (changed.length === 0) return { kind: 'none' };
     const plans = changed.filter((p) => PLAN_FILE.test(p)).map((p) => Number(PLAN_FILE.exec(p)![1]));
     const probe = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
-    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules, descriptive_keys: probe.descriptive_keys });
+    const found = architectFindings({ files: texts }, { requirement_keys: probe.requirement_keys, spec_modules: probe.spec_modules, descriptive_keys: probe.descriptive_keys, adopted: probe.baseline.adopted === true });
     const parsed = found.parsed;
     const findings = [...found.findings];
     if (!parsed.modules) findings.push({ code: 'machine_file_invalid', path: MODULES_FILE, subject: { path: MODULES_FILE, field: null }, message: `${MODULES_FILE} is missing or does not parse` });

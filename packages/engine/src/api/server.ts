@@ -26,6 +26,7 @@ import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { ownerReview } from '../design/owner-review.js';
+import { REVIEW_BODY_CAP, reviewTooLarge } from '../design/evidence.js';
 import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
 import { liveTranscript, readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { redactText } from '../records/redact.js';
@@ -171,12 +172,19 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     try {
       return await readJsonBody(r.req, cap, bodyDeadlineMs);
     } catch (err) {
-      throw err instanceof Refusal && err.code === 'payload_too_large' ? assetTooLarge(cap) : err;
+      throw err instanceof Refusal && err.code === 'payload_too_large' ? tooLarge(r.path, cap) : err;
     }
   };
   // The owner's asset upload (D7 §6.3; SEAM.md §508) carries a file, base64:
   // its own cap, so that a file up to the largest design tree bound fits.
-  const capFor = (method: string, path: string): number => (method === 'POST' && /^\/v1\/projects\/[^/]+\/design\/assets$/.test(path) ? Math.max(bodyCap, ASSET_BODY_CAP) : bodyCap);
+  const capFor = (method: string, path: string): number =>
+    method === 'POST' && /^\/v1\/projects\/[^/]+\/design\/assets$/.test(path)
+      ? Math.max(bodyCap, ASSET_BODY_CAP)
+      : method === 'POST' && /^\/v1\/projects\/[^/]+\/design\/reviews$/.test(path)
+        ? Math.max(bodyCap, REVIEW_BODY_CAP)
+        : bodyCap;
+  // The refusal of a body past its cap: the route's own words.
+  const tooLarge = (path: string, cap: number) => (cap === bodyCap ? payloadTooLarge(bodyCap) : /\/design\/reviews$/.test(path) ? reviewTooLarge(cap) : assetTooLarge(cap));
   const store = () => {
     if (!state.store) throw storeError(new Error('the store is not open'));
     return state.store;
@@ -501,10 +509,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             // F §5.1; SEAM.md §428), read by that answer alone.
             // `assets_held`: design_approval's (D7 §6.4; SEAM.md §486).
             // `until`: design_due's `later` (D7 §11; SEAM.md §514).
-            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review', 'assets_held', 'until']);
+            // `edits`, `strikes`, `severity`: design_verdicts' confirm (D7 §10.3; SEAM.md §525).
+            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review', 'assets_held', 'until', 'edits', 'strikes', 'severity']);
             const facts = await answerFacts(runtime(), project, decision);
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, ...(body.assets_held !== undefined ? { assets_held: body.assets_held } : {}), ...(body.until !== undefined ? { until: body.until } : {}), facts, waits };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, ...(body.assets_held !== undefined ? { assets_held: body.assets_held } : {}), ...(body.until !== undefined ? { until: body.until } : {}),
+              ...(body.edits !== undefined ? { edits: body.edits } : {}),
+              ...(body.strikes !== undefined ? { strikes: body.strikes } : {}),
+              ...(body.severity !== undefined ? { severity: body.severity } : {}),
+              facts,
+              waits,
+            };
           },
           // A committed answer is answered 200 whatever follows it: a failed
           // effect or publication is logged and carried by the next tick
@@ -944,7 +959,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     // 4. Declared length: refused before any of the body is read.
     const declared = req.headers['content-length'];
     const cap = capFor(method, target.path);
-    if (declared !== undefined && Number(declared) > cap) return refuseAudited(cap === bodyCap ? payloadTooLarge(bodyCap) : assetTooLarge(cap));
+    if (declared !== undefined && Number(declared) > cap) return refuseAudited(tooLarge(target.path, cap));
     if (expect === 'refuse') {
       const value = String(req.headers.expect ?? '');
       return refuseAudited(

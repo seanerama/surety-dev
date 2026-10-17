@@ -540,7 +540,14 @@ function interfacesDisputed(db: Db, rev: RevisionRow): string[] {
 // spec_change.
 export function reviewVerdictBlockers(db: Db, run: string | null): string[] {
   if (run === null) return [];
-  const reviews = db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL ORDER BY rowid`).all(run) as { id: string }[];
+  // A review whose verdicts were asked about, or that holds any: only a
+  // first design's review with no verdict asks nothing, and holds nothing.
+  const reviews = db
+    .prepare(
+      `SELECT r."id" FROM "design_reviews" r WHERE r."run" = ? AND r."confirmation_decision" IS NULL
+         AND (r."verdicts" <> '[]' OR EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'design_verdicts' AND d."subject_id" = r."id")) ORDER BY r.rowid`,
+    )
+    .all(run) as { id: string }[];
   return reviews.map((r) => {
     const rejected = db
       .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'design_verdicts' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'reject' LIMIT 1`)
@@ -564,7 +571,8 @@ export const DESIGN_APPROVAL: KindSpec = {
     // A batch member before its change's proposal exists is not asked yet.
     if (rev.scope !== 'asset_only' && (!r || (r.status !== 'proposed' && r.status !== 'rejected'))) return null;
     const inv = currentInventory(tx.db, rev.project)?.inventory ?? null;
-    const check = rev.design_check ? (tx.db.prepare('SELECT "id", "outcome", "hash" FROM "design_checks" WHERE "id" = ?').get(rev.design_check) as { id: string; outcome: string; hash: string } | undefined) : undefined;
+    const check = rev.design_check ? (tx.db.prepare('SELECT "id", "outcome", "hash", "notices" FROM "design_checks" WHERE "id" = ?').get(rev.design_check) as { id: string; outcome: string; hash: string; notices: string | null } | undefined) : undefined;
+    const notices = parseJson<{ code: string; subjects: Record<string, unknown> }[]>(check?.notices ?? null) ?? [];
     const manifest = designManifest(tx.db, rev);
     const assignments = rev.scope === 'asset_only' ? [] : humanTestAssignments(tx.db, rev);
     const capability = (target: string) => inv?.targets.find((t) => t.target === target)?.preview_capability ?? 'none';
@@ -578,8 +586,15 @@ export const DESIGN_APPROVAL: KindSpec = {
     const narrowings = parseJson<string[]>(rev.narrowings) ?? [];
     const disputed = interfacesDisputed(tx.db, rev);
     const evidence = {
+      // D7 §10.6, §12 (SEAM.md §§527, 528): the scope (a first design at
+      // Alpha is an initial design, with no deltas: there is nothing to
+      // differ from) and the origin, shown.
+      scope: rev.scope,
+      origin: rev.origin,
+      ...(rev.scope === 'initial_review' ? { deltas: [] } : {}),
       mockups,
-      design_check: check ? { id: check.id, outcome: check.outcome, hash: check.hash } : null,
+      // What the check shows without refusing (§528: under at_alpha).
+      design_check: check ? { id: check.id, outcome: check.outcome, hash: check.hash, ...(notices.length > 0 ? { notices } : {}) } : null,
       criteria_diff: r ? { requirements: (impact as { requirements?: unknown } | null)?.requirements ?? null, added_criteria: (impact as { added_criteria?: unknown } | null)?.added_criteria ?? null, criteria: content?.criteria.criteria ?? [] } : null,
       asset_manifest: { version: assetManifest?.version ?? null, slots: (assetManifest?.slots ?? []).map((s) => ({ key: s.key, kind: s.kind, slot_version: s.slot_version, status: s.status, provenance: s.provenance })) },
       narrowings,
@@ -682,6 +697,12 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   tx.db
     .prepare(`UPDATE "design_revisions" SET "status" = ?, "approved_by" = ?, "approved_at" = ?, "current_against_spec" = ?, "ready_at" = ?, "supersedes" = ? WHERE "id" = ?`)
     .run(args.withoutCriteria ? 'approved_without_criteria' : 'approved', tx.actor.actor_kind, tx.at, spec, readyAt, prior?.id ?? null, rev.id);
+  // The criterion ids its consolidated change added, recorded as it is
+  // applied (the slice-45 review's S6): later reads match them by id.
+  if (args.specRevision !== null && rev.spec_change_request) {
+    const added = parseJson<{ added_criteria?: string[] }>(requestRow(tx.db, rev.spec_change_request)?.impact_value ?? null)?.added_criteria ?? [];
+    tx.db.prepare('UPDATE "design_revisions" SET "criterion_ids" = ? WHERE "id" = ?').run(JSON.stringify([...added].sort()), rev.id);
+  }
   // The screens, and the slots as this revision holds them.
   for (const s of content?.screens.screens ?? []) {
     tx.db

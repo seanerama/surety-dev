@@ -506,7 +506,7 @@ export class Acceptor {
       if (text === null) return { refused: `${e.path} could not be read` };
       files[e.path] = text;
     }
-    const parsedArch = architectFindings({ files }, { requirement_keys: b.requirement_keys, spec_modules: b.spec_modules, descriptive_keys: b.descriptive_keys });
+    const parsedArch = architectFindings({ files }, { requirement_keys: b.requirement_keys, spec_modules: b.spec_modules, descriptive_keys: b.descriptive_keys, adopted: b.baseline.adopted === true });
     if (parsedArch.findings.length > 0) return { refused: `the replan's architecture products do not parse: ${parsedArch.findings.map((f) => f.message).join('; ')}` };
     if (parsedArch.parsed.modules === null) return { refused: `the replan's tree has no ${MODULES_FILE}` };
     const adrTexts: Record<string, string> = {};
