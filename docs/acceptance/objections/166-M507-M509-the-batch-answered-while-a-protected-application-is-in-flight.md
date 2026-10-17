@@ -48,3 +48,15 @@ The engine raises, or keeps open, a batch whose `spec_change` binds the effectiv
 
 - D1 §10.5 (an effect's preconditions read again; a change between answer and effect asks again); D6 §4.4 and the slice-37 ruling (a spec change asked again); D7 §7.4 (the batch, neither answer alone having effect).
 - harness/journey/drive.mjs `pump` (`ctx.answerKinds`; the `spec_change` re-answer loop).
+
+## Decision
+
+Decided **engine-side** by the driver under the owner's delegation, 2026-10-17, and extended the same day. The engine does not raise the design batch (`design_approval` with its `spec_change`) while any correction of the protected checks is **pending**. Pending means:
+- undecided: not yet classified, awaiting a Reviewer, or its owner question open; or
+- approved and not yet applied.
+
+The design criteria's own correction (trigger `spec_obligation`, subject the request) is excluded. The deferral is visible (`GET …/design` `batches_deferred`, naming the pending corrections). The owner answers the correction first and the batch once, bound to the version the application leaves.
+
+**No test change for this objection** (Verifier, `verify/m6-s40c` from `main` `ca0ac5a`). The objection shows no test fault beyond this order of events. M507 (c), (e) and M509's journey answer the corrections through the pump and then the batch, as the owner would. The Builder reports M507 (c), (e) and M509 passing 10/10 on the engine with the extended rule (`906e2ff`). Cases that held a correction back until after the batch had to change under the extension: objection 169 (M507 (g), M518).
+
+**Observed** on the Builder's engine before that change (a detached scratch worktree of `build/m6-s40-fix` at `f001d4a`, `TMPDIR=/tmp/v40d`, M507 run whole with `node --test`): M507 (c), (e) failed in 2 of 3 whole-file runs with this objection's message ("the design criteria's correction captured: not reached within 40 ticks", the one human act being the `check_correction_unclassifiable` approval). On the engine with the extended deferral (`906e2ff`, `TMPDIR=/tmp/v40e`, with objection 169's change to (g)), M507 passed whole 3 of 3 (7/7 each). M509 was not run by the Verifier.

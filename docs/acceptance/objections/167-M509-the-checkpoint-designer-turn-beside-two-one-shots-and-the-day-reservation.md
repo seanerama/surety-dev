@@ -37,3 +37,9 @@ D7 G12 has the Designer work beside one-shots (M532). With the default limits (`
 
 - D1 §13.3; SEAM.md §§55, 120 (the reservation at a dispatch); D6 §2.4 (budget exhaustion and sessions); D7 G12 (the Designer beside one-shots).
 - `packages/engine/src/store/transitions/ledger.ts` `daySpend` / `exhaustedLimits`; `packages/engine/src/sessions/session.ts` (the turn's admission).
+
+## Decision
+
+Decided by the driver under the owner's delegation, 2026-10-17, **as objection 156 (a)**: a Designer turn's dispatch is held on the day limits as a one-shot's dispatch is held. The hold is visible, and the held turn is dispatched ahead of one-shots that become eligible after it. The session closes `budget_exhausted` only on its own budget (`designer_session_budget_billable_tokens`), never because other runs' reservations refused a turn. A turn posted beside two Verifier one-shots is held until their reservations end, then admitted.
+
+**No test change** (Verifier, `verify/m6-s40c` from `main` `ca0ac5a`). M509's `make` posts the checkpoint Designer turn as the owner would. Under 156 (a) the turn is held, then admitted, so the file passes on an engine that builds the hold. M509 was not run for this decision.

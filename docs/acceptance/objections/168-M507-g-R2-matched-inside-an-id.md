@@ -38,3 +38,19 @@ Decide "delivers R2" from the gate's stage, not from the snapshot's text: a stag
 ## Sources
 
 - M507 (g) as written; the reference plan's stages (harness/design/reference.mjs `STAGES`).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17. **The test is changed** (Verifier, `verify/m6-s40c` from `main` `ca0ac5a`).
+
+M507 (g) no longer reads "delivers R2" from `inputs_snapshot`'s text. It reads it from the engine's records:
+- A **stage gate** delivers R2 when its stage's `implements` holds R2 (the requirement's id, or its key).
+- **Any other gate** delivers R2 when its acceptance scope's `delivered_requirement_ids` holds R2.
+
+A stage gate's scope cannot decide this. In a run of (g) on `f001d4a`, every stage gate's scope listed the whole candidate's requirements, R1, R2 and R3, including the scope of stage 1 (the API stage). Only the stage's `implements` names what the stage delivers. The case also asserts that the filter is live: the web stage's gate delivers R2, and the API stage does not implement R2.
+
+The assertion's meaning is kept: while `accept-r2-tokens` does not exist, every gate delivering R2 names `ACCEPTANCE_SCOPE_INCOMPLETE` with R2.2. Nothing else in M507 changed.
+
+**Run** against the Builder's engine (a detached scratch worktree of `build/m6-s40-fix` at `f001d4a`, `npm ci`, `npm run build`, the changed file copied over, `TMPDIR=/tmp/v40d`, `node --test`):
+- **(g) alone: 10 of 10 passed.** An earlier draft that used the scope alone failed on its first run, on stage 3's gate (R3.2 named, its scope delivering R1 to R3). That failure is why the stage's `implements` is the test.
+- **The whole file, 3 runs:** 7/7 once and 6/7 twice. Both failures were (c), (e) with objection 166's message ("the design criteria's correction captured: not reached within 40 ticks"). That objection is decided engine-side and is not yet built at `f001d4a`. (g) passed in all three runs.
