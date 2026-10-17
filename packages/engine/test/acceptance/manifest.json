@@ -525,7 +525,13 @@
       "M529-a-first-design-at-alpha.test.mjs",
       "M531-owner-verdicts-are-owner-acts.test.mjs"
     ],
-    "46": []
+    "46": [
+      "M537-the-designers-and-verifiers-packages-state-what-the-engine-reads.test.mjs",
+      "M537-the-rehearsal-plays-from-the-designers-package.test.mjs",
+      "M539-the-pace-reads-design-figures.test.mjs",
+      "M540-the-m6-report.test.mjs",
+      "M541-hands-on-script.test.mjs"
+    ]
   },
   "sandbox": [
     "M110-host-checks-and-scope.test.mjs",
@@ -652,6 +658,8 @@
     "M342-the-real-deployment-journey.test.mjs",
     "M420-the-continuation-canary-on-the-real-backend.test.mjs",
     "M443-the-real-journey-from-an-idea-to-alpha.test.mjs",
-    "M444-the-real-retrofit-journey.test.mjs"
+    "M444-the-real-retrofit-journey.test.mjs",
+    "M519-the-real-run-design-before-build-and-at-alpha.test.mjs",
+    "M535-the-real-run-web-an-android-simulation-and-a-held-logo.test.mjs"
   ]
 }
