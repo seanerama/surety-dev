@@ -2556,3 +2556,35 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - Verdicts and the design approval need two owner acts, because the approval's preview changes when the verdicts are confirmed.
    - Without a change phase in the roadmap, nothing reads an observed design's criterion.
    - An asset-only approval resets `owner_accepted` to pending.
+
+## E162. Sean's rulings on the M6 night's open items (decided by Sean, 2026-10-17)
+
+**Status: decided by Sean.**
+
+1. **Objections 126 and 145: answering consumes the question, under a replacement invariant.** The implementation is accepted, with this invariant in place of D7 §11's "no design hold exists without an open owner question naming it":
+
+   > Every design-held stage must be accounted for by an open owner question, an owner-opened active Designer session, pending engine work, or an unexpired owner-selected deferral. Reads identify that cause and the next action. Answering `open` or `later` consumes the question; it does not release the held stages or approve a design.
+
+   Required checks:
+   - a session that ends without resolving the hold re-raises the question;
+   - a deferral survives a restart, re-raises when due, and ends early when a new cause arises;
+   - a failed session opening leaves an actionable question;
+   - an intentional wait is reported as waiting, never as completion or a passed real-lane step.
+
+   D7 §11, the M6 build spec's rule 25, and the plan's M512, M536 and M538 (f) are updated together. E160's visibility fix stands, but it did not meet the old rule's letter, which required an open question.
+2. **The snapshot caps: keep the current protection; do not silently raise the limits.**
+   - For M6, the effective policy limits stand: 5,000 entries or files as actually counted, 100 MiB in total and 10 MiB per file.
+   - E67's accounting of materialized upper-layer output stays, ignored dependencies included. **Git inclusion and resource accounting are different decisions:** ignoring `node_modules` in a commit does not make traversing or materializing it free.
+   - If M519 hits the limit during an otherwise supported workflow, record the measured counts and the cause, fix the defect, and pass the relevant rehearsal before M535. No deleting output and no silent policy widening to turn the run green. Any proposed default change comes back with measurements. This closes E158 item 11's question.
+3. **M535: Waterlog is approved with three edits.**
+   - Android notifications are removed from this version and moved to future work.
+   - The held-logo sequence is mandatory: hold the first proposal, build with the placeholder, then approve the logo through an asset-only approval and verify that it propagates.
+   - Android is source plus a labelled simulation; cross-target behaviour on Android stays unverified until a native runtime is exercised.
+
+   The one-phase scope, the simple API and the absence of persistence stay. Approving the brief does not replace the later specification and design approvals, or M535's prerequisites.
+4. **The smaller questions.**
+   - **API wording:** D7 §14 is corrected. The engine's API is TCP on loopback, protected by its token and by Host and origin checks; D7 does not claim that a browser cannot reach it. Preview content receives no API credentials, and the token bootstrap's exception stays explicitly described. This is a documentation correction, not a transport migration.
+   - **`design.assets_approved`:** it is still emitted only when an effective asset version changes. Every design approval must still durably identify its effective asset set, unchanged assets and placeholders included. D7 §6.4 is clarified. Tests must show that an approval changing nothing emits no change event and schedules no asset-update work, and that a retry duplicates neither.
+   - **The other conversational roles:** M5's daily-limit refusal stays for Vision, Spec Writer and Architect turns in M6. Consistent held-turn behaviour is recorded as a later improvement; extending scheduling and recovery now would enlarge the closing scope.
+5. **The first real-unit preview: evidence acknowledged and preserved.** Sean checked the files: both unit lists are empty, and `run.log` records 12 passed, 0 failed, exit code 0. The evidence, with its commands and exit statuses, is now kept at `docs/acceptance/reports/M6-first-preview/`. It supports the before-and-after result. It does not establish that unrelated units were unchanged throughout the run.
+6. **The journal staging mistake: acknowledged; no further reversal needed.** `364367b` restores the committed journal, and Sean's edits stay in his working tree. Explicit-path staging is the correction. The driver keeps the watcher's current edits intact and inspects the staged diff before committing.
