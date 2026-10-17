@@ -2475,3 +2475,48 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - D7 §14 says the engine's API is a unix socket the browser cannot reach; as built since M1, it is TCP on 127.0.0.1 with a token and a host check. That is a wording question for Sean.
 8. **Slice 42's gate,** at `a286577` (slices 40 to 42): 417 files, 2,254 passed, 6 failed in M440, M338, M311 (h) and M424. M424, M338 and M440 passed alone three times out of three.
 9. **Recorded:** every gate since slice 40 leaves one `/var/tmp/surety-integ-*` home behind on `mini-hp01` ("homes after: 1"). It is not yet traced to a file.
+
+## E160. Slices 43 and 44 merged: assets; approval, holds, staleness and the plan; objections 172, 180, 181, 182 upheld; the reviews' decisions (decided by the driver under Sean's delegation, 2026-10-17)
+
+**Status: decided by the driver** under Sean's standing instruction; Sean may overturn any item.
+
+1. **Slices 43 and 44 merged together** (`4bc0e80`; build `0619d36` on `build/m6-s44`, which carries slice 43 (`28b5794`) and the cases `2da47fd`, `9b5a7a5`, `395b236`): M522, M523, M525, M526, M527, M534; M508, M512, M513, M514, M515, M517, M530. The gate, split, 3 workers, at `0124076`: 430 files, 2,308 passed; 4 failed, in M440, M29 and M311 (h), all on E150 item 6's load-sensitive list.
+2. **Slice 43's review: blocking findings, fixed.**
+   - **The SVG activity check now refuses by default.** Ten of twelve crafted active or external-reference SVGs had passed (namespace-prefixed and XHTML scripts, `srcdoc`, a `data:text/html` iframe, an ISO-2022-JP encoding, `xml-stylesheet`, CSS `@import` and external `url()`, `animate` on `href`). Now refused:
+     - processing instructions other than the XML declaration, any encoding other than UTF-8, `DOCTYPE` and `ENTITY`;
+     - namespaces other than SVG and xlink;
+     - the elements `script`, `foreignObject`, `iframe`, `object`, `embed`, `handler` and `listener` under any prefix;
+     - `on*` attributes, `srcdoc`, `javascript:`, `@import`, and any `url(` not starting with `#`;
+     - `data:` anywhere except a raster image in an `<image>` or `<feImage>` `href`.
+   - **The inventory's placeholder record holds only the engine's own placeholders,** with the derivation's platforms. Before this, re-deriving recorded the head's manifest, Designer and owner proposals included, so a held proposal could become effective (against D7 §6.4).
+3. **The driver's decisions in slice 43's review.**
+   - An SVG declaring transparency `forbidden` or `required` is refused, with the transparency "not established". A `transparency` value outside the three, or a raster variant with no `size`, is refused.
+   - An approval never approves an engine placeholder variant. A slot holding one counts as not approved.
+   - The release hook refuses on an unknown `assets_required_for` and never reports `met`.
+   - The owner's asset upload has its own body cap and refuses `design_asset_too_large`.
+   - An `asset_updated` fix with no stage is held `asset_fix_ungated`.
+4. **Slice 44's review: blocking finding, fixed.** Staleness and the holds now read one revision rule (`designInForce`). Before this, a stage bound to a stale screen of an approved-but-not-ready design could dispatch against the older ready design.
+5. **The driver's decisions in slice 44's review.**
+   - **A `later` deferral is visible and bounded.**
+     - It shows as `deferred` on `GET …/design` and on the plan read's hold.
+     - It ends at once on a new cause.
+     - `until` needs a zone and a real date, and is refused if past.
+   - **The other answers:**
+     - An `open` the engine cannot carry out is recorded and asked again.
+     - `open` on an `alpha_review` question opens review mode.
+     - A `waive` with nothing held is blocked `NOTHING_HELD`.
+     - A stage is bound to the union of its named and computed screens.
+   - **Unknown spec targets or a missing inventory stale every screen concerned.** `deliveryVerdict` reports `failing` on any established failure.
+   - **The replan trigger fires for any change that adds a criterion after the last phase,** as D7 §10.4 says ("every spec change"). That goes beyond E153's "obligations only" and is recorded here for Sean.
+   - **The verdicts block the batch:** a batched `spec_change` is blocked by unconfirmed or rejected verdicts, as the design approval is (`DESIGN_VERDICTS_UNCONFIRMED`, `DESIGN_VERDICTS_REJECTED`).
+   - **The `preview_memory_max` ceiling:** it is capped by the engine's `domain_memory_max` when submitted and when used, which closes E158 item 4.
+6. **An engine defect found through objection 182.** The design approval's bound `asset_manifest_version` was recomputed from the revision's own field, so an owner's asset add could never stale the approval. It is now read from the latest `design.asset_added` after the revision (`a492b88`).
+7. **Objections upheld, tests corrected:**
+   - **172** (M526 (a)): the correction is answered first, and the API stage's Builder is held to keep the UI stages back; the owner resumes the recovered work after the restart.
+   - **180** (M514 (c), M515 (a), M530 (c)): each case waits for phase 1 to finish before the owner's change.
+   - **181** (M515 (f)/(g)): the correction is valid for the spec in force.
+   - **182** (M514 (b), M515 (e)): the owner's favicon is in its declared format. M515 (e) also counts new `design.assets_approved` events, reads the current revision, and scripts the favicon's fix.
+8. **Recorded for Sean.**
+   - The engine emits `design.assets_approved` only when an effective version moves. D7 §6.4 can be read as "at every approval"; if that is the reading, M526 needs a case.
+   - Turning `design` on by a policy change, on a project that already has an asset manifest, records placeholders but writes none of their files (`projects/commands.ts`). It predates this slice and no row reaches it.
+   - In M512 (c), both `open` and `later` are consumed, and the tests pass as built. Objections 126 and 145 stay open; with the deferral now visible on the reads, rule 25 holds either way.
