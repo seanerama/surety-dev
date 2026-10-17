@@ -15,6 +15,7 @@ import { assetsRequired } from './release-hook.js';
 import { unboundAssets } from './asset-bindings.js';
 import { deferredBatches } from './approval.js';
 import { stalePlatforms } from './stale.js';
+import { mappedCriteria } from './criterion-map.js';
 import { humanTestEvidence, reviewsView } from './review.js';
 
 // The `later` deferral running now, or null.
@@ -87,6 +88,10 @@ export function designView(db: Database.Database, args: { project: string }): Re
     // provenance, never merged.
     reviews: reviewsView(db, args.project),
     not_checkable_yet,
+    // The approved design's criteria its approval could not map to a
+    // specification id (criterion-map.ts; the slice-46 review's B1): shown,
+    // never dropped.
+    criteria_unmatched: mappedCriteria(db, args.project)?.unmatched ?? [],
     holds: heldStages(db, args.project),
     // A design batch the engine is holding back, and why (objection 166; rule 25).
     batches_deferred: deferredBatches(db, args.project),

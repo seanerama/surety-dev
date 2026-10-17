@@ -27,6 +27,9 @@ import { recordsDir } from '../records/files.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeRelative, isSlug } from './paths.js';
+import { mappedCriteria } from './criterion-map.js';
+import { type PackageName, type ReadsElement, statedElements } from '../packages/reads.js';
+import { type DesignerReadsFacts, designerElements, designerRetrofitElement, designerReviewElement } from '../packages/design-reads.js';
 
 export interface DesignPackageFacts {
   // The approved design revision's commit and the files the package reads of it.
@@ -40,13 +43,63 @@ export interface DesignPackageFacts {
   fixtures: string[];
   effective: { slot: string; variant: string; slot_version: number; source: string; digest: string; format: string; revision: string; file: string; declared_path?: string }[];
   criteria: { id: string; kind: string; targets: string[]; paths?: string[]; slot?: string; variant?: string }[];
+  // The design criteria of the stage's requirements the approval could not map.
+  unmatched?: { index: number; requirement: string; kind: string; text: string; why: string }[];
   // An asset_updated fix: what it is to update.
   asset_update?: Record<string, unknown> | null;
+  // An asset_updated fix: each bound path with the file the engine expects
+  // there (the slice-46 rehearsal's finding).
+  asset_places?: AssetPlace[];
+}
+
+// What an asset_updated fix places at one bound path: the slot and variant
+// the binding recorded, and the effective slot@version and digest the
+// engine expects of the file there (D7 §6.5). `variant` null where no
+// recorded binding names the path; the rest null where the effective set
+// has no such variant: unknown, never guessed.
+export interface AssetPlace {
+  path: string;
+  target: string;
+  form: string;
+  slot: string;
+  variant: string | null;
+  slot_version: number | null;
+  digest: string | null;
+  // The package path of the effective file, where it is carried.
+  file: string | null;
+}
+
+// Each bound path of the fix with its variant (the latest recorded binding
+// of that slot, target and path) and the effective file it expects. Pure.
+export function assetPlaces(
+  slot: string,
+  bound: { path: string; target: string; form: string; stage?: string | null }[],
+  recorded: { stage: string | null; target: string; slot: string; variant: string; path: string }[],
+  effective: { slot: string; variant: string; slot_version: number; digest: string; format: string }[],
+): AssetPlace[] {
+  return bound.map((b) => {
+    const rows = recorded.filter((r) => r.slot === slot && r.path === b.path && r.target === b.target);
+    const row = rows.filter((r) => (b.stage ?? null) === null || r.stage === b.stage).at(-1) ?? rows.at(-1) ?? null;
+    const e = row ? effective.find((x) => x.slot === slot && x.variant === row.variant) : undefined;
+    return {
+      path: b.path,
+      target: b.target,
+      form: b.form,
+      slot,
+      variant: row?.variant ?? null,
+      slot_version: e?.slot_version ?? null,
+      digest: e?.digest ?? null,
+      file: e && isSlug(e.slot) && isSlug(e.variant) && isSlug(e.format) ? `design/assets/${e.slot}/${e.variant}.${e.format}` : null,
+    };
+  });
 }
 
 export interface DesignPackage {
   files: { path: string; content: Buffer }[];
   prompt: string[];
+  // A Designer session's: what its package states of what the engine reads
+  // (src/packages/design-reads.ts; M537).
+  reads?: { pkg: PackageName; elements: ReadsElement[] };
 }
 
 const BUILDER_DESIGN_TEXT = [
@@ -114,27 +167,41 @@ export function designPackageFacts(db: Database.Database, args: { run: string })
       const d = declared.find((a) => a.slot === e.slot && a.variant === e.variant && targets.includes(a.target));
       return { slot: e.slot, variant: e.variant, slot_version: e.slot_version, source: e.source, digest: e.digest, format: e.format, revision: e.revision, file: e.file, ...(d ? { declared_path: d.path } : {}) };
     });
-  // The design criteria the stage's requirements carry, by their spec ids:
-  // each criterion of criteria.json under one of them, matched by its text.
-  const reqs = db.prepare('SELECT "key", "criteria_text" FROM "requirements" WHERE "project" = ?').all(run.project) as { key: string; criteria_text: string | null }[];
+  // The design criteria the stage's requirements carry, by the spec ids the
+  // approval mapped (criterion-map.ts; the slice-46 review's B1); those it
+  // could not map, stated as unmatched.
   const criteria: DesignPackageFacts['criteria'] = [];
-  for (const c of content.criteria?.criteria ?? []) {
-    const req = String(c.requirement);
-    if (fix || !requirementKeys.includes(req)) continue;
-    const texts = parseJson<{ id: string; text: string }[]>(reqs.find((r) => r.key === req)?.criteria_text ?? null) ?? [];
-    const match = texts.find((t) => t.text.trim() === String(c.text).trim());
-    if (!match) continue;
+  const mapped = fix ? null : mappedCriteria(db, run.project);
+  for (const e of mapped?.mapped ?? []) {
+    if (!requirementKeys.includes(e.requirement_key)) continue;
+    const c = e.criterion;
     criteria.push({
-      id: match.id,
-      kind: String(c.kind),
-      targets: Array.isArray(c.targets) ? (c.targets as string[]) : [],
+      id: e.id,
+      kind: e.kind,
+      targets: e.targets,
       ...(Array.isArray(c.paths) ? { paths: c.paths as string[] } : {}),
       ...(typeof c.slot === 'string' ? { slot: c.slot } : {}),
       ...(typeof c.variant === 'string' ? { variant: c.variant } : {}),
     });
   }
+  const unmatched = (mapped?.unmatched ?? []).filter((u) => u.requirement === 'new' || requirementKeys.includes(u.requirement));
   const repo = (db.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(run.project) as { dev_repo_path: string }).dev_repo_path;
-  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(fix ? { asset_update: subject as Record<string, unknown> } : {}) };
+  // The fix's bound paths with the file each expects (from the recorded bindings, in insertion order).
+  const places = fix
+    ? assetPlaces(
+        String((subject as { slot?: unknown }).slot ?? ''),
+        ((subject as { bindings?: { path: string; target: string; form: string; stage?: string | null }[] }).bindings ?? []).filter((b) => b && typeof b.path === 'string'),
+        db.prepare('SELECT "stage", "target", "slot", "variant", "path" FROM "asset_bindings" WHERE "project" = ? AND "slot" = ? ORDER BY rowid').all(run.project, String((subject as { slot?: unknown }).slot ?? '')) as {
+          stage: string | null;
+          target: string;
+          slot: string;
+          variant: string;
+          path: string;
+        }[],
+        effective,
+      )
+    : [];
+  return { revision: rev.revision, repo, technologies, targets, screens, navigation, mockups, fixtures, effective, criteria, ...(unmatched.length > 0 ? { unmatched } : {}), ...(fix ? { asset_update: subject as Record<string, unknown>, asset_places: places } : {}) };
 }
 
 const REVIEW_TEXT = [
@@ -176,8 +243,9 @@ async function readRecordBytes(rt: Runtime, record: string): Promise<Buffer | nu
 }
 
 // The design files of a review-mode or retrofit-mode Designer session's
-// package (D7 §3.4, §10.2, §10.5, §12; SEAM.md §§489, 523, 528).
-async function reviewPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage | null> {
+// package (D7 §3.4, §10.2, §10.5, §12; SEAM.md §§489, 523, 528), with the
+// element its mode adds (M537 (a3), (a4)).
+async function reviewPackage(rt: Runtime, project: string, run: string): Promise<(DesignPackage & { mode: 'review' | 'retrofit'; built: ReturnType<typeof designerReviewElement> }) | null> {
   const f = await rt.read<ReviewPackageFacts | null>('design.review_package_facts', { run });
   if (!f) return null;
   const json = (v: unknown) => Buffer.from(`${JSON.stringify(v, null, 2)}\n`);
@@ -196,6 +264,7 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
   }
   // The UI source, read-only: every file under the ui modules' paths.
   const omitted: string[] = [];
+  const included: string[] = [];
   if (f.source) {
     const ctx = repoContext(f.repo);
     const tree = await treeOf(ctx, f.source.revision);
@@ -213,12 +282,13 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
       total += b.length;
       count += 1;
       files.push({ path: `design/source/${e.path}`, content: b });
+      included.push(e.path);
     }
   }
   const left = omitted.length > 0 ? ['', `Left out of design/source/ (past the package's bounds): ${omitted.length} file(s), the first ${omitted.slice(0, 20).join(', ')}.`] : [];
   if (f.mode === 'retrofit') {
     prompt.push('', ...RETROFIT_TEXT, ...left);
-    return { files, prompt };
+    return { files, prompt, mode: 'retrofit', built: designerRetrofitElement(included) };
   }
   files.push({ path: 'design/check-results.json', content: json(f.check_results) });
   if (f.review.owner) {
@@ -238,7 +308,9 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     }
     files.push({ path: 'design/evidence.json', content: json({ evidence: listed }) });
     prompt.push('', '## The review', '', ...OWNER_REVIEW_TEXT, ...left);
-    return { files, prompt };
+    const build_ref = typeof f.review.subject.build_ref === 'string' ? f.review.subject.build_ref : null;
+    const owner = { build_ref, evidence: listed.map((e) => ({ id: String(e.id), name: (e.name as string | null) ?? null, format: (e.format as string | null) ?? null, observed_on: (e.observed_on as string | null) ?? null, ...(typeof e.file === 'string' ? { file: e.file } : {}) })) };
+    return { files, prompt, mode: 'review', built: designerReviewElement({ owner, observations: [], present: { approved: f.approved !== null, source: included.length > 0 } }) };
   }
   const o = await observationsFor(rt, project, run);
   files.push({ path: 'design/observations.json', content: json({ observations: o.observations, not_observed: o.not_observed, ...(o.unobservable ? { unobservable: o.unobservable } : {}) }) });
@@ -248,13 +320,23 @@ async function reviewPackage(rt: Runtime, project: string, run: string): Promise
     if (bytes) files.push({ path: `design/observations/${ob.evidence}`, content: bytes });
   }
   prompt.push('', '## The review', '', ...REVIEW_TEXT, ...left);
-  return { files, prompt };
+  return { files, prompt, mode: 'review', built: designerReviewElement({ owner: null, observations: o.observations as unknown as Record<string, unknown>[], present: { approved: f.approved !== null, source: included.length > 0 } }) };
+}
+
+// A Designer session's package (D7 §3.4; E151; M537): the elements every
+// mode states, and the files and element its review or retrofit mode adds.
+async function designerPackage(rt: Runtime, project: string, run: string): Promise<DesignPackage> {
+  const facts = await rt.read<DesignerReadsFacts | null>('design.designer_reads', { run });
+  const mode = await reviewPackage(rt, project, run);
+  const pkg: PackageName = mode?.mode === 'review' ? 'designer_review' : mode?.mode === 'retrofit' ? 'designer_retrofit' : 'designer';
+  const elements = statedElements(pkg, { ...designerElements(facts), ...(mode?.built ?? {}) });
+  return { files: mode?.files ?? [], prompt: mode?.prompt ?? [], reads: { pkg, elements } };
 }
 
 // The package's design files, read from git (main thread).
 export async function designPackageFor(rt: Runtime, run: string): Promise<DesignPackage | null> {
   const who = await rt.read<{ project: string; role: string; mode: string | null } | null>('design.run_facts', { run });
-  if (who?.role === 'designer') return reviewPackage(rt, who.project, run);
+  if (who?.role === 'designer') return designerPackage(rt, who.project, run);
   const f = await rt.read<DesignPackageFacts | null>('design.package_facts', { run });
   if (!f) return null;
   // What this package carries of the effective set, recorded for the
@@ -284,7 +366,7 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
       const b = await at(p);
       if (b) files.push({ path: `design/${p}`, content: b });
     }
-    files.push({ path: 'design/criteria.json', content: json({ criteria: f.criteria }) });
+    files.push({ path: 'design/criteria.json', content: json({ criteria: f.criteria, ...(f.unmatched ? { unmatched: f.unmatched } : {}) }) });
   }
   const listed: Record<string, unknown>[] = [];
   for (const e of f.effective) {
@@ -301,6 +383,17 @@ export async function designPackageFor(rt: Runtime, run: string): Promise<Design
   if (f.asset_update) {
     const u = f.asset_update;
     prompt.push('', `This fix updates the asset slot ${String(u.slot)} from ${String(u.from_version)} to ${String(u.to_version)} (D7 §6.5): place the new effective file at every bound path below (re-deriving a derived one) and return the bindings anew.`, ...((u.bindings as { path: string; form: string; target: string }[] | undefined) ?? []).map((b) => `- \`${b.path}\` (${b.target}, ${b.form})`));
+    // Which file belongs at each path (design/asset-update.json holds the same).
+    const places = f.asset_places ?? [];
+    files.push({ path: 'design/asset-update.json', content: json({ slot: u.slot, from_version: u.from_version, to_version: u.to_version, places }) });
+    prompt.push(
+      '',
+      'At each bound path, the file the engine expects there (design/asset-update.json lists the same):',
+      ...places.map(
+        (p) =>
+          `  * ${p.path}: ${p.slot}/${p.variant ?? 'variant unknown (no recorded binding names this path)'}, ${p.slot_version === null ? 'its effective version unknown' : `${p.slot}@${p.slot_version}`}, sha256 ${p.digest ?? 'unknown'}${p.file ? `, the file ${p.file}` : ''}${p.form === 'derived' ? ' (derived from it)' : ' (a copy, byte for byte)'}`,
+      ),
+    );
   }
   return { files, prompt };
 }

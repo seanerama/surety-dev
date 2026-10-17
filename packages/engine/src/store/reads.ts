@@ -1,5 +1,6 @@
 // Read-only queries. Reads never write and never call out of the store.
 
+import { designCatalogueFacts, designChangeFacts } from '../design/review-package.js';
 import { replanFacts } from '../plan/replan-package.js';
 import { activeStages } from '../plan/active.js';
 import { phaseVerificationFacts } from '../plan/phase.js';
@@ -399,6 +400,11 @@ export function contextFacts(db: Database, args: { run: string }) {
     check_keys: checkKeys,
     criteria,
     check_writing: checkWriting,
+    // The design criteria a Verifier's authoring or correction covers (D7
+    // §7.2, §8.4; M537 (a2)): [] before any design is approved.
+    design_catalogue: item.kind === 'check_authoring' || item.kind === 'check_correction' ? designCatalogueFacts(db, item.project) : null,
+    // A design batch's change (D7 §7.1): the design's criteria and human tests.
+    design_change: item.kind === 'spec_change' && requestId !== null ? designChangeFacts(db, requestId) : null,
     // Whether the project was adopted (D6 §8): the retrofit packages.
     adopted: isAdopted(db, item.project),
     builder_stage: builderStage,

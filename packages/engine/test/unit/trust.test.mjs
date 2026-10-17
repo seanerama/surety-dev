@@ -265,6 +265,24 @@ test('the dispatch rule: scripted only in harness; a named backend needs an acti
   assert.equal(resolve().code, 'backend_refused', 'a revoked entry');
 });
 
+test("each role's backend key is read, the Designer's backend_designer among them (the slice-46 rehearsal's finding)", (t) => {
+  const db = store(t);
+  const roles = ['builder', 'verifier', 'reviewer', 'architect', 'vision', 'spec_writer', 'designer'];
+  // Unset, every role is the scripted backend (harness mode offers it).
+  for (const role of roles) assert.equal(trust.resolveBackend(db, { project: 'prj_1', role, scripted: 'scripted-1' }).kind, 'scripted', `${role}: scripted by default`);
+  // Each role's own key alone names its backend: set for one role, the others stay scripted.
+  for (const [n, role] of roles.entries()) {
+    db.prepare(
+      `INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective)
+       VALUES (?, ?, 'prj_1', ?, '.surety/policy.json', 'b', 'test', ?, '', 0, 1, ?)`,
+    ).run(`pr_k${n}`, AT, 100 + n, AT, JSON.stringify({ [`backend_${role}`]: 'claude' }));
+    db.prepare('UPDATE projects SET policy_revision = ? WHERE id = ?').run(`pr_k${n}`, 'prj_1');
+    const r = trust.resolveBackend(db, { project: 'prj_1', role, scripted: 'scripted-1' });
+    assert.equal(r.backend, 'claude', `${role}: backend_${role} selects its backend`);
+    for (const other of roles.filter((x) => x !== role)) assert.equal(trust.resolveBackend(db, { project: 'prj_1', role: other, scripted: 'scripted-1' }).kind, 'scripted', `${other} is not moved by backend_${role}`);
+  }
+});
+
 test('the engine read lists only backends with active entries, and scripted only in harness mode', (t) => {
   const db = store(t);
   assert.deepEqual(trust.trustView(db, { scripted: false }).backends, []);

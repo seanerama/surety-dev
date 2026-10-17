@@ -5,7 +5,7 @@
 // owner's words reach the engine as the JSON body's text, never through a
 // shell (BS5 §5).
 //
-//   surety session open --project <p> --role <vision|spec_writer|architect|designer> [--model <m>]
+//   surety session open --project <p> --role <vision|spec_writer|architect|designer> [--model <m>] [--mode review]
 //                                                     POST …/sessions
 //   surety session say <run> --project <p> (--text <t> | --file <path|->) [--no-wait] [--wait-minutes <n>]
 //                                                     POST …/sessions/:r/turns, then GET …/sessions/:r
@@ -47,7 +47,7 @@ export function parseSession(argv: string[], readText: (file: string) => string 
   }
   const values: Record<string, string> = {};
   const switches = new Set<string>();
-  const valued: Record<string, string[]> = { open: ['--project', '--role', '--model'], say: ['--project', '--text', '--file', '--wait-minutes'], save: ['--project'], close: ['--project'], resume: ['--project'], show: ['--project'] };
+  const valued: Record<string, string[]> = { open: ['--project', '--role', '--model', '--mode'], say: ['--project', '--text', '--file', '--wait-minutes'], save: ['--project'], close: ['--project'], resume: ['--project'], show: ['--project'] };
   const bare: Record<string, string[]> = { open: [], say: ['--no-wait'], save: [], close: ['--refuse'], resume: [], show: [] };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
@@ -70,7 +70,9 @@ export function parseSession(argv: string[], readText: (file: string) => string 
     case 'open': {
       const role = values['--role'];
       if (role === undefined || !ROLES.includes(role)) return `session open needs --role ${ROLES.join(' | ')}`;
-      return done({ method: 'POST', path: base, body: { role, ...(values['--model'] !== undefined ? { model: values['--model'] } : {}) } });
+      // A Designer session in review mode (D7 §10.2): the owner's route (POST …/sessions {role, mode}).
+      if (values['--mode'] !== undefined && (role !== 'designer' || values['--mode'] !== 'review')) return 'session open takes --mode review, with --role designer only';
+      return done({ method: 'POST', path: base, body: { role, ...(values['--model'] !== undefined ? { model: values['--model'] } : {}), ...(values['--mode'] !== undefined ? { mode: values['--mode'] } : {}) } });
     }
     case 'say': {
       const inline = values['--text'];

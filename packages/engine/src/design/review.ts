@@ -15,6 +15,8 @@
 // Evidence is kept by provenance and never merged: no owner item is ever
 // shown or counted as engine-observed (§10.5).
 
+import { mappedCriteria } from './criterion-map.js';
+import { ROUTE_PATTERN } from './check.js';
 import type Database from 'better-sqlite3';
 
 import { Refusal } from '../refusal.js';
@@ -91,7 +93,7 @@ export function boundSubjectOfRun(db: Db, run: string): Record<string, unknown> 
 
 // A route the engine asks for: a request path of printable ASCII, no
 // space, CR, LF or control (S1).
-export const isRequestPath = (route: unknown): route is string => typeof route === 'string' && /^\/[!-~]*$/.test(route);
+export const isRequestPath = (route: unknown): route is string => typeof route === 'string' && ROUTE_PATTERN.test(route);
 
 // At the design's review: an `alpha_complete` satisfied since the last
 // review puts design_due at stage `alpha_review`, bound to the Alpha's
@@ -175,7 +177,8 @@ export interface Observation {
   provenance: 'engine_observed';
   record: string | null;
   evidence: string;
-  bytes: number;
+  // The bytes the fetch recorded; a fetch that got no answer is unknown, never 0 (the slice-46 review's S4).
+  bytes: number | { unknown: string };
   digest: string | null;
   truncated: boolean;
   reason?: string;
@@ -203,7 +206,7 @@ export function observationsOf(db: Db, args: { run: string }): Observation[] {
     provenance: 'engine_observed',
     record: r.record,
     evidence: r.id,
-    bytes: r.bytes ?? 0,
+    bytes: r.bytes ?? { unknown: r.reason ? `the fetch got no answer: ${r.reason}` : 'the fetch recorded no bytes' },
     digest: r.digest,
     truncated: r.truncated === 1,
     ...(r.reason ? { reason: r.reason } : {}),
@@ -469,16 +472,9 @@ function reviewCandidate(db: Db, r: ReviewRow, target: string): string | null {
 // criteria's checks deciding"): a check of the effective protected version
 // covering a criterion of the approved design for that target, or null.
 function designCheckFor(db: Db, project: string, target: string): { check: string; criterion: string } | null {
-  const rev = db.prepare(`SELECT "content" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as { content: string | null } | undefined;
-  const criteria = (parseJson<{ criteria?: { criteria?: { requirement?: string; text?: string; targets?: string[] }[] } }>(rev?.content ?? null)?.criteria?.criteria ?? []).filter(
-    (c) => !Array.isArray(c.targets) || c.targets.length === 0 || c.targets.includes(target),
-  );
-  if (criteria.length === 0) return null;
-  const ids = new Set<string>();
-  for (const c of criteria) {
-    const row = db.prepare('SELECT "criteria_text" FROM "requirements" WHERE "project" = ? AND "key" = ?').get(project, c.requirement ?? '') as { criteria_text: string | null } | undefined;
-    for (const t of parseJson<{ id: string; text: string }[]>(row?.criteria_text ?? null) ?? []) if (t.text.trim() === String(c.text ?? '').trim()) ids.add(t.id);
-  }
+  // The ids the approval mapped (criterion-map.ts; the slice-46 review's
+  // B1), each criterion on its resolved targets.
+  const ids = new Set((mappedCriteria(db, project)?.mapped ?? []).filter((e) => e.targets.length === 0 || e.targets.includes(target)).map((e) => e.id));
   const version = effectiveVersion(db, project);
   if (!version || ids.size === 0) return null;
   // The finding names the criterion with the check, so the check verifies
