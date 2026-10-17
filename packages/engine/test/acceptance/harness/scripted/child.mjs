@@ -1976,6 +1976,25 @@ async function runSteps(steps, ctx) {
         content = content.split('__HEAD__').join((head.stdout ?? '').trim());
       }
       writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : content);
+    } else if (step.copy_context !== undefined) {
+      // M6 slice 40 (SEAM.md §482): a file of the role's own context package
+      // (relative to the package's directory) placed in its workspace, byte
+      // for byte: how a scripted UI Builder places an effective asset file or
+      // the generated tokens.css its package carries. A file the package does
+      // not hold is logged `missing` and nothing is written.
+      const from = join(contextDir, step.copy_context.from);
+      let bytes = null;
+      try {
+        bytes = readFileSync(from);
+      } catch (err) {
+        log('copy_context', { outcome: 'missing', from: step.copy_context.from, error: err?.code ?? String(err) });
+      }
+      if (bytes !== null) {
+        const target = at(step.copy_context.to);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, bytes);
+        log('copy_context', { outcome: 'copied', from: step.copy_context.from, to: step.copy_context.to, bytes: bytes.length, sha256: sha256Of(bytes) });
+      }
     } else if (step.write_many !== undefined) {
       const target = at(step.write_many.dir);
       mkdirSync(target, { recursive: true });

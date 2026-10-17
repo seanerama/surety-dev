@@ -35,6 +35,8 @@ export const step = {
   writeFill: (path, bytes) => ({ write: { path, fill: bytes } }),
   // `count` files of `bytes` bytes each in the directory `dir`.
   writeMany: (dir, count, bytes = 1) => ({ write_many: { dir, count, bytes } }),
+  // M6 slice 40 (SEAM.md §482): a file of the role's context package placed in its workspace, byte for byte.
+  copyContext: (from, to) => ({ copy_context: { from, to } }),
   // Remove a file or a whole directory.
   delete: (path) => ({ delete: path }),
   rename: (from, to) => ({ rename: { from, to } }),

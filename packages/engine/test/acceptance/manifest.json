@@ -470,7 +470,16 @@
       "M446-hands-on-script.test.mjs"
     ],
     "39": [],
-    "40": [],
+    "40": [
+      "M536-the-design-journey-on-the-scripted-backend.test.mjs",
+      "M501-the-module-maps-new-fields.test.mjs",
+      "M502-targets-and-the-surface-mark.test.mjs",
+      "M503-the-designers-paths-and-everyone-elses.test.mjs",
+      "M504-the-interface-inventory.test.mjs",
+      "M505-close-raises-the-consolidated-batch.test.mjs",
+      "M507-design-readiness-and-the-third-milestone.test.mjs",
+      "M509-the-ui-builders-package.test.mjs"
+    ],
     "41": [],
     "42": [],
     "43": [],
@@ -580,7 +589,8 @@
     "M438-the-profile-maxima-on-the-real-boundary.test.mjs",
     "M439-memory-peak-recorded.test.mjs",
     "M451-the-qualified-profile-on-a-real-domain.test.mjs",
-    "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs"
+    "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
+    "M536-the-design-journey-on-the-scripted-backend.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
