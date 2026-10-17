@@ -8,8 +8,13 @@
 // environment outside the attempt's frozen intent, and a unit name not
 // derived from the home's hash. Each is refused before any host call:
 // `deploy.capability_refused` names the member, the attempt is `failed`,
-// and the host's unit list is unchanged (every `surety-*` unit, read before
-// and after, and the forged name `not-found`), so no `systemd-run` ran.
+// and no `systemd-run` ran: the units whose names derive from this file's
+// home hash (`surety-<h>-*`), read before and after, are unchanged, and the
+// forged name, read by exact name before and after, is `not-found` both
+// times. The read is confined to this home and the forged name (SEAM.md
+// §474; E154 item 5): a host-wide `surety-*` read before and after also
+// saw the units other files of the split gate's parallel workers started
+// and stopped in that window.
 //
 // SAFETY (BS4 §4.1; E64; SEAM.md §257). The forged names are read only, by
 // exact name; nothing creates, stops or signals a unit or a process. Every
@@ -24,10 +29,20 @@ import { attemptsOf, configure, forgeCapability, homeHash, operationsOf, unitNam
 import { endCase, hostConfig, hostDeployable, hostEnvironment, listUnits, operatorGuard, ticksUntil, unitShow } from './harness/deploy/host.mjs';
 
 const POLICY = Object.freeze({ deploy_auto_retries_max: 0, service_memory_max: 67108864 });
-const suretyUnits = () => {
+// The loaded units whose names derive from this home's hash, in any state
+// (SEAM.md §474): never another home's, so a parallel file's units cannot
+// change it. The engine names every unit it starts from its home's hash.
+const homeUnits = (home) => {
   const units = listUnits();
   assert.ok(units !== null, 'the user units can be listed');
-  return units.filter((u) => u.unit.startsWith('surety-')).map((u) => `${u.unit} ${u.active}`).sort();
+  const prefix = `surety-${homeHash(home)}-`;
+  return units.filter((u) => u.unit.startsWith(prefix)).map((u) => `${u.unit} ${u.active}`).sort();
+};
+// The forged unit, by exact name only.
+const loadState = (name) => {
+  const shown = unitShow(name, ['LoadState']);
+  assert.ok(shown !== null, `host-read: ${name} can be shown`);
+  return shown.LoadState;
 };
 
 describe('M335 a forged capability is refused before any host call, on the real adapter', () => {
@@ -54,10 +69,12 @@ describe('M335 a forged capability is refused before any host call, on the real 
     ['create_units', 'a unit name not derived from the home\'s hash', (env) => [`surety-${homeHash(ctx.fx.home) === '000000000000' ? '111111111111' : '000000000000'}-${env.id}-g1.service`], (env) => `surety-${homeHash(ctx.fx.home) === '000000000000' ? '111111111111' : '000000000000'}-${env.id}-g1.service`],
   ];
   cases.forEach(([field, what, value, forgedName], n) => {
-    test(`${what}: refused before any host call, naming ${field}; the host's units unchanged`, async () => {
+    test(`${what}: refused before any host call, naming ${field}; this home's units and the forged name unchanged`, async () => {
       const env = await hostEnvironment(ctx, `cap${n + 1}`);
       try {
-        const before = suretyUnits();
+        const before = homeUnits(ctx.fx.home);
+        const name = forgedName(env);
+        if (name !== null) assert.equal(loadState(name), 'not-found', `host-read: ${name} does not exist before the request`);
         await forgeCapability(ctx.fx.engine, env.id, field, value(env));
         const res = await ctx.fx.engine.post(`/v1/projects/${ctx.project}/deployments`, { candidate: ctx.candidate.id, environment: env.name });
         assert.ok([200, 201].includes(res.status), `the request is issued (${res.text})`);
@@ -71,9 +88,8 @@ describe('M335 a forged capability is refused before any host call, on the real 
         const events = eventsOfType(ctx.fx.home, 'deploy.capability_refused').filter((e) => e.subject?.attempt === attempt.id);
         assert.equal(events.length, 1, `deploy.capability_refused, once (${JSON.stringify(events)})`);
         assert.equal(events[0].payload?.field, field, `naming ${field} (${JSON.stringify(events[0].payload)})`);
-        assert.deepEqual(suretyUnits(), before, 'host-read: the unit list is unchanged (no systemd-run ran)');
-        const name = forgedName(env);
-        if (name !== null) assert.equal(unitShow(name, ['LoadState'])?.LoadState, 'not-found', `host-read: ${name} was never created`);
+        assert.deepEqual(homeUnits(ctx.fx.home), before, 'host-read: the units of this home are unchanged (no systemd-run ran)');
+        if (name !== null) assert.equal(loadState(name), 'not-found', `host-read: ${name} was never created`);
       } finally {
         await endCase(ctx, env);
       }
