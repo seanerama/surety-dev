@@ -501,7 +501,14 @@
       "M520-simulation-labelling.test.mjs",
       "M520-simulation-labelling-through-the-preview-unit.test.mjs"
     ],
-    "43": [],
+    "43": [
+      "M522-placeholders-never-block.test.mjs",
+      "M523-the-asset-manifests-versions.test.mjs",
+      "M525-asset-header-checks.test.mjs",
+      "M526-the-effective-asset-set.test.mjs",
+      "M527-bindings-and-versioned-parity.test.mjs",
+      "M534-the-release-hook-and-its-range.test.mjs"
+    ],
     "44": [],
     "45": [],
     "46": []

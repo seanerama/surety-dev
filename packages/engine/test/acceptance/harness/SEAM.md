@@ -7346,3 +7346,127 @@ The Verifier of slice 42, 2026-10-17, on `verify/m6-s42` from `main` `ee9af2f`. 
 - **`runPreviewServer(config, sealed, {tmp})`**: §500's kernel-lane reading; `stop()` signals only the child it started, after reading back its command line.
 - **`rawRequest(port, method, path)`**: the path sent as written, the body kept as bytes; `engineBytes(fx, path)` the API's bytes (for the archive). `indexEntries`, `assertFrame`, `bannerOf`, `untar`, `simulationRecords`, `designTreeAt(repo, rev | tree)` read markup, archives and git trees as text and bytes; nothing is rendered or decoded beyond a ustar header.
 - **`quiesce(fx, project)`**: the project paused through the owner's route and nothing of it in flight (`harness/journey/project.mjs`'s reading), so no domain is left running at the engine's end.
+
+## 504. M6 slice 43: the files, the lane and what they reuse (M522, M523, M525, M526, M527, M534; BS6 §§3, 8; D7 §6, A.4, A.6 to A.8; G10, G11, G14, G15)
+
+The Verifier of slice 43, 2026-10-17, on `verify/m6-s43` from `main` `95e8185`. **Files** (kernel lane, manifest slice `43`): `M522-placeholders-never-block`, `M523-the-asset-manifests-versions`, `M525-asset-header-checks`, `M526-the-effective-asset-set`, `M527-bindings-and-versioned-parity`, `M534-the-release-hook-and-its-range`. **Harness:** `harness/design/assets43.mjs` (§511). The names of slices 40 to 42 are reused as they are pinned:
+- the policy key `design` and `GET …/design` with `effective_assets` and `assets_required` (§§480, 496);
+- the inventory's default slots and placeholders (§484);
+- the batch, `approveBatch` and `assets_held` (§486);
+- the UI Builder's package layout and `step.copyContext` (§482);
+- `design_effective_assets`, `asset_bindings`, the `asset_updated` subject, `asset_inputs` and `asset_version_changed` (§487);
+- the design check's `{code, subjects}` (§§483, 493);
+- `surety design assets submit` (§480);
+- `step.writeBytes` and the binary generators (§497).
+
+Where D7 gives a name, the name is D7's. The names below are the Verifier's within D7's text, and the Builder may object.
+
+**The asset manifest's paths.** A variant's `file` is a path relative to `.surety/design/`, anywhere under `assets/`. The tests write their own files under `assets/m43/` and elsewhere under `assets/`, and leave the engine's placeholder files where the engine wrote them. A file under `assets/` that the manifest does not name is not refused for that alone.
+
+## 505. The asset manifest's versions, status and history (M523 (a), (b), (e), (f), (g); D7 §6.1, §6.4, §6.6; B.16)
+
+- **The base** of the version rules is the manifest of the project's current approved design revision. Before any approval it is the manifest the engine last committed (its inventory or placeholder `intent` revision, or an owner's `asset add`). A Designer checkpoint is never the base, so a session may save many times against one base. This is the same base `DESIGN_ASSET_STATUS_FORGED` is judged against (D7 §6.4: "that the last approved revision did not approve with the same digests").
+- **`version`.** A save whose manifest differs from the base in any slot, file or `packaging` entry carries a `version` greater than the base's; otherwise it is `DESIGN_ASSET_VERSION_INVALID`.
+- **`slot_version`.** A slot whose files (any variant's `file` or `digest`) differ from the base's carries a `slot_version` greater than the base slot's; otherwise it is `DESIGN_ASSET_VERSION_INVALID` naming the slot. A slot new to the manifest starts at 1. The tests' valid saves increment each by exactly one, and their faults leave it equal, so the tests do not pin whether a larger step is admitted.
+- **Status.** A save may not give a slot status `approved` unless the base approved that slot at the same digests (`DESIGN_ASSET_STATUS_FORGED` naming the slot). The status `placeholder` belongs to provenance `engine_placeholder`.
+- **`history`** is the slot's list of `{slot_version, design_version, status, files: [{variant, digest}]}`. The engine keeps every entry it has written across later manifests, the placeholder's included (`slot_version` 1, `design_version` 0, status `placeholder`; §484). The placeholder's bytes are recoverable from the engine's derivation commit by the digest its entry names.
+- **`packaging`** (D7 §6.6): `[{target, slot?, requirement, guidance: {source, read_on}, status}]`, with `status` `recorded` or `not_checkable_yet`. Any other status, `checked_pass` included, is `DESIGN_SCHEMA_INVALID` naming the field or the value.
+- **Subjects** of the asset reasons name the slot's key, and where it applies the variant, the file's path and the target:
+  - `DESIGN_ASSET_PLACEMENT_MISSING`: a `banner` without `placement`;
+  - `DESIGN_ASSET_ALT_MISSING`: a `logo`, `banner` or `illustration` without `alt_text`;
+  - `DESIGN_ASSET_PLATFORM_UNKNOWN`: names the slot and the target outside the inventory;
+  - `DESIGN_ASSET_SLOT_MISSING`: names the selected kind the manifest lacks;
+  - `DESIGN_ASSET_FILE_MISSING`: names the slot and the variant with no `file`, or whose `file` is not in the tree.
+- **A slot the design adds** (a banner) is selected in `design.json`'s `selection.slots` (§5.8: "slots and variants only as selected"), and is otherwise judged as any slot.
+
+## 506. Placeholders (M522; D7 §6.2, §6.3; objection 140)
+
+- **Default slots.** One slot per kind of D7 §6.2's table, with its key, platforms and variants as §484 pins them. Every slot and variant has a file, provenance `engine_placeholder` and status `placeholder`.
+- **Logo variants: the labelled logo block.** An SVG whose text holds the project's name (as created, any case) and the word `PLACEHOLDER`.
+- **Other SVG placeholders: the initials icon.** An SVG whose text holds the project's initials as a text node: the first letter of each of the first two words of the name, upper case, words split on anything not a letter or digit (`pantry` → `P`, `larder-box` → `LB`).
+- **Raster placeholders.** A raster placeholder, if the engine writes any (objection 140), is a flat PNG whose IHDR size equals the variant's declared `size`.
+- **Validity.** Every placeholder is passive (§507) and its `digest` is its SHA-256.
+- **Deterministic from the name.** The same name gives the same manifest and the same bytes in another home. Another name gives other logo bytes.
+- **A target added later.** An approved specification names the new target, and an approved architecture revision adds it to a `ui` module. The inventory is then re-derived. The engine commits the new target's missing slots and variants (ios: `splash` `default`), with their placeholders and the manifest, in one `intent` revision of its own (`created_by_run` null) touching `.surety/design/` only. Existing slots whose kind the target uses gain it in `platforms`; neither their `slot_version` nor their files change.
+- **No gate reads asset status.** `design_ready`, dispatch, the stage and phase gates and `alpha_authorize` proceed with every effective slot a placeholder, and none of them evaluates the release hook's condition (§509).
+
+## 507. Header checks (M525; M523 (c); D7 §6.3, §14; A.4)
+
+- **Format.** It is read from the magic bytes, or for an SVG from the root element after an optional XML declaration and comments: PNG `89 50 4E 47 0D 0A 1A 0A`; WebP `RIFF….WEBP`; ICO `00 00 01 00`; SVG `<svg`. A declared `format` other than the one read is `DESIGN_ASSET_FORMAT_MISMATCH`. The file's extension is never what decides.
+- **Size.** A raster's width and height come from its header (PNG's IHDR; WebP's VP8X, VP8 or VP8L header; ICO's directory entry). If they differ from the declared `size` it is `DESIGN_ASSET_SIZE_MISMATCH`.
+- **Transparency.** A PNG of colour type 4 or 6, or one with a `tRNS` chunk, has an alpha channel. `forbidden` refuses one even when every pixel is opaque, and `required` refuses a PNG without one; each is `DESIGN_ASSET_TRANSPARENCY_MISMATCH`.
+- **Active SVGs.** An SVG holding a `<script>` element, an `on*` event attribute or an `href`/`xlink:href`/`src` not starting `#` or `data:` is `DESIGN_ASSET_SVG_ACTIVE`.
+- **An unreadable header.** A file whose header cannot establish what is declared (a PNG cut off inside its IHDR) is refused with one of the three header reasons (`FORMAT`, `SIZE` or `TRANSPARENCY_MISMATCH`) naming the file. Which of the three is not pinned. Such a file is never admitted.
+- **What is read.** Only the header and the SVG's text. A PNG whose IHDR is valid and whose IDAT is not zlib passes, at 20000 x 20000. No process naming the asset files is started around the save.
+- **The owner's files.** `surety design asset add` applies the same checks and refuses `design_asset_invalid` with the reasons (A.6).
+
+## 508. The owner's asset commands, asset-only revisions and the reads (M523 (c), (d); M526 (e); M527 (g); D7 §6.3 to §6.5, A.8)
+
+- **`surety design asset add --project <p> <slot> <variant> <file>`** (D7 A.8; M4's `surety env` form):
+  - it prints the answer's JSON and exits 0 on 2xx; otherwise it prints the code and body and exits 1;
+  - the engine validates the file against the slot and variant (§§505, 507) and commits it as an engine `intent` revision (`created_by_run` null, the integration head) touching `.surety/design/assets/` only;
+  - the manifest's slot becomes `proposed`, provenance `owner`, its `slot_version` one above the slot's, the variant's `digest` the file's; `design.asset_added`;
+  - an invalid file is 422 `design_asset_invalid`, its reasons named, and nothing is committed;
+  - the route `POST …/design/assets`'s body is the Builder's; the tests use the CLI.
+- **`surety design assets submit`** (`POST …/design/assets/submit`):
+  - it records a `design_revisions` row of `scope` `asset_only` with its `design_check` (the check run, `design.checked`);
+  - it raises one `design_approval` whose `subject_id` is that revision, with no `spec_change` sharing its `batch_key`, and its `approve` option carrying no blocker;
+  - the revision's `design_assets` rows hold every pending proposal `proposed`, a slot held at an earlier approval included;
+  - answered `approve` with `assets_held`, the held rows stay `proposed` with `held` 1 and their effective entries do not move;
+  - no screen goes stale, no readiness changes, and no `design.ready` follows.
+- **`GET /v1/projects/:p/design/bindings`** answers 200 `{bindings: [{id, stage, revision, target, slot, variant, path, form, source_slot_version, declared_by, superseded_by}]}`, every binding by insertion, superseded ones included. `surety design bindings --project <p>` prints the same.
+- **`GET …/design`** gains:
+  - `unbound` `[{slot, variant, target, stage}]`: each slot and variant that an integrated UI stage's package carried and that no current binding of that stage names (D7 §6.5);
+  - `assets_required.text`, `"required for <assets_required_for>: <count> slots not approved"` (D7 §6.7's form) beside §496's `{for, not_approved, count}`.
+
+## 509. The release hook through the seam (M534; M522 (b), (c); D7 §6.7; G10; Q8)
+
+- **`assets_required_for`** is a project policy key: `none`, `beta`, `live`, default `live`. Any other value, `alpha` included, is refused 400 `invalid_value` naming the key, and nothing changes. The tests set it through the owner's route and accept either a direct application or a `policy_widening` confirmation (`setPolicy`), so neither direction is pinned as a widening.
+- **`POST /v1/harness/release-hook`** † (harness mode only, SEAM §7's confinement and M74's lint): `{project, tier: "beta" | "live", public?: boolean, targets?: [<target>]}`.
+  - It answers 200 `{tier, policy, outcome: "met" | "not_met", reasons: [{code: "ASSETS_NOT_APPROVED", subjects: [<slot key>]}]}`.
+  - The condition is D7 §6.7's. When the tier is at or beyond the policy (`none` requires nothing; `beta` requires Beta and Live; `live` requires Live), every selected slot whose `platforms` include a deployed target and whose effective source is not `approved` is named.
+  - The deployed targets are `targets`, by default every target of the inventory. `public` changes nothing under `live` or `beta`.
+  - A `tier` of `alpha`, or anything else, is refused 400 `invalid_value`: the hook's range excludes Alpha.
+- **`GET /v1/harness/release-hook`** † answers 200 `{evaluations: [{caller, project, tier?}]}`, every evaluation of the condition function since the engine started, in order.
+  - `caller` is `harness` for the route above and `design_view` for `GET …/design`'s `assets_required`.
+  - Until D5 nothing else calls it: `design_ready`, dispatch, every D6 gate and `alpha_authorize` never appear.
+  - The tests read the list after carrying Pantry to Alpha, with a seam evaluation of their own as the counter's control.
+
+## 510. Bindings, `asset_updated` and versioned parity (M527; D7 §6.5; G11, G14, G15; B.17)
+
+- **A refused binding.** It fails the run `invalid_result`, its `reason_text` naming the code (`ASSET_BINDING_PATH_MISSING`, `ASSET_BINDING_UNKNOWN_SLOT`, `ASSET_BINDING_MISMATCH`), as any result validation does. Nothing is integrated and no binding is recorded; the work item repairs as any failed run. "The package's effective set" is the set the run's own package carried.
+- **A recorded binding** is an `asset_bindings` row with:
+  - the stage, the integrated revision (a commit), the target, slot, variant, path and form;
+  - `source_slot_version`, the slot's effective version in the package;
+  - `declared_by` `builder`;
+  - one `design.asset_bound` each.
+
+  A later binding of the same slot, variant and path sets `superseded_by` on the earlier one, and is recorded with the stage that first bound the path.
+- **`asset_updated`.** Each approval that moves a slot's effective version registers one `fix` per slot. Its subject is §487's `{cause, slot, from_version, to_version, bindings, candidate}`:
+  - `from_version` and `to_version` are written `<slot>@<n>`;
+  - `bindings` is every current (not superseded) binding of the slot, as `{stage, target, path, form}`; it is `[]` for a slot an integrated UI stage carried and none bound;
+  - `candidate` is the project's newest candidate at the approval.
+
+  A slot no integrated UI stage carried gets no item, and the next UI stage's package holds its new version. The trigger is keyed by the revision and the slot, so a replayed answer (refused, not 200), a recovery or a restart registers nothing more.
+- **The barrier `design.effective_moved`** (plan §2.3; pause or kill) sits after the effective set's move and before its work's registration. With `kill`, the tests restart the engine and answer again if the decision is still open. Either way there is one item per moved slot afterwards.
+- **`asset_version_changed`.** One `check_obligations` row per check whose definition's `asset_inputs` names the slot (§487), and none for a slot no check reads. The row is resolved (`resolved_at`) only by a result recording the new `slot_version`.
+- **The old result.** A gate evaluation recorded after the move never counts a result of the slot's older version: no `satisfiers` names one. This holds even when the old result is offered again for the latest candidate (`POST /v1/harness/fixtures/evidence-reuse`, §73).
+- **The rebinding.** The fix's package carries the effective set (§482). Its Builder copies the new files to every bound path, re-derives the `derived` ones, places an unbound slot, and returns the bindings anew. These are recorded at the new `source_slot_version`, and the old rows are `superseded_by`.
+
+## 511. The effective set as the only asset source (M526; D7 §6.4) and the harness of slice 43 (`harness/design/assets43.mjs`)
+
+- **`design_effective_assets`** holds one row per selected slot and variant of the current approved revision, each with `slot_version`, `source` and `digest`.
+  - It moves only in an approval's effect, and never on a Designer save; a pending or held proposal is never in it.
+  - It is the record the UI Builders' packages (`design/effective-assets.json` and its files), the checks' `asset_inputs` and `GET …/design`'s `effective_assets` read, across a restart.
+  - The manifest's latest files at the head (a held proposal there) are never read for them.
+- **A revised full design** (a later Designer session) is drawn against the inventory at the head at its time, and its batch carries a change. In M526 that change is its human tests' texts, revised as M533 (e) does.
+- **The harness** (`harness/design/assets43.mjs`):
+  - `propose(base, proposals)` and `addSlot` edit a manifest as §505 says, each variant with its file and digest;
+  - `withAssets`, `assetTurn` (removing `mockups/` and `assets/m43/` first) and `assetSession` run the fault session;
+  - `assertReasonAny` checks a refusal's reason;
+  - `pngOf` (colour type 2 or 6, any fill), `headerOnlyPng`, `truncatedPng`, `passiveSvg` and `ACTIVE_SVG` generate the asset files, and `pngHeader`, `isSvg` and `svgPassive` are the test's own header reads;
+  - `blobBytes` and `variantBytes` read git blobs as bytes;
+  - `descendants` and `sampled` are M506 (h)'s process reading;
+  - `assetAdd`, `assetsSubmit`, `readBindings`, `assetFixes`, `versionObligations`, `resultsOfKey`, `designAssetsOf` and `openApproval` drive the owner's commands and read the results;
+  - `setPolicy`, `evaluateHook`, `hookEvaluated`, `hookEvaluations` and `notApprovedOf` serve the release hook;
+  - `toAlphaWithPlaceholders(fx)` carries Pantry under `before_build` and `on_phase_complete` to `alpha_deployed` on the kernel lane, its design `designModel`'s, which proposes no asset.
