@@ -4,7 +4,8 @@
 // - the preview's names as the store and the host hold them: the reserved
 //   environment `design-preview`, its engine-written configuration, its
 //   deploy and teardown operations, the sealed directory, the unit
-//   `surety-<h>-design-preview-g<n>.service` and its domain;
+//   `surety-<h>-<env id>-g<n>.service` (D4 §9.3, from the reserved
+//   environment's id; objection 135, decided) and its domain;
 // - a preview deployed on the kernel lane's scripted adapter, its deploy
 //   answered at the barrier `preview.sealed` (SEAM.md §499);
 // - the engine's own server run by the test on the kernel lane, as the
@@ -19,14 +20,18 @@
 // SAFETY (BS6 §4.1 rules 1, 2, 8, 21 to 24; E64). A unit is read by its exact
 // name or from the user manager's list filtered here to this home's hash; the
 // only act on one is `stopPreviewLeftovers`, after the engine's own `--stop`,
-// by an exact name matching `surety-<this home's hash>-design-preview-g<n>.service`.
+// by an exact name `surety-<this home's hash>-<the project's design-preview
+// environment id>-g<n>.service` that an attempt intent of this home's store
+// names (`stopOwnUnit`). Being an `env_<ULID>` name, the preview's unit is
+// also under the fixture's fail-closed teardown and `operatorGuard`
+// (SEAM.md §257; objection 135).
 // The only process the test starts is the engine's own server on the kernel
 // lane, its own child, ended through its own handle after its command line
 // is read back. Nothing the Designer wrote is run: mockups are bytes over
 // HTTP, never opened in a browser or executed (rules 21, 22).
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
@@ -37,8 +42,8 @@ import { gitEnv } from '../git.mjs';
 import { listTree } from '../repos.mjs';
 import { SESSION_IDLE_STATES, tickUntil } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { cgroupsNamed, listUnits, unitShow } from '../deploy/host.mjs';
-import { armBarrier, attemptIntent, attemptsOf, configsOf, homeHash, operationsOf, scriptCall, tickToBarrier } from '../deploy/kernel.mjs';
+import { cgroupsNamed, intendedUnits, listUnits, ownUnitPattern, stopOwnUnit } from '../deploy/host.mjs';
+import { armBarrier, attemptIntent, attemptsOf, configsOf, homeHash, operationsOf, scriptCall, tickToBarrier, unitName, unitPrefix } from '../deploy/kernel.mjs';
 import { cli, designEvents } from './drive.mjs';
 
 const rows = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
@@ -67,15 +72,25 @@ export const ENGINE_INSTALL = dirname(dirname(CLI));
 
 // ---- the host, read only ------------------------------------------------------------------------
 
-export const previewPrefix = (home) => `surety-${homeHash(home)}-design-preview-`;
-export const previewUnitName = (home, generation) => `${previewPrefix(home)}g${generation}.service`;
-const ownPreviewUnit = (home) => new RegExp(`^surety-${homeHash(home)}-design-preview-g[1-9][0-9]*\\.service$`);
+// The preview's unit is named as D4 §9.3 names every unit, from the id of
+// the project's reserved `design-preview` environment row (objection 135,
+// decided (b); SEAM.md §§488, 499): `surety-<h>-env_<ULID>-g<n>.service`.
+// `environment` is that row's id (`previewEnvRow(home, project).id`).
+const PREVIEW_ENV_ID = /^env_[0-9A-HJKMNP-TV-Z]{26}$/;
+const envIdOf = (environment) => {
+  assert.ok(typeof environment === 'string' && PREVIEW_ENV_ID.test(environment), `the preview's unit is named from its environment's id, env_<ULID> (objection 135) (${JSON.stringify(environment)})`);
+  return environment;
+};
+export const previewPrefix = (home, environment) => unitPrefix(home, envIdOf(environment));
+export const previewUnitName = (home, environment, generation) => unitName(home, envIdOf(environment), generation);
+const ownPreviewUnit = (home, environment) => new RegExp(`^surety-${homeHash(home)}-${envIdOf(environment)}-g[1-9][0-9]*\\.service$`);
 
-// The loaded units of this home's preview, by the list filtered to its prefix.
-export function previewUnits(home) {
+// The loaded units of this home's preview, by the list filtered to its environment's prefix.
+export function previewUnits(home, environment) {
+  const prefix = previewPrefix(home, environment);
   const all = listUnits();
   assert.ok(all !== null, 'the user units can be listed (systemctl --user list-units): what is loaded is otherwise unknown');
-  return all.filter((u) => u.unit.startsWith(previewPrefix(home)));
+  return all.filter((u) => u.unit.startsWith(prefix));
 }
 // Every loaded unit of this home's hash, any environment (SEAM.md §474's confinement).
 export function homeUnits(home) {
@@ -83,7 +98,7 @@ export function homeUnits(home) {
   assert.ok(all !== null, 'the user units can be listed');
   return all.filter((u) => u.unit.startsWith(`surety-${homeHash(home)}-`)).map((u) => u.unit).sort();
 }
-export const previewCgroups = (home) => cgroupsNamed(previewPrefix(home));
+export const previewCgroups = (home, environment) => cgroupsNamed(previewPrefix(home, environment));
 
 // A cgroup's memory.max, read from the host (a number, `max`, or null if unread).
 export function memoryMaxOf(cgroupPath) {
@@ -115,19 +130,27 @@ export function hostListeners(port) {
   return out;
 }
 
-// After a sandbox file: a preview unit of this home still loaded is asked to
-// stop by the engine's own command, then, if still there, stopped by its exact
-// name (rule 1). Returns the names found (the file fails on any).
+// After a sandbox file: a unit of the project's preview environment still
+// loaded is asked to stop by the engine's own command, then, if still there,
+// stopped by its exact name when an attempt intent of this home's store names
+// it (rule 1; `stopOwnUnit`), else left for the guard to report. With no
+// `design-preview` row for the project no unit can carry its id; anything
+// else of this home's `env_` prefix is the guard's to find. Returns the names
+// found (the file fails on any).
 export function stopPreviewLeftovers(fx, project) {
-  let left = previewUnits(fx.home).map((u) => u.unit);
+  const env = project ? previewEnvRow(fx.home, project) : null;
+  if (!env) return [];
+  let left = previewUnits(fx.home, env.id).map((u) => u.unit);
   if (left.length === 0) return [];
-  if (project) cli(fx, ['design', 'preview', '--stop', '--project', project], { timeoutMs: 120_000 });
-  left = previewUnits(fx.home).map((u) => u.unit);
+  cli(fx, ['design', 'preview', '--stop', '--project', project], { timeoutMs: 120_000 });
+  left = previewUnits(fx.home, env.id).map((u) => u.unit);
   for (const name of left) {
-    assert.ok(ownPreviewUnit(fx.home).test(name), `${name} is exactly this home's preview unit`);
-    spawnSync('systemctl', ['--user', 'stop', '--', name], { encoding: 'utf8', timeout: 60_000 });
-    const after = unitShow(name, ['LoadState', 'ActiveState']);
-    if (after?.LoadState === 'loaded' && after?.ActiveState === 'failed') spawnSync('systemctl', ['--user', 'reset-failed', '--', name], { encoding: 'utf8', timeout: 30_000 });
+    assert.ok(ownPreviewUnit(fx.home, env.id).test(name) && ownUnitPattern(fx.home).test(name), `${name} is exactly this home's preview unit`);
+    if (!intendedUnits(fx.home).includes(name)) {
+      console.log(`# note: ${name} was left loaded by the file and is named in no attempt intent of this home: not acted on`);
+      continue;
+    }
+    stopOwnUnit(fx.home, name);
     console.log(`# note: ${name} was left loaded by the file and stopped by the test by its exact name`);
   }
   return left;

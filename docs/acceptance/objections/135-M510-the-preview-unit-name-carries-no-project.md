@@ -25,3 +25,22 @@ Whichever is chosen, the test changes to read it: a decision for the errata.
 - D7 §5.7: "Environment `design-preview`, reserved, engine-configured …, one per project"; "One preview generation per project"; "the unit name derived from the home as D4 §9.3".
 - D4 §9.3; SEAM §§250, 257 (`unitPrefix(home, environment)`, `ownUnitPattern`).
 - COVERAGE, "M6 slice 40": "Noted, not filed: the preview's unit name … carries no project".
+
+## Decided
+
+Option (b), decided by the driver under Sean's delegation, 2026-10-17; applied by the Verifier on `verify/m6-o135` from main 0119ac0.
+
+The preview's unit is named as D4 §9.3 names every unit, from its environment's id: `surety-<h>-env_<ULID>-g<n>.service`, `<ULID>` the id of the project's reserved `design-preview` environment row.
+
+Why:
+- D7 §5.7 already derives the name "from the home as D4 §9.3", and the environment row is per project. Rule 1's fixed `design-preview` name was the outlier.
+- The id makes the name per project, so two projects' previews in one home never collide. Nothing new has to be said about cross-project generations or refusals, as (a) would require.
+- The name falls under the `surety-<h>-env_` prefix and `ownUnitPattern`, so the fixture's fail-closed teardown and `operatorGuard` (SEAM §257) see a preview unit as they see every other unit. Under BS6's name they could not.
+- (c) would also be per project, but it would stay outside the guard's prefix and add a second naming scheme.
+
+What changed in the tests:
+- `harness/design/preview42.mjs`: `previewPrefix`, `previewUnitName`, `previewUnits` and `previewCgroups` take the reserved row's id and are built on `unitPrefix`/`unitName`. `stopPreviewLeftovers` reads the row and stops a leftover only by its exact name, through `stopOwnUnit` (an attempt intent of the home must name it).
+- M510, `M520-simulation-labelling-through-the-preview-unit` and M536 (d), (l) read the name from `previewEnvRow(home, project).id`. Each asserts the exact name, that it matches the guard's pattern (`assertOwnUnit`), the identity reads, and that nothing of the prefix is left after teardown, unit or cgroup. Each file keeps its own exact-prefix reads beside the guard.
+- SEAM §§488, 499 and 503 are updated to match.
+
+BS6 §4.1 rule 1's wording and the M6 plan's M510 (b) text belong to the owner and are left for the errata.
