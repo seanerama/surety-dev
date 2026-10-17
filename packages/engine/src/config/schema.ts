@@ -298,6 +298,9 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   design_preview_ttl: int(86_400, 3600, 1_209_600),
   design_due_max_defer: int(604_800, 3600, 2_592_000),
   design_review_evidence_max_bytes: int(67_108_864, 1_048_576, 2_147_483_648),
+  // D7 A.7's "512 MiB per review" (SEAM.md §522 †): every file of one
+  // owner-invoked review together.
+  design_review_evidence_max_review_bytes: int(536_870_912, 1_048_576, 17_179_869_184),
 };
 
 // The finer a budget boundary, the earlier in this list (D2 A.2

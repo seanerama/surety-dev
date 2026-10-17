@@ -72,13 +72,13 @@ export function approvedSpec(db: Database, project: string): { id: string; versi
 }
 
 // The published (or completed) plans' stages, active generation only.
-export function publishedStages(db: Database, project: string): { id: string; number: number; phase: number; modules: string; implements: string; work_item: string | null; phase_plan: string }[] {
+export function publishedStages(db: Database, project: string): { id: string; number: number; phase: number; modules: string; implements: string; work_item: string | null; phase_plan: string; conformance: number }[] {
   return db
     .prepare(
-      `SELECT s."id", s."number", p."phase_number" AS "phase", s."modules", s."implements", s."work_item", s."phase_plan" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan"
+      `SELECT s."id", s."number", p."phase_number" AS "phase", s."modules", s."implements", s."work_item", s."phase_plan", s."conformance" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan"
        WHERE s."project" = ? AND p."active" = 1 AND p."status" IN ('published', 'completed') AND s."cancelled_at" IS NULL ORDER BY p."phase_number", s."number"`,
     )
-    .all(project) as { id: string; number: number; phase: number; modules: string; implements: string; work_item: string | null; phase_plan: string }[];
+    .all(project) as { id: string; number: number; phase: number; modules: string; implements: string; work_item: string | null; phase_plan: string; conformance: number }[];
 }
 
 // The requirement keys a design's own spec changes added as human tests:
@@ -104,7 +104,7 @@ export function inventoryInputs(db: Database, project: string, opts: { rep?: Spe
   const requirements = rep.requirements
     .filter((q) => q.withdrawn !== true)
     .map((q) => ({ key: q.key, phase: reqRows.get(q.key)?.assigned_phase ?? q.phase_hint ?? null, human_test: q.human_test, surface: q.surface ?? null, surface_targets: q.surface_targets ?? null }));
-  const stages = publishedStages(db, project).map((s) => ({ modules: stageModuleNames(db, project, s.modules), implements: stageRequirementKeys(db, project, s.implements) }));
+  const stages = publishedStages(db, project).map((s) => ({ modules: stageModuleNames(db, project, s.modules), implements: stageRequirementKeys(db, project, s.implements), ...(s.conformance === 1 ? { conformance: true } : {}) }));
   const adrs = (db.prepare(`SELECT "key", "text" FROM "baseline_texts" WHERE "project" = ? AND "kind" = 'adr' ORDER BY "key"`).all(project) as { key: string; text: string }[]).map((a) => ({ key: a.key, text: a.text }));
   const env = rep.environments[0];
   const runtime = env?.fields['Runtime and start command'] ?? null;

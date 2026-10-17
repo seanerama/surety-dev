@@ -123,6 +123,11 @@ export interface AnswerExtra {
   assets_held?: unknown;
   // D7 §11 (SEAM.md §514): the time `later` asks design_due again at.
   until?: unknown;
+  // D7 §10.3 (SEAM.md §525): design_verdicts' confirmation, the verdicts the
+  // owner edits and strikes, and the severity of the defects it files.
+  edits?: unknown;
+  strikes?: unknown;
+  severity?: unknown;
 }
 
 const consumed = (d: DecisionRow, effects: Effect[] = []): CommandResult => ({ status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects });
@@ -2092,7 +2097,10 @@ export function dropBlockQuestion(tx: Tx, item: string): void {
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §76).
-export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; until?: unknown; facts?: Facts | undefined }): CommandResult {
+export function answerQueued(
+  tx: Tx,
+  args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; until?: unknown; edits?: unknown; strikes?: unknown; severity?: unknown; facts?: Facts | undefined },
+): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
   if ((d.status === 'open' || d.status === 'invalidated') && typeof args.option === 'string') {
@@ -2116,6 +2124,14 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
   if (args.until !== undefined && !(d.kind === 'design_due' && args.option === 'later')) {
     throw new Refusal(422, 'invalid_value', '"until" is the time of design_due\'s later answer, and of no other.', 'Leave "until" out of this answer; nothing was changed.', { field: 'until' });
   }
+  // `edits`, `strikes` and `severity` belong to design_verdicts' confirm
+  // alone (D7 §10.3; SEAM.md §525): sent with any other answer they are
+  // refused, nothing consumed.
+  for (const field of ['edits', 'strikes', 'severity'] as const) {
+    if (args[field] !== undefined && !(d.kind === 'design_verdicts' && args.option === 'confirm')) {
+      throw new Refusal(422, 'invalid_value', `"${field}" belongs to design_verdicts' confirm answer, and to no other.`, `Leave "${field}" out of this answer; nothing was changed.`, { field });
+    }
+  }
   const facts = args.facts ?? {};
   const now = spec.preview(tx, d, facts);
   if (typeof args.preview_hash !== 'string' || args.preview_hash !== d.preview_hash || now === null || previewOf(d, now) !== d.preview_hash) throw stale(d);
@@ -2126,20 +2142,34 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
       blockers: option.blockers,
     });
   }
-  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review, ...(args.assets_held !== undefined ? { assets_held: args.assets_held } : {}), ...(args.until !== undefined ? { until: args.until } : {}) });
+  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review, ...(args.assets_held !== undefined ? { assets_held: args.assets_held } : {}), ...(args.until !== undefined ? { until: args.until } : {}),
+    ...(args.edits !== undefined ? { edits: args.edits } : {}),
+    ...(args.strikes !== undefined ? { strikes: args.strikes } : {}),
+    ...(args.severity !== undefined ? { severity: args.severity } : {}),
+  });
 }
 
 // POST /v1/projects/:p/decisions/answer-batch (D1 §10.3; SEAM.md §81): one
 // combined plan, consumed in one transaction or not at all. Two answers that
 // both change the project's policy against one base conflict.
+// The fields one answer of a batch may carry: a single answer's (B3).
+const BATCH_ANSWER_FIELDS = ['decision', 'option', 'preview_hash', 'note', 'reason', 'review', 'assets_held', 'until', 'edits', 'strikes', 'severity'];
+
 export function answerBatch(tx: Tx, args: { project: string; answers: unknown; facts?: Record<string, Facts> }): CommandResult {
   if (!Array.isArray(args.answers) || args.answers.length === 0) {
     throw new Refusal(400, 'invalid_value', '"answers" must be a non-empty array.', 'Send {"answers": [{"decision", "option", "preview_hash"}]}.', { field: 'answers' });
   }
-  const answers = args.answers as { decision?: unknown; option?: unknown; preview_hash?: unknown }[];
+  const answers = args.answers as ({ decision?: unknown; option?: unknown; preview_hash?: unknown } & AnswerExtra & { note?: unknown })[];
   const rows: DecisionRow[] = [];
-  for (const a of answers) {
+  for (const [i, a] of answers.entries()) {
     if (typeof a !== 'object' || a === null || typeof a.decision !== 'string') throw new Refusal(400, 'invalid_value', 'Each answer names a decision.', 'Send {"decision", "option", "preview_hash"}.', { field: 'answers' });
+    // Each answer carries what a single answer may, and nothing else (the
+    // slice-45 review's B3): an unknown field is refused, named.
+    for (const k of Object.keys(a)) {
+      if (!BATCH_ANSWER_FIELDS.includes(k)) {
+        throw new Refusal(400, 'unknown_field', `"${k}" is not a field of an answer.`, `Send only ${BATCH_ANSWER_FIELDS.join(', ')} in each answer; nothing was consumed.`, { field: `answers[${i}].${k}` });
+      }
+    }
     const d = getDecision(tx, a.decision);
     if (!d || d.project !== args.project) throw notFound('decision', a.decision);
     rows.push(d);
@@ -2162,7 +2192,21 @@ export function answerBatch(tx: Tx, args: { project: string; answers: unknown; f
   const effects: Effect[] = [];
   const results: unknown[] = [];
   for (const [i, a] of answers.entries()) {
-    const r = answerQueued(tx, { project: args.project, decision: rows[i]!.id, option: a.option, preview_hash: a.preview_hash, note: null, facts: args.facts?.[rows[i]!.id] });
+    const r = answerQueued(tx, {
+      project: args.project,
+      decision: rows[i]!.id,
+      option: a.option,
+      preview_hash: a.preview_hash,
+      note: a.note ?? null,
+      ...(a.reason !== undefined ? { reason: a.reason } : {}),
+      ...(a.review !== undefined ? { review: a.review } : {}),
+      ...(a.assets_held !== undefined ? { assets_held: a.assets_held } : {}),
+      ...(a.until !== undefined ? { until: a.until } : {}),
+      ...(a.edits !== undefined ? { edits: a.edits } : {}),
+      ...(a.strikes !== undefined ? { strikes: a.strikes } : {}),
+      ...(a.severity !== undefined ? { severity: a.severity } : {}),
+      facts: args.facts?.[rows[i]!.id],
+    });
     // A batch is consumed whole or not at all: a guard's refusal of one
     // answer refuses the batch (D1 §10.3).
     if (r.status >= 400) {

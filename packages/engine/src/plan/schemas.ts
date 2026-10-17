@@ -244,7 +244,14 @@ export interface ModuleInterface {
   request?: Shape;
   response?: Shape;
   errors?: { code: string; when: string }[];
+  // D7 §12 (objection 150; SEAM.md §528): an adopted project's retrofit map
+  // declares an interface it cannot shape `shape: "unknown"`, in place of
+  // `request`, `response` and `errors`. Refused in any other project.
+  shape?: 'unknown';
 }
+
+// The retrofit map's declaration of an interface it cannot shape (D7 §12).
+export const SHAPE_UNKNOWN_FIELD = 'shape';
 
 export interface ModuleTarget {
   target: string;
@@ -276,7 +283,7 @@ export interface ModuleMap {
 
 export const MODULES_FILE = '.surety/architecture/modules.json';
 
-export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<ModuleMap> {
+export function parseModuleMap(text: string, file = MODULES_FILE, opts: { adopted?: boolean } = {}): Parsed<ModuleMap> {
   const p = parseJsonObject(file, text);
   if (!p.ok) return p;
   const o = p.value;
@@ -311,13 +318,18 @@ export function parseModuleMap(text: string, file = MODULES_FILE): Parsed<Module
       // Named by its name where it has one (D7 §4.1: a refusal names the interface).
       const fat = isObj(f) && typeof f.name === 'string' && f.name !== '' ? `${at}.interfaces[${j}] (${f.name})` : `${at}.interfaces[${j}]`;
       if (!isObj(f)) return refuse(file, fat, 'must be an object');
-      const cf = closed(file, fat, f, B3.interface.fields, B3.interface.required);
+      // `shape: "unknown"` only in an adopted project's map (objection 150).
+      const cf = closed(file, fat, f, opts.adopted === true ? [...B3.interface.fields, SHAPE_UNKNOWN_FIELD] : B3.interface.fields, B3.interface.required);
       if (cf) return { ok: false, finding: cf };
+      if (f.shape !== undefined) {
+        if (f.shape !== 'unknown') return refuse(file, `${fat}.shape`, 'must be "unknown": the declaration of an interface the retrofit map cannot shape');
+        for (const k of ['request', 'response', 'errors']) if (f[k] !== undefined) return refuse(file, `${fat}.${k}`, `an interface declared shape "unknown" carries no ${k}`);
+      }
       if (typeof f.name !== 'string' || f.name === '') return refuse(file, `${fat}.name`, 'must be a non-empty string');
       if (typeof f.kind !== 'string' || !INTERFACE_KINDS.includes(f.kind)) return refuse(file, `${fat}.kind`, `must be one of ${INTERFACE_KINDS.join(', ')}`);
       if (f.path !== undefined && typeof f.path !== 'string') return refuse(file, `${fat}.path`, 'must be a string');
       if (typeof f.description !== 'string') return refuse(file, `${fat}.description`, 'must be a string');
-      const iface: ModuleInterface = { name: f.name, kind: f.kind, ...(f.path !== undefined ? { path: f.path } : {}), description: f.description };
+      const iface: ModuleInterface = { name: f.name, kind: f.kind, ...(f.path !== undefined ? { path: f.path } : {}), description: f.description, ...(f.shape === 'unknown' ? { shape: 'unknown' as const } : {}) };
       if (f.consumed_by !== undefined) {
         if (!strings(f.consumed_by)) return refuse(file, `${fat}.consumed_by`, 'must be an array of module names');
         iface.consumed_by = f.consumed_by;

@@ -82,7 +82,7 @@ export interface InventoryInputs {
   modules: ModuleMap;
   // The published plans' stages: their modules' names and the requirement
   // keys they implement.
-  stages: { modules: string[]; implements: string[] }[];
+  stages: { modules: string[]; implements: string[]; conformance?: boolean }[];
   adrs: { key: string; text: string }[];
   runtime: string | null;
   policy: { design_preview: string; design_widths: number[]; design_orientations: string[] };
@@ -171,6 +171,8 @@ export function deriveInventory(input: InventoryInputs): Inventory {
   // Interfaces a `ui` module consumes or exposes (§4.2).
   const interfaces: InventoryInterface[] = [];
   const consumersOf = new Map<string, string[]>();
+  // Declared unshapeable (D7 §12): nothing is derived from it.
+  const unshaped = new Set<string>();
   for (const m of map.modules) {
     for (const f of m.interfaces) {
       const consumers = (f.consumed_by ?? []).filter((c) => uiNames.has(c));
@@ -185,8 +187,9 @@ export function deriveInventory(input: InventoryInputs): Inventory {
         ...(f.request ? { request: f.request } : {}),
         ...(f.response ? { response: f.response } : {}),
         errors: [...(f.errors ?? [])],
-        shape_known: f.request !== undefined && f.response !== undefined,
+        shape_known: f.shape !== 'unknown' && f.request !== undefined && f.response !== undefined,
       });
+      if (f.shape === 'unknown') unshaped.add(f.name);
     }
   }
   // State obligations, per target the consuming modules serve (§4.2).
@@ -200,6 +203,7 @@ export function deriveInventory(input: InventoryInputs): Inventory {
   };
   for (const t of targets) {
     for (const f of interfaces) {
+      if (unshaped.has(f.name)) continue;
       if (!(consumersOf.get(f.name) ?? []).some((c) => targetsOf(c).includes(t.target) && c === t.module)) continue;
       if (isHttpish(f.kind)) push({ target: t.target, interface: f.name, state: 'loading' });
       for (const e of f.errors) push({ target: t.target, interface: f.name, state: `error:${e.code}` });
@@ -212,7 +216,9 @@ export function deriveInventory(input: InventoryInputs): Inventory {
   // UI requirements (§4.2): implemented by a UI stage, or marked.
   const uiStageTargets = (key: string): { modules: string[]; targets: string[] } => {
     const modules = new Set<string>();
-    for (const s of input.stages) if (s.implements.includes(key)) for (const m of s.modules) if (uiNames.has(m)) modules.add(m);
+    // A conformance stage builds nothing: its requirements are UI
+    // requirements only by the mark (objection 150).
+    for (const s of input.stages) if (!s.conformance && s.implements.includes(key)) for (const m of s.modules) if (uiNames.has(m)) modules.add(m);
     const ts = new Set<string>();
     for (const m of modules) for (const t of targetsOf(m)) if (input.spec_targets === null || input.spec_targets.includes(t)) ts.add(t);
     return { modules: [...modules].sort(), targets: [...ts] };

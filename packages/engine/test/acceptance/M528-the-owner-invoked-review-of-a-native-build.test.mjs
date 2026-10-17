@@ -3,7 +3,7 @@
 // rules 21, 22, 26; SEAM.md §§502, 516, 521, 522, 524.
 //
 // Pantry designed and approved before build (every slot a placeholder), its
-// stages built so a candidate exists; then the owner reviews his Android
+// phase 1 built and complete, the project idle; then the owner reviews his Android
 // build, which M6 cannot run, by `surety design review` and `POST
 // …/design/reviews`.
 // (a) `surety design review --target android --build "1.4.2 (37)"
@@ -36,7 +36,7 @@ import { after, before, describe, test } from 'node:test';
 
 import { sharedFixture } from './harness/gates.mjs';
 import { getPolicy } from './harness/journal.mjs';
-import { candidatesOfProject, pump } from './harness/journey/drive.mjs';
+import { candidatesOfProject, phaseCompleted, pump } from './harness/journey/drive.mjs';
 import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { createPantry } from './harness/design/drive.mjs';
 import { setPolicy } from './harness/design/assets43.mjs';
@@ -76,6 +76,12 @@ const BUILD = '1.4.2 (37)';
 const labelsOf = (value) => JSON.stringify(value ?? null);
 // The refusal's reasons as text (A.6: `design_evidence_invalid`, with its reasons).
 const refusalText = (res) => `${res.stdout} ${res.stderr}`;
+// "Makes no operation" (SEAM.md §§522, 536; objection 192): no D4 operation of the project
+// (deploy, rollback, teardown, publish). The review session's own git journal operations for its
+// workspace and saves (D1 §7.3; D6 §2.1) are not effects on the build he names.
+const D4_OPERATIONS = `"project" = ? AND "kind" IN ('deploy', 'rollback', 'teardown', 'publish')`;
+// The window's counts: engine observations, check executions, D4 operations.
+const countsOf = (home, project) => ({ observations: countOf(home, 'records', '"kind" = \'design_observation\''), executions: countOf(home, 'check_executions'), operations: countOf(home, 'operations', D4_OPERATIONS, project) });
 
 describe('M528 the owner-invoked review of a native build (shared: Pantry designed, approved and built)', () => {
   const shared = sharedFixture();
@@ -86,6 +92,9 @@ describe('M528 the owner-invoked review of a native build (shared: Pantry design
     const d = await designedPantry(fx, { name: 'pantry-owner-build' });
     Object.assign(J, d);
     J.candidate = await pump(fx, d.ctx, () => candidatesOfProject(fx.home, d.p.id).at(-1), { what: 'a candidate of the built stages', max: 120 });
+    // The build finished before any case (objection 192): phase 1 complete and the project idle,
+    // so a count that moves during a review is the review's, not the build's.
+    await phaseCompleted(fx, d.ctx, 1, { max: 200 });
     await waitForIdle(fx.home, d.p.id);
   });
   after(shared.cleanup);
@@ -95,7 +104,7 @@ describe('M528 the owner-invoked review of a native build (shared: Pantry design
     const png = evidenceBytes('png', { tag: 1 });
     const webm = evidenceBytes('webm', { tag: 1 });
     const [a, b] = evidenceFiles(fx, { 'a.png': png, 'b.webm': webm });
-    const before_ = { observations: countOf(fx.home, 'records', '"kind" = \'design_observation\''), executions: countOf(fx.home, 'check_executions'), operations: countOf(fx.home, 'operations', '"project" = ?', p.id) };
+    const before_ = countsOf(fx.home, p.id);
     const res = designReview(fx, p.id, { target: 'android', build: BUILD, observedOn: 'device', evidence: [a, b] });
     assert.equal(res.status, 0, `surety design review exits 0 (stdout ${res.stdout.slice(0, 400)}; stderr ${res.stderr.slice(0, 400)})`);
     const run = res.body?.run;
@@ -133,10 +142,11 @@ describe('M528 the owner-invoked review of a native build (shared: Pantry design
     assert.equal(entry(rowB).file ?? null, null, 'the recording by name only: no file');
     assert.ok(!Object.values(pkg).some((f) => f.sha256 === sha256hex(webm)), 'its bytes nowhere in the package');
     assert.equal(packageJson(pkg, 'design/review.json')?.subject?.kind, 'owner_build', 'the review\'s subject in the package');
-    // Not verified: the command observed nothing, ran no check and no operation.
-    assert.equal(countOf(fx.home, 'records', '"kind" = \'design_observation\''), before_.observations, 'no engine observation made');
-    assert.equal(countOf(fx.home, 'check_executions'), before_.executions, 'no check run');
-    assert.equal(countOf(fx.home, 'operations', '"project" = ?', p.id), before_.operations, 'no operation');
+    // Not verified: the command observed nothing, ran no check and made no D4 operation.
+    const after_ = countsOf(fx.home, p.id);
+    assert.equal(after_.observations, before_.observations, 'no engine observation made');
+    assert.equal(after_.executions, before_.executions, 'no check run');
+    assert.equal(after_.operations, before_.operations, 'no operation (deploy, rollback, teardown, publish)');
     // (f) the projections, before and after the owner's confirmation.
     const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, reviewId) ?? undefined, { what: 'design_verdicts', max: 10 });
     const preview = labelsOf(verdicts.evidence);
@@ -160,7 +170,7 @@ describe('M528 the owner-invoked review of a native build (shared: Pantry design
 
   test('(a) POST …/design/reviews with a candidate: the candidate recorded as his word, unverified', async () => {
     const { fx, p, candidate } = J;
-    const before_ = { observations: countOf(fx.home, 'records', '"kind" = \'design_observation\''), executions: countOf(fx.home, 'check_executions'), operations: countOf(fx.home, 'operations', '"project" = ?', p.id) };
+    const before_ = countsOf(fx.home, p.id);
     const res = await postReview(fx, p.id, { target: 'android', build_ref: 'pantry-android 0.2.0', candidate: candidate.id });
     assert.equal(res.status, 201, `POST …/design/reviews (→ ${res.status} ${res.text?.slice(0, 400)})`);
     const reviewId = res.body?.review?.id ?? res.body?.review;
@@ -168,9 +178,10 @@ describe('M528 the owner-invoked review of a native build (shared: Pantry design
     assert.equal(out.close.status, 200, `the close (${out.close.text?.slice(0, 300)})`);
     const review = reviewRow(fx.home, reviewId) ?? reviewsOf(fx.home, p.id).at(-1);
     assert.deepEqual(review?.subject, { kind: 'owner_build', target: 'android', build_ref: 'pantry-android 0.2.0', candidate: candidate.id }, `the candidate he named, in the subject (${JSON.stringify(review?.subject)})`);
-    assert.equal(countOf(fx.home, 'records', '"kind" = \'design_observation\''), before_.observations, 'nothing observed to verify it');
-    assert.equal(countOf(fx.home, 'check_executions'), before_.executions, 'no check run on it');
-    assert.equal(countOf(fx.home, 'operations', '"project" = ?', p.id), before_.operations, 'no operation');
+    const after_ = countsOf(fx.home, p.id);
+    assert.equal(after_.observations, before_.observations, 'nothing observed to verify it');
+    assert.equal(after_.executions, before_.executions, 'no check run on it');
+    assert.equal(after_.operations, before_.operations, 'no operation (deploy, rollback, teardown, publish)');
     const v = openVerdicts(fx.home, p.id, review.id);
     if (v) assert.equal(designVerdicts(fx, p.id, review.id, 'reject').status, 0, 'the verdicts rejected (tidy)');
   });

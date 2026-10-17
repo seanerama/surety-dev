@@ -159,6 +159,9 @@ export function interfaceShapesMissing(map: ModuleMap): string[] {
   for (const m of map.modules) {
     for (const i of m.interfaces ?? []) {
       if (!(i.consumed_by ?? []).some((c) => ui.has(c))) continue;
+      // Declared unshapeable by an adopted project's map (D7 §12; objection
+      // 150): listed shape unknown in the inventory, never refused here.
+      if (i.shape === 'unknown') continue;
       if (i.request === undefined || i.response === undefined || i.errors === undefined) out.push(`${m.name}:${i.name}`);
     }
   }

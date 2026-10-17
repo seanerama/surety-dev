@@ -228,11 +228,13 @@ export function observedDesign(inventory, manifest, { unknownBack = false } = {}
       target: 'web',
       title: 'Sums',
       flow_steps: ['F1.1'],
-      // The conformance stage carries every module, the web module among
-      // them, so each requirement it implements is a UI requirement of the
-      // inventory (D7 §4.2; objection 150): the sum page, the service's front
-      // page, is where the observed design shows R1 to R3.
-      requirements: ['R1', 'R2', 'R3', 'R5'],
+      // In the conformance stage only requirements marked `**Surface:** ui`
+      // are UI requirements of the inventory (objection 150's ruling, E158
+      // item 8; objection 190): of Shelf's, R5 and R6. The sum page shows R5;
+      // R1 to R3 are the service's, not the screen's (the flow still names
+      // them; the check does not read a flow's requirements against the
+      // inventory).
+      requirements: ['R5'],
       interfaces: ['sum-route', 'history-feed'],
       states: obligations.filter((o) => o.interface !== 'history-feed').map((o) => stateOf(o, s1Mockup)),
       layouts: web.layouts,

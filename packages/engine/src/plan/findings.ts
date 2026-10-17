@@ -170,6 +170,9 @@ export interface ArchitectBaseline {
   // Scoped mode's descriptive, criteria-less requirements (Sean,
   // 2026-10-13): each must be held by a module of the map.
   descriptive_keys?: string[];
+  // An adopted project (D6 §8): its retrofit map may declare an interface
+  // `shape: "unknown"` (D7 §12; objection 150).
+  adopted?: boolean;
 }
 
 export interface ArchitectParsed {
@@ -191,7 +194,7 @@ export function architectFindings(texts: ArchitectTexts, baseline: ArchitectBase
     else findings.push({ code: 'machine_file_invalid', path, subject: { path, field: finding.field }, message: `${path}: ${finding.why}` });
   };
   if (texts.files[MODULES_FILE] !== undefined) {
-    const m = parseModuleMap(texts.files[MODULES_FILE]!, MODULES_FILE);
+    const m = parseModuleMap(texts.files[MODULES_FILE]!, MODULES_FILE, { adopted: baseline.adopted === true });
     if (m.ok) parsed.modules = m.value;
     else for (const f of [m.finding, ...(m.also ?? [])]) schema(MODULES_FILE, f);
   }

@@ -15,6 +15,7 @@ import { assetsRequired } from './release-hook.js';
 import { unboundAssets } from './asset-bindings.js';
 import { deferredBatches } from './approval.js';
 import { stalePlatforms } from './stale.js';
+import { humanTestEvidence, reviewsView } from './review.js';
 
 // The `later` deferral running now, or null.
 export function deferredOf(db: Database.Database, project: string): { until: string; decision: string; held_stages: string[]; stale_screens: string[] } | null {
@@ -49,12 +50,13 @@ export function designView(db: Database.Database, args: { project: string }): Re
   const approved = db.prepare(`SELECT "id", "assignments" FROM "design_revisions" WHERE "project" = ? AND "assignments" IS NOT NULL AND "status" IN ('approved', 'approved_without_criteria', 'superseded') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
     | { id: string; assignments: string }
     | undefined;
-  const confirmed = (
-    db.prepare(`SELECT "verdicts" FROM "design_reviews" WHERE "project" = ? AND "confirmation_decision" IS NOT NULL ORDER BY rowid`).all(args.project) as { verdicts: string }[]
-  ).flatMap((r) => parseJson<{ target: string; verdict: string; status: string; observed_on?: string }[]>(r.verdicts) ?? []);
+  // The design revision in force: a confirmed verdict counts for the
+  // version it was given on only (Q4; SEAM.md §524), kept as history after.
+  const inForce = (db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(args.project) as { id: string } | undefined)?.id ?? null;
   const human_tests = (parseJson<{ target: string; requirement: string | null; phase: number | null }[]>(approved?.assignments ?? null) ?? []).map((h) => {
-    const accepted = confirmed.some((v) => v.target === h.target && v.status === 'confirmed' && v.verdict === 'matches' && v.observed_on !== 'simulation');
-    return { target: h.target, requirement: h.requirement, phase: h.phase, status: accepted ? 'owner_accepted' : 'pending' };
+    const owner = humanTestEvidence(db, args.project, h.target, inForce);
+    // Never `verified`: owner_accepted on his confirmed word alone (Q4).
+    return { target: h.target, requirement: h.requirement, phase: h.phase, status: owner.accepted ? 'owner_accepted' : 'pending', evidence: owner.evidence };
   });
   const due = db.prepare(`SELECT "id", "evidence" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { id: string; evidence: string } | undefined;
   // The native conventions the current approved revision leaves not
@@ -81,6 +83,9 @@ export function designView(db: Database.Database, args: { project: string }): Re
     unbound: unboundAssets(db, args.project),
     assets_required,
     human_tests,
+    // The reviews (D7 §10; SEAM.md §524): evidence labelled and counted by
+    // provenance, never merged.
+    reviews: reviewsView(db, args.project),
     not_checkable_yet,
     holds: heldStages(db, args.project),
     // A design batch the engine is holding back, and why (objection 166; rule 25).

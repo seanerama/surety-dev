@@ -2450,6 +2450,9 @@
         },
         "blobs": {
           "required": true
+        },
+        "notices": {
+          "required": false
         }
       }
     },
@@ -2556,6 +2559,12 @@
         "record": {
           "required": false,
           "references": "records"
+        },
+        "name": {
+          "required": false
+        },
+        "reason": {
+          "required": false
         }
       }
     },
@@ -2807,6 +2816,13 @@
         },
         "findings": {
           "required": true
+        },
+        "proposed_revision": {
+          "required": false,
+          "references": "design_revisions"
+        },
+        "review_path": {
+          "required": false
         }
       }
     },
@@ -2916,6 +2932,9 @@
           "required": false
         },
         "batch_released_at": {
+          "required": false
+        },
+        "criterion_ids": {
           "required": false
         }
       }
@@ -8377,6 +8396,12 @@
         "default": 67108864,
         "min": 1048576,
         "max": 2147483648,
+        "integer": true
+      },
+      "design_review_evidence_max_review_bytes": {
+        "default": 536870912,
+        "min": 1048576,
+        "max": 17179869184,
         "integer": true
       },
       "budget_run_boundary": {
