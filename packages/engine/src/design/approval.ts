@@ -425,6 +425,23 @@ export function planVersions(db: Db, project: string): { id: string; generation:
 }
 const roadmapVersion = (db: Db, project: string): number | null => (db.prepare('SELECT "version" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { version: number } | undefined)?.version ?? null;
 
+// The asset manifest's version as the project's head holds it now, for a
+// revision's bindings: the version the latest owner's `asset add` committed
+// after the revision was proposed (`design.asset_added` carries it; SEAM.md
+// §505), else the revision's own (a later Designer save moves the tree,
+// which `tree_blobs` binds).
+export function manifestVersionNow(db: Db, rev: Pick<RevisionRow, 'id' | 'project' | 'asset_manifest_version'>): number | null {
+  const added = db
+    .prepare(
+      `SELECT json_extract(e."payload", '$.manifest.version') AS "version" FROM "events" e
+       WHERE e."type" = 'design.asset_added' AND json_extract(e."subject", '$.project') = ?
+         AND e."seq" > COALESCE((SELECT MAX(p."seq") FROM "events" p WHERE p."type" = 'design.proposed' AND json_extract(p."subject", '$.design_revision') = ?), 0)
+       ORDER BY e."seq" DESC LIMIT 1`,
+    )
+    .get(rev.project, rev.id) as { version: number | null } | undefined;
+  return added && typeof added.version === 'number' ? added.version : rev.asset_manifest_version;
+}
+
 export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown> {
   const r = requestRow(db, rev.spec_change_request);
   const current = (db.prepare('SELECT "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(rev.project) as { version: number } | undefined)?.version ?? null;
@@ -438,7 +455,10 @@ export function designManifest(db: Db, rev: RevisionRow): Record<string, unknown
     design_version: rev.version,
     architecture_version: arch,
     design_check: rev.design_check,
-    asset_manifest_version: rev.asset_manifest_version,
+    // The manifest's version at the head, not the revision's own (the
+    // Verifier's finding on M514 (b)): an owner's `asset add` after the
+    // proposal moves it and stales the approval.
+    asset_manifest_version: manifestVersionNow(db, rev),
     selection: sha256(canonical(parseJson(rev.selection))),
     // The design tree as the project's last save left it: a later save
     // stales the approval (M505 (g)).

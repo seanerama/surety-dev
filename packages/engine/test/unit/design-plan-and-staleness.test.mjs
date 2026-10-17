@@ -114,6 +114,7 @@ const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { designUnmet } = await import(join(dist, 'design', 'readiness.js'));
 const staleModule = await import(join(dist, 'design', 'stale.js'));
+const queueModule = await import(join(dist, 'store', 'transitions', 'queue.js'));
 const { staleScreens, specDesignClass, inventoryDesignClass } = staleModule;
 const { bindStageScreensTo, designInForce } = await import(join(dist, 'design', 'stage-screens.js'));
 const { untilTime } = await import(join(dist, 'design', 'due.js'));
@@ -281,4 +282,24 @@ test('a target removed: the slots an earlier inventory\'s placeholder record gav
   assert.ok(marked.some((x) => x.slot === 'splash' && x.target === 'ios'), JSON.stringify(marked));
   assert.ok(marked.every((x) => x.target === 'ios'));
   assert.deepEqual(stalePlatforms(db, P, { targets: [{ target: 'web' }, { target: 'android' }, { target: 'ios' }] }), []);
+});
+
+test('an owner\'s asset add after the batch is raised moves asset_manifest_version: the design_approval is invalidated naming it, and asked again', (t) => {
+  const { db, at, tx } = scratch(t);
+  const { raiseQuestion, refreshDecisions } = queueModule;
+  db.prepare(`INSERT INTO "spec_change_requests" ("id", "created_at", "project", "seq", "request_text", "source", "status", "proposal_blob") VALUES ('scr_1', ?, ?, 1, 'the design', 'design', 'proposed', 'blob_1')`).run(at, P);
+  db.prepare(
+    `INSERT INTO "design_revisions" ("id", "created_at", "project", "version", "scope", "revision", "blobs", "origin", "targets", "status", "asset_manifest_version", "asset_manifest", "selection", "spec_change_request", "batch_key", "content")
+     VALUES ('rev_p', ?, ?, 1, 'full', 'r', '{}', 'intended', '[]', 'proposed', 1, ?, '{}', 'scr_1', 'design:rev_p', ?)`,
+  ).run(at, P, JSON.stringify({ version: 1, slots: [], packaging: [] }), JSON.stringify({ design: {}, screens: { screens: [] }, navigation: { targets: [] }, criteria: { criteria: [], human_tests: [] }, manifest: { version: 1, slots: [], packaging: [] } }));
+  tx((x) => x.emit('design.proposed', { project: P, design_revision: 'rev_p' }, {}));
+  const first = tx((x) => raiseQuestion(x, { project: P, kind: 'design_approval', subjectType: 'design_revision', subjectId: 'rev_p' }));
+  assert.equal(JSON.parse(first.dependency_manifest).asset_manifest_version, 1);
+  tx((x) => x.emit('design.asset_added', { project: P }, { slot: 'favicon', manifest: { version: 2, slots: [], packaging: [] } }));
+  tx((x) => refreshDecisions(x, P));
+  assert.equal(db.prepare('SELECT "status" FROM "decisions" WHERE "id" = ?').get(first.id).status, 'invalidated');
+  const why = db.prepare(`SELECT "payload" FROM "events" WHERE "type" = 'decision.invalidated' ORDER BY "seq" DESC LIMIT 1`).get();
+  assert.ok(JSON.parse(why.payload).changed.some((c) => c.includes('asset_manifest_version')), why.payload);
+  const next = db.prepare(`SELECT "dependency_manifest" FROM "decisions" WHERE "kind" = 'design_approval' AND "status" = 'open'`).get();
+  assert.equal(JSON.parse(next.dependency_manifest).asset_manifest_version, 2, 'asked again on version 2');
 });
