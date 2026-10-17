@@ -253,7 +253,12 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           // after its repair: a repair cannot add screens, a design can.
           ...(item.kind === 'replan' && replanDesignRefused(tx.db, item.id)
             ? [
-                ...(!((blocker.reason === 'repair_attempts_max' || blocker.reason === 'no_progress_max') && replanOffered(tx.db, item)) ? [REPLAN_OPTION(item)] : []),
+                {
+                  key: 'replan',
+                  label: 'Replan',
+                  consequence: 'The Architect plans the phase again from the start, its repairs counted afresh; the plan check reads the design then current.',
+                  effect: { work_item: item.id, to: 'eligible', replan: true },
+                },
                 {
                   key: 'design',
                   label: 'Design',
@@ -640,6 +645,11 @@ const BLOCKER: KindSpec = {
           return consumed(d, [{ kind: 'tick' }]);
         }
         return consumed(d, answerConflict(tx, item, option, d.id));
+      }
+      if (option === 'replan' && item.kind === 'replan') {
+        // D7 §8.3: the parked replan planned again from the start.
+        transitionWork(tx, item, 'eligible', { blocker: null, repair_due: 0 }, { decision: d.id, cause: 'replan' });
+        return consumed(d, [{ kind: 'tick' }]);
       }
       if (option === 'replan') {
         answerReplan(tx, item, d.id, 'blocker_replan', { evidence: workEvidence(tx, item.id) });

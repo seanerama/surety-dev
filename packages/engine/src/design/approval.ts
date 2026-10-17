@@ -38,7 +38,7 @@ import type { AssetManifest } from './assets.js';
 import { narrowings as narrowingsOf } from './check.js';
 import { writeDueState } from './due.js';
 import { type Inventory, deriveInventory } from './inventory.js';
-import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames, stageRequirementKeys } from './policy.js';
+import { approvedModuleMap, designHumanTestKeys, inventoryInputs, publishedStages, stageModuleNames } from './policy.js';
 import { designDueState } from './readiness.js';
 import { blobsHash, currentInventory } from './store.js';
 import { latestCheck } from './records.js';

@@ -8,10 +8,12 @@
 // never answers it; it is closed by the engine only when no stage it names
 // is held any more (the design ready, waived, or the policy off).
 //
-// Objection 126 (open for Sean): this slice opens the Designer session by
-// the owner's own command, never by answering `open`; an `open` answer is
-// consumed and, while a stage stays held, the question is raised again at
-// the next review, so a hold is never without an open question naming it.
+// Objections 126 and 145 (open for Sean): what `open` and `later` do to the
+// question itself. As built in slice 40 and kept: an `open` answer is
+// consumed, the Designer session allocated (slice 44), and while a stage
+// stays held the question is raised again at the next review; a `later`
+// answer is consumed and nothing is asked until the owner's time passes.
+// Stale screens raise it as held stages do (D7 §9.1).
 
 import { type AnswerExtra, type KindSpec, type Subject, consumed, recordApproval, recordIntent } from '../store/transitions/queue.js';
 import { Refusal } from '../refusal.js';
