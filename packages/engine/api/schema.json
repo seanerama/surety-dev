@@ -4570,6 +4570,9 @@
         "diff": {
           "required": false,
           "references": "records"
+        },
+        "design_obligations": {
+          "required": false
         }
       }
     },
@@ -5840,6 +5843,9 @@
           "required": false
         },
         "conformance_state": {
+          "required": false
+        },
+        "screens": {
           "required": false
         }
       }

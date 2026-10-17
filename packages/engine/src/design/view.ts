@@ -13,6 +13,7 @@ import { currentInventory } from './store.js';
 import { heldStages } from './readiness.js';
 import type { AssetManifest } from './assets.js';
 import { deferredBatches } from './approval.js';
+import { stalePlatforms } from './stale.js';
 
 // The selected slots and their selected variants (D7 §5.8, §6.2): the
 // current approved revision's manifest under its selection; before any
@@ -106,6 +107,9 @@ export function designView(db: Database.Database, args: { project: string }): Re
     holds: heldStages(db, args.project),
     // A design batch the engine is holding back, and why (objection 166; rule 25).
     batches_deferred: deferredBatches(db, args.project),
+    // A target removed (D7 §9.1; SEAM.md §515): the slots whose platforms
+    // hold a target the inventory no longer has, for the Designer to tidy.
+    stale_platforms: stalePlatforms(db, args.project, inv?.inventory ?? null, inv?.row.manifest ?? null),
     design_due: due ? { id: due.id, ...(parseJson<Record<string, unknown>>(due.evidence) ?? {}) } : null,
   };
 }

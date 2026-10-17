@@ -490,10 +490,11 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             // `reason` and `review`: the `build_first` exception's (D6 §6.2;
             // F §5.1; SEAM.md §428), read by that answer alone.
             // `assets_held`: design_approval's (D7 §6.4; SEAM.md §486).
-            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review', 'assets_held']);
+            // `until`: design_due's `later` (D7 §11; SEAM.md §514).
+            const body = onlyFields(b, ['option', 'preview_hash', 'note', 'reason', 'review', 'assets_held', 'until']);
             const facts = await answerFacts(runtime(), project, decision);
             const waits = await beforeAnswer(runtime(), project, [{ decision, option: body.option }]);
-            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, ...(body.assets_held !== undefined ? { assets_held: body.assets_held } : {}), facts, waits };
+            return { project, decision, option: body.option, preview_hash: body.preview_hash, note: body.note, reason: body.reason, review: body.review, ...(body.assets_held !== undefined ? { assets_held: body.assets_held } : {}), ...(body.until !== undefined ? { until: body.until } : {}), facts, waits };
           },
           // A committed answer is answered 200 whatever follows it: a failed
           // effect or publication is logged and carried by the next tick

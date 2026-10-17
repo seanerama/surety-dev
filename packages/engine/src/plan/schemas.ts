@@ -91,7 +91,8 @@ export const B5 = {
   file: { fields: ['phase', 'prepared_against', 'stages', 'conformance', 'roadmap_revision', 'notes'], required: ['phase', 'prepared_against', 'stages', 'conformance'] },
   prepared_against: { fields: ['spec_version', 'architecture_version', 'roadmap_version', 'revision'], required: ['spec_version', 'architecture_version', 'roadmap_version', 'revision'] },
   stage: {
-    fields: ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations', 'conformance'],
+    // G6 (D7 §8.1): `screens`, keys of the approved design, optional.
+    fields: ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations', 'conformance', 'screens'],
     required: ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations'],
   },
   validation: { fields: ['criteria', 'kinds', 'sensitive_areas'], required: ['criteria', 'kinds', 'sensitive_areas'] },
@@ -457,6 +458,9 @@ export interface PlanStage {
   validation: { criteria: string[]; kinds: string[]; sensitive_areas: string[] };
   integration_obligations: string[];
   conformance?: boolean;
+  // D7 §8.1 (G6): the approved design's screens the stage implements, when
+  // the plan names them; the plan check verifies them (PLAN_SCREEN_UNKNOWN).
+  screens?: string[];
 }
 
 export interface PhasePlanFile {
@@ -515,6 +519,7 @@ export function parsePhasePlan(text: string, file: string, phase: number): Parse
     if (!strings(s.integration_obligations)) return refuse(file, `${at}.integration_obligations`, 'must be an array of strings');
     if (s.conformance !== undefined && typeof s.conformance !== 'boolean') return refuse(file, `${at}.conformance`, 'must be a boolean');
     if (s.conformance === true && s.tasks.length > 0) return refuse(file, `${at}.tasks`, 'a conformance stage has no tasks (K11)');
+    if (s.screens !== undefined && (!strings(s.screens) || s.screens.some((k) => k.trim() === ''))) return refuse(file, `${at}.screens`, 'must be an array of screen keys of the approved design');
     stages.push({
       number: s.number,
       goal: s.goal,
@@ -526,6 +531,7 @@ export function parsePhasePlan(text: string, file: string, phase: number): Parse
       validation: { criteria: v.criteria, kinds: v.kinds, sensitive_areas: v.sensitive_areas },
       integration_obligations: s.integration_obligations,
       ...(s.conformance !== undefined ? { conformance: s.conformance } : {}),
+      ...(s.screens !== undefined ? { screens: [...(s.screens as string[])] } : {}),
     });
   }
   let roadmap: Roadmap | undefined;

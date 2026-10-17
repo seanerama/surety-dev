@@ -10,8 +10,9 @@ import { catBlob } from '../git/repo.js';
 import type { Journal } from '../journal/driver.js';
 import { prepareCommit } from '../projects/commands.js';
 import { type Runtime, log } from '../runtime.js';
-import { pausePoint } from '../testing/seam.js';
-import { MANIFEST_FILE } from './assets.js';
+import { pausePoint, seamBackends } from '../testing/seam.js';
+import { type AssetManifest, MANIFEST_FILE } from './assets.js';
+import { mergeTargetSlots, recordedPlaceholders } from './stale.js';
 import { DESIGN_ROOT, INVENTORY_FILE } from './inventory.js';
 import type { InventoryDue } from './store.js';
 import { DesignPreviewer } from './preview.js';
@@ -54,16 +55,35 @@ export class DesignDriver {
           for (const [path, text] of Object.entries(d.fixtures)) files[`${DESIGN_ROOT}${path}`] = text;
           // The placeholders, for every default slot and variant that has
           // none (§6.3): written with the manifest when the tree has none.
-          if ((await catBlob(ctx, facts.head, MANIFEST_FILE)) === null) {
+          const treeManifest = await catBlob(ctx, facts.head, MANIFEST_FILE);
+          let recorded = d.placeholders.manifest;
+          if (treeManifest === null) {
             files[MANIFEST_FILE] = `${JSON.stringify(d.placeholders.manifest, null, 2)}\n`;
             for (const [path, text] of Object.entries(d.placeholders.files)) files[`${DESIGN_ROOT}${path}`] = text;
+          } else {
+            // A target added (D7 §9.1): its default slots and placeholders
+            // merged into the manifest the tree holds.
+            let tree: AssetManifest | null = null;
+            try {
+              tree = JSON.parse(treeManifest) as AssetManifest;
+            } catch {
+              tree = null;
+            }
+            if (tree !== null && Array.isArray(tree.slots)) {
+              const merged = mergeTargetSlots(tree, d.placeholders);
+              if (merged !== null) {
+                files[MANIFEST_FILE] = `${JSON.stringify(merged.manifest, null, 2)}\n`;
+                for (const [path, text] of Object.entries(merged.files)) files[`${DESIGN_ROOT}${path}`] = text;
+              }
+              recorded = recordedPlaceholders(d.placeholders.manifest, merged?.manifest ?? tree);
+            }
           }
           const message = messageText({ title: 'surety: the interface inventory', trailers: [['Surety-Project', project], ['Surety-Kind', 'intent'], ['Surety-Inventory', d.digest]] });
           const commit = await prepareCommit(facts.repo, facts.head, files, message, this.rt.scratch);
           if (commit === null) throw new Error('the inventory commit could not be prepared');
           const made = await this.journal.intend(
             'design.intend_inventory',
-            { project, repo: facts.repo, head: facts.head, commit, digest: d.digest, inventory: d.inventory, manifest: d.placeholders.manifest, incarnation: this.rt.incarnation, deadlineSeconds: this.rt.setting('git_deadline') },
+            { project, repo: facts.repo, head: facts.head, commit, digest: d.digest, inventory: d.inventory, manifest: recorded, incarnation: this.rt.incarnation, deadlineSeconds: this.rt.setting('git_deadline') },
             'commit_tree',
           );
           if (!('operation' in made)) return false;
@@ -92,8 +112,21 @@ export class DesignDriver {
     }
   }
 
+  // design_due answered `open` (D7 §11): the Designer session allocated as
+  // `POST …/sessions {role: designer}` allocates it (D6 §2.1: a run, its
+  // grant, lease and workspace, no process before the owner's first turn).
+  // The request is cleared first: an opening refused (another session open)
+  // leaves the question's command for the owner, never a loop.
+  async openRequested(project: string): Promise<void> {
+    const requested = await this.rt.read<string | null>('design.open_requested', { project });
+    if (requested === null || !this.rt.sessions) return;
+    await this.rt.engine('design.open_cleared', { project, decision: requested });
+    await this.rt.sessions.open(project, { role: 'designer', scripted: seamBackends().find((x) => x.id === 'scripted')?.version ?? null });
+  }
+
   // The design's part of a tick.
   async step(project: string): Promise<void> {
+    await this.openRequested(project).catch((err) => log('design session', err, { project }));
     await this.deriveIfDue(project).catch((err) => log('design inventory', err, { project }));
     await this.rt.engine('design.tick', { project }).catch((err) => log('design', err, { project }));
     await releaseAnsweredBatches(this.rt, project).catch((err) => log('design batch', err, { project }));

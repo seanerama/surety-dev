@@ -26,7 +26,9 @@ import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/
 import { supersededWhileRunning } from '../../plan/replace.js';
 import { registerPhaseAtNomination } from '../../plan/phase.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
-import { type InventoryRefInputs, designTurnedOn, finalizeInventoryRef, recordInventory } from '../../design/store.js';
+import { type InventoryRefInputs, designTurnedOff, designTurnedOn, finalizeInventoryRef, recordInventory } from '../../design/store.js';
+import { heldStages } from '../../design/readiness.js';
+import { reviewDesignDue } from '../../design/due.js';
 import { recordBindings } from '../../design/asset-bindings.js';
 
 export interface WorkspaceInputs {
@@ -186,6 +188,8 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       return {};
     }
     case 'policy': {
+      // The UI stages held for design under the policy this revision replaces (D7 §2).
+      const designHeldBefore = heldStages(tx.db, op.project);
       const id = tx.newId('pol_');
       tx.db
         .prepare(
@@ -204,6 +208,12 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       // Design turned on (D7 §2): the undispatched UI stages wait on it, and
       // the inventory committed with the policy is recorded.
       designTurnedOn(tx, op.project);
+      // Design turned off, or to `at_alpha` (D7 §2): the holds released, a
+      // waiver recorded on each stage design `off` released.
+      designTurnedOff(tx, { project: op.project, held: designHeldBefore, policy_revision: id, decision: inputs.decision ?? null });
+      // design_due binds the policy revision (D1 §4.6; SEAM.md §517): asked
+      // again against it in this transaction, as the adoption's questions are.
+      reviewDesignDue(tx, op.project);
       if (inputs.design_inventory) {
         const di = inputs.design_inventory;
         const made = finalizeInventoryRef(tx, op, { purpose: 'design_inventory', ref: inputs.ref, ref_kind: 'integration', new_oid: inputs.new_oid, project: op.project, inventory_digest: di.digest, inventory: di.inventory as never, manifest: di.manifest as never, incarnation: di.incarnation });

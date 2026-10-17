@@ -12,6 +12,8 @@ import type { Tx } from '../store/transitions/tx.js';
 import type { Database } from 'better-sqlite3';
 import { type AssetManifest, placeholderManifest } from './assets.js';
 import { reviewDesignDue } from './due.js';
+import { recordMetMilestones } from '../scheduler/milestones.js';
+import { inventoryDesignClass, staleScreens } from './stale.js';
 import { type Inventory, deriveInventory, fixtureFiles, inventoryText } from './inventory.js';
 import { approvedModuleMap, designPolicyOf, holdsBeforeBuild, inventoryInputs, isUiStage, publishedStages } from './policy.js';
 
@@ -82,6 +84,23 @@ export function designTurnedOn(tx: Tx, project: string): number {
   return n;
 }
 
+// Design turned off, or to `at_alpha`, by a policy revision (D7 §2; SEAM.md
+// §§514, 516): the stages held for design before the revision are released
+// (their milestone is met once the policy no longer holds before build);
+// under `off` each released stage records `design.waived`, the design's
+// human tests staying pending. Idempotent: called once per revision.
+export function designTurnedOff(tx: Tx, args: { project: string; held: string[]; policy_revision: string; decision: string | null }): number {
+  if (args.held.length === 0 || holdsBeforeBuild(designPolicyOf(tx.db, args.project))) return 0;
+  const off = designPolicyOf(tx.db, args.project) === 'off';
+  if (off) {
+    for (const stage of args.held) {
+      tx.emit('design.waived', { project: args.project, stage }, { reason: 'design turned off by a policy revision', policy_revision: args.policy_revision, ...(args.decision ? { decision: args.decision } : {}) });
+    }
+  }
+  recordMetMilestones(tx, args.project);
+  return off ? args.held.length : 0;
+}
+
 export interface InventoryRefInputs {
   purpose: 'design_inventory';
   ref: string;
@@ -117,6 +136,9 @@ export function finalizeInventoryRef(tx: Tx, op: { id: string; project: string }
 export function recordInventory(tx: Tx, args: { id: string }): { recorded: boolean } {
   const row = tx.db.prepare('SELECT * FROM "design_inventories" WHERE "id" = ?').get(args.id) as InventoryRow | undefined;
   if (!row || row.recorded_at !== null) return { recorded: false };
+  // The inventory the approved design was drawn against (else the one this
+  // replaces), read before this one is recorded (D7 §9.1).
+  const drawnAgainst = designInventoryBefore(tx.db, row.project);
   tx.db.prepare('UPDATE "design_inventories" SET "recorded_at" = ? WHERE "id" = ?').run(tx.at, row.id);
   tx.db.prepare('UPDATE "projects" SET "design_inventory_digest" = ? WHERE "id" = ?').run(row.inventory_digest, row.project);
   const inventory = parseJson<Inventory>(row.inventory)!;
@@ -141,8 +163,23 @@ export function recordInventory(tx: Tx, args: { id: string }): { recorded: boole
     ui_requirements: inventory.ui_requirements.map((r) => r.key),
     obligations: inventory.obligations.length,
   });
+  // An architecture revision that moved the inventory stales the screens
+  // whose interfaces, technology or target moved (D7 §9.1; G8).
+  if (drawnAgainst !== null) staleScreens(tx, { project: row.project, screens: inventoryDesignClass(tx.db, { project: row.project, from: drawnAgainst, to: inventory }), cause: { design_inventory: row.id, inventory_digest: row.inventory_digest } });
   reviewDesignDue(tx, row.project);
   return { recorded: true };
+}
+
+// The inventory the approved design names (its `inventory_digest`), else
+// the project's last recorded one; null with neither.
+function designInventoryBefore(db: Database, project: string): Inventory | null {
+  const digest = (db.prepare(`SELECT "inventory_digest" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(project) as { inventory_digest: string | null } | undefined)?.inventory_digest ?? null;
+  const row = (
+    digest !== null
+      ? db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(project, digest)
+      : db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "recorded_at" IS NOT NULL ORDER BY rowid DESC LIMIT 1').get(project)
+  ) as { inventory: string } | undefined;
+  return parseJson<Inventory>(row?.inventory ?? null);
 }
 
 // The project's recorded inventory (the latest by insertion), or null.

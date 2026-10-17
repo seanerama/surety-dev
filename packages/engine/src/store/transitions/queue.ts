@@ -55,7 +55,7 @@ import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
 import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
-import { DESIGN_DUE, DESIGN_DUE_KEYS } from '../../design/due.js';
+import { DESIGN_DUE, DESIGN_DUE_KEYS, requestDesignerSession } from '../../design/due.js';
 import { designBatchKeyOf } from '../../design/batch-key.js';
 import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
 import { DESIGN_CONFLICT, DESIGN_CONFLICT_SCOPE } from '../../design/findings.js';
@@ -121,6 +121,8 @@ export interface AnswerExtra {
   review?: unknown;
   // D7 §6.4 (SEAM.md §486): the slots an owner holds with design_approval's approve.
   assets_held?: unknown;
+  // D7 §11 (SEAM.md §514): the time `later` asks design_due again at.
+  until?: unknown;
 }
 
 const consumed = (d: DecisionRow, effects: Effect[] = []): CommandResult => ({ status: 200, body: { decision: { id: d.id, status: 'consumed' } }, effects });
@@ -247,6 +249,19 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           { key: 'retry', label: 'Retry', consequence: 'The item becomes eligible and is dispatched again by the scheduler.', effect: { work_item: item.id, to: 'eligible' } },
           // D6 §5.7, A.2: a stage's work parked by its repair limits.
           ...((blocker.reason === 'repair_attempts_max' || blocker.reason === 'no_progress_max') && replanOffered(tx.db, item) ? [REPLAN_OPTION(item)] : []),
+          // D7 §8.3 (SEAM.md §513): a replan refused for design coverage
+          // after its repair: a repair cannot add screens, a design can.
+          ...(item.kind === 'replan' && replanDesignRefused(tx.db, item.id)
+            ? [
+                ...(!((blocker.reason === 'repair_attempts_max' || blocker.reason === 'no_progress_max') && replanOffered(tx.db, item)) ? [REPLAN_OPTION(item)] : []),
+                {
+                  key: 'design',
+                  label: 'Design',
+                  consequence: 'A Designer session is opened for you (no process before your first turn); the replan stays parked, asked again here, until a design covering it is approved and you retry it.',
+                  effect: { work_item: item.id, open: 'designer' },
+                },
+              ]
+            : []),
           // D6 §5.4: a replan whose Architect reported a requirement it
           // cannot plan routes the conflict to a specification change (D3 X2).
           ...(replanConflicts(tx.db, item).length > 0
@@ -519,6 +534,15 @@ function applyBuildFirst(tx: Tx, d: DecisionRow, item: WorkRow, e: BuildFirst): 
 
 // The reasons the replan's last plan check refused it, as the blocker's
 // question names them (D6 §5.6; M424 (d)).
+// Whether a replan item's last refused plan check refused it for design
+// coverage (D7 §8.3): PLAN_DESIGN_UNCOVERED or PLAN_SCREEN_UNKNOWN.
+function replanDesignRefused(db: Db, item: string): boolean {
+  const c = db
+    .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c.rowid DESC LIMIT 1`)
+    .get(item) as { reasons: string } | undefined;
+  return (parseJson<{ code: string }[]>(c?.reasons ?? null) ?? []).some((r) => r.code === 'PLAN_DESIGN_UNCOVERED' || r.code === 'PLAN_SCREEN_UNKNOWN');
+}
+
 function replanRefusal(tx: Tx, item: string): string {
   const c = tx.db
     .prepare(`SELECT c."reasons" FROM "plan_checks" c JOIN "runs" r ON r."id" = json_extract(c."evidence", '$.run') WHERE r."work_item" = ? AND c."outcome" = 'refused' ORDER BY c.rowid DESC LIMIT 1`)
@@ -619,6 +643,14 @@ const BLOCKER: KindSpec = {
       }
       if (option === 'replan') {
         answerReplan(tx, item, d.id, 'blocker_replan', { evidence: workEvidence(tx, item.id) });
+        return consumed(d, [{ kind: 'tick' }]);
+      }
+      if (option === 'design') {
+        // D7 §8.3: the Designer session requested (the design driver opens
+        // it at the next tick, as design_due's `open`); the replan stays
+        // parked with its question asked again, never a silent stall.
+        requestDesignerSession(tx, item.project, d.id);
+        raiseQuestion(tx, { project: item.project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
         return consumed(d, [{ kind: 'tick' }]);
       }
       if (option === 'change_spec') {
@@ -2050,7 +2082,7 @@ export function dropBlockQuestion(tx: Tx, item: string): void {
 const previewOf = (d: DecisionRow, p: Preview): string => currentPreview(d, p.manifest, p.options);
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §76).
-export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; facts?: Facts | undefined }): CommandResult {
+export function answerQueued(tx: Tx, args: { project: string | null; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; until?: unknown; facts?: Facts | undefined }): CommandResult {
   const d = getDecision(tx, args.decision);
   if (!d || d.project !== args.project) throw notFound('decision', args.decision);
   if ((d.status === 'open' || d.status === 'invalidated') && typeof args.option === 'string') {
@@ -2079,7 +2111,7 @@ export function answerQueued(tx: Tx, args: { project: string | null; decision: s
       blockers: option.blockers,
     });
   }
-  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review, ...(args.assets_held !== undefined ? { assets_held: args.assets_held } : {}) });
+  return spec.answer(tx, d, args.option, typeof args.note === 'string' ? args.note : null, facts, { reason: args.reason, review: args.review, ...(args.assets_held !== undefined ? { assets_held: args.assets_held } : {}), ...(args.until !== undefined ? { until: args.until } : {}) });
 }
 
 // POST /v1/projects/:p/decisions/answer-batch (D1 §10.3; SEAM.md §81): one

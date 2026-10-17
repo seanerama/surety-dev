@@ -43,6 +43,7 @@ import { designDueState } from './readiness.js';
 import { blobsHash, currentInventory } from './store.js';
 import { latestCheck } from './records.js';
 import { disputedInterfaces } from './findings.js';
+import { bindStageScreensTo } from './stage-screens.js';
 
 type Db = Database.Database;
 
@@ -119,7 +120,7 @@ export function requestText(content: DesignContent): string {
 
 export function proposeDesign(
   tx: Tx,
-  args: { project: string; run: string | null; revision: string; tree?: string | null; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' },
+  args: { project: string; run: string | null; revision: string; tree?: string | null; blobs: Record<string, string>; content: DesignContent; check: string; findings: Record<string, unknown>[]; scope?: 'full' | 'asset_only' | 'initial_review' },
 ): { revision: string; request: string | null } {
   const d = args.content.design;
   const inv = currentInventory(tx.db, args.project);
@@ -187,13 +188,35 @@ export const revisionOfRequest = (db: Db, request: string): RevisionRow | undefi
 // the design's at raise: a difference refuses the batch (§7.4). null when
 // they agree; the reason otherwise.
 export function batchInventoryDifference(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): string | null {
+  return batchInventoryDiff(db, args)?.reason ?? null;
+}
+
+// The same, with what differs (SEAM.md §519 `evidence.inventory_difference`):
+// the UI requirements added or gone, and the interfaces and targets moved.
+export function batchInventoryDiff(db: Db, args: { project: string; rep: SpecRepresentation; addedHumanTests: string[]; designDigest: string | null }): { reason: string; detail: Record<string, unknown> } | null {
   // The design's human tests already approved stay excluded beside the ones
   // this change adds: a later design's batch revises them (M533 (e)).
   const inputs = inventoryInputs(db, args.project, { rep: liveRepresentation(args.rep), exclude: [...new Set([...designHumanTestKeys(db, args.project), ...args.addedHumanTests])] });
-  if ('unknown' in inputs) return `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`;
+  if ('unknown' in inputs) return { reason: `the inventory of the proposed specification cannot be derived: ${inputs.unknown}`, detail: { unknown: inputs.unknown } };
   const next = deriveInventory(inputs);
-  if (args.designDigest === null) return 'the design names no inventory';
-  return next.inventory_digest === args.designDigest ? null : `the proposed specification's inventory (${next.inventory_digest.slice(0, 12)}) differs from the design's (${args.designDigest.slice(0, 12)})`;
+  if (args.designDigest === null) return { reason: 'the design names no inventory', detail: { design_inventory: null } };
+  if (next.inventory_digest === args.designDigest) return null;
+  const drawn = parseJson<Inventory>((db.prepare('SELECT "inventory" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(args.project, args.designDigest) as { inventory: string } | undefined)?.inventory ?? null);
+  const keyed = (inv: Inventory | null) => new Map((inv?.ui_requirements ?? []).map((r) => [r.key, canonical(r)]));
+  const [a, b] = [keyed(drawn), keyed(next)];
+  const shapes = (inv: Inventory | null) => new Map((inv?.interfaces ?? []).map((i) => [i.name, canonical(i)]));
+  const [ia, ib] = [shapes(drawn), shapes(next)];
+  const targets = (inv: Inventory | null) => new Map((inv?.targets ?? []).map((t) => [t.target, canonical(t)]));
+  const [ta, tb] = [targets(drawn), targets(next)];
+  const moved = <T>(x: Map<string, T>, y: Map<string, T>) => [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).sort();
+  const detail = {
+    design_inventory: args.designDigest,
+    proposed_inventory: next.inventory_digest,
+    ui_requirements: { added: [...b.keys()].filter((k) => !a.has(k)).sort(), removed: [...a.keys()].filter((k) => !b.has(k)).sort(), changed: [...a.keys()].filter((k) => b.has(k) && a.get(k) !== b.get(k)).sort() },
+    interfaces: moved(ia, ib),
+    targets: moved(ta, tb),
+  };
+  return { reason: `the proposed specification's inventory (${next.inventory_digest.slice(0, 12)}) differs from the design's (${args.designDigest.slice(0, 12)})`, detail };
 }
 
 // Called when a design request's proposal is recorded (spec/change.ts
@@ -204,13 +227,20 @@ export function raiseDesignBatch(tx: Tx, args: { request: string; rep: SpecRepre
   const rev = revisionOfRequest(tx.db, args.request);
   if (!rev || rev.status !== 'proposed') return { refused: 'the design is no longer proposed' };
   const human = args.rep ? args.rep.requirements.filter((q) => q.human_test && args.added.includes(q.key)).map((q) => q.key) : [];
-  const diff = args.rep ? batchInventoryDifference(tx.db, { project: rev.project, rep: args.rep, addedHumanTests: human, designDigest: rev.inventory_digest }) : 'the proposed specification cannot be read';
-  if (diff !== null) {
-    tx.db.prepare(`UPDATE "design_revisions" SET "status" = 'superseded' WHERE "id" = ?`).run(rev.id);
-    writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', note: `the batch was refused at raise: ${diff}` });
-    return { refused: diff };
+  const found = args.rep ? batchInventoryDiff(tx.db, { project: rev.project, rep: args.rep, addedHumanTests: human, designDigest: rev.inventory_digest }) : { reason: 'the proposed specification cannot be read', detail: { proposed: null } };
+  if (found !== null) {
+    // The close's product stays recorded, `proposed` and never raised
+    // (SEAM.md §519); design_due names what differs.
+    writeDueState(tx, rev.project, { ...designDueState(tx.db, rev.project), stage: 'revise', note: `the batch was refused at raise: ${found.reason}`, inventory_difference: { design_revision: rev.id, ...found.detail } });
+    return { refused: found.reason };
   }
   const key = `design:${rev.id}`;
+  // An earlier batch's refusal at raise is answered by this one.
+  const due = designDueState(tx.db, rev.project);
+  if (due.inventory_difference) {
+    const { inventory_difference: _d, ...rest } = due;
+    writeDueState(tx, rev.project, rest);
+  }
   tx.db.prepare('UPDATE "design_revisions" SET "batch_key" = ? WHERE "id" = ?').run(key, rev.id);
   const d = raiseQuestion(tx, { project: rev.project, kind: 'design_approval', subjectType: 'design_revision', subjectId: rev.id });
   if (d) tx.db.prepare('UPDATE "decisions" SET "batch_key" = ? WHERE "id" = ?').run(key, d.id);
@@ -511,7 +541,13 @@ export const DESIGN_APPROVAL: KindSpec = {
       impact,
       human_test_assignments: assignments,
     };
+    // A review's revised or first design (D7 §10.3): approved only once the
+    // verdicts it rests on are the owner's.
+    const unconfirmed = rev.run
+      ? (tx.db.prepare(`SELECT "id" FROM "design_reviews" WHERE "run" = ? AND "confirmation_decision" IS NULL ORDER BY rowid`).all(rev.run) as { id: string }[]).map((x) => x.id)
+      : [];
     const approveBlockers = [
+      ...unconfirmed.map((x) => `DESIGN_VERDICTS_UNCONFIRMED:${x}`),
       ...(check && check.outcome !== 'passed' ? [`DESIGN_CHECK_FAILED:${check.id}`] : []),
       ...disputed.map((i) => `DESIGN_INTERFACE_DISPUTED:${i}`),
       ...(r && r.status === 'rejected' ? [`SPEC_CHANGE_REJECTED:${r.seq}`] : []),
@@ -739,22 +775,9 @@ function assignHumanTests(tx: Tx, rev: RevisionRow, file: { blob: string; path: 
   tx.emit('baseline.roadmap_revised', { project: rev.project, roadmap_revision: id }, { version: road.version + 1, phases: phases.map((p) => p.number), design_revision: rev.id, approved_by: 'engine:design_approval', moved_requirements: moves });
 }
 
-// The stage-to-screen binding (D7 §8.1): each UI stage's screens, of the
-// targets its modules serve, naming a requirement it implements.
+// The stage-to-screen binding (D7 §8.1): design/stage-screens.ts.
 export function bindStageScreens(tx: Tx, rev: RevisionRow): void {
-  const content = contentOf(rev);
-  const map = approvedModuleMap(tx.db, rev.project)?.map ?? null;
-  for (const st of publishedStages(tx.db, rev.project)) {
-    const modules = stageModuleNames(tx.db, rev.project, st.modules);
-    const targets = new Set((map?.modules ?? []).filter((m) => m.surface === 'ui' && modules.includes(m.name)).flatMap((m) => (m.targets ?? []).map((t) => t.target)));
-    if (targets.size === 0) continue;
-    const reqs = new Set(stageRequirementKeys(tx.db, rev.project, st.implements));
-    for (const s of content?.screens.screens ?? []) {
-      if (!targets.has(String(s.target))) continue;
-      if (!(Array.isArray(s.requirements) ? (s.requirements as string[]) : []).some((r) => reqs.has(r))) continue;
-      tx.db.prepare('INSERT OR IGNORE INTO "stage_screens" ("id", "created_at", "stage", "screen", "target", "design_revision") VALUES (?, ?, ?, ?, ?, ?)').run(tx.newId('sscr_'), tx.at, st.id, String(s.key), String(s.target), rev.id);
-    }
-  }
+  bindStageScreensTo(tx, { project: rev.project, revision: rev.id });
 }
 
 // D7 §5.3's "not checkable" column as A.2's NativeConvention, per target

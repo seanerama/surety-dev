@@ -13,7 +13,8 @@
 // consumed and, while a stage stays held, the question is raised again at
 // the next review, so a hold is never without an open question naming it.
 
-import { type KindSpec, type Subject, consumed, recordApproval, recordIntent } from '../store/transitions/queue.js';
+import { type AnswerExtra, type KindSpec, type Subject, consumed, recordApproval, recordIntent } from '../store/transitions/queue.js';
+import { Refusal } from '../refusal.js';
 import { consumeDecision } from '../store/transitions/decisions.js';
 import { openDecision } from '../store/transitions/decisions.js';
 import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
@@ -22,6 +23,7 @@ import { recordMetMilestones } from '../scheduler/milestones.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
 import { type DesignDueState, designDueState, heldStages } from './readiness.js';
 import { designPolicyOf } from './policy.js';
+import { currentStaleScreens } from './stale.js';
 
 export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision', 'inventory_failure'];
 
@@ -50,16 +52,19 @@ function dueFacts(tx: Tx, project: string) {
   const stage = state.stage ?? 'before_build';
   const held = heldStages(tx.db, project);
   const failed = state.inventory_failure && state.inventory_failure.count >= INVENTORY_FAILURES_NAMED ? state.inventory_failure.reason : null;
-  const manifest = { stage, held_stages: held, stale_screens: [] as { screen: string; target: string }[], policy_revision: policyRevision(tx.db, project), inventory_failure: failed };
-  return { state, stage, held, manifest };
+  // The approved design's stale screens with their targets (D7 §9.1, §11).
+  const stale = currentStaleScreens(tx.db, project);
+  const manifest = { stage, held_stages: held, stale_screens: stale, policy_revision: policyRevision(tx.db, project), inventory_failure: failed };
+  return { state, stage, held, stale, manifest };
 }
 
 export const DESIGN_DUE: KindSpec = {
   preview(tx, d: Subject) {
     const project = d.project!;
-    const { state, stage, held, manifest } = dueFacts(tx, project);
+    const { state, stage, held, stale, manifest } = dueFacts(tx, project);
     if (designPolicyOf(tx.db, project) === 'off' && stage !== 'alpha_review') return null;
-    if (stage !== 'alpha_review' && held.length === 0) return null;
+    // Stale screens raise it whether or not a stage is held (D7 §9.1).
+    if (stage !== 'alpha_review' && held.length === 0 && stale.length === 0) return null;
     const command = stage === 'alpha_review' ? 'surety session open designer --review' : 'surety session open designer';
     const inventoryFailed = state.inventory_failure && state.inventory_failure.count >= INVENTORY_FAILURES_NAMED ? state.inventory_failure : null;
     const evidence = {
@@ -69,13 +74,17 @@ export const DESIGN_DUE: KindSpec = {
       command,
       ...(state.note ? { note: state.note } : {}),
       ...(inventoryFailed ? { inventory_failure: inventoryFailed } : {}),
+      // The batch refused at raise (D7 §7.4; SEAM.md §519): what differs.
+      ...(state.inventory_difference ? { inventory_difference: state.inventory_difference } : {}),
     };
     const what = inventoryFailed
       ? `${held.length} UI stage(s) wait for a design, and the engine could not commit the interface inventory a Designer session needs (${inventoryFailed.count} attempts; the last: ${inventoryFailed.reason}).`
       : stage === 'alpha_review'
         ? 'The Alpha is deployed: review it against the design.'
         : stage === 'revise'
-          ? `The design was sent back for revision${state.note ? ` ("${state.note}")` : ''}; ${held.length} UI stage(s) wait on it.`
+          ? stale.length > 0
+            ? `${stale.length} screen(s) of the approved design are stale (${stale.map((x) => `${x.screen} on ${x.target}`).join(', ')}); ${held.length} UI stage(s) wait on them.`
+            : `The design was sent back for revision${state.note ? ` ("${state.note}")` : ''}; ${held.length} UI stage(s) wait on it.`
           : `${held.length} UI stage(s) wait for an approved design before they build.`;
     return {
       manifest,
@@ -93,9 +102,32 @@ export const DESIGN_DUE: KindSpec = {
     return dueFacts(tx, d.project!).manifest;
   },
   reraise: true,
-  answer(tx, d, option, note) {
-    consumeDecision(tx, d, option, note);
+  answer(tx, d, option, note, _facts, extra?: AnswerExtra) {
     const project = d.project!;
+    // `later` (D7 §11; SEAM.md §514): the owner's time, at most
+    // design_due_max_defer from now; refused before anything is consumed.
+    let until: string | null = null;
+    if (option === 'later') {
+      const max = projectPolicy(tx.db, project).design_due_max_defer ?? 604_800;
+      const bound = Date.parse(tx.at) + max * 1000;
+      if (extra?.until === undefined) until = new Date(bound).toISOString();
+      else {
+        const at = typeof extra.until === 'string' ? Date.parse(extra.until) : Number.NaN;
+        if (!Number.isFinite(at) || !/^\d{4}-\d{2}-\d{2}T/.test(String(extra.until))) {
+          throw new Refusal(400, 'invalid_value', '"until" must be an ISO 8601 time.', `Give the time to ask again, at most design_due_max_defer (${max} s) from now; nothing was changed.`, { field: 'until' });
+        }
+        if (at > bound) {
+          throw new Refusal(400, 'invalid_value', `"until" is later than design_due_max_defer (${max} s) from now (${new Date(bound).toISOString()}).`, 'Give a time within design_due_max_defer; nothing was changed.', {
+            field: 'until',
+            key: 'design_due_max_defer',
+            max_seconds: max,
+            latest: new Date(bound).toISOString(),
+          });
+        }
+        until = new Date(at).toISOString();
+      }
+    }
+    consumeDecision(tx, d, option, note);
     const state = designDueState(tx.db, project);
     if (option === 'waive') {
       const held = heldStages(tx.db, project);
@@ -105,8 +137,7 @@ export const DESIGN_DUE: KindSpec = {
       return consumed(d);
     }
     if (option === 'later') {
-      const max = projectPolicy(tx.db, project).design_due_max_defer ?? 604_800;
-      writeDueState(tx, project, { ...state, later_until: new Date(Date.parse(tx.at) + max * 1000).toISOString() });
+      writeDueState(tx, project, { ...state, later_until: until! });
       return consumed(d);
     }
     if (option === 'policy_off') {
@@ -116,10 +147,23 @@ export const DESIGN_DUE: KindSpec = {
       const approval = recordApproval(tx, d, { consequence: 'design turned off', subjectType: 'project', subjectId: project });
       return consumed(d, [recordIntent(tx, d, { approval, kind: 'policy_widening', plan: { change: { design: 'off' } } })]);
     }
-    // `open`: the owner opens the session by its command (objection 126).
-    return consumed(d);
+    // `open` (D7 §11; D6 §2.1): the Designer session is allocated by the
+    // design driver at the next tick (a session's workspace is made on the
+    // main thread), no process before the owner's first turn. What the
+    // answer does to the question itself is objection 126's, open for Sean:
+    // consumed here, and raised again by the next review while a stage it
+    // named stays held, as slice 40 built it.
+    requestDesignerSession(tx, project, d.id);
+    return { ...consumed(d), effects: [{ kind: 'tick' }] };
   },
 };
+
+// A Designer session asked for by an owner's answer (design_due's `open`,
+// a replan blocker's `design`): allocated by the design driver at the next
+// tick (design/driver.ts openRequested).
+export function requestDesignerSession(tx: Tx, project: string, decision: string): void {
+  writeDueState(tx, project, { ...designDueState(tx.db, project), open_requested: decision });
+}
 
 // The review of design_due (D7 §11): raised while a stage is held and none
 // is open (and no deferral runs), its next generation when its subjects
@@ -135,6 +179,12 @@ export function reviewDesignDue(tx: Tx, project: string): void {
   if (state.later_until && Date.parse(state.later_until) > Date.parse(tx.at)) return;
   if (state.later_until) {
     const { later_until: _done, ...rest } = state;
+    writeDueState(tx, project, rest);
+  }
+  // A revision's cause settled (the covering design approved, nothing held
+  // and nothing stale): the next question starts from before_build again.
+  if (state.stage === 'revise' && heldStages(tx.db, project).length === 0 && currentStaleScreens(tx.db, project).length === 0) {
+    const { stage: _s, note: _n, inventory_difference: _d, ...rest } = designDueState(tx.db, project);
     writeDueState(tx, project, rest);
   }
   const open = openDecision(tx, project, 'design_due', 'project', project);

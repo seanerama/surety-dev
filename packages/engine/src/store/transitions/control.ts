@@ -143,7 +143,7 @@ export function controlRun(tx: Tx, args: { project: string; run: string; kind: C
 }
 
 // POST /v1/projects/:p/decisions/:d/answer (D1 §10.5; SEAM.md §§17, 76).
-export function answerDecision(tx: Tx, args: { project: string; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; facts?: Facts }): CommandResult {
+export function answerDecision(tx: Tx, args: { project: string; decision: string; option: unknown; preview_hash: unknown; note: unknown; reason?: unknown; review?: unknown; assets_held?: unknown; until?: unknown; facts?: Facts }): CommandResult {
   return answerQueued(tx, args);
 }
 

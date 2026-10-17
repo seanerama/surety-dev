@@ -97,7 +97,7 @@ export async function reviewRaise(rt: Runtime, facts: SaveFacts): Promise<Record
   if (!file) return null;
   const r = await git(ctx, ['cat-file', 'blob', file.oid]);
   if (r.code !== 0) return null;
-  let review: { subject?: Record<string, unknown>; screens?: Record<string, unknown>[] };
+  let review: { subject?: Record<string, unknown>; screens?: Record<string, unknown>[]; revised_design?: unknown; first_design?: unknown };
   try {
     review = JSON.parse(r.bytes.toString('utf8')) as typeof review;
   } catch {
@@ -123,6 +123,10 @@ export async function reviewRaise(rt: Runtime, facts: SaveFacts): Promise<Record
       subject: review.subject ?? {},
       review_blob: file.oid,
       verdicts,
+      // B.14: the role revised the design in the same tree, or drew the
+      // first one (D7 §10.3, §10.6); the close proposes it.
+      revised_design: review.revised_design === true,
+      first_design: review.first_design === true,
     },
   };
 }

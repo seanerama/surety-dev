@@ -10,7 +10,8 @@ import type { IntentResult } from '../store/transitions/journal.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { AssetManifest } from './assets.js';
-import { inventoryAttempt, reviewDesignDue } from './due.js';
+import { inventoryAttempt, reviewDesignDue, writeDueState } from './due.js';
+import { designDueState } from './readiness.js';
 import type { Inventory } from './inventory.js';
 import { type InventoryRefInputs, inventoryDue, inventoryForPolicy, recordInventory } from './store.js';
 import { answeredBatches, designBatchState, designReadiness, proposeDesign, releaseBatch, roadmapAssignment } from './approval.js';
@@ -78,6 +79,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
     return r ? { project: r.project, role: r.role, mode: parseJson<{ mode?: string }>(r.session_notes)?.mode ?? null, owner_review: ownerReviewOfRun(d, a.run) } : null;
   },
   'design.observations': (d, a: { run: string }) => observationsOf(d, a),
+  'design.open_requested': (d, a: { project: string }) => designDueState(d, a.project).open_requested ?? null,
   'design.review_facts': (d, a: { project: string; run: string }) => {
     const rev = d.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(a.project) as { id: string } | undefined;
     const state = parseJson<{ stage?: string }>((d.prepare('SELECT "design_due" FROM "projects" WHERE "id" = ?').get(a.project) as { design_due: string | null }).design_due);
@@ -116,6 +118,13 @@ export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> =
     return {};
   },
   'design.release_batch': (tx, a: { revision: string }) => releaseBatch(tx, a),
+  'design.open_cleared': (tx, a: { project: string; decision: string }) => {
+    const state = designDueState(tx.db, a.project);
+    if (state.open_requested !== a.decision) return { cleared: false };
+    const { open_requested: _o, ...rest } = state;
+    writeDueState(tx, a.project, rest);
+    return { cleared: true };
+  },
   'design.record_check': (tx, a) => recordCheck(tx, a),
   'design.propose': (tx, a) => proposeDesign(tx, a),
   'design.preview_begin': (tx, a) => beginPreview(tx, a),

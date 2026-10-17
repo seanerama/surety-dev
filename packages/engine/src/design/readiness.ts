@@ -22,6 +22,12 @@ export interface DesignDueState {
   // The interface inventory's commit failing, attempt after attempt (the
   // slice-40 review's m6): design_due names it rather than holding silently.
   inventory_failure?: { count: number; reason: string; at: string };
+  // `open` answered (D7 §11): the design_due whose answer asked for a
+  // Designer session, until the design driver has allocated it.
+  open_requested?: string;
+  // A batch refused at raise (D7 §7.4; SEAM.md §519): what differs between
+  // the proposed specification's inventory and the design's.
+  inventory_difference?: Record<string, unknown>;
 }
 
 export function designDueState(db: Database, project: string): DesignDueState {
