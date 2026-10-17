@@ -518,7 +518,13 @@
       "M517-a-design-change-after-the-final-phase.test.mjs",
       "M530-no-self-staleness.test.mjs"
     ],
-    "45": [],
+    "45": [
+      "M516-the-review-at-alpha.test.mjs",
+      "M518-retrofit-the-observed-design.test.mjs",
+      "M528-the-owner-invoked-review-of-a-native-build.test.mjs",
+      "M529-a-first-design-at-alpha.test.mjs",
+      "M531-owner-verdicts-are-owner-acts.test.mjs"
+    ],
     "46": []
   },
   "sandbox": [
@@ -626,7 +632,8 @@
     "M441-the-peak-across-a-restart-on-the-real-boundary.test.mjs",
     "M536-the-design-journey-on-the-scripted-backend.test.mjs",
     "M510-the-preview-on-a-real-unit.test.mjs",
-    "M520-simulation-labelling-through-the-preview-unit.test.mjs"
+    "M520-simulation-labelling-through-the-preview-unit.test.mjs",
+    "M516-the-review-at-alpha.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
