@@ -43,7 +43,7 @@ import { openSession, saveSession, sayAndSettle, scriptTurns, turnResult } from 
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
-import { answerWith, assertNoSilentHold, designScripts, inventoryOf, openDesignDue, openOfKind, readDesign, scriptBuilders, stageRow, toPublished, variantSpec } from './harness/design/drive.mjs';
+import { answerWith, assertHoldsAccounted, designScripts, inventoryOf, openDesignDue, openOfKind, readDesign, scriptBuilders, stageRow, toPublished, variantSpec } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS, approveBatch, checkSession, designModel, filesOf, scriptVariant } from './harness/design/check41.mjs';
 import {
   approveReviewBatch,
@@ -114,7 +114,7 @@ describe('M530 no self-staleness', () => {
     const humanKeys = Object.values(v2.humanKeys);
     assert.deepEqual((after.ui_requirements ?? []).map((r) => r.key).filter((k) => humanKeys.includes(k)), [], `(e) the human-test requirements (${humanKeys}) are never UI requirements of the inventory, though marked **Surface:** ui`);
     assert.equal(currentRevision(fx.home, p.id).inventory_digest ?? n.inventory_digest, n.inventory_digest, '(e) the approved revision recorded against that inventory');
-    assertNoSilentHold(fx.home, p.id, '(b)');
+    await assertHoldsAccounted(fx, p.id, '(b)');
   });
 
   test('(c) another spec change approved after the raise and before the design approval\'s answer: the batch stale', async (t) => {
@@ -134,7 +134,7 @@ describe('M530 no self-staleness', () => {
     const res = await answerWith(fx, p.id, decision(fx.home, open.id), 'approve_without_criteria');
     assert.ok(stale(res), `the design approval answered with its earlier preview is refused stale (→ ${res.status} ${res.text?.slice(0, 400)})`);
     assert.equal(currentRevision(fx.home, p.id), null, 'nothing approved from it');
-    assertNoSilentHold(fx.home, p.id, '(c)');
+    await assertHoldsAccounted(fx, p.id, '(c)');
   });
 
   test('(d) the n+1 inventory differing from n\'s at raise: the batch not raised, the close\'s product recorded, design_due open naming the difference', async (t) => {
@@ -159,7 +159,7 @@ describe('M530 no self-staleness', () => {
     const product = revisionsOf(fx.home, p.id).at(-1);
     assert.ok(product && product.status === 'proposed', `the close's product recorded (${JSON.stringify(product)})`);
     assert.equal(specRevisions(fx.home, p.id).length, 1, 'no version 2');
-    assertNoSilentHold(fx.home, p.id, '(d)');
+    await assertHoldsAccounted(fx, p.id, '(d)');
   });
 
   test('(f) a roadmap revision between the raise and the answer: the roadmap and plan versions bound; the answer stale, the batch re-raised with the new assignment, nothing approved or assigned from it', async (t) => {
@@ -179,7 +179,7 @@ describe('M530 no self-staleness', () => {
     const next = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'design_approval').find((x) => x.id !== batch.design_approval.id), { what: 'the batch re-raised', max: 10 });
     assert.equal(next.manifest?.roadmap_version, 2, 'bound to roadmap version 2');
     assert.equal(assignmentOf(next, 'android')?.phase, 3, `android's human test now proposed for phase 3, the phase of its last UI stage (${JSON.stringify(next.evidence?.human_test_assignments)})`);
-    assertNoSilentHold(fx.home, p.id, '(f)');
+    await assertHoldsAccounted(fx, p.id, '(f)');
   });
 
   test('(f) a roadmap revision between the answer and the effect (barrier design.approved): the effect refused whole, the batch re-raised', async (t) => {
@@ -199,7 +199,7 @@ describe('M530 no self-staleness', () => {
     assert.deepEqual(engineRoadmaps(fx, p), [], 'no assignment applied');
     const next = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'design_approval').find((x) => x.id !== batch.design_approval.id), { what: 'the batch re-raised', max: 10 });
     assert.equal(next.manifest?.roadmap_version, 2, 'against the new roadmap version');
-    assertNoSilentHold(fx.home, p.id, '(f) effect');
+    await assertHoldsAccounted(fx, p.id, '(f) effect');
   });
 
   test('(g) a first design at Alpha, every phase complete: approved current against n+1, its human tests assigned to the completed phase and pending, the phase not reopened, no machine evidence created', async (t) => {
@@ -254,7 +254,7 @@ describe('M530 no self-staleness', () => {
     assert.deepEqual(now.plan, history.plan, 'phase 1 not reopened: its plan row unchanged');
     assert.deepEqual(now.signoffs, history.signoffs, 'its sign-offs unchanged');
     assert.deepEqual(now.phaseEvaluations, history.phaseEvaluations, 'its evaluations unchanged');
-    assertNoSilentHold(fx.home, p.id, '(g)');
+    await assertHoldsAccounted(fx, p.id, '(g)');
     void latestRequest;
     void BEFORE_BUILD;
   });

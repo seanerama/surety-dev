@@ -12,7 +12,14 @@
 // As M519's setting, from the purpose-written brief
 // (docs/acceptance/reports/M6-real-lane/m535-brief.md, SURETY_M535_BRIEF):
 // `**Targets:** web, android` (`html_css`, `react_native`),
-// `**Cross-platform:** yes`, `design: both`, a day limit of 50 USD. SEAN
+// `**Cross-platform:** yes`, `design: both`, a day limit of 50 USD. The
+// brief is Waterlog as Sean approved it with three edits (E162 item 3): no
+// Android notifications in this version (no permission, no notification
+// screen or state expected; future work); the held-logo sequence mandatory,
+// (c) to (f): the first proposal held, the UI stages built with the
+// placeholder, the logo approved by an asset-only approval, its propagation
+// verified; Android source plus a labelled simulation, its cross-target
+// behaviour unverified until a native runtime is exercised ((b), (h)). SEAN
 // PERFORMS FOUR ACTS HIMSELF (E156 Q6): the Designer feedback (his own turns
 // in the Designer session), the preview inspection (the relay, the web
 // mockup and the android simulation in his own browser), the combined

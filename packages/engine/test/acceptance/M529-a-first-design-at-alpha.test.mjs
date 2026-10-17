@@ -31,7 +31,7 @@ import { candidatesOfProject, pump, specRevisions } from './harness/journey/driv
 import { allReplans, changeReplans } from './harness/journey/final153.mjs';
 import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
-import { assertNoSilentHold, designRevisions, effectiveAssets, inventoryOf, manifestOf, openDesigner } from './harness/design/drive.mjs';
+import { assertHoldsAccounted, designRevisions, effectiveAssets, inventoryOf, manifestOf, openDesigner } from './harness/design/drive.mjs';
 import { KERNEL_KINDS, designModel, filesOf, variantOf } from './harness/design/check41.mjs';
 import { approveReviewBatch, batchSpec, currentRevision, latestRequest, specWriter } from './harness/design/plan44.mjs';
 import {
@@ -175,7 +175,7 @@ describe('M529 a first design at Alpha under at_alpha, its criterion failing on 
     await tick(fx.engine, p.id, { rounds: 3 });
     await waitForIdle(fx.home, p.id);
     assert.equal(allReplans(fx.home, p.id).length, 1, 'and no other');
-    assertNoSilentHold(fx.home, p.id, '(e)');
+    await assertHoldsAccounted(fx, p.id, '(e)');
   });
 });
 

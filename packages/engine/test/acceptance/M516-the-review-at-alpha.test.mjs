@@ -70,7 +70,7 @@ import { acting, hostNamespaces } from './harness/scripted.mjs';
 import { hostAddresses } from './harness/sandbox/egress.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
-import { assertNoSilentHold, cli, getBytes, inventoryOf, openDesigner, toPublished } from './harness/design/drive.mjs';
+import { assertHoldsAccounted, cli, getBytes, inventoryOf, openDesigner, toPublished } from './harness/design/drive.mjs';
 import { approveBatch, assertPassed, checkSession, filesOf, scriptVariant, untilBatch } from './harness/design/check41.mjs';
 import { batchSpec, specWriter } from './harness/design/plan44.mjs';
 import { quiesce } from './harness/design/preview42.mjs';
@@ -180,7 +180,7 @@ describe('M516 the review at Alpha, on the project lane from a kernel-lane seed'
     assert.ok(op && bound.includes(op.id), `bound to the deployment ${op?.id} (D7 §10.1) (${bound})`);
     assert.match(due.evidence?.command ?? '', /surety session open designer/, 'its command opens a Designer session (the product has a web target)');
     assert.equal(candidatesOfProject(fx.home, p.id).find((c) => c.id === deployed.id)?.progress, 'alpha_deployed', 'nothing waits on it: the candidate stays alpha_deployed');
-    assertNoSilentHold(fx.home, p.id, '(a)');
+    await assertHoldsAccounted(fx, p.id, '(a)');
   });
 
   step('(b) the review session\'s package: the approved design, the candidate\'s UI source, the design checks\' results, one observed record per web screen\'s route fetched by the engine at the review\'s start through the redactor, provenance engine_observed; (c) the role\'s domain does not reach the service', async () => {
@@ -371,6 +371,6 @@ describe('M516 the review at Alpha, on the project lane from a kernel-lane seed'
     const fix = await pump(fx, J.ctx, () => workOf(fx.home, p.id, 'fix').find((w) => w.subject?.finding === finding.id), { what: 'fix work from the owner\'s disposition (E43)', projectMs: 120_000 });
     assert.ok(fix, 'fix work registered from the finding');
     assert.equal(candidatesOfProject(fx.home, p.id).find((c) => c.id === deployed.id)?.progress, 'alpha_deployed', '(a) the review\'s candidate still alpha_deployed');
-    assertNoSilentHold(fx.home, p.id, '(g)');
+    await assertHoldsAccounted(fx, p.id, '(g)');
   });
 });

@@ -217,7 +217,16 @@ export async function answerDecision(engine, project, decision, option) {
   );
 }
 
-export const advanceClock = async (engine, seconds) => expectStatus(await engine.post('/v1/harness/clock/advance', { seconds }), 200, 'clock advance');
+export const advanceClock = async (engine, seconds) => {
+  const res = expectStatus(await engine.post('/v1/harness/clock/advance', { seconds }), 200, 'clock advance');
+  // The engine's time, kept beside the wall clock for reads that compare
+  // against it (engineTimeMs; SEAM.md §547). A restart starts a new engine
+  // object, its offset zero unless started with one.
+  if (typeof res.body?.now === 'string') engine.clockAt = { now: Date.parse(res.body.now), wall: Date.now() };
+  return res;
+};
+// The engine's time now (ms): the controlled clock as last advanced, else the wall clock.
+export const engineTimeMs = (engine) => (engine?.clockAt ? engine.clockAt.now + (Date.now() - engine.clockAt.wall) : Date.now());
 
 // The slack a comparison between an engine timestamp and the controlled
 // clock allows for a host clock that steps back (SEAM.md §23). Two seconds
