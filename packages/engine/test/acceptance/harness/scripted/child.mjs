@@ -31,6 +31,7 @@
 //           {"heartbeat": true}
 //           {"write": {"path": "<relative to the workspace, or absolute>", "content": "<text>"}}
 //           {"write": {"path": "...", "fill": <n>}}        n bytes of filler instead of content
+//           {"write": {"path": "...", "b64": "<base64>"}}  those bytes, as given (M6 slice 41)
 //           {"write_many": {"dir": "<path>", "count": <n>, "bytes": <m>}}   n files of m bytes each in a directory
 //           {"delete": "<path>"}                            a file or a whole directory
 //           {"rename": {"from": "<path>", "to": "<path>"}}
@@ -1975,7 +1976,9 @@ async function runSteps(steps, ctx) {
         const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
         content = content.split('__HEAD__').join((head.stdout ?? '').trim());
       }
-      writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : content);
+      // M6 slice 41 (SEAM.md §497): `b64`, the file's bytes as given (a
+      // binary asset or mockup the test generated with a valid header).
+      writeFileSync(target, step.write.fill !== undefined ? Buffer.alloc(step.write.fill, 'x') : step.write.b64 !== undefined ? Buffer.from(step.write.b64, 'base64') : content);
     } else if (step.copy_context !== undefined) {
       // M6 slice 40 (SEAM.md §482): a file of the role's own context package
       // (relative to the package's directory) placed in its workspace, byte

@@ -33,6 +33,8 @@ export const step = {
   write: (path, content) => ({ write: { path, content } }),
   // A file of `bytes` bytes of filler.
   writeFill: (path, bytes) => ({ write: { path, fill: bytes } }),
+  // M6 slice 41 (SEAM.md §497): a file of exactly these bytes (a Buffer).
+  writeBytes: (path, bytes) => ({ write: { path, b64: Buffer.from(bytes).toString('base64') } }),
   // `count` files of `bytes` bytes each in the directory `dir`.
   writeMany: (dir, count, bytes = 1) => ({ write_many: { dir, count, bytes } }),
   // M6 slice 40 (SEAM.md §482): a file of the role's context package placed in its workspace, byte for byte.
