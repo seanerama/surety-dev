@@ -165,9 +165,17 @@ export function designPace(db: Database, project: string): Record<string, unknow
 
   // ---- per review -----------------------------------------------------------------------------
   const reviews = (
-    db.prepare('SELECT r."id", r."created_at", r."subject", r."verdicts", r."run", x."created_at" AS "run_at" FROM "design_reviews" r LEFT JOIN "runs" x ON x."id" = r."run" WHERE r."project" = ? ORDER BY r.rowid').all(project) as {
+    db
+      .prepare(
+        `SELECT r."id", r."created_at", r."subject", r."verdicts", r."run", r."review_blob", x."created_at" AS "run_at",
+           (SELECT e."created_at" FROM "events" e WHERE e."type" = 'design.review_recorded' AND json_extract(e."subject", '$.design_review') = r."id" ORDER BY e."seq" LIMIT 1) AS "recorded_at"
+         FROM "design_reviews" r LEFT JOIN "runs" x ON x."id" = r."run" WHERE r."project" = ? ORDER BY r.rowid`,
+      )
+      .all(project) as {
       id: string;
       created_at: string;
+      review_blob: string | null;
+      recorded_at: string | null;
       subject: string;
       verdicts: string;
       run: string | null;
@@ -183,7 +191,10 @@ export function designPace(db: Database, project: string): Record<string, unknow
     return {
       review: r.id,
       subject: subject.kind === 'candidate' && subject.candidate ? `candidate:${subject.candidate}` : (subject.kind ?? unknown('the review names no subject')),
-      seconds: seconds(r.run_at, r.created_at, ['the review session opened', 'the review recorded']),
+      // To the review's record (`design.review_recorded`): an owner-invoked
+      // review's row is made at its opening, so its time is unknown until
+      // its review is recorded.
+      seconds: r.review_blob === null || r.recorded_at === null ? unknown('the review was not recorded') : seconds(r.run_at, r.recorded_at, ['the review session opened', 'the review recorded']),
       deltas,
       evidence,
     };

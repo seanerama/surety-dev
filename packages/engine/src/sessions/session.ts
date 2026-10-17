@@ -39,6 +39,7 @@ import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
 import { proposeDesign } from '../design/approval.js';
 import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
+import { openOwnerReview } from '../design/owner-review.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -213,7 +214,7 @@ export function appendTranscript(tx: Tx, run: SessionRow, entry: { turn: number;
 // template and model; no project backend key and no entry is consulted.
 export function openSession(
   tx: Tx,
-  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null; mode?: unknown },
+  args: { project: string; role: unknown; model?: unknown; scripted: string | null; incarnation: string; parent?: string | null; attempt?: string | null; mode?: unknown; review?: Record<string, unknown> },
 ): { run: Record<string, unknown> } {
   const p = tx.db.prepare('SELECT "id", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; paused: number; registration_state: string } | undefined;
   if (!p) throw notFound('project', args.project);
@@ -312,6 +313,12 @@ export function openSession(
   // A Designer session in review mode (D7 §10.2): its notes say so.
   if (args.mode === 'review') tx.db.prepare('UPDATE "runs" SET "session_notes" = ? WHERE "id" = ?').run(JSON.stringify({ mode: 'review' }), run);
   tx.emit('session.allocated', subject, { role, idle_deadline_at: idle, ...(args.mode === 'review' ? { mode: 'review' } : {}) });
+  // An owner-invoked review (D7 §10.5): its row and subject in this same
+  // transaction, so no review-mode session exists without them.
+  if (args.mode === 'review' && args.review !== undefined) {
+    const made = openOwnerReview(tx, { project: p.id, run, subject: args.review });
+    return { run: runSummary(tx.db, run), review: made.review } as { run: Record<string, unknown> };
+  }
   return { run: runSummary(tx.db, run) };
 }
 
