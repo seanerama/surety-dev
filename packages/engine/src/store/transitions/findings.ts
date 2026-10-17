@@ -262,6 +262,19 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
         recordDisposition(tx, f, { disposition: d.disposition, authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null, remediation: d.remediation ?? null });
         continue;
       }
+      // The owner has already answered this (M546; INK2-2; D3 §2.11): a
+      // proposal of the disposition the owner's own standing answer gave
+      // asks nothing again. It is recorded against that answer; the
+      // finding's disposition is unchanged.
+      const standing = standingOwnerAnswer(tx.db, f, d);
+      if (standing !== null) {
+        tx.emit(
+          'finding.disposition_proposed',
+          { project, finding: f.id, run: run.id },
+          { disposition: d.disposition, linked_issue: d.linked_issue ?? null, defer_target: d.defer_target ?? null, question: null, standing_answer: standing },
+        );
+        continue;
+      }
       // Beyond a Reviewer's authority (F §6.2): the human owner decides.
       tx.db
         .prepare('UPDATE "findings" SET "proposed_disposition" = ? WHERE "id" = ?')
@@ -483,6 +496,24 @@ function raisedOpenFindings(db: Tx['db'], run: string): boolean {
 function fromPhaseVerification(db: Tx['db'], run: string | null): boolean {
   if (run === null) return false;
   return db.prepare(`SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'phase_verification'`).get(run) !== undefined;
+}
+
+// The owner's standing answer a Reviewer's proposed disposition repeats
+// (M546; INK2-2): the finding dispositioned by the human owner, as it
+// stands, with the same disposition (and, for a deferral, the same target
+// and issue). null for anything else, which is asked as before.
+function standingOwnerAnswer(
+  db: Tx['db'],
+  f: FindingRow,
+  d: { disposition: string; linked_issue?: string; defer_target?: string },
+): { disposition: string; authority: 'human'; by: string | null; at: string | null; decision: string | null } | null {
+  const row = f as FindingRow & { disposition_authority?: string | null; disposition_by?: string | null; disposition_at?: string | null; linked_issue?: string | null; defer_target?: string | null };
+  if (row.status !== 'dispositioned' || row.disposition !== d.disposition || row.disposition_authority !== 'human') return null;
+  if (d.disposition === 'defer' && ((row.defer_target ?? null) !== (d.defer_target ?? null) || (row.linked_issue ?? null) !== (d.linked_issue ?? null))) return null;
+  // The owner's decision that gave it: the latest consumed question about
+  // the finding, by insertion.
+  const decision = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_type" = 'finding' AND "subject_id" = ? AND "status" = 'consumed' ORDER BY rowid DESC LIMIT 1`).get(f.id) as { id: string } | undefined;
+  return { disposition: row.disposition, authority: 'human', by: row.disposition_by ?? null, at: row.disposition_at ?? null, decision: decision?.id ?? null };
 }
 
 // The scope of the finding_disposition question an Alpha exception

@@ -7,10 +7,10 @@
 // journal or an out-of-band hold) records no interval. Pure over the store
 // but for the interval writes; no status changes.
 
-import { CHAIN_BOUNDARY, dispatchBlocker } from '../store/transitions/runs.js';
+import { CHAIN_BOUNDARY, PREREQUISITES_PENDING, dispatchBlocker, replanPendingPrerequisites } from '../store/transitions/runs.js';
 import { envelopeHold } from '../store/transitions/envelope.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { type HoldReason, type WorkRow, setHold } from '../store/transitions/work.js';
+import { type HoldDetail, type HoldReason, type WorkRow, setHold } from '../store/transitions/work.js';
 
 // The HoldReason a dispatch blocker names, or null.
 export function holdReasonOf(blocker: string): HoldReason | null {
@@ -32,6 +32,7 @@ export function markHolds(tx: Tx): number {
   };
   for (const item of items) {
     let reason: HoldReason | null = null;
+    let detail: HoldDetail | null = null;
     if (item.status === 'eligible') {
       let blocker: string | null;
       try {
@@ -42,9 +43,14 @@ export function markHolds(tx: Tx): number {
       if (blocker !== null) reason = holdReasonOf(blocker);
       // Dispatchable and still eligible after dispatch: the envelope held it.
       else if (envelopeHolds(item.project)) reason = 'resource_envelope';
+      // A replan held for its prerequisite results names them (M543).
+      if (blocker !== null && blocker.startsWith(PREREQUISITES_PENDING)) {
+        const results = replanPendingPrerequisites(tx.db, item);
+        if (results !== null) detail = { results };
+      }
     }
     if ((item.held ?? null) !== reason) changed++;
-    setHold(tx, item, reason);
+    setHold(tx, item, reason, detail);
   }
   return changed;
 }

@@ -13,6 +13,7 @@ import { effectiveProfileMax, engineSettings, projectOptions } from '../store/tr
 import { currentHostQualification, resolveBackend } from '../store/transitions/trust.js';
 import { memAvailable } from '../store/transitions/envelope.js';
 import type { Tx } from '../store/transitions/tx.js';
+import type { EngineRevision } from '../revision.js';
 
 type Unknown = { unknown: string; detail?: string };
 type Figure<T> = T | Unknown;
@@ -91,6 +92,21 @@ function blockedItems(d: DecisionRow): string[] | null {
 
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
+// A session's model per turn (M542 (b)), given only where its turns
+// observed different models (or one observed none): every turn of the run,
+// in order, with the model its ledger rows recorded or unknown.
+function turnModels(db: Database, run: string): { models_by_turn?: { turn: string; model: Figure<string> }[] } {
+  const turns = db.prepare('SELECT "id" FROM "turns" WHERE "run" = ? ORDER BY "number", rowid').all(run) as { id: string }[];
+  if (turns.length < 2) return {};
+  const per = turns.map((t) => {
+    const rows = db.prepare('SELECT "model_observed" FROM "ledger_rows" WHERE "turn" = ? AND "model_observed" IS NOT NULL ORDER BY rowid').all(t.id) as { model_observed: string }[];
+    const models = [...new Set(rows.flatMap((r) => r.model_observed.split(',').map((m) => m.trim()).filter((m) => m.length > 0)))];
+    return { turn: t.id, model: models.length === 0 ? unknown('no invocation of the turn recorded an observed model') : models.join(',') };
+  });
+  const distinct = new Set(per.map((p) => (typeof p.model === 'string' ? p.model : '\u0000unknown')));
+  return distinct.size > 1 ? { models_by_turn: per } : {};
+}
+
 export function paceView(db: Database, args: { project: string }) {
   const project = db.prepare('SELECT "id", "created_at" FROM "projects" WHERE "id" = ?').get(args.project) as { id: string; created_at: string } | undefined;
   if (!project) throw notFound('project', args.project);
@@ -129,6 +145,8 @@ export function paceView(db: Database, args: { project: string }) {
     created_at: string;
     incarnation: string;
     engine_version: string;
+    engine_revision?: string | null;
+    engine_revision_unknown?: string | null;
     autonomy: string | null;
     settings: string;
     mem_available: number | null;
@@ -146,6 +164,9 @@ export function paceView(db: Database, args: { project: string }) {
       observed_at: h.created_at,
       incarnation: h.incarnation,
       engine_version: h.engine_version,
+      // The source revision the engine was started from (M544), beside the
+      // package version, which is not a revision.
+      engine_revision: h.engine_revision ?? unknown(h.engine_revision_unknown ?? 'the revision was not recorded then (an observation from before the engine recorded it)'),
       host_qualification: h.host_qualification ?? unknown('no host qualification was in force then'),
       backend_entry: json<Record<string, unknown> | null>(h.backend_entry, null) ?? unknown('no active trust entry served the project then (the scripted backend, or none)'),
       autonomy: h.autonomy ?? unknown('the policy recorded no autonomy then'),
@@ -168,6 +189,7 @@ export function paceView(db: Database, args: { project: string }) {
     observed_at: none,
     incarnation: none,
     engine_version: none,
+    engine_revision: none,
     host_qualification: none,
     backend_entry: none,
     autonomy: none,
@@ -242,7 +264,12 @@ export function paceView(db: Database, args: { project: string }) {
         usd: ledger.length === 0 ? unknown('the run has no ledger row') : ledger.some((l) => l.cost_usd === null) ? unknown('a ledger row of the run has no cost') : sum(ledger.map((l) => l.cost_usd as number)),
         status: statuses.length === 1 ? statuses[0]! : statuses.length === 0 ? unknown('the run has no ledger row') : statuses.join(','),
       },
-      model: r.model_observed ?? unknown('no model was observed for the run'),
+      // The model the run observed, as its ledger rows recorded it (M542):
+      // unknown with its reason, never the requested model in its place.
+      model: r.model_observed ?? unknown(ledger.length === 0 ? 'the run has no ledger row' : 'no invocation of the run recorded an observed model'),
+      // A session's turns, where what they observed differs (M542 (b)):
+      // each turn's model, or unknown for a turn that observed none.
+      ...turnModels(db, id),
       outcome: r.outcome ?? unknown('the run has not ended'),
       reason_class: r.reason_class ?? unknown('the run has not ended'),
       repair_ordinal: n,
@@ -531,7 +558,7 @@ export function paceView(db: Database, args: { project: string }) {
 // The host as it is at this engine start, recorded once per project and
 // incarnation (D6 §7.6, A.3): `project_start` at the project's first
 // observation, `engine_start` at each later incarnation's.
-export function observeHost(tx: Tx, args: { project: string; incarnation: string; engine_version: string; settings: Record<string, number>; scripted?: string | null }): boolean {
+export function observeHost(tx: Tx, args: { project: string; incarnation: string; engine_version: string; engine_revision?: EngineRevision | null; settings: Record<string, number>; scripted?: string | null }): boolean {
   const resolved = resolveBackend(tx.db, { project: args.project, role: 'builder', scripted: args.scripted ?? null });
   const entry = resolved.kind === 'entry' ? { id: resolved.entry.id, binary_sha256: resolved.entry.binary_sha256, model: resolved.entry.model } : null;
   const exists = tx.db.prepare('SELECT "id", "backend_entry" FROM "host_observations" WHERE "project" = ? AND "incarnation" = ?').get(args.project, args.incarnation) as { id: string; backend_entry: string | null } | undefined;
@@ -545,6 +572,7 @@ export function observeHost(tx: Tx, args: { project: string; incarnation: string
     return false;
   }
   const earlier = tx.db.prepare('SELECT 1 FROM "host_observations" WHERE "project" = ? LIMIT 1').get(args.project);
+  const revision = args.engine_revision ?? null;
   const settings: Record<string, number> = Object.fromEntries(Object.entries(args.settings ?? {}).filter(([, v]) => typeof v === 'number'));
   settings.role_memory_max = effectiveProfileMax(tx.db, args.project, 'role');
   settings.check_memory_max = effectiveProfileMax(tx.db, args.project, 'check');
@@ -557,7 +585,7 @@ export function observeHost(tx: Tx, args: { project: string; incarnation: string
   const id = tx.newId('hobs_');
   tx.db
     .prepare(
-      'INSERT INTO "host_observations" ("id", "created_at", "project", "incarnation", "engine_version", "autonomy", "settings", "mem_available", "trigger", "host_qualification", "backend_entry", "peak_domains") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO "host_observations" ("id", "created_at", "project", "incarnation", "engine_version", "engine_revision", "engine_revision_unknown", "autonomy", "settings", "mem_available", "trigger", "host_qualification", "backend_entry", "peak_domains") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       id,
@@ -565,6 +593,10 @@ export function observeHost(tx: Tx, args: { project: string; incarnation: string
       args.project,
       args.incarnation,
       args.engine_version,
+      // The revision this engine was started from (M544), or why it is
+      // unknown; a caller that did not say is unknown too, never a guess.
+      revision && 'revision' in revision ? revision.revision : null,
+      revision && 'revision' in revision ? null : (revision?.unknown ?? 'the engine did not report its revision'),
       (projectOptions(tx.db, args.project) as { autonomy?: string }).autonomy ?? null,
       JSON.stringify(settings),
       memAvailable(),

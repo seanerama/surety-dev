@@ -775,6 +775,7 @@
       "finding.raised",
       "finding.severity_changed",
       "finding.dispositioned",
+      "finding.disposition_proposed",
       "finding.resolved",
       "finding.reopened",
       "finding.check_unbound",
@@ -2897,6 +2898,12 @@
           "required": false
         },
         "peak_domains": {
+          "required": false
+        },
+        "engine_revision": {
+          "required": false
+        },
+        "engine_revision_unknown": {
           "required": false
         }
       }
@@ -6517,6 +6524,9 @@
     },
     "finding.dispositioned": {
       "owner": "store/transitions/queue.ts"
+    },
+    "finding.disposition_proposed": {
+      "owner": "store/transitions/findings.ts"
     },
     "finding.resolved": {
       "owner": "store/transitions/gates.ts, store/transitions/work.ts"

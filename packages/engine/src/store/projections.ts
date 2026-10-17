@@ -298,6 +298,8 @@ export function readProject(db: Db, args: { project: string }) {
       // D6 §8.1 step 1 (SEAM.md §379): A, the signals and the mode; the
       // mode is null, with its reason, while the owner has not chosen it.
       adoption: parseJson<unknown>((db.prepare('SELECT "adoption" FROM "projects" WHERE "id" = ?').get(args.project) as { adoption: string | null }).adoption),
+      // The work held now, with what each waits on (M543 (f)).
+      held_work: heldWork(db, args.project),
     },
   };
 }
@@ -633,8 +635,28 @@ export function readWork(db: Db, args: { project: string }) {
       // A deploy waiting for its service's admission (D4 §4.7, A.2) shows
       // the hold its operation recorded (SEAM.md §271).
       dispatch_hold: w.status === 'eligible' ? envelopeHold(db, { kind: 'role', project: w.project }) : w.kind === 'deploy' ? deployAdmissionHold(w) : null,
+      // Why an eligible item waits now (N01), with what it waits on where
+      // its hold names it (M543: a replan's prerequisite results).
+      held: heldOf(w),
     })),
   };
+}
+
+// An item's hold as it stands (work.ts setHold): its reason, since when,
+// and the results it waits on; null when it is not held.
+function heldOf(w: WorkRow): { reason: string; since: string | null; waits_on?: unknown[] } | null {
+  const row = w as WorkRow & { held?: string | null; held_intervals?: string | null };
+  if (!row.held) return null;
+  const intervals = parseJson<{ from: string; to?: string; reason: string; results?: unknown[] }[]>(row.held_intervals ?? null) ?? [];
+  const open = intervals.length > 0 && intervals[intervals.length - 1]!.to === undefined ? intervals[intervals.length - 1]! : null;
+  return { reason: row.held, since: open?.from ?? null, ...(open?.results ? { waits_on: open.results } : {}) };
+}
+
+// The project's work held now (M543 (f)): each held item with its reason
+// and what it waits on.
+function heldWork(db: Db, project: string) {
+  const rows = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "held" IS NOT NULL AND "status" = 'eligible' ORDER BY "seq"`).all(project) as WorkRow[];
+  return rows.map((w) => ({ work_item: w.id, kind: w.kind, ...heldOf(w)! }));
 }
 
 // ---- a gate evaluation (D1 §11.3; E47) -------------------------------------------------

@@ -49,6 +49,7 @@ import { ensureAncestry, ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareDeployment, settleDeployment } from '../deploy/commands.js';
 import { Refusal } from '../refusal.js';
 import { ENGINE_VERSION } from '../index.js';
+import { engineRevision } from '../revision.js';
 
 const PREREQUISITES = ['recover', 'journal', 'integrity'] as const;
 
@@ -179,6 +180,7 @@ export class Scheduler {
         project,
         incarnation: this.rt.incarnation,
         engine_version: ENGINE_VERSION,
+        engine_revision: engineRevision(),
         settings: Object.fromEntries((['tick_interval', 'domain_memory_max', 'max_concurrent_domains'] as const).map((k) => [k, this.rt.setting(k)])),
       })
       .catch((err) => log('host observation', err, { project }));

@@ -197,7 +197,7 @@ import {
   markSessionHolds,
   budgetSpent,
 } from '../sessions/session.js';
-import { bundleBaselineFacts, recordBundle, replanBaseline } from '../plan/bundle.js';
+import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
@@ -501,6 +501,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
     d.prepare(`SELECT p."dev_repo_path" AS "repo", r."base_revision" AS "base" FROM "runs" r JOIN "projects" p ON p."id" = r."project" WHERE r."id" = ?`).get(a.run),
   'session.bundle_baseline': (d, a) => bundleBaselineFacts(d, a),
   'replan.baseline': (d, a) => replanBaseline(d, a),
+  // M543: a replan's prerequisite results still to come (plan/bundle.ts).
+  'replan.pending_prerequisites': (d, a: { project: string; depends_on: number[] }) => pendingPrerequisites(d, a.project, a.depends_on),
   'spec.view': (d, a) => specView(d, a),
   'spec.change_impact': (d, a) => impactRead(d, a),
   'spec.correction_facts': (d, a) => correctionFacts(d, a),
