@@ -17,6 +17,10 @@
 //        architecture and both plans, both phases' checks, every Builder's
 //        code;
 //   (c3) every package carried its elements (§454), and none was omitted.
+// A play that threw (SEAM.md §548) is its own failure in (c2) and (c3),
+// naming its error; its package's elements, logged before the play, are
+// still judged in (c3), so an errored play never reads as a package with no
+// elements.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
@@ -28,6 +32,8 @@ import { alphaConfigured, contextOf, fakeEngine, judgeArchitect, judgeAuthoring,
 import { TALLY_CHANGE_TEXT, tallyBrief } from './harness/real/rehearsal-content.mjs';
 
 const show = (v) => JSON.stringify(v)?.slice(0, 6000);
+// A play that threw (SEAM.md §548), named by its kind, its run and the first line of its error.
+const errored = (e) => ({ at: `${e.kind === 'session' ? e.role : e.launch?.work_kind ?? '?'} (${e.launch?.run ?? '?'})`, errored: String(e.error).split('\n')[0], package_error: e.package_error ?? null });
 
 describe('M442 (c) the rehearsal with the packages whole: the journey on the package-driven fakes', () => {
   const shared = sharedFixture();
@@ -69,7 +75,9 @@ describe('M442 (c) the rehearsal with the packages whole: the journey on the pac
 
   test('(c2) every product the fakes wrote passes the judgement against the whole package', () => {
     const failures = [];
-    const by = (kind) => J.plays.filter((e) => (e.launch?.work_kind ?? null) === kind || (kind === 'session' && e.kind === 'session'));
+    // A play that threw wrote no product: its error is the failure (SEAM.md §548).
+    for (const e of J.plays.filter((x) => typeof x.error === 'string')) failures.push(errored(e));
+    const by = (kind) => J.plays.filter((e) => typeof e.error !== 'string' && ((e.launch?.work_kind ?? null) === kind || (kind === 'session' && e.kind === 'session')));
     const brief = tallyBrief();
     for (const e of by('session').filter((x) => x.role === 'spec_writer' && x.written?.['.surety/spec/spec.md'])) failures.push(...judgeSpec(e.written['.surety/spec/spec.md'], { ...J.W, ...(e.blocks ?? {}) }, brief).map((f) => ({ ...f, at: 'spec session' })));
     for (const e of by('session').filter((x) => x.role === 'architect' && Object.keys(x.written ?? {}).length > 0)) failures.push(...judgeArchitect(e.written, { ...J.W, ...(e.blocks ?? {}) }, { adrs: ['ADR-001'] }).map((f) => ({ ...f, at: 'architect session' })));
@@ -85,10 +93,15 @@ describe('M442 (c) the rehearsal with the packages whole: the journey on the pac
   test('(c3) every package the fakes read carried its elements, none omitted', () => {
     const missing = [];
     const want = { spec_writer: SPEC_WRITER_ELEMENTS, architect: ARCHITECT_ELEMENTS, replan: ARCHITECT_ELEMENTS, check_authoring: AUTHORING_ELEMENTS, stage_build: BUILDER_ELEMENTS, spec_change: SPEC_CHANGE_ELEMENTS, phase_verification: PHASE_VERIFICATION_ELEMENTS };
+    const errors = [];
     for (const e of J.plays) {
       const key = e.kind === 'session' ? e.role : e.launch?.work_kind;
+      if (typeof e.error === 'string') errors.push(errored(e));
+      // A package the play could not read has no elements to judge: its error says so.
+      if (e.blocks === null && typeof e.error === 'string') continue;
       for (const id of want[key] ?? []) if (!(id in (e.blocks ?? {}))) missing.push(`${key} (${e.launch?.run ?? '?'}): ${id}`);
     }
+    assert.deepEqual(errors, [], 'no play errored (each named with its error)');
     assert.deepEqual(missing, []);
   });
 });

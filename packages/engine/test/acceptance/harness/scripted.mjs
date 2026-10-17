@@ -61,6 +61,12 @@ export const step = {
   result: (value = VALID_RESULT) => ({ result: value }),
   // M5 slice 38 (SEAM.md §455): the package-driven fake plays the role (Scripted.packageFakes first).
   packageFake: () => ({ package_fake: {} }),
+  // SEAM.md §548: an early replan listing the open plan's stages `copy` (by
+  // number) exactly as its package's open-plan.json states them, beside the
+  // stages `add`; prepared against the versions given and the workspace's HEAD.
+  planFromOpenPlan: ({ copy = [], add = [], phase, spec_version = 1, architecture_version = 1, roadmap_version = 1, conformance = 'within_baseline' } = {}) => ({
+    plan_from_open_plan: { copy, add, phase, spec_version, architecture_version, roadmap_version, conformance },
+  }),
   // M2 slice 13 (SEAM.md §143): the result file without the event, and the
   // event without the file.
   resultFile: (value = VALID_RESULT) => ({ result_file: value }),
