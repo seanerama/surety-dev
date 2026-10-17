@@ -25,9 +25,20 @@ import { addGitProject, addItem, permittedEdit, roleThat } from './harness/gitru
 import { revisionsOf } from './harness/journal.mjs';
 import { getLedger } from './harness/ledger.mjs';
 import { readRecord, recordRow } from './harness/records.mjs';
-import { gitQuiet, objectExists, refsContaining } from './harness/repos.mjs';
+import { gitQuiet, objectExists, refsContaining, worktreeList } from './harness/repos.mjs';
 import { pauseProject, scriptedEngine, tickOnce, waitForRun } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
+
+// Is `ancestor` reachable from `rev` (or `rev` itself)? An unreadable `rev`
+// (a worktree whose HEAD is not yet a commit) reaches nothing.
+function isAncestor(repo, ancestor, rev) {
+  try {
+    gitQuiet(repo, ['merge-base', '--is-ancestor', ancestor, rev]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe('M66 backup and restore', () => {
   // One engine home with a history worth restoring: a Builder's run that was
@@ -152,8 +163,20 @@ describe('M66 backup and restore', () => {
     assert.ok(keeping.length >= 1, 'the fixture: the engine kept the commit reachable from a ref');
     for (const ref of keeping) gitQuiet(repo, ['update-ref', '-d', ref]);
     gitQuiet(repo, ['reflog', 'expire', '--expire=now', '--all']);
+    // A ref is not all that keeps it. The checkpoint returns the item to
+    // eligible, and the run's end requests a tick: the run that continues
+    // from the checkpoint can be claimed before the pause lands, and its
+    // workspace added, detached at the commit, before the engine stops. git
+    // keeps whatever a linked worktree's HEAD reaches, so that workspace
+    // keeps the commit through any prune. Whether it exists is a race with
+    // the engine's stop (on mini-hp01 it won every time, on the workstation
+    // in some runs; SEAM.md §473). Someone removes it too.
+    for (const wt of worktreeList(repo).slice(1)) {
+      if (wt.head === null || !isAncestor(repo, commit, wt.head)) continue;
+      gitQuiet(repo, ['worktree', 'remove', '--force', '--force', '--', wt.path]);
+    }
     gitQuiet(repo, ['prune', '--expire=now']);
-    assert.equal(objectExists(repo, commit), false, 'the fixture: the commit is gone from the repository');
+    assert.equal(objectExists(repo, commit), false, `the fixture: the commit is gone from the repository (worktrees: ${JSON.stringify(worktreeList(repo))}; refs containing it: ${JSON.stringify(objectExists(repo, commit) ? refsContaining(repo, commit) : [])})`);
 
     const done = storeCommand(fx.home, ['backup']);
     assert.notDeepEqual([done.status, done.last?.label], [0, 'complete'], `a backup that lists a commit the repository no longer has is not complete (stdout: ${done.stdout})`);
