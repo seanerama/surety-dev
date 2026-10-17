@@ -41,3 +41,13 @@ The alternative, stating `verifier.toolchain` in the correction package, would c
 - D3 Appendix B, `command`: its first string names a program of the governed file's `check_commands` (`src/checks/schema.ts` `parseDefinition`, `program_not_allowed`).
 - M442's `CORRECTION_ABSENT` (harness/real/packages.mjs line 42).
 - E151; BS6 §11.4 ("the package states what the engine reads").
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17 (Verifier, `verify/m6-s46b` from `build/m6-s46` `60cefbc`). **The fake reads the programs where the engine now states them.** `verifier.toolchain` stays absent from the correction package, as M442's `CORRECTION_ABSENT` pins.
+
+- `package-fakes.cjs` `programOf` takes the toolchain's program where the package states `verifier.toolchain`, as before. Otherwise it takes the first of `verifier.design_catalogue.command.programs`. When `programs` is `null` (the governed values cannot be read, so unknown), it names no program, and discovery refuses the definition where the engine reads it.
+- SEAM.md §538's `verifier.design_catalogue` row lists `command: {member: "command", programs: [<name>…] or null, rule}`.
+- `harness/design/packages46.mjs`: `elementProblems` reads `command`'s form (member `command`, `programs` an array of names or `null`, a rule). `judgeDesignChecks` names a design check whose command does not name one of the stated programs first.
+
+With these changes, M537 (c) passes on `60cefbc` (both M537 files, run alone), and M442's three files still pass. SEAM.md §539 says so, and §546 records this decision.

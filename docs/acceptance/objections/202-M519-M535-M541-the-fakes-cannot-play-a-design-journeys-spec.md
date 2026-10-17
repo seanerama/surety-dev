@@ -48,3 +48,19 @@ Objection 201 (the correction fake's program) is the fourth gap on the same path
 - E151; BS6 §11.4: the package states what the engine reads.
 - D7 §4.1, G3 (the header's `**Targets:**`, `**Cross-platform:**`, the `**Surface:** ui` mark); §7.1, §7.3 (the consolidated change: criteria under their requirements, one human-test requirement per target).
 - SEAM.md §544 (the hands-on's fakes: "the Designer, the batch's `spec_change` one-shot and the `check_correction` Verifier play the package-driven fakes with `designerContent({name})`"); §541 (the real lane's rehearsal).
+
+## Decision
+
+Upheld by the driver under the owner's delegation, 2026-10-17 (Verifier, `verify/m6-s46b` from `build/m6-s46` `60cefbc`). The fakes work only from what the packages state (BS6 §12, the rehearsal's judgement).
+
+1. **Targets and surface marks.** `specWriterTurn` reads `spec_writer.targets` alone. It writes the targets line after the header's fields, and the cross-platform line when the owner's brief says `cross_platform`. After each requirement's statement it writes the surface mark on its own line: the owner's `ui (<targets>)` in the element's `with_targets` form, or its `mark` for `ui` alone. Told nothing of the element, it writes neither.
+2. **A design batch's `spec_change`.** `specChangeRun` plays a request whose package states `spec_writer.design_change` (`source: design`) from that block and the package's forms (`requirement_form`, `index_columns`, `index_cells`, `sensitive_areas`, `change_result`), and does not throw:
+   - each criterion goes under its requirement at the next free `R<n>.<m>`, its text exactly as given, and is added to the index's Criteria cell;
+   - each human test becomes a new requirement at the next free `R<n>`, with its target's surface mark and the human-test mark, its index Phase the test's `phase` (empty where `null`);
+   - the version is raised;
+   - the result's `changes` are `criteria_added` per requirement and `added` per human test.
+
+   A criterion under a requirement of its own (`"new"`) is not played: the fake fails loudly. An owner's request still plays its `rehearsal-change` block.
+3. **The hands-on's content.** `M6-hands-on.sh` `roles prepare` now passes `{design: designerContent({name: ref.PROJECT_NAME, criteria: designCriteriaOf("M535")}), design_checks: DESIGN_CHECKS}`, as `m6Content` does. `harness/real/m6-content.mjs` now exports `DESIGN_CHECKS` and `designCriteriaOf`. M541 (c) reads that call. M541 passes, run alone; the script itself was not run.
+
+SEAM.md §§539 and 544 say so, and §546 records the two new elements and this decision.

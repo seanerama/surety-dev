@@ -237,12 +237,27 @@ var SURETY_PACKAGE_FAKES = (function () {
       return hit ? hit.tier : word;
     };
     const L = [`# ${o.project}`, ''];
+    const tg = R['spec_writer.targets'];
+    // A requirement's surface mark in the element's form, from the owner's `ui (<targets>)` (or `ui`).
+    const surfaceLine = (surface) => {
+      if (!tg || !tg.surface || typeof surface !== 'string') return null;
+      const m = /^\s*ui\s*(?:\(([^)]*)\))?\s*$/.exec(surface);
+      if (!m) return null;
+      const ts = m[1] ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : [];
+      return ts.length > 0 && tg.surface.with_targets ? String(tg.surface.with_targets).replace('<targets>', ts.join(tg.surface.separator ?? ', ')) : tg.surface.mark;
+    };
     const header = R['spec_writer.header_fields'];
     if (header && Array.isArray(header.fields)) {
       for (const f of header.fields) {
         const n = String(f.name ?? '');
         const value = /version/i.test(n) ? String(o.spec_version ?? 1) : /status/i.test(n) ? (f.value ?? 'draft') : /tier/i.test(n) ? tierOf(o.tier) : /owner/i.test(n) ? o.owner : '';
         L.push(`${f.line} ${value}`);
+      }
+      // The product's targets and the cross-platform line, from `spec_writer.targets` alone
+      // (objection 202); told nothing of the element, neither is written.
+      if (tg && tg.targets && Array.isArray(o.targets) && o.targets.length > 0) {
+        L.push(`${tg.targets.line} ${o.targets.filter((t) => !Array.isArray(tg.targets.values) || tg.targets.values.includes(t)).join(tg.targets.separator ?? ', ')}`);
+        if (o.cross_platform && tg.cross_platform) L.push(`${tg.cross_platform.line} ${tg.cross_platform.value}`);
       }
       L.push('');
     }
@@ -252,7 +267,8 @@ var SURETY_PACKAGE_FAKES = (function () {
     const marks = R['spec_writer.marks'];
     for (const r of o.requirements ?? []) {
       if (form) {
-        L.push(String(form.heading).replace('R<n>', r.key).replace('<title>', r.title), '', r.statement, '', `**Rationale.** ${r.rationale ?? 'The owner asked for it.'}`, '', `${form.sensitive_areas} ${areas(r.areas)}`, '');
+        const surface = surfaceLine(r.surface);
+        L.push(String(form.heading).replace('R<n>', r.key).replace('<title>', r.title), '', r.statement, '', ...(surface ? [surface, ''] : []), `**Rationale.** ${r.rationale ?? 'The owner asked for it.'}`, '', `${form.sensitive_areas} ${areas(r.areas)}`, '');
         if ((r.criteria ?? []).length > 0) {
           L.push('**Acceptance criteria**', '');
           for (const c of r.criteria) L.push(String(form.criterion).replace('R<n>.<m>', c.id).replace('<text>', c.text));
@@ -337,10 +353,21 @@ var SURETY_PACKAGE_FAKES = (function () {
       return [{ number: base + 1, goal: `conformance of the adopted code: ${requirements.join(', ')}`, tasks: [], modules: mods.map((m) => m.name), implements: requirements, adrs, depends_on: [], validation: { criteria: requirements.flatMap(crit), kinds, sensitive_areas: [...new Set([...mods.flatMap((m) => m.sensitive_areas ?? []), ...requirements.flatMap(reqAreas)])] }, integration_obligations: [], conformance: true }];
     }
     return requirements.map((key, i) => {
-      const owned = modules.filter((m) => (m.interfaces ?? []).some((f) => citing(f.description, key)));
+      // The module whose interfaces cite the key; else (a module with no
+      // interface of its own, a UI module) the module the map assigns the
+      // requirement to (its `requirements`), its tasks its own paths.
+      const citingOwners = modules.filter((m) => (m.interfaces ?? []).some((f) => citing(f.description, key)));
+      const owned = citingOwners.length > 0 ? citingOwners : modules.filter((m) => Array.isArray(m.requirements) && m.requirements.includes(key));
       const ifaces = owned.flatMap((m) => (m.interfaces ?? []).filter((f) => citing(f.description, key)));
       const byPath = {};
       for (const f of ifaces) (byPath[f.path ?? f.name] ??= []).push(f.description);
+      // A module's own paths where no interface path lies under them (an http
+      // interface's path is a route, not a file): the module's files are the task.
+      for (const m of owned) {
+        const mine = (m.paths ?? []).filter((mp) => typeof mp === 'string');
+        const covered = ifaces.some((f) => mine.some((mp) => String(f.path ?? '').startsWith(mp)));
+        if (citingOwners.length === 0 || !covered) for (const mp of mine) (byPath[mp] ??= []).push(`${m.name}'s files for ${key}`);
+      }
       const number = base + i + 1;
       return {
         number,
@@ -412,8 +439,78 @@ var SURETY_PACKAGE_FAKES = (function () {
     return shapeResult(pkg, { summary: 'wrote the architecture and the first plan', reply: 'The architecture, module map, ADRs, roadmap and phase 1.', artifact_changed: true, done: true });
   }
 
+  // A replan of the open phase, replacing its plan (the package's
+  // `open-plan.json`; the prompt's "the open phase <n>, replacing its plan"):
+  // from the package alone. Kept stages (the prompt's "Kept stages: stage
+  // <n> …", else the open plan's stages it states integrated or verified)
+  // are omitted, which the kept-stage rule says is always valid. Each
+  // criterion a kept stage's requirement gained since it was built (the
+  // specification's criteria not in its validation as built) or that the
+  // trigger touched (the prompt's list, else trigger.json's stale
+  // `criterion:` entries) is planned in a new stage, under a new number, on
+  // the kept stage's modules, tasks and ADRs, validating only those. A
+  // stage not yet built is listed again with its inputs, validating every
+  // current criterion of what it implements. A requirement of the phase
+  // that no stage implements gets a stage as a first plan does; one with
+  // no criterion (a human test, `index.json`'s `human_test`) gets none.
+  function openReplanRun(pkg, ws, open) {
+    const f = pkg.files;
+    const spec = readSpec(f['spec.md']);
+    const roadmap = parse(f['roadmap.json'], null);
+    const map = parse(f['module_map.json'], null);
+    if (!spec || !roadmap || !map) throw new Error(`rehearsal fake: the open phase's replan package lacks its facts (spec.md ${Boolean(spec)}, roadmap.json ${Boolean(roadmap)}, module_map.json ${Boolean(map)})`);
+    const phase = Number(open.phase_number);
+    const phases = Array.isArray(roadmap.phases) ? roadmap.phases : Array.isArray(roadmap) ? roadmap : [];
+    const ph = phases.find((x) => Number(x.number) === phase);
+    if (!ph) throw new Error(`rehearsal fake: no phase ${phase} in the package's roadmap`);
+    const modules = Array.isArray(map.modules) ? map.modules : Array.isArray(map) ? map : [];
+    const R = pkg.reads;
+    const kinds = R['architect.plan_reasons'] && R['architect.plan_reasons'].kinds_by_tier ? (R['architect.plan_reasons'].kinds_by_tier[spec.tier] ?? []) : [];
+    const crit = (k) => (spec.index.find((r) => r.key === k) || { criteria: [] }).criteria;
+    const index = parse(f['index.json'], []) || [];
+    const humanOnly = (k) => crit(k).length === 0 && (Array.isArray(index) ? index.some((x) => x && x.key === k && x.human_test === true) : false);
+    const stages = (open.stages || []).filter((st) => !st.cancelled_at);
+    const keptList = /Kept stages: (.*?)\. Their inputs/.exec(pkg.prompt);
+    const keptNumbers = keptList ? [...keptList[1].matchAll(/stage (\d+)/g)].map((m) => Number(m[1])) : stages.filter((st) => st.status === 'integrated' || st.status === 'verified').map((st) => Number(st.number));
+    const touchedLine = /Criteria this replan's trigger touched \(gained or changed\): ([^.]*)\./.exec(pkg.prompt);
+    const trig = parse(f['trigger.json'], null);
+    const staleCriteria = trig && Array.isArray(trig.stale) ? trig.stale.map((x) => (typeof x === 'string' ? x : x && (x.subject || x.id))).filter((x) => typeof x === 'string' && x.startsWith('criterion:')).map((x) => x.slice('criterion:'.length)) : [];
+    const touched = new Set([...(touchedLine ? touchedLine[1].split(',').map((x) => x.trim()).filter(Boolean) : []), ...staleCriteria]);
+    const adrs = Object.keys(f).filter((n) => /^adrs\/.+\.md$/.test(n)).map((n) => path.basename(n, '.md'));
+    let next = Math.max(0, ...stages.map((st) => Number(st.number) || 0));
+    const out = [];
+    const implemented = new Set();
+    for (const st of stages) {
+      const impl = Array.isArray(st.implements) ? st.implements : [];
+      impl.forEach((k) => implemented.add(k));
+      const v = st.validation && typeof st.validation === 'object' ? st.validation : {};
+      if (keptNumbers.includes(Number(st.number))) {
+        const built = new Set(Array.isArray(v.criteria) ? v.criteria : []);
+        for (const k of impl) {
+          const gained = crit(k).filter((c) => !built.has(c) || touched.has(c));
+          if (gained.length === 0) continue;
+          next += 1;
+          out.push({ number: next, goal: `${k}: the criteria it gained since stage ${st.number} was built`, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: [k], adrs: st.adrs ?? adrs, depends_on: Array.isArray(st.depends_on) ? st.depends_on : [], validation: { criteria: gained, kinds: kinds.length > 0 ? kinds : (v.kinds ?? []), sensitive_areas: v.sensitive_areas ?? [] }, integration_obligations: st.integration_obligations ?? [] });
+        }
+        continue;
+      }
+      out.push({ number: Number(st.number), goal: st.goal, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: impl, adrs: st.adrs ?? adrs, depends_on: Array.isArray(st.depends_on) ? st.depends_on : [], validation: { ...v, criteria: [...new Set(impl.flatMap(crit))] }, integration_obligations: st.integration_obligations ?? [] });
+    }
+    const missing = (ph.requirement_ids ?? ph.requirements ?? []).filter((k) => !implemented.has(k) && !humanOnly(k) && crit(k).length > 0);
+    if (missing.length > 0) {
+      const obligations = {};
+      for (const st of stages) for (const m of st.modules ?? []) if (Array.isArray(st.integration_obligations) && st.integration_obligations.length > 0) obligations[m] = st.integration_obligations;
+      out.push(...stagesFor(pkg, { phase, requirements: missing, modules, spec, adrs, obligations, base: next, conformance: false }).map((x) => ({ ...x, depends_on: [] })));
+    }
+    const declared = writeArchitectFiles(pkg, ws, { arch: {}, spec, phase, roadmapToo: false, stages: out });
+    return shapeResult(pkg, { summary: `the open phase ${phase} replanned: ${out.map((x) => `stage ${x.number}`).join(', ') || 'no new stage'}`, plan: `phase-${phase}`, conformance: declared ?? 'uncertain' });
+  }
+
   function replanRun(pkg, ws, content) {
     const f = pkg.files;
+    // The open phase, replacing its plan (an early replacement, a change's replan of the phase under way).
+    const openPlan = parse(f['open-plan.json'], null);
+    if (openPlan && Number.isInteger(Number(openPlan.phase_number)) && Array.isArray(openPlan.stages)) return openReplanRun(pkg, ws, openPlan);
     const gen = parse(f['generation.json'], {}) ?? {};
     const spec = readSpec(f['spec.md']);
     const roadmap = parse(f['roadmap.json'], null);
@@ -448,7 +545,102 @@ var SURETY_PACKAGE_FAKES = (function () {
 
   // ---- the Spec Writer's change (B.7) ------------------------------------------------------
 
+  // A design batch's change (`spec_writer.design_change`; D7 §7.1, §7.3;
+  // objection 202), written from the package alone: each design criterion
+  // under its requirement at the next free id, its text exactly as given;
+  // each human test a new requirement at the next free key, with the
+  // surface mark and the human-test mark, at its phase in the index; the
+  // version raised. The forms are the package's (`spec_writer.requirement_form`,
+  // `spec_writer.index_columns`, `spec_writer.index_cells`,
+  // `spec_writer.sensitive_areas`, `spec_writer.change_result`).
+  function designChangeRun(pkg, ws, dc) {
+    const R = pkg.reads;
+    const text = ws.read('.surety/spec/spec.md');
+    if (text === null) throw new Error('rehearsal fake: the design change found no specification at .surety/spec/spec.md');
+    const form = R['spec_writer.requirement_form'];
+    const idx = R['spec_writer.index_columns'];
+    const cells = R['spec_writer.index_cells'];
+    const sep = cells && typeof cells.list_separator === 'string' ? cells.list_separator : ', ';
+    const areaList = R['spec_writer.sensitive_areas'];
+    const none = areaList && areaList.none ? areaList.none : 'none';
+    const crit = dc.criterion || {};
+    const ht = dc.human_test || {};
+    const lines = text.split('\n');
+    const reqHead = (key) => lines.findIndex((l) => new RegExp(`^### ${key}\\b`).test(l));
+    const sectionEnd = (from) => {
+      for (let i = from + 1; i < lines.length; i++) if (/^#{2,3} /.test(lines[i])) return i;
+      return lines.length;
+    };
+    const keys = () => lines.map((l) => /^### R(\d+)\b/.exec(l)).filter(Boolean).map((m) => Number(m[1]));
+    const changes = [];
+    const added = {};
+    for (const c of dc.criteria || []) {
+      const key = c.requirement;
+      if (typeof key !== 'string' || !/^R\d+$/.test(key)) throw new Error(`rehearsal fake: a design criterion under ${JSON.stringify(key)} (a requirement of its own is not played)`);
+      const at = reqHead(key);
+      if (at < 0) throw new Error(`rehearsal fake: the specification has no requirement ${key} for a design criterion`);
+      const end = sectionEnd(at);
+      const mine = new RegExp(`^- ${key}\\.(\\d+) `);
+      let last = -1;
+      let top = 0;
+      for (let i = at; i < end; i++) {
+        const m = mine.exec(lines[i]);
+        if (m) {
+          last = i;
+          top = Math.max(top, Number(m[1]));
+        }
+      }
+      if (last < 0) throw new Error(`rehearsal fake: requirement ${key} has no criteria list to add to`);
+      const id = `${key}.${top + 1}`;
+      lines.splice(last + 1, 0, form && form.criterion ? String(form.criterion).replace('R<n>.<m>', id).replace('<text>', c.text) : `- ${id} ${c.text}`);
+      (added[key] ??= []).push(id);
+      const kind = crit.change_kind ?? 'criteria_added';
+      if (!changes.some((x) => x.key === key && x.kind === kind)) changes.push({ key, kind, reason: 'the approved design\'s criteria' });
+    }
+    const indexAt = () => (idx && idx.section ? lines.findIndex((l) => l.trim() === String(idx.section).trim()) : -1);
+    const newRows = [];
+    for (const h of dc.human_tests || []) {
+      const key = `R${Math.max(0, ...keys()) + 1}`;
+      const title = `The ${h.target} UI matches the approved design`;
+      const at = indexAt();
+      if (at < 0) throw new Error('rehearsal fake: the specification has no requirement index to place a human test before');
+      const heading = form && form.heading ? String(form.heading).replace('R<n>', key).replace('<title>', title) : `### ${key}. ${title}`;
+      const block = [heading, '', `A person judges the ${h.target} UI against the approved design.`, '', String(ht.surface ?? '').replace('<target>', h.target), '', '**Rationale.** The approved design.', '', `${form && form.sensitive_areas ? form.sensitive_areas : '**Sensitive areas:**'} ${none}`, '', ht.mark ?? '**Human test.**', '', h.text, ''];
+      lines.splice(at, 0, ...block);
+      newRows.push({ key, title, phase: h.phase === null || h.phase === undefined ? '' : String(h.phase) });
+      changes.push({ key, kind: ht.change_kind ?? 'added', reason: `the ${h.target} human test of the approved design` });
+    }
+    // The index: each criterion added to its row's Criteria cell; a row per human test.
+    if (idx && Array.isArray(idx.columns)) {
+      const at = indexAt();
+      let end = at + 1;
+      while (end < lines.length && !/^## /.test(lines[end])) end++;
+      const cellsOf = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+      const ci = idx.columns.indexOf('Criteria');
+      let lastRow = -1;
+      for (let i = at + 1; i < end; i++) {
+        if (!lines[i].trim().startsWith('|')) continue;
+        lastRow = i;
+        const cs = cellsOf(lines[i]);
+        if (ci >= 0 && added[cs[0]]) {
+          cs[ci] = [...cs[ci].split(sep.trim()).map((x) => x.trim()).filter(Boolean), ...added[cs[0]]].join(sep);
+          lines[i] = `| ${cs.join(' | ')} |`;
+        }
+      }
+      if (lastRow < 0) throw new Error('rehearsal fake: the requirement index has no rows');
+      lines.splice(lastRow + 1, 0, ...newRows.map((r) => `| ${idx.columns.map((c) => ({ Key: r.key, Title: r.title, Phase: r.phase, 'Sensitive areas': none, Criteria: '', Origin: idx.default_origin ?? '' })[c] ?? '').join(' | ')} |`));
+    }
+    ws.write('.surety/spec/spec.md', lines.join('\n').replace(/^(\*\*Spec version:\*\*)\s*(\d+)/m, (_, a, n) => `${a} ${Number(n) + 1}`));
+    const cr = R['spec_writer.change_result'];
+    const kinds = cr && cr.item && Array.isArray(cr.item.kind) ? cr.item.kind : [];
+    const listed = cr ? changes.filter((c) => kinds.includes(c.kind)) : [];
+    return shapeResult(pkg, { summary: 'the approved design written into the specification', ...(cr ? { [cr.field]: listed } : {}) });
+  }
+
   function specChangeRun(pkg, ws) {
+    // A design batch's change, played from the element that states it (objection 202).
+    const dc = pkg.reads['spec_writer.design_change'];
+    if (dc && dc.source === 'design') return designChangeRun(pkg, ws, dc);
     const req = parse(pkg.files['change_request.json'], {}) ?? {};
     const change = taggedBlock(req.text ?? req.request_text ?? '', 'rehearsal-change') ?? taggedBlock(pkg.prompt, 'rehearsal-change');
     let text = ws.read('.surety/spec/spec.md');
@@ -500,11 +692,19 @@ var SURETY_PACKAGE_FAKES = (function () {
   }
 
   // The program a definition names: one the governed values already name,
-  // else the toolchain's runtime this run writes in.
+  // else the toolchain's runtime this run writes in, else (a package that
+  // states no toolchain: the correction's, M442) the first of the programs
+  // `verifier.design_catalogue`'s `command` states (objection 201). Its
+  // `programs` null is unknown: no program is named, and discovery refuses
+  // the definition where the engine reads it.
   function programOf(R, governed) {
     const t = R['verifier.toolchain'];
     const named = t && t.current && t.current.check_commands ? Object.keys(t.current.check_commands) : [];
-    return named[0] ?? (governed ? governed.program : null);
+    if (named[0] !== undefined) return named[0];
+    if (governed) return governed.program;
+    const dc = R['verifier.design_catalogue'];
+    const programs = dc && dc.command && Array.isArray(dc.command.programs) ? dc.command.programs.filter((x) => typeof x === 'string' && x.length > 0) : [];
+    return programs[0] ?? null;
   }
 
   const had0 = (ws, dir) => ws.list(dir).some((n) => n.endsWith('.json'));
@@ -641,7 +841,9 @@ var SURETY_PACKAGE_FAKES = (function () {
     const impl = R['builder.implements'];
     const deps = R['builder.dependency_interfaces'];
     const obligations = R['builder.integration_obligations'];
-    const paths = tasks && Array.isArray(tasks.tasks) ? [...new Set(tasks.tasks.flatMap((t) => [...String(t).matchAll(/`([^`]+)`/g)].map((m) => m[1])))] : [];
+    const named = tasks && Array.isArray(tasks.tasks) ? [...new Set(tasks.tasks.flatMap((t) => [...String(t).matchAll(/`([^`]+)`/g)].map((m) => m[1])))] : [];
+    // A task naming a directory (a module's path, `web/`) is each file of the content under it.
+    const paths = [...new Set(named.flatMap((p) => (p.endsWith('/') ? Object.keys(content.code ?? {}).filter((k) => k.startsWith(p)) : [p])))];
     const keys = impl && Array.isArray(impl.implements) ? impl.implements : [];
     const wrote = [];
     for (const p of paths) {
@@ -946,7 +1148,10 @@ var SURETY_PACKAGE_FAKES = (function () {
     const owner = rv.owner || null;
     if (owner && Array.isArray(owner.evidence)) {
       const target = review.subject && review.subject.target;
-      for (const s of (approvedScreens.screens || []).filter((x) => x.target === target)) screens.push({ target, key: s.key, verdict: 'matches', observed_on: (owner.evidence[0] || {}).observed_on || 'device', evidence: owner.evidence.map((e) => e.id), deltas: [] });
+      // observed_on as the element states it: the owner's word, {value, provenance: owner_reported} (the review's S4), or a bare value.
+      const said = (owner.evidence[0] || {}).observed_on;
+      const on = said && typeof said === 'object' ? said.value : said;
+      for (const s of (approvedScreens.screens || []).filter((x) => x.target === target)) screens.push({ target, key: s.key, verdict: 'matches', observed_on: on || 'device', evidence: owner.evidence.map((e) => e.id), deltas: [] });
     }
     const n = ws.list(`${DESIGN_ROOT}reviews`).filter((x) => /^review-\d+\.json$/.test(x)).length + 1;
     const body = { ...(approved && approved.version ? { design_version: approved.version } : {}), subject: review.subject || {}, screens, revised_design: false, first_design: Boolean(review.first_design) };
@@ -966,10 +1171,17 @@ var SURETY_PACKAGE_FAKES = (function () {
     const screens = (parse(pkg.files['design/screens.json'], { screens: [] }) || { screens: [] }).screens || [];
     const targets = [...new Set(screens.map((s) => s.target))];
     const bound = [...String(pkg.prompt).matchAll(/^- `([^`]+)` \((\w+), (copy|derived)\)$/gm)].map((m) => ({ path: m[1], target: m[2], form: m[3] }));
+    // An asset_updated fix names the slot it updates ("updates the asset slot <slot>"); the
+    // prompt lists each bound path with its target and form but not its variant, so the
+    // variant at a bound path is the one CONTENT.asset_paths placed there (the Builder's own
+    // placement), and nothing else is copied onto it.
+    const updated = (/updates the asset slot (\S+) from/.exec(String(pkg.prompt)) || [])[1] || null;
+    const variantAt = (b) => Object.entries((content.asset_paths || {})[b.target] || {}).find(([, p]) => p === b.path)?.[0] ?? null;
     const bindings = [];
     for (const e of eff) {
+      if (bound.length > 0 && updated !== null && e.slot !== updated) continue;
       const places = bound.length > 0
-        ? bound.map((b) => ({ target: b.target, path: b.path }))
+        ? bound.filter((b) => variantAt(b) === `${e.slot}/${e.variant}`).map((b) => ({ target: b.target, path: b.path }))
         : targets.map((t) => ({ target: t, path: ((content.asset_paths || {})[t] || {})[`${e.slot}/${e.variant}`] || (targets.length === 1 ? e.declared_path : undefined) })).filter((x) => x.path);
       for (const pl of places) {
         if (!fs.existsSync(path.join(pkg.dir, e.path))) continue;
@@ -1030,6 +1242,15 @@ var SURETY_PACKAGE_FAKES = (function () {
       // M6 slice 46: a UI stage places the effective assets its package carries and binds them (SEAM.md §539).
       const bindings = placeAssets(pkg, ws, content);
       if (bindings && pkg.resultSchema && pkg.resultSchema.properties && 'asset_bindings' in pkg.resultSchema.properties) result.asset_bindings = bindings;
+      // The approved tokens' CSS binding the package carries (design/tokens.css, for an HTML and
+      // CSS target) placed where CONTENT.tokens_paths puts it for the stage's target.
+      if (typeof pkg.files['design/tokens.css'] === 'string') {
+        const screens = (parse(pkg.files['design/screens.json'], { screens: [] }) || { screens: [] }).screens || [];
+        for (const t of [...new Set(screens.map((x) => x.target))]) {
+          const dest = (content.tokens_paths || {})[t];
+          if (dest) ws.copyFrom(path.join(pkg.dir, 'design/tokens.css'), dest);
+        }
+      }
     } else if (kind === 'fix' && pkg.files['design/effective-assets.json']) {
       const bindings = placeAssets(pkg, ws, content) || [];
       result = shapeResult(pkg, { summary: `the effective assets placed at ${bindings.length} bound paths`, asset_bindings: bindings });
