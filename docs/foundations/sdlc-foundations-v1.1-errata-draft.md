@@ -2641,3 +2641,44 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - At T2/T3, the phase verification is requested before the hold check. If the replacement then publishes, that Verifier run is spent on the old generation, which costs money in the paid lane.
    - The owner's `GET …/plan` still shows `depends_on` as ids, beside each stage's id. The Builder package silently drops an id it cannot resolve. That predates this change and is an unknown turned into none, to be fixed.
 8. **The M519 dress rehearsal** passed ten of ten at `390b2fd` on a clean checkout of `main`. It is repeated at the revision the paid run uses.
+
+## E164. M519's first paid run: finding F1, the design readiness deadlock, and the driver's ruling on human-judged design criteria (decided by the driver under Sean's delegation, 2026-10-18)
+
+**Status: decided by the driver** under Sean's standing instruction ("go ahead and drive M519's acts yourself"); Sean may overturn any item.
+
+1. **M519 started** at 01:56 UTC on `main` `0824dff`.
+   - Clean worktree; run directory `~/s6-1018`. The dress rehearsal passed ten of ten at that revision (`~/s6r-w2`). Subscription token passed by path only; Claude Code 2.1.302.
+   - The driver performed every owner act and recorded each with `driver-act.mjs` and Sean's words.
+   - **Passed:** (a), the attempts: the Opus canary and Sonnet.
+   - **Done before the stall:**
+     - the activations;
+     - the project and its widening (2,000,000 tokens a run, 4,000,000 a day of unknown usage, `alpha_deploy: on_phase_complete`);
+     - the Spec Writer session (`**Targets:** web`, one phase, R1 to R8);
+     - the Architect session: four stages, the two UI stages held for the design;
+     - `qualify-adapter local_service`;
+     - four check corrections approved, two of them prompted by findings: the friction corner μ = 1 at 45°, and an API check that grepped a re-export barrel;
+     - a three-turn Designer session. Its first save was refused by the design check (fixture names, `scene_html` on a web target), and the Designer fixed both.
+   - **The preview inspection** was the driver's HTTP read of five mockups through the relay, as HTML and CSS. No browser rendered them.
+   - The batched `design_approval` and `spec_change` were approved at 02:39, and the design criteria's checks at 02:44.
+   - Estimated spend at the stall: 11.56 USD.
+2. **Finding F1: the design readiness deadlock.**
+   - The consolidated spec change added three criteria of `DesignCriterionKind` `human`, R6.1, R7.1 and R8.20, as ordinary criteria.
+   - `designReadiness` required every added criterion to be covered by a check, which is stricter than D7 §7.5.
+   - The Verifier rightly wrote no check for criteria a person judges, and deferred them to stage 4, which was itself held `design_pending`.
+   - Result: the design approved and never ready, the UI stages held, nothing in flight, and no question naming the cause. The step was left to time out; no workaround was used.
+3. **The driver's ruling.**
+   - **Readiness follows D7 §7.5 literally:** the design is approved and the `spec_obligation` correction its change registered has ended with its proposal applied, or none was owed. A checkable criterion left uncovered carries `ACCEPTANCE_SCOPE_INCOMPLETE` on gates (D6 §4.5) but does not hold readiness.
+   - **A design criterion of kind `human` is judged by a person and carried by its target's human test (D7 §7.3).**
+     - The engine identifies it from the criterion map of the design in force, and only when the criterion was matched by text or kept from an earlier design, never when paired by order alone.
+     - It is never uncovered, owes no check, carries no `ACCEPTANCE_SCOPE_INCOMPLETE`, and a deferral of it holds nothing.
+     - A plan may list it as validated or omit it.
+   - **No silent wait:** the design read (`revisions[].readiness {waits_on, next_action}`) and the open `design_due` name what readiness waits on.
+   - An already-stuck store becomes ready at the next tick, with no owner act.
+   - Commits: build `f6722a8`, `a803c2b`, `6613f3b`; cases `379baa6`, `ec5f3ba` (M505, M507, M508); SEAM §549.
+   - **The gate at `3e945a2`:** 440 files, 2,388 passed, 4 failed. M15's run-end fault matrix and M440's storm each passed three of three alone. M404 (e) passed two of three alone. It is a race already seen at `2d5b852`, before this change: the test opens an Architect session while a Verifier one-shot has not ended, and the engine rightly refuses `session_busy`. The test is to wait for the one-shot (a Verifier fix). M540 is the skeleton. Merged as `68f3867`.
+   - **The halt:** the step was left to time out. At 05:11:25 UTC `m6w_design` was halted, not reached within 180 minutes, with the open `design_due` named, and nothing further was started. (a) passed and (b) to (j) failed, one pass and nine failures. Every step before the design is recorded done, so the run resumes from `m6w_design` (`SURETY_REAL_RERUN`).
+4. **Recorded for Sean.**
+   - Cancelling a parked spec-obligation correction leaves that design version never ready. No route registers another correction for the same change, so the owner's way out is `waive`, `policy_off` or a revised design.
+   - `design_due` is raised again while an owner-opened Designer session exists, naming the session. This is by design (E162), but its `open` option is then blocked.
+   - An owner turn is refused `resource_envelope` while two builds hold the host's domains, and must be resent. The first Designer turn waited about 16 minutes this way.
+   - A refused answer left one false `trust_activation` line in `driver-acts.jsonl` (01:59:41, a stale decision). The line is kept, not edited.
