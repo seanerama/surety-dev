@@ -10,7 +10,10 @@ import { canonical, parseJson, sha256 } from '../store/transitions/common.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { AssetManifest } from './assets.js';
-import type { CheckContext, DesignReason } from './check.js';
+import type { CheckContext, DesignReason, ReviewLinks } from './check.js';
+import { knownCriteria } from '../store/transitions/checks.js';
+import { checksOfVersion } from '../store/transitions/evidence.js';
+import { effectiveVersion } from '../store/transitions/protected.js';
 import { currentInventory } from './store.js';
 import { designPolicyOf } from './policy.js';
 
@@ -39,7 +42,20 @@ export function checkContext(db: Database.Database, project: string, run: string
     placeholders: parseJson<AssetManifest>(inv?.row.manifest ?? null),
     policy: designPolicyOf(db, project),
     reviews: reviewEvidence(db, project, run),
+    links: reviewLinks(db, project),
   };
+}
+
+// What a review delta's `criterion` and `check` may name (F4): the
+// criteria of the registered requirement index, null when none is
+// registered; each check of the effective protected version with the
+// criteria its covers.criteria names (none with no effective version).
+export function reviewLinks(db: Database.Database, project: string): ReviewLinks {
+  const known = knownCriteria(db, project);
+  const version = effectiveVersion(db, project);
+  const checks: Record<string, string[]> = {};
+  for (const c of version ? checksOfVersion(db, version.id) : []) checks[c.key] = parseJson<string[]>((c as unknown as { criteria: string | null }).criteria) ?? [];
+  return { criteria: known === null ? null : [...known].sort(), checks };
 }
 
 // The evidence each review file may cite (B.14): each recorded review's

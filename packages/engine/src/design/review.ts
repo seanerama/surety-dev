@@ -15,8 +15,7 @@
 // Evidence is kept by provenance and never merged: no owner item is ever
 // shown or counted as engine-observed (§10.5).
 
-import { mappedCriteria } from './criterion-map.js';
-import { ROUTE_PATTERN } from './check.js';
+import { ROUTE_PATTERN, type ReviewLinks, deltaLinkProblem } from './check.js';
 import type Database from 'better-sqlite3';
 
 import { Refusal } from '../refusal.js';
@@ -25,8 +24,7 @@ import { consumeDecision } from '../store/transitions/decisions.js';
 import { runningService } from '../store/transitions/deploy.js';
 import { SEVERITIES, raiseFinding } from '../store/transitions/findings.js';
 import { OWED_SCOPE, type AnswerExtra, type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
-import { effectiveVersion } from '../store/transitions/protected.js';
-import { type CandidateRow, checksOfVersion, presenceOf } from '../store/transitions/evidence.js';
+import { type CandidateRow, presenceOf } from '../store/transitions/evidence.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import { approvedModuleMap } from './policy.js';
 import type { Tx } from '../store/transitions/tx.js';
@@ -34,7 +32,7 @@ import { OBSERVED_ON } from './evidence.js';
 import { designPolicyOf } from './policy.js';
 import { designDueState } from './readiness.js';
 import { writeDueState } from './due.js';
-import { latestCheck } from './records.js';
+import { latestCheck, reviewLinks } from './records.js';
 
 type Db = Database.Database;
 
@@ -294,7 +292,8 @@ interface Verdict {
   observed_on?: string;
   not_observed_reason?: string;
   evidence: string[];
-  deltas: { state?: string; owner_words: string; kind: string }[];
+  // F4: `criterion` and `check`, only as the delta names them.
+  deltas: { state?: string; owner_words: string; kind: string; criterion?: string; check?: string }[];
 }
 
 // The review file's blob as the project's latest design save left it (D7
@@ -377,7 +376,7 @@ export const DESIGN_VERDICTS: KindSpec = {
     if (option !== 'confirm' && option !== 'reject') throw new Refusal(400, 'invalid_option', `"${option}" is not an option of design_verdicts.`, 'Answer confirm or reject.', { option });
     const proposed = parseJson<Verdict[]>(r.verdicts) ?? [];
     // Everything the confirmation carries is judged before anything is consumed.
-    const shaped = option === 'confirm' ? confirmedVerdicts(proposed, extra) : null;
+    const shaped = option === 'confirm' ? confirmedVerdicts(proposed, extra, reviewLinks(tx.db, r.project)) : null;
     consumeDecision(tx, d, option, note);
     if (option === 'reject') return consumed(d);
     recordApproval(tx, d, { consequence: 'the review\'s verdicts confirmed', subjectType: 'design_review', subjectId: r.id });
@@ -385,7 +384,6 @@ export const DESIGN_VERDICTS: KindSpec = {
     tx.db.prepare('UPDATE "design_reviews" SET "verdicts" = ?, "confirmed_by" = ?, "confirmation_decision" = ? WHERE "id" = ?').run(JSON.stringify(verdicts), tx.actor.actor_kind, d.id, r.id);
     // Implementation defects of the confirmed verdicts, filed (D7 §10.3).
     const findings = fileDefects(tx, r, verdicts, shaped!.severity);
-    if (findings.length > 0) tx.db.prepare('UPDATE "design_reviews" SET "findings" = ? WHERE "id" = ?').run(JSON.stringify(findings), r.id);
     tx.emit('design.verdicts_confirmed', { project: r.project, design_review: r.id }, {
       decision: d.id,
       verdicts: verdicts.map((v) => ({ target: v.target, screen: v.screen, verdict: v.verdict, status: v.status })),
@@ -400,7 +398,10 @@ const invalidAnswer = (field: string, why: string) => new Refusal(422, 'invalid_
 
 // The proposals as the owner confirms them: edits replace a verdict's
 // fields, a strike marks it struck, every other confirmed (SEAM.md §525).
-function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined): { verdicts: Verdict[]; severity: string } {
+// F4: a delta's `criterion` and `check`, as an edit names them or the
+// review file proposed them, are judged against the store as it is now; an
+// invalid link is refused naming its field, nothing consumed.
+function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined, links: ReviewLinks): { verdicts: Verdict[]; severity: string } {
   const at = (target: unknown, screen: unknown) => proposed.findIndex((v) => v.target === target && v.screen === screen);
   const edits = extra?.edits === undefined ? [] : extra.edits;
   const strikes = extra?.strikes === undefined ? [] : extra.strikes;
@@ -409,6 +410,7 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined):
   const severity = extra?.severity === undefined ? 'medium' : extra.severity;
   if (typeof severity !== 'string' || !(SEVERITIES as readonly string[]).includes(severity)) throw invalidAnswer('severity', `must be one of ${SEVERITIES.join(', ')}`);
   const out: Verdict[] = proposed.map((v) => ({ ...v, status: 'confirmed' }));
+  const edited = new Set<number>();
   for (const [i, e] of edits.entries()) {
     if (e === null || typeof e !== 'object' || Array.isArray(e)) throw invalidAnswer(`edits[${i}]`, 'must be an object');
     const x = e as Record<string, unknown>;
@@ -425,18 +427,21 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined):
       v.observed_on = x.observed_on;
     }
     if (x.deltas !== undefined) {
-      if (!Array.isArray(x.deltas)) throw invalidAnswer(`edits[${i}].deltas`, 'must be a list of {state?, owner_words, kind}');
+      if (!Array.isArray(x.deltas)) throw invalidAnswer(`edits[${i}].deltas`, 'must be a list of {state?, owner_words, kind, criterion?, check?}');
       v.deltas = x.deltas.map((dl, k) => {
         if (dl === null || typeof dl !== 'object' || Array.isArray(dl)) throw invalidAnswer(`edits[${i}].deltas[${k}]`, 'must be an object');
         const y = dl as Record<string, unknown>;
-        for (const key of Object.keys(y)) if (!['state', 'owner_words', 'kind'].includes(key)) throw invalidAnswer(`edits[${i}].deltas[${k}].${key}`, 'is not a field of a delta');
+        for (const key of Object.keys(y)) if (!['state', 'owner_words', 'kind', 'criterion', 'check'].includes(key)) throw invalidAnswer(`edits[${i}].deltas[${k}].${key}`, 'is not a field of a delta');
         if (typeof y.owner_words !== 'string' || y.owner_words === '') throw invalidAnswer(`edits[${i}].deltas[${k}].owner_words`, 'must be the owner\'s words');
         if (typeof y.kind !== 'string' || !(DELTA_KINDS as readonly string[]).includes(y.kind)) throw invalidAnswer(`edits[${i}].deltas[${k}].kind`, `must be one of ${DELTA_KINDS.join(', ')}`);
         if (y.state !== undefined && typeof y.state !== 'string') throw invalidAnswer(`edits[${i}].deltas[${k}].state`, 'must be a string');
-        return { ...(typeof y.state === 'string' ? { state: y.state } : {}), owner_words: y.owner_words, kind: y.kind };
+        const link = deltaLinkProblem(y, links);
+        if (link !== null) throw invalidAnswer(`edits[${i}].deltas[${k}].${link.field}`, link.why);
+        return { ...(typeof y.state === 'string' ? { state: y.state } : {}), owner_words: y.owner_words, kind: y.kind, ...linkOf(y) };
       });
     }
     out[j] = v;
+    edited.add(j);
   }
   for (const [i, s] of strikes.entries()) {
     if (s === null || typeof s !== 'object' || Array.isArray(s)) throw invalidAnswer(`strikes[${i}]`, 'must be {target, screen}');
@@ -444,6 +449,16 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined):
     const j = at(x.target, x.screen);
     if (j < 0) throw invalidAnswer(`strikes[${i}]`, `names no verdict of the review (${String(x.target)}/${String(x.screen)})`);
     out[j] = { ...out[j]!, status: 'struck' };
+  }
+  // The links the review file proposed on a confirmed verdict the owner did
+  // not edit: judged again now (the effective version or the index may have
+  // changed since the close).
+  for (const [j, v] of out.entries()) {
+    if (edited.has(j) || v.status !== 'confirmed') continue;
+    for (const [k, dl] of (v.deltas ?? []).entries()) {
+      const link = deltaLinkProblem(dl, links);
+      if (link !== null) throw invalidAnswer(`deltas of ${v.target}/${v.screen}[${k}].${link.field}`, `${link.why}; edit the delta to name a link that holds, or none`);
+    }
   }
   return { verdicts: out, severity };
 }
@@ -468,27 +483,22 @@ function reviewCandidate(db: Db, r: ReviewRow, target: string): string | null {
   return null;
 }
 
-// The check that decides a target's design criteria (D7 §10.3: "the design
-// criteria's checks deciding"): a check of the effective protected version
-// covering a criterion of the approved design for that target, or null.
-function designCheckFor(db: Db, project: string, target: string): { check: string; criterion: string } | null {
-  // The ids the approval mapped (criterion-map.ts; the slice-46 review's
-  // B1), each criterion on its resolved targets.
-  const ids = new Set((mappedCriteria(db, project)?.mapped ?? []).filter((e) => e.targets.length === 0 || e.targets.includes(target)).map((e) => e.id));
-  const version = effectiveVersion(db, project);
-  if (!version || ids.size === 0) return null;
-  // The finding names the criterion with the check, so the check verifies
-  // it by that criterion (D3 §2.11 condition 2).
-  for (const k of checksOfVersion(db, version.id).sort((a, b) => a.key.localeCompare(b.key))) {
-    const covered = (parseJson<string[]>((k as unknown as { criteria: string | null }).criteria) ?? []).find((c) => ids.has(c));
-    if (covered !== undefined) return { check: k.key, criterion: covered };
-  }
-  return null;
-}
+// A delta's link as it names it (F4): `criterion` and `check` where each is
+// a string, nothing for one absent or null.
+const linkOf = (d: { criterion?: unknown; check?: unknown }): { criterion?: string; check?: string } => ({
+  ...(typeof d.criterion === 'string' ? { criterion: d.criterion } : {}),
+  ...(typeof d.check === 'string' ? { check: d.check } : {}),
+});
 
 // Each implementation defect of a confirmed verdict (a delta of kind
 // `implementation` or `both`) is one finding with its disposition owed to
-// the owner; nothing from a struck verdict or a `design` delta.
+// the owner; nothing from a struck verdict or a `design` delta. The finding
+// carries exactly the criterion and check its confirmed delta names, null
+// each where it names none (F4, Sean's ruling 2026-10-18): the engine never
+// derives either, from another criterion of the same target or otherwise.
+// The review's `findings` are recorded before the questions are asked, so
+// the disposition question reads the finding as a design review's
+// (queue.ts DISPOSITION_OWED).
 function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string): string[] {
   const subject = parseJson<{ build_ref?: string }>(r.subject) ?? {};
   const out: string[] = [];
@@ -507,15 +517,15 @@ function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string
         category: 'defect',
         severity,
         message: `${dl.owner_words} [design review ${r.id}, ${where}${typeof subject.build_ref === 'string' ? `, build ${JSON.stringify(subject.build_ref)}` : ''}]`,
-        ...(() => {
-          const decides = designCheckFor(tx.db, r.project, v.target);
-          return decides ? { check: decides.check, criterion: decides.criterion } : {};
-        })(),
+        criterion: typeof dl.criterion === 'string' ? dl.criterion : null,
+        check: typeof dl.check === 'string' ? dl.check : null,
       });
-      raiseQuestion(tx, { project: r.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: id, scope: OWED_SCOPE });
       out.push(id);
     }
   }
+  if (out.length === 0) return out;
+  tx.db.prepare('UPDATE "design_reviews" SET "findings" = ? WHERE "id" = ?').run(JSON.stringify(out), r.id);
+  for (const id of out) raiseQuestion(tx, { project: r.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: id, scope: OWED_SCOPE });
   return out;
 }
 

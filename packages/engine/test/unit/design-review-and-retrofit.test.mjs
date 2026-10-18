@@ -86,6 +86,24 @@ const reviewReasons = (review, ctx = {}) => {
 };
 const REVIEW = { subject: { kind: 'owner_build', target: 'android', build_ref: 'b' }, screens: [{ target: 'android', key: 'S2', verdict: 'matches', observed_on: 'device', evidence: [], deltas: [] }], revised_design: false, first_design: false };
 
+test('F4: a delta names a criterion and a covering check only explicitly; an unknown criterion or check, a check not covering it, or a check without one is refused; a recorded file is not judged again', () => {
+  const links = { criteria: ['R2.2', 'R3.2'], checks: { 'marker-android': ['R3.2'], 'accept-r2-tokens': ['R2.2'] } };
+  const withDelta = (d) => ({ ...REVIEW, screens: [{ ...REVIEW.screens[0], verdict: 'deltas', deltas: [{ owner_words: 'x', kind: 'implementation', ...d }] }] });
+  assert.deepEqual(reviewReasons(withDelta({}), { links }), [], 'no link: nothing to judge');
+  assert.deepEqual(reviewReasons(withDelta({ criterion: 'R3.2' }), { links }), [], 'a criterion alone');
+  assert.deepEqual(reviewReasons(withDelta({ criterion: 'R3.2', check: 'marker-android' }), { links }), [], 'a criterion and the check covering it');
+  const field = (d, ctx = { links }) => reviewReasons(withDelta(d), ctx).map((r) => r.subjects.field);
+  assert.deepEqual(field({ criterion: 'R9.9', check: 'marker-android' }), ['screens[0].deltas[0].criterion']);
+  assert.deepEqual(field({ criterion: 'R3.2', check: 'nope' }), ['screens[0].deltas[0].check']);
+  assert.deepEqual(field({ criterion: 'R3.2', check: 'accept-r2-tokens' }), ['screens[0].deltas[0].check']);
+  assert.deepEqual(field({ check: 'marker-android' }), ['screens[0].deltas[0].check']);
+  assert.deepEqual(field({ criterion: 'R3.2' }, {}), ['screens[0].deltas[0].criterion'], 'unknown links: nothing named is accepted');
+  assert.deepEqual(field({ criterion: 'R3.2' }, { links: { criteria: null, checks: {} } }), ['screens[0].deltas[0].criterion'], 'no index registered');
+  const recorded = withDelta({ criterion: 'R3.2', check: 'gone' });
+  const blob = gitBlobId(Buffer.from(JSON.stringify(recorded)));
+  assert.deepEqual(reviewReasons(recorded, { links, reviews: { held: { [blob]: [] }, run: [] } }), [], 'a recorded review is judged again at its confirmation, not at every save');
+});
+
 test('B.14: a review file is closed, a verdict never carries a status, and cites only its own evidence', () => {
   assert.deepEqual(reviewReasons(REVIEW), []);
   const forged = reviewReasons({ ...REVIEW, screens: [{ ...REVIEW.screens[0], status: 'confirmed' }] });
