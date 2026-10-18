@@ -41,8 +41,10 @@
 
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
+import { CLI } from '../engine.mjs';
 import { alphaTarget, effectiveVersion, findingsOf, installGatedPlan, proposalsOf, stageGate } from '../gates.mjs';
 import { changePolicy, createProject, workItemsOf } from '../journal.mjs';
 import { gitQuiet, makeProjectRepo, refOid, trailersOf } from '../repos.mjs';
@@ -132,6 +134,21 @@ export const SELF_TEST = selfTestArgs();
 // held, within the project's chain limit (an item past the chain boundary
 // waits for a person's `continue`), or a run not ended. It refuses otherwise,
 // before anything is started or resumed.
+//
+// An eligible item whose third milestone (D7 §8.2: a UI stage's
+// `design_ready`) the engine finds unmet `design_pending` in the store as it
+// stands is held, not leftover work (M519 finding F2; the driver's ruling of
+// 2026-10-18 under Sean's delegation; SEAM.md §550): releasing it is the
+// design step's own purpose. That is decided by the engine's own predicate,
+// `designUnmet` of the compiled `design/readiness.js` beside the CLI that runs
+// on the home (pure reads), over this read-only handle, before any engine
+// starts. Only `design_pending` is read so; every other computed hold is not
+// (an item held only by one of those still counts). Unknown is never held: a
+// predicate that cannot be loaded or throws, a `depends_on` that cannot be
+// read, or a milestone naming no stage of the item's project leaves the item
+// counted, marked `design_hold: "unknown"`. An item whose readable
+// `depends_on` has no `design_ready` milestone (every M2 to M5 project's) is
+// read exactly as before.
 
 const CONTRACT_CONFIG = JSON.parse(readFileSync(new URL('../../contract/config.json', import.meta.url), 'utf8'));
 function contractDefault(key) {
@@ -147,8 +164,48 @@ function contractDefault(key) {
   return walk(CONTRACT_CONFIG);
 }
 
+// The engine's `designUnmet(db, stage)` (null when it cannot be loaded).
+const DESIGN_UNMET = await import(pathToFileURL(join(dirname(CLI), 'design', 'readiness.js')).href).then(
+  (m) => (typeof m.designUnmet === 'function' ? m.designUnmet : null),
+  () => null,
+);
+
+// 'none' (no design_ready milestone), 'held' (one is unmet design_pending by
+// the engine's predicate) or 'unknown' (one cannot be judged; never held).
+// The rest: no design_ready milestone is unmet `design_pending`.
+function designHoldOf(db, w) {
+  let deps;
+  try {
+    deps = JSON.parse(w.depends_on ?? '[]');
+  } catch {
+    return 'unknown';
+  }
+  if (!Array.isArray(deps)) return 'unknown';
+  const design = deps.filter((d) => d !== null && typeof d === 'object' && d.milestone === 'design_ready');
+  if (design.length === 0) return 'none';
+  if (DESIGN_UNMET === null) return 'unknown';
+  let unknown = false;
+  for (const d of design) {
+    if (typeof d.stage !== 'string' || !db.prepare('SELECT 1 FROM "stages" WHERE "id" = ? AND "project" = ?').get(d.stage, w.project)) {
+      unknown = true;
+      continue;
+    }
+    let unmet;
+    try {
+      unmet = DESIGN_UNMET(db, d.stage);
+    } catch {
+      unknown = true;
+      continue;
+    }
+    if (unmet === 'design_pending') return 'held';
+  }
+  return unknown ? 'unknown' : 'not_held';
+}
+
 // For each project of `ids` (default: every project of M239 in the home):
-// whether it is paused, its dispatchable items and its live runs.
+// whether it is paused, its dispatchable items and its live runs; and, only
+// when there are any, `design_held`: the eligible items the engine holds
+// `design_pending` (not counted dispatchable).
 export function leftovers(home, ids = null) {
   if (!exists(join(home, 'store.db'))) return [];
   return withStore(home, (db) => {
@@ -158,12 +215,21 @@ export function leftovers(home, ids = null) {
       const policy = db.prepare('SELECT r."effective" FROM "projects" p JOIN "policy_revisions" r ON r."id" = p."policy_revision" WHERE p."id" = ?').get(project);
       const recorded = policy ? JSON.parse(policy.effective).max_chained_roles : undefined;
       const maxChained = Number.isInteger(recorded) ? recorded : contractDefault('max_chained_roles');
-      const dispatchable = db
-        .prepare(`SELECT "id", "kind", "status", "chain", "dispatch_hold" FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`)
+      const dispatchable = [];
+      const designHeld = [];
+      const eligible = db
+        .prepare(`SELECT "id", "project", "kind", "status", "chain", "dispatch_hold", "depends_on" FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`)
         .all(project)
         .filter((w) => w.dispatch_hold !== 1 && !(w.chain + 1 > maxChained));
+      for (const w of eligible) {
+        const design = designHoldOf(db, w);
+        // The row as before (no `project`, no `depends_on`).
+        const row = { id: w.id, kind: w.kind, status: w.status, chain: w.chain, dispatch_hold: w.dispatch_hold };
+        if (design === 'held') designHeld.push({ id: w.id, kind: w.kind, held: 'design_pending' });
+        else dispatchable.push(design === 'unknown' ? { ...row, design_hold: 'unknown' } : row);
+      }
       const live = db.prepare(`SELECT "id", "role", "state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`).all(project);
-      return { project, paused: p?.paused === 1, dispatchable, live };
+      return { project, paused: p?.paused === 1, dispatchable, live, ...(designHeld.length > 0 ? { design_held: designHeld } : {}) };
     });
   });
 }
