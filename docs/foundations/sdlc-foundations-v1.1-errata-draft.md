@@ -2588,3 +2588,55 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - **The other conversational roles:** M5's daily-limit refusal stays for Vision, Spec Writer and Architect turns in M6. Consistent held-turn behaviour is recorded as a later improvement; extending scheduling and recovery now would enlarge the closing scope.
 5. **The first real-unit preview: evidence acknowledged and preserved.** Sean checked the files: both unit lists are empty, and `run.log` records 12 passed, 0 failed, exit code 0. The evidence, with its commands and exit statuses, is now kept at `docs/acceptance/reports/M6-first-preview/`. It supports the before-and-after result. It does not establish that unrelated units were unchanged throughout the run.
 6. **The journal staging mistake: acknowledged; no further reversal needed.** `364367b` restores the committed journal, and Sean's edits stay in his working tree. Explicit-path staging is the correction. The driver keeps the watcher's current edits intact and inspects the staged diff before committing.
+
+## E163. Slice 46 and E162's checks merged; objections 200 to 204 upheld; two replan defects found before M519 and the driver's ruling on a pending replacement (decided by the driver under Sean's delegation, 2026-10-18)
+
+**Status: decided by the driver** under Sean's standing instruction; Sean may overturn any item.
+
+1. **Slice 46 merged** (`a149cc5`; build `1416a60`, cases `16a058a` and `c1200cc`): M519, M535, M537, M539, M540 and M541, plus the packages, the pace read and the real-run harness. The gate ran at `1f20d2e`. It was clean apart from load-only failures: M440, and M338, which passed three of three alone. M540, the report, still fails, as a skeleton should until the report is written. **All of M6's slices, 39 to 46, are merged.**
+2. **The slice 46 review's findings, fixed** (`f3fbc8c`, `9a7e58b`, `1416a60`).
+   - **B1:** each design criterion is now mapped, by its index, to the specification id that its consolidated change wrote. The map is recorded as the change is applied (migration 0037, `design_revisions.criterion_map`).
+     - An asset-only revision keeps its predecessor's map.
+     - The Verifier's and Builder's packages, the review package and the review's deciding check all read the map.
+     - A miss is stated as unmatched, never dropped.
+   - **S1, the driver's decision:** a UI stage's human wait counts a decision only within the stage's design holds, cut to the stage's lifetime.
+   - **S2:** a Designer session's tokens are unknown when a row's usage is not whole.
+   - **S3:** the route rule is stated in the screens schema.
+   - **S4:** review mode records the owner's `observed_on` as `{value, owner_reported}`; the files the mode lacks are null.
+   - `ROLE_KEY` gains `designer: backend_designer`; the fake rehearsal found this was missing.
+   - An `asset_updated` fix is told, for each bound path, which slot, variant, `slot@version` and digest belong there. A path that no binding names is stated with its variant unknown.
+3. **Objections 200 to 204 upheld; tests corrected** (`verify/m6-s46b`):
+   - **200:** M539 (c), a review with no evidence, names `observed_on`.
+   - **201:** the correction fake reads the programs where the engine now states them. `verifier.toolchain` stays absent from the correction package.
+   - **202:** the fakes work only from what the packages state.
+   - **203:** M539 (b)'s overlap of one-shots beside the session is made certain by a held build.
+   - **204:** M537 (a3): `designer.review.files` is null for what the mode lacks.
+4. **E162's checks merged** (`390b2fd`; cases `eb951df`).
+   - **What the cases cover:**
+     - the stall invariant (M512's new cases, M536 (l), M538 (f));
+     - M526's no-change and no-duplicate cases;
+     - the Waterlog brief's three edits;
+     - the runner reporting an intentional wait as waiting.
+   - **The gate at `bcc69de`:** 440 files, 2,373 passed, 9 failed.
+     - M440 (storm and requested tick), M29 and M15 each passed three of three alone.
+     - M540 is the skeleton.
+     - M442 (c) packages-whole failed once alone in three runs, which led to item 6.
+5. **E162 item 4, read strictly: every design approval records its own effective asset set** (build `1b11e7f`, cases `5db011a`, migration 0038, `design_revisions.effective_assets` and `effective_assets_digest`). `design.assets_approved` and `asset_updated` work still happen only on a change. M526 pins each approval's set through `GET …/design` and `design.approved`. The new assertions fail without the feature.
+6. **Two engine defects behind an intermittent M442 failure, found before M519.**
+   - **The symptom:** M442 (c) packages-whole intermittently reported a replan play with "every element missing". The harness logged a play that threw with no blocks, so an errored play read as an element-less package. Now the child logs the package's blocks before playing, and (c2) and (c3) report an errored play as its own failure (Verifier, `verify/m6-replan`).
+   - **Defect 1: `depends_on` as stage ids.** The replan package, and the check-authoring package, stated each stage's stored `depends_on` as stage ids, while the plan schema requires stage numbers.
+     - An Architect copying the inputs as built was refused `PLAN_INVALID` and parked. Every early replan of an open phase with dependent stages failed this way, and M519's design batch can trigger one (D7 §10.4).
+     - Fixed with `dependsOnNumbers`. M430 (c) pins it.
+   - **Defect 2, and the driver's ruling: the phase waits.** Nothing stopped a phase completing while a replacement replan of its plan was pending. The replan then launched with a package with no open plan, saying "plan the next phase", against a generation already complete.
+     - **The ruling:** a phase does not complete while any replacement replan is pending that is aimed at its open plan generation, or at any generation that one replaced. "Pending" means queued, in flight, awaiting its repair, parked with its owner question, or its proposal still `proposed`.
+     - It completes once the replacement publishes and its stages are built, or once the replacement is retired by the owner's route.
+     - The plan read names the hold in `plan.completion_held_by`. A parked replan is accounted for by its question (E162 item 1's invariant).
+     - The design documents and specs say nothing about this case, and none contradicts the ruling.
+     - M430 R1 and R2 pin it, including the hold while the replacement's proposal awaits the owner's approval.
+     - Commits: build `d4661a0`, `877d823`; cases `e554382`, `c9f09fa`; SEAM §548.
+7. **Recorded for Sean (from the replan review).**
+   - A spec change whose replan is refused as stale by the compare-and-swap is not raised again. This existed before and is not fixed here.
+   - No single owner act retires a pending proposal. `reject` creates the replan's next generation, so the phase is released only once that replan parks and is answered `cancel` (consistent with D6 §5.4).
+   - At T2/T3, the phase verification is requested before the hold check. If the replacement then publishes, that Verifier run is spent on the old generation, which costs money in the paid lane.
+   - The owner's `GET …/plan` still shows `depends_on` as ids, beside each stage's id. The Builder package silently drops an id it cannot resolve. That predates this change and is an unknown turned into none, to be fixed.
+8. **The M519 dress rehearsal** passed ten of ten at `390b2fd` on a clean checkout of `main`. It is repeated at the revision the paid run uses.
