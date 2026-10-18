@@ -2634,6 +2634,7 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
      - The design documents and specs say nothing about this case, and none contradicts the ruling.
      - M430 R1 and R2 pin it, including the hold while the replacement's proposal awaits the owner's approval.
      - Commits: build `d4661a0`, `877d823`; cases `e554382`, `c9f09fa`; SEAM §548.
+     - **Merged** with item 5 at `e8529d3`. The gate at `b76c37e`: 440 files, 2,378 passed, 7 failed, in M440, M338, M430 (S2, an existing case), M70, M104 and M540's skeleton. Each except M540 passed three of three alone; M442 (c) packages-whole did not fail.
 7. **Recorded for Sean (from the replan review).**
    - A spec change whose replan is refused as stale by the compare-and-swap is not raised again. This existed before and is not fixed here.
    - No single owner act retires a pending proposal. `reject` creates the replan's next generation, so the phase is released only once that replan parks and is answered `cancel` (consistent with D6 §5.4).
