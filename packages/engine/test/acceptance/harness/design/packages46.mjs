@@ -167,7 +167,7 @@ export const SCHEMA_EXPECTED = Object.freeze([
       '': ['design_version', 'subject', 'screens', 'revised_design', 'first_design'],
       subject: ['kind', 'candidate', 'target', 'build_ref'],
       'screens[]': ['target', 'key', 'verdict', 'observed_on', 'not_observed_reason', 'evidence', 'deltas'],
-      'screens[].deltas[]': ['state', 'owner_words', 'kind'],
+      'screens[].deltas[]': ['state', 'owner_words', 'kind', 'criterion', 'check'],
     },
     enums: { 'screens[].verdict': REVIEW_VERDICTS },
   },
