@@ -154,3 +154,49 @@ export function mappedCriteria(db: Db, project: string): MappedCriteria | null {
   }
   return out;
 }
+
+// ---- the design criteria a person judges (D7 §7.2, §7.3; the driver's ruling on M519's F1) ----------
+//
+// A design criterion of kind `human` is judged by a person, carried by its
+// target's human test, never by a check: it is never uncovered in an
+// impact, owes no check or correction, carries no ACCEPTANCE_SCOPE_INCOMPLETE
+// and holds nothing when a Verifier defers it. The engine knows it by the
+// kind its design's criteria.json gives it, through the criterion map that
+// design's approval recorded, never by the Spec Writer's wording.
+
+// Only a criterion matched by its text (`text`) or kept from an earlier
+// design (`existing`) is classified `human`: one paired by order alone
+// (`order`, a reworded text) is never a person's, so a rewording cannot move
+// a checkable criterion out of the gates (it stays checkable, its uncovered
+// state visible; the Reviewer's should-fix 1 on build/m6-ready).
+const judgedEntry = (e: CriterionMapEntry): e is CriterionMapEntry & { id: string } => e.kind === 'human' && typeof e.id === 'string' && (e.how === 'text' || e.how === 'existing');
+
+// The specification ids of the design in force's criteria of kind `human`:
+// the latest approved revision's map (an asset-only revision carries the
+// one it supersedes, approval.ts), so a criterion a later design drops is
+// checkable again.
+export function designHumanCriteria(db: Db, project: string): Set<string> {
+  const rev = db
+    .prepare(`SELECT "criterion_map" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`)
+    .get(project) as { criterion_map: string | null } | undefined;
+  return new Set((parseJson<CriterionMapEntry[]>(rev?.criterion_map ?? null) ?? []).filter(judgedEntry).map((e) => e.id));
+}
+
+// The same, for a specification change not applied yet: the design in
+// force's, unless `request` is a design's consolidated change, whose design
+// will be the one in force: then the ids its proposed specification gives
+// that design's `human` criteria, mapped as its approval will map them.
+export function humanCriteriaOfChange(
+  db: Db,
+  args: { project: string; request: string | null; rep: SpecRepresentation; added_criteria: string[]; added_requirements: string[] },
+): Set<string> {
+  const rev =
+    args.request === null
+      ? undefined
+      : (db.prepare('SELECT "content" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1').get(args.request) as { content: string | null } | undefined);
+  if (!rev) return designHumanCriteria(db, args.project);
+  const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[] }; screens?: { screens?: Record<string, unknown>[] } }>(rev.content);
+  const criteria = content?.criteria?.criteria ?? [];
+  const map = criterionMap({ criteria, screens: content?.screens?.screens ?? [], rep: args.rep, added_criteria: args.added_criteria, added_requirements: args.added_requirements });
+  return new Set(map.filter(judgedEntry).map((e) => e.id));
+}

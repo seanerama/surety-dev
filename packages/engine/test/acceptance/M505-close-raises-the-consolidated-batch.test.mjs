@@ -24,6 +24,16 @@
 //     requirement in the same batch's spec change;
 // (l) after the assignment: the human tests' status, the evidence tables,
 //     and a target whose last UI stage is in a completed phase.
+//
+// M519's finding F1 (SEAM.md §549; the driver's ruling of 2026-10-17):
+// (b), (l) design criteria of kind `human`, written by the Spec Writer as
+//     plain criteria: never uncovered in the impact (at raise and as
+//     applied), never owed a check by the correction, carried by their
+//     target's human test on GET …/design;
+// (b) the spoof: a checkable and a human criterion under R2, reworded by the
+//     Spec Writer and written in swapped order (no text matches): the
+//     checkable one (R2.3) is not judged by a person; it stays uncovered and
+//     owed.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -37,6 +47,7 @@ import { scriptedEngine, tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { CRITERIA, REQUIREMENTS, specV2For } from './harness/design/reference.mjs';
+import { CHECKABLE_IDS, CRITERIA_WITH_HUMAN, SPOOF_CRITERIA, SPOOF_IDS, SPOOF_V2, HUMAN_IDS, HUMAN_KIND_IDS, assertV2Shape, checksCovering, designChange, readinessFacts } from './harness/design/ready.mjs';
 import {
   VARIANTS,
   answerWith,
@@ -371,5 +382,66 @@ describe('M505 close raises the consolidated batch', () => {
     assert.equal(JSON.stringify(phasePlansOf(fx.home, p.id).find((x) => x.id === phase1.id)), before.phase1, 'phase 1\'s completed_at and completion binding unchanged');
     assert.equal(workOf(fx.home, p.id, 'replan').length, before.replans, 'no replan');
     void step;
+  });
+  test('(b), (l) M519 F1: human-kind criteria written as plain criteria are never uncovered in the impact, never owed a check, and are carried by their target\'s human test', async (t) => {
+    assertV2Shape(assert);
+    const fx = await scriptedEngine(t);
+    const { p, ctx, v2 } = await published(fx, { criteria: CRITERIA_WITH_HUMAN });
+    assert.deepEqual(v2.requirements.find((r) => r.key === 'R2').criteria.map((c) => c.id), ['R2.1', 'R2.2', 'R2.3', 'R2.4'], 'the fixture: the Spec Writer writes R2.4 as a plain criterion');
+    await design(fx, p, { criteria: CRITERIA_WITH_HUMAN });
+    const batch = await settledBatch(fx, ctx);
+    // At raise: the impact lists the checkable criteria uncovered, never the human-kind ones.
+    const atRaise = JSON.parse(rows(fx.home, 'SELECT "impact_value" FROM "spec_change_requests" WHERE "id" = ?', batch.spec_change.subject_id)[0]?.impact_value ?? 'null');
+    const uncoveredAtRaise = atRaise?.checks?.uncovered ?? null;
+    assert.ok(Array.isArray(uncoveredAtRaise), `the impact computed at raise (${JSON.stringify(atRaise?.checks)})`);
+    for (const id of CHECKABLE_IDS) assert.ok(uncoveredAtRaise.includes(id), `the fixture is live: ${id} uncovered at raise (${uncoveredAtRaise})`);
+    assert.deepEqual(uncoveredAtRaise.filter((id) => HUMAN_IDS.includes(id)), [], `at raise: no human-kind criterion uncovered in the impact (D7 §7.3; the ruling's item 2) (${uncoveredAtRaise})`);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    await pump(fx, ctx, () => approvedRevision(fx.home, p.id) ?? undefined, { what: 'the design approved', max: 10 });
+    // As applied: the impact recomputed, and the correction it registered, owe nothing for them.
+    const change = designChange(fx.home, p.id);
+    assert.deepEqual((change.impact?.checks?.uncovered ?? []).filter((id) => HUMAN_IDS.includes(id)), [], `as applied: no human-kind criterion uncovered (${change.impact?.checks?.uncovered})`);
+    assert.ok(change.correction, `the correction registered for the checkable criteria (${readinessFacts(fx.home, p.id)})`);
+    const owed = change.correction.trigger_evidence?.criteria?.uncovered ?? [];
+    assert.deepEqual([...owed].sort(), CHECKABLE_IDS, `the correction names the checkable criteria and no human-kind one (${owed})`);
+    assert.equal(count(fx.home, 'check_obligations', '"project" = ? AND (' + HUMAN_IDS.map(() => '"criteria" LIKE ?').join(' OR ') + ')', p.id, ...HUMAN_IDS.map((id) => `%"${id}"%`)), 0, 'no obligation names a human-kind criterion');
+    await pump(fx, ctx, () => designRevisions(fx.home, p.id).find((r) => r.ready_at) ?? undefined, { what: 'readiness', max: 40 }).catch((err) => assert.fail(`${err.message.split('\n')[0]} (${readinessFacts(fx.home, p.id)})`));
+    for (const id of HUMAN_IDS) assert.deepEqual(checksCovering(fx.home, p.id, id), [], `no check of ${id} was owed or written`);
+    // Carried by the target's human test (D7 §7.3): GET …/design human_tests[].criteria.
+    const read = await readDesign(fx, p.id);
+    for (const [target, id] of Object.entries(HUMAN_KIND_IDS)) {
+      const h = (read.human_tests ?? []).find((x) => x.target === target);
+      assert.ok(h, `the ${target} human test on GET …/design (${JSON.stringify(read.human_tests)})`);
+      assert.ok(Array.isArray(h.criteria) && h.criteria.includes(id), `the ${target} human test carries ${id} (human_tests[].criteria; the ruling's item 2) (${JSON.stringify(h)})`);
+      const other = Object.entries(HUMAN_KIND_IDS).filter(([t2]) => t2 !== target).map(([, x]) => x);
+      assert.deepEqual(h.criteria.filter((x) => other.includes(x) || CHECKABLE_IDS.includes(x)), [], `and only its own target's human-kind criteria (${JSON.stringify(h.criteria)})`);
+      assert.equal(h.status, 'pending', `still pending, never verified (${h.status})`);
+    }
+  });
+  test('(b) M519 F1, the spoof: a checkable and a human criterion under R2 reworded and swapped by the Spec Writer: the checkable one is not judged by a person, it stays uncovered and owed', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, ctx } = await published(fx, { criteria: SPOOF_CRITERIA });
+    fx.scripted.kindScript('spec_change', specChangeScriptFor(SPOOF_V2));
+    const r2 = SPOOF_V2.requirements.find((r) => r.key === 'R2').criteria;
+    assert.deepEqual(r2.map((c) => c.id), ['R2.1', 'R2.2', 'R2.3'], 'the fixture: R2.2 the reworded human criterion, R2.3 the reworded checkable one');
+    for (const c of r2.slice(1)) assert.ok(!SPOOF_CRITERIA.criteria.some((x) => x.text === c.text), `the fixture: ${c.id}'s text matches no criterion of criteria.json`);
+    await design(fx, p, { criteria: SPOOF_CRITERIA });
+    const batch = await settledBatch(fx, ctx);
+    const checkable = SPOOF_IDS.checkable;
+    const atRaise = JSON.parse(rows(fx.home, 'SELECT "impact_value" FROM "spec_change_requests" WHERE "id" = ?', batch.spec_change.subject_id)[0]?.impact_value ?? 'null');
+    assert.ok((atRaise?.checks?.uncovered ?? []).includes(checkable), `at raise: the checkable ${checkable} uncovered, never taken for a person's (${JSON.stringify(atRaise?.checks)})`);
+    assert.equal((atRaise?.checks?.judged_by_person ?? []).includes(checkable), false, `at raise: ${checkable} not judged by a person (${JSON.stringify(atRaise?.checks)})`);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    await pump(fx, ctx, () => approvedRevision(fx.home, p.id) ?? undefined, { what: 'the design approved', max: 10 });
+    const change = designChange(fx.home, p.id);
+    assert.ok((change.impact?.checks?.uncovered ?? []).includes(checkable), `as applied: ${checkable} uncovered (${JSON.stringify(change.impact?.checks)})`);
+    assert.ok(change.correction, `a correction registered (${readinessFacts(fx.home, p.id)})`);
+    assert.ok((change.correction.trigger_evidence?.criteria?.uncovered ?? []).includes(checkable), `the correction owes ${checkable} (${JSON.stringify(change.correction.trigger_evidence)})`);
+    const read = await readDesign(fx, p.id);
+    const web = (read.human_tests ?? []).find((x) => x.target === 'web');
+    assert.ok(web, `the web human test on GET …/design (${JSON.stringify(read.human_tests)})`);
+    assert.equal((web.criteria ?? []).includes(checkable), false, `the web human test does not carry the checkable ${checkable} (${JSON.stringify(web)})`);
   });
 });

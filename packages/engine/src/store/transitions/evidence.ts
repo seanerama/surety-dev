@@ -9,7 +9,8 @@ import type { Tx } from './tx.js';
 
 // The kinds of an environment-bound check (D4 §5.1).
 export const POST_DEPLOY_KINDS = ['post_deploy_identity', 'post_deploy_behavior'];
-import { MODULE_PRESENCE, type ScopeCheck, type Tier, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf } from '../../checks/scope.js';
+import { MODULE_PRESENCE, type ScopeCheck, type Tier, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf, withoutJudgedByPerson } from '../../checks/scope.js';
+import { designHumanCriteria } from '../../design/criterion-map.js';
 
 const SIGNOFF_ORDER = (s: Signoff): number => ({ candidate: 0, module: 1, security: 2 })[s.scope] ?? 3;
 
@@ -308,13 +309,15 @@ function scopeInputs(db: Db, args: { project: string; kind: string; stage: strin
 }
 
 function requirementRows(db: Db, project: string): ScopeRequirement[] {
+  // A design criterion of kind `human` is a person's (D7 §7.3): no scope's.
+  const judged = designHumanCriteria(db, project);
   return (db.prepare('SELECT "id", "key", "criteria", "sensitive_areas", "human_test" FROM "requirements" WHERE "project" = ? ORDER BY "id"').all(project) as {
     id: string;
     key: string;
     criteria: string | null;
     sensitive_areas: string;
     human_test: number;
-  }[]).map((r) => ({ id: r.id, key: r.key, criteria: r.criteria === null ? null : (JSON.parse(r.criteria) as string[]), sensitive_areas: JSON.parse(r.sensitive_areas) as string[], human_test: r.human_test === 1 }));
+  }[]).map((r) => withoutJudgedByPerson({ id: r.id, key: r.key, criteria: r.criteria === null ? null : (JSON.parse(r.criteria) as string[]), sensitive_areas: JSON.parse(r.sensitive_areas) as string[], human_test: r.human_test === 1 }, judged));
 }
 
 export interface RequiredSet {

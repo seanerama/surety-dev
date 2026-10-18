@@ -45,6 +45,7 @@ import { compareKeys } from './keys.js';
 import { type SemanticFinding, type SpecRepresentation, liveRepresentation } from './semantics.js';
 import { DESIGN_BATCH_DEFERRED, requestVerdictBlockers, approveDesign, deferredBatches, designBatchState, designBindingsChanged, getRevision, pendingCorrections, raiseDesignBatch, reraiseDesignBatch, revisionOfRequest } from '../design/approval.js';
 import { blobsHash } from '../design/store.js';
+import { designHumanCriteria, humanCriteriaOfChange } from '../design/criterion-map.js';
 import { latestCheck } from '../design/records.js';
 import { type DesignClass, specDesignClass, staleScreens } from '../design/stale.js';
 import { reviewDesignDue } from '../design/due.js';
@@ -221,7 +222,15 @@ export interface Impact {
   affected_criteria: string[];
   removed_criteria: string[];
   added_criteria: string[];
-  checks: { obligations: { check: string; key: string; criteria: string[] }[]; criterion_unknown: { check: string; key: string; criteria: string[] }[]; uncovered: string[] };
+  checks: {
+    obligations: { check: string; key: string; criteria: string[] }[];
+    criterion_unknown: { check: string; key: string; criteria: string[] }[];
+    uncovered: string[];
+    // The added design criteria of kind `human` (D7 §7.2, §7.3; the
+    // driver's ruling on M519's F1): judged by a person, never uncovered,
+    // owing no check. Present only when the change adds one.
+    judged_by_person?: string[];
+  };
   stages: { stage: string; number: number; status: string; phase_plan: string }[];
   phases: number[];
   touches_current: boolean;
@@ -289,7 +298,7 @@ function citedKeys(text: string): string[] {
   return uniq([...body.matchAll(/\bR([1-9][0-9]*)(?:\.[0-9]+)?\b/g)].map((m) => `R${m[1]}`));
 }
 
-export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown }): Impact {
+export function computeImpact(db: Db, args: { project: string; proposed: SpecRepresentation; proposedDigest: string | null; claimed: unknown; request?: string | null }): Impact {
   const spec = currentSpec(db, args.project);
   const row = spec?.semantics ? (db.prepare('SELECT "representation" FROM "spec_semantics" WHERE "id" = ?').get(spec.semantics) as { representation: string | null } | undefined) : undefined;
   const approved = liveRepresentation(parseJson<SpecRepresentation>(row?.representation ?? null));
@@ -350,7 +359,17 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
   const covers = (c: { criteria?: string }): string[] => parseJson<string[]>(c.criteria ?? null) ?? [];
   const obligations = checks.filter((c) => covers(c).some((x) => affectedCriteria.includes(x))).map((c) => ({ check: c.id, key: c.key, criteria: covers(c).filter((x) => affectedCriteria.includes(x)).sort() }));
   const unknown = checks.filter((c) => covers(c).some((x) => removed.includes(x))).map((c) => ({ check: c.id, key: c.key, criteria: covers(c).filter((x) => removed.includes(x)).sort() }));
-  const uncovered = uniq(added).filter((x) => !checks.some((c) => covers(c).includes(x))).sort();
+  // A design criterion of kind `human` is a person's to judge, never a
+  // check's: never uncovered (the driver's ruling on M519's F1).
+  const human = humanCriteriaOfChange(db, {
+    project: args.project,
+    request: args.request ?? null,
+    rep: args.proposed,
+    added_criteria: uniq(added),
+    added_requirements: requirements.filter((q) => q.changes.includes('added')).map((q) => q.key),
+  });
+  const judged = uniq(added).filter((x) => human.has(x)).sort();
+  const uncovered = uniq(added).filter((x) => !human.has(x) && !checks.some((c) => covers(c).includes(x))).sort();
   const listedKeys = uniq([...obligations, ...unknown].map((c) => c.key));
   const results = listedKeys.length === 0
     ? []
@@ -429,7 +448,7 @@ export function computeImpact(db: Db, args: { project: string; proposed: SpecRep
     affected_criteria: affectedCriteria,
     removed_criteria: uniq(removed).sort(),
     added_criteria: uniq(added).sort(),
-    checks: { obligations, criterion_unknown: unknown, uncovered },
+    checks: { obligations, criterion_unknown: unknown, uncovered, ...(judged.length > 0 ? { judged_by_person: judged } : {}) },
     stages,
     phases,
     touches_current: touchesCurrent,
@@ -516,9 +535,12 @@ export function workClass(status: string): 'active' | 'held' | 'terminal' {
 
 // The main thread's read before the side ref's intent (runs/accept.ts): the
 // impact, or the reason the proposal is refused (D6 §4.4).
-export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown }): { impact: Impact } | { refused: string } {
+export function impactRead(db: Db, args: { project: string; representation: SpecRepresentation; digest: string | null; claimed: unknown; work_item?: string | null }): { impact: Impact } | { refused: string } {
+  // The request the proposing run's item is for (a design's change names
+  // its design's human criteria through it).
+  const request = args.work_item ? ((db.prepare('SELECT "id" FROM "spec_change_requests" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(args.work_item) as { id: string } | undefined)?.id ?? null) : null;
   try {
-    return { impact: computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed }) };
+    return { impact: computeImpact(db, { project: args.project, proposed: args.representation, proposedDigest: args.digest, claimed: args.claimed, request }) };
   } catch (err) {
     if (err instanceof ImpactRefused) return { refused: err.message };
     throw err;
@@ -698,7 +720,7 @@ export function impactNow(db: Db, r: RequestRow): { impact: Impact } | { reason:
   const representation = liveRepresentation(parseJson<SpecRepresentation>(sem?.representation ?? null));
   if (!representation) return { reason: "the proposal's representation cannot be read" };
   try {
-    return { impact: computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null }) };
+    return { impact: computeImpact(db, { project: r.project, proposed: representation, proposedDigest: sem?.semantic_digest ?? null, claimed: parseJson<Impact>(r.impact_value)?.claimed ?? null, request: r.id }) };
   } catch (err) {
     return { reason: err instanceof Error ? err.message : String(err) };
   }
@@ -1187,7 +1209,10 @@ export function deliveryVerdict(db: Db, project: string, request: string): Deliv
 // never read as passing or failing).
 function addedCriteriaChecks(db: Db, project: string, request: string): string[] | null {
   const r = db.prepare('SELECT "impact_value" FROM "spec_change_requests" WHERE "id" = ?').get(request) as { impact_value: string | null } | undefined;
-  const uncovered = parseJson<Impact>(r?.impact_value ?? null)?.checks?.uncovered ?? [];
+  // A design criterion of kind `human` owes no check, also in an impact
+  // recorded before the driver's ruling on M519's F1 listed it uncovered.
+  const human = designHumanCriteria(db, project);
+  const uncovered = (parseJson<Impact>(r?.impact_value ?? null)?.checks?.uncovered ?? []).filter((c) => !human.has(c));
   if (uncovered.length === 0) return [];
   if (db.prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`).get(project, request)) return null;
   const version = effectiveVersion(db, project);

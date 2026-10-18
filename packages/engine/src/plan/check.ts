@@ -12,7 +12,7 @@
 // as computed uncertainty, never a refusal; an early replacement's kept
 // stages (D6 §5.7; B08).
 
-import { TIER_RANK, type Tier, computeScope, modulePathOk } from '../checks/scope.js';
+import { TIER_RANK, type Tier, computeScope, modulePathOk, withoutJudgedByPerson } from '../checks/scope.js';
 import type { AdrFrontMatter, ModuleMap, PhasePlanFile, PlanStage, Roadmap } from './schemas.js';
 import { canonical, sha256 } from '../store/transitions/common.js';
 
@@ -30,7 +30,7 @@ export interface PlanReason {
 export interface BundleBaseline {
   spec_version: number;
   // The approved requirements: key → criteria ids, areas, withdrawn.
-  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean; human_test?: boolean; design_human_test?: boolean }[];
+  requirements: { key: string; criteria: string[]; sensitive_areas: string[]; withdrawn: boolean; blocked_by_questions: string[]; defect?: boolean; descriptive_unverified?: boolean; human_test?: boolean; design_human_test?: boolean; judged_by_person?: string[] }[];
   // TPL §10's open questions of the bundle's specification (B04; D6-P07),
   // each with the keys it blocks and its `(phase n)` hint.
   questions?: { id: string; blocks: string[]; phase_hint: number | null }[];
@@ -399,14 +399,22 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // Only a requirement with criteria to validate is an obligation: a
   // descriptive one is excluded (ruling 7).
   const obligated = (k: string) => reqs.has(k) && reqs.get(k)!.descriptive_unverified !== true && !reqs.get(k)!.withdrawn;
-  const scopeRequirements = baseline.requirements.map((r) => ({ id: r.key, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas, human_test: r.human_test === true }));
+  // A design criterion of kind `human` (judged_by_person) owes no
+  // validation: a stage may list it or omit it; a requirement whose only
+  // criteria are such is a human test here as at the gates (the driver's
+  // ruling on M519's F1).
+  const judgedOf = (k: string): Set<string> => new Set(reqs.get(k)?.judged_by_person ?? []);
+  const owedCriteria = (k: string): string[] => (reqs.get(k)?.criteria ?? []).filter((c) => !judgedOf(k).has(c));
+  const scopeRequirements = baseline.requirements.map((r) =>
+    withoutJudgedByPerson({ id: r.key, key: r.key, criteria: r.criteria, sensitive_areas: r.sensitive_areas, human_test: r.human_test === true }, new Set(r.judged_by_person ?? [])),
+  );
   const scopeModules = (names: string[]) => moduleRows.filter((m) => names.includes(m.name)).map((m) => ({ id: m.name, name: m.name, sensitive_areas: m.sensitive_areas, tier_override: m.tier_override ?? null }));
   const planned = (kind: 'stage' | 'phase', keys: string[], modules: string[], covering?: { criteria: string[]; kinds: string[]; areas: string[] }) =>
     computeScope({ kind, projectTier: baseline.project_tier, checks: [], requirements: scopeRequirements, delivered: keys, partial: [], stageImplements: keys, modules: scopeModules(modules), ...(covering ? { covering } : {}) });
   for (const s of plan.stages) {
     const keys = s.implements.filter(obligated);
     const scope = planned('stage', keys, s.modules, { criteria: s.validation.criteria, kinds: s.validation.kinds, areas: s.validation.sensitive_areas });
-    const criteria = uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? []));
+    const criteria = uniq(keys.flatMap(owedCriteria));
     obligations.push({ scope: { kind: 'stage', number: s.number }, tier: scope.tier, criteria, kinds: [...scope.kinds], sensitive_areas: scope.categories });
     // A kept stage listed unchanged (KEPT_STAGE_RULE) cannot take criteria
     // its requirement gained after it was built: they are not charged to it,
@@ -428,7 +436,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   if (phase) {
     const keys = phase.requirement_ids.filter(obligated);
     const scope = planned('phase', keys, phase.modules);
-    obligations.push({ scope: { kind: 'phase', number: phase.number }, tier: scope.tier, criteria: uniq(keys.flatMap((k) => reqs.get(k)?.criteria ?? [])), kinds: [...scope.kinds], sensitive_areas: scope.categories });
+    obligations.push({ scope: { kind: 'phase', number: phase.number }, tier: scope.tier, criteria: uniq(keys.flatMap(owedCriteria)), kinds: [...scope.kinds], sensitive_areas: scope.categories });
   }
   // Clause 4's design obligations (D7 §8.3; G2, G6; SEAM.md §513): under
   // `before_build` or `both`, with an approved design, a UI stage
@@ -577,7 +585,7 @@ export const KEPT_STAGE_RULE =
 // it: each stage's gate scope is built from its own implements, so its own
 // validation must cover them. The replan exceptions (criteria only) follow.
 export const STAGE_VALIDATION_RULE =
-  "Each stage validates what it implements, in its own validation: every criterion of every requirement a stage implements is in that stage's validation.criteria, and every sensitive area of those requirements and of the modules it touches is in that stage's validation.sensitive_areas. A requirement implemented by several stages is validated in full by each of them: every one of those stages lists all of the requirement's criteria; another stage's validation never counts for it.";
+  "Each stage validates what it implements, in its own validation: every criterion of every requirement a stage implements is in that stage's validation.criteria (a design criterion of kind human, judged by a person, may be listed or omitted: it owes no check), and every sensitive area of those requirements and of the modules it touches is in that stage's validation.sensitive_areas. A requirement implemented by several stages is validated in full by each of them: every one of those stages lists all of the requirement's criteria; another stage's validation never counts for it.";
 export const STAGE_VALIDATION_REPLAN_EXCEPTIONS =
   "In a replan, two exceptions, for criteria only: a kept stage listed unchanged is not charged a criterion its requirement gained after it was built (another stage of the plan validates it, as the kept-stage rule says); and a criterion a kept stage validated as built, which this replan's trigger did not touch, stays validated by that stage, so a new stage implementing the same requirement need list only the gained or changed criteria.";
 

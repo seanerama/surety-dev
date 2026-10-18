@@ -28,7 +28,7 @@ import { raiseQuestion } from '../store/transitions/queue.js';
 import { type DesignDueState, designDueState, heldStages } from './readiness.js';
 import { designPolicyOf } from './policy.js';
 import { currentStaleScreens } from './stale.js';
-import { deferredBatches } from './approval.js';
+import { deferredBatches, readinessWaits } from './approval.js';
 import { currentInventory } from './store.js';
 
 export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision', 'inventory_failure', 'reason'];
@@ -67,9 +67,12 @@ function dueFacts(tx: Tx, project: string) {
   const stale = currentStaleScreens(tx.db, project);
   const session = liveDesignerSession(tx.db, project);
   const deferred = deferredBatches(tx.db, project);
+  // An approved design not ready yet, and what its readiness waits on (the
+  // driver's ruling on M519's F1: no silent wait, E162).
+  const readiness = readinessWaits(tx.db, project);
   // What the question says beside its subjects, bound as one digest, so a
   // changed reason asks it again (the review's S5).
-  const reason = sha256(canonical({ note: state.note ?? null, inventory_difference: state.inventory_difference ?? null, open_refused: state.open_refused ?? null, session, deferred_batches: deferred.map((b) => b.spec_change_request) }));
+  const reason = sha256(canonical({ note: state.note ?? null, inventory_difference: state.inventory_difference ?? null, open_refused: state.open_refused ?? null, session, deferred_batches: deferred.map((b) => b.spec_change_request), ...(readiness.length > 0 ? { readiness: readiness.map((w) => ({ design_revision: w.design_revision, waits_on: w.waits_on })) } : {}) }));
   // At alpha_review, bound to the Alpha's candidate and deployment (D7 §10.1; SEAM.md §526).
   const review = stage === 'alpha_review' ? (state.review as { candidate?: string; deployment?: string } | undefined) : undefined;
   const manifest = {
@@ -81,13 +84,13 @@ function dueFacts(tx: Tx, project: string) {
     reason,
     ...(review ? { alpha: { candidate: review.candidate ?? null, deployment: review.deployment ?? null } } : {}),
   };
-  return { state, stage, held, stale, session, deferred, manifest };
+  return { state, stage, held, stale, session, deferred, readiness, manifest };
 }
 
 export const DESIGN_DUE: KindSpec = {
   preview(tx, d: Subject) {
     const project = d.project!;
-    const { state, stage, held, stale, session, deferred, manifest } = dueFacts(tx, project);
+    const { state, stage, held, stale, session, deferred, readiness, manifest } = dueFacts(tx, project);
     if (designPolicyOf(tx.db, project) === 'off' && stage !== 'alpha_review') return null;
     // Stale screens raise it whether or not a stage is held (D7 §9.1).
     if (stage !== 'alpha_review' && held.length === 0 && stale.length === 0) return null;
@@ -122,6 +125,10 @@ export const DESIGN_DUE: KindSpec = {
       ...(deferred.length > 0
         ? { batches_deferred: deferred.map((b) => ({ spec_change_request: b.spec_change_request, design_revision: b.design_revision, pending_corrections: b.pending_corrections.map((c) => ({ proposal: c.proposal, question: c.question })) })) }
         : {}),
+      // An approved design not ready yet: what its readiness waits on and
+      // the next action (the driver's ruling on M519's F1).
+      // (SEAM.md §549: `readiness.waits_on`, as the design read's revision.)
+      ...(readiness.length > 0 ? { readiness: { design_revision: readiness[0]!.design_revision, waits_on: readiness[0]!.waits_on, next_action: readiness[0]!.next_action, detail: readiness[0]!.detail } } : {}),
     };
     const what = inventoryFailed
       ? `${held.length} UI stage(s) wait for a design, and the engine could not commit the interface inventory a Designer session needs (${inventoryFailed.count} attempts; the last: ${inventoryFailed.reason}).`
@@ -131,8 +138,11 @@ export const DESIGN_DUE: KindSpec = {
           ? stale.length > 0
             ? `${stale.length} screen(s) of the approved design are stale (${stale.map((x) => `${x.screen} on ${x.target}`).join(', ')}); ${held.length} UI stage(s) wait on them.`
             : `The design was sent back for revision${state.note ? ` ("${state.note}")` : ''}; ${held.length} UI stage(s) wait on it.`
-          : `${held.length} UI stage(s) wait for an approved design before they build.`;
+          : readiness.length > 0
+            ? `${held.length} UI stage(s) wait for the approved design to be ready.`
+            : `${held.length} UI stage(s) wait for an approved design before they build.`;
     const also = [
+      ...readiness.map((w) => `Design version ${w.version} is approved and not ready yet: it waits on ${w.detail.join('; ')}; next: ${w.next_action}.`),
       ...(deferred.length > 0 ? [`A design batch is not raised yet: it waits for ${deferred.reduce((n, b) => n + b.pending_corrections.length, 0)} pending correction(s) of the protected checks; answer those first.`] : []),
       ...(state.open_refused ? [`The Designer session asked for could not be opened (${state.open_refused.reason}).`] : []),
       ...(session ? [`Designer session ${session} is open.`] : []),
