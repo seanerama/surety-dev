@@ -82,7 +82,7 @@ import { roleThat } from './harness/gitruns.mjs';
 import { step } from './harness/scripted.mjs';
 import { candidatesOfProject, evaluationsOfKind, pump, resultsOf } from './harness/journey/drive.mjs';
 import { addWork, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
-import { transcriptEntries } from './harness/sessions.mjs';
+import { runRow, transcriptEntries } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
 import { assertHoldsAccounted, inventoryOf, stageRow, toPublished } from './harness/design/drive.mjs';
@@ -554,6 +554,23 @@ describe('M531 owner verdicts are owner acts (shared: Pantry with R3.2 failing o
     assert.equal(reviewsCount(fx.home, p.id, true), reviewsBefore.withVerdicts, 'no review recorded with verdicts');
     assert.equal(openVerdicts(fx.home, p.id, bad.review), null, 'no design_verdicts asked');
     assert.equal(findingsOf(fx.home, p.id).length, findingsMid, 'nothing filed');
+    // The refused close leaves the session open ("Correct the review in the
+    // session, save, and close again; or close with refuse"), its file saved
+    // in the session's tree, where the design check of every later review
+    // session would read it. The Designer removes the file in the session,
+    // the save's check passes, and the owner closes with refuse: the session
+    // ends, raising nothing, and still nothing is recorded, asked or filed.
+    assert.notEqual(runRow(fx.home, bad.run.id)?.state, 'ended', `the session whose close was refused is still open (${runRow(fx.home, bad.run.id)?.state})`);
+    const withdrawn = await driveReview(fx, p.id, bad.run, [{ steps: [step.delete(REVIEW_FILE(7))], reply: 'The review is withdrawn.', say: 'Drop that review; close it without one.', done: true }], { close: { refuse: true } });
+    assert.equal(withdrawn.saves[0]?.body?.design_check?.outcome, 'passed', `the tree without the refused file passes its check (${JSON.stringify(withdrawn.saves[0]?.body?.design_check)})`);
+    assert.equal(withdrawn.close.status, 200, `closed with refuse (${withdrawn.close.status} ${withdrawn.close.text?.slice(0, 300)})`);
+    assert.deepEqual(withdrawn.close.body?.decisions, [], `the refuse raises no decision (${JSON.stringify(withdrawn.close.body?.decisions)})`);
+    assert.equal(runRow(fx.home, bad.run.id)?.state, 'ended', `the session ended (${runRow(fx.home, bad.run.id)?.state})`);
+    const kept = reviewRow(fx.home, bad.review);
+    assert.ok(!kept || (kept.verdicts ?? []).length === 0, `still no verdict recorded from it (${JSON.stringify(kept?.verdicts)})`);
+    assert.equal(reviewsCount(fx.home, p.id, true), reviewsBefore.withVerdicts, 'still no review recorded with verdicts');
+    assert.equal(openVerdicts(fx.home, p.id, bad.review), null, 'still no design_verdicts asked');
+    assert.equal(findingsOf(fx.home, p.id).length, findingsMid, 'still nothing filed');
   });
 
   const REMOVED = 'The rows flicker when the list scrolls.';
