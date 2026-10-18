@@ -7,6 +7,7 @@
 
 import { activeStages } from './active.js';
 import { designPace } from '../design/pace.js';
+import { designHumanCriteria } from '../design/criterion-map.js';
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
@@ -536,7 +537,22 @@ export function paceView(db: Database, args: { project: string }) {
     db
       .prepare(`SELECT "key", "assigned_phase" FROM "requirements" WHERE "project" = ? AND "human_test" = 1 AND ("criteria" IS NULL OR "criteria" = '[]') AND "withdrawn_at" IS NULL ORDER BY "key"`)
       .all(p) as { key: string; assigned_phase: number | null }[]
-  ).map((r) => ({ requirement: r.key, phase: r.assigned_phase, status: 'owed' as const }));
+  ).map((r): { requirement: string; criterion?: string; phase: number | null; status: 'owed' } => ({ requirement: r.key, phase: r.assigned_phase, status: 'owed' as const }));
+  // The design criteria of kind `human` (D7 §7.3; the driver's ruling on
+  // M519's F1): a person's to judge, owed the same way, never verified.
+  const judged = designHumanCriteria(db, p);
+  if (judged.size > 0) {
+    const reqs = db.prepare(`SELECT "key", "criteria", "assigned_phase" FROM "requirements" WHERE "project" = ? AND "withdrawn_at" IS NULL ORDER BY "key"`).all(p) as { key: string; criteria: string | null; assigned_phase: number | null }[];
+    for (const r of reqs) {
+      let criteria: unknown = [];
+      try {
+        criteria = r.criteria === null ? [] : JSON.parse(r.criteria);
+      } catch {
+        criteria = [];
+      }
+      for (const c of Array.isArray(criteria) ? criteria : []) if (typeof c === 'string' && judged.has(c)) humanTests.push({ requirement: r.key, criterion: c, phase: r.assigned_phase, status: 'owed' });
+    }
+  }
 
   return {
     labels: { invocation_elapsed: 'invocation elapsed time' },

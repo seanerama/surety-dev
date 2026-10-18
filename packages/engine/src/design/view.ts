@@ -13,9 +13,9 @@ import { currentInventory } from './store.js';
 import { designDueState, heldStages } from './readiness.js';
 import { assetsRequired } from './release-hook.js';
 import { unboundAssets } from './asset-bindings.js';
-import { deferredBatches, effectiveSetNow } from './approval.js';
+import { deferredBatches, effectiveSetNow, readinessWaits } from './approval.js';
+import { designHumanCriteria, mappedCriteria } from './criterion-map.js';
 import { stalePlatforms } from './stale.js';
-import { mappedCriteria } from './criterion-map.js';
 import { humanTestEvidence, reviewsView } from './review.js';
 
 // The `later` deferral running now, or null.
@@ -61,6 +61,18 @@ export function designView(db: Database.Database, args: { project: string }): Re
     effective_assets: parseJson<unknown[]>(r.effective_assets),
     effective_assets_digest: r.effective_assets_digest,
   }));
+  // An approved revision not ready: what its readiness waits on and the
+  // next action (SEAM.md §549; the driver's ruling on M519's F1).
+  const waits = new Map(readinessWaits(db, args.project).map((w) => [w.design_revision, w]));
+  for (const r of revisions as (typeof revisions[number] & { readiness?: unknown })[]) {
+    const w = waits.get(r.id);
+    if (r.status === 'approved' && r.ready_at === null && w) r.readiness = { waits_on: w.waits_on, next_action: w.next_action, detail: w.detail };
+  }
+  // The in-force design's criteria of kind `human`, by target: a person
+  // judges them through that target's human test (D7 §7.3).
+  const mapped = mappedCriteria(db, args.project);
+  const judgedOn = (target: string): string[] =>
+    (mapped?.mapped ?? []).filter((e) => e.kind === 'human' && e.targets.includes(target)).map((e) => e.id);
   const effective = db.prepare('SELECT "slot", "kind", "variant", "slot_version", "source", "digest", "format" FROM "design_effective_assets" WHERE "project" = ? ORDER BY "slot", "variant"').all(args.project);
   // The design's human tests: one per target of the approved design's change.
   const approved = db.prepare(`SELECT "id", "assignments" FROM "design_revisions" WHERE "project" = ? AND "assignments" IS NOT NULL AND "status" IN ('approved', 'approved_without_criteria', 'superseded') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
@@ -72,7 +84,7 @@ export function designView(db: Database.Database, args: { project: string }): Re
   const human_tests = (parseJson<{ target: string; requirement: string | null; phase: number | null }[]>(approved?.assignments ?? null) ?? []).map((h) => {
     const owner = humanTestEvidence(db, args.project, h.target, inForce);
     // Never `verified`: owner_accepted on his confirmed word alone (Q4).
-    return { target: h.target, requirement: h.requirement, phase: h.phase, status: owner.accepted ? 'owner_accepted' : 'pending', evidence: owner.evidence };
+    return { target: h.target, requirement: h.requirement, phase: h.phase, criteria: judgedOn(h.target), status: owner.accepted ? 'owner_accepted' : 'pending', evidence: owner.evidence };
   });
   const due = db.prepare(`SELECT "id", "evidence" FROM "decisions" WHERE "project" = ? AND "kind" = 'design_due' AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(args.project) as { id: string; evidence: string } | undefined;
   // The native conventions the current approved revision leaves not
@@ -113,6 +125,9 @@ export function designView(db: Database.Database, args: { project: string }): Re
     // never dropped.
     criteria_unmatched: mappedCriteria(db, args.project)?.unmatched ?? [],
     holds: heldStages(db, args.project),
+    // The design criteria of kind `human` in the specification: a person
+    // judges them through the target's human test; no check covers them.
+    criteria_judged_by_person: [...designHumanCriteria(db, args.project)].sort(),
     // A design batch the engine is holding back, and why (objection 166; rule 25).
     batches_deferred: deferredBatches(db, args.project),
     // A target removed (D7 §9.1; SEAM.md §515): the slots whose platforms

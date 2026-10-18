@@ -16,6 +16,7 @@ import type { Database } from 'better-sqlite3';
 import { activeStages } from './active.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import { checksOfVersion } from '../store/transitions/evidence.js';
+import { designHumanCriteria } from '../design/criterion-map.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 
@@ -100,8 +101,13 @@ export function recordDeferrals(tx: Tx, args: { project: string; proposal: strin
   if (!row || row.kind !== 'check_authoring' || row.deferred_criteria === null) return 0;
   const plan = parse<{ phase_plan?: string }>(row.subject, {}).phase_plan ?? null;
   const generation = (tx.db.prepare('SELECT "spec_evidence_generation" AS g FROM "projects" WHERE "id" = ?').get(args.project) as { g: number }).g;
+  // A design criterion of kind `human` is a person's, owing no check (D7
+  // §7.3; the driver's ruling on M519's F1): its deferral records nothing
+  // and so holds nothing.
+  const judged = designHumanCriteria(tx.db, args.project);
   let n = 0;
   for (const d of parse<Deferral[]>(row.deferred_criteria, [])) {
+    if (judged.has(d.criterion)) continue;
     const id = tx.newId('obl_');
     const followUp = { trigger_source: 'deferred_authoring', trigger_id: id, trigger_generation: 1 };
     tx.db
@@ -151,8 +157,12 @@ export function deferralRefsInvalid(db: Db, plan: string | null, deferrals: Defe
   if (plan === null) return 'deferred_criteria names prerequisites, and the authoring names no plan';
   const active = activePlanOf(db, plan);
   const owed = criteriaOwed(db, active);
+  // A design criterion of kind `human` owes no check: its deferral is
+  // never refused for its phase, and records nothing (recordDeferrals).
+  const project = (db.prepare('SELECT "project" FROM "phase_plans" WHERE "id" = ?').get(active) as { project: string } | undefined)?.project;
+  const judged = project ? designHumanCriteria(db, project) : new Set<string>();
   if (owed !== null) {
-    const foreign = [...new Set(deferrals.map((d) => d.criterion).filter((c) => !owed.has(c)))];
+    const foreign = [...new Set(deferrals.map((d) => d.criterion).filter((c) => !owed.has(c) && !judged.has(c)))];
     if (foreign.length > 0) {
       const phase = (db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(active) as { phase_number: number } | undefined)?.phase_number;
       const which = phase === undefined ? 'this phase' : `phase ${phase}`;
@@ -181,14 +191,19 @@ export function resolveUnowedDeferrals(tx: Tx, project: string): number {
   const rows = tx.db
     .prepare(`SELECT "id", "criteria", "phase_plan", "follow_up" FROM "check_obligations" WHERE "project" = ? AND "reason" = 'deferred_authoring' AND "resolved_at" IS NULL AND "phase_plan" IS NOT NULL ORDER BY rowid`)
     .all(project) as { id: string; criteria: string; phase_plan: string; follow_up: string | null }[];
+  // A deferral of design criteria of kind `human` only is resolved too: a
+  // person judges them, no check is owed (the driver's ruling on M519's F1).
+  const judged = designHumanCriteria(tx.db, project);
   let n = 0;
   for (const o of rows) {
     const active = activePlanOf(tx.db, o.phase_plan);
     const owed = criteriaOwed(tx.db, active);
     const criteria = parse<string[]>(o.criteria, []);
-    if (owed === null || criteria.length === 0 || criteria.some((c) => owed.has(c))) continue;
+    const human = criteria.length > 0 && criteria.every((c) => judged.has(c));
+    if (!human && (owed === null || criteria.length === 0 || criteria.some((c) => owed.has(c)))) continue;
+    const how = human ? 'judged_by_person' : 'not_owed_by_phase';
     if (tx.db.prepare('UPDATE "check_obligations" SET "resolved_by" = ?, "resolved_at" = ? WHERE "id" = ? AND "resolved_at" IS NULL').run(active, tx.at, o.id).changes === 0) continue;
-    tx.emit('check.obligation_resolved', { project, check_obligation: o.id }, { resolved_by: active, how: 'not_owed_by_phase', criteria, phase_plan: active });
+    tx.emit('check.obligation_resolved', { project, check_obligation: o.id }, { resolved_by: active, how, criteria, phase_plan: active });
     const f = parse<{ trigger_source?: string; trigger_id?: string }>(o.follow_up, {});
     const items = tx.db
       .prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = ? AND "trigger_id" = ? AND "status" IN ('eligible', 'held', 'parked', 'awaiting_decision')`)
@@ -196,9 +211,9 @@ export function resolveUnowedDeferrals(tx: Tx, project: string): number {
     for (const w of items) {
       const item = getWorkItem(tx, w.id);
       if (!item) continue;
-      transitionWork(tx, item, 'cancelled', { blocker: null }, { cause: 'not_owed_by_phase', check_obligation: o.id });
+      transitionWork(tx, item, 'cancelled', { blocker: null }, { cause: how, check_obligation: o.id });
       const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
-      for (const d of open) invalidateDecision(tx, d, `the deferral it followed up names criteria phase plan ${active} does not owe (${criteria.join(', ')})`);
+      for (const d of open) invalidateDecision(tx, d, human ? `the deferral it followed up names design criteria a person judges (${criteria.join(', ')}): no check is owed` : `the deferral it followed up names criteria phase plan ${active} does not owe (${criteria.join(', ')})`);
     }
     n++;
   }

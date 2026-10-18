@@ -20,6 +20,7 @@
 // Phase completion establishes nothing about deployment.
 
 import { designAssignedHumanTests } from '../design/policy.js';
+import { designHumanCriteria } from '../design/criterion-map.js';
 import { alphaBarrier, conformanceNominationDue, conformancePhaseComplete } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
 import { parseJson } from '../store/transitions/common.js';
@@ -491,12 +492,15 @@ export function authoringShortfall(db: Db, planId: string, version: string): str
     planned = parsed as ScopeObligation[];
   }
   const checks = (db.prepare('SELECT * FROM "checks" WHERE "protected_version" = ? AND "required" = 1').all(version) as CheckRow[]).filter((c) => (c.origin ?? 'acceptance') !== 'developer');
+  // A design criterion of kind `human` is a person's, owing no check (D7
+  // §7.3; the driver's ruling on M519's F1), whatever a plan recorded.
+  const judged = designHumanCriteria(db, row.project);
   const out: string[] = [];
   for (const o of planned) {
     const kinds = o.scope.kind === 'stage' ? ['stage'] : ['phase', 'stage'];
     const covering = checks.filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).some((k) => kinds.includes(k)) && (c.tier_floor === null || TIER_RANK[c.tier_floor]! <= TIER_RANK[o.tier]!));
     const missing = coverageMissing(
-      { criteria: o.criteria, kinds: o.kinds, areas: o.sensitive_areas },
+      { criteria: o.criteria.filter((c) => !judged.has(c)), kinds: o.kinds, areas: o.sensitive_areas },
       {
         criteria: covering.flatMap((c) => parseJson<string[]>(c.criteria ?? null) ?? []),
         kinds: covering.map((c) => c.kind),
@@ -520,7 +524,7 @@ export function authoringShortfall(db: Db, planId: string, version: string): str
   // and holds nothing here (plan/deferral.ts resolveUnowedDeferrals resolves
   // it at the next tick); an unknown owed set drops nothing.
   const owes = criteriaOwed(db, planId);
-  for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).filter((c) => owes === null || owes.has(c)).map((c) => `deferred:${c}`));
+  for (const o of owed) out.push(...(parseJson<string[]>(o.criteria) ?? []).filter((c) => (owes === null || owes.has(c)) && !judged.has(c)).map((c) => `deferred:${c}`));
   // The owner's build_first binding, shown with what it left owed (the
   // slice-37 review's N9): its decision, by the plan's readiness.
   if (out.length > 0) {

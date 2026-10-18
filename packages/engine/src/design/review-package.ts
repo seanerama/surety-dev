@@ -16,7 +16,7 @@ import { currentInventory } from './store.js';
 import { projectEffective } from '../store/transitions/settings.js';
 import type { DesignCatalogueFacts, DesignChangeFacts, DesignerReadsFacts } from '../packages/design-reads.js';
 import { lastUiPhase } from './approval.js';
-import { mappedCriteria } from './criterion-map.js';
+import { designHumanCriteria, mappedCriteria } from './criterion-map.js';
 
 type Db = Database.Database;
 
@@ -162,5 +162,6 @@ export function designCatalogueFacts(db: Db, project: string): DesignCatalogueFa
       };
     }),
     unmatched: m.unmatched,
+    judged_by_person: [...designHumanCriteria(db, project)].sort(),
   };
 }

@@ -1014,25 +1014,87 @@ function registerAssetUpdates(tx: Tx, rev: RevisionRow, moved: { slot: string; v
 
 // ---- readiness (D7 §7.5) ---------------------------------------------------------------------------------
 
+// D7 §7.5, read as the driver's ruling on M519's F1 has it: an approved
+// design is ready once the `check_correction` its consolidated change
+// registered (trigger `spec_obligation`, D6 §4.5) has ended with its
+// proposal applied, or when none was owed. Readiness does not wait for
+// every added criterion to be covered: one still uncovered carries
+// ACCEPTANCE_SCOPE_INCOMPLETE on the gates (D6 §4.5), and a criterion of
+// kind `human` is a person's, owing no check (criterion-map.ts).
+// What readiness waits on, per approved revision not ready; [] when none
+// waits. Every entry names the next action (no silent wait, E162).
+export interface ReadinessWait {
+  design_revision: string;
+  version: number;
+  spec_change_request: string | null;
+  // The first thing readiness waits on (SEAM.md §549): the correction
+  // (`check_correction`), a proposal of its runs not applied (`proposal`,
+  // with the owner's open question on it, or null), the change not
+  // approved (`spec_change_request`), an obligation of the change still
+  // open (`check_obligation`), or the correction ended without applying a
+  // version (`correction_ended`).
+  waits_on: Record<string, unknown> & { kind: string };
+  next_action: string;
+  // Every wait, in words.
+  detail: string[];
+}
+
+export function readinessWaitOf(db: Db, rev: RevisionRow): ReadinessWait | null {
+  const r = requestRow(db, rev.spec_change_request);
+  if (!r) return null;
+  const base = { design_revision: rev.id, version: rev.version, spec_change_request: r.id };
+  if (r.status !== 'approved') {
+    return { ...base, waits_on: { kind: 'spec_change_request', spec_change_request: r.id, status: r.status }, next_action: "answer the design batch's spec_change", detail: [`the design's consolidated specification change is ${r.status}, not approved`] };
+  }
+  const items = db
+    .prepare(`SELECT "id", "status", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? ORDER BY "trigger_generation", "seq"`)
+    .all(rev.project, r.id) as { id: string; status: string; trigger_generation: number }[];
+  let first: { waits_on: ReadinessWait['waits_on']; next_action: string } | null = null;
+  const detail: string[] = [];
+  for (const w of items.filter((x) => x.status !== 'complete' && x.status !== 'cancelled')) {
+    // A proposal of the correction's runs captured and not applied.
+    const p = db
+      .prepare(
+        `SELECT p."id", p."status" FROM "protected_proposals" p JOIN "runs" u ON u."id" = p."run" WHERE u."work_item" = ? AND p."status" IN ('captured', 'classified', 'awaiting_human', 'approved') ORDER BY p."seq" DESC LIMIT 1`,
+      )
+      .get(w.id) as { id: string; status: string } | undefined;
+    if (p) {
+      const question = db.prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(p.id) as { id: string } | undefined;
+      detail.push(`the correction ${w.id}'s proposal ${p.id} is ${p.status}, not applied${question ? `; question ${question.id} on it is open` : ''}`);
+      first ??= { waits_on: { kind: 'proposal', proposal: p.id, decision: question?.id ?? null, work_item: w.id }, next_action: question ? `answer question ${question.id} on the correction's proposal ${p.id}` : `the engine classifies or applies the correction's proposal ${p.id}` };
+    } else {
+      detail.push(`the Verifier's correction ${w.id} of the protected checks for the change is ${w.status}`);
+      first ??= { waits_on: { kind: 'check_correction', work_item: w.id }, next_action: w.status === 'parked' ? `retry or cancel the parked correction ${w.id}` : `the Verifier's correction ${w.id} runs; its proposal is then answered` };
+    }
+  }
+  if (detail.length === 0 && items.length > 0) {
+    // Every correction ended: the latest must have ended complete (its
+    // proposal applied). A cancelled one established nothing (D7 §7.5).
+    const last = items[items.length - 1]!;
+    if (last.status !== 'complete') {
+      detail.push(`the change's correction ${last.id} was ${last.status}: no protected version covering the design's criteria was applied`);
+      first ??= { waits_on: { kind: 'correction_ended', work_item: last.id, status: last.status }, next_action: 'no correction of the change is pending and none applied a covering version: the owner decides (design_due)' };
+    }
+  }
+  const open = db.prepare(`SELECT "id", "key" FROM "check_obligations" WHERE "request" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL ORDER BY rowid`).all(r.id) as { id: string; key: string | null }[];
+  for (const o of open) detail.push(`the check ${o.key ?? '(unknown)'} owes its correction for the change (obligation ${o.id})`);
+  if (open.length > 0) first ??= { waits_on: { kind: 'check_obligation', check_obligation: open[0]!.id }, next_action: "the Verifier's correction resolves the open obligations" };
+  if (first === null) return null;
+  return { ...base, ...first, detail };
+}
+
+// The approved design revisions not ready, with what each waits on.
+export function readinessWaits(db: Db, project: string): ReadinessWait[] {
+  const revs = db.prepare(`SELECT * FROM "design_revisions" WHERE "project" = ? AND "status" = 'approved' AND "ready_at" IS NULL ORDER BY rowid`).all(project) as RevisionRow[];
+  return revs.map((rev) => readinessWaitOf(db, rev)).filter((w): w is ReadinessWait => w !== null);
+}
+
 export function designReadiness(tx: Tx, project: string): string[] {
   const revs = tx.db.prepare(`SELECT * FROM "design_revisions" WHERE "project" = ? AND "status" = 'approved' AND "ready_at" IS NULL ORDER BY rowid`).all(project) as RevisionRow[];
   const out: string[] = [];
   for (const rev of revs) {
+    if (readinessWaitOf(tx.db, rev) !== null) continue;
     const r = requestRow(tx.db, rev.spec_change_request);
-    if (r && r.status !== 'approved') continue;
-    if (r) {
-      const open = tx.db
-        .prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`)
-        .get(project, r.id);
-      if (open) continue;
-      if (tx.db.prepare(`SELECT 1 FROM "check_obligations" WHERE "request" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL LIMIT 1`).get(r.id)) continue;
-      // Every criterion the change added is covered by a check of the
-      // effective protected version.
-      const impact = parseJson<{ added_criteria?: string[]; checks?: { uncovered?: string[] } }>(r.impact_value);
-      const version = effectiveVersion(tx.db, project);
-      const covered = new Set((version ? checksOfVersion(tx.db, version.id) : []).flatMap((c) => parseJson<string[]>((c as { criteria?: string }).criteria ?? null) ?? []));
-      if ((impact?.checks?.uncovered ?? []).some((c) => !covered.has(c))) continue;
-    }
     tx.db.prepare('UPDATE "design_revisions" SET "ready_at" = ? WHERE "id" = ? AND "ready_at" IS NULL').run(tx.at, rev.id);
     tx.emit('design.ready', { project, design_revision: rev.id }, { version: rev.version, spec_change_request: r?.id ?? null });
     out.push(rev.id);
