@@ -27,7 +27,7 @@ import { type CandidateRow, type CheckRow, TIER_RANK, contentHash, deliveredStag
 import { coverageMissing } from '../checks/scope.js';
 import type { ScopeObligation } from './check.js';
 import { criteriaOwed } from './deferral.js';
-import { activeStages, settleReplacements } from './replace.js';
+import { activeStages, pendingReplacement, settleReplacements } from './replace.js';
 import { registerExecutions } from '../store/transitions/checks.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
 import { correctionOpen } from '../store/transitions/repair.js';
@@ -204,6 +204,15 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
     }
   }
   if (evaluation.outcome !== 'satisfied') return NONE;
+  // The phase waits for a replacement of this generation still pending (the
+  // driver's ruling, under Sean's delegation; D6 §5.7, §6.6): queued, in
+  // flight, awaiting its repair or the owner's approval, or parked with its
+  // owner question (E162). It completes on the generation that replacement
+  // publishes, or on this one once the replacement is retired. Completing
+  // under it would leave a replan whose generation no longer exists: a
+  // package naming no open plan, a publication the swap refuses. The plan
+  // read names it (plan/reads.ts planView).
+  if (pendingReplacement(tx.db, args.project, plan) !== null) return NONE;
   const binding = { candidate: candidate.id, acceptance_hash: acceptance, protected_version: effective.id, spec_revision: spec?.id ?? null, generation: plan.generation, evaluation: evaluation.id };
   const changed = tx.db
     .prepare(`UPDATE "phase_plans" SET "completed_at" = ?, "completion_binding" = ?, "status" = 'completed' WHERE "id" = ? AND "completed_at" IS NULL`)

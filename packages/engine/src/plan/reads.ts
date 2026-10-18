@@ -7,6 +7,7 @@
 // listing, never a `phase_plans` row).
 
 import { activeStages } from './active.js';
+import { pendingReplacement } from './replace.js';
 import type { Database } from 'better-sqlite3';
 
 import { nowMs } from '../clock.js';
@@ -191,6 +192,16 @@ export function planView(db: Database, args: { project: string }) {
       })(),
       completed_at: p.completed_at,
       completion_binding: json<unknown>(p.completion_binding, null),
+      // What holds the open generation's completion (plan/phase.ts): a
+      // replacement of it still pending, with its work, trigger, proposal
+      // and the open question that accounts for it; null when none does.
+      completion_held_by:
+        p.completed_at === null && p.status === 'published'
+          ? (() => {
+              const r = pendingReplacement(db, args.project, { id: p.id as string, generation: p.generation as number });
+              return r === null ? null : { reason: 'replacement_pending', ...r };
+            })()
+          : null,
       bundle: p.bundle,
       stages,
     };
