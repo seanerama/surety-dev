@@ -72,7 +72,7 @@ export function designView(db: Database.Database, args: { project: string }): Re
   // judges them through that target's human test (D7 §7.3).
   const mapped = mappedCriteria(db, args.project);
   const judgedOn = (target: string): string[] =>
-    (mapped?.mapped ?? []).filter((e) => e.kind === 'human' && e.targets.includes(target)).map((e) => e.id);
+    (mapped?.mapped ?? []).filter((e) => e.kind === 'human' && (e.how === 'text' || e.how === 'existing') && e.targets.includes(target)).map((e) => e.id);
   const effective = db.prepare('SELECT "slot", "kind", "variant", "slot_version", "source", "digest", "format" FROM "design_effective_assets" WHERE "project" = ? ORDER BY "slot", "variant"').all(args.project);
   // The design's human tests: one per target of the approved design's change.
   const approved = db.prepare(`SELECT "id", "assignments" FROM "design_revisions" WHERE "project" = ? AND "assignments" IS NOT NULL AND "status" IN ('approved', 'approved_without_criteria', 'superseded') ORDER BY rowid DESC LIMIT 1`).get(args.project) as

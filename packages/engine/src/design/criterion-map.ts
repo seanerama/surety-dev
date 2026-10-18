@@ -164,35 +164,39 @@ export function mappedCriteria(db: Db, project: string): MappedCriteria | null {
 // kind its design's criteria.json gives it, through the criterion map that
 // design's approval recorded, never by the Spec Writer's wording.
 
-// The specification ids of the design criteria of kind `human`, over every
-// design revision whose approval recorded a map, in order: a later map's
-// kind for an id stands over an earlier one's.
+// Only a criterion matched by its text (`text`) or kept from an earlier
+// design (`existing`) is classified `human`: one paired by order alone
+// (`order`, a reworded text) is never a person's, so a rewording cannot move
+// a checkable criterion out of the gates (it stays checkable, its uncovered
+// state visible; the Reviewer's should-fix 1 on build/m6-ready).
+const judgedEntry = (e: CriterionMapEntry): e is CriterionMapEntry & { id: string } => e.kind === 'human' && typeof e.id === 'string' && (e.how === 'text' || e.how === 'existing');
+
+// The specification ids of the design in force's criteria of kind `human`:
+// the latest approved revision's map (an asset-only revision carries the
+// one it supersedes, approval.ts), so a criterion a later design drops is
+// checkable again.
 export function designHumanCriteria(db: Db, project: string): Set<string> {
-  const rows = db.prepare('SELECT "criterion_map" FROM "design_revisions" WHERE "project" = ? AND "criterion_map" IS NOT NULL ORDER BY rowid').all(project) as { criterion_map: string }[];
-  const kinds = new Map<string, string>();
-  for (const r of rows) for (const e of parseJson<CriterionMapEntry[]>(r.criterion_map) ?? []) if (e && typeof e.id === 'string') kinds.set(e.id, e.kind);
-  return new Set([...kinds].filter(([, k]) => k === 'human').map(([id]) => id));
+  const rev = db
+    .prepare(`SELECT "criterion_map" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`)
+    .get(project) as { criterion_map: string | null } | undefined;
+  return new Set((parseJson<CriterionMapEntry[]>(rev?.criterion_map ?? null) ?? []).filter(judgedEntry).map((e) => e.id));
 }
 
-// The same, for a specification change not applied yet: the approved
-// designs' and, when `request` is a design's consolidated change, the ids
-// its proposed specification gives the design's `human` criteria (mapped
-// as its approval will map them).
+// The same, for a specification change not applied yet: the design in
+// force's, unless `request` is a design's consolidated change, whose design
+// will be the one in force: then the ids its proposed specification gives
+// that design's `human` criteria, mapped as its approval will map them.
 export function humanCriteriaOfChange(
   db: Db,
   args: { project: string; request: string | null; rep: SpecRepresentation; added_criteria: string[]; added_requirements: string[] },
 ): Set<string> {
-  const out = designHumanCriteria(db, args.project);
-  if (args.request === null) return out;
-  const rev = db.prepare('SELECT "content" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1').get(args.request) as { content: string | null } | undefined;
-  if (!rev) return out;
+  const rev =
+    args.request === null
+      ? undefined
+      : (db.prepare('SELECT "content" FROM "design_revisions" WHERE "spec_change_request" = ? ORDER BY rowid DESC LIMIT 1').get(args.request) as { content: string | null } | undefined);
+  if (!rev) return designHumanCriteria(db, args.project);
   const content = parseJson<{ criteria?: { criteria?: Record<string, unknown>[] }; screens?: { screens?: Record<string, unknown>[] } }>(rev.content);
   const criteria = content?.criteria?.criteria ?? [];
-  if (criteria.length === 0) return out;
-  for (const e of criterionMap({ criteria, screens: content?.screens?.screens ?? [], rep: args.rep, added_criteria: args.added_criteria, added_requirements: args.added_requirements })) {
-    if (e.id === null) continue;
-    if (e.kind === 'human') out.add(e.id);
-    else out.delete(e.id);
-  }
-  return out;
+  const map = criterionMap({ criteria, screens: content?.screens?.screens ?? [], rep: args.rep, added_criteria: args.added_criteria, added_requirements: args.added_requirements });
+  return new Set(map.filter(judgedEntry).map((e) => e.id));
 }

@@ -1042,6 +1042,13 @@ export interface ReadinessWait {
   detail: string[];
 }
 
+// What follows a cancelled correction: no route registers another
+// correction for the same change, so this design does not become ready;
+// the owner's routes are design_due's waive or policy_off for the held
+// stages, or a revised design whose new batch registers its own correction.
+const AFTER_CANCEL =
+  "and no route registers another correction for this change, so this design version does not become ready: answer design_due (waive the held stages, or turn design off), or open a Designer session to revise the design, whose new batch registers its own correction";
+
 export function readinessWaitOf(db: Db, rev: RevisionRow): ReadinessWait | null {
   const r = requestRow(db, rev.spec_change_request);
   if (!r) return null;
@@ -1067,7 +1074,14 @@ export function readinessWaitOf(db: Db, rev: RevisionRow): ReadinessWait | null 
       first ??= { waits_on: { kind: 'proposal', proposal: p.id, decision: question?.id ?? null, work_item: w.id }, next_action: question ? `answer question ${question.id} on the correction's proposal ${p.id}` : `the engine classifies or applies the correction's proposal ${p.id}` };
     } else {
       detail.push(`the Verifier's correction ${w.id} of the protected checks for the change is ${w.status}`);
-      first ??= { waits_on: { kind: 'check_correction', work_item: w.id }, next_action: w.status === 'parked' ? `retry or cancel the parked correction ${w.id}` : `the Verifier's correction ${w.id} runs; its proposal is then answered` };
+      const blocker = w.status === 'parked' ? (db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(w.id) as { id: string } | undefined) : undefined;
+      first ??= {
+        waits_on: { kind: 'check_correction', work_item: w.id },
+        next_action:
+          w.status === 'parked'
+            ? `answer the blocker question ${blocker?.id ?? '(none open)'} on the parked correction ${w.id}: retry dispatches it again and readiness follows its applied proposal; cancel ends it with no covering version, ${AFTER_CANCEL}`
+            : `the Verifier's correction ${w.id} runs; its proposal is then answered`,
+      };
     }
   }
   if (detail.length === 0 && items.length > 0) {
@@ -1076,7 +1090,7 @@ export function readinessWaitOf(db: Db, rev: RevisionRow): ReadinessWait | null 
     const last = items[items.length - 1]!;
     if (last.status !== 'complete') {
       detail.push(`the change's correction ${last.id} was ${last.status}: no protected version covering the design's criteria was applied`);
-      first ??= { waits_on: { kind: 'correction_ended', work_item: last.id, status: last.status }, next_action: 'no correction of the change is pending and none applied a covering version: the owner decides (design_due)' };
+      first ??= { waits_on: { kind: 'correction_ended', work_item: last.id, status: last.status }, next_action: `the change's correction ${last.id} was ${last.status} with no covering version; ${AFTER_CANCEL}` };
     }
   }
   const open = db.prepare(`SELECT "id", "key" FROM "check_obligations" WHERE "request" = ? AND "reason" = 'spec_changed' AND "resolved_at" IS NULL ORDER BY rowid`).all(r.id) as { id: string; key: string | null }[];
