@@ -4727,3 +4727,24 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 - **On `main` `292e11e`'s harness** (only `checks-journey.mjs` restored): M512 (k) F2 fails at its first assertion, both UI stages counted dispatchable.
 - **With the change:** M512 13/13; M239 the Verifier's check-writing package 2/2; M342 the Verifier's deployment-check package 1/1; M442 plays from the package 42/42 (it reaches `lane.mjs`, not `checks-journey.mjs`).
 - **M519's paid store** (a copy of `~/s6-1018/home/store.db` with its `-wal`/`-shm`, read only): before, `leftovers` counted `wi_01M56CC1ZRBKYD2HMNXY0G286C` and `wi_01M56CC1ZSESC8WJN99KVPM0KW` (stages 3 and 4) and `refuseLeftovers(…, {evenIfPaused: true})` refused; after, `dispatchable` `[]`, both in `design_held`, not refused.
+
+## A rerun's act record covers every attempt of its step (M519 finding F3; the driver's ruling of 2026-10-18; SEAM §551)
+
+2026-10-18, by the Verifier, on `verify/m6-acts`, cut from `main` `fd5087f`. No new row. Harness: `harness/real/m6-lane.mjs`. `m6Step` keeps every attempt in `observed/step-attempts.json`. `actWindow`, `recordActs` and `storeActs` take each attempt's range. `inspectionAct` names the preview inspection over those ranges. `rebuildRerunActs` rebuilds a directory from before the attempts were kept. `qualify_adapter` is now read from the store. `m6BuildToReview` refuses a halted directory before any engine starts. The case goes to M512 (k).
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| the ruling | M512 (k) | `M512-design-due-and-no-silent-stalls.test.mjs` (13 → 14) | A first attempt with the batched approval halts; the rerun names only its own inspection. Its record has the combined approval (both decisions, `driver`), every act of the first attempt and its own, with both attempts' window. A first run's record is the old formula's, with no `window`. A directory from before the attempts were kept is rebuilt once, `inferred` from `m6w_qualify`'s end and bounded by the step's end. A first run, and an unknown start, are not rebuilt | written; fails on `main` |
+
+**What was run, 2026-10-18** (this worktree, `npm ci`, `npm run build`, `TMPDIR=/tmp/vacts`, each file alone with `node --test --test-concurrency=1`):
+- **On `main` `fd5087f`'s harness** (only `m6-lane.mjs` restored): the first run's assertions pass. M512 (k) F3 then fails: "the combined approval of the first attempt is in the rerun's act record ([["preview_inspection","driver"]])".
+- **With the change:** M512 14/14. The real-lane files M519 and M535 (which import `m6-lane.mjs`) were syntax-checked with `node --check`, not run.
+- **M519's paid run directory** (a copy of `~/s6-1018`'s `home/store.db`, `observed/` and `state.json` in `/tmp/vacts`; the engine was stopped, no `-wal`/`-shm`). `rebuildRerunActs` turned the `m6w_design` record from `[preview_inspection]` into:
+  - `correction_approval` ×5, `design_due` (`open`), `finding_disposition` ×2;
+  - `combined_approval` ×2 (`dec_01M56E1ZFT5V2N1SGHPBE31G2A` `design_approval`, `dec_01M56E1ZGFGX6A05YN84GY6H90` `spec_change`), with Sean's instruction quoted;
+  - `designer_feedback` (`run_01M56CW24FTV4XNS6TSZJKEGPP`);
+  - `qualify_adapter` (`aq_01M56WTCZD2XD9VYHMRJVE77QZ`, 06:57:36);
+  - `preview_inspection`, with relay events 4240/4246 (generation 1) and 7146/7153 (generation 3).
+
+  Every act is `driver`. The window is seqs 1464 to 6874 (`inferred`, from `m6w_qualify`'s end at 02:18:16.992Z) and 6874 to 7405 (to the step's end at 07:00:55.476Z). The spec and architect sessions are not taken in. All 14 human decisions of the project are in the record; no performer is `unknown`. A second call returns `null`.
+- **Then `upTo(…, 'm6w_design')` on a fresh copy** (every step done, so no engine starts and the store's sequence is unchanged): the record is rebuilt and (c)'s act is found. `upTo(…, 'm6w_build')` on the copy, still halted by judge (c), is refused by `refuseIfStopped` before any engine starts, and the store's sequence is unchanged.

@@ -101,6 +101,7 @@ import {
   projectPolicy,
   qualifyStep,
   readPace,
+  refuseIfStopped,
   resultsOfProject,
   seanTypes,
   sessionRuns,
@@ -294,16 +295,107 @@ export function m6Preflight(row) {
 // A step of the M6 lane: M5's `step` (state.json, halts, reruns) with its
 // start time recorded (for the findings' workarounds and the acts' evidence)
 // and the events' sequence at its start (for the acts it observed).
+//
+// Every attempt of the step is kept too (M519 finding F3; the driver's
+// ruling of 2026-10-18; SEAM.md §551): `observed/step-attempts.json`,
+// {step: [{at, seq, ended_at, ended_seq}]}, the events' sequence read from
+// the run home's store at the attempt's start and end, so that the step's
+// act record covers every attempt from the first (`actWindow`), while
+// `step-starts.json` keeps the last start for the judgements of the
+// attempt itself (the workarounds, `stepVerdicts`).
 export function m6Step(ctx, name, fn) {
   return step(ctx, name, async () => {
     const starts = readStarts(ctx.runDir);
+    const before = starts[name] ?? null;
     starts[name] = new Date().toISOString();
     mkdirSync(join(ctx.runDir, 'observed'), { recursive: true, mode: 0o700 });
     writeFileSync(startsFile(ctx.runDir), `${JSON.stringify(starts, null, 2)}\n`, { mode: 0o600 });
-    return fn({ startedAt: starts[name] });
+    const attempts = readAttempts(ctx.runDir);
+    // A run directory from before the attempts were kept: the step ran before, and only its last start was kept.
+    attempts[name] = [...(attempts[name] ?? (before ? [unkeptAttempts(ctx, name)] : [])), { at: starts[name], seq: seqOfRun(ctx) }];
+    writeAttempts(ctx.runDir, attempts);
+    try {
+      return await fn({ startedAt: starts[name] });
+    } finally {
+      const now = readAttempts(ctx.runDir);
+      const last = now[name]?.at(-1);
+      if (last?.at === starts[name]) {
+        last.ended_at = new Date().toISOString();
+        last.ended_seq = seqOfRun(ctx);
+        writeAttempts(ctx.runDir, now);
+      }
+    }
   });
 }
 const maxSeq = (home) => one(home, 'SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').n;
+
+// ---- every attempt of a step (M519 F3; SEAM.md §551) -------------------------------------------
+
+const attemptsFile = (runDir) => join(runDir, 'observed', 'step-attempts.json');
+export const readAttempts = (runDir) => (existsSync(attemptsFile(runDir)) ? JSON.parse(readFileSync(attemptsFile(runDir), 'utf8')) : {});
+function writeAttempts(runDir, attempts) {
+  mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
+  writeFileSync(attemptsFile(runDir), `${JSON.stringify(attempts, null, 2)}\n`, { mode: 0o600 });
+}
+// The run home's last event, read directly (an engine running or not); null when it cannot be read.
+function seqOfRun(ctx) {
+  try {
+    return existsSync(join(homeOfRun(ctx), 'store.db')) ? maxSeq(homeOfRun(ctx)) : null;
+  } catch {
+    return null;
+  }
+}
+// The last event at or before an instant (the engine's clock, ISO-8601 UTC with milliseconds).
+const seqAt = (home, at) => one(home, 'SELECT COALESCE(MAX("seq"), 0) AS n FROM "events" WHERE "at" <= ?', at).n;
+
+// The earlier attempts of a step in a run directory from before the attempts
+// were kept: taken to begin where the step before it in the file's order
+// ended (its `at` in state.json), the only bound such a directory keeps, and
+// to end where the next kept attempt began; unknown when no step before it
+// has a recorded end. Never assumed.
+function unkeptAttempts(ctx, name) {
+  const order = Object.values(STEPS).find((o) => o.includes(name)) ?? [];
+  const st = loadState(ctx).steps ?? {};
+  const prev = order.slice(0, Math.max(0, order.indexOf(name))).reverse().find((s) => st[s]?.status === 'done' && st[s]?.at);
+  return prev
+    ? { at: st[prev].at, seq: null, basis: `inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where ${prev} ended (state.json)` }
+    : { at: null, seq: null, basis: "unknown: this step's earlier attempts were made before their starts were kept (M519 F3), and no step before it has a recorded end" };
+}
+
+// Each attempt as a range of the events' sequence, (from, to]: from its
+// start's sequence (or the last event at its start), to its end's (or the
+// next attempt's start; open for the last attempt without an end). An
+// attempt whose start is unknown has `from` null.
+function attemptRanges(home, list) {
+  return list.map((a, i) => {
+    const next = list[i + 1] ?? null;
+    const from = a.seq ?? (a.at ? seqAt(home, a.at) : null);
+    const to = a.ended_seq ?? (a.ended_at ? seqAt(home, a.ended_at) : next ? next.seq ?? (next.at ? seqAt(home, next.at) : null) : null);
+    return { from, to, at: a.at ?? null, ended_at: a.ended_at ?? next?.at ?? null, ...(a.basis ? { basis: a.basis } : {}) };
+  });
+}
+const inRanges = (ranges, seq) => ranges.some((r) => seq > r.from && (r.to === null || r.to === undefined || seq <= r.to));
+
+// What a step's act record covers (the driver's ruling, M519 F3): every
+// attempt of the step from its first start, the store's acts in each
+// attempt's range and their performers from the entries made at or after
+// the first start. A first run (one attempt) keeps exactly the window its
+// step passes (`sinceSeq` and `since` at this attempt's start), as before.
+// Only what the act record covers changes: each step's own judgements
+// (rule 25, its wait conditions, the workarounds) keep the attempt's own.
+export function actWindow(ctx, name, home, { sinceSeq, since }) {
+  const list = readAttempts(ctx.runDir)[name] ?? [];
+  const current = { from: sinceSeq, to: null, at: since, ended_at: null };
+  // m6Step keeps this attempt last, before the step runs.
+  const earlier = list.length > 1 && list.at(-1).at === since ? attemptRanges(home, list).slice(0, -1) : [];
+  const known = earlier.filter((r) => r.from !== null);
+  return { ranges: [...known, current], since: known[0]?.at ?? since, earlier: known, unknown: earlier.filter((r) => r.from === null) };
+}
+const windowNote = (w) => ({
+  attempts: w.ranges.map((r) => ({ from_seq: r.from, to_seq: r.to, at: r.at, ended_at: r.ended_at, ...(r.basis ? { basis: r.basis } : {}) })),
+  performers_since: w.since,
+  ...(w.unknown.length > 0 ? { unknown: w.unknown.map((r) => r.basis) } : {}),
+});
 
 const openDecisions = (home, project) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY rowid`, project).map((d) => ({ ...d, options: json(d.options), evidence: json(d.evidence ?? null) }));
 
@@ -449,16 +541,23 @@ export function actOfDecision(home, d) {
   return d.kind;
 }
 
-// The owner acts the store recorded since `sinceSeq`: decisions answered by
-// the `human` actor (grouped by act), owner turns in sessions, and the acts
-// the step names itself (an owner command observed by its effect).
+// The owner acts the store recorded since `sinceSeq` (a sequence number, or
+// the ranges of a step's attempts, `actWindow`): decisions answered by the
+// `human` actor (grouped by act), owner turns in sessions, the adapter's
+// qualifications (the owner's `surety qualify-adapter`, observed by its
+// effect: a qualification run's row; a fixture's row has none; M519 F3, the
+// design step's rerun qualified it again after the engine's build changed),
+// and the acts the step names itself (an owner command observed by its effect).
 export function storeActs(home, project, sinceSeq, named = []) {
+  const ranges = Array.isArray(sinceSeq) ? sinceSeq : [{ from: sinceSeq, to: null }];
+  const floor = Math.min(...ranges.map((r) => r.from));
   const acts = new Map();
   const add = (act, item) => {
     if (!acts.has(act)) acts.set(act, { act, items: [] });
     acts.get(act).items.push(item);
   };
-  for (const e of rows(home, `SELECT * FROM "events" WHERE "type" = 'decision.consumed' AND "seq" > ? ORDER BY "seq"`, sinceSeq)) {
+  for (const e of rows(home, `SELECT * FROM "events" WHERE "type" = 'decision.consumed' AND "seq" > ? ORDER BY "seq"`, floor)) {
+    if (!inRanges(ranges, e.seq)) continue;
     const subject = json(e.subject);
     if (subject?.project !== project) continue;
     const d = one(home, 'SELECT * FROM "decisions" WHERE "id" = ?', subject.decision);
@@ -469,11 +568,17 @@ export function storeActs(home, project, sinceSeq, named = []) {
   for (const t of rows(home, `SELECT t.*, r."role", r."id" AS "run_id" FROM "session_transcripts" t JOIN "runs" r ON r."id" = t."run" WHERE t."project" = ?`, project)) {
     const owner = (json(t.entries) ?? []).filter((x) => x.speaker === 'owner');
     if (owner.length === 0) continue;
-    const firstSeq = one(home, `SELECT MIN("seq") AS s FROM "events" WHERE "seq" > ? AND "subject" LIKE ?`, sinceSeq, `%${t.run_id}%`)?.s;
+    const firstSeq = rows(home, `SELECT "seq" FROM "events" WHERE "seq" > ? AND "subject" LIKE ? ORDER BY "seq"`, floor, `%${t.run_id}%`).find((e) => inRanges(ranges, e.seq))?.seq;
     if (firstSeq === null || firstSeq === undefined) continue;
     const review = one(home, 'SELECT "id" FROM "design_reviews" WHERE "run" = ?', t.run_id);
     const act = t.role === 'designer' ? (review ? 'review_session' : 'designer_feedback') : t.role === 'spec_writer' ? 'spec_session' : t.role === 'architect' ? 'architect_session' : `${t.role}_session`;
     add(act, { run: t.run_id, owner_turns: owner.length, store_actor: 'owner (transcript speaker)', answered_at: owner.at(-1)?.at ?? null, route: `POST /v1/projects/${project}/sessions/${t.run_id}/turns` });
+  }
+  for (const e of rows(home, `SELECT "seq", "at", "subject" FROM "events" WHERE "type" = 'adapter.qualified' AND "seq" > ? ORDER BY "seq"`, floor)) {
+    if (!inRanges(ranges, e.seq)) continue;
+    const q = one(home, 'SELECT "id", "adapter", "run" FROM "adapter_qualifications" WHERE "id" = ?', json(e.subject)?.adapter_qualification);
+    if (!q?.run) continue;
+    add('qualify_adapter', { qualification: q.id, adapter: q.adapter, qualification_run: q.run, store_actor: "the owner's CLI (a qualification run)", answered_at: e.at, route: `surety qualify-adapter ${q.adapter}` });
   }
   for (const n of named) add(n.act, n);
   return [...acts.values()];
@@ -507,15 +612,65 @@ export function performers(ctx, acts, since) {
 
 const actsFile = (ctx, row) => join(ctx.runDir, 'observed', `acts-${row}.json`);
 export const readActs = (ctx, row) => (existsSync(actsFile(ctx, row)) ? JSON.parse(readFileSync(actsFile(ctx, row), 'utf8')) : []);
+// A step's acts, in place of those recorded for it before.
+function writeStepActs(ctx, row, name, stamped) {
+  const all = readActs(ctx, row).filter((a) => a.step !== name).concat(stamped);
+  mkdirSync(join(ctx.runDir, 'observed'), { recursive: true, mode: 0o700 });
+  writeFileSync(actsFile(ctx, row), `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
+}
+
+// M519 F3, a run directory from before the attempts were kept (the driver's
+// ruling of 2026-10-18; SEAM.md §551): a step done after a rerun of it (its
+// name in state.json's `reruns_applied`), with no attempts kept, has an act
+// record of its last attempt alone. It is rebuilt once, from the store (read
+// only, the step's engine stopped) and the act entries, over every attempt:
+// the earlier ones from where the step before it ended (`unkeptAttempts`),
+// the last from its kept start (step-starts.json) to its end (state.json),
+// so that no later step's act is taken in. No performer is waited for: an
+// act without an entry is `unknown`. The attempts are then kept, so that it
+// is never rebuilt again and a later rerun of the step adds to them. Returns
+// the rebuilt acts, or null (nothing to rebuild, or a bound unknown: the
+// record left as it was, and said so in observed/).
+export function rebuildRerunActs(ctx, row, name, { project, named = () => [] }) {
+  const state = loadState(ctx);
+  const done = state.steps?.[name];
+  if (done?.status !== 'done' || readAttempts(ctx.runDir)[name]) return null;
+  const reran = (state.reruns_applied ?? []).some((k) => k.slice(k.indexOf(':') + 1).split(',').map((s) => s.trim()).includes(name));
+  if (!reran) return null;
+  const last = readStarts(ctx.runDir)[name] ?? null;
+  const list = [unkeptAttempts(ctx, name), { at: last, seq: null, ended_at: done.at, basis: "kept: the last attempt's start (step-starts.json) and its end (state.json)" }];
+  if (!list.every((a) => a.at)) {
+    observe(ctx, row, `acts_not_rebuilt_${name}`, { why: last ? list[0].basis : "unknown: the last attempt's start was not kept", record: 'left as it was' });
+    return null;
+  }
+  const home = homeOfRun(ctx);
+  const ranges = attemptRanges(home, list);
+  const window = { ranges, since: ranges[0].at, earlier: ranges.slice(0, -1), unknown: [] };
+  const acts = storeActs(home, project, ranges, named(window));
+  const stamped = performers(ctx, acts, window.since).map((a) => ({ ...a, step: name, window: { ...windowNote(window), rebuilt_at: new Date().toISOString() } }));
+  const before = readActs(ctx, row).filter((a) => a.step === name).map((a) => a.act);
+  writeStepActs(ctx, row, name, stamped);
+  const attempts = readAttempts(ctx.runDir);
+  attempts[name] = list;
+  writeAttempts(ctx.runDir, attempts);
+  observe(ctx, row, `acts_rebuilt_${name}`, { finding: 'F3', before, after: stamped.map((a) => ({ act: a.act, items: a.items.length, performer: a.performer })), window: windowNote(window) });
+  return stamped;
+}
 
 // A step's acts, their evidence waited for and recorded: Sean's central acts
 // (M535) up to SURETY_REAL_WAIT_MINUTES, then the step fails naming each one
 // not performed by him; every other act up to SURETY_REAL_ACT_RECORD_MINUTES,
-// then recorded `unknown`, never assumed Sean's.
+// then recorded `unknown`, never assumed Sean's. The record covers every
+// attempt of the step (`actWindow`; M519 F3): a rerun replaces the step's
+// acts with those of all its attempts, never with its own alone; when it
+// covers more than one attempt each act carries the `window`. `named` is
+// the acts the step names, or a function of the window giving them.
 export async function recordActs(ctx, row, name, { home, project, sinceSeq, since, named = [], central = [] }) {
-  const acts = storeActs(home, project, sinceSeq, named);
+  const window = actWindow(ctx, name, home, { sinceSeq, since });
+  const acts = storeActs(home, project, window.ranges, typeof named === 'function' ? named(window) : named);
   for (const c of central) if (!acts.some((a) => a.act === c)) throw new Error(`${name}: the owner act ${c} was not observed in the store (E156 Q6)`);
   const needed = (list) => list.filter((a) => a.performer === 'unknown');
+  since = window.since;
   let rec = performers(ctx, acts, since);
   if (!ctx.rehearsal && needed(rec).length > 0) {
     tellSean(
@@ -539,10 +694,8 @@ export async function recordActs(ctx, row, name, { home, project, sinceSeq, sinc
       await sleep(10_000);
     }
   }
-  const stamped = rec.map((a) => ({ ...a, step: name }));
-  const all = readActs(ctx, row).filter((a) => a.step !== name).concat(stamped);
-  mkdirSync(join(ctx.runDir, 'observed'), { recursive: true, mode: 0o700 });
-  writeFileSync(actsFile(ctx, row), `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
+  const stamped = rec.map((a) => ({ ...a, step: name, ...(window.earlier.length > 0 || window.unknown.length > 0 ? { window: windowNote(window) } : {}) }));
+  writeStepActs(ctx, row, name, stamped);
   if (!ctx.rehearsal) {
     const notSean = stamped.filter((a) => central.includes(a.act) && a.performer !== 'sean');
     if (notSean.length > 0) throw new Error(`${name} not passed: ${notSean.map((a) => `${a.act} (performer ${a.performer})`).join(', ')}: Sean performs it himself and records it with owner-act.mjs (E156 Q6); the store's human actor alone does not establish it`);
@@ -734,6 +887,14 @@ export const bindingsOf = (home, project) => rows(home, 'SELECT * FROM "asset_bi
 export const readyRevision = (home, project) => designRevisionsOf(home, project).filter((r) => ['approved', 'approved_without_criteria'].includes(r.status) && r.ready_at).at(-1) ?? null;
 const RELAY_UNRECORDED = Object.freeze({ unknown: 'neither the operator relay (src/deploy/service-host.ts) nor the preview server (src/design/preview/server.mts) records the requests it serves; the relay\'s openings and closings are the events below' });
 
+// The preview inspection as the design step names it (rule 26): the
+// previews, and the relay's openings and closings for `design-preview` in
+// the act record's ranges (every attempt of the step, M519 F3).
+export function inspectionAct(home, project, ranges) {
+  const relay = relayEvents(home, project, Math.min(...ranges.map((r) => r.from))).filter((e) => inRanges(ranges, e.seq));
+  return { act: 'preview_inspection', previews: previewsOf(home, project).map((p) => ({ generation: p.generation, unit: p.unit, status: p.status, deployed_at: p.deployed_at, torn_down_at: p.torn_down_at })), relay, relay_requests: RELAY_UNRECORDED, route: `POST /v1/projects/${project}/design/preview; POST /v1/projects/${project}/environments/design-preview/relay`, store_actor: "the owner's routes", answered_at: relay.find((e) => e.type === 'environment.relay_opened')?.at ?? null };
+}
+
 // GET over loopback, bytes as bytes (the rehearsal's read of the relay; rule 21: nothing rendered).
 function getBytes(url, timeoutMs = 15_000) {
   return new Promise((resolve) => {
@@ -850,7 +1011,7 @@ export async function m6Design(ctx, row) {
   const name = stepName(row, 'design');
   const project = projectOf(ctx, row);
   const central = row === 'M535' ? ['designer_feedback', 'preview_inspection', 'combined_approval'] : [];
-  return m6Step(ctx, name, ({ startedAt }) =>
+  const value = await m6Step(ctx, name, ({ startedAt }) =>
     onEngine(ctx, `${row} ${name}`, { projects: [project], resume: project }, async (fx) => {
       const sinceSeq = maxSeq(fx.home);
       let inspection = null;
@@ -903,7 +1064,8 @@ export async function m6Design(ctx, row) {
         sinceSeq,
         since: startedAt,
         central,
-        named: [{ act: 'preview_inspection', previews: previewsOf(fx.home, project).map((p) => ({ generation: p.generation, unit: p.unit, status: p.status, deployed_at: p.deployed_at, torn_down_at: p.torn_down_at })), relay, relay_requests: RELAY_UNRECORDED, route: `POST /v1/projects/${project}/design/preview; POST /v1/projects/${project}/environments/design-preview/relay`, store_actor: 'the owner\'s routes', answered_at: relay.find((e) => e.type === 'environment.relay_opened')?.at ?? null }],
+        // The inspection's relay events over every attempt of the step (M519 F3), not this attempt's alone.
+        named: (w) => [inspectionAct(fx.home, project, w.ranges)],
       });
       const ready = s.value;
       const out = {
@@ -925,6 +1087,9 @@ export async function m6Design(ctx, row) {
       return out;
     }),
   );
+  // A run directory from before the attempts were kept (M519 F3): the record rebuilt once over every attempt.
+  rebuildRerunActs(ctx, row, name, { project, named: (w) => [inspectionAct(homeOfRun(ctx), project, w.ranges)] });
+  return value;
 }
 
 // ---- the build, the asset change (M535), Alpha and the review, in one engine ------------------
@@ -1121,6 +1286,12 @@ export async function m6BuildToReview(ctx, row) {
   const st = loadState(ctx).steps ?? {};
   const allDone = order.every((s) => st[stepName(row, s)]?.status === 'done');
   if (allDone && st[stepName(row, 'teardown')]?.status === 'done') return st[stepName(row, 'review')].value;
+  // Before any engine starts or the project resumes (BS5 §12; M5's S3): a
+  // halted run directory, or a step to run that failed earlier, refuses here,
+  // with nothing started. (M519: after judge (c) halted the directory, each
+  // later case started an engine and resumed the project before the build
+  // step's own refusal.) The teardown's rerun alone (README §7) is as before.
+  if (!allDone) refuseIfStopped(ctx, stepName(row, order.find((s) => st[stepName(row, s)]?.status !== 'done')));
   // Only the teardown left (its rerun, README §7): a loaded unit of the prefix is what it is for.
   return onEngine(ctx, `${row} ${stepName(row, allDone ? 'teardown' : order[0])}`, { projects: [project], resume: project, teardown: allDone }, async (fx) => {
     try {
