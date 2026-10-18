@@ -17,6 +17,7 @@ const { checkEvidence: checkSized, formatOfBytes, formatOfName, validName } = aw
 const checkEvidence = (files, bounds) => checkSized(files.map((f) => ({ name: f.name, size: f.bytes.length, bytes: () => f.bytes })), bounds);
 const { parseDesignCommand, parseDesignVerdicts } = await import(join(dist, 'design', 'design-command.js'));
 const { checkDesign, gitBlobId } = await import(join(dist, 'design', 'check.js'));
+const { confirmedVerdicts } = await import(join(dist, 'design', 'review.js'));
 const { parseModuleMap } = await import(join(dist, 'plan', 'schemas.js'));
 const { interfaceShapesMissing } = await import(join(dist, 'plan', 'check.js'));
 
@@ -102,6 +103,27 @@ test('F4: a delta names a criterion and a covering check only explicitly; an unk
   const recorded = withDelta({ criterion: 'R3.2', check: 'gone' });
   const blob = gitBlobId(Buffer.from(JSON.stringify(recorded)));
   assert.deepEqual(reviewReasons(recorded, { links, reviews: { held: { [blob]: [] }, run: [] } }), [], 'a recorded review is judged again at its confirmation, not at every save');
+});
+
+test('F4: at confirmation the proposed links of filing deltas are judged again unless an edit supplies the deltas; a design delta or a struck verdict is not; the refusal names the review file\'s path', () => {
+  const links = { criteria: ['R3.2'], checks: { 'marker-android': ['R3.2'] } };
+  const v = (deltas, extra = {}) => ({ target: 'android', screen: 'S2', verdict: 'deltas', status: 'proposed', evidence: [], deltas, ...extra });
+  const stale = { owner_words: 'x', kind: 'implementation', criterion: 'R3.2', check: 'no-such-check' };
+  const refused = (fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    assert.fail('not refused');
+  };
+  const e = refused(() => confirmedVerdicts([v([stale])], { edits: [{ target: 'android', screen: 'S2', observed_on: 'device' }] }, links, 'reviews/review-4.json'));
+  assert.deepEqual([e.status, e.code, e.subject?.field], [422, 'invalid_value', 'reviews/review-4.json: screens[0].deltas[0].check'], 'an edit of observed_on alone does not replace the proposed links');
+  const ok = confirmedVerdicts([v([stale])], { edits: [{ target: 'android', screen: 'S2', deltas: [{ owner_words: 'x', kind: 'implementation' }] }] }, links, 'reviews/review-4.json');
+  assert.deepEqual(ok.verdicts[0].deltas, [{ owner_words: 'x', kind: 'implementation' }], 'an edit supplying deltas replaces them, links removed');
+  assert.equal(confirmedVerdicts([v([{ ...stale, kind: 'design' }])], {}, links, null).verdicts.length, 1, 'a design delta files nothing: its stale link is not refused');
+  assert.equal(confirmedVerdicts([v([stale])], { strikes: [{ target: 'android', screen: 'S2' }] }, links, null).verdicts[0].status, 'struck', 'a struck verdict files nothing');
+  assert.equal(refused(() => confirmedVerdicts([v([stale])], {}, links, null)).subject?.field, 'the review file: screens[0].deltas[0].check');
 });
 
 test('B.14: a review file is closed, a verdict never carries a status, and cites only its own evidence', () => {

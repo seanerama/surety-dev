@@ -32,6 +32,7 @@ const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 's
 const { askUndispositioned } = await import(join(dist, 'store', 'transitions', 'findings.js'));
 const { answerQueued } = await import(join(dist, 'store', 'transitions', 'queue.js'));
 const { blocks } = await import(join(dist, 'store', 'transitions', 'gates.js'));
+const reviewModule = await import(join(dist, 'design', 'review.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });
 const AT = '2026-10-16T00:00:00.000Z';
@@ -179,4 +180,78 @@ test('5: a finding accepted through the earlier owed question while it blocks is
   // if it blocks again (raised by a role's severity change, for one).
   s.run(`UPDATE findings SET effective_severity = 'high' WHERE id = 'fnd_live'`);
   assert.equal(sweep(s.db), 0, 'after the corrected form, no recovery');
+});
+
+// F4 (Sean's ruling, 2026-10-18; the driver's rulings on 9ff79c0): a
+// finding a confirmed design review filed (its id among the review's
+// `findings`) is offered fix even where no check can verify it, and each
+// consequence says what the disposition and the gate then do.
+function reviewed(s, ids) {
+  s.run(`INSERT INTO design_reviews (id, created_at, project, trigger, subject, verdicts, confirmed_by, confirmation_decision, findings) VALUES ('drv_1', ?, 'prj_1', 'owner_command', '{}', '[]', 'human', 'dec_conf', ?)`, AT, JSON.stringify(ids));
+}
+const fixText = (db, id) => JSON.parse(owedOpen(db, id)[0].options).find((o) => o.key === 'fix')?.consequence_text;
+const workCount = (db, kind, id) => db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = ? AND json_extract(subject, '$.finding') = ?`).get(kind, id).n;
+
+test('F4: a design review finding no check can verify is offered fix; nothing will resolve one naming no check, and the text says so and names the only re-disposition route; fix registers fix and check_correction work', (t) => {
+  const s = store(t);
+  s.finding('fnd_bare', { severity: 'medium' });
+  s.finding('fnd_crit_only', { severity: 'medium', criterion: 'R1.1' });
+  s.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
+  s.finding('fnd_plain', { severity: 'medium' });
+  reviewed(s, ['fnd_bare', 'fnd_crit_only', 'fnd_linked']);
+  sweep(s.db);
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_bare')[0]), ['fix', 'accept'], 'fix offered on the unlinked review finding');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_plain')[0]), ['accept'], 'the M444 rule for every other finding');
+  const bare = fixText(s.db, 'fnd_bare');
+  assert.match(bare, /registers fix work/);
+  assert.match(bare, /check_correction work for the Verifier/);
+  assert.match(bare, /names no criterion and no check, and nothing in the engine ever gives a finding a check, so nothing in the engine will resolve it \(the check_correction work does not\)/);
+  assert.match(bare, /until it is dispositioned otherwise/);
+  assert.match(bare, /only a Reviewer's report can/);
+  assert.doesNotMatch(bare, /as it stands/);
+  assert.match(fixText(s.db, 'fnd_crit_only'), /names criterion R1\.1 but no check/);
+  const linked = fixText(s.db, 'fnd_linked');
+  assert.match(linked, /until its check login passes after this disposition/);
+  assert.doesNotMatch(linked, /check_correction/);
+  answer(s.db, owedOpen(s.db, 'fnd_bare')[0], 'fix');
+  assert.deepEqual([workCount(s.db, 'fix', 'fnd_bare'), workCount(s.db, 'check_correction', 'fnd_bare')], [1, 1], 'fix work and check_correction work');
+  answer(s.db, owedOpen(s.db, 'fnd_linked')[0], 'fix');
+  assert.deepEqual([workCount(s.db, 'fix', 'fnd_linked'), workCount(s.db, 'check_correction', 'fnd_linked')], [1, 0], 'a verifiable one routes no check_correction');
+});
+
+test('F4: in the conformance phase the fix text says no fix work and no check_correction work, as recordDisposition does; with no effective protected version verifiability is unknown', (t) => {
+  const s = store(t);
+  s.finding('fnd_bare', { severity: 'medium' });
+  reviewed(s, ['fnd_bare']);
+  s.run(`UPDATE projects SET adoption = '{}' WHERE id = 'prj_1'`);
+  sweep(s.db);
+  const conf = fixText(s.db, 'fnd_bare');
+  assert.match(conf, /conformance phase, so nothing else is registered now: no fix work, no check_correction work/);
+  assert.doesNotMatch(conf, /registers fix work|registers check_correction/);
+  assert.match(conf, /nothing in the engine will resolve it:/);
+  answer(s.db, owedOpen(s.db, 'fnd_bare')[0], 'fix');
+  assert.deepEqual([workCount(s.db, 'fix', 'fnd_bare'), workCount(s.db, 'check_correction', 'fnd_bare')], [0, 0], 'as the text says');
+
+  const u = store(t);
+  u.finding('fnd_bare', { severity: 'medium' });
+  reviewed(u, ['fnd_bare']);
+  u.run(`UPDATE protected_versions SET effective_from = NULL`);
+  sweep(u.db);
+  const unknown = fixText(u.db, 'fnd_bare');
+  assert.match(unknown, /Whether a check can verify it is unknown \(the project has no effective protected version\)/);
+  assert.doesNotMatch(unknown, /No check named by the finding can verify it/);
+});
+
+test('F4: the confirm option of design_verdicts states the link each filing delta will carry, or no criterion, no check', (t) => {
+  const s = store(t);
+  const { DESIGN_VERDICTS } = reviewModule;
+  const verdicts = [
+    { target: 'android', screen: 'S2', verdict: 'deltas', status: 'proposed', evidence: [], deltas: [{ owner_words: 'a', kind: 'implementation', criterion: 'R1.1', check: 'login' }, { owner_words: 'b', kind: 'design' }, { owner_words: 'c', kind: 'both', state: 'empty' }] },
+  ];
+  s.run(`INSERT INTO design_reviews (id, created_at, project, trigger, subject, verdicts) VALUES ('drv_2', ?, 'prj_1', 'owner_command', '{}', ?)`, AT, JSON.stringify(verdicts));
+  const preview = transact(s.db, HUMAN, (tx) => DESIGN_VERDICTS.preview(tx, { subject_id: 'drv_2' }));
+  const confirm = preview.options.find((o) => o.key === 'confirm').consequence;
+  assert.match(confirm, /Each finding carries the criterion and check its delta names, and neither where it names none/);
+  assert.match(confirm, /as proposed: android S2: criterion R1\.1, check login; android S2 \(empty\): no criterion, no check\./);
+  assert.doesNotMatch(confirm, /android S2: no criterion.*android S2: no criterion/, 'the design delta is not listed');
 });

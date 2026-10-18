@@ -53,6 +53,8 @@ export interface ReviewArgs {
 
 export const VERDICTS = ['matches', 'deltas', 'not_observed'] as const;
 export const DELTA_KINDS = ['design', 'implementation', 'both'] as const;
+// The kinds of delta a confirmed verdict files a finding for (D7 §10.3).
+const FILED_KINDS: readonly string[] = ['implementation', 'both'];
 export const NOT_OBSERVED_REASONS = ['no_native_runtime', 'not_reached', 'owner_skipped'] as const;
 
 // SEAM.md §524: how each provenance is shown.
@@ -282,6 +284,7 @@ interface ReviewRow {
   confirmation_decision: string | null;
   findings: string;
   proposed_revision: string | null;
+  review_path: string | null;
 }
 
 interface Verdict {
@@ -342,6 +345,12 @@ export const DESIGN_VERDICTS: KindSpec = {
     if (!r || r.confirmation_decision !== null) return null;
     const verdicts = parseJson<Verdict[]>(r.verdicts) ?? [];
     const evidence = evidenceRows(tx.db, r.id);
+    // F4: the owner confirms the links, so the question shows each one.
+    const filed = verdicts.flatMap((v) =>
+      (v.deltas ?? [])
+        .filter((dl) => FILED_KINDS.includes(dl.kind))
+        .map((dl) => `${String(v.target)} ${String(v.screen)}${dl.state ? ` (${dl.state})` : ''}: ${typeof dl.criterion === 'string' ? `criterion ${dl.criterion}` : 'no criterion'}, ${typeof dl.check === 'string' ? `check ${dl.check}` : 'no check'}`),
+    );
     return {
       manifest: { review: r.id, review_blob: reviewFileBlob(tx.db, r), evidence: evidence.map((e) => e.id) },
       question:
@@ -353,7 +362,8 @@ export const DESIGN_VERDICTS: KindSpec = {
           key: 'confirm',
           label: 'Confirm',
           consequence:
-            'The verdicts become yours, as you edit them; a struck one is not. A confirmed `matches` on a native runtime carries its target\'s human test as owner accepted for this design version (never verified); a target not observed stays pending. Each confirmed implementation defect becomes a finding against the review\'s candidate (severity medium unless you give one); a design delta waits in its batch.',
+            'The verdicts become yours, as you edit them; a struck one is not. A confirmed `matches` on a native runtime carries its target\'s human test as owner accepted for this design version (never verified); a target not observed stays pending. Each confirmed implementation defect becomes a finding against the review\'s candidate (severity medium unless you give one); a design delta waits in its batch. ' +
+            `Each finding carries the criterion and check its delta names, and neither where it names none (an edited delta carries what your edit names)${filed.length > 0 ? `; as proposed: ${filed.join('; ')}` : ''}.`,
           effect: { design_review: r.id },
         },
         { key: 'reject', label: 'Reject', consequence: 'The verdicts stay proposals; nothing is accepted, filed or routed.', effect: { design_review: r.id } },
@@ -376,7 +386,7 @@ export const DESIGN_VERDICTS: KindSpec = {
     if (option !== 'confirm' && option !== 'reject') throw new Refusal(400, 'invalid_option', `"${option}" is not an option of design_verdicts.`, 'Answer confirm or reject.', { option });
     const proposed = parseJson<Verdict[]>(r.verdicts) ?? [];
     // Everything the confirmation carries is judged before anything is consumed.
-    const shaped = option === 'confirm' ? confirmedVerdicts(proposed, extra, reviewLinks(tx.db, r.project)) : null;
+    const shaped = option === 'confirm' ? confirmedVerdicts(proposed, extra, reviewLinks(tx.db, r.project), r.review_path) : null;
     consumeDecision(tx, d, option, note);
     if (option === 'reject') return consumed(d);
     recordApproval(tx, d, { consequence: 'the review\'s verdicts confirmed', subjectType: 'design_review', subjectId: r.id });
@@ -401,7 +411,9 @@ const invalidAnswer = (field: string, why: string) => new Refusal(422, 'invalid_
 // F4: a delta's `criterion` and `check`, as an edit names them or the
 // review file proposed them, are judged against the store as it is now; an
 // invalid link is refused naming its field, nothing consumed.
-function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined, links: ReviewLinks): { verdicts: Verdict[]; severity: string } {
+// `reviewPath`: the review file's, to name a proposed link by where it is
+// written (each verdict is the file's screens[] entry of the same index).
+export function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined, links: ReviewLinks, reviewPath: string | null): { verdicts: Verdict[]; severity: string } {
   const at = (target: unknown, screen: unknown) => proposed.findIndex((v) => v.target === target && v.screen === screen);
   const edits = extra?.edits === undefined ? [] : extra.edits;
   const strikes = extra?.strikes === undefined ? [] : extra.strikes;
@@ -441,7 +453,8 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined, 
       });
     }
     out[j] = v;
-    edited.add(j);
+    // Only an edit that supplies deltas replaces the proposed links.
+    if (x.deltas !== undefined) edited.add(j);
   }
   for (const [i, s] of strikes.entries()) {
     if (s === null || typeof s !== 'object' || Array.isArray(s)) throw invalidAnswer(`strikes[${i}]`, 'must be {target, screen}');
@@ -450,14 +463,16 @@ function confirmedVerdicts(proposed: Verdict[], extra: AnswerExtra | undefined, 
     if (j < 0) throw invalidAnswer(`strikes[${i}]`, `names no verdict of the review (${String(x.target)}/${String(x.screen)})`);
     out[j] = { ...out[j]!, status: 'struck' };
   }
-  // The links the review file proposed on a confirmed verdict the owner did
-  // not edit: judged again now (the effective version or the index may have
-  // changed since the close).
+  // The links the review file proposed on a confirmed verdict whose deltas
+  // the owner did not edit, on the deltas that file a finding: judged again
+  // now (the effective version or the index may have changed since the
+  // close); named by where the review file writes them.
   for (const [j, v] of out.entries()) {
     if (edited.has(j) || v.status !== 'confirmed') continue;
     for (const [k, dl] of (v.deltas ?? []).entries()) {
+      if (!FILED_KINDS.includes(dl.kind)) continue;
       const link = deltaLinkProblem(dl, links);
-      if (link !== null) throw invalidAnswer(`deltas of ${v.target}/${v.screen}[${k}].${link.field}`, `${link.why}; edit the delta to name a link that holds, or none`);
+      if (link !== null) throw invalidAnswer(`${reviewPath ?? 'the review file'}: screens[${j}].deltas[${k}].${link.field}`, `${link.why}; edit the delta to name a link that holds, or none`);
     }
   }
   return { verdicts: out, severity };
@@ -506,7 +521,7 @@ function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string
     if (v.status !== 'confirmed') continue;
     const candidate = reviewCandidate(tx.db, r, v.target);
     for (const dl of v.deltas ?? []) {
-      if (dl.kind !== 'implementation' && dl.kind !== 'both') continue;
+      if (!FILED_KINDS.includes(dl.kind)) continue;
       const where = `${v.target} ${v.screen}${dl.state ? ` (${dl.state})` : ''}`;
       const id = raiseFinding(tx, {
         project: r.project,

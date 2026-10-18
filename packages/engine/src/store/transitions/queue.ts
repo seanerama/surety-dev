@@ -1317,16 +1317,40 @@ const sentence = (xs: (string | null)[]): string => {
   return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
 };
 
-// What `fix` does to a design review's finding no check can verify (F4;
-// D3 §2.11's route, repair.ts routeMissingVerification), truthfully.
-function unverifiedConsequence(f: FindingRow): string {
-  const head =
-    'The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. No check named by the finding can verify it, so the engine also registers check_correction work for the Verifier, triggered by the finding (D3 §2.11).';
-  if ((f.criterion ?? null) === null)
-    return `${head} It names no criterion, so no check can resolve it as it stands: it holds the gates, and the gate read names its missing verification.`;
-  if (f.check === null)
-    return `${head} It names criterion ${f.criterion} but no check, so no check can resolve it as it stands: it holds the gates, and the gate read names its missing verification.`;
-  return `${head} It holds the gates, and the gate read names its missing verification, until a required acceptance check covering its criterion ${f.criterion} and named by it (${f.check}) passes after this disposition, which resolves it.`;
+// What `fix` does to a finding filed by a confirmed design review (F4,
+// Sean's ruling 2026-10-18; the driver's rulings on 9ff79c0), exactly as
+// recordDisposition and the gate then act: in an adopted project's
+// conformance phase no fix work and no check_correction work; else fix work,
+// and check_correction work where the finding is not verifiable or that is
+// unknown (routeMissingVerification). A finding naming no check is never
+// resolved: nothing in the engine gives a finding a check later, and the
+// gate resolves a fix only through its named check (gates.ts). The owner has
+// no route of his own to change a `fix` disposition: only a Reviewer's
+// report does (findings.ts recordReport: a Low deferral it records itself,
+// any other disposition it proposes for the owner's approval through
+// finding_disposition, DISPOSITION_PROPOSED).
+// `verifiable`: null when unknown (no effective protected version).
+function reviewFixConsequence(f: FindingRow, args: { verifiable: boolean | null; conformance: boolean }): string {
+  const out: string[] = ['The finding is dispositioned fix by the human owner.'];
+  if (args.conformance) {
+    out.push('This adopted project is in its conformance phase, so nothing else is registered now: no fix work, no check_correction work, and no source change before conformance.');
+  } else {
+    out.push('The engine registers fix work for it, and a Builder run changes the code.');
+    if (args.verifiable === null)
+      out.push('Whether a check can verify it is unknown (the project has no effective protected version), so the engine also registers check_correction work for the Verifier, triggered by the finding (D3 §2.11).');
+    else if (!args.verifiable) out.push('No check named by the finding can verify it now, so the engine also registers check_correction work for the Verifier, triggered by the finding (D3 §2.11).');
+  }
+  const criterion = f.criterion ?? null;
+  if (args.verifiable === true) {
+    out.push(`It holds the gates until its check ${f.check} passes after this disposition, which resolves it.`);
+  } else if (f.check === null) {
+    out.push(
+      `It names ${criterion === null ? 'no criterion and no check' : `criterion ${criterion} but no check`}, and nothing in the engine ever gives a finding a check, so nothing in the engine will resolve it${args.conformance ? '' : ' (the check_correction work does not)'}: it holds the gates of the candidates it applies to, the gate read naming its missing verification, until it is dispositioned otherwise. You have no route of your own to change a fix disposition: only a Reviewer's report can (a deferral of a Low finding it records itself; any other disposition it proposes for your approval through a finding_disposition question).`,
+    );
+  } else {
+    out.push(`It holds the gates, the gate read naming its missing verification, until its check ${f.check} is a required acceptance check covering ${criterion} in the effective protected version and passes after this disposition, which resolves it.`);
+  }
+  return out.join(' ');
 }
 
 const DISPOSITION_OWED: KindSpec = {
@@ -1341,11 +1365,11 @@ const DISPOSITION_OWED: KindSpec = {
     const version = effectiveVersion(tx.db, f.project);
     // Unknown is not verifiable: with no effective version, no fix is offered.
     const verifiable = version !== undefined && findingVerifiable(tx.db, f, version.id);
-    // F4: a design review's finding no check can verify yet is offered fix,
-    // which takes the missing-verification route; every other finding as
-    // the M444 ruling has it.
-    const unverifiedReview = !verifiable && filedByDesignReview(tx.db, f);
-    const fixOffered = verifiable || unverifiedReview;
+    // F4: a design review's finding is offered fix even where no check can
+    // verify it (or that is unknown), its consequence what the disposition
+    // and the gate then do; every other finding as the M444 ruling has it.
+    const review = filedByDesignReview(tx.db, f);
+    const fixOffered = verifiable || review;
     const lowered = `its severity is lowered from ${f.effective_severity} to ${LOWERED_TO} by the human owner (recorded in its severity history with your authority and this decision)`;
     return {
       manifest: dispositionManifest(tx, f),
@@ -1355,9 +1379,9 @@ const DISPOSITION_OWED: KindSpec = {
               {
                 key: 'fix',
                 label: 'Fix',
-                consequence: verifiable
-                  ? `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`
-                  : unverifiedConsequence(f),
+                consequence: review
+                  ? reviewFixConsequence(f, { verifiable: version === undefined ? null : verifiable, conformance: inConformancePhase(tx.db, f.project) })
+                  : `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
                 effect: { finding: f.id, disposition: 'fix' },
               },
             ]
