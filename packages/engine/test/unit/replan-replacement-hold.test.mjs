@@ -203,9 +203,9 @@ test('a replacement pending when the last stage completes publishes; the phase c
   const second = publish(db, [stage(1), stage(2, { depends_on: [1] }), stage(3, { depends_on: [2] })], { phase_plan: first.plan.id, generation: 1, trigger: { source: 'spec_change', id: 'scr_1', generation: 1 }, evidence: null, stale: null });
   assert.equal(second.plan.generation, 2);
   assert.deepEqual(planRow(db, first.plan.id).status, 'replaced', 'the generation it replaced is never completed');
-  // The replan's own item no longer holds anything (its target is replaced).
+  // Its run integrated before the publication: its item is complete.
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(replan);
   assert.equal(pendingReplacement(db, 'prj_1', { id: second.plan.id, generation: 2 }), null);
-  void replan;
   // Its new stage built, the phase completes on generation 2.
   db.prepare(`UPDATE phase_plans SET authoring_ready_at = ?, verification = ? WHERE id = ?`).run(AT, JSON.stringify({ nominated_revision: 'rev_1', at: AT }), second.plan.id);
   assert.equal(step(db).completed, null, 'stage 3 is not built yet');
@@ -214,4 +214,26 @@ test('a replacement pending when the last stage completes publishes; the phase c
   assert.equal(step(db).completed, second.plan.id);
   assert.equal(planRow(db, second.plan.id).status, 'completed');
   assert.equal(JSON.parse(db.prepare('SELECT completion_binding FROM phase_plans WHERE id = ?').get(second.plan.id).completion_binding).generation, 2);
+});
+
+test('the hold follows the replacement chain: replans A and B both aimed at generation 1; A publishes generation 2 while B is queued; generation 2 does not complete until B ends', (t) => {
+  const db = store(t);
+  const first = publish(db, [stage(1), stage(2, { depends_on: [1] })]);
+  const a = transact(db, ENGINE_ACTOR, (tx) => requestEarlyReplan(tx, { project: 'prj_1', source: 'spec_change', id: 'scr_a', evidence: { request: 'scr_a' }, stale: [] }));
+  const b = transact(db, ENGINE_ACTOR, (tx) => requestEarlyReplan(tx, { project: 'prj_1', source: 'spec_change', id: 'scr_b', evidence: { request: 'scr_b' }, stale: [] }));
+  stagesDone(db, first.stages);
+  // A publishes generation 2, keeping both stages and adding none.
+  db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(a);
+  const second = publish(db, [stage(1), stage(2, { depends_on: [1] })], { phase_plan: first.plan.id, generation: 1, trigger: { source: 'spec_change', id: 'scr_a', generation: 1 }, evidence: null, stale: null });
+  assert.equal(second.plan.generation, 2);
+  // B, aimed at generation 1, is still queued (held on its own correction).
+  db.prepare(`UPDATE work_items SET status = 'held' WHERE id = ?`).run(b);
+  phaseAtCompletion(db, second.plan.id, 2);
+  const held = pendingReplacement(db, 'prj_1', { id: second.plan.id, generation: 2 });
+  assert.deepEqual([held?.work_item, held?.status], [b, 'held'], 'B, aimed at the generation 2 replaced, holds generation 2');
+  assert.equal(step(db).completed, null, 'the phase does not complete under B');
+  assert.equal(planView(db, { project: 'prj_1' }).plan.completion_held_by?.work_item, b, 'the plan read names B');
+  // B ends (cancelled, or its stale proposal refused): the phase completes.
+  db.prepare(`UPDATE work_items SET status = 'cancelled' WHERE id = ?`).run(b);
+  assert.equal(step(db).completed, second.plan.id);
 });
