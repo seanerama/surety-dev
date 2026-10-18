@@ -712,6 +712,14 @@ export function findingVerification(db: Db, f: Pick<FindingRow, 'project' | 'che
       reason: 'It is unknown whether a check can verify this finding: the project has no effective protected version. Fix is not offered while that is unknown.',
     };
   }
+  // Where findingVerifiable looks (its pool, described): a finding on a
+  // candidate, the required sets of the candidate's stage and Alpha scopes
+  // (candidateContent), and for one naming no criterion also the phase scope
+  // of each active phase plan; any other finding, the checks of the version.
+  const candidate = f.candidate ? getCandidate(db, f.candidate) : undefined;
+  const pool = candidate
+    ? `among the checks of the stage and Alpha scopes of its candidate ${candidate.id}${criterion === null ? ' or of the phase scope of an active phase plan' : ''}, under the effective protected version`
+    : 'among the checks of the effective protected version';
   if (findingVerifiable(db, f, version.id)) {
     return {
       state: 'verifiable',
@@ -720,16 +728,16 @@ export function findingVerification(db: Db, f: Pick<FindingRow, 'project' | 'che
       check,
       reason:
         criterion === null
-          ? `Its check ${check} can verify it: the finding names no criterion, and ${check} is a required acceptance check covering none. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`
-          : `Its check ${check} can verify it: a required acceptance check of the effective protected version covering its criterion ${criterion}. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`,
+          ? `Its check ${check} can verify it: the finding names no criterion, and ${check} is a required acceptance check covering no criterion ${pool}. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`
+          : `Its check ${check} can verify it: a required acceptance check covering its criterion ${criterion} ${pool}. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`,
     };
   }
   const why =
     check === null
       ? `it names ${criterion === null ? 'no criterion and no check' : `criterion ${criterion} but no check`}, so no check can verify it, and no route in M6 adds a check to an existing finding`
       : criterion === null
-        ? `it names no criterion, and its check ${check} is not a required acceptance check covering none`
-        : `its check ${check} is not a required acceptance check of the effective protected version covering its criterion ${criterion}`;
+        ? `it names no criterion, and its check ${check} is not a required acceptance check covering no criterion ${pool}`
+        : `its check ${check} is not a required acceptance check covering its criterion ${criterion} ${pool}`;
   return {
     state: 'missing',
     fix_available: false,

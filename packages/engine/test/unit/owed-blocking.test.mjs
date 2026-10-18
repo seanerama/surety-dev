@@ -245,7 +245,7 @@ test('F4: the preview manifest carries verification for every finding, in the th
   assert.match(critOnly.reason, /names criterion R1\.1 but no check/);
   const wrong = v('fnd_wrong');
   assert.deepEqual([wrong.state, wrong.fix_available], ['missing', false]);
-  assert.match(wrong.reason, /its check login is not a required acceptance check of the effective protected version covering its criterion R9\.9/);
+  assert.match(wrong.reason, /its check login is not a required acceptance check covering its criterion R9\.9 among the checks of the effective protected version/);
   assert.doesNotMatch(wrong.reason, /no route in M6/, 'it names a check');
   assert.deepEqual([v('fnd_plain').state, v('fnd_plain').fix_available], ['missing', false], 'every finding, not only a review\'s');
 
@@ -261,6 +261,37 @@ test('F4: the preview manifest carries verification for every finding, in the th
   assert.match(unknown.reason, /unknown whether a check can verify/);
   assert.deepEqual(keys(d), ['correct_check', 'accept'], 'fix not offered while unknown');
   assert.match(d.question, /It is unknown whether a check can verify this finding/);
+});
+
+test('F4: E152 item 3 stays verifiable (a named required check covering no criterion, for a finding naming none); fix\'s text in the conformance phase says nothing is registered, as recordDisposition does', (t) => {
+  const s = store(t);
+  s.run(
+    `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria)
+     VALUES ('chk_2', ?, 'prj_1', 'smoke', 'pv_1', 'smoke', 1, '["stage","alpha_authorize"]', '.surety/checks/defs/smoke.json', 'h', 'direct', '[]')`,
+    AT,
+  );
+  s.finding('fnd_smoke', { severity: 'medium', check: 'smoke' });
+  s.finding('fnd_login_nocrit', { severity: 'medium', check: 'login' });
+  sweep(s.db);
+  const smoke = manifestOf(owedOpen(s.db, 'fnd_smoke')[0]).verification;
+  assert.deepEqual([smoke.state, smoke.fix_available], ['verifiable', true]);
+  assert.match(smoke.reason, /names no criterion, and smoke is a required acceptance check covering no criterion among the checks of the effective protected version/);
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_smoke')[0]), ['fix', 'correct_check', 'accept']);
+  const nocrit = manifestOf(owedOpen(s.db, 'fnd_login_nocrit')[0]).verification;
+  assert.deepEqual([nocrit.state, nocrit.fix_available], ['missing', false], 'login covers a criterion: it cannot verify a finding naming none');
+  assert.match(nocrit.reason, /its check login is not a required acceptance check covering no criterion among the checks of the effective protected version/);
+  const plainFix = JSON.parse(owedOpen(s.db, 'fnd_smoke')[0].options)[0].consequence_text;
+  assert.match(plainFix, /registers fix work for it, and a Builder run changes the code/);
+
+  const c = store(t);
+  c.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
+  c.run(`UPDATE projects SET adoption = '{}' WHERE id = 'prj_1'`);
+  sweep(c.db);
+  const conf = JSON.parse(owedOpen(c.db, 'fnd_linked')[0].options).find((o) => o.key === 'fix').consequence_text;
+  assert.match(conf, /conformance phase, so nothing else is registered now: no fix work, and no source change before conformance/);
+  assert.doesNotMatch(conf, /registers fix work|Builder run changes/);
+  answer(c.db, owedOpen(c.db, 'fnd_linked')[0], 'fix');
+  assert.deepEqual([workCount(c.db, 'fix', 'fnd_linked'), workCount(c.db, 'check_correction', 'fnd_linked')], [0, 0], 'as the text says');
 });
 
 test('F4: the review read carries finding_verification, one per filed finding, computed at read time', (t) => {

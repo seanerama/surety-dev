@@ -1328,7 +1328,11 @@ const DISPOSITION_OWED: KindSpec = {
               {
                 key: 'fix',
                 label: 'Fix',
-                consequence: `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
+                // In an adopted project's conformance phase recordDisposition
+                // registers nothing for a fix (below): the text says so.
+                consequence: inConformancePhase(tx.db, f.project)
+                  ? `The finding is dispositioned fix by the human owner. This adopted project is in its conformance phase, so nothing else is registered now: no fix work, and no source change before conformance. It holds the gates until its check ${f.check} passes after this disposition, which resolves it.`
+                  : `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
                 effect: { finding: f.id, disposition: 'fix' },
               },
             ]
