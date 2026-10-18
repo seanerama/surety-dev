@@ -40,14 +40,20 @@
 //     shown "owner accepted" apart from automated verification; the struck
 //     one not; `design.verdicts_confirmed`;
 // (g) the confirmed implementation defect: a finding against the review's
-//     candidate, Medium, dispositioned by the owner; `fix` as E43. F4 (M519's
-//     engine finding; Sean's ruling, 2026-10-18): the delta names no
-//     criterion and no check, so the finding carries neither, though the web
-//     target's mapped criterion is covered by `accept-r2-tokens`, a required
-//     acceptance check passing on the candidate (M519's favicon shape);
-//     nothing is associated from another criterion of the same target, and
-//     the owner's `fix` takes the missing-verification route: check_correction
-//     work for the Verifier, triggered by the finding (D3 §2.11).
+//     candidate, Medium, dispositioned by the owner. F4 (M519's engine
+//     finding; Sean's rulings, 2026-10-18; D7 B.14 as E166 amends it): the
+//     delta names no criterion and no check, so the finding carries neither,
+//     though the web target's mapped criterion is covered by
+//     `accept-r2-tokens`, a required acceptance check passing on the
+//     candidate (M519's favicon shape); nothing is associated from another
+//     criterion of the same target. No check named by it can verify it, so
+//     `fix` is not offered (b7249bb's rule, no exception; answered, refused
+//     400): the owner is offered the ordinary `accept`, and the preview's
+//     `manifest.verification` and the reviews read's `finding_verification`
+//     say verification is missing and fix unavailable. His `accept`
+//     registers no fix and no check_correction work and leaves the finding
+//     dispositioned `accept`, never resolved (accept is not repair). E43's
+//     `fix` on a finding a check can verify is M531 (i)'s.
 //
 // SAFETY (BS6 §4.1; E64; SEAM.md §§257, 356, 357). The only units are the
 // engine's own under this test home's prefix (Alpha's; no preview is asked
@@ -102,6 +108,7 @@ import {
   packageJson,
   packageOfLaunch,
   readDesign,
+  reviewInDesign,
   reviewBuilders,
   reviewEvents,
   reviewJson,
@@ -367,7 +374,7 @@ describe('M516 the review at Alpha, on the project lane from a kernel-lane seed'
     assert.ok(approval, '(h) the approval no longer waits on the verdicts');
   });
 
-  step('(g) the confirmed implementation defect: a finding against the review\'s candidate, Medium by default, with no criterion and no check though the target\'s mapped criterion has a passing check (F4), dispositioned by the owner; fix as E43, taking the missing-verification route', async () => {
+  step('(g) the confirmed implementation defect: a finding against the review\'s candidate, Medium by default, with no criterion and no check though the target\'s mapped criterion has a passing check (F4), dispositioned by the owner: no fix offered, verification missing and fix unavailable said in the preview and the reviews read; accepted, no work registered, never resolved', async () => {
     const { fx, p, deployed } = J;
     const finding = await pump(fx, J.ctx, () => findingsOf(fx.home, p.id).find((f) => (f.message ?? '').includes(EDITED_WORDS)), { what: 'the finding from the confirmed defect', projectMs: 120_000 });
     assert.deepEqual([finding.scope, finding.candidate, finding.category], ['candidate', deployed.id, 'defect'], `against the review's candidate (${JSON.stringify(finding)})`);
@@ -386,12 +393,30 @@ describe('M516 the review at Alpha, on the project lane from a kernel-lane seed'
     assert.ok(!findingsOf(fx.home, p.id).some((f) => /should say so and link back/.test(f.message ?? '')), 'the design delta is not a finding');
     assert.ok(!findingsOf(fx.home, p.id).some((f) => /big page|S3/.test(f.message ?? '') && f.id !== finding.id), 'nothing from the struck verdict');
     const question = await pump(fx, J.ctx, () => decisionsOn(fx.home, 'finding_disposition', finding.id).find((d) => d.status === 'open'), { what: 'the owner\'s disposition question', projectMs: 120_000 });
-    fx.scripted.kindScript('fix', { steps: [{ write: { path: 'web/index.html', content: '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Pantry</title></head><body><main id="S1"><h1>Pantry</h1></main></body></html>\n' } }, { result: { status: 'completed', summary: 'the heading' } }] });
-    assert.ok((question.options ?? []).some((o) => o.key === 'fix'), `the owner is offered fix on a finding no check can verify yet (F4 ruling: fix follows the missing-verification route; today's owed question offers fix only where a check can verify it, b7249bb) (${JSON.stringify((question.options ?? []).map((o) => o.key))})`);
-    await consume(fx, p.id, question, 'fix');
-    const fix = await pump(fx, J.ctx, () => workOf(fx.home, p.id, 'fix').find((w) => w.subject?.finding === finding.id), { what: 'fix work from the owner\'s disposition (E43)', projectMs: 120_000 });
-    assert.ok(fix, 'fix work registered from the finding');
-    assert.equal(workFor(fx.home, p.id, 'check_correction', finding.id).length, 1, 'F4: no check can verify it, so the fix takes the missing-verification route: check_correction work for the Verifier, triggered by the finding (D3 §2.11; SEAM.md §231)');
+    const keys = (question.options ?? []).map((o) => o.key);
+    assert.ok(!keys.includes('fix'), `F4: fix is not offered where no check named by the finding can verify it (b7249bb's rule, no exception) (${JSON.stringify(keys)})`);
+    assert.ok(!keys.includes('correct_check'), 'nor correct_check: it names no check');
+    assert.ok(keys.includes('accept'), `the ordinary accept offered (Medium) (${JSON.stringify(keys)})`);
+    const missing = (v, what) => {
+      assert.deepEqual([v?.state, v?.fix_available, v?.criterion ?? null, v?.check ?? null], ['missing', false, null, null], `${what}: verification missing, fix unavailable, no criterion and no check (${JSON.stringify(v)})`);
+      const reason = String(v.reason ?? '');
+      assert.ok(/verification/i.test(reason) && /missing/i.test(reason), `${what}: the reason says verification is missing (${reason})`);
+      assert.ok(/\bfix\b/i.test(reason) && /unavailable|not available|not offered/i.test(reason), `${what}: and that fix is unavailable (${reason})`);
+      assert.ok(/\broute\b/i.test(reason) && /\badd/i.test(reason), `${what}: and that no route in M6 adds a check to an existing finding (${reason})`);
+    };
+    missing(question.manifest?.verification, 'the preview\'s manifest.verification');
+    const words = [question.question, ...Object.entries(question.manifest ?? {}).filter(([k]) => k !== 'verification').map(([, x]) => (typeof x === 'string' ? x : ''))].join(' ');
+    assert.ok(/verification/i.test(words) && /missing/i.test(words) && /unavailable|not available|not offered/i.test(words), `the question says in words that verification is missing and fix unavailable (${question.question})`);
+    const read = reviewInDesign(await readDesign(fx, p.id), J.review.id);
+    assert.ok(Array.isArray(read?.finding_verification), `the reviews read carries finding_verification (${JSON.stringify(Object.keys(read ?? {}))})`);
+    missing(read.finding_verification.find((x) => x.finding === finding.id), 'the reviews read\'s finding_verification');
+    const refused = await fx.engine.post(`/v1/projects/${p.id}/decisions/${question.id}/answer`, { option: 'fix', preview_hash: question.preview_hash });
+    assert.deepEqual([refused.status, refused.body?.code, refused.body?.subject?.field], [400, 'invalid_value', 'option'], `fix answered is refused as no option of the question (${refused.status} ${refused.text})`);
+    await consume(fx, p.id, decisionsOn(fx.home, 'finding_disposition', finding.id).find((d) => d.status === 'open'), 'accept');
+    const now = withStore(fx.home, (db) => db.prepare('SELECT "status", "disposition", "resolution_verification" FROM "findings" WHERE "id" = ?').get(finding.id));
+    assert.deepEqual([now.status, now.disposition, now.resolution_verification ?? null], ['dispositioned', 'accept', null], `dispositioned accept, not resolved: accept is not repair (${JSON.stringify(now)})`);
+    assert.deepEqual(workOf(fx.home, p.id, 'fix').filter((w) => w.subject?.finding === finding.id), [], 'no fix work registered');
+    assert.deepEqual(workFor(fx.home, p.id, 'check_correction', finding.id), [], 'no check_correction work registered (nothing dispatched through an action that cannot resolve it)');
     assert.equal(candidatesOfProject(fx.home, p.id).find((c) => c.id === deployed.id)?.progress, 'alpha_deployed', '(a) the review\'s candidate still alpha_deployed');
     await assertHoldsAccounted(fx, p.id, '(g)');
   });

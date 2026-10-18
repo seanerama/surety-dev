@@ -54,3 +54,4 @@ Observed on `9ff79c0` plus this change, after `npm run build`, each file run alo
 - M537, the rehearsal: 13 of 13 pass.
 - M531: 7 of 7 pass.
 - M516: 7 of 7 pass.
+- Closed, 2026-10-18 (Verifier, `verify/f4c`): Sean's second F4 ruling amends D7 B.14 (errata E166) to `deltas: [{state?, owner_words, kind =DeltaKind, criterion?, check?}]`, so the package schema the harness pins and B.14 now agree. Nothing further is owed on this objection.
