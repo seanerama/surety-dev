@@ -120,7 +120,12 @@ describe('M435 the proposal\'s class and the coverage', () => {
     const before = protectedVersionsOf(fx.home, p.id).length;
     fx.scripted.kindScript('check_correction', roleThat([step.write('.surety/checks/defs/integration.json', authoringFiles(1)['.surety/checks/defs/integration.json']), step.write('.surety/checks/tests/integration.test.mjs', CHECK_PROGRAMS['.surety/checks/tests/integration.test.mjs']), step.write('.surety/checks/defs/accept-r2.json', authoringFiles(1)['.surety/checks/defs/accept-r2.json'])], { proposal: { rationale: 'R2.2 covered again.', requested_change_kind: 'tightening' } }));
     await addWork(fx.engine, p.id, 'check_correction');
-    await until(fx, ctx, () => protectedVersionsOf(fx.home, p.id).length > before || undefined, { what: 'the correction applied', max: 30, answerKinds: ROUTED_KINDS });
+    // Applied means effective: the version row is recorded unauthorized with
+    // the application's journal intent and takes effect only when its
+    // ref_update finalizes (SEAM.md §69; as M37 shows). A gate evaluated in
+    // between reads the old version, GIT_JOURNAL_PENDING with it, so the
+    // wait is for the new version authorized and effective.
+    await until(fx, ctx, () => protectedVersionsOf(fx.home, p.id).slice(before).find((v) => v.authorized === 1 && v.effective_from !== null), { what: 'the correction applied and effective', max: 30, answerKinds: ROUTED_KINDS });
     const again = await fx.engine.post(`/v1/projects/${p.id}/candidates/${c.id}/gates/phase`, { phase_plan: plan.id });
     assert.equal(again.status, 200, again.text);
     assert.ok(!(again.body?.evaluation?.reasons ?? []).some((r) => r.code === 'AUTHORING_INCOMPLETE'), `the phase gate no longer carries AUTHORING_INCOMPLETE (${JSON.stringify(again.body?.evaluation?.reasons)})`);
