@@ -33,6 +33,7 @@ import { designPolicyOf } from './policy.js';
 import { designDueState } from './readiness.js';
 import { writeDueState } from './due.js';
 import { latestCheck, reviewLinks } from './records.js';
+import { findingVerification } from '../store/transitions/repair.js';
 
 type Db = Database.Database;
 
@@ -511,9 +512,9 @@ const linkOf = (d: { criterion?: unknown; check?: unknown }): { criterion?: stri
 // carries exactly the criterion and check its confirmed delta names, null
 // each where it names none (F4, Sean's ruling 2026-10-18): the engine never
 // derives either, from another criterion of the same target or otherwise.
-// The review's `findings` are recorded before the questions are asked, so
-// the disposition question reads the finding as a design review's
-// (queue.ts DISPOSITION_OWED).
+// The review's `findings` are recorded before the questions are asked. Each
+// finding's disposition question offers fix by the rule every finding's
+// does (F4, Sean's second ruling: no exception for a review's finding).
 function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string): string[] {
   const subject = parseJson<{ build_ref?: string }>(r.subject) ?? {};
   const out: string[] = [];
@@ -546,6 +547,20 @@ function fileDefects(tx: Tx, r: ReviewRow, verdicts: Verdict[], severity: string
 
 // ---- the reads (SEAM.md §524) --------------------------------------------------------------------
 
+// Each filed finding's verification as it is now (F4, Sean's second ruling
+// 2026-10-18): the rule the owed question offers fix by (repair.ts
+// findingVerification), read at read time, so a finding with no check reads
+// that verification is missing and fix is unavailable.
+function findingVerifications(db: Db, ids: string[]): Record<string, unknown>[] {
+  const row = db.prepare('SELECT "id", "project", "check", "candidate", "criterion" FROM "findings" WHERE "id" = ?');
+  return ids.map((id) => {
+    const f = row.get(id) as { id: string; project: string; check: string | null; candidate: string | null; criterion: string | null } | undefined;
+    if (!f) return { finding: id, criterion: null, check: null, state: 'unknown', fix_available: null, reason: `Finding ${id} is not recorded, so whether a check can verify it is unknown.` };
+    const v = findingVerification(db, f);
+    return { finding: id, criterion: v.criterion, check: v.check, state: v.state, fix_available: v.fix_available, reason: v.reason };
+  });
+}
+
 // Every review of the project, its evidence labelled and counted by provenance.
 export function reviewsView(db: Db, project: string): Record<string, unknown>[] {
   // A review whose session never had its workspace (the opening refused
@@ -570,6 +585,7 @@ export function reviewsView(db: Db, project: string): Record<string, unknown>[] 
       confirmed_by: r.confirmed_by,
       confirmation_decision: r.confirmation_decision,
       findings: parseJson(r.findings) ?? [],
+      finding_verification: findingVerifications(db, parseJson<string[]>(r.findings) ?? []),
       evidence: evidence.map((e) => ({ id: e.id, provenance: e.provenance, label: e.label, format: e.format, target: e.target, screen: e.screen, observed_on: e.observed_on, name: e.name })),
       evidence_by_provenance: { engine_observed: count('engine_observed'), owner_supplied: count('owner_supplied'), owner_reported: count('owner_reported') },
     };

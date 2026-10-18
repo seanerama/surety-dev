@@ -48,7 +48,7 @@ import { engineSettings, policyRevision, projectEffective } from './settings.js'
 import type { Tx } from './tx.js';
 import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
-import { answerConflict, conflictPreview, correctionFor, findingVerifiable, routeMissingVerification, settleConflicts } from './repair.js';
+import { answerConflict, conflictPreview, correctionFor, findingVerification, routeMissingVerification, settleConflicts } from './repair.js';
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
 import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
@@ -1089,6 +1089,9 @@ function dispositionManifest(tx: Tx, f: FindingRow): Record<string, unknown> {
     linked_issue: proposed?.linked_issue ?? null,
     ...findingBinding(tx, f),
     policy_revision: policyRevisionId(tx.db, f.project),
+    // F4: whether a check can verify it, as the owed question's option rule
+    // computes it (repair.ts findingVerification).
+    verification: findingVerification(tx.db, f),
   };
 }
 
@@ -1250,17 +1253,6 @@ export function applyAlphaException(tx: Tx, args: { intent: string }): boolean {
   return true;
 }
 
-// A finding filed by the owner's confirmation of a design review (D7 §10.3;
-// F4): one its review records among its `findings`, the review confirmed.
-// Read from the recorded review, never from the finding's message.
-export function filedByDesignReview(db: Db, f: Pick<FindingRow, 'id' | 'project'>): boolean {
-  return (
-    db
-      .prepare(`SELECT 1 FROM "design_reviews" r WHERE r."project" = ? AND r."confirmation_decision" IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(r."findings") j WHERE j."value" = ?) LIMIT 1`)
-      .get(f.project, f.id) !== undefined
-  );
-}
-
 // A finding no one has dispositioned, after a Reviewer's report (the driver's
 // ruling on the real M443 run's silent stall): the owner is asked what is
 // to be done, never left with a gate held by a finding nothing will act on.
@@ -1272,13 +1264,11 @@ export function filedByDesignReview(db: Db, f: Pick<FindingRow, 'id' | 'project'
 // decision) and accepting it. fix is offered only when the finding's named
 // check can verify it (repair.ts findingVerifiable: a check covering its
 // criterion, or, naming no criterion, a required check covering none, E152
-// item 3); a finding filed by a confirmed design review is offered fix
-// all the same (F4, Sean's ruling 2026-10-18; E166), its consequence the
-// missing-verification route (D3 §2.11): fix work, the Verifier's
-// check_correction work, and the gates held until a required acceptance
-// check covering its criterion and named by it passes after the
-// disposition. correct_check is offered whenever the finding names a check (E152
-// item 3): the check judged over-broad, the Verifier's correction registered
+// item 3), for every finding, a design review's among them (F4, Sean's
+// second ruling 2026-10-18: no exception; repair.ts findingVerification,
+// whose state and reason the manifest's `verification` carries and the
+// question states where fix is unavailable). correct_check is offered
+// whenever the finding names a check (E152 item 3): the check judged over-broad, the Verifier's correction registered
 // as the conflict route's, the finding dispositioned fix with no fix work
 // and resolved when the corrected check passes. For a conflict with the requirements
 // or a contract, change_spec makes a specification change request from the
@@ -1317,42 +1307,6 @@ const sentence = (xs: (string | null)[]): string => {
   return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
 };
 
-// What `fix` does to a finding filed by a confirmed design review (F4,
-// Sean's ruling 2026-10-18; the driver's rulings on 9ff79c0), exactly as
-// recordDisposition and the gate then act: in an adopted project's
-// conformance phase no fix work and no check_correction work; else fix work,
-// and check_correction work where the finding is not verifiable or that is
-// unknown (routeMissingVerification). A finding naming no check is never
-// resolved: nothing in the engine gives a finding a check later, and the
-// gate resolves a fix only through its named check (gates.ts). The owner has
-// no route of his own to change a `fix` disposition: only a Reviewer's
-// report does (findings.ts recordReport: a Low deferral it records itself,
-// any other disposition it proposes for the owner's approval through
-// finding_disposition, DISPOSITION_PROPOSED).
-// `verifiable`: null when unknown (no effective protected version).
-function reviewFixConsequence(f: FindingRow, args: { verifiable: boolean | null; conformance: boolean }): string {
-  const out: string[] = ['The finding is dispositioned fix by the human owner.'];
-  if (args.conformance) {
-    out.push('This adopted project is in its conformance phase, so nothing else is registered now: no fix work, no check_correction work, and no source change before conformance.');
-  } else {
-    out.push('The engine registers fix work for it, and a Builder run changes the code.');
-    if (args.verifiable === null)
-      out.push('Whether a check can verify it is unknown (the project has no effective protected version), so the engine also registers check_correction work for the Verifier, triggered by the finding (D3 §2.11).');
-    else if (!args.verifiable) out.push('No check named by the finding can verify it now, so the engine also registers check_correction work for the Verifier, triggered by the finding (D3 §2.11).');
-  }
-  const criterion = f.criterion ?? null;
-  if (args.verifiable === true) {
-    out.push(`It holds the gates until its check ${f.check} passes after this disposition, which resolves it.`);
-  } else if (f.check === null) {
-    out.push(
-      `It names ${criterion === null ? 'no criterion and no check' : `criterion ${criterion} but no check`}, and nothing in the engine ever gives a finding a check, so nothing in the engine will resolve it${args.conformance ? '' : ' (the check_correction work does not)'}: it holds the gates of the candidates it applies to, the gate read naming its missing verification, until it is dispositioned otherwise. You have no route of your own to change a fix disposition: only a Reviewer's report can (a deferral of a Low finding it records itself; any other disposition it proposes for your approval through a finding_disposition question).`,
-    );
-  } else {
-    out.push(`It holds the gates, the gate read naming its missing verification, until its check ${f.check} is a required acceptance check covering ${criterion} in the effective protected version and passes after this disposition, which resolves it.`);
-  }
-  return out.join(' ');
-}
-
 const DISPOSITION_OWED: KindSpec = {
   preview(tx, d) {
     const f = findingRow(tx.db, d.subject_id);
@@ -1362,14 +1316,9 @@ const DISPOSITION_OWED: KindSpec = {
     if (!undispositioned && !reask) return null;
     const conflict = (CHANGE_SPEC_CATEGORIES as readonly string[]).includes(f.category);
     const blocking = BLOCKING_SEVERITIES.includes(f.effective_severity);
-    const version = effectiveVersion(tx.db, f.project);
     // Unknown is not verifiable: with no effective version, no fix is offered.
-    const verifiable = version !== undefined && findingVerifiable(tx.db, f, version.id);
-    // F4: a design review's finding is offered fix even where no check can
-    // verify it (or that is unknown), its consequence what the disposition
-    // and the gate then do; every other finding as the M444 ruling has it.
-    const review = filedByDesignReview(tx.db, f);
-    const fixOffered = verifiable || review;
+    const verification = findingVerification(tx.db, f);
+    const fixOffered = verification.state === 'verifiable';
     const lowered = `its severity is lowered from ${f.effective_severity} to ${LOWERED_TO} by the human owner (recorded in its severity history with your authority and this decision)`;
     return {
       manifest: dispositionManifest(tx, f),
@@ -1379,9 +1328,7 @@ const DISPOSITION_OWED: KindSpec = {
               {
                 key: 'fix',
                 label: 'Fix',
-                consequence: review
-                  ? reviewFixConsequence(f, { verifiable: version === undefined ? null : verifiable, conformance: inConformancePhase(tx.db, f.project) })
-                  : `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
+                consequence: `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
                 effect: { finding: f.id, disposition: 'fix' },
               },
             ]
@@ -1421,7 +1368,7 @@ const DISPOSITION_OWED: KindSpec = {
       ],
       question: `Finding ${f.id} (${f.category}, ${f.effective_severity}${f.criterion ? `, criterion ${f.criterion}` : ''}) ${
         reask ? `was accepted, but at severity ${f.effective_severity} an accepted finding still holds the gates` : 'has no disposition, and it holds the gates of the candidates it applies to'
-      }: ${(f as FindingRow & { message: string }).message} ${sentence([
+      }: ${(f as FindingRow & { message: string }).message} ${fixOffered ? '' : `${verification.reason} `}${sentence([
         fixOffered ? 'fix it' : null,
         f.check !== null ? `have its check ${f.check} corrected` : null,
         conflict ? 'change the specification' : null,

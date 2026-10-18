@@ -683,6 +683,62 @@ export function findingVerifiable(db: Db, f: Pick<FindingRow, 'project' | 'check
   return [...pool, ...phase].some((c) => c.key === f.check && verifiesByCheck(c));
 }
 
+// Whether a finding can be verified, and so whether `fix` is offered to it
+// (F4, Sean's second ruling 2026-10-18): the owed question's option rule
+// (queue.ts DISPOSITION_OWED) and every read that explains it compute it
+// here, one rule for every finding. `verifiable` where findingVerifiable
+// holds against the effective protected version; `unknown` where the
+// project has none (never false: fix is not offered while it is unknown);
+// `missing` otherwise.
+export type VerificationState = 'verifiable' | 'missing' | 'unknown';
+export interface FindingVerification {
+  state: VerificationState;
+  fix_available: boolean | null;
+  criterion: string | null;
+  check: string | null;
+  reason: string;
+}
+
+export function findingVerification(db: Db, f: Pick<FindingRow, 'project' | 'check' | 'candidate'> & { criterion?: string | null }): FindingVerification {
+  const criterion = f.criterion ?? null;
+  const check = f.check;
+  const version = effectiveVersion(db, f.project);
+  if (version === undefined) {
+    return {
+      state: 'unknown',
+      fix_available: null,
+      criterion,
+      check,
+      reason: 'It is unknown whether a check can verify this finding: the project has no effective protected version. Fix is not offered while that is unknown.',
+    };
+  }
+  if (findingVerifiable(db, f, version.id)) {
+    return {
+      state: 'verifiable',
+      fix_available: true,
+      criterion,
+      check,
+      reason:
+        criterion === null
+          ? `Its check ${check} can verify it: the finding names no criterion, and ${check} is a required acceptance check covering none. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`
+          : `Its check ${check} can verify it: a required acceptance check of the effective protected version covering its criterion ${criterion}. Fix is available; the finding resolves when ${check} passes after the fix (D3 §2.11).`,
+    };
+  }
+  const why =
+    check === null
+      ? `it names ${criterion === null ? 'no criterion and no check' : `criterion ${criterion} but no check`}, so no check can verify it, and no route in M6 adds a check to an existing finding`
+      : criterion === null
+        ? `it names no criterion, and its check ${check} is not a required acceptance check covering none`
+        : `its check ${check} is not a required acceptance check of the effective protected version covering its criterion ${criterion}`;
+  return {
+    state: 'missing',
+    fix_available: false,
+    criterion,
+    check,
+    reason: `Verification is missing: ${why}. Fix is therefore unavailable.`,
+  };
+}
+
 // Is a correction registered for the finding still open (E152 item 3): its
 // check_correction work not ended, or a protected proposal its runs
 // captured not yet applied or rejected?

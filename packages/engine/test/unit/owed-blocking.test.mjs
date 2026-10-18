@@ -182,64 +182,112 @@ test('5: a finding accepted through the earlier owed question while it blocks is
   assert.equal(sweep(s.db), 0, 'after the corrected form, no recovery');
 });
 
-// F4 (Sean's ruling, 2026-10-18; the driver's rulings on 9ff79c0): a
-// finding a confirmed design review filed (its id among the review's
-// `findings`) is offered fix even where no check can verify it, and each
-// consequence says what the disposition and the gate then do.
+// F4 (Sean's second ruling, 2026-10-18): no exception for a design
+// review's finding. fix is offered by findingVerification, one rule for every
+// finding; the preview's manifest carries `verification` and the question
+// says in words where fix is unavailable; the review's read carries
+// `finding_verification`, the same computation, at read time.
 function reviewed(s, ids) {
   s.run(`INSERT INTO design_reviews (id, created_at, project, trigger, subject, verdicts, confirmed_by, confirmation_decision, findings) VALUES ('drv_1', ?, 'prj_1', 'owner_command', '{}', '[]', 'human', 'dec_conf', ?)`, AT, JSON.stringify(ids));
 }
-const fixText = (db, id) => JSON.parse(owedOpen(db, id)[0].options).find((o) => o.key === 'fix')?.consequence_text;
 const workCount = (db, kind, id) => db.prepare(`SELECT COUNT(*) AS n FROM work_items WHERE kind = ? AND json_extract(subject, '$.finding') = ?`).get(kind, id).n;
+const manifestOf = (d) => JSON.parse(d.dependency_manifest);
 
-test('F4: a design review finding no check can verify is offered fix; nothing will resolve one naming no check, and the text says so and names the only re-disposition route; fix registers fix and check_correction work', (t) => {
+test('F4: a design review finding is offered fix only where a check can verify it: none unlinked, none criterion-only; fix for a verifiable linked one; answering fix where not offered is refused and registers nothing', (t) => {
   const s = store(t);
   s.finding('fnd_bare', { severity: 'medium' });
   s.finding('fnd_crit_only', { severity: 'medium', criterion: 'R1.1' });
   s.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
-  s.finding('fnd_plain', { severity: 'medium' });
-  reviewed(s, ['fnd_bare', 'fnd_crit_only', 'fnd_linked']);
+  s.finding('fnd_bare_high', { severity: 'high' });
+  reviewed(s, ['fnd_bare', 'fnd_crit_only', 'fnd_linked', 'fnd_bare_high']);
   sweep(s.db);
-  assert.deepEqual(keys(owedOpen(s.db, 'fnd_bare')[0]), ['fix', 'accept'], 'fix offered on the unlinked review finding');
-  assert.deepEqual(keys(owedOpen(s.db, 'fnd_plain')[0]), ['accept'], 'the M444 rule for every other finding');
-  const bare = fixText(s.db, 'fnd_bare');
-  assert.match(bare, /registers fix work/);
-  assert.match(bare, /check_correction work for the Verifier/);
-  assert.match(bare, /names no criterion and no check, and nothing in the engine ever gives a finding a check, so nothing in the engine will resolve it \(the check_correction work does not\)/);
-  assert.match(bare, /until it is dispositioned otherwise/);
-  assert.match(bare, /only a Reviewer's report can/);
-  assert.doesNotMatch(bare, /as it stands/);
-  assert.match(fixText(s.db, 'fnd_crit_only'), /names criterion R1\.1 but no check/);
-  const linked = fixText(s.db, 'fnd_linked');
-  assert.match(linked, /until its check login passes after this disposition/);
-  assert.doesNotMatch(linked, /check_correction/);
-  answer(s.db, owedOpen(s.db, 'fnd_bare')[0], 'fix');
-  assert.deepEqual([workCount(s.db, 'fix', 'fnd_bare'), workCount(s.db, 'check_correction', 'fnd_bare')], [1, 1], 'fix work and check_correction work');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_bare')[0]), ['accept'], 'unlinked: no fix');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_crit_only')[0]), ['accept'], 'a criterion without a check: no fix');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_bare_high')[0]), ['lower_and_accept'], 'blocking and unlinked: lower_and_accept only');
+  assert.deepEqual(keys(owedOpen(s.db, 'fnd_linked')[0]), ['fix', 'correct_check', 'accept'], 'linked to a covering check: fix as any verifiable finding');
+  const linkedFix = JSON.parse(owedOpen(s.db, 'fnd_linked')[0].options)[0].consequence_text;
+  assert.match(linkedFix, /holds the gates until its check login passes after the fix/);
+  for (const text of JSON.parse(owedOpen(s.db, 'fnd_bare')[0].options).map((o) => o.consequence_text)) assert.doesNotMatch(text, /nothing in the engine will resolve it|check_correction/, 'the exception\'s texts are gone');
+  for (const id of ['fnd_bare', 'fnd_crit_only']) {
+    const [d] = owedOpen(s.db, id);
+    assert.throws(() => answer(s.db, d, 'fix'), (e) => e.status === 400, `${id}: fix is not an option`);
+    assert.deepEqual([workCount(s.db, 'fix', id), workCount(s.db, 'check_correction', id)], [0, 0], `${id}: no fix or check_correction work`);
+    answer(s.db, owedOpen(s.db, id)[0], 'accept');
+    const f = row(s.db, id);
+    assert.deepEqual([f.status, f.disposition, f.resolution_verification ?? null], ['dispositioned', 'accept', null], `${id}: accepted, never resolved`);
+    assert.deepEqual([workCount(s.db, 'fix', id), workCount(s.db, 'check_correction', id)], [0, 0], `${id}: accept registers nothing`);
+  }
   answer(s.db, owedOpen(s.db, 'fnd_linked')[0], 'fix');
-  assert.deepEqual([workCount(s.db, 'fix', 'fnd_linked'), workCount(s.db, 'check_correction', 'fnd_linked')], [1, 0], 'a verifiable one routes no check_correction');
+  assert.deepEqual([workCount(s.db, 'fix', 'fnd_linked'), workCount(s.db, 'check_correction', 'fnd_linked')], [1, 0], 'a verifiable one: fix work, no check_correction');
 });
 
-test('F4: in the conformance phase the fix text says no fix work and no check_correction work, as recordDisposition does; with no effective protected version verifiability is unknown', (t) => {
+test('F4: the preview manifest carries verification for every finding, in the three states, and the question says where fix is unavailable', (t) => {
   const s = store(t);
   s.finding('fnd_bare', { severity: 'medium' });
-  reviewed(s, ['fnd_bare']);
-  s.run(`UPDATE projects SET adoption = '{}' WHERE id = 'prj_1'`);
+  s.finding('fnd_crit_only', { severity: 'medium', criterion: 'R1.1' });
+  s.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
+  s.finding('fnd_wrong', { severity: 'medium', check: 'login', criterion: 'R9.9' });
+  s.finding('fnd_plain', { severity: 'medium' });
+  reviewed(s, ['fnd_bare', 'fnd_crit_only', 'fnd_linked', 'fnd_wrong']);
   sweep(s.db);
-  const conf = fixText(s.db, 'fnd_bare');
-  assert.match(conf, /conformance phase, so nothing else is registered now: no fix work, no check_correction work/);
-  assert.doesNotMatch(conf, /registers fix work|registers check_correction/);
-  assert.match(conf, /nothing in the engine will resolve it:/);
-  answer(s.db, owedOpen(s.db, 'fnd_bare')[0], 'fix');
-  assert.deepEqual([workCount(s.db, 'fix', 'fnd_bare'), workCount(s.db, 'check_correction', 'fnd_bare')], [0, 0], 'as the text says');
+  const v = (id) => manifestOf(owedOpen(s.db, id)[0]).verification;
+  const linked = v('fnd_linked');
+  assert.deepEqual([linked.state, linked.fix_available, linked.criterion, linked.check], ['verifiable', true, 'R1.1', 'login']);
+  assert.doesNotMatch(owedOpen(s.db, 'fnd_linked')[0].question, /Verification is missing/);
+  const bare = v('fnd_bare');
+  assert.deepEqual([bare.state, bare.fix_available, bare.criterion, bare.check], ['missing', false, null, null]);
+  assert.match(bare.reason, /Verification is missing/);
+  assert.match(bare.reason, /Fix is therefore unavailable/);
+  assert.match(bare.reason, /no route in M6 adds a check to an existing finding/);
+  assert.match(owedOpen(s.db, 'fnd_bare')[0].question, /Verification is missing: it names no criterion and no check.*Fix is therefore unavailable\. Accept it\.$/);
+  const critOnly = v('fnd_crit_only');
+  assert.deepEqual([critOnly.state, critOnly.fix_available, critOnly.criterion, critOnly.check], ['missing', false, 'R1.1', null]);
+  assert.match(critOnly.reason, /names criterion R1\.1 but no check/);
+  const wrong = v('fnd_wrong');
+  assert.deepEqual([wrong.state, wrong.fix_available], ['missing', false]);
+  assert.match(wrong.reason, /its check login is not a required acceptance check of the effective protected version covering its criterion R9\.9/);
+  assert.doesNotMatch(wrong.reason, /no route in M6/, 'it names a check');
+  assert.deepEqual([v('fnd_plain').state, v('fnd_plain').fix_available], ['missing', false], 'every finding, not only a review\'s');
 
+  // Unknown: no effective protected version. Not false; fix not offered.
   const u = store(t);
-  u.finding('fnd_bare', { severity: 'medium' });
-  reviewed(u, ['fnd_bare']);
+  u.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
+  reviewed(u, ['fnd_linked']);
   u.run(`UPDATE protected_versions SET effective_from = NULL`);
   sweep(u.db);
-  const unknown = fixText(u.db, 'fnd_bare');
-  assert.match(unknown, /Whether a check can verify it is unknown \(the project has no effective protected version\)/);
-  assert.doesNotMatch(unknown, /No check named by the finding can verify it/);
+  const [d] = owedOpen(u.db, 'fnd_linked');
+  const unknown = manifestOf(d).verification;
+  assert.deepEqual([unknown.state, unknown.fix_available, unknown.criterion, unknown.check], ['unknown', null, 'R1.1', 'login']);
+  assert.match(unknown.reason, /unknown whether a check can verify/);
+  assert.deepEqual(keys(d), ['correct_check', 'accept'], 'fix not offered while unknown');
+  assert.match(d.question, /It is unknown whether a check can verify this finding/);
+});
+
+test('F4: the review read carries finding_verification, one per filed finding, computed at read time', (t) => {
+  const s = store(t);
+  s.finding('fnd_bare', { severity: 'medium' });
+  s.finding('fnd_linked', { severity: 'medium', check: 'login', criterion: 'R1.1' });
+  reviewed(s, ['fnd_bare', 'fnd_linked']);
+  const read = () => reviewModule.reviewsView(s.db, 'prj_1')[0];
+  const r = read();
+  assert.deepEqual(r.findings, ['fnd_bare', 'fnd_linked'], 'findings stays the list of ids');
+  assert.deepEqual(
+    r.finding_verification.map((x) => [x.finding, x.criterion, x.check, x.state, x.fix_available]),
+    [
+      ['fnd_bare', null, null, 'missing', false],
+      ['fnd_linked', 'R1.1', 'login', 'verifiable', true],
+    ],
+  );
+  assert.match(r.finding_verification[0].reason, /Verification is missing.*Fix is therefore unavailable/);
+  s.run(`UPDATE protected_versions SET effective_from = NULL`);
+  assert.deepEqual(
+    read().finding_verification.map((x) => [x.state, x.fix_available]),
+    [
+      ['unknown', null],
+      ['unknown', null],
+    ],
+    'read time: no effective version, unknown, never false',
+  );
 });
 
 test('F4: the confirm option of design_verdicts states the link each filing delta will carry, or no criterion, no check', (t) => {
