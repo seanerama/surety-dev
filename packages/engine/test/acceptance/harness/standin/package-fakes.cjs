@@ -478,6 +478,18 @@ var SURETY_PACKAGE_FAKES = (function () {
     const touched = new Set([...(touchedLine ? touchedLine[1].split(',').map((x) => x.trim()).filter(Boolean) : []), ...staleCriteria]);
     const adrs = Object.keys(f).filter((n) => /^adrs\/.+\.md$/.test(n)).map((n) => path.basename(n, '.md'));
     let next = Math.max(0, ...stages.map((st) => Number(st.number) || 0));
+    // A stage's dependencies as its package states them, which a real
+    // Architect copies into the plan: the plan's form (the package's
+    // `architect.schema.phase_plan`) takes stage numbers. Anything else
+    // (a stage id) is never translated here (SEAM.md §548): the play fails
+    // naming it, so an engine that states the open plan in a form its own
+    // plan check refuses is seen, never papered over.
+    const asBuilt = (st) => {
+      const d = Array.isArray(st.depends_on) ? st.depends_on : [];
+      const bad = d.filter((x) => !(Number.isInteger(x) && x > 0));
+      if (bad.length > 0 || !Array.isArray(st.depends_on)) throw new Error(`rehearsal fake: the package's open plan (open-plan.json) states stage ${st.number}'s depends_on as ${JSON.stringify(st.depends_on)}, not as the stage numbers the plan's form takes (architect.schema.phase_plan); copied as built it is refused, and the fake does not translate it`);
+      return d;
+    };
     const out = [];
     const implemented = new Set();
     for (const st of stages) {
@@ -490,11 +502,11 @@ var SURETY_PACKAGE_FAKES = (function () {
           const gained = crit(k).filter((c) => !built.has(c) || touched.has(c));
           if (gained.length === 0) continue;
           next += 1;
-          out.push({ number: next, goal: `${k}: the criteria it gained since stage ${st.number} was built`, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: [k], adrs: st.adrs ?? adrs, depends_on: Array.isArray(st.depends_on) ? st.depends_on : [], validation: { criteria: gained, kinds: kinds.length > 0 ? kinds : (v.kinds ?? []), sensitive_areas: v.sensitive_areas ?? [] }, integration_obligations: st.integration_obligations ?? [] });
+          out.push({ number: next, goal: `${k}: the criteria it gained since stage ${st.number} was built`, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: [k], adrs: st.adrs ?? adrs, depends_on: asBuilt(st), validation: { criteria: gained, kinds: kinds.length > 0 ? kinds : (v.kinds ?? []), sensitive_areas: v.sensitive_areas ?? [] }, integration_obligations: st.integration_obligations ?? [] });
         }
         continue;
       }
-      out.push({ number: Number(st.number), goal: st.goal, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: impl, adrs: st.adrs ?? adrs, depends_on: Array.isArray(st.depends_on) ? st.depends_on : [], validation: { ...v, criteria: [...new Set(impl.flatMap(crit))] }, integration_obligations: st.integration_obligations ?? [] });
+      out.push({ number: Number(st.number), goal: st.goal, tasks: st.tasks ?? [], modules: st.modules ?? [], implements: impl, adrs: st.adrs ?? adrs, depends_on: asBuilt(st), validation: { ...v, criteria: [...new Set(impl.flatMap(crit))] }, integration_obligations: st.integration_obligations ?? [] });
     }
     const missing = (ph.requirement_ids ?? ph.requirements ?? []).filter((k) => !implemented.has(k) && !humanOnly(k) && crit(k).length > 0);
     if (missing.length > 0) {
@@ -511,6 +523,11 @@ var SURETY_PACKAGE_FAKES = (function () {
     // The open phase, replacing its plan (an early replacement, a change's replan of the phase under way).
     const openPlan = parse(f['open-plan.json'], null);
     if (openPlan && Number.isInteger(Number(openPlan.phase_number)) && Array.isArray(openPlan.stages)) return openReplanRun(pkg, ws, openPlan);
+    // A replacement of an open plan's generation (trigger.json's `replaces`)
+    // whose package carries no open plan: the generation it replaces is no
+    // longer open (SEAM.md §548). Never planned as the next phase.
+    const trig = parse(f['trigger.json'], null);
+    if (trig && trig.replaces) throw new Error(`rehearsal fake: the package replaces generation ${trig.replaces.generation} of the plan ${trig.replaces.phase_plan} (trigger.json) but carries no open plan (open-plan.json); its prompt says: ${(/^Plan the next phase.*$/m.exec(pkg.prompt || '') || ['(no replan line)'])[0]}`);
     const gen = parse(f['generation.json'], {}) ?? {};
     const spec = readSpec(f['spec.md']);
     const roadmap = parse(f['roadmap.json'], null);
