@@ -43,11 +43,17 @@
 //     engine starts, an eligible UI stage the engine holds `design_pending`
 //     is held, not earlier work that could be dispatched; an item not held
 //     still refuses the rerun; a stage the store as it stands releases is
-//     counted, and a design milestone that cannot be judged is never held.
+//     counted, and a design milestone that cannot be judged is never held;
+//     and a rerun's act record (M519 finding F3; SEAM.md §551): a step's
+//     per-act record covers every attempt of it from the first (the
+//     store's acts and their performers' entries), never the rerun's alone;
+//     a first run's record is as before; and a run directory from before
+//     the attempts were kept is rebuilt once over every attempt, bounded by
+//     the step's end.
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -65,6 +71,8 @@ import { BEFORE_BUILD, KERNEL_KINDS } from './harness/design/check41.mjs';
 import { TWO_DAYS, designDues, designWithCriterion, designedPantry, engineNow, escalations, openDues, policyEffective, stageIdsOf, waivedEvents } from './harness/design/plan44.mjs';
 import { realStep } from './harness/real/lane.mjs';
 import { activity, quietState, ruleTwentyFive, stepVerdicts } from './harness/real/m6-lane.mjs';
+import * as m6lane from './harness/real/m6-lane.mjs';
+import { approveBatch } from './harness/design/check41.mjs';
 import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
 import { copyStore, openStore, withStore } from './harness/store.mjs';
 
@@ -449,6 +457,138 @@ describe('M512 design_due and no silent stalls', () => {
       assert.deepEqual(read[0].dispatchable.filter((w) => w.id === work2).map((w) => w.design_hold), ['unknown'], `${name}: stage 2 counted, marked unknown (${JSON.stringify(read)})`);
       assert.throws(() => refuseLeftovers(path, read, { evenIfPaused: true }), (err) => err.message.includes(work2), `${name}: the rerun refused, naming it`);
     }
+  });
+
+  test("(k) M519 F3, a rerun's act record: every attempt of the step from the first, never the rerun's alone; a first run's record as before; a run directory from before the attempts were kept rebuilt once, bounded by the step's end", async (t) => {
+    const fx = await scriptedEngine(t);
+    const d = await designedPantry(fx, { name: 'pantry-acts', approve: false });
+    const project = d.p.id;
+    const name = 'm6w_design';
+    const batchIds = sortedIds([d.batch.design_approval.id, d.batch.spec_change.id]);
+    const maxSeq = () => withStore(fx.home, (db) => db.prepare('SELECT MAX("seq") AS n FROM "events"').get().n);
+    const atOf = (seq) => withStore(fx.home, (db) => db.prepare('SELECT "at" FROM "events" WHERE "seq" = ?').get(seq).at);
+    const readJson = (file, empty) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : empty);
+    // Run directories of the real-lane runner's form, inside this test's root (removed with it); `home` is the engine's.
+    const runCtx = (tag) => {
+      const runDir = join(fx.root, `k-acts-${tag}`);
+      mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
+      symlinkSync(fx.home, join(runDir, 'home'));
+      return { runDir, keyValue: null, rehearsal: false, waitMinutes: 0 };
+    };
+    const stepActs = (ctx) => m6lane.readActs(ctx, 'M519').filter((a) => a.step === name);
+    // The driver's entry for each act (driver-act.mjs's form), at the act; under the engine's clock when `at` is given.
+    const driverActs = (ctx, acts, at = null) => {
+      for (const a of acts) {
+        for (const i of a.items) appendFileSync(join(ctx.runDir, 'observed', 'driver-acts.jsonl'), `${JSON.stringify({ act: a.act, step: name, ...(i.decision ? { decision: i.decision, option: i.option } : {}), at: at ?? new Date().toISOString(), acted_by: 'driver', on_instruction: 'M512 (k): drive the acts yourself', entered_via: 'driver-act.mjs' })}\n`);
+      }
+    };
+    const named = (tag) => [{ act: 'preview_inspection', route: `M512 (k) ${tag}`, store_actor: "the owner's routes", answered_at: null }];
+    const rerun = (ctx) => {
+      // As SURETY_REAL_RERUN=m6w_design applies it (lane.mjs applyRerun): the step cleared, its halt with it.
+      const file = join(ctx.runDir, 'state.json');
+      const st = readJson(file, null);
+      delete st.steps[name];
+      if (st.halted?.step === name) st.halted = null;
+      st.reruns_applied = [...(st.reruns_applied ?? []), `${process.pid}:${name}`];
+      writeFileSync(file, `${JSON.stringify(st, null, 2)}\n`);
+    };
+    const previousMinutes = process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+    process.env.SURETY_REAL_ACT_RECORD_MINUTES = '0';
+    t.after(() => {
+      if (previousMinutes === undefined) delete process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+      else process.env.SURETY_REAL_ACT_RECORD_MINUTES = previousMinutes;
+    });
+
+    // The rerun's run directory: its first attempt (F1's shape) holds the batched approval, the driver's
+    // entries recorded, and halts. A first run's (its one attempt) sees the same acts: it runs inside it.
+    const first = runCtx('first');
+    const rerunDir = runCtx('rerun');
+    const seqBefore = maxSeq();
+    let firstRun = null;
+    await assert.rejects(
+      () =>
+        m6lane.m6Step(rerunDir, name, async () => {
+          firstRun = await m6lane.m6Step(first, name, async ({ startedAt }) => {
+            const sinceSeq = maxSeq();
+            await approveBatch(fx, d.ctx, d.batch);
+            const found = m6lane.storeActs(fx.home, project, sinceSeq, named('first'));
+            driverActs(first, found);
+            driverActs(rerunDir, found);
+            const recorded = await m6lane.recordActs(first, 'M519', name, { home: fx.home, project, sinceSeq, since: startedAt, named: named('first') });
+            return { sinceSeq, startedAt, recorded };
+          });
+          throw new Error('M512 (k): the stand-in for F1, the step halted');
+        }),
+      /the stand-in for F1/,
+    );
+    assert.equal(readJson(join(rerunDir.runDir, 'state.json'), null)?.halted?.step, name, 'the first attempt halted the run directory');
+
+    // (2) A first run: its record is the window its step passed, as before (no `window`), the combined approval in it.
+    const old = m6lane.performers(first, m6lane.storeActs(fx.home, project, firstRun.sinceSeq, named('first')), firstRun.startedAt).map((a) => ({ ...a, step: name }));
+    assert.deepEqual(stepActs(first), old, `a first run's act record is the one its window gives, as before (${JSON.stringify(stepActs(first).map((a) => [a.act, a.performer]))})`);
+    assert.ok(stepActs(first).every((a) => !('window' in a)), 'a first run carries no window');
+    const combinedFirst = stepActs(first).find((a) => a.act === 'combined_approval');
+    assert.deepEqual([combinedFirst?.performer, sortedIds((combinedFirst?.items ?? []).map((i) => i.decision))], ['driver', batchIds], 'its combined approval: both decisions of the batch, the driver\'s');
+
+    // The rerun (SURETY_REAL_RERUN=m6w_design): its own act only, the preview inspected again.
+    rerun(rerunDir);
+    const t2Seq = maxSeq();
+    await m6lane.m6Step(rerunDir, name, async ({ startedAt }) => {
+      const sinceSeq = maxSeq();
+      driverActs(rerunDir, [{ act: 'preview_inspection', items: [{}] }]);
+      return m6lane.recordActs(rerunDir, 'M519', name, { home: fx.home, project, sinceSeq, since: startedAt, named: named('rerun') });
+    });
+    const endSeq = maxSeq();
+    // (1) The rerun's record covers both attempts: the first attempt's acts with their performers, and its own.
+    const acts = stepActs(rerunDir);
+    const combined = acts.find((a) => a.act === 'combined_approval');
+    assert.ok(combined, `the combined approval of the first attempt is in the rerun's act record (${JSON.stringify(acts.map((a) => [a.act, a.performer]))})`);
+    assert.deepEqual([combined.performer, sortedIds(combined.items.map((i) => i.decision))], ['driver', batchIds], 'both decisions, the driver\'s by his entries since the first attempt');
+    for (const a of stepActs(first).filter((x) => x.act !== 'preview_inspection')) {
+      const got = acts.find((x) => x.act === a.act);
+      assert.ok(got, `the first attempt's ${a.act} recorded`);
+      for (const i of a.items) assert.ok(got.items.some((x) => JSON.stringify(x) === JSON.stringify(i)), `${a.act}: its item ${JSON.stringify(i).slice(0, 200)}`);
+    }
+    const inspection = acts.find((a) => a.act === 'preview_inspection');
+    assert.deepEqual(inspection?.items.map((i) => i.route), ['M512 (k) rerun'], 'the rerun\'s own act added');
+    assert.equal(inspection?.performer, 'driver', 'its performer');
+    assert.ok(acts.every((a) => a.window?.attempts?.length === 2), `each act carries the window of both attempts (${JSON.stringify(acts[0]?.window)})`);
+    const attemptsOf = (ctx) => readJson(join(ctx.runDir, 'observed', 'step-attempts.json'), {})[name] ?? [];
+    assert.equal(acts[0].window.performers_since, attemptsOf(rerunDir)[0]?.at, 'performers from the first attempt\'s start');
+    assert.deepEqual(attemptsOf(rerunDir).map((a) => [typeof a.seq, typeof a.ended_seq]), [['number', 'number'], ['number', 'number']], 'both attempts kept with their sequences, start and end');
+    assert.equal(attemptsOf(first).length, 1, "the first run's one attempt kept");
+
+    // A run directory from before the attempts were kept (M519's ~/s6-1018): no step-attempts.json, the
+    // last start only, and the rerun's record alone; the step before it ended before the first attempt.
+    const legacy = runCtx('legacy');
+    const t0 = atOf(seqBefore);
+    const t2 = atOf(t2Seq);
+    const tEnd = atOf(endSeq);
+    writeFileSync(join(legacy.runDir, 'state.json'), `${JSON.stringify({ version: 1, steps: { m6w_qualify: { status: 'done', at: t0, value: {} }, [name]: { status: 'done', at: tEnd, value: {} } }, halted: { step: 'judge:M519 (c)', reason: 'the combined approval is in the per-act record', at: tEnd }, reruns_applied: [`1:${name}`] }, null, 2)}\n`);
+    writeFileSync(join(legacy.runDir, 'observed', 'step-starts.json'), `${JSON.stringify({ [name]: t2 }, null, 2)}\n`);
+    writeFileSync(join(legacy.runDir, 'observed', 'acts-M519.json'), `${JSON.stringify(acts.filter((a) => a.act === 'preview_inspection').map(({ window, ...a }) => a), null, 2)}\n`);
+    // The driver's entries under the engine's clock, at each act (the store's answer times).
+    for (const a of stepActs(first)) driverActs(legacy, [a], a.items[0].answered_at ?? t0);
+    driverActs(legacy, [{ act: 'preview_inspection', items: [{}] }], tEnd);
+    assert.equal(typeof m6lane.rebuildRerunActs, 'function', 'the harness rebuilds such a record (M519 F3)');
+    const rebuilt = m6lane.rebuildRerunActs(legacy, 'M519', name, { project, named: () => named('rerun') });
+    const legacyActs = stepActs(legacy);
+    const lc = legacyActs.find((a) => a.act === 'combined_approval');
+    assert.deepEqual([lc?.performer, sortedIds((lc?.items ?? []).map((i) => i.decision))], ['driver', batchIds], `rebuilt: the first attempt's combined approval, the driver's (${JSON.stringify(legacyActs.map((a) => [a.act, a.performer]))})`);
+    assert.deepEqual(sortedIds(legacyActs.map((a) => a.act)), sortedIds(acts.map((a) => a.act)), 'the same acts as a directory that kept its attempts');
+    assert.ok(legacyActs.every((a) => a.window?.attempts?.length === 2 && /inferred: .* m6w_qualify ended/.test(a.window.attempts[0].basis ?? '')), `the window inferred from the step before it, and said so (${JSON.stringify(legacyActs[0]?.window)})`);
+    assert.equal(legacyActs[0].window.attempts[1].to_seq, withStore(fx.home, (db) => db.prepare('SELECT MAX("seq") AS n FROM "events" WHERE "at" <= ?').get(tEnd).n), 'bounded by the step\'s end (state.json)');
+    assert.equal(rebuilt.length, legacyActs.length, 'returned as recorded');
+    const kept = readFileSync(join(legacy.runDir, 'observed', 'acts-M519.json'), 'utf8');
+    assert.equal(m6lane.rebuildRerunActs(legacy, 'M519', name, { project, named: () => named('rerun') }), null, 'rebuilt once: the attempts are now kept');
+    assert.equal(readFileSync(join(legacy.runDir, 'observed', 'acts-M519.json'), 'utf8'), kept, 'the record unchanged by a second call');
+    // A directory whose step was never rerun keeps its record (a first run's), and one whose first start is unknown is not rebuilt.
+    assert.equal(m6lane.rebuildRerunActs(first, 'M519', name, { project }), null, 'a first run is not rebuilt');
+    const unknown = runCtx('unknown');
+    writeFileSync(join(unknown.runDir, 'state.json'), `${JSON.stringify({ version: 1, steps: { [name]: { status: 'done', at: tEnd, value: {} } }, halted: null, reruns_applied: [`1:${name}`] }, null, 2)}\n`);
+    writeFileSync(join(unknown.runDir, 'observed', 'step-starts.json'), `${JSON.stringify({ [name]: t2 }, null, 2)}\n`);
+    assert.equal(m6lane.rebuildRerunActs(unknown, 'M519', name, { project }), null, 'no step before it ended: unknown, not rebuilt');
+    assert.match(JSON.stringify(readJson(join(unknown.runDir, 'observed', 'M519.json'), {})[`acts_not_rebuilt_${name}`] ?? null), /unknown/, 'and said so');
   });
 
   test('(f) a new cause while one is open (sent back with revise): one row open, its subjects updated, the earlier generation stale, never a second', async (t) => {
