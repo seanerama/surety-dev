@@ -2682,3 +2682,52 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - `design_due` is raised again while an owner-opened Designer session exists, naming the session. This is by design (E162), but its `open` option is then blocked.
    - An owner turn is refused `resource_envelope` while two builds hold the host's domains, and must be resent. The first Designer turn waited about 16 minutes this way.
    - A refused answer left one false `trust_activation` line in `driver-acts.jsonl` (01:59:41, a stale decision). The line is kept, not edited.
+
+## E165. M519 passed: the rerun from the design step, three harness findings (F2, F3) and one engine finding (F4), and the review at Alpha (decided by the driver under Sean's delegation, 2026-10-18)
+
+**Status: decided by the driver** under Sean's standing instruction ("go ahead and drive M519's acts yourself"); Sean may overturn any item.
+
+1. **M519 passed ten of ten** at `main` `308230d`, run directory `~/s6-1018`.
+   - The run was resumed from `m6w_design` after F1 (E164). F2 and F3 below then needed a judge's halt cleared (`SURETY_REAL_RERUN='judge:M519 (c)'`).
+   - The dress rehearsal passed ten of ten at every revision the paid run used: `292e11e` (`~/s6r-w3`), `fd5087f` (`~/s6r-w4`) and `308230d` (`~/s6r-w5`).
+   - Estimated spend: 16.57 USD over 39 runs (the guess was 10 to 18 USD). That is 1,462,583 billable tokens, 17,305,009 cached and 435,911 output. By role: 16 Verifier, 10 Reviewer and 8 Builder runs, 2 Spec Writer, 2 Designer and 1 Architect.
+   - The teardown was applied and nothing of the prefix is left. Findings F1, F2 and F3 are resolved with their merges; F4 is open.
+2. **The rerun from the design step.**
+   - With F1 fixed, the approved design became ready at the engine's first tick, and the UI stages were released.
+   - The new engine build lapsed the `local_service` qualification (D4 §2.6: a qualification is of the version this engine builds). The driver re-qualified it, `surety qualify-adapter local_service`, and every case passed.
+   - The preview was inspected again through the relay, as an HTTP read of the index, eight mockups and the favicon, and was stopped by the owner's route `DELETE …/design/preview`. Its first deploy (generation 2) was not serving; generation 3 was.
+3. **F2 (harness), and the driver's ruling: an item held `design_pending` is held.**
+   - The first rerun was refused before any engine started: `leftovers()` counted stage 3's and stage 4's builds as earlier work that could be dispatched. They had never run. They were held by the engine's computed `design_pending` blocker, which `leftovers()` did not read.
+   - It now asks the engine's own compiled `designUnmet` over a read-only handle. Unknown is never held. Only `design_pending` is fixed: `design_stale`, `depends_on` and the other computed holds have the same gap, and none blocked this run.
+   - Merged as `e47e0bc`; M512 (k); SEAM §550.
+4. **F3 (harness), and the driver's ruling: a step's act record covers every attempt.**
+   - After the rerun passed, judge (c) halted the run: "the combined approval is in the per-act record". `recordActs` read the store only from the rerun's start and replaced the step's record, so the first attempt's acts were dropped: `design_due` open, the corrections, the Designer feedback, the first preview inspection and the combined approval.
+   - Each attempt is now kept in `observed/step-attempts.json`, and the record reads every attempt's range. For a run directory that lacks it, the first start is inferred from the end of the step before (recorded as inferred).
+   - A halted run directory now starts no engine for the build. In this run, cases (d) to (j) had each started an engine and resumed the project while it was halted; nothing was dispatched.
+   - Merged as `308230d`; M512 (k); SEAM §551.
+5. **The build: a protected check corrected.**
+   - Both UI stages failed `page-labels` (R8.4). The Verifier's finding said the check was wrong, and the driver confirmed it in `.surety/checks/run/html.mjs`: its id-to-text map matched whole elements, so `<html>` swallowed every nested label id.
+   - The driver answered `correct_check` on both blockers and approved the Verifier's correction (classified unclassifiable; it counts same-name nesting and touches only `html.mjs`). The phase then completed and Alpha deployed.
+6. **The review at Alpha.**
+   - **The driver's inspection.** The driver read the Alpha through the relay as HTML, CSS and scripts; no browser rendered it.
+     - Every route and asset returned 200.
+     - The served `tokens.css` is main's, and all 86 colour values of the design's tokens are in it.
+     - The logos (compact, on_light, on_dark) and the favicon are byte-identical to the design's assets.
+   - **The review session.** `design_due` was answered `open`, and the review-mode session took two owner turns. The Designer proposed `deltas` for all three labs, with 13 differences:
+     - The implementation differs from the design: the start-up card has no logo and no Reload button; the Run button never reads "Run again"; the 3D-unavailable wording; no console report of a missing token; the grid is fully opaque; the skip link targets the momentum panel on the other two labs; the momentum "Why" sentence can contradict the numbers; the friction and trajectory scene markers; and the drag hint is overwritten.
+     - The design itself was wrong or too loose: the momentum prediction range should be −30 to 30 m/s, and the build is right; the input-error wording; the letter-spacing; the scaled playback.
+   - **The driver's decisions.** The design was not revised in this review. Its four design changes are recorded as recommendations for the next revision, and the scaled playback is accepted as built for now. The verdicts were confirmed as proposed.
+   - **`observed_on`.** The review schema allows only browser, simulator, emulator, device and simulation, so a read that rendered nothing is recorded as `browser`. Each delta states that nothing was rendered. R7.1 and R8.20 stay not observed, and the four human tests stay owed.
+7. **F4 (engine), open: the review's findings are linked to an unrelated check.**
+   - Confirming the verdicts filed 24 findings, one per implementation delta per lab. Every one was linked to criterion R8.19 and check `design-asset-favicon`, whatever it concerned.
+   - So `fix` would hold the gates only until that unrelated, already passing check passed: a fix resolved by evidence that has nothing to do with it. `correct_check` names the same check.
+   - The design-kind recommendations marked `both` were filed as implementation defects too.
+   - The driver answered `accept` on all 24: recorded, holding no gate, and left for a later run. This is a decision for Sean: whether a confirmed review delta should be linked to the criterion it concerns, or carry no check.
+8. **Gates.**
+   - The gate of `3e945a2` (F1) is in E164.
+   - **The gate of `fd5087f`** (F2 and M404's race fix): 440 files, 2,387 passed, 6 failed. M440's storm, M311 (h) and M401 each passed three of three alone. M435 (e) failed three of three alone, and also failed alone at `3e945a2`, which had passed in its own loaded gate at 05:35. So no change caused it. It passes under load (38 to 53 s a file) and fails alone (28 s): the assertion is made while the correction's git journal operation is still pending (`GIT_JOURNAL_PENDING`). A Verifier is establishing whether the hold clears by itself, which would make it a test race, or never clears, which would make it an engine defect. M540 is the skeleton.
+   - `308230d` (F3) changed only the real-lane harness and M512, which passed alone (14/14).
+9. **Recorded for Sean.**
+   - M535 (Sean performs its four central acts) can reuse this run directory's qualification attempts.
+   - Owner acts recorded only as driver acts, with no store event of their own: `alpha_inspection` and `review_session`. The second is also derived from the store's transcript.
+   - A real run on a new engine build must re-qualify `local_service` before any preview or Alpha deploy. Nothing in the lane says so; the engine's refusal does (`design_preview_unavailable`, `adapter_unqualified`).
