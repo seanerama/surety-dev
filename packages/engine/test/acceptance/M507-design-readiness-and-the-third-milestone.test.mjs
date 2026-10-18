@@ -22,18 +22,22 @@
 //     no gate names a human-kind criterion ACCEPTANCE_SCOPE_INCOMPLETE;
 // (c) the same while the correction is pending, then while its proposal is
 //     unapplied: no readiness, and GET …/design (and design_due when open)
-//     names what readiness waits on and the next action.
+//     names what readiness waits on and the next action;
+// (g) once ready, a checkable design criterion the applied correction left
+//     uncovered (R2.2) still carries ACCEPTANCE_SCOPE_INCOMPLETE on the gate
+//     of the stage that validates it; the human-kind R2.4 does not.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume, decision, decisionsOfKind } from './harness/decisions.mjs';
+import { roleThat } from './harness/gitruns.mjs';
 import { eventsAbout, evaluationsOfKind, journeyContext, pump, specRevisions } from './harness/journey/drive.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, STAGES, specText } from './harness/design/reference.mjs';
-import { CHECKABLE_IDS, CRITERIA_WITH_HUMAN, HUMAN_IDS, HUMAN_KIND_IDS, V2_WITH_HUMAN, assertV2Shape, checksCovering, criterionMapOf, designChange, readinessFacts, scopeIncompleteNaming } from './harness/design/ready.mjs';
+import { CHECKABLE_IDS, CORRECTION_WITHOUT_TOKENS, CRITERIA_WITH_HUMAN, HUMAN_IDS, HUMAN_KIND_IDS, V2_WITH_HUMAN, assertV2Shape, checksCovering, criterionMapOf, designChange, readinessFacts, scopeIncompleteNaming } from './harness/design/ready.mjs';
 import {
   answerWith,
   assertHoldsAccounted,
@@ -327,5 +331,31 @@ describe('M507 design readiness and the third milestone', () => {
     assert.ok(ready, 'ready once applied');
     read = await readDesign(fx, p.id);
     assert.equal(revisionRead(read, rev.id)?.readiness ?? null, null, `ready: no wait named (${JSON.stringify(revisionRead(read, rev.id))})`);
+  });
+  test('(g) M519 F1: once ready, a checkable design criterion the applied correction left uncovered still carries ACCEPTANCE_SCOPE_INCOMPLETE on its stage\'s gate; the human-kind one does not', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, ctx } = await project(fx);
+    // The correction covers R2.3 and R3.2 only: R2.2 (tokens_only, checkable) stays uncovered.
+    fx.scripted.kindScript('check_correction', roleThat(Object.entries(CORRECTION_WITHOUT_TOKENS).map(([path, text]) => step.write(path, text)), { proposal: { rationale: 'The approved design added R2.3 and R3.2: their checks. R2.2 is left for later.', requested_change_kind: 'tightening' } }));
+    await designedWithHuman(fx, p);
+    const batch = await untilBatch(fx, ctx);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    // Ready once the correction ended with its proposal applied (D7 §7.5), the uncovered R2.2 notwithstanding.
+    await pump(fx, ctx, () => readyAt(fx.home, p.id) ?? undefined, { what: 'readiness', max: 40 }).catch((err) =>
+      assert.fail(`readiness waits on nothing but the correction's application: an uncovered checkable criterion carries ACCEPTANCE_SCOPE_INCOMPLETE and does not hold readiness (D7 §7.5; D6 §4.5; the ruling's item 1) (${err.message.split('\n')[0]}; facts ${readinessFacts(fx.home, p.id)})`),
+    );
+    const change = designChange(fx.home, p.id);
+    assert.ok(change.proposals.some((x) => x.status === 'applied'), `the fixture: the correction's proposal applied (${JSON.stringify(change.proposals)})`);
+    assert.deepEqual(checksCovering(fx.home, p.id, 'R2.2'), [], 'the fixture: no check covers R2.2');
+    assert.ok(checksCovering(fx.home, p.id, 'R2.3').length > 0, 'the fixture: R2.3 covered');
+    const markReady = rows(fx.home, 'SELECT COALESCE(MAX(rowid), 0) AS r FROM "gate_evaluations"')[0].r;
+    const s2 = () => stageRow(fx.home, p.id, 2)?.id;
+    const gate = await pump(fx, ctx, () => rows(fx.home, 'SELECT rowid AS r, * FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = \'stage\' AND "stage" = ? AND rowid > ? ORDER BY rowid', p.id, s2(), markReady)[0], { what: 'the web stage\'s gate after readiness', max: 80 });
+    const named = scopeIncompleteNaming(fx.home, p.id, ['R2.2', HUMAN_KIND_IDS.web], { afterRowid: gate.r - 1 }).find((e) => e.stage === s2());
+    assert.ok(named && named.named.includes('R2.2'), `the web stage's gate names R2.2 ACCEPTANCE_SCOPE_INCOMPLETE (D6 §4.5) (${gate.reasons})`);
+    assert.equal(named.named.includes(HUMAN_KIND_IDS.web), false, `and not the human-kind ${HUMAN_KIND_IDS.web} (${gate.reasons})`);
+    assert.deepEqual(scopeIncompleteNaming(fx.home, p.id, HUMAN_IDS, { afterRowid: markReady }), [], 'no gate names a human-kind criterion');
+    assert.notEqual(stageRow(fx.home, p.id, 2)?.status, 'verified', 'the web stage not verified while R2.2 has no check');
   });
 });

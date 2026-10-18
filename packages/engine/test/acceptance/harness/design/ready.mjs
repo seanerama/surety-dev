@@ -7,7 +7,7 @@
 // Store and route reads only; nothing here starts, stops or signals anything.
 
 import { withStore } from '../store.mjs';
-import { CRITERIA, DESIGN_CRITERIA_IDS, specV2For } from './reference.mjs';
+import { CORRECTION_FILES, CRITERIA, DESIGN_CRITERIA_IDS, specV2For } from './reference.mjs';
 
 const rows = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
 const parse = (v) => (v === null || v === undefined ? null : typeof v === 'string' ? JSON.parse(v) : v);
@@ -89,3 +89,33 @@ export function readinessFacts(home, project) {
     open: rows(home, `SELECT "kind", "id" FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY rowid`, project),
   });
 }
+
+// ---- the coordinator's three further cases (SEAM.md §549, "further") -------------------------------
+
+// A correction that covers R2.3 and R3.2 and leaves the checkable R2.2
+// (tokens_only) uncovered: the reference's correction without the tokens
+// check and its definition.
+export const CORRECTION_WITHOUT_TOKENS = Object.freeze(
+  Object.fromEntries(Object.entries(CORRECTION_FILES).filter(([path]) => !path.includes('tokens'))),
+);
+
+// The spoof: under R2 a checkable criterion (tokens_only) and a human one,
+// in that order in criteria.json; the Spec Writer rewords both and writes
+// them in the swapped order, so that no text matches and the criteria
+// pair by position the wrong way round. R3's parity criterion is kept
+// verbatim. In version 2, R2.2 is the reworded HUMAN criterion and R2.3
+// the reworded CHECKABLE one: R2.3 must stay uncovered and owed.
+export const SPOOF_CHECKABLE = Object.freeze({ ...CRITERIA.criteria[0] });
+export const SPOOF_HUMAN = Object.freeze({ requirement: 'R2', text: 'Given the web page, when a person reads the list, then it looks calm and uncluttered in both themes.', kind: 'human', targets: ['web'] });
+export const SPOOF_CRITERIA = Object.freeze({ ...CRITERIA, criteria: [SPOOF_CHECKABLE, SPOOF_HUMAN, CRITERIA.criteria[2]] });
+export const SPOOF_V2 = specV2For({
+  criteria: {
+    ...CRITERIA,
+    criteria: [
+      { requirement: 'R2', text: 'Given the web page in either theme, a person judging it finds the list calm and free of clutter.' },
+      { requirement: 'R2', text: 'Given the web module, web/app.css uses only custom properties from web/tokens.css for colours, sizes, spacing, radii and durations, with no literal values.' },
+      CRITERIA.criteria[2],
+    ],
+  },
+});
+export const SPOOF_IDS = Object.freeze({ human: 'R2.2', checkable: 'R2.3' });

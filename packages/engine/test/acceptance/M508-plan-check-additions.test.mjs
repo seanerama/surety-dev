@@ -17,6 +17,11 @@
 //     `cancel`;
 // (f) `stage_screens` computed and recorded at the design's approval and at
 //     each publication; a plan naming `screens` verified against the design.
+//
+// M519's finding F1 (SEAM.md §549; the driver's ruling of 2026-10-17): a
+// replan whose stage validates R3 in full, naming its human-kind design
+// criterion among the validated criteria, is accepted and published; one
+// omitting it is accepted too (it owes nothing).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -27,7 +32,8 @@ import { scriptedEngine } from './harness/runs.mjs';
 import { closeSession, transcriptEntries } from './harness/sessions.mjs';
 import { INTERFACES, MODULES_JSON } from './harness/design/reference.mjs';
 import { assertHoldsAccounted, createPantry, pantryArchitect, pantrySpec, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
-import { BEFORE_BUILD, approveBatch, latestPlanCheck, planSubjects } from './harness/design/check41.mjs';
+import { BEFORE_BUILD, approveBatch, designModel, latestPlanCheck, planSubjects } from './harness/design/check41.mjs';
+import { withStore } from './harness/store.mjs';
 import { PHASE_TWO_STAGES, TWO_PHASE, currentRevision, currentRoadmap, designedPantry, replanWith, stageIdsOf, stageScreens } from './harness/design/plan44.mjs';
 
 const OFF = Object.freeze({ autonomy: 'phase', phase_size: { min: 1, max: 5 } });
@@ -56,9 +62,9 @@ const designObligationsOf = (check) => {
 // phase 1's completion with the replan scripted `replans(roadmap_version)`
 // (one per launch), prepared against the roadmap as the design's approval
 // left it (the engine's placing of the human tests, SEAM.md §486).
-async function twoPhaseToReplan(t, name, replans) {
+async function twoPhaseToReplan(t, name, replans, { model } = {}) {
   const fx = await scriptedEngine(t);
-  const d = await designedPantry(fx, { name, variant: TWO_PHASE });
+  const d = await designedPantry(fx, { name, variant: TWO_PHASE, ...(model ? { model } : {}) });
   fx.scripted.kindScript('replan', replans(currentRoadmap(fx.home, d.p.id).version));
   await phaseCompleted(fx, d.ctx, 1, { max: 200 });
   return { fx, ...d };
@@ -147,4 +153,29 @@ describe('M508 the plan check\'s design clauses', () => {
     assert.ok(published.id, 'published');
     await assertHoldsAccounted(fx, p.id, '(b)');
   });
+  // M519 F1: a design criterion of kind `human` under R3 (phase 2, android),
+  // written by the Spec Writer as the plain criterion R3.2 (plan44's batchSpec).
+  const HUMAN_R3 = Object.freeze({ requirement: 'R3', text: 'Given the Android app, when a person adds an item, then the flow feels like a native Android app.', kind: 'human', targets: ['android'] });
+  const humanModel = (inventory) => {
+    const m = designModel(inventory);
+    m.criteria.criteria = [clone(HUMAN_R3)];
+    return m;
+  };
+  for (const [label, criteria] of [['naming R3.2 among its validated criteria', ['R3.1', 'R3.2']], ['omitting R3.2', ['R3.1']]]) {
+    test(`M519 F1: a replan validating R3 ${label}, R3.2 a human-kind design criterion: accepted and published, never PLAN_CRITERION_MISMATCH`, async (t) => {
+      const plan = (roadmap_version) => replanWith({ roadmap_version, stages: [{ ...PHASE_TWO_STAGES.android, validation: { ...PHASE_TWO_STAGES.android.validation, criteria } }, PHASE_TWO_STAGES.countApi] });
+      const { fx, p, ctx } = await twoPhaseToReplan(t, `pantry-human-${criteria.length}`, (rv) => [plan(rv), plan(rv), plan(rv)], { model: humanModel });
+      const r3 = withStore(fx.home, (db) => db.prepare('SELECT "criteria" FROM "requirements" WHERE "project" = ? AND "key" = \'R3\'').get(p.id));
+      assert.ok(JSON.parse(r3?.criteria ?? '[]').includes('R3.2'), `the fixture: R3.2 is a criterion of R3 in the specification (${r3?.criteria})`);
+      const mark = planCheckRows(fx, p.id).length;
+      const published = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 2).find((x) => x.published_at), { what: 'phase 2 published', max: 60 }).catch((err) =>
+        assert.fail(`${err.message.split('\n')[0]} (plan checks: ${JSON.stringify(planCheckRows(fx, p.id).slice(mark).map((c) => [c.outcome, c.reasons]))})`),
+      );
+      const after = planCheckRows(fx, p.id).slice(mark);
+      assert.deepEqual(after.filter((c) => c.outcome === 'refused').map((c) => c.reasons), [], `no plan check of phase 2 refused (PLAN_CRITERION_MISMATCH never for a human-kind criterion) (${JSON.stringify(after.map((c) => [c.outcome, c.reasons]))})`);
+      const [s3] = stageIdsOf(fx.home, p.id, [3], 2);
+      assert.ok(s3, 'stage 3 published in phase 2');
+      assert.ok(published.id, 'published');
+    });
+  }
 });

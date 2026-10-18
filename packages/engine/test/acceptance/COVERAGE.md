@@ -4685,12 +4685,32 @@ Harness (§537): `harness/design/packages46.mjs` (new); `harness/standin/package
 |---|---|---|---|---|
 | ruling items 1, 2 | M507 (c), (g) | `M507-design-readiness-and-the-third-milestone.test.mjs` (7 → 9) | **M519's shape:** human-kind R2.4 and R3.3 written as plain criteria, and the correction covering R2.2, R2.3 and R3.2 applied. Expected: ready, `design.ready`, both UI stages built and `verified`, phase 1 complete, and no gate evaluated after version 2 naming R2.4 or R3.3 `ACCEPTANCE_SCOPE_INCOMPLETE` | written; fails on `main` |
 | ruling items 1, 3 | M507 (c) | the same | **The pending correction:** not ready, and `revisions[].readiness.waits_on` `{kind: check_correction, work_item}`. **Its proposal unapplied:** `{kind: proposal, proposal, decision}`, in both cases with `next_action`, and the same on the open `design_due`. **Applied:** ready, `readiness` null | written; fails on `main` |
-| ruling item 2 | M505 (b), (l) | `M505-close-raises-the-consolidated-batch.test.mjs` (15 → 16) | Neither R2.4 nor R3.3 is in the impact's `uncovered`, at raise or as applied. The correction's `uncovered` is exactly R2.2, R2.3 and R3.2. No obligation or check names them. `GET …/design` `human_tests[].criteria` carries R2.4 (web) and R3.3 (android), each `pending` | written; fails on `main` |
+| ruling item 2 | M505 (b), (l) | `M505-close-raises-the-consolidated-batch.test.mjs` (14 → 15) | Neither R2.4 nor R3.3 is in the impact's `uncovered`, at raise or as applied. The correction's `uncovered` is exactly R2.2, R2.3 and R3.2. No obligation or check names them. `GET …/design` `human_tests[].criteria` carries R2.4 (web) and R3.3 (android), each `pending` | written; fails on `main` |
 
 **What was run, 2026-10-17, on `main` `0824dff`** (this worktree, `npm ci`, `npm run build`, `TMPDIR=/tmp/vrfrd`, each file alone with `node --test --test-concurrency=1`):
 - **`M507` 7/9.** The seven earlier cases pass.
   - "(c), (g) M519 F1" fails on the engine: "the approved design never became ready though its correction ended with its proposal applied". The facts are `ready_at` null, the impact's and the correction's `uncovered` both `[R2.2, R2.3, R2.4, R3.2, R3.3]`, the correction `complete`, its proposal `applied`, both UI stages held `design_pending`, and only `design_due` open. This is M519's deadlock.
   - "(c) M519 F1: readiness waits …" fails at its first read: the revision on `GET …/design` has no `readiness`.
-- **`M505` 15/16.** The fourteen earlier cases pass. "(b), (l) M519 F1" fails at raise: the impact's `uncovered` includes `R2.4` and `R3.3`.
+- **`M505` 14/15.** The fourteen earlier cases pass. "(b), (l) M519 F1" fails at raise: the impact's `uncovered` includes `R2.4` and `R3.3`.
 
 **Checked before the cases, not a case:** on `main`, the reference design without the human-kind criteria goes through the same pumps as M507's first new case: it becomes ready, both UI stages are `verified`, and phase 1 completes. Its gates after version 2 name no criterion `ACCEPTANCE_SCOPE_INCOMPLETE`. So that case's post-readiness part is one a corrected engine can pass.
+
+**Further cases** (the coordinator's message, 2026-10-17; SEAM §549 "Further cases"):
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| ruling item 1 | M507 (g) | `M507-design-readiness-and-the-third-milestone.test.mjs` (9 → 10) | The applied correction leaves the checkable R2.2 uncovered. Expected: ready; stage 2's gate names R2.2 `ACCEPTANCE_SCOPE_INCOMPLETE`, not R2.4 | written; fails on `main` |
+| ruling item 2 (plan check) | M508 | `M508-plan-check-additions.test.mjs` (5 → 7) | Phase 2's replan validates R3 with its human-kind R3.2 named, and again with it omitted. Expected: published, no refused plan check | written; fails on `main` |
+| ruling item 2 (identification) | M505 (b) | `M505-close-raises-the-consolidated-batch.test.mjs` (15 → 16) | The spoof: the checkable criterion R2.3, reworded and swapped with a human one, stays uncovered and owed, and is not on the web human test | written; passes on `main` (nothing is human there); fails on `build/m6-ready` `a803c2b` |
+
+**What was run, 2026-10-17**, each file alone, `--test-name-pattern "M519 F1"` (`node --test --test-concurrency=1`):
+
+On `main` `0824dff`:
+- **M507 0/3.** Both first-round cases fail as before. (g) fails: never ready, R2.2 counted as holding readiness.
+- **M505 1/2.** The first-round case fails at raise. The spoof passes.
+- **M508 0/2.** Both cases fail at "phase 1 to complete": phase 1's web stage is never released, because readiness is never set.
+
+On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scratch/vrfrd-ready`, not pushed):
+- **M507 3/3.**
+- **M505 1/2.** The first-round case passes. The spoof fails: "at raise: the checkable R2.3 uncovered" (`uncovered [R2.2, R3.2]`, `judged_by_person [R2.3]`).
+- **M508 1/2.** Omitting R3.2 passes. Naming R3.2 fails: phase 2's replan is refused `PLAN_CRITERION_MISMATCH` `[R3.2]`.
