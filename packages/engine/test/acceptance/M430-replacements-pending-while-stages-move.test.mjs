@@ -27,8 +27,9 @@
 // holds completion; and no replacement replan launches with a package
 // saying "plan the next phase" for a generation already completed.
 // R1     the replacement's run held past the last stage's integration, then
-//        refused, its automatic repair publishing: phase 1 open until then,
-//        then complete on generation 2;
+//        refused, its automatic repair routed to the owner (`uncertain`):
+//        phase 1 open throughout (in flight, awaiting the repair, awaiting
+//        his approval), then complete on generation 2;
 // R2     the replacement's run held past the last stage's integration, then
 //        refused twice and parked: phase 1 open while it is parked, its
 //        blocker open; answered `cancel`, phase 1 completes on generation 1.
@@ -80,7 +81,8 @@ const S2R = changed(S2, { number: 3, goal: 'the service, restated', depends_on: 
 const builderS2R = roleThat([step.write('server.mjs', `${BUILDER_FILES[2]['server.mjs']}// R2 restated: a refused request names the parameter.\n`)]);
 // A replacement plan the plan check refuses (PLAN_INVALID: a dependency that is no stage number).
 const refusedPlan = (before = []) => replan35({ phase: 1, spec_version: 2, stages: [{ ...S2R, depends_on: ['stage-x'] }], before });
-const replacementPlan = (before = []) => replan35({ phase: 1, spec_version: 2, stages: [S2R], before });
+// `uncertain` routes the proposal to the owner (D6 §5.5), so R1 sees it pending at his approval.
+const replacementPlan = (before = [], conformance = 'within_baseline') => replan35({ phase: 1, spec_version: 2, stages: [S2R], before, conformance });
 
 // The T1 reference project (phase 1: S1, S2) with a change touching R2
 // approved (its obligations met by the Verifier's assessment) and its
@@ -117,15 +119,22 @@ async function replacementHeldAtPhaseEnd(t, replan) {
 }
 
 // While the replacement is pending: phase 1 open, no completion recorded,
-// and the phase read naming the replan (by its work item) as what holds it.
-async function assertHeldOpen(fx, p, plan, item, how) {
+// and the phase read's `plan.completion_held_by` naming the replan's work
+// item, and the open question accounting for it (`question`: its id, or
+// null where none is expected; `bundle`: whether a proposal is expected).
+async function assertHeldOpen(fx, p, plan, item, how, { question = null, bundle = false } = {}) {
   const now = phasePlansOf(fx.home, p.id).find((x) => x.id === plan.id);
   assert.deepEqual([now.status, now.completed_at ?? null], ['published', null], `phase 1 does not complete while the replacement of its open generation is ${how} (status ${now.status}, completed_at ${now.completed_at}, binding ${JSON.stringify(now.completion_binding)})`);
   assert.deepEqual(eventsAbout(fx.home, 'baseline.phase_complete', p.id).filter((e) => e.subject?.phase_plan === plan.id), [], 'no baseline.phase_complete for it');
   assert.deepEqual(replans(fx.home, p.id).filter((w) => w.trigger_source === 'phase_complete'), [], 'and no replan of the next phase');
   const read = await readPlan(fx, p.id);
   assert.deepEqual([read.plan?.id, read.plan?.completed_at ?? null], [plan.id, null], 'the phase read: generation 1, not complete');
-  assert.ok(JSON.stringify(read).includes(item.id), `the phase read names the pending replacement ${item.id} as what holds completion (${JSON.stringify(read.plan).slice(0, 1500)})`);
+  const held = read.plan?.completion_held_by ?? null;
+  assert.equal(held?.work_item, item.id, `plan.completion_held_by names the pending replacement ${item.id} (${JSON.stringify(held)})`);
+  assert.equal(held.reason, 'replacement_pending', 'for a replacement pending');
+  assert.deepEqual([held.trigger?.source, held.trigger?.id], [item.trigger_source, item.trigger_id], 'with its trigger');
+  assert.equal(held.question ?? null, question, `and the open question accounting for it (${how})`);
+  if (bundle) assert.ok(typeof held.bundle === 'string' && held.bundle !== '', `and its proposal awaiting the owner (${JSON.stringify(held)})`);
 }
 
 // Every launch of the replacement was given the open phase to replace,
@@ -242,7 +251,7 @@ describe('M430 the review\'s pending replacements', () => {
     assert.ok(replans(fx.home, p.id).some((w) => w.trigger_source === 'blocker_replan'), 'by a blocker_replan');
   });
   test('R1 the replacement held past the last stage\'s integration, then refused and repaired: phase 1 stays open until the repair publishes, then completes on generation 2', async (t) => {
-    const { fx, p, ctx, plan, item, end } = await replacementHeldAtPhaseEnd(t, [refusedPlan([DUMP, HOLD]), replacementPlan([DUMP])]);
+    const { fx, p, ctx, plan, item, end } = await replacementHeldAtPhaseEnd(t, [refusedPlan([DUMP, HOLD]), replacementPlan([DUMP], 'uncertain')]);
     assert.equal(end.completed, undefined, `phase 1 completed while its replacement replan was in flight (completed_at ${end.completed?.completed_at}; binding ${JSON.stringify(end.completed?.completion_binding)})`);
     await assertHeldOpen(fx, p, plan, item, 'in flight');
     fx.scripted.release('all', 'gate');
@@ -258,7 +267,13 @@ describe('M430 the review\'s pending replacements', () => {
     const runs = runsOfProject(fx.home, p.id).filter((r) => r.work_item === item.id);
     assert.deepEqual(runs.map((r) => r.outcome).slice(0, 1), ['failed'], `the fixture is live: the first run was refused (${JSON.stringify(runs.map((r) => [r.outcome, r.reason_class, r.reason_text]))})`);
     assertEveryLaunchReplacesTheOpenPhase(fx, item);
-    if (g2.approval) assert.equal((await answer(fx.engine, p.id, g2.approval, 'approve')).status, 200, 'the owner approves the replacement');
+    // Routed (`uncertain`): held while the proposal awaits the owner's approval.
+    assert.ok(g2.approval, `the fixture is live: the repaired replacement routed to the owner (${JSON.stringify(Object.keys(g2))})`);
+    await tick(fx.engine, p.id, { rounds: 4 });
+    const pendingApproval = await boundApproval(fx, p.id);
+    assert.ok(pendingApproval, 'its plan_approval open');
+    await assertHeldOpen(fx, p, plan, item, 'awaiting the owner\'s approval', { question: pendingApproval.id, bundle: true });
+    assert.equal((await answer(fx.engine, p.id, pendingApproval, 'approve')).status, 200, 'the owner approves the replacement');
     const done = await pump(fx, ctx, () => phasePlansOf(fx.home, p.id).find((x) => x.phase_number === 1 && active(x) && x.completed_at), { what: 'phase 1 complete after its replacement', max: 160 });
     assert.equal(done.generation, 2, 'phase 1 completes on generation 2');
     assert.equal(done.completion_binding?.generation, 2, 'bound to generation 2');
@@ -278,7 +293,7 @@ describe('M430 the review\'s pending replacements', () => {
     assert.ok(blocker, 'the parked replacement asks its owner question');
     assertEveryLaunchReplacesTheOpenPhase(fx, item);
     await tick(fx.engine, p.id, { rounds: 4 });
-    await assertHeldOpen(fx, p, plan, item, 'parked');
+    await assertHeldOpen(fx, p, plan, item, 'parked', { question: blocker.id });
     assert.equal(openBlockerAbout(fx.home, item.id)?.id, blocker.id, 'its blocker still open: the parked replacement is accounted for by its question');
     assert.ok(blocker.options.some((o) => o.key === 'cancel'), `offering cancel (${JSON.stringify(blocker.options.map((o) => o.key))})`);
     assert.equal((await answer(fx.engine, p.id, blocker, 'cancel')).status, 200, 'the owner cancels the replacement');
