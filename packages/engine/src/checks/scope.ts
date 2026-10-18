@@ -63,6 +63,18 @@ export interface ScopeRequirement {
 // A requirement only a person tests: no criteria, the human-test mark.
 export const isHumanTest = (r: Pick<ScopeRequirement, 'criteria' | 'human_test'> | undefined): boolean => r?.human_test === true && (r.criteria === null || r.criteria.length === 0);
 
+// A requirement's criteria with those a person judges taken out (a design
+// criterion of kind `human`, D7 §7.2, §7.3; the driver's ruling on M519's
+// F1): such a criterion is carried by its target's human test, never by a
+// check, so it imposes no criterion on any scope; a requirement left with
+// no criterion of its own is a human test, as TPL §4's mark makes one.
+export function withoutJudgedByPerson<T extends { criteria: string[] | null; human_test?: boolean }>(r: T, judged: ReadonlySet<string>): T {
+  if (r.criteria === null || judged.size === 0) return r;
+  const kept = r.criteria.filter((c) => !judged.has(c));
+  if (kept.length === r.criteria.length) return r;
+  return { ...r, criteria: kept, ...(kept.length === 0 ? { human_test: true } : {}) };
+}
+
 // The kinds that cover criteria (checks/schema.ts COVERING_KINDS): a scope
 // whose obligations are all human tests has no criterion for them to cover,
 // so it is held only to the tier's revision-wide kinds.

@@ -11,6 +11,7 @@
 // from one (B02).
 
 import { designAssignedHumanTests, designPolicyOf } from '../design/policy.js';
+import { designHumanCriteria } from '../design/criterion-map.js';
 import { approvedDesignScreens } from '../design/stage-screens.js';
 import { requestsFromReplan } from '../spec/change.js';
 import { Refusal } from '../refusal.js';
@@ -141,6 +142,9 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
   }
   const blocked = new Map((representation?.requirements ?? []).map((r) => [r.key, r.blocked_by_questions]));
   const designHumanTests = designAssignedHumanTests(db, args.project);
+  // A design criterion of kind `human` is a person's, never a stage's
+  // validation or a check's (D7 §7.3; the driver's ruling on M519's F1).
+  const judged = designHumanCriteria(db, args.project);
   const requirements = (
     db.prepare('SELECT "key", "criteria", "sensitive_areas", "withdrawn_at", "defect", "status", "human_test" FROM "requirements" WHERE "project" = ? ORDER BY "key"').all(args.project) as {
       key: string;
@@ -161,6 +165,9 @@ export function bundleBaselineFacts(db: Db, args: { project: string; head: strin
     sensitive_areas: JSON.parse(r.sensitive_areas) as string[],
     withdrawn: r.withdrawn_at !== null,
     blocked_by_questions: blocked.get(r.key) ?? [],
+    // Kept in `criteria` (the specification lists them, and a stage may
+    // validate them); named here so the plan check owes nothing for them.
+    ...(r.criteria !== null && (JSON.parse(r.criteria) as string[]).some((c) => judged.has(c)) ? { judged_by_person: (JSON.parse(r.criteria) as string[]).filter((c) => judged.has(c)) } : {}),
   }));
   const arch = db.prepare('SELECT "id", "version", "module_map", "blobs" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { id: string; version: number; module_map: string; blobs: string } | undefined;
   const road = db.prepare('SELECT "id", "version", "phases", "git_blob" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as

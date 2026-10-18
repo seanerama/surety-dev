@@ -435,7 +435,7 @@ export class Acceptor {
     const claimed = (facts.result?.report as { changes?: unknown } | undefined)?.changes ?? null;
     let impact: unknown;
     try {
-      const read = await this.rt.read<{ impact: unknown } | { refused: string }>('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed });
+      const read = await this.rt.read<{ impact: unknown } | { refused: string }>('spec.change_impact', { project, representation: parsed.representation, digest: parsed.digest, claimed, work_item: facts.work.id });
       // A renumbered key, a withdrawn key used again or an unreadable
       // approved version refuses the proposal at the run (D6 §4.4; Q1).
       if ('refused' in read) return failed('invalid_result', `the proposed specification is refused: ${read.refused}`);

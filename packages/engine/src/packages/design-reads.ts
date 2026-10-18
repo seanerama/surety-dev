@@ -635,6 +635,9 @@ export interface DesignCatalogueFacts {
   // The approved design's criteria its approval could not map to a
   // specification id (criterion-map.ts), stated, never omitted.
   unmatched?: { index: number; requirement: string; kind: string; text: string; why: string }[];
+  // The design criteria of kind `human` (D7 §7.2, §7.3): a person judges
+  // them through the target's human test; no check is written or owed.
+  judged_by_person?: string[];
   // The programs the governed file's check_commands names, which a
   // definition's command names first; null when the governed values cannot
   // be read (unknown, never none).
@@ -646,11 +649,12 @@ export function verifierDesignElements(f: DesignCatalogueFacts | null): Built {
     'verifier.design_catalogue': {
       id: 'verifier.design_catalogue',
       gloss:
-        "Each design criterion needs a required acceptance check covering it, of a criteria kind, reading what its catalogue kind reads at the implemented paths it names. A check of a slot reads the effective file through asset_inputs, given to it at the variable named, never the file in the repository alone.",
+        "Each design criterion needs a required acceptance check covering it, of a criteria kind, reading what its catalogue kind reads at the implemented paths it names, except a criterion of kind human (judged_by_person): a person judges it through its target's human test, so write no check for it and leave it out of deferred_criteria; no gate waits on a check of it. A check of a slot reads the effective file through asset_inputs, given to it at the variable named, never the file in the repository alone.",
       data: {
         kinds: catalogueKinds(),
         criteria: f.criteria,
         unmatched: f.unmatched ?? [],
+        judged_by_person: f.judged_by_person ?? [],
         command: {
           member: 'command',
           programs: f.programs ?? null,
