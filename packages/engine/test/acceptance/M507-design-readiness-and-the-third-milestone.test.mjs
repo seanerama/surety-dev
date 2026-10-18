@@ -14,6 +14,15 @@
 // (f) `at_alpha` and `off`: no hold;
 // (g) gates while the design criteria's checks do not exist:
 //     ACCEPTANCE_SCOPE_INCOMPLETE naming the design criteria.
+//
+// M519's finding F1 (SEAM.md §549; the driver's ruling of 2026-10-17):
+// (c), (g) a design whose criteria include kind `human`, written by the
+//     Spec Writer as plain criteria, the correction covering only the
+//     checkable ones and approved: ready; the UI stages released and built;
+//     no gate names a human-kind criterion ACCEPTANCE_SCOPE_INCOMPLETE;
+// (c) the same while the correction is pending, then while its proposal is
+//     unapplied: no readiness, and GET …/design (and design_due when open)
+//     names what readiness waits on and the next action.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -24,6 +33,7 @@ import { scriptedEngine, tick } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS, ROADMAP_JSON, STAGES, specText } from './harness/design/reference.mjs';
+import { CHECKABLE_IDS, CRITERIA_WITH_HUMAN, HUMAN_IDS, HUMAN_KIND_IDS, V2_WITH_HUMAN, assertV2Shape, checksCovering, criterionMapOf, designChange, readinessFacts, scopeIncompleteNaming } from './harness/design/ready.mjs';
 import {
   answerWith,
   assertHoldsAccounted,
@@ -34,7 +44,9 @@ import {
   designerSession,
   effectiveAssets,
   openOfKind,
+  readDesign,
   scriptBuilders,
+  specChangeScriptFor,
   stageRow,
   stageWork,
   toPublished,
@@ -59,6 +71,14 @@ const untilBatch = (fx, ctx) =>
     return b?.spec_change ? b : undefined;
   }, { what: 'the batch', max: 40 });
 const designed = async (fx, p) => designerSession(fx, p.id, [{ files: validDesign(p), say: 'Draw Pantry.', result: { done: true } }]);
+// M519's shape (SEAM.md §549): the design with two human-kind criteria, the
+// Spec Writer writing them as plain criteria R2.4 and R3.3.
+const designedWithHuman = async (fx, p) => {
+  fx.scripted.kindScript('spec_change', specChangeScriptFor(V2_WITH_HUMAN));
+  return designerSession(fx, p.id, [{ files: validDesign(p, { criteria: CRITERIA_WITH_HUMAN }), say: 'Draw Pantry; the look is judged by a person.', result: { done: true } }]);
+};
+// The approved revision's entry on GET …/design.
+const revisionRead = (read, id) => (read.revisions ?? []).find((r) => r.id === id) ?? null;
 const readyAt = (home, project) => designRevisions(home, project).find((r) => r.ready_at)?.ready_at ?? null;
 const uiLaunches = (fx, p) => [2, 3].flatMap((n) => fx.scripted.launches({ work_item: stageWork(fx.home, p.id, n)?.id }));
 
@@ -217,5 +237,95 @@ describe('M507 design readiness and the third milestone', () => {
     assert.equal(holdsR2(stageRow(fx.home, p.id, 1)?.implements), false, 'and the API stage does not implement R2');
     const applied = rows(fx.home, 'SELECT COUNT(*) AS n FROM "checks" WHERE "project" = ? AND "key" = \'accept-r2-tokens\'', p.id)[0].n;
     if (applied === 0) for (const e of after().filter(delivers)) assert.ok(named(e), `every gate delivering R2 names it while its checks do not exist (${e.gate_kind}: ${e.reasons})`);
+  });
+  test('(c), (g) M519 F1: human-kind criteria written as plain criteria, the correction covering the checkable ones applied: ready; the UI stages released and built; no gate names a human-kind criterion ACCEPTANCE_SCOPE_INCOMPLETE', async (t) => {
+    assertV2Shape(assert);
+    const fx = await scriptedEngine(t);
+    const { p, ctx } = await project(fx);
+    await designedWithHuman(fx, p);
+    const batch = await untilBatch(fx, ctx);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    const mark = rows(fx.home, 'SELECT COALESCE(MAX(rowid), 0) AS r FROM "gate_evaluations"')[0].r;
+    // The engine identifies the human-kind criteria from the design (its criterion map), never from the wording.
+    const map = criterionMapOf(fx.home, p.id);
+    for (const [target, id] of Object.entries(HUMAN_KIND_IDS)) {
+      const e = map.find((x) => x.id === id);
+      assert.ok(e && e.kind === 'human' && (e.targets ?? []).includes(target), `the fixture: the criterion map records ${id} kind human on ${target} (${JSON.stringify(map.map((x) => [x.id, x.kind, x.targets]))})`);
+    }
+    // The correction (auto-approved, a tightening) covers the checkable criteria only.
+    let ready;
+    try {
+      ready = await pump(fx, ctx, () => readyAt(fx.home, p.id) ?? undefined, { what: 'readiness', max: 40 });
+    } catch (err) {
+      assert.fail(`the approved design never became ready though its correction ended with its proposal applied: readiness must not wait on the human-kind criteria ${HUMAN_IDS.join(', ')} (D7 §7.5 and §7.3; the driver's ruling, M519 F1) (${err.message.split('\n')[0]}; facts ${readinessFacts(fx.home, p.id)})`);
+    }
+    assert.ok(ready, 'design_ready_at set');
+    const markReady = rows(fx.home, 'SELECT COALESCE(MAX(rowid), 0) AS r FROM "gate_evaluations"')[0].r;
+    const change = designChange(fx.home, p.id);
+    assert.ok(change.correction && change.correction.status === 'complete', `the correction ended (${change.correction?.status})`);
+    assert.ok(change.proposals.some((x) => x.status === 'applied'), `its proposal applied (${JSON.stringify(change.proposals)})`);
+    for (const id of CHECKABLE_IDS) assert.ok(checksCovering(fx.home, p.id, id).length > 0, `${id} covered by a check`);
+    for (const id of HUMAN_IDS) assert.deepEqual(checksCovering(fx.home, p.id, id), [], `the fixture: no check covers ${id}`);
+    assert.equal(eventsAbout(fx.home, 'design.ready', p.id).length, 1, 'design.ready once');
+    // The UI stages released and built.
+    await pump(fx, ctx, () => ([2, 3].every((n) => stageRow(fx.home, p.id, n)?.status === 'verified') ? true : undefined), { what: 'both UI stages verified', max: 120 });
+    for (const n of [2, 3]) {
+      const w = stageWork(fx.home, p.id, n);
+      assert.ok(w.milestones_met.includes('design_ready'), `stage ${n}'s design_ready milestone met (${JSON.stringify(w.milestones_met)})`);
+      assert.ok(fx.scripted.launches({ work_item: w.id }).length >= 1, `stage ${n}'s Builder launched`);
+    }
+    await pump(fx, ctx, () => (eventsAbout(fx.home, 'baseline.phase_complete', p.id).length > 0 ? true : undefined), { what: 'phase 1 complete', max: 120 });
+    // No gate names a human-kind criterion (or a covered one) ACCEPTANCE_SCOPE_INCOMPLETE.
+    const evaluated = rows(fx.home, 'SELECT "gate_kind", "stage" FROM "gate_evaluations" WHERE "project" = ? AND rowid > ?', p.id, mark);
+    for (const n of [2, 3]) assert.ok(evaluated.some((e) => e.gate_kind === 'stage' && e.stage === stageRow(fx.home, p.id, n).id), `the fixture is live: stage ${n}'s gate evaluated after version 2`);
+    assert.ok(evaluated.some((e) => e.gate_kind === 'phase'), 'the fixture is live: the phase gate evaluated');
+    assert.deepEqual(scopeIncompleteNaming(fx.home, p.id, HUMAN_IDS, { afterRowid: mark }), [], 'no gate carries ACCEPTANCE_SCOPE_INCOMPLETE for a human-kind criterion (D7 §7.3; the ruling)');
+    assert.deepEqual(scopeIncompleteNaming(fx.home, p.id, CHECKABLE_IDS, { afterRowid: markReady }), [], 'nor for a checkable one once its check exists');
+    await assertHoldsAccounted(fx, p.id, '(c), (g) M519 F1');
+  });
+
+  test('(c) M519 F1: readiness waits while the correction is pending, then while its proposal is unapplied; GET …/design names what it waits on and the next action', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, ctx } = await project(fx);
+    ctx.answerKinds = [...OWNER];
+    await designedWithHuman(fx, p);
+    const batch = await untilBatch(fx, ctx);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    const rev = designRevisions(fx.home, p.id).find((r) => r.status === 'approved');
+    assert.ok(rev, 'the design approved');
+    const change = designChange(fx.home, p.id);
+    assert.ok(change?.correction, `the change registered its correction (${readinessFacts(fx.home, p.id)})`);
+    // (1) The correction pending: not ready; the read names it.
+    const sameOnDue = (read, readiness, how) => {
+      if (read.design_due) assert.deepEqual(read.design_due.readiness?.waits_on, readiness.waits_on, `${how}: the open design_due's evidence names the same wait (${JSON.stringify(read.design_due)})`);
+    };
+    assert.equal(readyAt(fx.home, p.id), null, 'the correction pending: no readiness');
+    let read = await readDesign(fx, p.id);
+    let r = revisionRead(read, rev.id)?.readiness;
+    assert.ok(r && r.waits_on, `the correction pending: GET …/design names what readiness waits on (revisions[].readiness; the ruling's item 3) (${JSON.stringify(revisionRead(read, rev.id))})`);
+    assert.deepEqual({ kind: r.waits_on.kind, work_item: r.waits_on.work_item }, { kind: 'check_correction', work_item: change.correction.id }, `the correction pending: waits on the check_correction ${change.correction.id} (${JSON.stringify(r)})`);
+    assert.ok(typeof r.next_action === 'string' && r.next_action.length > 0, `and states the next action (${JSON.stringify(r)})`);
+    sameOnDue(read, r, 'the correction pending');
+    // (2) Its proposal captured, awaiting the owner: not ready; the read names the proposal and the decision.
+    const captured = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'check_correction_tightening')[0], { what: 'the correction\'s proposal captured', max: 40 });
+    const proposal = designChange(fx.home, p.id).proposals.find((x) => x.status !== 'applied' && x.status !== 'rejected');
+    assert.ok(proposal, `the proposal unapplied (${JSON.stringify(designChange(fx.home, p.id).proposals)})`);
+    assert.equal(readyAt(fx.home, p.id), null, 'the proposal unapplied: no readiness');
+    assert.deepEqual(uiLaunches(fx, p), [], 'no UI Builder');
+    read = await readDesign(fx, p.id);
+    r = revisionRead(read, rev.id)?.readiness;
+    assert.ok(r && r.waits_on, `the proposal unapplied: GET …/design names what readiness waits on (${JSON.stringify(revisionRead(read, rev.id))})`);
+    assert.deepEqual({ kind: r.waits_on.kind, proposal: r.waits_on.proposal, decision: r.waits_on.decision }, { kind: 'proposal', proposal: proposal.id, decision: captured.id }, `the proposal unapplied: waits on proposal ${proposal.id} and the owner's ${captured.id} (${JSON.stringify(r)})`);
+    assert.ok(typeof r.next_action === 'string' && r.next_action.length > 0, `and states the next action (${JSON.stringify(r)})`);
+    sameOnDue(read, r, 'the proposal unapplied');
+    await assertHoldsAccounted(fx, p.id, '(c) the proposal unapplied');
+    // (3) Approved and applied: ready, and the read names no wait.
+    await consume(fx, p.id, decision(fx.home, captured.id), 'approve');
+    const ready = await pump(fx, ctx, () => readyAt(fx.home, p.id) ?? undefined, { what: 'readiness once the proposal is applied', max: 20 }).catch((err) => assert.fail(`${err.message.split('\n')[0]} (${readinessFacts(fx.home, p.id)})`));
+    assert.ok(ready, 'ready once applied');
+    read = await readDesign(fx, p.id);
+    assert.equal(revisionRead(read, rev.id)?.readiness ?? null, null, `ready: no wait named (${JSON.stringify(revisionRead(read, rev.id))})`);
   });
 });
