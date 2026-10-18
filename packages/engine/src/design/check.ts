@@ -46,6 +46,42 @@ export interface CheckContext {
   // by its file's blob; and the saving session's review's (its owner
   // evidence and the engine's observations for its run).
   reviews?: { held: Record<string, string[]>; run: string[] };
+  // What a delta's `criterion` and `check` may name (F4, Sean's ruling
+  // 2026-10-18): the criteria of the registered requirement index (null:
+  // none registered) and each check of the effective protected version with
+  // the criteria it covers. Absent: nothing is known, and no link is valid.
+  links?: ReviewLinks;
+}
+
+// F4: the links a review delta may carry, as the store holds them now.
+export interface ReviewLinks {
+  criteria: string[] | null;
+  checks: Record<string, string[]>;
+}
+
+// Why a delta's `criterion` and `check` are not a link the engine accepts
+// (F4): an unknown criterion, an unknown check, a check that does not cover
+// the criterion, or a check without a criterion; null when they are, or
+// when the delta names neither. Nothing is ever inferred: a delta is linked
+// only by what it names. `links` undefined: unknown, so nothing it names is
+// accepted.
+export function deltaLinkProblem(d: { criterion?: unknown; check?: unknown }, links: ReviewLinks | undefined): { field: 'criterion' | 'check'; why: string } | null {
+  const criterion = d.criterion ?? null;
+  const check = d.check ?? null;
+  if (criterion !== null && (typeof criterion !== 'string' || criterion === '')) return { field: 'criterion', why: 'must be a criterion id of the specification (R<n>.<m>)' };
+  if (check !== null && (typeof check !== 'string' || check === '')) return { field: 'check', why: 'must be a check key of the effective protected version' };
+  if (check !== null && criterion === null) return { field: 'check', why: 'names no criterion: a check is named only with the criterion it covers' };
+  if (criterion !== null) {
+    if (links === undefined) return { field: 'criterion', why: `${String(criterion)} cannot be judged: the specification's criteria are unknown here` };
+    if (links.criteria === null) return { field: 'criterion', why: `${String(criterion)} is not a criterion: no requirement index is registered` };
+    if (!links.criteria.includes(criterion as string)) return { field: 'criterion', why: `${String(criterion)} is not a criterion of the requirement index in force` };
+  }
+  if (check !== null) {
+    const covers = links!.checks[check as string];
+    if (covers === undefined) return { field: 'check', why: `${String(check)} is not a check of the effective protected version` };
+    if (!covers.includes(criterion as string)) return { field: 'check', why: `${String(check)} does not cover ${String(criterion)} (its covers.criteria: ${covers.length > 0 ? covers.join(', ') : 'none'})` };
+  }
+  return null;
 }
 
 export interface CheckOutcome {
@@ -65,7 +101,9 @@ export const REVIEW_FIELDS = {
   file: ['design_version', 'subject', 'screens', 'revised_design', 'first_design'],
   subject: ['kind', 'candidate', 'target', 'build_ref'],
   screen: ['target', 'key', 'verdict', 'observed_on', 'not_observed_reason', 'evidence', 'deltas'],
-  delta: ['state', 'owner_words', 'kind'],
+  // F4: `criterion` and `check`, each optional, `check` only with
+  // `criterion`: the link a delta establishes, never inferred.
+  delta: ['state', 'owner_words', 'kind', 'criterion', 'check'],
 } as const;
 export const REVIEW_VERDICTS = ['matches', 'deltas', 'not_observed'];
 export const OBSERVED_ON = ['browser', 'simulator', 'emulator', 'device', 'simulation'];
@@ -356,6 +394,12 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
         closed(file, `${at}.deltas[${j}]`, d, REVIEW_FIELDS.delta);
         if (typeof d.owner_words !== 'string' || d.owner_words === '') schema(file, `${at}.deltas[${j}].owner_words`, "must be the owner's words");
         if (!DELTA_KINDS.includes(String(d.kind))) schema(file, `${at}.deltas[${j}].kind`, `must be one of ${DELTA_KINDS.join(', ')}`);
+        // F4: a link the delta names is judged against the store as it is
+        // now while the file is not yet recorded; a recorded review's links
+        // are judged again when the owner confirms it (design/review.ts).
+        const recorded = ctx.reviews !== undefined && ctx.reviews.held[gitBlobId(bytes)] !== undefined;
+        const link = recorded ? null : deltaLinkProblem(d, ctx.links);
+        if (link !== null) schema(file, `${at}.deltas[${j}].${link.field}`, link.why);
       }
     }
   }

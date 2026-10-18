@@ -289,7 +289,19 @@ function schemas(): Record<string, Schema> {
             observed_on: oneOf(OBSERVED_ON),
             not_observed_reason: oneOf(NOT_OBSERVED),
             evidence: strings('evidence ids this review holds'),
-            deltas: list(fieldsOf(REVIEW_FIELDS.delta, { state: str(), owner_words: str("the owner's words"), kind: oneOf(DELTA_KINDS) }, ['owner_words', 'kind'])),
+            deltas: list(
+              fieldsOf(
+                REVIEW_FIELDS.delta,
+                {
+                  state: str(),
+                  owner_words: str("the owner's words"),
+                  kind: oneOf(DELTA_KINDS),
+                  criterion: str('the specification criterion (R<n>.<m>) the difference breaks; only when it breaks that criterion'),
+                  check: str('a check of the effective protected version covering that criterion; only with criterion'),
+                },
+                ['owner_words', 'kind'],
+              ),
+            ),
           },
           ['target', 'key', 'verdict', 'evidence', 'deltas'],
         ),
@@ -588,6 +600,8 @@ export function designerReviewElement(f: DesignerReviewFacts): Built {
           owner_reported: 'the owner said it (the build he names, what he saw); nothing verified it',
         },
         verdicts: 'Your verdicts are proposals the owner confirms (design_verdicts); never write a status.',
+        // F4 (Sean's ruling, 2026-10-18): a link is named, never inferred.
+        deltas: 'A delta names a criterion (and a check covering it) only when the difference breaks that criterion; otherwise it names neither.',
         simulation: 'A verdict on a simulation (observed_on simulation) is never evidence about the native build.',
         owner: f.owner
           ? {
