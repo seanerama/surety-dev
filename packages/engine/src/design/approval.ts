@@ -754,6 +754,9 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
     tx.emit('design.ready', { project: rev.project, design_revision: rev.id }, { without_criteria: true });
     recordMetMilestones(tx, rev.project);
   }
+  // An open design_due names what the approved design's readiness waits
+  // on from the approval on, never a stale cause (SEAM.md §549).
+  reviewDesignDue(tx, rev.project);
 }
 
 // An approved revision's effective asset set (D7 §6.4; E162 item 4): the
