@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume, decision } from './harness/decisions.mjs';
+import { waitFor } from './harness/engine.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import {
   NOTHING,
@@ -43,9 +44,9 @@ import {
 } from './harness/journey/drive.mjs';
 import { ADR_001, ADR_001_REVISED, ADR_KEY, BAD_ARCHITECTURE, MODULES_JSON, MODULES_JSON_SERVICE_SECRETS, REQUIREMENTS, SPEC_SERVICE_SECRETS, adrText, phasePlan, specText } from './harness/journey/reference.mjs';
 import { refOid } from './harness/repos.mjs';
-import { addWork, runsOf, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { addWork, runIsIdle, runsOf, runsOfProject, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
-import { closeSession, openSession, packageOf, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from './harness/sessions.mjs';
+import { closeSession, packageOf, saveSession, sayAndSettle, scriptTurns, turnThatWrites } from './harness/sessions.mjs';
 
 const ADR_PATH = `.surety/adrs/${ADR_KEY}.md`;
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
@@ -66,6 +67,31 @@ async function refusedProducts(fx, p, over) {
   assert.deepEqual(nothingPublished(fx.home, p.id), NOTHING, 'nothing registered');
   await closeSession(fx, p.id, arch.run.id, { refuse: true });
   return arch;
+}
+
+// A session of `role` opened once no one-shot run of the project is live.
+// From the publication phase 1's check_authoring is eligible, and a tick the
+// engine takes on its own (a run's end, a journal effect) may dispatch its
+// Verifier between two of (e)'s sessions; the engine then rightly refuses the
+// opening `session_busy`, naming the one-shot (D6-S08; M419 (d)). So the
+// project's one-shot runs are waited out before the POST, and one dispatched
+// between that read and the POST is waited out the same way, within one
+// bound. Any other refusal fails as openSession would.
+async function openBesideOneShots(fx, project, role, { timeoutMs = 30_000 } = {}) {
+  const started = performance.now();
+  const oneShotsEnded = () => runsOfProject(fx.home, project).every((r) => r.kind !== 'one_shot' || runIsIdle(r));
+  for (;;) {
+    const left = Math.max(0, timeoutMs - (performance.now() - started));
+    await waitFor(oneShotsEnded, { timeoutMs: left, what: `every one-shot run of ${project} to end before a ${role} session opens` });
+    const res = await fx.engine.post(`/v1/projects/${project}/sessions`, { role });
+    const busyByOneShot = res.status === 409 && res.body?.code === 'session_busy' && res.body?.subject?.kind === 'one_shot';
+    if (busyByOneShot && performance.now() - started < timeoutMs) continue;
+    assert.equal(res.status, 201, `POST …/sessions opens a ${role} session (SEAM.md §344) once no one-shot of the project is live (within ${timeoutMs} ms) (→ ${res.status} ${res.text})`);
+    const run = res.body?.run;
+    assert.match(run?.id ?? '', /^run_/, `the answer names the session run (body: ${res.text})`);
+    assert.deepEqual([run.role, run.kind, run.session_state], [role, 'session', 'allocated'], `a run of kind session, allocated (body: ${res.text})`);
+    return run;
+  }
 }
 
 const names = (findings, code, text) => (findings ?? []).some((f) => f.code === code && JSON.stringify(f).includes(text));
@@ -146,7 +172,7 @@ describe('M404 the Architect\'s products registered; packages read approved bind
     for (const w of authoring) fx.scripted.script(w.id, [script.complete(), script.complete(), script.complete()]);
     fx.scripted.defaultScript(script.complete());
     // Revision 2: a later Architect session revises the ADR; its close raises architecture_approval again.
-    const run = await openSession(fx, p.id, 'architect');
+    const run = await openBesideOneShots(fx, p.id, 'architect');
     scriptTurns(fx, run.id, [turnThatWrites({ [ADR_PATH]: ADR_001_REVISED }, { reply: 'ADR revised.', done: true })]);
     await sayAndSettle(fx, p.id, run.id, 'Make every answer JSON.');
     await saveSession(fx, p.id, run.id);
@@ -160,12 +186,12 @@ describe('M404 the Architect\'s products registered; packages read approved bind
     // Newer checkpoints, unapproved: a third ADR text and a changed R1 statement.
     const CHECKPOINT_ADR = adrText({ decision: 'CHECKPOINT ONLY: the service uses Express.' });
     const CHECKPOINT_R1 = 'CHECKPOINT ONLY: the library multiplies two numbers.';
-    const a3 = await openSession(fx, p.id, 'architect');
+    const a3 = await openBesideOneShots(fx, p.id, 'architect');
     scriptTurns(fx, a3.id, [turnThatWrites({ [ADR_PATH]: CHECKPOINT_ADR }, { reply: 'A draft.' })]);
     await sayAndSettle(fx, p.id, a3.id, 'Draft a change.');
     await saveSession(fx, p.id, a3.id);
     await closeSession(fx, p.id, a3.id, { refuse: true });
-    const s2 = await openSession(fx, p.id, 'spec_writer');
+    const s2 = await openBesideOneShots(fx, p.id, 'spec_writer');
     scriptTurns(fx, s2.id, [turnThatWrites({ '.surety/spec/spec.md': specText({ requirements: REQUIREMENTS.map((r) => (r.key === 'R1' ? { ...r, statement: CHECKPOINT_R1 } : r)) }) }, { reply: 'A draft.' })]);
     await sayAndSettle(fx, p.id, s2.id, 'Draft a change to R1.');
     await saveSession(fx, p.id, s2.id);
