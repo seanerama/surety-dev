@@ -730,6 +730,10 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
     else if (slot.variants.some((v) => selected(slot.kind, v.name))) tx.db.prepare(`UPDATE "design_assets" SET "status" = 'approved' WHERE "design_revision" = ? AND "slot" = ? AND "status" = 'proposed'`).run(rev.id, slot.key);
   }
   const moved = moveEffective(tx, rev, manifest, held);
+  // The set this approval leaves effective, recorded on it (E162 item 4):
+  // every entry, unchanged assets and placeholders included, whether or
+  // not anything moved.
+  const effective = recordApprovedSet(tx, rev);
   // The human tests' assignment (E156 Q3), with the change's effect; an
   // asset-only revision keeps the one it supersedes.
   if (!args.withoutCriteria && rev.spec_change_request) assignHumanTests(tx, rev, args.roadmap ?? null);
@@ -738,7 +742,7 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
   // The native conventions the design leaves not checkable yet (§7.2, §7.3;
   // SEAM.md §494), each bound to its target's human-test requirement.
   recordNativeObligations(tx, rev);
-  tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [] });
+  tx.emit('design.approved', { project: rev.project, design_revision: rev.id }, { version: rev.version, scope: rev.scope, status: args.withoutCriteria ? 'approved_without_criteria' : 'approved', spec_revision: spec, assets_held: [...held], narrowings: parseJson<string[]>(rev.narrowings) ?? [], effective_assets_digest: effective.digest });
   if (moved.length > 0) {
     tx.emit('design.assets_approved', { project: rev.project, design_revision: rev.id }, { moved });
     // SEAM.md §510: after the move, before its work's registration (one
@@ -750,6 +754,32 @@ export function approveDesign(tx: Tx, args: { revision: string; specRevision: st
     tx.emit('design.ready', { project: rev.project, design_revision: rev.id }, { without_criteria: true });
     recordMetMilestones(tx, rev.project);
   }
+}
+
+// An approved revision's effective asset set (D7 §6.4; E162 item 4): the
+// whole of `design_effective_assets` as its approval left it, each entry
+// {slot, variant, slot_version, source, digest} in slot then variant order,
+// and the sha256 of its canonical JSON. Written on the revision row in the
+// approval's transaction; the same set gives the same digest.
+export interface ApprovedSetEntry {
+  slot: string;
+  variant: string;
+  slot_version: number;
+  source: 'approved' | 'placeholder';
+  digest: string;
+}
+
+export function effectiveSetNow(db: Db, project: string): { entries: ApprovedSetEntry[]; digest: string } {
+  const entries = db
+    .prepare('SELECT "slot", "variant", "slot_version", "source", "digest" FROM "design_effective_assets" WHERE "project" = ? ORDER BY "slot", "variant"')
+    .all(project) as ApprovedSetEntry[];
+  return { entries, digest: sha256(canonical(entries)) };
+}
+
+function recordApprovedSet(tx: Tx, rev: RevisionRow): { entries: ApprovedSetEntry[]; digest: string } {
+  const set = effectiveSetNow(tx.db, rev.project);
+  tx.db.prepare('UPDATE "design_revisions" SET "effective_assets" = ?, "effective_assets_digest" = ? WHERE "id" = ?').run(JSON.stringify(set.entries), set.digest, rev.id);
+  return set;
 }
 
 // A revision's slots, recorded when it is proposed (SEAM.md §508): each

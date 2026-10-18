@@ -434,3 +434,57 @@ export function settleReplacements(tx: Tx, project: string): void {
     raiseQuestion(tx, { project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id });
   }
 }
+
+// What holds an open plan generation's completion (the driver's ruling on
+// the M442 (c) intermittent, under Sean's delegation; to be recorded as an
+// erratum): a replacement of that generation, or of any generation of its
+// phase it replaced (transitively), still pending. Pending: its
+// `replan` item not yet ended (eligible, held, claimed, executing,
+// integrating, awaiting a decision, or parked with its blocker for the
+// owner, E162), or a proposal it made still `proposed` (awaiting the
+// owner's approval or its publication). A replacement retired (its item
+// cancelled, the owner's `cancel` on its blocker included), refused with no
+// further generation, or published (its item complete, its proposal
+// published) holds nothing. The first pending one, by seq, with the open
+// question that accounts for it, if any.
+export interface PendingReplacement {
+  work_item: string;
+  status: string;
+  trigger: { source: string; id: string; generation: number };
+  bundle: string | null;
+  question: string | null;
+}
+
+export function pendingReplacement(db: Db, project: string, plan: { id: string; generation: number }): PendingReplacement | null {
+  const items = db
+    .prepare(
+      `SELECT "id", "status", "trigger_source", "trigger_id", "trigger_generation", "subject", "trigger_evidence" FROM "work_items"
+       WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" IN (SELECT value FROM json_each(?)) ORDER BY "seq"`,
+    )
+    .all(project, JSON.stringify(EARLY_TRIGGERS)) as { id: string; status: string; trigger_source: string; trigger_id: string; trigger_generation: number; subject: string; trigger_evidence: string | null }[];
+  // The open generation and every generation of its phase it replaced,
+  // transitively (the driver's ruling on the Reviewer's should-fix 1): a
+  // replan aimed at an earlier generation is still pending against the
+  // phase until it ends, whatever the compare-and-swap later does with it.
+  const chain = new Map(
+    (
+      db
+        .prepare(`WITH RECURSIVE "gen"("id") AS (SELECT ? UNION SELECT p."id" FROM "phase_plans" p JOIN "gen" g ON p."replaced_by" = g."id") SELECT p."id", p."generation" FROM "phase_plans" p JOIN "gen" g ON p."id" = g."id"`)
+        .all(plan.id) as { id: string; generation: number }[]
+    ).map((r) => [r.id, r.generation]),
+  );
+  chain.set(plan.id, plan.generation);
+  for (const w of items) {
+    const target = replacementOf(db, w);
+    if (!target || chain.get(target.phase_plan) !== target.generation) continue;
+    const proposed = db
+      .prepare(`SELECT b."id" FROM "plan_bundles" b JOIN "runs" r ON r."id" = b."run" WHERE r."work_item" = ? AND b."status" = 'proposed' ORDER BY b.rowid DESC LIMIT 1`)
+      .get(w.id) as { id: string } | undefined;
+    if (!proposed && (w.status === 'complete' || w.status === 'cancelled')) continue;
+    const question = proposed
+      ? ((db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" IN ('plan_approval', 'architecture_approval') AND "scope" = ? AND "status" = 'open' ORDER BY rowid LIMIT 1`).get(proposed.id) as { id: string } | undefined)?.id ?? null)
+      : ((db.prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open' ORDER BY rowid LIMIT 1`).get(w.id) as { id: string } | undefined)?.id ?? null);
+    return { work_item: w.id, status: w.status, trigger: { source: w.trigger_source, id: w.trigger_id, generation: w.trigger_generation }, bundle: proposed?.id ?? null, question };
+  }
+  return null;
+}

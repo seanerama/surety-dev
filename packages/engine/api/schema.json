@@ -2939,6 +2939,12 @@
         },
         "criterion_map": {
           "required": false
+        },
+        "effective_assets": {
+          "required": false
+        },
+        "effective_assets_digest": {
+          "required": false
         }
       }
     },

@@ -1998,6 +1998,32 @@ async function runSteps(steps, ctx) {
         writeFileSync(target, bytes);
         log('copy_context', { outcome: 'copied', from: step.copy_context.from, to: step.copy_context.to, bytes: bytes.length, sha256: sha256Of(bytes) });
       }
+    } else if (step.plan_from_open_plan !== undefined) {
+      // SEAM.md §548: an early replan that lists stages of the open plan
+      // exactly as its package states them (the replan's `open-plan.json`,
+      // "their inputs as built"), beside the new stages given: the plan file
+      // `.surety/phases/phase-<n>.json` (and its .md) prepared against the
+      // versions given and the workspace's HEAD. Nothing of a copied stage is
+      // translated: what the package says is what the plan says. A package
+      // without the open plan is logged `missing` and nothing is written.
+      const want = step.plan_from_open_plan;
+      let open = null;
+      try {
+        open = JSON.parse(readFileSync(join(contextDir, 'open-plan.json'), 'utf8'));
+      } catch (err) {
+        log('plan_from_open_plan', { outcome: 'missing', error: err?.code ?? String(err) });
+      }
+      if (open !== null) {
+        const FIELDS = ['number', 'goal', 'tasks', 'modules', 'implements', 'adrs', 'depends_on', 'validation', 'integration_obligations'];
+        const copied = (Array.isArray(open.stages) ? open.stages : []).filter((st) => (want.copy ?? []).includes(st.number) && !st.cancelled_at).map((st) => Object.fromEntries(FIELDS.map((k) => [k, st[k]])));
+        const phase = want.phase ?? open.phase_number;
+        const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.cwd(), GIT_CONFIG_NOSYSTEM: '1' }, encoding: 'utf8' });
+        const plan = { phase, prepared_against: { spec_version: want.spec_version ?? 1, architecture_version: want.architecture_version ?? 1, roadmap_version: want.roadmap_version ?? 1, revision: (head.stdout ?? '').trim() }, stages: [...copied, ...(want.add ?? [])], conformance: want.conformance ?? 'within_baseline' };
+        mkdirSync(at('.surety/phases'), { recursive: true });
+        writeFileSync(at(`.surety/phases/phase-${phase}.json`), `${JSON.stringify(plan, null, 2)}\n`);
+        writeFileSync(at(`.surety/phases/phase-${phase}.md`), `# Phase ${phase}\n\n${plan.stages.map((s) => `- Stage ${s.number}: ${s.goal}`).join('\n')}\n`);
+        log('plan_from_open_plan', { outcome: 'written', open_phase: open.phase_number ?? null, open_generation: open.generation ?? null, copied: copied.map((s) => ({ number: s.number, depends_on: s.depends_on })), added: (want.add ?? []).map((s) => s.number) });
+      }
     } else if (step.write_many !== undefined) {
       const target = at(step.write_many.dir);
       mkdirSync(target, { recursive: true });
@@ -2062,13 +2088,24 @@ async function runSteps(steps, ctx) {
       // rehearsal-content.json) plays the role from the package it was given.
       // Its reads (every `surety-reads` block it found), what it wrote and its
       // result are logged as a `package_fake` entry.
+      // SEAM.md §548: the package's blocks, role and kind are read before the
+      // play, so that a play that throws is logged with the package it was
+      // actually given (its `error` beside them), never as a package with no
+      // elements.
       let played = null;
+      let given = { role: null, kind: null, blocks: null, package_error: null };
       try {
         const fakes = createRequire(import.meta.url)(join(dirname(fileURLToPath(import.meta.url)), 'package-fakes.cjs'));
+        try {
+          const pkg = fakes.readPackage(contextDir);
+          given = { role: pkg.manifest?.role ?? null, kind: pkg.manifest?.kind ?? null, blocks: pkg.reads ?? null, package_error: null };
+        } catch (err) {
+          given.package_error = String(err?.message ?? err);
+        }
         const content = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'rehearsal-content.json'), 'utf8'));
         played = fakes.play({ context: contextDir, workspace: process.cwd(), content });
       } catch (err) {
-        log('package_fake', { error: String(err?.stack ?? err) });
+        log('package_fake', { role: given.role, kind: given.kind, blocks: given.blocks, package_error: given.package_error, written: null, error: String(err?.stack ?? err) });
         await finish(97);
       }
       log('package_fake', { role: played.role, kind: played.kind, blocks: played.blocks, written: played.written, result: played.result });

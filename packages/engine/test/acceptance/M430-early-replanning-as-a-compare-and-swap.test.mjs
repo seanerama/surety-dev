@@ -20,6 +20,11 @@
 //     history, its work `superseded`; with every input unchanged: retained;
 // (f) delivery and dispatch from the active set; the finding kept;
 // (g) what became stale recorded.
+// (c) the open plan in an early replan's package (the driver's ruling of
+//     2026-10-17 on M442 (c)'s intermittent failure; SEAM.md §548): its
+//     stages' `depends_on` stated as stage numbers, the plan's own form, so
+//     that a replan copying unbuilt stages that depend on one another as
+//     the package states them is not refused, and publishes;
 // (e) is in `M430-two-replacements-and-a-restart.test.mjs`. The floor of
 // (f) has no case: the reference project has no sensitive area (COVERAGE).
 
@@ -29,8 +34,8 @@ import { describe, test } from 'node:test';
 import { answer, decisionsOn } from './harness/decisions.mjs';
 import { findingsOf, raiseFindings, review } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
-import { ROUTED_KINDS, builderScript, candidatesOfProject, phasePlansOf, planOfPhase, pump, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
-import { journey35, nextReplanOutcome, openPlanApprovals, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
+import { ROUTED_KINDS, builderScript, candidatesOfProject, phasePlansOf, planOfPhase, pump, readPlan, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
+import { journey35, nextReplanOutcome, openPlanApprovals, outcomes, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
 import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { CHECK_DEFS, CHECK_PROGRAMS, REQUIREMENTS, STAGES, authoringFiles, specText } from './harness/journey/reference.mjs';
 import { tick } from './harness/runs.mjs';
@@ -141,6 +146,49 @@ describe('M430 early replanning as a compare-and-swap', () => {
     await pumpNoIdle(fx, ctx, () => (stagesOfPlan(fx.home, plan.id).find((s) => s.number === 2)?.status === 'integrated' ? true : undefined), { what: 'S2 integrated', max: 20, answerKinds });
     const s2work = stageWorkOf(fx.home, p.id, stages1[2]);
     assert.ok(!JSON.stringify(s2work).includes('superseded'), 'S2\'s work is not superseded: its integration fulfils the replacement');
+  });
+
+  test('(c) the open plan in an early replan\'s package states depends_on as stage numbers; a replan copying the unbuilt stages as the package states them publishes (SEAM.md §548)', async (t) => {
+    // Phase 1 of three stages, S2 depending on S1 and S3 on S2; a change
+    // touching R3 approved before readiness, so no stage has built. The
+    // replan (and its repair, should it be refused) lists S1 and S2 exactly
+    // as its package's open-plan.json states them, and replaces S3 by S4.
+    const S4 = { ...S3, number: 4, tasks: ['write src/tally.mjs counting successful sums'], depends_on: [2] };
+    const { fx, p, ctx, plan } = await journey35(t, { tier: 'T1', over: ROADMAP3, stages: THREE });
+    fx.scripted.kindScript('check_authoring', [authoring3]);
+    fx.scripted.kindScript('spec_change', changeScript);
+    const copying = { steps: [step.probe('context_dump'), step.planFromOpenPlan({ phase: 1, copy: [1, 2], add: [S4], spec_version: 2 }), step.result({ status: 'completed', summary: 'phase 1 replanned', plan: 'phase-1', conformance: 'within_baseline', adrs_changed: [] })] };
+    fx.scripted.kindScript('replan', [copying, copying]);
+    const gen1 = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s.status]));
+    await postChange(fx, ctx, 'R3 counts successful sums only.');
+    const out = await nextReplanOutcome(fx, ctx, 1, outcomes([plan.id]), { max: 200, answerKinds: ['spec_change'] });
+    // The package as the Architect read it: the open plan, its stages' dependencies.
+    const launch = fx.scripted.launches({ work_kind: 'replan' })[0];
+    assert.ok(launch, 'the replan launched');
+    const dump = fx.scripted.probes(launch.invocation, 'context_dump').at(-1);
+    const file = (dump?.files ?? []).find((f) => f.name === 'open-plan.json');
+    assert.ok(file && typeof file.text === 'string', `the early replan's package carries the open plan (${JSON.stringify((dump?.files ?? []).map((f) => f.name))})`);
+    const open = JSON.parse(file.text);
+    assert.deepEqual(gen1, { 1: 'planned', 2: 'planned', 3: 'planned' }, 'the fixture is live: every stage planned, none built, before the change');
+    assert.deepEqual(
+      Object.fromEntries(open.stages.map((s) => [s.number, s.depends_on])),
+      { 1: [], 2: [1], 3: [2] },
+      `the open plan states each stage's depends_on as the stage numbers it was planned with, the plan's own form (${JSON.stringify(open.stages.map((s) => [s.number, s.depends_on]))})`,
+    );
+    const copied = fx.scripted.eventsOfInvocation(launch.invocation, 'plan_from_open_plan').at(-1);
+    assert.equal(copied?.outcome, 'written', `the replan copied the stages from its package (${JSON.stringify(copied)})`);
+    // Copied as stated, the plan is not refused, and it publishes (or routes to the owner, who approves).
+    assert.ok(!out.failed, `the replan copying the inputs as the package states them is not refused (${JSON.stringify(out.failed ? [out.failed.reason_class, out.failed.reason_text] : null)})`);
+    if (out.approval) assert.equal((await answer(fx.engine, p.id, out.approval, 'approve')).status, 200, 'the owner approves the replacement');
+    const g2 = await pumpNoIdle(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2 && x.published_at), { what: 'generation 2 published', max: 40, answerKinds: ['spec_change'] });
+    const read = await readPlan(fx, p.id);
+    assert.equal(read.plan?.id, g2.id, 'the plan read is generation 2');
+    const numberOf = Object.fromEntries((read.plan.stages ?? []).map((s) => [s.id, s.number]));
+    assert.deepEqual(
+      Object.fromEntries((read.plan.stages ?? []).map((s) => [s.number, (s.depends_on ?? []).map((d) => numberOf[d] ?? d)])),
+      { 1: [], 2: [1], 4: [2] },
+      `generation 2's stages, each depending on the stage of the number the plan named (${JSON.stringify(read.plan.stages.map((s) => [s.number, s.depends_on]))})`,
+    );
   });
 
   test('(a) a parked stage\'s blocker answered replan: blocker_replan with its evidence; the replacement recorded with the stale from the blocker', async (t) => {
