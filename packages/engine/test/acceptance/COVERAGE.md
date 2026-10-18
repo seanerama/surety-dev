@@ -4714,3 +4714,16 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 - **M507 3/3.**
 - **M505 1/2.** The first-round case passes. The spoof fails: "at raise: the checkable R2.3 uncovered" (`uncovered [R2.2, R3.2]`, `judged_by_person [R2.3]`).
 - **M508 1/2.** Omitting R3.2 passes. Naming R3.2 fails: phase 2's replan is refused `PLAN_CRITERION_MISMATCH` `[R3.2]`.
+
+## A rerun's leftovers and the design hold (M519 finding F2; the driver's ruling of 2026-10-18; SEAM §550)
+
+2026-10-18, by the Verifier, on `verify/m6-leftovers`, cut from `main` `292e11e`. No new row. Harness: `harness/real/checks-journey.mjs` `leftovers` (an eligible item the engine's `designUnmet` finds `design_pending` is held, listed in `design_held`, not counted; unknown never held). The case goes to M512 (k).
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| the ruling | M512 (k) | `M512-design-due-and-no-silent-stalls.test.mjs` (12 → 13) | Paused, engine stopped: both UI stages held `design_pending` are in `design_held`, nothing dispatchable, no refusal. An eligible `review` beside them: only it counted, the rerun refused naming it. On store copies: stage 2 waived counted, stage 3 held; a milestone naming a missing stage, and an unparseable `depends_on`, counted `unknown` and refused | written; fails on `main` |
+
+**What was run, 2026-10-18** (this worktree, `npm ci`, `npm run build`, `TMPDIR=/tmp/vleft`, each file alone with `node --test --test-concurrency=1`):
+- **On `main` `292e11e`'s harness** (only `checks-journey.mjs` restored): M512 (k) F2 fails at its first assertion, both UI stages counted dispatchable.
+- **With the change:** M512 13/13; M239 the Verifier's check-writing package 2/2; M342 the Verifier's deployment-check package 1/1; M442 plays from the package 42/42 (it reaches `lane.mjs`, not `checks-journey.mjs`).
+- **M519's paid store** (a copy of `~/s6-1018/home/store.db` with its `-wal`/`-shm`, read only): before, `leftovers` counted `wi_01M56CC1ZRBKYD2HMNXY0G286C` and `wi_01M56CC1ZSESC8WJN99KVPM0KW` (stages 3 and 4) and `refuseLeftovers(…, {evenIfPaused: true})` refused; after, `dispatchable` `[]`, both in `design_held`, not refused.

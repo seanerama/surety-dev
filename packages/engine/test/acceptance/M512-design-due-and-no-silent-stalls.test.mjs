@@ -38,7 +38,12 @@
 //     during an open Designer session, the plan read shows each stage held
 //     and waiting, nothing ready, and the real-lane runner's judgement
 //     (harness/real/m6-lane.mjs) reports waiting, its step recorded
-//     `waiting`, never `done`, never passed (E162 item 1; rule 25).
+//     `waiting`, never `done`, never passed (E162 item 1; rule 25); and
+//     a rerun's leftovers (M519 finding F2; SEAM.md §550): read before any
+//     engine starts, an eligible UI stage the engine holds `design_pending`
+//     is held, not earlier work that could be dispatched; an item not held
+//     still refuses the rerun; a stage the store as it stands releases is
+//     counted, and a design milestone that cannot be judged is never held.
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
@@ -50,7 +55,7 @@ import { CODES, decision } from './harness/decisions.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { changePolicy, getPolicy, policyRevisions } from './harness/journal.mjs';
 import { alphaDeployed, alphaReady, journeyContext, pump, runsOfProject } from './harness/journey/drive.mjs';
-import { advanceClock, engineTimeMs, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
+import { addWork, advanceClock, engineTimeMs, pauseProject, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { openSession, runRow, sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { step } from './harness/scripted.mjs';
@@ -60,6 +65,8 @@ import { BEFORE_BUILD, KERNEL_KINDS } from './harness/design/check41.mjs';
 import { TWO_DAYS, designDues, designWithCriterion, designedPantry, engineNow, escalations, openDues, policyEffective, stageIdsOf, waivedEvents } from './harness/design/plan44.mjs';
 import { realStep } from './harness/real/lane.mjs';
 import { activity, quietState, ruleTwentyFive, stepVerdicts } from './harness/real/m6-lane.mjs';
+import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
+import { copyStore, openStore, withStore } from './harness/store.mjs';
 
 const OWNER_NO_TIGHTENING = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
 const TO_ALPHA = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', phase_size: { min: 1, max: 5 } });
@@ -377,6 +384,71 @@ describe('M512 design_due and no silent stalls', () => {
     assert.equal((await answerWith(fx, p.id, again, 'open')).status, 200, 'open answered');
     await pump(fx, { project: p.id, ...NO_ANSWER }, () => designerRuns(fx, p.id).find((r) => !before.has(r.id)), { what: 'the Designer session allocated', max: 4 });
     await waitingOnReads('(k) during the open session', 'session');
+  });
+
+  test('(k) M519 F2, a rerun\'s leftovers: an eligible UI stage the engine holds design_pending is held, not earlier work; an item not held still refuses; a stage the store releases is counted; unknown is never held', async (t) => {
+    const { fx, p, ui } = await heldPantry(t, 'pantry-rerun');
+    const uiWork = [2, 3].map((n) => stageWork(fx.home, p.id, n).id);
+    const path = 'M512 (k) rerun';
+    // A step that ended "not established": its project paused, its engine stopped. A rerun reads the store before any engine starts.
+    await pauseProject(fx.engine, p.id);
+    await fx.engine.kill();
+    const facts = (home) => withStore(home, (db) => db.prepare(`SELECT "id", "kind", "status", "held", "dispatch_hold", "chain", "depends_on" FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id));
+    const first = leftovers(fx.home, [p.id]);
+    assert.equal(first.length, 1, `one project read (${JSON.stringify(first)})`);
+    assert.equal(first[0].paused, true, 'the project paused');
+    assert.deepEqual(sortedIds((first[0].design_held ?? []).map((w) => w.id)), sortedIds(uiWork), `both UI stages held design_pending, not leftover work (${JSON.stringify(first)}; eligible: ${JSON.stringify(facts(fx.home))})`);
+    for (const w of first[0].design_held) assert.equal(w.held, 'design_pending', `${w.id} held design_pending`);
+    assert.deepEqual(first[0].dispatchable, [], `nothing of the project could be dispatched (${JSON.stringify(first)}; eligible: ${JSON.stringify(facts(fx.home))})`);
+    assert.doesNotThrow(() => refuseLeftovers(path, first, { evenIfPaused: true }), 'the rerun is not refused for the held UI stages');
+
+    // An eligible item not held, beside them: the rerun is refused, naming it, and only it is counted.
+    await fx.start();
+    const loose = await addWork(fx.engine, p.id, 'review');
+    await fx.engine.kill();
+    const second = leftovers(fx.home, [p.id]);
+    assert.deepEqual(second[0].dispatchable.map((w) => w.id), [loose], `only the item not held is counted (${JSON.stringify(second)})`);
+    assert.deepEqual(sortedIds(second[0].design_held.map((w) => w.id)), sortedIds(uiWork), 'the UI stages still held');
+    assert.throws(() => refuseLeftovers(path, second, { evenIfPaused: true }), (err) => err.message.includes('could be dispatched') && err.message.includes(loose), 'refused, naming the item not held');
+    assert.doesNotThrow(() => refuseLeftovers(path, second, { evenIfPaused: false }), 'paused, with evenIfPaused false: not refused, as before');
+
+    // Copies of the store, changed as the store would stand (not the engine's home).
+    const copyOf = (name, change) => {
+      const home = join(fx.root, `k-copy-${name}`, 'home');
+      mkdirSync(home, { recursive: true, mode: 0o700 });
+      copyStore(fx.home, home);
+      const db = openStore(join(home, 'store.db'));
+      try {
+        change(db);
+      } finally {
+        db.close();
+      }
+      return home;
+    };
+    const stage2 = stageRow(fx.home, p.id, 2).id;
+    const [work2, work3] = uiWork;
+    // Released by the store as it stands (stage 2 waived, D7 §11): the engine's own predicate releases it, so it is counted.
+    const waived = copyOf('waived', (db) => {
+      const row = db.prepare('SELECT "design_due" FROM "projects" WHERE "id" = ?').get(p.id);
+      const state = row.design_due ? JSON.parse(row.design_due) : {};
+      db.prepare('UPDATE "projects" SET "design_due" = ? WHERE "id" = ?').run(JSON.stringify({ ...state, waived: [...(state.waived ?? []), stage2] }), p.id);
+    });
+    const released = leftovers(waived, [p.id]);
+    assert.ok(released[0].dispatchable.some((w) => w.id === work2), `stage 2 released by the store as it stands is counted, whatever its recorded hold (${JSON.stringify(released)}; recorded: ${JSON.stringify(facts(waived).find((w) => w.id === work2)?.held)})`);
+    assert.deepEqual((released[0].design_held ?? []).map((w) => w.id), [work3], 'stage 3 still held');
+    // Unknown is never held: a design milestone naming no stage of the project, and a depends_on that cannot be read.
+    for (const [name, value] of [
+      ['missing-stage', (deps) => JSON.stringify(deps.map((d) => (d && d.milestone === 'design_ready' ? { ...d, stage: 'stage_00000000000000000000000000' } : d)))],
+      ['unreadable', () => '[{"milestone":"design_ready"'],
+    ]) {
+      const home = copyOf(name, (db) => {
+        const deps = JSON.parse(db.prepare('SELECT "depends_on" FROM "work_items" WHERE "id" = ?').get(work2).depends_on);
+        db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(value(deps), work2);
+      });
+      const read = leftovers(home, [p.id]);
+      assert.deepEqual(read[0].dispatchable.filter((w) => w.id === work2).map((w) => w.design_hold), ['unknown'], `${name}: stage 2 counted, marked unknown (${JSON.stringify(read)})`);
+      assert.throws(() => refuseLeftovers(path, read, { evenIfPaused: true }), (err) => err.message.includes(work2), `${name}: the rerun refused, naming it`);
+    }
   });
 
   test('(f) a new cause while one is open (sent back with revise): one row open, its subjects updated, the earlier generation stale, never a second', async (t) => {
