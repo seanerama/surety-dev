@@ -40,7 +40,14 @@
 //     shown "owner accepted" apart from automated verification; the struck
 //     one not; `design.verdicts_confirmed`;
 // (g) the confirmed implementation defect: a finding against the review's
-//     candidate, Medium, dispositioned by the owner; `fix` as E43.
+//     candidate, Medium, dispositioned by the owner; `fix` as E43. F4 (M519's
+//     engine finding; Sean's ruling, 2026-10-18): the delta names no
+//     criterion and no check, so the finding carries neither, though the web
+//     target's mapped criterion is covered by `accept-r2-tokens`, a required
+//     acceptance check passing on the candidate (M519's favicon shape);
+//     nothing is associated from another criterion of the same target, and
+//     the owner's `fix` takes the missing-verification route: check_correction
+//     work for the Verifier, triggered by the finding (D3 §2.11).
 //
 // SAFETY (BS6 §4.1; E64; SEAM.md §§257, 356, 357). The only units are the
 // engine's own under this test home's prefix (Alpha's; no preview is asked
@@ -66,6 +73,8 @@ import { decisionsOn } from './harness/decisions.mjs';
 import { alphaDeployed, candidatesOfProject, phaseCompleted, pump, resultsOf, workOf } from './harness/journey/drive.mjs';
 import { alphaByCommand, endJourney, journeyEngine, toProjectLane } from './harness/journey/project.mjs';
 import { holdSecret, recordFile, recordRow } from './harness/records.mjs';
+import { withStore } from './harness/store.mjs';
+import { workFor } from './harness/checks/repair.mjs';
 import { acting, hostNamespaces } from './harness/scripted.mjs';
 import { hostAddresses } from './harness/sandbox/egress.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
@@ -358,18 +367,31 @@ describe('M516 the review at Alpha, on the project lane from a kernel-lane seed'
     assert.ok(approval, '(h) the approval no longer waits on the verdicts');
   });
 
-  step('(g) the confirmed implementation defect: a finding against the review\'s candidate, Medium by default, dispositioned by the owner; fix as E43', async () => {
+  step('(g) the confirmed implementation defect: a finding against the review\'s candidate, Medium by default, with no criterion and no check though the target\'s mapped criterion has a passing check (F4), dispositioned by the owner; fix as E43, taking the missing-verification route', async () => {
     const { fx, p, deployed } = J;
     const finding = await pump(fx, J.ctx, () => findingsOf(fx.home, p.id).find((f) => (f.message ?? '').includes(EDITED_WORDS)), { what: 'the finding from the confirmed defect', projectMs: 120_000 });
     assert.deepEqual([finding.scope, finding.candidate, finding.category], ['candidate', deployed.id, 'defect'], `against the review's candidate (${JSON.stringify(finding)})`);
+    // F4: M519's shape. The web target's design criterion is covered by a required acceptance check that passed on the candidate.
+    const tokens = withStore(fx.home, (db) =>
+      db
+        .prepare(
+          `SELECT c."key", c."criteria", c."required", c."origin", r."exit_status" FROM "check_results" r JOIN "check_executions" x ON x."id" = r."execution" JOIN "checks" c ON c."id" = x."check"
+           WHERE r."project" = ? AND r."candidate" = ? AND c."key" = 'accept-r2-tokens' ORDER BY r."execution_seq" DESC LIMIT 1`,
+        )
+        .get(p.id, deployed.id),
+    );
+    assert.ok(tokens && tokens.exit_status === 0 && tokens.required === 1 && JSON.parse(tokens.criteria ?? '[]').length > 0, `the fixture is live: accept-r2-tokens, a required check covering the web design criterion, passed on the candidate (${JSON.stringify(tokens)})`);
+    assert.deepEqual([finding.criterion, finding.check], [null, null], `F4: the delta established no relationship, so the finding names no criterion and no check, nothing taken from accept-r2-tokens or its criterion (${JSON.stringify({ criterion: finding.criterion, check: finding.check })})`);
     assert.deepEqual([finding.proposed_severity, finding.effective_severity], ['medium', 'medium'], 'Medium by default');
     assert.ok(!findingsOf(fx.home, p.id).some((f) => /should say so and link back/.test(f.message ?? '')), 'the design delta is not a finding');
     assert.ok(!findingsOf(fx.home, p.id).some((f) => /big page|S3/.test(f.message ?? '') && f.id !== finding.id), 'nothing from the struck verdict');
     const question = await pump(fx, J.ctx, () => decisionsOn(fx.home, 'finding_disposition', finding.id).find((d) => d.status === 'open'), { what: 'the owner\'s disposition question', projectMs: 120_000 });
     fx.scripted.kindScript('fix', { steps: [{ write: { path: 'web/index.html', content: '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Pantry</title></head><body><main id="S1"><h1>Pantry</h1></main></body></html>\n' } }, { result: { status: 'completed', summary: 'the heading' } }] });
+    assert.ok((question.options ?? []).some((o) => o.key === 'fix'), `the owner is offered fix on a finding no check can verify yet (F4 ruling: fix follows the missing-verification route; today's owed question offers fix only where a check can verify it, b7249bb) (${JSON.stringify((question.options ?? []).map((o) => o.key))})`);
     await consume(fx, p.id, question, 'fix');
     const fix = await pump(fx, J.ctx, () => workOf(fx.home, p.id, 'fix').find((w) => w.subject?.finding === finding.id), { what: 'fix work from the owner\'s disposition (E43)', projectMs: 120_000 });
     assert.ok(fix, 'fix work registered from the finding');
+    assert.equal(workFor(fx.home, p.id, 'check_correction', finding.id).length, 1, 'F4: no check can verify it, so the fix takes the missing-verification route: check_correction work for the Verifier, triggered by the finding (D3 §2.11; SEAM.md §231)');
     assert.equal(candidatesOfProject(fx.home, p.id).find((c) => c.id === deployed.id)?.progress, 'alpha_deployed', '(a) the review\'s candidate still alpha_deployed');
     await assertHoldsAccounted(fx, p.id, '(g)');
   });

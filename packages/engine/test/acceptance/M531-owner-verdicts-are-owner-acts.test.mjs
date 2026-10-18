@@ -22,6 +22,31 @@
 // (g) a confirmed verdict whose design version is later superseded: kept as
 //     history with its bindings, not counted for the new version.
 //
+// F4 (M519's engine finding; Sean's ruling, 2026-10-18): a confirmed
+// implementation difference is linked to the criterion it concerns only when
+// that relationship is established, explicitly (a delta's `criterion` and
+// `check`, proposed in the review file or set by the owner's edit); else it
+// is filed with neither. Nothing is associated from another criterion of the
+// same target, and an unrelated passing check never closes it (D3 §2.11).
+// R3.2's check, `marker-android`, is made to pass first, so android has a
+// mapped criterion covered by a passing required acceptance check (M519's
+// shape: its favicon criterion and `design-asset-favicon`):
+// (h) an unmapped difference on android, and a `both` delta, each filed with
+//     no criterion and no check; a `design` delta files none; `both` stays a
+//     design delta; the owner's `fix` on the unmapped one routes
+//     check_correction work triggered by it, and a pass of `marker-android`
+//     registered after the disposition does not resolve it: the gate read
+//     names its missing verification;
+// (i) the owner's edit naming an unknown criterion, an unknown check, a check
+//     that does not cover the criterion, or a check without a criterion:
+//     refused naming the field, nothing filed; his edit naming R3.2 and
+//     `marker-android`: the finding names exactly those; a pass before the
+//     `fix` disposition resolves nothing, a pass after it resolves it;
+// (j) the Designer's review file proposing R3.2 and `marker-android` on a
+//     delta: its check passes and the confirmed finding names them; one
+//     proposing a check that does not cover its criterion: the close refused,
+//     nothing recorded or filed.
+//
 // No unit (kernel lane). No browser, emulator or device: the owner's words
 // are the evidence of these reviews (rule 22).
 
@@ -29,7 +54,10 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
 import { decisionsOn } from './harness/decisions.mjs';
-import { sharedFixture } from './harness/gates.mjs';
+import { evaluate, sharedFixture } from './harness/gates.mjs';
+import { findingRow, missingFor, workFor } from './harness/checks/repair.mjs';
+import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
+import { readGate } from './harness/reads.mjs';
 import { candidatesOfProject, evaluationsOfKind, pump, resultsOf } from './harness/journey/drive.mjs';
 import { scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { transcriptEntries } from './harness/sessions.mjs';
@@ -46,6 +74,7 @@ import {
   REVIEW_FILE,
   batchMembers,
   blockersOf,
+  consume,
   decision,
   designVerdicts,
   driveReview,
@@ -67,6 +96,40 @@ const matches = (observed_on = 'device', extra = {}) => ({ target: 'android', ke
 // The marker check's results by candidate (the latest first).
 const markerResults = (home, project) =>
   rows(home, 'SELECT r.* FROM "check_results" r JOIN "check_executions" x ON x."id" = r."execution" JOIN "checks" c ON c."id" = x."check" WHERE r."project" = ? AND c."key" = ? ORDER BY r."execution_seq" DESC', project, MARKER);
+
+// F4's reads: the effective protected version's checks, each with the
+// criteria it covers; the newest candidate not superseded; a finding by the
+// owner's words; the open disposition question about a finding.
+const effectiveChecks = (home, project) =>
+  rows(
+    home,
+    `SELECT c.* FROM "checks" c JOIN "protected_versions" v ON v."id" = c."protected_version"
+     WHERE v."project" = ? AND v."authorized" = 1 AND v."effective_from" IS NOT NULL AND v."superseded_by" IS NULL ORDER BY c."key"`,
+    project,
+  ).map((c) => ({ ...c, criteria: JSON.parse(c.criteria ?? '[]') }));
+const liveCandidate = (home, project) => candidatesOfProject(home, project).filter((c) => c.superseded_by === null).at(-1);
+const findingBy = (home, project, words) => findingsOf(home, project).filter((f) => (f.message ?? '').includes(words));
+const openDisposition = (home, finding) => decisionsOn(home, 'finding_disposition', finding).find((d) => d.status === 'open');
+// A pass of `marker-android` on the newest candidate, registered now through
+// the operator route (SEAM.md §180) and recorded with exit 0; the stage
+// gate of the Android stage evaluated on that candidate right after.
+async function markerPass(fx, project) {
+  await waitForIdle(fx.home, project);
+  const candidate = liveCandidate(fx.home, project);
+  const executions = await operatorRequest(fx.engine, project, candidate.id, [MARKER]);
+  assert.ok(executions[MARKER], `an execution of ${MARKER} registered on ${candidate.id} (${JSON.stringify(executions)})`);
+  const result = await recordExit(fx.engine, executions[MARKER], 0);
+  return { candidate, result };
+}
+async function androidGate(fx, project, candidate) {
+  const stage = stageRow(fx.home, project, 3);
+  const marker = effectiveChecks(fx.home, project).find((c) => c.key === MARKER);
+  const evaluation = await evaluate(fx.engine, project, candidate.id, 'stage', { stage: stage.id });
+  assert.equal(evaluation.check_states?.[marker.id], 'passed', `the fixture is live: ${MARKER} is in the Android stage's scope and passed there (${JSON.stringify(evaluation.check_states)})`);
+  return evaluation;
+}
+// The confirmation's answer, raw: {status, body, text}.
+const confirmWith = (fx, project, verdicts, extra = {}) => fx.engine.post(`/v1/projects/${project}/decisions/${verdicts.id}/answer`, { option: 'confirm', preview_hash: verdicts.preview_hash, ...extra });
 
 // The owner's review of his Android build: POST …/design/reviews, the turns
 // given, closed. Returns {run, review (its id), out}.
@@ -239,4 +302,175 @@ describe('M531 owner verdicts are owner acts (shared: Pantry with R3.2 failing o
     assert.ok(!(android?.evidence ?? []).some((e) => e.review === confirmedReview.id && e.design_version === 2), 'no evidence of version 2 from it');
     await assertHoldsAccounted(fx, p.id, '(g)');
   });
+
+  // ---- F4 (Sean's ruling, 2026-10-18) ----------------------------------------------------------
+
+  const UNMAPPED = 'The rows overlap the status bar on the tablet.';
+  const BOTH = 'An empty pantry shows a blank screen: say "Nothing in the pantry".';
+  const DESIGN_ONLY = 'Show the list as a grid on a tablet.';
+  const LABEL = 'The rows carry no accessibility label for the screen reader.';
+  const PROPOSED = 'The rows announce nothing when the screen reader reaches them.';
+  const UNCOVERED = 'The list never says how many items it holds.';
+
+  test('(h) F4: an unmapped difference and a both delta, on a target whose mapped criterion R3.2 is covered by a passing required acceptance check, are filed with no criterion and no check; a design delta files none and both stays a design delta; fix routes check_correction work, and a pass of the unrelated check after the disposition does not resolve it: the gate read names the missing verification', async () => {
+    const { fx, p, ctx } = J;
+    // M519's shape: android's mapped criterion R3.2, covered by a required acceptance check that passes.
+    const marker = effectiveChecks(fx.home, p.id).find((c) => c.key === MARKER);
+    assert.ok(marker && marker.required === 1 && (marker.origin ?? 'acceptance') === 'acceptance' && marker.criteria.includes('R3.2'), `the fixture is live: ${MARKER} is a required acceptance check covering R3.2 (${JSON.stringify(marker)})`);
+    const before = await markerPass(fx, p.id);
+    const findingsBefore = findingsOf(fx.home, p.id).length;
+    const build = 'pantry-android 0.1.3 (build 10)';
+    const screens = [
+      {
+        target: 'android',
+        key: S2,
+        verdict: 'deltas',
+        observed_on: 'device',
+        evidence: [],
+        deltas: [
+          { owner_words: UNMAPPED, kind: 'implementation' },
+          { owner_words: DESIGN_ONLY, kind: 'design' },
+          { owner_words: BOTH, kind: 'both' },
+        ],
+      },
+    ];
+    const r = await ownerReviewOf(fx, p.id, { build, candidate: before.candidate.id, turns: [{ files: { [REVIEW_FILE(4)]: reviewJson({ design_version: 2, subject: subjectOf(build, before.candidate.id), screens }) }, say: 'Three things on my tablet.', done: true }] });
+    assert.equal(r.out.saves[0]?.body?.design_check?.outcome, 'passed', `the review file passes its check (${JSON.stringify(r.out.saves[0]?.body?.design_check)})`);
+    assert.equal(r.out.close.status, 200, `the close (${r.out.close.text?.slice(0, 300)})`);
+    const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, r.review) ?? undefined, { what: 'design_verdicts', max: 10 });
+    const res = await confirmWith(fx, p.id, verdicts);
+    assert.equal(res.status, 200, `design_verdicts confirmed as proposed (${res.text})`);
+    const filed = findingsOf(fx.home, p.id).slice(findingsBefore);
+    // (e) the kinds: implementation and both file one finding each; design files none.
+    assert.deepEqual(filed.map((f) => [UNMAPPED, BOTH, DESIGN_ONLY].find((w) => (f.message ?? '').includes(w)) ?? f.message).sort(), [BOTH, UNMAPPED].sort(), `one finding each for the implementation and the both delta, none for the design delta (${JSON.stringify(filed.map((f) => f.message))})`);
+    const review = reviewRow(fx.home, r.review);
+    const kinds = (verdictOf(review, 'android', S2)?.deltas ?? []).map((d) => [d.owner_words, d.kind]);
+    assert.deepEqual(kinds, [[UNMAPPED, 'implementation'], [DESIGN_ONLY, 'design'], [BOTH, 'both']], `(e) the confirmed verdict keeps every delta and its kind: both stays a design delta beside its finding (${JSON.stringify(kinds)})`);
+    // (a), (c): no relationship established, none manufactured from R3.2 on the same target.
+    const [unmapped] = findingBy(fx.home, p.id, UNMAPPED);
+    const [both] = findingBy(fx.home, p.id, BOTH);
+    for (const [what, f] of [['the unmapped implementation difference', unmapped], ['the both delta', both]]) {
+      assert.deepEqual([f.criterion, f.check], [null, null], `${what}: filed with no criterion and no check, nothing taken from R3.2 or ${MARKER} (F4) (${JSON.stringify({ criterion: f.criterion, check: f.check })})`);
+      assert.deepEqual([f.scope, f.candidate, f.category], ['candidate', before.candidate.id, 'defect'], `${what}: a defect against the candidate the owner named`);
+    }
+    // The owner's fix on the unmapped one: the existing missing-verification route (D3 §2.11; SEAM.md §231).
+    const question = await pump(fx, ctx, () => openDisposition(fx.home, unmapped.id), { what: 'the disposition owed on the unmapped finding', max: 10 });
+    assert.ok((question.options ?? []).some((o) => o.key === 'fix'), `the owner is offered fix on a finding no check can verify yet (F4 ruling: fix follows the missing-verification route; today's owed question offers fix only where a check can verify it, b7249bb) (${JSON.stringify((question.options ?? []).map((o) => o.key))})`);
+    await consume(fx, p.id, question, 'fix');
+    assert.equal(workFor(fx.home, p.id, 'fix', unmapped.id).length, 1, 'fix work registered from the disposition (E43)');
+    assert.equal(workFor(fx.home, p.id, 'check_correction', unmapped.id).length, 1, 'check_correction work for the Verifier, triggered by the finding, registered with the disposition: no check can verify it (D3 §2.11)');
+    // A pass of the unrelated check, registered after the disposition, closes nothing.
+    const after_ = await markerPass(fx, p.id);
+    assert.ok(after_.result.execution_seq > findingRow(fx.home, unmapped.id).disposition_seq, 'the fixture is live: the pass was registered after the disposition');
+    const evaluation = await androidGate(fx, p.id, after_.candidate);
+    const now = findingRow(fx.home, unmapped.id);
+    assert.notEqual(now.status, 'resolved', `${MARKER}'s pass does not resolve the unmapped finding (${JSON.stringify({ status: now.status, resolution_verification: now.resolution_verification })})`);
+    assert.equal(now.resolution_verification ?? null, null, 'no resolving result recorded');
+    assert.equal(missingFor(evaluation, unmapped.id).length, 1, `the evaluation names its missing verification (${JSON.stringify(evaluation.missing_verifications)})`);
+    assert.deepEqual([missingFor(evaluation, unmapped.id)[0].criterion, missingFor(evaluation, unmapped.id)[0].check], [null, null], 'with no criterion and no check');
+    const read = (await readGate(fx.engine, p.id, after_.candidate.id, 'stage')).evaluation;
+    assert.equal(missingFor(read, unmapped.id).length, 1, 'the gate read names it as the evaluation recorded it');
+    assert.equal(workFor(fx.home, p.id, 'check_correction', unmapped.id).length, 1, 'still one check_correction item');
+    J.f4 = { unmapped, both };
+  });
+
+  test('(i) F4: the owner\'s edit naming an unknown criterion, an unknown check, a check not covering the criterion, or a check without a criterion is refused naming the field and files nothing; his edit naming R3.2 and its covering check files a finding naming exactly those; a pass before the fix disposition resolves nothing, a pass after it resolves it', async () => {
+    const { fx, p, ctx } = J;
+    const checks = effectiveChecks(fx.home, p.id);
+    const other = checks.find((c) => c.key !== MARKER && !c.criteria.includes('R3.2') && c.criteria.length > 0);
+    assert.ok(other, `the fixture is live: a check of the effective version covering criteria other than R3.2 (${JSON.stringify(checks.map((c) => [c.key, c.criteria]))})`);
+    const candidate = liveCandidate(fx.home, p.id);
+    const build = 'pantry-android 0.1.4 (build 11)';
+    const proposed = { target: 'android', key: S2, verdict: 'deltas', observed_on: 'device', evidence: [], deltas: [{ owner_words: LABEL, kind: 'implementation' }] };
+    const r = await ownerReviewOf(fx, p.id, { build, candidate: candidate.id, turns: [{ files: { [REVIEW_FILE(5)]: reviewJson({ design_version: 2, subject: subjectOf(build, candidate.id), screens: [proposed] }) }, say: 'The screen reader says nothing on the rows.', done: true }] });
+    assert.equal(r.out.close.status, 200, `the close (${r.out.close.text?.slice(0, 300)})`);
+    const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, r.review) ?? undefined, { what: 'design_verdicts', max: 10 });
+    const findingsBefore = findingsOf(fx.home, p.id).length;
+    const edit = (delta) => ({ edits: [{ target: 'android', screen: S2, deltas: [{ owner_words: LABEL, kind: 'implementation', ...delta }] }] });
+    // (d) each refused naming its field, as an invalid value of the edit (not as an unknown field).
+    for (const [what, delta, fields] of [
+      ['an unknown criterion', { criterion: 'R9.9', check: MARKER }, ['edits[0].deltas[0].criterion']],
+      ['an unknown check', { criterion: 'R3.2', check: 'no-such-check' }, ['edits[0].deltas[0].check']],
+      [`a check (${other.key}) that does not cover the criterion`, { criterion: 'R3.2', check: other.key }, ['edits[0].deltas[0].check']],
+      ['a check without a criterion', { check: MARKER }, ['edits[0].deltas[0].check', 'edits[0].deltas[0].criterion']],
+    ]) {
+      const res = await confirmWith(fx, p.id, verdicts, edit(delta));
+      assert.equal(res.status, 422, `${what}: refused (${res.status} ${res.text})`);
+      assert.equal(res.body?.code, 'invalid_value', `${what}: an invalid answer (${res.text})`);
+      assert.ok(fields.includes(res.body?.subject?.field), `${what}: the refusal names the field, one of ${fields.join(' or ')} (${JSON.stringify(res.body?.subject)})`);
+      assert.doesNotMatch(res.body?.reason ?? '', /is not a field/, `${what}: refused for its value, the fields being the delta's (${res.body?.reason})`);
+      assert.equal(decision(fx.home, verdicts.id).status, 'open', `${what}: nothing consumed`);
+      assert.equal(findingsOf(fx.home, p.id).length, findingsBefore, `${what}: nothing filed`);
+      assert.equal(reviewRow(fx.home, r.review).confirmed_by ?? null, null, `${what}: nothing confirmed`);
+    }
+    // (b) the relationship the owner establishes: R3.2 and the required acceptance check covering it.
+    const res = await confirmWith(fx, p.id, verdicts, edit({ criterion: 'R3.2', check: MARKER }));
+    assert.equal(res.status, 200, `the owner's edit naming R3.2 and ${MARKER} confirmed (${res.text})`);
+    const kept = verdictOf(reviewRow(fx.home, r.review), 'android', S2)?.deltas?.[0];
+    assert.deepEqual([kept?.criterion, kept?.check], ['R3.2', MARKER], `the confirmed delta carries what the owner confirmed (${JSON.stringify(kept)})`);
+    const filed = findingsOf(fx.home, p.id).slice(findingsBefore);
+    assert.equal(filed.length, 1, `one finding (${JSON.stringify(filed.map((f) => f.message))})`);
+    const [label] = filed;
+    assert.ok((label.message ?? '').includes(LABEL), 'from the edited delta');
+    assert.deepEqual([label.criterion, label.check], ['R3.2', MARKER], `the finding names exactly the criterion and check the owner confirmed (${JSON.stringify({ criterion: label.criterion, check: label.check })})`);
+    // A pass of the check registered before the disposition resolves nothing.
+    const early = await markerPass(fx, p.id);
+    const question = await pump(fx, ctx, () => openDisposition(fx.home, label.id), { what: 'the disposition owed on the linked finding', max: 10 });
+    await consume(fx, p.id, question, 'fix');
+    assert.ok(early.result.execution_seq <= findingRow(fx.home, label.id).disposition_seq, 'the fixture is live: that pass was registered before the disposition');
+    assert.deepEqual(workFor(fx.home, p.id, 'check_correction', label.id), [], `a finding its named check can verify routes no check_correction (D3 §2.11)`);
+    await waitForIdle(fx.home, p.id);
+    const unresolved = await androidGate(fx, p.id, liveCandidate(fx.home, p.id));
+    assert.notEqual(findingRow(fx.home, label.id).status, 'resolved', 'the pass before the disposition does not resolve it');
+    assert.deepEqual(missingFor(unresolved, label.id), [], 'and no missing verification is named for it');
+    // A pass registered after the disposition, evidence intact: resolved through its named check.
+    const late = await markerPass(fx, p.id);
+    assert.ok(late.result.execution_seq > findingRow(fx.home, label.id).disposition_seq, 'the fixture is live: this pass was registered after the disposition');
+    await androidGate(fx, p.id, late.candidate);
+    const resolved = findingRow(fx.home, label.id);
+    assert.equal(resolved.status, 'resolved', `a pass of ${MARKER} after the fix disposition resolves it (${JSON.stringify({ status: resolved.status })})`);
+    assert.ok(JSON.stringify(resolved.resolution_verification ?? null).includes(late.result.id), `resolved by that pass (${JSON.stringify(resolved.resolution_verification)})`);
+    // (h)'s unmapped finding stays unresolved through the same pass.
+    if (J.f4) assert.notEqual(findingRow(fx.home, J.f4.unmapped.id).status, 'resolved', '(h)\'s unmapped finding is still not resolved by it');
+  });
+
+  test('(j) F4: the Designer\'s review file proposing R3.2 and its covering check: the file passes its check and the confirmed finding names them; one proposing a check that does not cover its criterion: the close refused, nothing recorded or filed', async () => {
+    const { fx, p, ctx } = J;
+    const other = effectiveChecks(fx.home, p.id).find((c) => c.key !== MARKER && !c.criteria.includes('R3.2') && c.criteria.length > 0);
+    const candidate = liveCandidate(fx.home, p.id);
+    const screen = (delta) => ({ target: 'android', key: S2, verdict: 'deltas', observed_on: 'device', evidence: [], deltas: [delta] });
+    let build = 'pantry-android 0.1.5 (build 12)';
+    const findingsBefore = findingsOf(fx.home, p.id).length;
+    const r = await ownerReviewOf(fx, p.id, { build, candidate: candidate.id, turns: [{ files: { [REVIEW_FILE(6)]: reviewJson({ design_version: 2, subject: subjectOf(build, candidate.id), screens: [screen({ owner_words: PROPOSED, kind: 'implementation', criterion: 'R3.2', check: MARKER })] }) }, say: 'The rows are silent to the screen reader: that is R3.2.', done: true }] });
+    assert.equal(r.out.saves[0]?.body?.design_check?.outcome, 'passed', `a delta proposing a criterion and its covering check passes the review file's check (B.14) (${JSON.stringify(r.out.saves[0]?.body?.design_check)})`);
+    assert.equal(r.out.close.status, 200, `the close (${r.out.close.text?.slice(0, 300)})`);
+    const proposedDelta = verdictOf(reviewRow(fx.home, r.review), 'android', S2)?.deltas?.[0];
+    assert.deepEqual([proposedDelta?.criterion, proposedDelta?.check], ['R3.2', MARKER], `recorded as proposed (${JSON.stringify(proposedDelta)})`);
+    assert.equal(findingsOf(fx.home, p.id).length, findingsBefore, 'nothing filed before the owner confirms');
+    const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, r.review) ?? undefined, { what: 'design_verdicts', max: 10 });
+    const res = await confirmWith(fx, p.id, verdicts);
+    assert.equal(res.status, 200, `confirmed as proposed (${res.text})`);
+    const [found] = findingBy(fx.home, p.id, PROPOSED);
+    assert.ok(found, 'the confirmed delta filed');
+    assert.deepEqual([found.criterion, found.check], ['R3.2', MARKER], `the finding names what the owner confirmed of the Designer's proposal (${JSON.stringify({ criterion: found.criterion, check: found.check })})`);
+    // A proposal whose check does not cover its criterion: refused at the close.
+    build = 'pantry-android 0.1.6 (build 13)';
+    const reviewsBefore = reviewsCount(fx.home, p.id);
+    const findingsMid = findingsOf(fx.home, p.id).length;
+    const bad = await ownerReviewOf(fx, p.id, { build, candidate: candidate.id, turns: [{ files: { [REVIEW_FILE(7)]: reviewJson({ design_version: 2, subject: subjectOf(build, candidate.id), screens: [screen({ owner_words: UNCOVERED, kind: 'implementation', criterion: 'R3.2', check: other.key })] }) }, say: 'The list never says how many items it holds.', done: true }] });
+    assert.equal(bad.out.close.status, 422, `a delta naming ${other.key}, which does not cover R3.2: the close refused (${bad.out.close.status} ${bad.out.close.text?.slice(0, 300)})`);
+    assert.equal(bad.out.close.body?.code, 'design_check_failed', `refused as an invalid review file is (${bad.out.close.text?.slice(0, 300)})`);
+    const recorded = reviewRow(fx.home, bad.review);
+    assert.ok(!recorded || (recorded.verdicts ?? []).length === 0, `no verdict recorded from it (${JSON.stringify(recorded?.verdicts)})`);
+    assert.equal(reviewsCount(fx.home, p.id, true), reviewsBefore.withVerdicts, 'no review recorded with verdicts');
+    assert.equal(openVerdicts(fx.home, p.id, bad.review), null, 'no design_verdicts asked');
+    assert.equal(findingsOf(fx.home, p.id).length, findingsMid, 'nothing filed');
+  });
 });
+
+// The project's reviews, and those holding verdicts.
+function reviewsCount(home, project, withVerdictsOnly = false) {
+  const all = rows(home, 'SELECT "verdicts" FROM "design_reviews" WHERE "project" = ?', project);
+  const withVerdicts = all.filter((r) => (JSON.parse(r.verdicts ?? '[]') ?? []).length > 0).length;
+  return withVerdictsOnly ? withVerdicts : { all: all.length, withVerdicts };
+}
