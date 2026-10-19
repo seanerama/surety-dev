@@ -316,7 +316,7 @@ export async function terminateDomain(args: TerminateArgs): Promise<Verdict> {
 }
 
 // A cgroup's memory.peak in bytes, or null when it cannot be read.
-function readPeak(path: string): number | null {
+export function readPeak(path: string): number | null {
   try {
     const text = readFileSync(join(path, 'memory.peak'), 'utf8').trim();
     return /^\d+$/.test(text) && Number(text) > 0 ? Number(text) : null;
