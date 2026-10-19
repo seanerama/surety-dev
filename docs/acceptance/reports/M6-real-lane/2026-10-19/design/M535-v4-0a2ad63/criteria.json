@@ -1,0 +1,216 @@
+{
+  "criteria": [
+    {
+      "requirement": "R3",
+      "text": "styles.css takes every colour, size, spacing (the touch minimum and the due edge among them), radius and duration from a custom property of tokens.css.",
+      "kind": "tokens_only",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "tokens.css holds the approved tokens: each theme's colours as --color-<name> (light on :root, dark under prefers-color-scheme: dark), and the type, space, radius and duration scales.",
+      "kind": "token_parity",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/tokens.css"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "Every declared text-on-background pair reaches the AA ratio in tokens.css, in both themes.",
+      "kind": "contrast_aa",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/tokens.css"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "At 360 px each plant row stacks name and Due label, interval, last watering and a full-width Watered button at least the touch token (48 px) tall.",
+      "kind": "layout_at_width",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ],
+      "width": 360
+    },
+    {
+      "requirement": "R3",
+      "text": "At 720 px each plant row puts its Watered button, at least 160 px wide and the touch token tall, at the row's right.",
+      "kind": "layout_at_width",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ],
+      "width": 720
+    },
+    {
+      "requirement": "R3",
+      "text": "At 1280 px each plant row lays out as columns name, interval, last watering and button, in a centred column at most 960 px wide.",
+      "kind": "layout_at_width",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ],
+      "width": 1280
+    },
+    {
+      "requirement": "R3",
+      "text": "Every button and link keeps a visible focus outline (focus token).",
+      "kind": "focus_visible",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "The loading pulse and button transitions stop under prefers-reduced-motion: reduce.",
+      "kind": "reduced_motion",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles.css"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "The page marks each state: data-state state-loading, state-ok, state-empty, state-unreachable on the list's root, and data-row-state idle, watering, failed, watered on each row.",
+      "kind": "state_marker_present",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/index.html",
+        "public/app.mjs"
+      ]
+    },
+    {
+      "requirement": "R3",
+      "text": "The page's logo file is the logo slot's on_dark variant.",
+      "kind": "asset_parity",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/assets/logo.svg"
+      ],
+      "slot": "logo",
+      "variant": "on_dark"
+    },
+    {
+      "requirement": "R4",
+      "text": "android/src/theme/tokens.js holds the approved tokens (both themes' colours, type, space, radius, duration).",
+      "kind": "token_parity",
+      "targets": [
+        "android"
+      ],
+      "paths": [
+        "android/src/theme/tokens.js"
+      ]
+    },
+    {
+      "requirement": "R4",
+      "text": "Every declared text-on-background pair reaches the AA ratio in android/src/theme/tokens.js, in both themes.",
+      "kind": "contrast_aa",
+      "targets": [
+        "android"
+      ],
+      "paths": [
+        "android/src/theme/tokens.js"
+      ]
+    },
+    {
+      "requirement": "R4",
+      "text": "The screen and the simulation mark each state: testID state-loading, state-ok, state-empty, state-unreachable, and each row's idle, watering, failed or watered.",
+      "kind": "state_marker_present",
+      "targets": [
+        "android"
+      ],
+      "paths": [
+        "android/src/screens/PlantListScreen.js",
+        "android/simulation/index.html"
+      ]
+    },
+    {
+      "requirement": "R4",
+      "text": "The app's logo file is derived from the logo slot's on_dark variant.",
+      "kind": "asset_parity",
+      "targets": [
+        "android"
+      ],
+      "paths": [
+        "android/assets/logo.png"
+      ],
+      "slot": "logo",
+      "variant": "on_dark"
+    },
+    {
+      "requirement": "R5",
+      "text": "A watering logged on one target shows on the other after a reload, and a plant past its interval is marked Due on both.",
+      "kind": "human",
+      "targets": [
+        "web",
+        "android"
+      ]
+    }
+  ],
+  "human_tests": [
+    {
+      "target": "web",
+      "screens": [
+        "web-plant-list"
+      ],
+      "text": "In a browser at 360, 720 and 1280 px: the list matches its mockups; press Watered on a Due plant: the row updates without a reload and the Due label goes; reload: the same. Tab through the page with the keyboard only; press Back: it leaves the page.",
+      "not_checkable_yet": [
+        {
+          "screen": "web-plant-list",
+          "convention": "browser_back"
+        },
+        {
+          "screen": "web-plant-list",
+          "convention": "keyboard_path"
+        }
+      ]
+    },
+    {
+      "target": "android",
+      "screens": [
+        "android-plant-list"
+      ],
+      "text": "On a native Android runtime (pending in this version): the screen matches the simulation in portrait and landscape; no permission prompt appears; Watered and Try again respond to a tap; system Back leaves the app; a watering logged here shows on the web page after a reload, and the reverse.",
+      "not_checkable_yet": [
+        {
+          "screen": "android-plant-list",
+          "convention": "system_back"
+        },
+        {
+          "screen": "android-plant-list",
+          "convention": "permission_prompt"
+        },
+        {
+          "screen": "android-plant-list",
+          "convention": "touch_interaction"
+        }
+      ]
+    }
+  ]
+}

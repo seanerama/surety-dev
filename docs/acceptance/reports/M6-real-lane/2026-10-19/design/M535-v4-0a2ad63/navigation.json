@@ -1,0 +1,18 @@
+{
+  "targets": [
+    {
+      "target": "web",
+      "entries": [
+        "web-plant-list"
+      ],
+      "edges": []
+    },
+    {
+      "target": "android",
+      "entries": [
+        "android-plant-list"
+      ],
+      "edges": []
+    }
+  ]
+}

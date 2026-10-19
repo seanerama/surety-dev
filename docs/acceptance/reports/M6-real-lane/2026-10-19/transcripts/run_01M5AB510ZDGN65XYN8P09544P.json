@@ -1,0 +1,74 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M5AB59TD1F2R4GCD9GRGF97D",
+  "created_at": "2026-10-19T15:05:56.810Z",
+  "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+  "project_name": "m6-m535-waterlog",
+  "run": "run_01M5AB510ZDGN65XYN8P09544P",
+  "role": "designer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-19T15:05:56.810Z",
+      "text_ref": "rec_01M5AB59TVF5ZWKPVSCEKP2VG8",
+      "text": "I'm the driver, acting for Sean (the owner) on his standing delegation for this run's routine steps. Please review the web Alpha against the approved design (version 4, with the logo approved since as slot version 2) and give your verdicts. Sean confirms, edits or strikes them himself afterwards; I make no design decision here.\n\nWhat I observed of the Alpha through the relay (`surety env open alpha`, 127.0.0.1), as HTTP reads only: no browser rendered it, so I saw HTML, CSS and scripts, never pixels.\n\n- `/` returns 200 with \"Waterlog\": a skip link \"Skip to the plants\", a header with `/assets/logo.svg` (alt \"Waterlog\", 108x36), and `main#plants` starting in `state-loading` (`aria-busy=\"true\"`, \"Loading plants…\" in a `role=\"status\"` summary, three skeleton rows). Headers include `Content-Security-Policy: default-src 'self'` and `X-Content-Type-Options: nosniff`.\n- `/tokens.css` as served is byte-identical to `public/tokens.css` on main. `/styles.css` (200) has `prefers-reduced-motion` and `focus-visible` rules. `/app.mjs` (200) contains the state texts \"Loading plants…\", \"No plants yet.\", \"Due\", \"Watered just now\", a \"Couldn't reach Waterlog.\" message and \"Try again\".\n- `/api/plants` returns one plant, \"post-deploy 1b23ddcb4cff\" (the post-deploy check's own entry), interval 3 days, not due.\n- `/favicon.svg` returns 404 (JSON body).\n- **The logo:** the Alpha serves the placeholder (`PLACEHOLDER (on_dark)`, digest 6a8c47e8…). This Alpha is the candidate deployed at 13:24 UTC, before Sean's asset-only approval at 15:00. Main now holds the approved on_dark logo in `public/assets/logo.svg` (commit 53efa50, logo@2), byte-identical to `.surety/design/assets/logo/on_dark.svg`, but no Alpha has been deployed from it yet. Please say so in the review rather than judging the placeholder as the design's logo.\n- Android: not observed. There is no native runtime here; its human test stays pending.\n- I did not see the layout at any width, the contrast, focus rings or motion. Judge those from the code and the checks, and say where a verdict rests on a reading rather than an observation.\n\nPlease give a verdict for each screen and state in the design, say what differs from the design, if anything, and what you would change. Use the review's `observed_on` value that does not claim a browser rendering, or, if the schema has none, state plainly that nothing was rendered. Then save the review.\n"
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-19T15:07:53.213Z",
+      "text_ref": "rec_01M5AB8VFPW0840536WNFE72GK",
+      "text": "I've saved the review to .surety/design/reviews/review-1.json. It reviews approved design version 4 (logo slot version 2) against candidate cand_01M5A50BX0WWHJX5Q2QXJCSR6K, deployment op_01M5A5C2X45NYG1Y3JC5RRWS9F. Each verdict is a proposal for Sean to confirm, edit or strike. I didn't change the design.\n\n**Nothing was rendered.** The schema's `observed_on` values (browser, simulator, emulator, device, simulation) all claim a rendering, so I left the field out. The only evidence is the engine's own HTTP fetch of `/` (dev_01M5AB5BCPJZP741HHTN2BTV1F), and it matches what you saw. Everything else rests on reading the candidate's source (public/index.html, app.mjs, styles.css, tokens.css), on the passing checks (r3-tokens, r3-layout, r3-focus-motion, r3-states, r3-logo), and on your report.\n\n**Web, Plant list: deltas** (4, all implementation, none breaks a specification criterion)\n1. **Logo:** the Alpha serves the slot-1 placeholder. That isn't a fault of this candidate: it was deployed at 13:24, before the logo was approved at 15:00. Main already holds the approved on_dark logo (53efa50), byte-identical to the design's file. It only needs a redeploy. Its 3:1 shape fits the 108x36 header slot.\n2. **Favicon:** the page has no rel=icon link and /favicon.svg returns 404. The design's favicon slot (still the engine placeholder) should be served and linked.\n3. **Focus while logging (from reading the code):** pressing Watered rebuilds the list and disables the new button, so focus falls to the page until the request ends. The design says focus stays on the button throughout.\n4. **Success announcement (from reading the code):** the polite live region is re-created with its text already in it on every render. Screen readers may not announce \"Logged a watering for <name>.\" Keeping one status element and changing only its text fixes it.\n\n**Web, state by state:**\n- **Loading:** matches. This is the only state the engine actually fetched: data-state, aria-busy, \"Loading plants…\" in a status, three skeletons.\n- **Empty:** matches (reading). \"No plants yet.\" and the API note, as in the mockup.\n- **list_plants 405 and 500:** match (reading). Any non-200 response or a network failure shows \"Can't reach Waterlog.\" with Try again.\n- **ok:** matches (reading). Due pill with drop glyph, amber edge and tinted card; bold interval and last watering; \"Never watered\".\n- **log_watering 400, 404, 405 and 500:** match (reading). The row keeps its previous values and shows \"Couldn't log the watering. Try again.\" as an alert. Focus comes back to the button afterwards.\n- **log_watering loading:** delta 3.\n- **log_watering ok:** \"Watered just now\" with a check in the done colours matches. The announcement is delta 4.\n- **Layouts:** match by reading and r3-layout, not observed at any width. 360: stacked rows with a full-width 48 px button. 720: the button on the right, at least 160 px. 1280: four columns in a 960 px column.\n- **Text and contrast:** text is at least 16 px. Contrast passes by calculation in both themes, including pairs tokens.json doesn't declare (disabled button and details on the due card), all at least 5.5:1.\n- **Focus, motion and hover:** the focus-visible outline, the reduced-motion rules and the hover brightening are present (reading).\n- **Header:** the same header_bg colour in both themes.\n\n**Android, Plant list: not_observed** (no_native_runtime). There's no evidence, and its human test stays pending.\n\n**One discrepancy to check:** you report a \"Couldn't reach Waterlog.\" message in /app.mjs. The candidate's source has \"Can't reach Waterlog.\", which is the design's wording, and its only \"Couldn't\" text is the row error \"Couldn't log the watering. Try again.\" I've judged the unreachable state from the source as a match. If the served app.mjs really says \"Couldn't reach Waterlog.\", that is a wording delta and I'll add it."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-19T15:08:07.828Z",
+      "text_ref": "rec_01M5AB99RX3RG9E1MS6FJJQ59D",
+      "text": "You're right, and my report was wrong. The served /app.mjs contains `\"Can't reach Waterlog.\"` (the design's wording) and, separately, `\"Couldn't log the watering. Try again.\"`; my search joined two fragments. There is no \"Couldn't reach Waterlog.\" in it, so your judgement of the unreachable state stands and no wording delta is needed.\n\nI have nothing to add or change: the verdicts, the four deltas and the note that nothing was rendered are for Sean to confirm, edit or strike. Please leave the review as you saved it.\n"
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-19T15:08:34.240Z",
+      "text_ref": "rec_01M5ABA3HTV6MFJJHGG2WF0CNM",
+      "text": "Thanks for checking. That settles the unreachable state: the served app says \"Can't reach Waterlog.\", as the design does. Its match stands and there's no wording delta.\n\nI've left .surety/design/reviews/review-1.json exactly as I saved it. That covers design version 4 (logo slot version 2) and candidate cand_01M5A50BX0WWHJX5Q2QXJCSR6K:\n- **Web, Plant list:** deltas. There are four, all implementation, and none breaks a specification criterion:\n  1. **Logo:** the Alpha serves the placeholder; it needs a redeploy from main.\n  2. **Favicon:** it isn't served or linked.\n  3. **Focus:** focus leaves the Watered button while it logs.\n  4. **Announcement:** the success message may not be announced, because its live region is re-created with each render.\n- **Android, Plant list:** not_observed (no_native_runtime).\n\nThe review has no observed_on, because nothing was rendered. Its only evidence is the engine's fetch of / (dev_01M5AB5BCPJZP741HHTN2BTV1F); everything else rests on reading the source and on the checks. The design is unchanged (revised_design: false).\n\nThe verdicts are proposals for Sean to confirm, edit or strike. I have nothing more for this session."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M5AB59TVF5ZWKPVSCEKP2VG8",
+      "sha256": "132710bba16931363bc61e90bfcd10ea76248dc70bc423a55dd435693d716378",
+      "bytes": 2418,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5AB8VFPW0840536WNFE72GK",
+      "sha256": "cbfed8bf6c9672a52c10f6d7fada26464d5a0ddc6bf5a814010964be699e6b96",
+      "bytes": 3879,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5AB99RX3RG9E1MS6FJJQ59D",
+      "sha256": "a6e5856114fe90ec620a230694d5e5f27e43fef1ab2afa09a65e03ad31f85f82",
+      "bytes": 522,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5ABA3HTV6MFJJHGG2WF0CNM",
+      "sha256": "83cb41bc036034c8dd21fde37067d808e68630b6106e7ad020ba8a38c6311ba1",
+      "bytes": 1173,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

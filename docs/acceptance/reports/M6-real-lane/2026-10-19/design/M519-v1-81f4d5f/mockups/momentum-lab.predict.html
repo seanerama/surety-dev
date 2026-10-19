@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Momentum lab · Predict (start) — Mechanica (mockup)</title>
+<link rel="icon" href="../assets/favicon/default.svg" type="image/svg+xml">
+<script>(function(){var d=document.documentElement,p=new URLSearchParams(location.search).get('theme');if(p==='light'||p==='dark')d.setAttribute('data-theme',p);var f=false;try{f=window.self!==window.top}catch(e){f=true}if(f)d.classList.add('framed');})();</script>
+<style>
+/* tokens.css (design v1) — mockup copy of the binding.
+   Text/background pairs (each at least 4.5:1 in both themes):
+   color-text on color-bg
+   color-text on color-surface
+   color-text on color-surface-sunken
+   color-text-muted on color-bg
+   color-text-muted on color-surface
+   color-text-muted on color-surface-sunken
+   color-accent-text on color-bg
+   color-accent-text on color-surface
+   color-accent-text on color-accent-soft
+   color-text on color-accent-soft
+   color-on-accent on color-accent
+   color-on-accent on color-accent-hover
+   color-on-action on color-action
+   color-on-action on color-action-hover
+   color-sim-text on color-surface
+   color-success-text on color-surface
+   color-danger-text on color-surface
+   color-danger-text on color-danger-surface
+   color-text on color-danger-surface
+   color-warning-text on color-warning-surface
+   color-text on color-warning-surface
+   color-text on scene-background
+   color-text-muted on scene-background
+*/
+:root {
+  color-scheme: light dark;
+  --color-bg: #f5f4fb;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #ecebf5;
+  --color-border: #d4d2e3;
+  --color-border-strong: #7d7a9c;
+  --color-text: #1c1a33;
+  --color-text-muted: #55536f;
+  --color-accent: #4b3fd6;
+  --color-accent-hover: #3d32b8;
+  --color-on-accent: #ffffff;
+  --color-accent-text: #4436c9;
+  --color-accent-soft: #e8e6fc;
+  --color-action: #ff7a3d;
+  --color-action-hover: #ff6a26;
+  --color-on-action: #1c1a33;
+  --color-sim-text: #a8410c;
+  --color-focus: #4b3fd6;
+  --color-success-text: #17733a;
+  --color-danger-text: #b3261e;
+  --color-danger-surface: #fdecea;
+  --color-warning-text: #7a4a00;
+  --color-warning-surface: #fff3d6;
+  --color-predict: #4b3fd6;
+  --color-sim: #ff7a3d;
+  --color-score-high: #22a55a;
+  --color-score-mid: #e09d00;
+  --color-score-low: #e5484d;
+  --color-score-track: #e4e2f0;
+  --scene-background: #e9e8f6;
+  --scene-ground: #f3f2fa;
+  --scene-grid: #c9c6de;
+  --scene-grid-major: #a9a5c6;
+  --scene-track: #b8b4d2;
+  --scene-surface: #d9d6ea;
+  --scene-cart-1: #6c63ff;
+  --scene-cart-2: #ff7a3d;
+  --scene-block: #ff7a3d;
+  --scene-launcher: #2e2a55;
+  --scene-projectile: #ff7a3d;
+  --scene-trail: #6c63ff;
+  --scene-prediction: #22a55a;
+  --scene-light-ambient: #ffffff;
+  --scene-light-sun: #fff6e8;
+  --font-family-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-family-display: ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-family-numeric: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-size-sm: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+  --font-size-3xl: 36px;
+  --font-size-score: 64px;
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 800;
+  --line-height-tight: 1.15;
+  --line-height-body: 1.5;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --size-border: 1px;
+  --size-border-strong: 2px;
+  --size-focus-ring: 3px;
+  --size-focus-offset: 2px;
+  --size-control: 44px;
+  --size-icon: 20px;
+  --size-logo: 32px;
+  --size-score-bar: 14px;
+  --size-step: 32px;
+  --size-field-min: 192px;
+  --size-content-max: 1200px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 250ms;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #11101e;
+    --color-surface: #1b1a2d;
+    --color-surface-sunken: #24233a;
+    --color-border: #35334f;
+    --color-border-strong: #7a779c;
+    --color-text: #f1f0fa;
+    --color-text-muted: #b2afcb;
+    --color-accent: #9d95ff;
+    --color-accent-hover: #b3adff;
+    --color-on-accent: #11101e;
+    --color-accent-text: #aaa3ff;
+    --color-accent-soft: #2a2752;
+    --color-action: #ff8a52;
+    --color-action-hover: #ff9d6d;
+    --color-on-action: #11101e;
+    --color-sim-text: #ffa477;
+    --color-focus: #b3adff;
+    --color-success-text: #5fd68d;
+    --color-danger-text: #ff8a80;
+    --color-danger-surface: #3a1a1f;
+    --color-warning-text: #ffd27a;
+    --color-warning-surface: #33280f;
+    --color-predict: #9d95ff;
+    --color-sim: #ff8a52;
+    --color-score-high: #3fcf7a;
+    --color-score-mid: #ffc23d;
+    --color-score-low: #ff6b6b;
+    --color-score-track: #2c2a44;
+    --scene-background: #151426;
+    --scene-ground: #1d1c31;
+    --scene-grid: #2f2d4a;
+    --scene-grid-major: #45426a;
+    --scene-track: #3d3a5e;
+    --scene-surface: #2b2945;
+    --scene-cart-1: #8b84ff;
+    --scene-cart-2: #ff8a52;
+    --scene-block: #ff8a52;
+    --scene-launcher: #c9c5ee;
+    --scene-projectile: #ff8a52;
+    --scene-trail: #8b84ff;
+    --scene-prediction: #3fcf7a;
+    --scene-light-ambient: #cfd0ff;
+    --scene-light-sun: #fff1dc;
+  }
+}
+:root[data-theme="dark"] {
+  --color-bg: #11101e;
+  --color-surface: #1b1a2d;
+  --color-surface-sunken: #24233a;
+  --color-border: #35334f;
+  --color-border-strong: #7a779c;
+  --color-text: #f1f0fa;
+  --color-text-muted: #b2afcb;
+  --color-accent: #9d95ff;
+  --color-accent-hover: #b3adff;
+  --color-on-accent: #11101e;
+  --color-accent-text: #aaa3ff;
+  --color-accent-soft: #2a2752;
+  --color-action: #ff8a52;
+  --color-action-hover: #ff9d6d;
+  --color-on-action: #11101e;
+  --color-sim-text: #ffa477;
+  --color-focus: #b3adff;
+  --color-success-text: #5fd68d;
+  --color-danger-text: #ff8a80;
+  --color-danger-surface: #3a1a1f;
+  --color-warning-text: #ffd27a;
+  --color-warning-surface: #33280f;
+  --color-predict: #9d95ff;
+  --color-sim: #ff8a52;
+  --color-score-high: #3fcf7a;
+  --color-score-mid: #ffc23d;
+  --color-score-low: #ff6b6b;
+  --color-score-track: #2c2a44;
+  --scene-background: #151426;
+  --scene-ground: #1d1c31;
+  --scene-grid: #2f2d4a;
+  --scene-grid-major: #45426a;
+  --scene-track: #3d3a5e;
+  --scene-surface: #2b2945;
+  --scene-cart-1: #8b84ff;
+  --scene-cart-2: #ff8a52;
+  --scene-block: #ff8a52;
+  --scene-launcher: #c9c5ee;
+  --scene-projectile: #ff8a52;
+  --scene-trail: #8b84ff;
+  --scene-prediction: #3fcf7a;
+  --scene-light-ambient: #cfd0ff;
+  --scene-light-sun: #fff1dc;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+h1, h2, h3 { font-family: var(--font-family-display); line-height: var(--line-height-tight); margin: 0; }
+p { margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+img, svg, canvas, iframe { display: block; max-width: 100%; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+:focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-focus);
+  outline-offset: var(--size-focus-offset);
+}
+.skip-link { position: absolute; left: var(--space-4); top: calc(-1 * var(--space-8)); background: var(--color-accent); color: var(--color-on-accent); padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); z-index: 10; }
+.skip-link:focus-visible { top: var(--space-2); }
+
+/* ---------- header and tabs ---------- */
+.app-header {
+  background: var(--color-surface);
+  border-bottom: var(--size-border) solid var(--color-border);
+}
+.app-header-inner {
+  max-width: var(--size-content-max);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5);
+}
+.brand { display: flex; align-items: center; gap: var(--space-3); text-decoration: none; color: var(--color-text); }
+.brand-mark { width: auto; height: var(--size-logo); border-radius: var(--radius-sm); }
+.brand h1 { font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); letter-spacing: -0.01em; }
+.tabs {
+  display: flex; gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-pill);
+  flex: 1 1 100%;
+}
+.tab {
+  flex: 1 1 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--size-control);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+  transition: background-color var(--duration-fast) ease-out, color var(--duration-fast) ease-out;
+}
+.tab svg { width: var(--size-icon); height: var(--size-icon); flex: none; display: none; }
+.tab span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab:hover { color: var(--color-text); background: var(--color-surface); }
+.tab[aria-selected="true"] { background: var(--color-accent); color: var(--color-on-accent); }
+@media (min-width: 720px) {
+  .tabs { flex: 0 1 auto; margin-left: auto; }
+  .tab { flex: 0 0 auto; padding: 0 var(--space-4); }
+  .tab svg { display: block; }
+}
+
+/* ---------- lab layout ---------- */
+.lab { max-width: var(--size-content-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-7); }
+.lab-intro { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); }
+.lab-intro h2 { font-size: var(--font-size-2xl); font-weight: var(--font-weight-bold); }
+.lab-intro p:not(.eyebrow) { color: var(--color-text-muted); font-size: var(--font-size-lg); }
+.lab-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.col { display: grid; gap: var(--space-5); min-width: 0; }
+@media (min-width: 720px) {
+  .lab { padding: var(--space-6) var(--space-5) var(--space-8); }
+  .lab-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+}
+@media (min-width: 1100px) {
+  .lab-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-6); }
+  .lab-intro h2 { font-size: var(--font-size-3xl); }
+}
+
+/* ---------- stepper ---------- */
+.stepper {
+  list-style: none; margin: 0 0 var(--space-5); padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2);
+  counter-reset: step;
+}
+.step { display: flex; align-items: center; gap: var(--space-2); min-width: 0; position: relative; color: var(--color-text-muted); }
+.step-dot {
+  flex: none; width: var(--size-step); height: var(--size-step); border-radius: var(--radius-pill);
+  display: grid; place-items: center;
+  border: var(--size-border-strong) solid var(--color-border-strong);
+  background: var(--color-surface);
+  font-weight: var(--font-weight-bold);
+  transition: background-color var(--duration-base) ease-out, border-color var(--duration-base) ease-out, color var(--duration-base) ease-out;
+}
+.step-dot svg { width: var(--size-icon); height: var(--size-icon); }
+.step-text { display: grid; min-width: 0; }
+.step-name { font-weight: var(--font-weight-semibold); }
+.step-caption { font-size: var(--font-size-sm); display: none; }
+.step::after { content: ""; flex: 1 1 auto; height: var(--size-border-strong); background: var(--color-border); border-radius: var(--radius-pill); min-width: var(--space-2); }
+.step:last-child::after { display: none; }
+@media (max-width: 719.98px) {
+  .step { flex-direction: column; text-align: center; gap: var(--space-1); }
+  .step::after { display: none; }
+}
+.step[data-step-state="done"] { color: var(--color-text); }
+.step[data-step-state="done"] .step-dot { background: var(--color-accent-soft); border-color: var(--color-accent); color: var(--color-accent-text); }
+.step[data-step-state="done"]::after { background: var(--color-accent); }
+.step[aria-current="step"] { color: var(--color-text); }
+.step[aria-current="step"] .step-dot { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); }
+@media (min-width: 1100px) { .step-caption { display: block; color: var(--color-text-muted); } }
+
+/* ---------- cards ---------- */
+.card {
+  background: var(--color-surface);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  min-width: 0;
+  box-shadow: 0 var(--space-1) var(--space-5) color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.card > h3, .card legend { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); margin-bottom: var(--space-4); padding: 0; }
+@media (min-width: 720px) { .card { padding: var(--space-5); } }
+fieldset.card { margin: 0; }
+fieldset.card legend { float: left; width: 100%; }
+fieldset.card legend + * { clear: both; }
+.eyebrow { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-muted); }
+
+/* ---------- fields ---------- */
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-field-min)), 1fr)); gap: var(--space-4) var(--space-5); }
+.field { display: grid; gap: var(--space-2); min-width: 0; }
+.field label, .field .label { font-weight: var(--font-weight-semibold); }
+.field-row { display: flex; align-items: stretch; min-width: 0; }
+.field input[type="number"], .field select {
+  width: 100%; min-width: 0;
+  min-height: var(--size-control);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-sunken);
+  border: var(--size-border-strong) solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family-numeric);
+  font-size: var(--font-size-lg);
+  transition: border-color var(--duration-fast) ease-out, background-color var(--duration-fast) ease-out;
+}
+.field select { font-family: var(--font-family-body); font-size: var(--font-size-md); }
+.field input[type="number"]:hover, .field select:hover { border-color: var(--color-border-strong); }
+.field-row input[type="number"] { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.field-unit {
+  display: grid; place-items: center; padding: 0 var(--space-3);
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+  border: var(--size-border-strong) solid var(--color-border); border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-family: var(--font-family-numeric);
+}
+.field input[type="range"] { width: 100%; accent-color: var(--color-accent); min-height: var(--size-control); margin: 0; }
+.field-hint { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+.field input:disabled, .field-disabled .field-unit { opacity: 0.55; }
+.field[data-invalid="true"] input[type="number"], .field[data-invalid="true"] .field-unit { border-color: var(--color-danger-text); }
+.field-error { color: var(--color-danger-text); font-weight: var(--font-weight-semibold); display: flex; gap: var(--space-2); align-items: flex-start; }
+.field-error svg { flex: none; width: var(--size-icon); height: var(--size-icon); margin-top: var(--space-1); }
+.check { display: flex; align-items: center; gap: var(--space-3); min-height: var(--size-control); font-weight: var(--font-weight-semibold); }
+.check input { width: var(--size-icon); height: var(--size-icon); accent-color: var(--color-accent); margin: 0; flex: none; }
+
+/* ---------- prediction ---------- */
+.predict-card { border-top: var(--space-1) solid var(--color-predict); }
+.predict-question { font-family: var(--font-family-display); font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); line-height: var(--line-height-tight); margin-bottom: var(--space-4); }
+.predict-card .fields { margin-bottom: var(--space-5); }
+.run-row { display: grid; gap: var(--space-2); }
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: var(--size-control);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-pill);
+  border: var(--size-border-strong) solid transparent;
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color var(--duration-fast) ease-out, transform var(--duration-fast) ease-out, border-color var(--duration-fast) ease-out;
+}
+.btn svg { width: var(--size-icon); height: var(--size-icon); flex: none; }
+.btn-run { background: var(--color-action); color: var(--color-on-action); font-size: var(--font-size-lg); min-height: calc(var(--size-control) + var(--space-2)); width: 100%; }
+.btn-run:hover { background: var(--color-action-hover); transform: translateY(calc(-1 * var(--size-border-strong))); }
+.btn-secondary { background: var(--color-surface); color: var(--color-accent-text); border-color: var(--color-border); }
+.btn-secondary:hover { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.btn-quiet { background: transparent; color: var(--color-text); border-color: var(--color-border); padding: 0 var(--space-4); }
+.btn-quiet:hover { background: var(--color-surface-sunken); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; transform: none; }
+.hint-key { font-size: var(--font-size-sm); color: var(--color-text-muted); text-align: center; }
+kbd { font-family: var(--font-family-numeric); font-size: var(--font-size-sm); border: var(--size-border) solid var(--color-border-strong); border-bottom-width: var(--size-border-strong); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+
+/* ---------- scene ---------- */
+.scene-card { padding: 0; overflow: hidden; }
+.scene-frame { position: relative; aspect-ratio: 16 / 10; background: var(--scene-background); }
+.scene-frame > svg, .scene-frame > iframe { width: 100%; height: 100%; border: 0; }
+.scene-legend {
+  position: absolute; left: var(--space-3); top: var(--space-3);
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  max-width: calc(100% - var(--space-5));
+}
+.chip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  border: var(--size-border) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold);
+}
+.swatch { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); flex: none; }
+.playback {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--size-border) solid var(--color-border);
+}
+.playback .time { margin-left: auto; font-family: var(--font-family-numeric); color: var(--color-text-muted); }
+.scene-notice {
+  position: absolute; inset: 0; display: grid; place-content: center; gap: var(--space-3);
+  padding: var(--space-5); text-align: center;
+  background: var(--color-warning-surface); color: var(--color-text);
+}
+.scene-notice strong { color: var(--color-warning-text); font-size: var(--font-size-lg); }
+.scene-notice svg { width: var(--space-7); height: var(--space-7); margin: 0 auto; color: var(--color-warning-text); }
+
+/* ---------- results ---------- */
+.results-empty { display: grid; gap: var(--space-3); justify-items: start; color: var(--color-text-muted); }
+.results-empty svg { width: var(--space-7); height: var(--space-7); color: var(--color-accent-text); }
+.versus { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--space-2); align-items: stretch; }
+@media (min-width: 720px) { .versus { gap: var(--space-3); } }
+.versus-vs { align-self: center; font-weight: var(--font-weight-bold); color: var(--color-text-muted); }
+.tile { background: var(--color-surface-sunken); border-radius: var(--radius-md); padding: var(--space-3); display: grid; gap: var(--space-1); min-width: 0; border-top: var(--space-1) solid transparent; }
+.tile-predict { border-top-color: var(--color-predict); }
+.tile-sim { border-top-color: var(--color-sim); }
+.tile-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text-muted); }
+.tile-value { font-family: var(--font-family-numeric); font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); }
+.tile-value small { font-size: var(--font-size-md); font-weight: var(--font-weight-regular); color: var(--color-text-muted); }
+.score { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2) var(--space-5); align-items: end; margin-top: var(--space-5); }
+.score-number { font-family: var(--font-family-display); font-size: var(--font-size-score); font-weight: var(--font-weight-bold); line-height: 1; letter-spacing: -0.03em; }
+.score-number small { font-size: var(--font-size-lg); color: var(--color-text-muted); letter-spacing: 0; font-weight: var(--font-weight-semibold); }
+.score-side { display: grid; gap: var(--space-2); padding-bottom: var(--space-2); min-width: 0; }
+.score-verdict { font-family: var(--font-family-display); font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); }
+.score-error { color: var(--color-text-muted); }
+.score-error strong { color: var(--color-text); font-family: var(--font-family-numeric); }
+.score-bar { grid-column: 1 / -1; height: var(--size-score-bar); background: var(--color-score-track); border-radius: var(--radius-pill); overflow: hidden; }
+.score-fill { height: 100%; width: var(--score-fill); border-radius: var(--radius-pill); background: var(--color-score-high); transition: width var(--duration-slow) ease-out; }
+.score[data-band="mid"] .score-fill { background: var(--color-score-mid); }
+.score[data-band="low"] .score-fill { background: var(--color-score-low); }
+.facts { list-style: none; margin: var(--space-5) 0 0; padding: var(--space-4) 0 0; border-top: var(--size-border) solid var(--color-border); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-field-min)), 1fr)); gap: var(--space-2) var(--space-5); }
+.facts li { display: flex; justify-content: space-between; gap: var(--space-3); }
+.facts span { color: var(--color-text-muted); }
+.facts strong { font-family: var(--font-family-numeric); }
+.callout { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-text); margin-bottom: var(--space-4); }
+.callout svg { flex: none; width: var(--size-icon); height: var(--size-icon); margin-top: var(--space-1); color: var(--color-accent-text); }
+.results-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
+
+/* ---------- explanation ---------- */
+.explain { display: grid; gap: var(--space-4); }
+.explain h4 { margin: 0 0 var(--space-1); }
+.equation {
+  font-family: var(--font-family-numeric);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  display: grid; gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+.equation .result { color: var(--color-accent-text); font-weight: var(--font-weight-bold); }
+
+/* ---------- error summary and startup failure ---------- */
+.alert { display: flex; gap: var(--space-3); align-items: flex-start; background: var(--color-danger-surface); color: var(--color-text); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); }
+.alert svg { flex: none; width: var(--size-icon); height: var(--size-icon); margin-top: var(--space-1); color: var(--color-danger-text); }
+.alert strong { color: var(--color-danger-text); }
+.fatal { max-width: var(--size-content-max); margin: 0 auto; padding: var(--space-7) var(--space-4); display: grid; place-items: center; }
+.fatal .card { max-width: calc(var(--size-field-min) * 3); display: grid; gap: var(--space-4); justify-items: start; }
+.fatal-logo { height: calc(var(--size-logo) * 2); width: auto; }
+.fatal h2 { font-size: var(--font-size-2xl); }
+.fatal code { font-family: var(--font-family-numeric); background: var(--color-surface-sunken); padding: 0 var(--space-1); border-radius: var(--radius-sm); }
+
+.app-footer { max-width: var(--size-content-max); margin: 0 auto; padding: 0 var(--space-4) var(--space-6); color: var(--color-text-muted); font-size: var(--font-size-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+
+.p-bg { fill: var(--scene-background); }
+.p-ground { fill: var(--scene-ground); }
+.p-grid { stroke: var(--scene-grid); stroke-width: 1; }
+.p-grid-major { stroke: var(--scene-grid-major); stroke-width: 1; }
+.p-track { fill: var(--scene-track); }
+.p-surface { fill: var(--scene-surface); }
+.p-cart1 { fill: var(--scene-cart-1); }
+.p-cart2 { fill: var(--scene-cart-2); }
+.p-block { fill: var(--scene-block); }
+.p-ball { fill: var(--scene-projectile); }
+.p-launcher { fill: var(--scene-launcher); }
+.p-wheel { fill: var(--scene-launcher); }
+.p-trail { stroke: var(--scene-trail); stroke-width: 3; fill: none; stroke-linecap: round; }
+.p-pred { stroke: var(--scene-prediction); stroke-width: 3; fill: none; }
+.p-pred-fill { fill: var(--scene-prediction); }
+.p-shadow { fill: var(--scene-grid-major); opacity: 0.45; }
+.p-arrow { stroke: var(--scene-launcher); stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+
+.scene-card { container-type: inline-size; }
+.scene-live { display: block; width: 100%; border: 0; height: calc(100cqw * 10 / 16 + var(--size-control) + var(--space-5) + var(--size-border)); }
+
+
+.mock-chrome {
+  position: fixed; right: var(--space-3); bottom: var(--space-3); z-index: 20;
+  max-width: calc(100% - var(--space-5));
+  background: var(--color-surface); color: var(--color-text);
+  border: var(--size-border-strong) dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+.mock-chrome summary { cursor: pointer; padding: var(--space-2) var(--space-3); font-weight: var(--font-weight-semibold); }
+.mock-chrome div { padding: 0 var(--space-3) var(--space-3); display: grid; gap: var(--space-1); }
+.mock-chrome a { color: var(--color-accent-text); }
+.mock-annotation {
+  max-width: var(--size-content-max); margin: var(--space-4) auto 0; padding: var(--space-3) var(--space-4);
+  border: var(--size-border-strong) dashed var(--color-border-strong); border-radius: var(--radius-md);
+  font-size: var(--font-size-sm); color: var(--color-text);
+}
+.mock-annotation code { font-family: var(--font-family-numeric); color: var(--color-danger-text); }
+html.framed .mock-chrome { display: none; }
+
+
+</style>
+</head>
+<body>
+<a class="skip-link" href="#momentum-controls">Skip to the lab controls</a>
+<header class="app-header">
+  <div class="app-header-inner">
+    <div class="brand"><img class="brand-mark" src="../assets/logo/compact.svg" alt=""><h1>Mechanica</h1></div>
+    <div class="tabs" role="tablist" aria-label="Labs">
+      <a class="tab keep-theme" role="tab" id="tab-momentum" aria-selected="true" aria-controls="panel-momentum" tabindex="0" href="momentum-lab.predict.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="12" r="3"/><circle cx="17" cy="12" r="4"/><path d="M1 6h5m-2-2 2 2-2 2"/></svg><span>Momentum</span></a><a class="tab keep-theme" role="tab" id="tab-friction" aria-selected="false" aria-controls="panel-friction" tabindex="-1" href="friction-lab.predict.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 20 22 8"/><rect x="9" y="8" width="6" height="5" transform="rotate(-31 12 10.5)"/></svg><span>Friction</span></a><a class="tab keep-theme" role="tab" id="tab-trajectory" aria-selected="false" aria-controls="panel-trajectory" tabindex="-1" href="trajectory-lab.predict.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 20c3-14 13-14 18 0" stroke-dasharray="2 3"/><circle cx="12" cy="9.5" r="2"/></svg><span>Trajectory</span></a>
+    </div>
+  </div>
+</header>
+<main class="lab" id="panel-momentum" role="tabpanel" aria-labelledby="tab-momentum" data-lab="momentum" data-state="predict">
+  <div class="lab-intro"><p class="eyebrow">Lab 1 of 3</p><h2>Momentum lab</h2><p>Two carts meet on a track. Predict how fast cart 2 is moving after they collide.</p></div>
+  <ol class="stepper" data-stepper aria-label="Predict, run, compare"><li class="step" data-step-state="current" aria-current="step"><span class="step-dot">1</span><span class="step-text"><span class="step-name">Predict</span><span class="step-caption">Set it up and make your guess</span></span></li><li class="step" data-step-state="upcoming"><span class="step-dot">2</span><span class="step-text"><span class="step-name">Run</span><span class="step-caption">Watch the simulation in 3D</span></span></li><li class="step" data-step-state="upcoming"><span class="step-dot">3</span><span class="step-text"><span class="step-name">Compare</span><span class="step-caption">See how close you were</span></span></li></ol>
+  <div class="lab-grid">
+    <div class="col">
+      <fieldset class="card" id="momentum-controls">
+  <legend>Set up the experiment</legend>
+  <div class="fields"><div class="field"><label for="momentum-m1" id="momentum-m1-label">Mass of cart 1, m₁ (kg)</label><div class="field-row"><input type="number" id="momentum-m1" name="m1" inputmode="decimal" min="0.1" max="10" step="0.1" value="2" aria-describedby="momentum-m1-hint"><span class="field-unit" aria-hidden="true">kg</span></div><input type="range" id="momentum-m1-slider" min="0.1" max="10" step="0.1" value="2" aria-labelledby="momentum-m1-label"><p class="field-hint" id="momentum-m1-hint">0.1 to 10 kg</p></div><div class="field"><label for="momentum-v1" id="momentum-v1-label">Velocity of cart 1, v₁ (m/s)</label><div class="field-row"><input type="number" id="momentum-v1" name="v1" inputmode="decimal" min="-10" max="10" step="0.1" value="3" aria-describedby="momentum-v1-hint"><span class="field-unit" aria-hidden="true">m/s</span></div><input type="range" id="momentum-v1-slider" min="-10" max="10" step="0.1" value="3" aria-labelledby="momentum-v1-label"><p class="field-hint" id="momentum-v1-hint">−10 to 10 m/s</p></div><div class="field"><label for="momentum-m2" id="momentum-m2-label">Mass of cart 2, m₂ (kg)</label><div class="field-row"><input type="number" id="momentum-m2" name="m2" inputmode="decimal" min="0.1" max="10" step="0.1" value="1" aria-describedby="momentum-m2-hint"><span class="field-unit" aria-hidden="true">kg</span></div><input type="range" id="momentum-m2-slider" min="0.1" max="10" step="0.1" value="1" aria-labelledby="momentum-m2-label"><p class="field-hint" id="momentum-m2-hint">0.1 to 10 kg</p></div><div class="field"><label for="momentum-v2" id="momentum-v2-label">Velocity of cart 2, v₂ (m/s)</label><div class="field-row"><input type="number" id="momentum-v2" name="v2" inputmode="decimal" min="-10" max="10" step="0.1" value="0" aria-describedby="momentum-v2-hint"><span class="field-unit" aria-hidden="true">m/s</span></div><input type="range" id="momentum-v2-slider" min="-10" max="10" step="0.1" value="0" aria-labelledby="momentum-v2-label"><p class="field-hint" id="momentum-v2-hint">−10 to 10 m/s</p></div><div class="field"><label for="momentum-collision">Collision type</label><select id="momentum-collision" name="collision"><option value="elastic" selected>Elastic (they bounce apart)</option><option value="inelastic">Perfectly inelastic (they stick together)</option></select></div></div>
+  <p class="field-hint" style="margin-top: var(--space-4)">Velocities are signed: positive means moving to the right. Cart 1 starts on the left.</p>
+</fieldset>
+      <section class="card predict-card" aria-labelledby="momentum-predict-title">
+  <p class="eyebrow" id="momentum-predict-title">Your prediction</p>
+  <p class="predict-question">How fast will cart 2 be moving after the collision?</p>
+  
+  <div class="fields"><div class="field"><label for="momentum-prediction" id="momentum-prediction-label">Cart 2 after the collision, v₂′ (m/s)</label><div class="field-row"><input type="number" id="momentum-prediction" name="prediction" inputmode="decimal" min="-10" max="10" step="0.01" value="3.9" aria-describedby="momentum-prediction-hint"><span class="field-unit" aria-hidden="true">m/s</span></div><input type="range" id="momentum-prediction-slider" min="-10" max="10" step="0.01" value="3.9" aria-labelledby="momentum-prediction-label"><p class="field-hint" id="momentum-prediction-hint">Positive means moving to the right.</p></div></div>
+  <div class="run-row">
+    <button class="btn btn-run" type="button" id="momentum-run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14m-5-5 5 5-5 5"/></svg><span>Run the experiment</span></button>
+    <p class="hint-key">or press <kbd>Enter</kbd> in any field</p>
+  </div>
+</section>
+    </div>
+    <div class="col">
+      <section class="card scene-card" aria-label="3D view: two carts on a track" data-live-scene="momentum-lab.scene.html?case=ready" data-scene-title="3D view: two carts on a track"><div class="scene-frame" id="momentum-scene" data-scene><svg viewBox="0 0 320 200" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Still of the momentum scene: two carts on a track, cart 2 moving away to the right after the collision"><rect class="p-bg" width="320" height="200"/><rect class="p-ground" y="128" width="320" height="72"/><line class="p-grid-major" x1="0" y1="128" x2="-192" y2="200"/><line class="p-grid" x1="20" y1="128" x2="-148" y2="200"/><line class="p-grid" x1="40" y1="128" x2="-104" y2="200"/><line class="p-grid" x1="60" y1="128" x2="-60" y2="200"/><line class="p-grid-major" x1="80" y1="128" x2="-16" y2="200"/><line class="p-grid" x1="100" y1="128" x2="28" y2="200"/><line class="p-grid" x1="120" y1="128" x2="72" y2="200"/><line class="p-grid" x1="140" y1="128" x2="116" y2="200"/><line class="p-grid-major" x1="160" y1="128" x2="160" y2="200"/><line class="p-grid" x1="180" y1="128" x2="204" y2="200"/><line class="p-grid" x1="200" y1="128" x2="248" y2="200"/><line class="p-grid" x1="220" y1="128" x2="292" y2="200"/><line class="p-grid-major" x1="240" y1="128" x2="336" y2="200"/><line class="p-grid" x1="260" y1="128" x2="380" y2="200"/><line class="p-grid" x1="280" y1="128" x2="424" y2="200"/><line class="p-grid" x1="300" y1="128" x2="468" y2="200"/><line class="p-grid-major" x1="320" y1="128" x2="512" y2="200"/><line class="p-grid" x1="0" y1="132" x2="320" y2="132"/><line class="p-grid" x1="0" y1="138" x2="320" y2="138"/><line class="p-grid-major" x1="0" y1="146" x2="320" y2="146"/><line class="p-grid" x1="0" y1="156" x2="320" y2="156"/><line class="p-grid" x1="0" y1="169" x2="320" y2="169"/><line class="p-grid-major" x1="0" y1="185" x2="320" y2="185"/><rect class="p-track" x="20" y="148" width="280" height="6" rx="3"/><ellipse class="p-shadow" cx="134" cy="152" rx="28" ry="5"/><rect class="p-cart1" x="112" y="122" width="44" height="22" rx="5"/><circle class="p-wheel" cx="122" cy="147" r="5"/><circle class="p-wheel" cx="146" cy="147" r="5"/><ellipse class="p-shadow" cx="212" cy="152" rx="28" ry="5"/><rect class="p-cart2" x="190" y="122" width="44" height="22" rx="5"/><circle class="p-wheel" cx="200" cy="147" r="5"/><circle class="p-wheel" cx="224" cy="147" r="5"/><path class="p-arrow" d="M120 110h14m-5-5 5 5-5 5"/><path class="p-arrow" d="M194 110h36m-5-5 5 5-5 5"/></svg><div class="scene-legend"><span class="chip"><span class="swatch" style="background: var(--scene-cart-1)"></span>Cart 1 · 2 kg · 3 m/s →</span><span class="chip"><span class="swatch" style="background: var(--scene-cart-2)"></span>Cart 2 · 1 kg · at rest</span></div></div><div class="playback" aria-label="Playback"><button class="btn btn-quiet" type="button" id="momentum-play" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 4v16l13-8z"/></svg>Play</button><button class="btn btn-quiet" type="button" id="momentum-pause" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 4v16M16 4v16"/></svg>Pause</button><button class="btn btn-quiet" type="button" id="momentum-replay" aria-disabled="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>Replay</button><span class="time" aria-live="off">t = 0.00 s</span></div></section>
+      <section class="card" id="momentum-results" aria-live="polite" aria-labelledby="momentum-results-title">
+  <h3 id="momentum-results-title">Compare</h3>
+  <div class="results-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><p><strong style="color: var(--color-text)">Your score appears here.</strong><br>Make a prediction and press Run. You’ll see your guess next to the simulation, how far off it was, and a score out of 100.</p></div>
+</section>
+      <section class="card" id="momentum-explanation" aria-labelledby="momentum-explain-title"><h3 id="momentum-explain-title">Why it came out this way</h3><p style="color: var(--color-text-muted)">After the run, this explains the physics with your numbers.</p></section>
+    </div>
+  </div>
+</main>
+<footer class="app-footer"><p>Mechanica runs the physics in your browser. Nothing about you is stored.</p></footer><details class="mock-chrome"><summary>Mockup · Momentum lab · Predict (start)</summary><div>
+<strong>States of this screen</strong><a class="keep-theme" href="momentum-lab.predict.html">▸ Predict (start)</a><a class="keep-theme" href="momentum-lab.compare.html">Compare (after the run)</a><a class="keep-theme" href="momentum-lab.no-collision.html">No collision</a><a class="keep-theme" href="momentum-lab.input-error.html">Input out of range</a><a class="keep-theme" href="momentum-lab.scene-unavailable.html">3D view unavailable</a><a class="keep-theme" href="momentum-lab.startup-error.html">Start-up failure</a><a class="keep-theme" href="momentum-lab.token-undefined.html">Design token missing</a>
+<strong>Theme</strong><a href="momentum-lab.predict.html?theme=light">Light</a><a href="momentum-lab.predict.html?theme=dark">Dark</a><a href="momentum-lab.predict.html">Follow the system</a>
+<a class="keep-theme" href="index.html">↩ Overview of the design</a></div></details>
+<script>(function(){var d=document.documentElement,t=d.getAttribute('data-theme');
+if(t){document.querySelectorAll('a.keep-theme').forEach(function(a){var u=new URL(a.getAttribute('href'),location.href);u.searchParams.set('theme',t);a.setAttribute('href',u.pathname.split('/').pop()+u.search+u.hash)});}
+if(d.classList.contains('framed'))return;
+document.querySelectorAll('[data-live-scene]').forEach(function(card){var src=card.getAttribute('data-live-scene')+(t?(card.getAttribute('data-live-scene').indexOf('?')<0?'?':'&')+'theme='+t:'');
+var f=document.createElement('iframe');f.className='scene-live';f.src=src;f.title=card.getAttribute('data-scene-title');card.replaceChildren(f);});})();</script>
+</body>
+</html>

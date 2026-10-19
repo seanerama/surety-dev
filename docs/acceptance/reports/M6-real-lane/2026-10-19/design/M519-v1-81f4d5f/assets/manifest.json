@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "slots": [
+    {
+      "key": "logo",
+      "kind": "logo",
+      "purpose": "the product mark",
+      "platforms": [
+        "web"
+      ],
+      "variants": [
+        {
+          "name": "full",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/full.svg",
+          "digest": "bb87334a9571de5ef978592fa16511838d89510ac79779cfff97fccad5d284e4"
+        },
+        {
+          "name": "compact",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/compact.svg",
+          "digest": "1aa9f06dad61e47c3b305b3dde7e3a7432fb477d1d39558416f9914cf8941fb4"
+        },
+        {
+          "name": "monochrome",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/monochrome.svg",
+          "digest": "63c134bfa551561d8c8fa68e33de00e7fbc5b3654454f1223196713c9cc61784"
+        },
+        {
+          "name": "on_light",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/on_light.svg",
+          "digest": "03d6373e1390e19809eeac9edb65a827154734aa91c4bbdfd180dc8913cc6a03"
+        },
+        {
+          "name": "on_dark",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/on_dark.svg",
+          "digest": "8e86570efa706a7e7e2c8e6b497a4063c36f604bd3e7a3743e8804881b0cb8d4"
+        }
+      ],
+      "alt_text": "m6-m519-mechanica (placeholder)",
+      "slot_version": 1,
+      "status": "placeholder",
+      "provenance": "engine_placeholder",
+      "status_since": 0,
+      "history": [
+        {
+          "slot_version": 1,
+          "design_version": 0,
+          "status": "placeholder",
+          "files": [
+            {
+              "variant": "full",
+              "digest": "bb87334a9571de5ef978592fa16511838d89510ac79779cfff97fccad5d284e4"
+            },
+            {
+              "variant": "compact",
+              "digest": "1aa9f06dad61e47c3b305b3dde7e3a7432fb477d1d39558416f9914cf8941fb4"
+            },
+            {
+              "variant": "monochrome",
+              "digest": "63c134bfa551561d8c8fa68e33de00e7fbc5b3654454f1223196713c9cc61784"
+            },
+            {
+              "variant": "on_light",
+              "digest": "03d6373e1390e19809eeac9edb65a827154734aa91c4bbdfd180dc8913cc6a03"
+            },
+            {
+              "variant": "on_dark",
+              "digest": "8e86570efa706a7e7e2c8e6b497a4063c36f604bd3e7a3743e8804881b0cb8d4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "favicon",
+      "kind": "favicon",
+      "purpose": "the browser tab icon",
+      "platforms": [
+        "web"
+      ],
+      "variants": [
+        {
+          "name": "default",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/favicon/default.svg",
+          "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+        }
+      ],
+      "slot_version": 1,
+      "status": "placeholder",
+      "provenance": "engine_placeholder",
+      "status_since": 0,
+      "history": [
+        {
+          "slot_version": 1,
+          "design_version": 0,
+          "status": "placeholder",
+          "files": [
+            {
+              "variant": "default",
+              "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "packaging": []
+}

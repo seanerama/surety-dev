@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "origin": "intended",
+  "inventory_digest": "53b353c25187c39a14e665ab6ff829906ee398e1e26b26f01837c931de88677c",
+  "selection": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "slots": [
+      {
+        "kind": "logo",
+        "variants": [
+          "full",
+          "compact",
+          "monochrome",
+          "on_light",
+          "on_dark"
+        ]
+      },
+      {
+        "kind": "favicon",
+        "variants": [
+          "default"
+        ]
+      }
+    ],
+    "layouts": [
+      {
+        "target": "web",
+        "layouts": [
+          360,
+          720,
+          1280
+        ]
+      }
+    ]
+  },
+  "targets": [
+    {
+      "module": "page-shell",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ]
+    },
+    {
+      "module": "app",
+      "target": "web",
+      "ui_technology": "three_js",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ]
+    },
+    {
+      "module": "styles",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ]
+    }
+  ],
+  "tokens_file": "tokens.json",
+  "flows_file": "flows.json",
+  "screens_file": "screens.json",
+  "navigation_file": "navigation.json",
+  "criteria_file": "criteria.json",
+  "assets_file": "assets/manifest.json",
+  "mockups": [
+    {
+      "path": "mockups/index.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab",
+        "friction-lab",
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.predict.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.compare.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.no-collision.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.input-error.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.scene-unavailable.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.startup-error.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.token-undefined.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ]
+    },
+    {
+      "path": "mockups/momentum-lab.scene.html",
+      "kind": "static_html",
+      "screens": [
+        "momentum-lab"
+      ],
+      "external_urls": [
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.predict.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.compare.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.never-stops.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.input-error.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.scene-unavailable.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.startup-error.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.token-undefined.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ]
+    },
+    {
+      "path": "mockups/friction-lab.scene.html",
+      "kind": "static_html",
+      "screens": [
+        "friction-lab"
+      ],
+      "external_urls": [
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.predict.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.compare.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.input-error.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.scene-unavailable.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.startup-error.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.token-undefined.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ]
+    },
+    {
+      "path": "mockups/trajectory-lab.scene.html",
+      "kind": "static_html",
+      "screens": [
+        "trajectory-lab"
+      ],
+      "external_urls": [
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      ]
+    }
+  ]
+}

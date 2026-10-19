@@ -1,0 +1,1020 @@
+{
+  "inventory_digest": "53b353c25187c39a14e665ab6ff829906ee398e1e26b26f01837c931de88677c",
+  "spec_version": 1,
+  "architecture_version": 1,
+  "targets": [
+    {
+      "module": "page-shell",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "required_conventions": [
+        "route|transient",
+        "browser_back",
+        "keyboard_path"
+      ],
+      "permissions": [],
+      "required_slots": [
+        {
+          "kind": "logo",
+          "variants": [
+            "full",
+            "compact",
+            "monochrome",
+            "on_light",
+            "on_dark"
+          ]
+        },
+        {
+          "kind": "favicon",
+          "variants": [
+            "default"
+          ]
+        }
+      ],
+      "adrs": [],
+      "runtime": "the engine's Node, Node built-ins only, no install and no build step; node server.mjs at the repository root."
+    },
+    {
+      "module": "app",
+      "target": "web",
+      "ui_technology": "three_js",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "required_conventions": [
+        "route|transient",
+        "browser_back",
+        "keyboard_path"
+      ],
+      "permissions": [],
+      "required_slots": [
+        {
+          "kind": "logo",
+          "variants": [
+            "full",
+            "compact",
+            "monochrome",
+            "on_light",
+            "on_dark"
+          ]
+        },
+        {
+          "kind": "favicon",
+          "variants": [
+            "default"
+          ]
+        }
+      ],
+      "adrs": [],
+      "runtime": "the engine's Node, Node built-ins only, no install and no build step; node server.mjs at the repository root."
+    },
+    {
+      "module": "styles",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "required_conventions": [
+        "route|transient",
+        "browser_back",
+        "keyboard_path"
+      ],
+      "permissions": [],
+      "required_slots": [
+        {
+          "kind": "logo",
+          "variants": [
+            "full",
+            "compact",
+            "monochrome",
+            "on_light",
+            "on_dark"
+          ]
+        },
+        {
+          "kind": "favicon",
+          "variants": [
+            "default"
+          ]
+        }
+      ],
+      "adrs": [],
+      "runtime": "the engine's Node, Node built-ins only, no install and no build step; node server.mjs at the repository root."
+    }
+  ],
+  "cross_platform": false,
+  "ui_requirements": [
+    {
+      "key": "R6",
+      "phase": 1,
+      "modules": [
+        "app"
+      ],
+      "targets": [
+        "web"
+      ]
+    },
+    {
+      "key": "R7",
+      "phase": 1,
+      "modules": [
+        "app"
+      ],
+      "targets": [
+        "web"
+      ]
+    },
+    {
+      "key": "R8",
+      "phase": 1,
+      "modules": [
+        "app",
+        "page-shell",
+        "styles"
+      ],
+      "targets": [
+        "web"
+      ]
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "RANGES",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "momentum": {
+            "type": "object"
+          },
+          "friction": {
+            "type": "object"
+          },
+          "trajectory": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "momentum",
+          "friction",
+          "trajectory"
+        ]
+      },
+      "errors": [
+        {
+          "code": "none",
+          "when": "a constant; it never fails"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object"
+      },
+      "response": {
+        "type": "object"
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "an input field is missing, of the wrong type, not finite or outside its range; the message names the field (the server turns it into 400)"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "simulateMomentum",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "m1": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 10,
+                "unit": "kg"
+              },
+              "v1": {
+                "type": "number",
+                "minimum": -10,
+                "maximum": 10,
+                "unit": "m/s"
+              },
+              "m2": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 10,
+                "unit": "kg"
+              },
+              "v2": {
+                "type": "number",
+                "minimum": -10,
+                "maximum": 10,
+                "unit": "m/s"
+              },
+              "collision": {
+                "type": "string",
+                "enum": [
+                  "elastic",
+                  "inelastic"
+                ]
+              }
+            },
+            "required": [
+              "m1",
+              "v1",
+              "m2",
+              "v2",
+              "collision"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "dt": {
+                "type": "number",
+                "minimum": 0,
+                "unit": "s"
+              }
+            }
+          }
+        },
+        "required": [
+          "input"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "collided": {
+                "type": "boolean"
+              },
+              "v1After": {
+                "type": "number",
+                "unit": "m/s"
+              },
+              "v2After": {
+                "type": "number",
+                "unit": "m/s"
+              },
+              "momentumBefore": {
+                "type": "number",
+                "unit": "kg*m/s"
+              },
+              "momentumAfter": {
+                "type": "number",
+                "unit": "kg*m/s"
+              },
+              "kineticEnergyBefore": {
+                "type": "number",
+                "unit": "J"
+              },
+              "kineticEnergyAfter": {
+                "type": "number",
+                "unit": "J"
+              }
+            },
+            "required": [
+              "collided",
+              "v1After",
+              "v2After",
+              "momentumBefore",
+              "momentumAfter",
+              "kineticEnergyBefore",
+              "kineticEnergyAfter"
+            ]
+          },
+          "series": {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "s"
+              },
+              "x1": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "m"
+              },
+              "x2": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "m"
+              }
+            },
+            "required": [
+              "t",
+              "x1",
+              "x2"
+            ]
+          }
+        },
+        "required": [
+          "result",
+          "series"
+        ]
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "an input field is missing, of the wrong type, not finite or outside its range; the message names the field (the server turns it into 400)"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "simulateFriction",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "mu": {
+                "type": "number",
+                "minimum": 0.05,
+                "maximum": 1
+              },
+              "v0": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 20,
+                "unit": "m/s"
+              },
+              "inclineDeg": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 45,
+                "unit": "deg"
+              }
+            },
+            "required": [
+              "mu",
+              "v0",
+              "inclineDeg"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "dt": {
+                "type": "number",
+                "minimum": 0,
+                "unit": "s"
+              }
+            }
+          }
+        },
+        "required": [
+          "input"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "stops": {
+                "type": "boolean"
+              },
+              "distance": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "unit": "m"
+              },
+              "time": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "unit": "s"
+              }
+            },
+            "required": [
+              "stops",
+              "distance",
+              "time"
+            ]
+          },
+          "series": {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "s"
+              },
+              "s": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "m"
+              }
+            },
+            "required": [
+              "t",
+              "s"
+            ]
+          }
+        },
+        "required": [
+          "result",
+          "series"
+        ]
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "an input field is missing, of the wrong type, not finite or outside its range; the message names the field (the server turns it into 400)"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "simulateTrajectory",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "speed": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50,
+                "unit": "m/s"
+              },
+              "angleDeg": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 85,
+                "unit": "deg"
+              },
+              "drag": {
+                "type": "boolean"
+              },
+              "dragCoefficient": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5,
+                "unit": "1/m"
+              }
+            },
+            "required": [
+              "speed",
+              "angleDeg"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "dt": {
+                "type": "number",
+                "minimum": 0,
+                "unit": "s"
+              }
+            }
+          }
+        },
+        "required": [
+          "input"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "object",
+            "properties": {
+              "range": {
+                "type": "number",
+                "unit": "m"
+              },
+              "flightTime": {
+                "type": "number",
+                "unit": "s"
+              },
+              "maxHeight": {
+                "type": "number",
+                "unit": "m"
+              }
+            },
+            "required": [
+              "range",
+              "flightTime",
+              "maxHeight"
+            ]
+          },
+          "series": {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "s"
+              },
+              "x": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "m"
+              },
+              "y": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "unit": "m"
+              }
+            },
+            "required": [
+              "t",
+              "x",
+              "y"
+            ]
+          }
+        },
+        "required": [
+          "result",
+          "series"
+        ]
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "an input field is missing, of the wrong type, not finite or outside its range; the message names the field (the server turns it into 400)"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "score",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object",
+        "properties": {
+          "predicted": {
+            "type": "number"
+          },
+          "simulated": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "predicted",
+          "simulated"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "relativeError": {
+            "type": "number",
+            "minimum": 0
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "relativeError",
+          "score"
+        ]
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "predicted or simulated is missing or not a finite number"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "scoreFriction",
+      "module": "physics",
+      "kind": "module",
+      "path": "public/physics/index.mjs",
+      "request": {
+        "type": "object",
+        "properties": {
+          "prediction": {
+            "type": "object",
+            "properties": {
+              "neverStops": {
+                "type": "boolean"
+              },
+              "distance": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "unit": "m"
+              }
+            },
+            "required": [
+              "neverStops",
+              "distance"
+            ]
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "stops": {
+                "type": "boolean"
+              },
+              "distance": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "unit": "m"
+              },
+              "time": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "unit": "s"
+              }
+            },
+            "required": [
+              "stops",
+              "distance",
+              "time"
+            ]
+          }
+        },
+        "required": [
+          "prediction",
+          "result"
+        ]
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "relativeError": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "relativeError",
+          "score"
+        ]
+      },
+      "errors": [
+        {
+          "code": "RangeError",
+          "when": "neverStops is false and distance is not a finite number"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "page document",
+      "module": "page-shell",
+      "kind": "file",
+      "path": "public/index.html",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "string"
+      },
+      "errors": [
+        {
+          "code": "ELEMENT_MISSING",
+          "when": "an element the scripts bind to is absent; the lab controller throws at start-up naming the missing id"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "main.mjs entry",
+      "module": "app",
+      "kind": "module",
+      "path": "public/app/main.mjs",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "null"
+      },
+      "errors": [
+        {
+          "code": "THREE_UNAVAILABLE",
+          "when": "three.js cannot be loaded from the pinned CDN; the scene region shows a notice and the labs still run, score and explain"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "design tokens",
+      "module": "styles",
+      "kind": "file",
+      "path": "public/styles/tokens.css",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "colors": {
+            "type": "object"
+          },
+          "fontSizes": {
+            "type": "object"
+          },
+          "spacing": {
+            "type": "object"
+          },
+          "radii": {
+            "type": "object"
+          },
+          "scene": {
+            "type": "object"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "TOKEN_UNDEFINED",
+          "when": "a stylesheet or script refers to a custom property tokens.css does not define; tokens.mjs reports it on the console and the R8.1 check fails"
+        }
+      ],
+      "shape_known": true
+    }
+  ],
+  "obligations": [
+    {
+      "target": "web",
+      "interface": "page document",
+      "state": "error:ELEMENT_MISSING"
+    },
+    {
+      "target": "web",
+      "interface": "page document",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "main.mjs entry",
+      "state": "error:THREE_UNAVAILABLE"
+    },
+    {
+      "target": "web",
+      "interface": "main.mjs entry",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "design tokens",
+      "state": "error:TOKEN_UNDEFINED"
+    },
+    {
+      "target": "web",
+      "interface": "design tokens",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "RANGES",
+      "state": "error:none"
+    },
+    {
+      "target": "web",
+      "interface": "RANGES",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "simulateMomentum",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "simulateMomentum",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "simulateFriction",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "simulateFriction",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "simulateTrajectory",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "simulateTrajectory",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "score",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "score",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "scoreFriction",
+      "state": "error:RangeError"
+    },
+    {
+      "target": "web",
+      "interface": "scoreFriction",
+      "state": "ok"
+    }
+  ],
+  "fixtures": [
+    {
+      "interface": "page document",
+      "state": "error:ELEMENT_MISSING",
+      "path": "inventory/fixtures/page document.error:ELEMENT_MISSING.json"
+    },
+    {
+      "interface": "page document",
+      "state": "ok",
+      "path": "inventory/fixtures/page document.ok.json"
+    },
+    {
+      "interface": "main.mjs entry",
+      "state": "error:THREE_UNAVAILABLE",
+      "path": "inventory/fixtures/main.mjs entry.error:THREE_UNAVAILABLE.json"
+    },
+    {
+      "interface": "main.mjs entry",
+      "state": "ok",
+      "path": "inventory/fixtures/main.mjs entry.ok.json"
+    },
+    {
+      "interface": "design tokens",
+      "state": "error:TOKEN_UNDEFINED",
+      "path": "inventory/fixtures/design tokens.error:TOKEN_UNDEFINED.json"
+    },
+    {
+      "interface": "design tokens",
+      "state": "ok",
+      "path": "inventory/fixtures/design tokens.ok.json"
+    },
+    {
+      "interface": "RANGES",
+      "state": "error:none",
+      "path": "inventory/fixtures/RANGES.error:none.json"
+    },
+    {
+      "interface": "RANGES",
+      "state": "ok",
+      "path": "inventory/fixtures/RANGES.ok.json"
+    },
+    {
+      "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.error:RangeError.json"
+    },
+    {
+      "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+      "state": "ok",
+      "path": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.ok.json"
+    },
+    {
+      "interface": "simulateMomentum",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/simulateMomentum.error:RangeError.json"
+    },
+    {
+      "interface": "simulateMomentum",
+      "state": "ok",
+      "path": "inventory/fixtures/simulateMomentum.ok.json"
+    },
+    {
+      "interface": "simulateFriction",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/simulateFriction.error:RangeError.json"
+    },
+    {
+      "interface": "simulateFriction",
+      "state": "ok",
+      "path": "inventory/fixtures/simulateFriction.ok.json"
+    },
+    {
+      "interface": "simulateTrajectory",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/simulateTrajectory.error:RangeError.json"
+    },
+    {
+      "interface": "simulateTrajectory",
+      "state": "ok",
+      "path": "inventory/fixtures/simulateTrajectory.ok.json"
+    },
+    {
+      "interface": "score",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/score.error:RangeError.json"
+    },
+    {
+      "interface": "score",
+      "state": "ok",
+      "path": "inventory/fixtures/score.ok.json"
+    },
+    {
+      "interface": "scoreFriction",
+      "state": "error:RangeError",
+      "path": "inventory/fixtures/scoreFriction.error:RangeError.json"
+    },
+    {
+      "interface": "scoreFriction",
+      "state": "ok",
+      "path": "inventory/fixtures/scoreFriction.ok.json"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+ "target": "web",
+ "screen": "web-plant-list",
+ "deltas": [
+  {
+   "owner_words": "Reported by the driver from HTTP reads (nothing was rendered), and confirmed by the candidate's source: the header logo /assets/logo.svg is the engine placeholder ('PLACEHOLDER (on_dark)', sha256 6a8c47e8\u2026), not the approved logo@2 on_dark (sha256 1b0c17ab\u2026). It shows in every state, because the header is outside main. This candidate was deployed at 13:24 UTC, before the logo's asset-only approval at 15:00. R3.6 allowed the placeholder until approval, so at the time the build was correct. Main (53efa50) already holds public/assets/logo.svg byte-identical to the design's on_dark.svg, and its 3:1 viewBox fits the page's 108x36 slot. Change: deploy an Alpha from main. Nothing changes in the design or the code.",
+   "kind": "implementation"
+  },
+  {
+   "owner_words": "Reported by the driver from HTTP reads: /favicon.svg answers 404. The candidate's index.html has no rel=icon link, so the design's favicon slot (default variant) is missing from the page. Change: serve design/assets/favicon/default.svg as public/favicon.svg and link it from index.html with <link rel=\"icon\" href=\"/favicon.svg\" type=\"image/svg+xml\">. No specification criterion names the favicon, so this breaks none.",
+   "kind": "implementation"
+  },
+  {
+   "state": "log_watering:loading",
+   "owner_words": "From reading app.mjs, not from use: the design keeps keyboard focus on a row's Watered button while it logs. In the code, water() calls renderList(), which replaces every row with new elements and disables the new button. The focused button is removed, so focus falls to the page body until the request ends; focusButton() only puts it back afterwards. Change: keep the row's button element in place while it logs (set aria-disabled and ignore presses, rather than disabling and replacing it), so focus never leaves it. R3.14 is about the visible focus outline, not where focus goes, so this breaks no criterion.",
+   "kind": "implementation"
+  },
+  {
+   "state": "log_watering:ok",
+   "owner_words": "From reading app.mjs, not from use: the design announces 'Logged a watering for <name>.' in a polite live region above the list. The code builds a new role=status element on every renderList(), and on success that element already holds the text when it is inserted. Screen readers often do not announce a live region that arrives with its text already in it, so the confirmation may go unheard. The wording is right. Change: keep one status element in the page across renders and change only its text.",
+   "kind": "implementation"
+  }
+ ]
+}
