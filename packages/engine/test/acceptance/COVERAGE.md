@@ -4778,3 +4778,24 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 
 **What was run, 2026-10-19, on `main` `4e05624` plus this case.** On the workstation, the engine's start recorded no `host_qualifications` row (only `engine.mode_changed` and `engine.started`), so the runner self-test was never recorded: M510's `before` timed out after 300 s, and so did the accepted M221 (a). The cause was not established. The agent sessions there run in the system's `/init.scope`, but another engine started from that scope did get its incarnation scope. The file was therefore run on mini-hp01 instead, in a fresh clone (`~/vf8`), with `npm install` (the lockfile change reverted), `npm run build`, `TMPDIR=/var/tmp/vf8` (`/tmp` there is tmpfs, which the engine refuses), and the file alone with `node --test`:
 - **`M510` 7/8**, 85 s. (a) to (g) pass. (h) fails on all four previews: `memory_peak` is `null` on each row, while the host read 29,683,712, 29,863,936, 29,609,984 and 29,474,816 bytes of their domains' `memory.peak` while they served. The pace-read half of (h) was not reached. No `surety-*` unit was left.
+
+## H4, recovery dead ends (E171 item 5 H4; E163 item 7, E164 item 4; Sean's rulings of 2026-10-19; SEAM §552)
+
+2026-10-19, by the Verifier, on `verify/h4`, cut from `main` `0634d11`. No new row and no harness file changed. Both cases fail on `main` for the reason each ruling fixes. The engine's part is the Builder's.
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| H4 (a), a spec change's replan refused stale | M430 (iv) | `M430-blockers-and-reopened-dispositions.test.mjs` (3 → 4) | The spec change's replacement pending. A stage blocker's replacement publishes generation 2, so the spec change's approval is refused 409 `plan_generation_stale`. Expected: its replan re-registered (`spec_change`, same request, `trigger_generation` 2, `trigger_evidence` naming generation 2's plan and `from_work_item`) and named by `completion_held_by`; its approval publishes generation 3 carrying `spec_change`; no third generation | written; fails on `main` |
+| H4 (b), a cancelled parked design correction | M507 (c) | `M507-design-readiness-and-the-third-milestone.test.mjs` (10 → 11) | The correction parks (no `correct` offered), then its blocker is answered `cancel`. Expected: not ready; `waits_on` `correction_ended` on the read and on `design_due`, which offers `correct`; answered, the correction is registered again at generation 2 with the same request, criteria and checks; once applied, `design.ready` fires once and `design_ready` is met | written; fails on `main` |
+
+**Not covered:**
+- (a)'s cap: a second staleness against the same active generation parks with a blocker. See SEAM §552 for why it was not built, and for a question to Sean on whether §415's S1 re-raise counts toward the cap.
+- (a)'s phase-held check is trivial, because the Builders crash and the phase never completes. `completion_held_by` is the observable part.
+- An owner `cancel` on the parked re-registered replan.
+
+**M512 and M73.** M512 asserts exactly four `design_due` options in (a) and (c). Both are states with no `correction_ended` wait, so the ruling keeps them as they are, and they do not conflict. M73: the contract has no `design_due` option enumeration. If the Builder changes `DESIGN_DUE_KEYS`, `api/schema.json` must be regenerated.
+
+**What was run, 2026-10-19, on `main` `0634d11` plus these cases.** On the workstation, in this worktree: `npm ci`, then `npm run build`. Each file was run alone with `node --test` under `TMPDIR=/tmp/v-h4`.
+- **`M430-blockers-and-reopened-dispositions` 3/4.** (i) to (iii) pass. (iv) fails at "a spec change's replan refused stale is re-registered against the active generation 2, trigger_generation 2 (E171 item 5 H4; Sean's ruling) (replans [["spec_change",1,"complete"],["blocker_replan",1,"complete"]])". Everything before that point passed, including the spec change's approval refused 409 `plan_generation_stale`.
+- **`M507` 10/11.** The ten earlier cases pass. (c) H4 fails at "design_due offers correct while readiness waits on correction_ended (E171 item 5 H4; Sean's ruling) (options ["open","waive","policy_off","later"])". Everything before that point passed: the correction parked, no `correct` while it was parked, `cancel` answered, and `correction_ended` named on the read and on `design_due`.
+- **`M512` 14/14**, unchanged.

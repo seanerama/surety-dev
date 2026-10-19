@@ -17,9 +17,9 @@ import { findingsOf, raiseFindings, review } from './harness/gates.mjs';
 import { roleThat, waitForCandidates } from './harness/gitruns.mjs';
 import { buildAndNominate, findingRow, registrationsBy, repairProject, x2Blocker } from './harness/checks/repair.mjs';
 import { recordExit } from './harness/checks/selection.mjs';
-import { candidatesOfProject, pump, runsOfProject, workOf } from './harness/journey/drive.mjs';
+import { candidatesOfProject, pump, readPlan, runsOfProject, workOf } from './harness/journey/drive.mjs';
 import { journey35, openPlanApprovals, replan35 } from './harness/journey/plan35.mjs';
-import { NO_PLAN_ANSWER, S1, S2, changed, generationOf, openBlockerAbout, stageWorkOf } from './harness/journey/review35.mjs';
+import { NO_PLAN_ANSWER, S1, S2, changed, generationOf, openBlockerAbout, replacementPending, replanOf, stageWorkOf } from './harness/journey/review35.mjs';
 import { pumpNoIdle } from './harness/journey/review31b.mjs';
 import { scriptedEngine, tickUntil, runsOf } from './harness/runs.mjs';
 import { script, step } from './harness/scripted.mjs';
@@ -98,5 +98,47 @@ describe('M430 the review\'s blockers and dispositions', () => {
     const after = findingRow(fx.home, a.id);
     assert.notEqual(after.disposition, 'fix', `A's disposition is reopened to the owner, no longer fix (SEAM.md §415) (${JSON.stringify({ disposition: after.disposition, status: after.status })})`);
     assert.ok(findingsOf(fx.home, p.id).some((f) => f.id === a.id), 'the finding itself kept');
+  });
+
+  test('(iv) H4: a spec change\'s replacement refused stale by a stage blocker\'s replacement: re-registered against the active generation, holding completion; its approval publishes generation 3; no further re-raise', async (t) => {
+    // Every Builder crashes, so no stage is ever carried; each replacement lists only new stage
+    // numbers, so a stage parking moves nothing a pending replacement counted.
+    const crashes = Array.from({ length: 12 }, () => script.crash());
+    const blockerPlan = replanOf([changed(S1, { number: 3 }), changed(S2, { number: 4, depends_on: [3] })]);
+    const againPlan = replanOf([changed(S1, { number: 5 }), changed(S2, { number: 6, depends_on: [5] })]);
+    const { fx, p, ctx, plan } = await replacementPending(t, { three: false, policy: { repair_attempts_max: 0 }, replacement: [changed(S1, { number: 7 }), changed(S2, { number: 8, depends_on: [7] })], after: [blockerPlan, againPlan], stageBuild: crashes });
+    const replans = () => workOf(fx.home, p.id, 'replan');
+    const [spec1] = replans();
+    assert.equal(spec1?.trigger_source, 'spec_change', 'the fixture is live: the spec change\'s replacement pending');
+    const sourceOf = (d) => replans().find((w) => w.id === runsOfProject(fx.home, p.id).find((r) => r.id === d.subject_id)?.work_item)?.trigger_source;
+    const approvalOf = (source, item) => openPlanApprovals(fx.home, p.id).find((d) => sourceOf(d) === source && (!item || runsOfProject(fx.home, p.id).find((r) => r.id === d.subject_id)?.work_item === item.id));
+    // Stage 1 parks; its blocker answered replan; that replacement approved: generation 2.
+    const s1 = stagesOfPlan(fx.home, plan.id)[0];
+    const blocker = await pumpNoIdle(fx, ctx, () => {
+      const w = stageWorkOf(fx.home, p.id, s1);
+      return w?.status === 'parked' ? openBlockerAbout(fx.home, w.id) : undefined;
+    }, { what: 'stage 1 parked', max: 60, answerKinds: NO_PLAN_ANSWER });
+    assert.equal((await answer(fx.engine, p.id, blocker, 'replan')).status, 200, 'the owner answers replan');
+    const forBlocker = await pumpNoIdle(fx, ctx, () => approvalOf('blocker_replan'), { what: 'the blocker\'s replacement awaiting the owner', max: 60, answerKinds: NO_PLAN_ANSWER });
+    const forSpec = approvalOf('spec_change');
+    assert.ok(forSpec, `the fixture is live: the spec change's replacement still awaits the owner (${JSON.stringify(replans().map((w) => [w.trigger_source, w.trigger_generation, w.status]))})`);
+    assert.equal((await answer(fx.engine, p.id, forBlocker, 'approve')).status, 200);
+    const g2 = await pumpNoIdle(fx, ctx, () => generationOf(fx.home, p.id, 1, 2)?.published_at ? generationOf(fx.home, p.id, 1, 2) : undefined, { what: 'generation 2 published', max: 20, answerKinds: NO_PLAN_ANSWER });
+    const lost = await answer(fx.engine, p.id, forSpec, 'approve');
+    assert.deepEqual([lost.status, lost.body?.code], [409, 'plan_generation_stale'], `the spec change's replacement refused stale (→ ${lost.status} ${lost.text})`);
+    // Sean's ruling (E171 item 5 H4): re-registered against the active generation.
+    const spec2 = await pumpNoIdle(fx, ctx, () => replans().find((w) => w.trigger_source === 'spec_change' && w.trigger_id === spec1.trigger_id && w.trigger_generation === 2), { what: 'the spec change\'s replan re-registered', max: 10, answerKinds: NO_PLAN_ANSWER }).catch(() => null);
+    assert.ok(spec2, `a spec change's replan refused stale is re-registered against the active generation 2, trigger_generation 2 (E171 item 5 H4; Sean's ruling) (replans ${JSON.stringify(replans().map((w) => [w.trigger_source, w.trigger_generation, w.status]))})`);
+    const ev = JSON.parse(spec2.trigger_evidence);
+    assert.deepEqual([ev.phase_plan, ev.generation, ev.evidence?.request, ev.from_work_item], [g2.id, 2, JSON.parse(spec1.trigger_evidence).evidence?.request, spec1.id], `its evidence names generation 2's plan, the request and the stale replan (${spec2.trigger_evidence})`);
+    const held = (await readPlan(fx, p.id)).plan?.completion_held_by;
+    assert.equal(held?.work_item, spec2.id, `completion_held_by names it (${JSON.stringify(held)})`);
+    assert.equal(generationOf(fx.home, p.id, 1, 2).completed_at ?? null, null, 'phase 1 not complete');
+    const forSpec2 = await pumpNoIdle(fx, ctx, () => approvalOf('spec_change', spec2), { what: 'the re-registered replacement awaiting the owner', max: 60, answerKinds: NO_PLAN_ANSWER });
+    assert.equal((await answer(fx.engine, p.id, forSpec2, 'approve')).status, 200);
+    const g3 = await pumpNoIdle(fx, ctx, () => generationOf(fx.home, p.id, 1, 3)?.published_at ? generationOf(fx.home, p.id, 1, 3) : undefined, { what: 'generation 3 published', max: 20, answerKinds: NO_PLAN_ANSWER });
+    assert.equal(JSON.parse(g3.replacement ?? 'null')?.trigger?.source, 'spec_change', `generation 3 carries the spec change (${g3.replacement})`);
+    await pumpNoIdle(fx, ctx, () => undefined, { max: 8, answerKinds: NO_PLAN_ANSWER }).catch(() => null);
+    assert.deepEqual(replans().filter((w) => w.trigger_source === 'spec_change').map((w) => w.trigger_generation), [1, 2], 'no third replan of the spec change');
   });
 });
