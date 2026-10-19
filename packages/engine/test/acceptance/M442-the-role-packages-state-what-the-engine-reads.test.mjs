@@ -28,12 +28,20 @@
 //        the governed-change permissions or the adoption rule;
 //   (a7) the Builder's: its stage's tasks, `implements`, integration
 //        obligations and its dependencies' interfaces, as registered;
-//   (a8) the registry (`GET /v1/harness/package-elements`) lists every id.
+//   (a8) the registry (`GET /v1/harness/package-elements`) lists every id;
+//   (a11) a `depends_on` entry of the Builder's stage that resolves to no
+//        active stage is named in `builder.dependency_interfaces`, as stored,
+//        in `depends_on` and in `unresolved` with its interfaces unknown
+//        (null, never []), never dropped (E171 item 5, H3; E163 item 7; the
+//        driver's ruling under Sean's delegation: named in the package).
 //
 // The packages are captured by `context_dump` on the reference journey of
 // M401 (Tally, T2) and on the retrofit journey of M408 (Sums, T1), driven on
-// the scripted backend through the owner's routes. A gap is listed with every
-// other gap of its package in one assertion.
+// the scripted backend through the owner's routes; (a11)'s on slice 37's
+// two-stage phase 1 (`twoStages`), its unresolvable entry planted by a direct
+// store write, as no owner's route reaches that state today (M434 (c)'s
+// pattern). A gap is listed with every other gap of its package in one
+// assertion.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
@@ -44,6 +52,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import {
   JOURNEY_POLICY,
+  ROUTED_KINDS,
   alphaReady,
   authoringScript,
   builderScript,
@@ -66,6 +75,8 @@ import {
 } from './harness/journey/drive.mjs';
 import { MODULES_JSON, architectFiles } from './harness/journey/reference.mjs';
 import { tickUntil } from './harness/runs.mjs';
+import { twoStages } from './harness/exec37/envelope.mjs';
+import { pumpHolding } from './harness/journey/change36.mjs';
 import { closeSession, openSession, packageOf, saveSession, sayAndSettle, scriptTurns, turnThatDumps } from './harness/sessions.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
@@ -287,5 +298,36 @@ describe('M442 (a2) the role packages in retrofit mode: the adopted repository',
     const disposition = adopted?.items?.properties?.dependency_boundary?.items?.properties?.disposition?.enum;
     if (JSON.stringify(disposition) !== JSON.stringify(['copied', 'replaced', 'application'])) problems.push(`check_authoring: result-schema.json adopted_tests[].dependency_boundary[].disposition copied | replaced | application (got ${JSON.stringify(disposition)})`);
     assertNoGaps(problems, 'the retrofit packages');
+  });
+});
+
+describe("M442 (a11) an unresolvable dependency is named in the Builder's package, never dropped (E171 item 5, H3; E163 item 7)", () => {
+  // An id naming no stage of any plan: what a dependency the store cannot
+  // resolve looks like in a stage row (registerPlan stores stage ids).
+  const PLANTED = 'stage_H3UNRESOLVABLE000000000000';
+
+  test("(a11) stage 2 depends on stage 1 and on an id naming no stage: its package states both, the unresolved one marked with its interfaces unknown, and stage 1's interfaces", async (t) => {
+    const J = await twoStages(t, { scripts: { 2: dumped(builderScript(2)) } });
+    const { fx, p, plan, stages } = J;
+    // Before any stage builds, the unresolvable entry is appended to stage 2's
+    // stored dependencies; its work item's milestones are left as published,
+    // so it dispatches at stage 1's integration as before.
+    const stored = withStore(fx.home, (db) => {
+      const row = db.prepare('SELECT "depends_on" FROM "stages" WHERE "id" = ?').get(stages[2].id);
+      const deps = [...json(row.depends_on), PLANTED];
+      db.prepare('UPDATE "stages" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(deps), stages[2].id);
+      return deps;
+    }, { readonly: false });
+    assert.deepEqual(stored, [stages[1].id, PLANTED], 'the fixture is live: stage 2 stores stage 1\'s id and the planted entry');
+    const own = (b) => packageReads(b.files).blocks['builder.tasks']?.stage === 2;
+    const build2 = await pumpHolding(fx, J.ctx, () => dumpsOfKind(fx, 'stage_build').find(own), { what: "stage 2's Builder to dump its package", answerKinds: ROUTED_KINDS.filter((k) => k !== 'plan_approval'), max: 120 });
+    const d = packageReads(build2.files).blocks['builder.dependency_interfaces'];
+    assert.ok(d, `stage 2's package carries builder.dependency_interfaces (${JSON.stringify(Object.keys(packageReads(build2.files).blocks))})`);
+    assert.ok(Array.isArray(d.depends_on) && d.depends_on.length === stored.length && d.depends_on.includes(1) && d.depends_on.includes(PLANTED),
+      `depends_on states every stored entry, stage 1 by its number and the unresolvable one as stored, none dropped (stored ${JSON.stringify(stored)}; stated ${JSON.stringify(d.depends_on)})`);
+    assert.deepEqual(d.unresolved, [{ entry: PLANTED, interfaces: null }], `the unresolvable entry is marked unresolved, its interfaces unknown (null, not []) (stated ${JSON.stringify(d.unresolved)})`);
+    const expected = dependencyInterfaces(fx.home, p.id, plan.id, { number: 2, depends_on: [1] });
+    const stated = (d.interfaces ?? []).filter((i) => i?.stage === 1).map((i) => `${i.module}:${i.name}`);
+    assert.deepEqual([...stated].sort(), [...expected].sort(), `stage 1's interfaces are still stated (${JSON.stringify(d.interfaces)})`);
   });
 });
