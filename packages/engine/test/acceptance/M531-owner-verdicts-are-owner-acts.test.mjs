@@ -67,6 +67,42 @@
 //     deltas untouched, refused naming the field, nothing consumed,
 //     confirmed or filed; the owner's edit dropping the link confirms.
 //
+// H5 (E171 item 5; Sean's ruling, 2026-10-19): a review session that ends
+// without recording a review leaves no review file where the design check
+// reads one. Before the session closes, the engine moves its unrecorded
+// `reviews/review-<n>.json` to `reviews/refused/<run>-review-<n>.json` (the
+// same blob) by one intent commit naming the run, and emits one
+// `design.review_refused`; later design checks and the review-recording step
+// skip `reviews/refused/`, and a Designer save writing there is refused
+// `diff_violation`:
+// (m) a review whose file fails the check, its close refused, closed with
+//     `refuse` with the file left in place: the file moved, the event, nothing
+//     recorded, asked or filed; out of active review (a review session writing
+//     no review file of its own, closed, records nothing; the next one's check
+//     passes, its close raises `design_verdicts` for its own review, and its
+//     save writing under `reviews/refused/` is refused `diff_violation`); its
+//     history kept (the same blob at the new path, the move in the head's
+//     history, the event). A rename the check or the recording still reads
+//     does not satisfy it.
+//
+// H2 (E171 item 5, E161 item 6; Sean's rulings and his refinement,
+// 2026-10-19), on a project of its own (M520 (f)'s shape: the design
+// approved, nothing built, owner-invoked reviews), with android holding two
+// screens, S2 and S5. A verdict is bound to the design version and to the
+// review's subject (`design_reviews.subject`: an owner build's `build_ref`,
+// else its `candidate`):
+// (n) a target's human test is judged on the newest reviewed build of the
+//     in-force design version, `owner_accepted` only when every screen of that
+//     target in the in-force screens.json has, on that build, a counting
+//     confirmed `matches`, the confirmed reviews of the build combining and
+//     the latest counting verdict per screen deciding. On build A: S2 alone
+//     matching, S5 matching on a simulation, S5's matching verdict struck, S5
+//     differing: pending each; S2 on a device and S5 on an emulator matching:
+//     owner accepted; a later confirmed `deltas` on S5: pending again. S5
+//     matching on a newer build B (S2 only on A): pending, builds never
+//     combining. Every screen matching on build C: owner accepted; a newer
+//     build D reviewed on S2 only: pending, C's acceptance not carried.
+//
 // No unit (kernel lane). No browser, emulator or device: the owner's words
 // are the evidence of these reviews (rule 22).
 
@@ -75,18 +111,19 @@ import { after, before, describe, test } from 'node:test';
 
 import { decisionsOn } from './harness/decisions.mjs';
 import { evaluate, sharedFixture } from './harness/gates.mjs';
+import { changedPaths, gitQuiet, isAncestor, listTree, messageOf, refOid, trailersOf } from './harness/repos.mjs';
 import { findingRow, missingFor, workFor } from './harness/checks/repair.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { definitionText } from './harness/checks/fixtures.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { step } from './harness/scripted.mjs';
-import { candidatesOfProject, evaluationsOfKind, pump, resultsOf } from './harness/journey/drive.mjs';
+import { candidatesOfProject, evaluationsOfKind, pump, readPace, resultsOf } from './harness/journey/drive.mjs';
 import { addWork, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { runRow, transcriptEntries } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { REQUIREMENTS } from './harness/design/reference.mjs';
 import { assertHoldsAccounted, inventoryOf, stageRow, toPublished } from './harness/design/drive.mjs';
-import { BEFORE_BUILD, KERNEL_KINDS, approveBatch, assertPassed, checkSession, designModel, filesOf, scriptVariant, untilBatch, variantOf } from './harness/design/check41.mjs';
+import { BEFORE_BUILD, DESIGN_DIR, KERNEL_KINDS, approveBatch, assertPassed, checkSession, designModel, filesOf, screenOf, scriptVariant, untilBatch, variantOf } from './harness/design/check41.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { approveReviewBatch, authoringByPhase, batchSpec, currentRevision, revisedHumanTests, specWriter } from './harness/design/plan44.mjs';
 import {
@@ -107,6 +144,7 @@ import {
   postReview,
   readDesign,
   reviewInDesign,
+  reviewEvents,
   reviewJson,
   reviewRow,
   verdictOf,
@@ -652,6 +690,146 @@ describe('M531 owner verdicts are owner acts (shared: Pantry with R3.2 failing o
     assert.equal(res.status, 200, `the owner's edit dropping the stale link confirms (${res.text})`);
     const [stale] = findingBy(fx.home, p.id, STALE);
     assert.deepEqual([stale?.criterion, stale?.check], [null, null], `filed with exactly the confirmed links: none (${JSON.stringify(stale)})`);
+  });
+
+  // ---- H5 (Sean's ruling, 2026-10-19) -------------------------------------------------------------
+
+  test('(m) H5: a review session closed with refuse, its unrecorded review file left in place: the engine moves the file to reviews/refused/<run>-review-<n>.json, the same blob, by one intent commit naming the run, and emits one design.review_refused; nothing recorded, asked or filed; out of active review (a session writing no review file records nothing; the next one\'s check passes, its close raises design_verdicts for its own review, its save writing under reviews/refused/ refused diff_violation); its history kept', async () => {
+    const { fx, p, ctx } = J;
+    const repo = p.repo.path;
+    const candidate = liveCandidate(fx.home, p.id);
+    let build = 'pantry-android 0.1.9 (build 16)';
+    const findingsBefore = findingsOf(fx.home, p.id).length;
+    const withVerdicts = reviewsCount(fx.home, p.id, true);
+    const eventsBefore = reviewEvents(fx.home, 'design.review_refused', p.id).length;
+    // A review file the check refuses: its verdict carries a status field ((a)'s).
+    const forged = reviewJson({ design_version: 2, subject: subjectOf(build, candidate.id), screens: [matches('device', { status: 'confirmed' })] });
+    const bad = await ownerReviewOf(fx, p.id, { build, candidate: candidate.id, turns: [{ files: { [REVIEW_FILE(10)]: forged }, say: 'It all matches on my phone.', done: true }] });
+    assert.deepEqual([bad.out.close.status, bad.out.close.body?.code], [422, 'design_check_failed'], `the close refused (${bad.out.close.text?.slice(0, 300)})`);
+    const headBefore = refOid(repo, p.repo.ref);
+    const entry = listTree(repo, headBefore)[REVIEW_FILE(10)];
+    assert.ok(entry, `the fixture is live: the session's save put ${REVIEW_FILE(10)} in the head`);
+    const blob = entry.split(/\s+/)[2];
+    // Closed with refuse, the file left where the Designer wrote it.
+    const refused = await postCloseRaw(fx, p.id, bad.run.id, { refuse: true });
+    assert.equal(refused.status, 200, `closed with refuse (${refused.status} ${refused.text?.slice(0, 300)})`);
+    assert.equal(runRow(fx.home, bad.run.id)?.state, 'ended', 'the session ended');
+    const moved = `${DESIGN_DIR}reviews/refused/${bad.run.id}-review-10.json`;
+    const headAfter = refOid(repo, p.repo.ref);
+    const tree = listTree(repo, headAfter);
+    assert.deepEqual([tree[REVIEW_FILE(10)] ?? null, tree[moved] ?? null], [null, entry], `the head holds the unrecorded file at ${moved}, the same blob, and not at ${REVIEW_FILE(10)} (H5)`);
+    const touching = gitQuiet(repo, ['rev-list', `${headBefore}..${headAfter}`]).split('\n').filter(Boolean).filter((c) => Object.keys(changedPaths(repo, `${c}^`, c)).some((x) => x.startsWith(`${DESIGN_DIR}reviews/`)));
+    assert.equal(touching.length, 1, `one commit moves it (${touching.join(', ')})`);
+    assert.deepEqual(changedPaths(repo, `${touching[0]}^`, touching[0]), { [REVIEW_FILE(10)]: 'D', [moved]: 'A' }, 'the commit is the move');
+    assert.deepEqual(trailersOf(repo, touching[0])['Surety-Kind'], ['intent'], 'an engine intent commit');
+    assert.ok(messageOf(repo, touching[0]).includes(bad.run.id), `naming the run (${messageOf(repo, touching[0])})`);
+    const events = reviewEvents(fx.home, 'design.review_refused', p.id).slice(eventsBefore);
+    assert.equal(events.length, 1, 'one design.review_refused');
+    const said = JSON.stringify([events[0].subject, events[0].payload]);
+    for (const x of [bad.run.id, 'reviews/review-10.json', blob, `reviews/refused/${bad.run.id}-review-10.json`]) assert.ok(said.includes(x), `the event names ${x} (${said})`);
+    // Nothing recorded, asked or filed.
+    assert.deepEqual(reviewRow(fx.home, bad.review)?.verdicts ?? [], [], 'no verdict recorded');
+    assert.equal(reviewsCount(fx.home, p.id, true), withVerdicts, 'no review recorded with verdicts');
+    assert.deepEqual(decisionsOn(fx.home, 'design_verdicts', bad.review), [], 'no design_verdicts');
+    assert.equal(findingsOf(fx.home, p.id).length, findingsBefore, 'nothing filed');
+    // Out of active review: a review session that writes no review file of its own, closed,
+    // records nothing; the refused file is not taken as its review.
+    const empty = await ownerReviewOf(fx, p.id, { build: 'pantry-android 0.1.9 (build 16)', candidate: candidate.id, turns: [{ reply: 'Nothing to record.', say: 'I have not run a build yet; close it.', done: true }] });
+    assert.equal(empty.out.close.status, 200, `the close of a review session with no review file (${empty.out.close.text?.slice(0, 300)})`);
+    assert.deepEqual(empty.out.close.body?.decisions, [], `the refused file is not recorded as its review: nothing raised (${JSON.stringify(empty.out.close.body?.decisions)})`);
+    assert.equal(reviewsCount(fx.home, p.id, true), withVerdicts, 'still no review recorded with verdicts');
+    // The next review session: a save writing under reviews/refused/ refused whole; the
+    // Designer removes that file; the check passes; the close records its own review.
+    build = 'pantry-android 0.2.0 (build 17)';
+    const planted = `${DESIGN_DIR}reviews/refused/planted-review-1.json`;
+    const honest = reviewJson({ design_version: 2, subject: subjectOf(build, candidate.id), screens: [matches()] });
+    const next = await ownerReviewOf(fx, p.id, {
+      build,
+      candidate: candidate.id,
+      turns: [
+        { files: { [REVIEW_FILE(11)]: honest, [planted]: honest }, say: 'It matches on my phone.' },
+        { steps: [step.delete(planted)], reply: 'The file under refused/ is removed.', say: 'Keep only the review.', done: true },
+      ],
+    });
+    const [plantedSave, cleanSave] = next.out.saves;
+    assert.deepEqual([plantedSave.status, plantedSave.body?.code], [422, 'diff_violation'], `a Designer save writing under reviews/refused/ refused (${plantedSave.status} ${plantedSave.text?.slice(0, 300)})`);
+    assert.equal(cleanSave.body?.design_check?.outcome, 'passed', `the check passes, the refused file skipped (${JSON.stringify(cleanSave.body?.design_check)})`);
+    assert.equal(next.out.close.status, 200, `the close (${next.out.close.text?.slice(0, 300)})`);
+    const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, next.review) ?? undefined, { what: 'design_verdicts for the new review', max: 10 });
+    assert.equal(verdictOf(reviewRow(fx.home, verdicts.subject_id), 'android', S2)?.verdict, 'matches', 'the new review recorded from its own file');
+    assert.equal(runRow(fx.home, next.run.id)?.state, 'ended', 'no session left open');
+    // Its history kept: the same blob at the new path, the move in the branch's history.
+    const head = refOid(repo, p.repo.ref);
+    assert.equal(listTree(repo, head)[moved], entry, 'the refused file kept at its new path, the same blob');
+    assert.ok(isAncestor(repo, touching[0], head), 'the move commit in the history of the head');
+  });
+});
+
+// ---- H2 (Sean's rulings, 2026-10-19) ----------------------------------------------------------------
+
+// designModel's Pantry with a second android screen, S5 (S2's, reached by a
+// push from S2, on S2's simulated mockup), and android's human test naming
+// both screens.
+const S5 = 'S5';
+function twoScreenModel(inventory) {
+  return variantOf(designModel(inventory), (m) => {
+    const s2 = screenOf(m, S2);
+    m.screens.screens.push({ ...structuredClone(s2), key: S5, title: 'Pantry, one item', flow_steps: ['F1.1'], interfaces: [], states: [], inputs: [], conventions: { ...structuredClone(s2.conventions), back: 'returns to the list' } });
+    m.design.mockups.find((x) => x.screens.includes(S2)).screens.push(S5);
+    m.navigation.targets.find((t) => t.target === 'android').edges.push({ from: S2, to: S5, trigger: 'open an item', kind: 'push' });
+    const android = m.criteria.human_tests.find((h) => h.target === 'android');
+    const conventions = [...new Set(android.not_checkable_yet.map((x) => x.convention))];
+    android.text = android.text.replace(/screen S2/, 'screens S2 and S5');
+    android.screens = [S2, S5];
+    android.not_checkable_yet = android.screens.flatMap((screen) => conventions.map((convention) => ({ screen, convention })));
+  });
+}
+
+describe('M531 (n) H2: a target\'s human test needs every screen of the target on one build (own project: Pantry with S2 and S5 on android, the design approved, nothing built)', () => {
+  const shared = sharedFixture();
+  after(shared.cleanup);
+
+  test('(n) H2: owner_accepted only when, on the newest reviewed build of the in-force design version, every android screen of the in-force screens.json has a counting confirmed matches, the latest counting verdict per screen of that build deciding: S2 alone, S5 on a simulation, S5 struck, S5 differing: pending; S2 and S5 matching on one build: owner accepted; a later deltas on that build: pending again; S2 on one build and S5 on a newer one: pending; a newer build reviewed on S2 only: pending', async () => {
+    const fx = await scriptedEngine(shared.context);
+    const { p } = await toPublished(fx, { policy: BEFORE_BUILD, name: 'pantry-screens' });
+    const model = twoScreenModel(inventoryOf(p));
+    const v2 = batchSpec({ base: REQUIREMENTS, criteria: model.criteria });
+    const ctx = scriptVariant(fx, p, v2);
+    const session = await checkSession(fx, p.id, [{ name: 'the design with S5', model }]);
+    assertPassed(session.saves[0].res, 'the design with S2 and S5 on android');
+    const closed = await postCloseRaw(fx, p.id, session.run.id, {});
+    assert.equal(closed.status, 200, `the close (${closed.text?.slice(0, 300)})`);
+    await approveBatch(fx, ctx, await untilBatch(fx, ctx));
+    const status = async () => humanTestOf(await readDesign(fx, p.id), 'android')?.status;
+    await pump(fx, ctx, async () => ((await status()) ? true : undefined), { what: 'the android human test on GET …/design', max: 40 });
+    let n = 0;
+    // One owner-invoked review of `build` (its subject's build_ref; no candidate named) holding
+    // `screens`, confirmed (`strikes` struck); the android human test's status after it.
+    const reviewed = async (build, screens, strikes = []) => {
+      n += 1;
+      const r = await ownerReviewOf(fx, p.id, { build, turns: [{ files: { [REVIEW_FILE(n)]: reviewJson({ subject: subjectOf(build), screens }) }, say: 'What I saw on my build.', done: true }] });
+      assert.equal(r.out.close.status, 200, `review ${n}: the close (${r.out.close.text?.slice(0, 300)})`);
+      const verdicts = await pump(fx, ctx, () => openVerdicts(fx.home, p.id, r.review) ?? undefined, { what: `review ${n}: design_verdicts`, max: 10 });
+      const res = await confirmWith(fx, p.id, verdicts, strikes.length > 0 ? { strikes } : {});
+      assert.equal(res.status, 200, `review ${n}: confirmed (${res.text})`);
+      return status();
+    };
+    const [A, B, C, D] = ['pantry-android 1.0.1 (build 1)', 'pantry-android 1.0.2 (build 2)', 'pantry-android 1.0.3 (build 3)', 'pantry-android 1.0.4 (build 4)'];
+    const s5 = (verdict, observed_on, deltas = []) => ({ target: 'android', key: S5, verdict, observed_on, evidence: [], deltas });
+    const differs = [{ owner_words: 'The item screen shows no quantity.', kind: 'implementation' }];
+    // Build A: every review of it combines, the latest counting verdict per screen deciding.
+    assert.equal(await reviewed(A, [matches('device')]), 'pending', '(1) build A: S2 matches on a device, S5 unreviewed: pending (H2)');
+    const owed = ((await readPace(fx, p.id)).human_tests ?? []).find((h) => h.requirement === v2.humanKeys.android);
+    assert.equal(owed?.status, 'owed', `(1) the pace read: still owed (${JSON.stringify(owed)})`);
+    assert.equal(await reviewed(A, [s5('matches', 'simulation')]), 'pending', '(3) build A: S5 matches on a simulation: never counted, pending');
+    assert.equal(await reviewed(A, [s5('matches', 'device')], [{ target: 'android', screen: S5 }]), 'pending', '(3) build A: S5\'s matches struck: unreviewed, pending');
+    assert.equal(await reviewed(A, [matches('device'), s5('deltas', 'device', differs)]), 'pending', '(2) build A: S2 matches, S5 differs: pending');
+    assert.equal(await reviewed(A, [matches('device'), s5('matches', 'emulator')]), 'owner_accepted', '(4) build A: S2 on a device and S5 on an emulator match: owner accepted (the control)');
+    assert.equal(await reviewed(A, [s5('deltas', 'device', differs)]), 'pending', '(5) build A: a later confirmed deltas on S5 revokes it, pending');
+    // Builds never combine: the newest reviewed build is judged alone.
+    assert.equal(await reviewed(B, [s5('matches', 'device')]), 'pending', '(6) S2 matches on build A, S5 on the newer build B: pending (verdicts of different builds never combine)');
+    assert.equal(await reviewed(C, [matches('device'), s5('matches', 'device')]), 'owner_accepted', '(7) build C: every screen matches: owner accepted');
+    assert.equal(await reviewed(D, [matches('device')]), 'pending', '(7) the newer build D reviewed on S2 only: pending (C\'s acceptance does not carry to D)');
   });
 });
 

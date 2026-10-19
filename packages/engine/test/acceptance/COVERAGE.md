@@ -4778,3 +4778,26 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 
 **What was run, 2026-10-19, on `main` `4e05624` plus this case.** On the workstation, the engine's start recorded no `host_qualifications` row (only `engine.mode_changed` and `engine.started`), so the runner self-test was never recorded: M510's `before` timed out after 300 s, and so did the accepted M221 (a). The cause was not established. The agent sessions there run in the system's `/init.scope`, but another engine started from that scope did get its incarnation scope. The file was therefore run on mini-hp01 instead, in a fresh clone (`~/vf8`), with `npm install` (the lockfile change reverted), `npm run build`, `TMPDIR=/var/tmp/vf8` (`/tmp` there is tmpfs, which the engine refuses), and the file alone with `node --test`:
 - **`M510` 7/8**, 85 s. (a) to (g) pass. (h) fails on all four previews: `memory_peak` is `null` on each row, while the host read 29,683,712, 29,863,936, 29,609,984 and 29,474,816 bytes of their domains' `memory.peak` while they served. The pace-read half of (h) was not reached. No `surety-*` unit was left.
+
+## A human test's scope, and a refused review's file (H2, H5; E171 item 5; Sean's rulings and his refinement of 2026-10-19)
+
+2026-10-19, by the Verifier, on `verify/h2h5`, cut from `main` `0634d11`. No new row and no harness file changed. The cases reuse M531's own helpers (`ownerReviewOf`, `confirmWith`, `liveCandidate`) and `review45.mjs`'s `reviewEvents`, `repos.mjs`'s git reads and `check41.mjs`'s model. SEAM.md §552 sets out the rules, and §§502 and 524 are amended to match.
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| H5 | M531 (m) | `M531-owner-verdicts-are-owner-acts.test.mjs` (9 → 11), after (l) in the shared fixture | A review file whose verdict carries `status`; the close refused 422 `design_check_failed`; closed with `refuse`, the file left in place: 200, the run ended. The head holds the file at `reviews/refused/<run>-review-10.json` (the same blob) and not at `reviews/review-10.json`, through one commit that changes only those paths, `Surety-Kind: intent`, naming the run. One `design.review_refused` names the run, both paths and the blob. No verdict, no `design_verdicts`, no finding. A review session that writes no review file, closed: `decisions: []`, nothing recorded. The next review session: a save writing under `reviews/refused/` is refused 422 `diff_violation`; once the Designer removes that file, the check passes; the close raises `design_verdicts` for its own review, which is recorded from its own file. The refused file is kept at its new path and the move stays in the head's history | written; fails on `main` |
+| H2 | M531 (n) | the same, its own `describe` and project (M520 (f)'s shape: `before_build`, the design approved, nothing built) | Pantry with S2 and S5 on android, each owner-invoked review confirmed. Build A: S2 `matches` (device) alone, then S5 `matches` on `simulation`, then S5 `matches` struck, then S2 `matches` with S5 `deltas`: `pending` each, and the pace read still `owed`. Then S2 (device) and S5 (emulator) `matches`: `owner_accepted`. A later S5 `deltas` on A: `pending`. S5 `matches` on the newer build B: `pending`. Build C with both `matches`: `owner_accepted`. The newer build D reviewed on S2 only: `pending` | written; fails on `main` |
+
+**What was run, 2026-10-19, on `main` `0634d11` plus these cases** (`npm ci`, `npm run build`, `TMPDIR=/tmp/v-h2h5`, the file alone with `node --test`):
+- **`M531` 9/11.** (a) to (l) pass.
+- (m) fails at the move. After `refuse`, the head still holds `.surety/design/reviews/review-10.json` and nothing under `reviews/refused/`.
+- (n) fails at its first review: "(1) build A: S2 matches on a device, S5 unreviewed: pending (H2)", actual `owner_accepted`.
+- **The cases' later steps were also exercised on `main`**, in a throwaway copy of the file that was not committed:
+  - In (m), a Designer turn deleted `review-10.json` to stand in for the move. The session with no review file then closed 200 with nothing raised. The next session's clean save passed and its close raised `design_verdicts`. The planted save was 200, as expected on `main`.
+  - In (n), each status assertion was replaced by a log line. All nine reviews closed and were confirmed. `main` answered `owner_accepted` after every one of them.
+
+**Existing cases under the rulings:**
+- M531 (d), M520 (f) and M536 (j) each judge a target with a single screen on its newest reviewed build, so they hold.
+- M516 (f) asserts only "not `verified`" for web and `pending` for android, so it holds.
+- M531 (j)'s hand deletion before its `refuse` close leaves nothing for the engine to move. It is not wrong under H5, so no objection is filed.
+- The protocol close (idle timeout or budget) is in the ruling but not exercised.
