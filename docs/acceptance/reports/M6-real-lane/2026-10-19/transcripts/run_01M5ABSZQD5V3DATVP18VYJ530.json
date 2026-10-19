@@ -1,0 +1,74 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M5ABTCVKY0SE8CVE5HQWK6AX",
+  "created_at": "2026-10-19T15:17:28.050Z",
+  "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+  "project_name": "m6-m535-waterlog",
+  "run": "run_01M5ABSZQD5V3DATVP18VYJ530",
+  "role": "designer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-19T15:17:28.050Z",
+      "text_ref": "rec_01M5ABTCWAX96QS1QE79HSK8YB",
+      "text": "I'm the driver, acting for Sean (the owner). This is a second review of the web target, on Sean's instruction: when he confirmed the first review (`review-1.json`, design_review drv_01M5ABABP9Z2WP3P7VC3TR2PSX) he struck its web verdict by mistake, so its four implementation deltas were not filed. He asked for this second web review so that he can confirm the web verdict properly. I make no design decision here; Sean confirms, edits or strikes your verdicts himself.\n\nThe build is the same web Alpha: candidate cand_01M5A50BX0WWHJX5Q2QXJCSR6K, deployment op_01M5A5C2X45NYG1Y3JC5RRWS9F. Nothing has changed since the first review. What I observed of it through the relay, as HTTP reads only (no browser rendered it):\n\n- `/` returns 200 \"Waterlog\": skip link \"Skip to the plants\", header logo `/assets/logo.svg` (alt \"Waterlog\", 108x36), `main#plants` in `state-loading` (`aria-busy=\"true\"`, \"Loading plants…\" in a `role=\"status\"` summary, three skeletons). Headers: `Content-Security-Policy: default-src 'self'`, `X-Content-Type-Options: nosniff`.\n- `/tokens.css` is byte-identical to `public/tokens.css` on main; `/styles.css` has `prefers-reduced-motion` and `focus-visible` rules; `/app.mjs` has \"Loading plants…\", \"No plants yet.\", \"Due\", \"Watered just now\", \"Can't reach Waterlog.\", \"Try again\" and \"Couldn't log the watering. Try again.\"\n- `/favicon.svg` returns 404.\n- The served logo is the placeholder (`PLACEHOLDER (on_dark)`): this candidate was deployed at 13:24 UTC, before the logo's asset-only approval at 15:00; main holds the approved on_dark logo (53efa50, logo@2), not yet deployed.\n- Not seen: layout at any width, contrast, focus rings, motion.\n\nPlease review the web Plant list for this build and write `.surety/design/reviews/` as your instructions say: a verdict per web screen and state, the deltas with their kind, and where each verdict rests on a reading of the source rather than an observation. Your first review's findings are in `review-1.json` if they help; judge afresh rather than copying. Nothing was rendered, so do not claim a rendering in `observed_on`. Then save the review.\n"
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-19T15:19:06.180Z",
+      "text_ref": "rec_01M5ABXCNW3RGVRW9HRAPST00V",
+      "text": "I wrote the second web review to `.surety/design/reviews/review-2.json`. I judged the build again from the candidate's source (design/source/public) and from your HTTP reads, rather than copying review-1.\n\n**Verdict for web-plant-list: deltas.** I left `observed_on` out because nothing was rendered, and `evidence` is empty because this session holds no evidence. The subject is the build you named (owner_build, cand_01M5A50BX0WWHJX5Q2QXJCSR6K / op_01M5A5C2X45NYG1Y3JC5RRWS9F), reviewed against design version 4. I gave no verdict for android, since this review covers only the web target.\n\n**Each state, and what my judgement rests on:**\n- list_plants loading: matches. You saw it in the served HTML (data-state, aria-busy, role=status \"Loading plants…\", three skeletons).\n- list_plants ok, empty, error:method_not_allowed, error:internal: the wording, state markers and row structure match the approved mockups. I read this from app.mjs and styles.css; none of it was observed.\n- log_watering loading, ok, and the four errors: the wording and row states match, also read from the source. There are two keyboard and screen-reader deltas (below).\n- Layout at 360/720/1280, contrast, focus rings and motion were not observed. The CSS rules for them are in place, and the candidate's checks r3-layout, r3-focus-motion and r3-tokens passed. That is a reading, not a rendering.\n\n**The deltas:**\n1. **Placeholder logo** (implementation; you reported it and the source confirms it). The fix is to deploy from main, where the approved on_dark logo already is. I named no criterion: R3.6 allowed the placeholder until the approval at 15:00, and this build came before it. If you want the redeploy tied to R3.17 / r3-logo, you can add that when you confirm.\n2. **No favicon**, /favicon.svg answers 404 (implementation). The fix is to serve design/assets/favicon/default.svg and link it with rel=icon. No criterion covers the favicon.\n3. **log_watering loading:** keyboard focus falls to the page body while a watering logs (implementation; read from the source).\n4. **log_watering ok:** the success live region is recreated with its text already in it, so the confirmation may not be announced (implementation; read from the source).\n5. **New this time.** After Try again on the error state, focus is lost (kind both; read from the source). The design does not say where focus goes after a retry. I propose that focus returns to Try again if the retry fails, and moves to the Plants heading if the list loads.\n\nDeltas 1–4 are the four from review-1. I re-checked each against the source, and they still hold. Delta 5 is new. Because it is kind both, confirming it would also mean revising the design's keyboard path. You can strike it on its own if you don't want that now. Every verdict here is a proposal for you to confirm, edit or strike. I did not change the design itself."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-19T15:19:22.366Z",
+      "text_ref": "rec_01M5ABXWGNQ97AX1D5DTFX2989",
+      "text": "Thank you. Both questions are Sean's to settle when he confirms, edits or strikes your verdicts, so please leave review-2 exactly as you wrote it. Nothing more for this session.\n"
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-19T15:19:44.609Z",
+      "text_ref": "rec_01M5ABYJ6SGYYB7BQTGK2W41X0",
+      "text": "Understood. I've left `.surety/design/reviews/review-2.json` exactly as I wrote it and changed nothing else under `.surety/design/`. The two open points are yours to settle when you confirm, edit or strike the verdicts: whether to tie the logo redeploy to R3.17 / r3-logo, and whether to accept delta 5 (focus after Try again), which would also mean revising the design's keyboard path. I'm proposing to close the session."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M5ABTCWAX96QS1QE79HSK8YB",
+      "sha256": "4741220807965f2ee9d79200973deefe2b6df8feee2221b61d4ae1c6488d0d33",
+      "bytes": 2121,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5ABXCNW3RGVRW9HRAPST00V",
+      "sha256": "d7fd5a824f62ea497a8082a993e4c9bf2eaf68ed3a4f2332e963ea33ce28357e",
+      "bytes": 2875,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5ABXWGNQ97AX1D5DTFX2989",
+      "sha256": "bd2483eda108039f3e73e8a059c089106c8f5e41d0f634b1c889f1d1bf920a4f",
+      "bytes": 178,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M5ABYJ6SGYYB7BQTGK2W41X0",
+      "sha256": "45a3ffbc1784c45f50a05d0eb57c15943cd25d7647ac56b1efec26e5e0310ab5",
+      "bytes": 422,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

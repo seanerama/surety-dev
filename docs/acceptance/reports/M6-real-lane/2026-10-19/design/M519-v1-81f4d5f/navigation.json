@@ -1,0 +1,104 @@
+{
+  "targets": [
+    {
+      "target": "web",
+      "entries": [
+        "momentum-lab",
+        "friction-lab",
+        "trajectory-lab"
+      ],
+      "edges": [
+        {
+          "from": "momentum-lab",
+          "to": "friction-lab",
+          "trigger": "Friction tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "friction-lab",
+          "to": "momentum-lab",
+          "trigger": "browser Back after switching from Momentum to Friction",
+          "kind": "back"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "trajectory-lab",
+          "trigger": "Trajectory tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "trajectory-lab",
+          "to": "momentum-lab",
+          "trigger": "browser Back after switching from Momentum to Trajectory",
+          "kind": "back"
+        },
+        {
+          "from": "friction-lab",
+          "to": "momentum-lab",
+          "trigger": "Momentum tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "friction-lab",
+          "trigger": "browser Back after switching from Friction to Momentum",
+          "kind": "back"
+        },
+        {
+          "from": "friction-lab",
+          "to": "trajectory-lab",
+          "trigger": "Trajectory tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "trajectory-lab",
+          "to": "friction-lab",
+          "trigger": "browser Back after switching from Friction to Trajectory",
+          "kind": "back"
+        },
+        {
+          "from": "trajectory-lab",
+          "to": "momentum-lab",
+          "trigger": "Momentum tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "trajectory-lab",
+          "trigger": "browser Back after switching from Trajectory to Momentum",
+          "kind": "back"
+        },
+        {
+          "from": "trajectory-lab",
+          "to": "friction-lab",
+          "trigger": "Friction tab (click, or ←/→ in the tab bar)",
+          "kind": "tab"
+        },
+        {
+          "from": "friction-lab",
+          "to": "trajectory-lab",
+          "trigger": "browser Back after switching from Trajectory to Friction",
+          "kind": "back"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "momentum-lab",
+          "trigger": "open the address /?lab=momentum directly (bookmark or shared link)",
+          "kind": "deep_link"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "friction-lab",
+          "trigger": "open the address /?lab=friction directly (bookmark or shared link)",
+          "kind": "deep_link"
+        },
+        {
+          "from": "momentum-lab",
+          "to": "trajectory-lab",
+          "trigger": "open the address /?lab=trajectory directly (bookmark or shared link)",
+          "kind": "deep_link"
+        }
+      ]
+    }
+  ]
+}

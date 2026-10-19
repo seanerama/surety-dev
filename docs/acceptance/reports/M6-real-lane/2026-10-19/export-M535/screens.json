@@ -1,0 +1,281 @@
+{
+  "screens": [
+    {
+      "key": "web-plant-list",
+      "target": "web",
+      "title": "Plant list",
+      "flow_steps": [
+        "open-list",
+        "see-due",
+        "log-watering",
+        "see-elsewhere"
+      ],
+      "requirements": [
+        "R3",
+        "R5"
+      ],
+      "interfaces": [
+        "list_plants",
+        "log_watering"
+      ],
+      "states": [
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "list_plants",
+            "state": "loading"
+          },
+          "mockup": "mockups/web/plant-list-loading.html",
+          "fixture": "inventory/fixtures/list_plants.loading.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "list_plants",
+            "state": "error:method_not_allowed"
+          },
+          "mockup": "mockups/web/plant-list-unreachable.html",
+          "fixture": "inventory/fixtures/list_plants.error:method_not_allowed.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "list_plants",
+            "state": "error:internal"
+          },
+          "mockup": "mockups/web/plant-list-unreachable.html",
+          "fixture": "inventory/fixtures/list_plants.error:internal.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "list_plants",
+            "state": "empty"
+          },
+          "mockup": "mockups/web/plant-list-empty.html",
+          "fixture": "inventory/fixtures/list_plants.empty.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "list_plants",
+            "state": "ok"
+          },
+          "mockup": "mockups/web/plant-list-ok.html",
+          "fixture": "mockups/data/list_plants.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "loading"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.loading.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "error:invalid_name"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:invalid_name.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "error:plant_not_found"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:plant_not_found.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "error:method_not_allowed"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:method_not_allowed.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "error:internal"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:internal.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "log_watering",
+            "state": "ok"
+          },
+          "mockup": "mockups/web/plant-list-watering.html",
+          "fixture": "mockups/data/log_watering.ok.json"
+        }
+      ],
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "conventions": {
+        "route": "/",
+        "browser_back": "One page with no in-page history: nothing is pushed on the history stack, so Back leaves Waterlog to the previous page, and Forward returns to a freshly loaded list.",
+        "keyboard_path": "Tab order: Skip to the plants, then each plant's Watered button in list order (Try again in the unreachable state). Enter or Space activates. Focus stays on a row's button while it logs and after it succeeds; a failure's message is announced (role=alert) and focus stays on the button so it can be retried. A success shows 'Logged a watering for <name>.' in a polite live region above the list.",
+        "hover": "Buttons brighten slightly on hover; nothing is revealed on hover only.",
+        "context_menu": "The browser's own; Waterlog adds none."
+      },
+      "notes": "Layouts: 360 stacks each row (name with its Due label, interval, last watering, then a full-width Watered button at least 48 px tall); 720 puts the button, at least 160 px wide, at the row's right; 1280 lays each row out as columns name | interval | last watering | button in a 960 px column. Last watering shows as a local date and time, or 'Never watered'. Due is the text label 'Due' (bold, outlined amber pill with a drop glyph) plus a thick amber left edge and an amber-tinted card, never colour alone. A row just watered shows the text 'Watered just now' with a check, in the done colours. Text is at least 16 px (body 18 px), and interval and last watering carry their values in bold. list_plants errors (405, 500) and an unreachable service all show 'Can't reach Waterlog.' with Try again; every log_watering error (400, 404, 405, 500) keeps the row as it was and shows 'Couldn't log the watering. Try again.' under it. The header uses the logo slot's on_dark variant on header_bg, the same in both themes. State markers: the screen's root carries data-state (web) or testID (android) set to one of state-loading, state-ok, state-empty, state-unreachable; each plant row carries data-row-state (web) or testID suffix (android) idle, watering, failed or watered. The web module draws it in public/index.html (the one page that draws every state of this screen), styled from public/tokens.css (the CSS binding of tokens.json)."
+    },
+    {
+      "key": "android-plant-list",
+      "target": "android",
+      "title": "Plant list",
+      "flow_steps": [
+        "open-list",
+        "see-due",
+        "log-watering",
+        "see-elsewhere"
+      ],
+      "requirements": [
+        "R4",
+        "R5"
+      ],
+      "interfaces": [
+        "list_plants",
+        "log_watering"
+      ],
+      "states": [
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "list_plants",
+            "state": "loading"
+          },
+          "mockup": "mockups/android/plant-list-loading.html",
+          "fixture": "inventory/fixtures/list_plants.loading.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "list_plants",
+            "state": "error:method_not_allowed"
+          },
+          "mockup": "mockups/android/plant-list-unreachable.html",
+          "fixture": "inventory/fixtures/list_plants.error:method_not_allowed.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "list_plants",
+            "state": "error:internal"
+          },
+          "mockup": "mockups/android/plant-list-unreachable.html",
+          "fixture": "inventory/fixtures/list_plants.error:internal.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "list_plants",
+            "state": "empty"
+          },
+          "mockup": "mockups/android/plant-list-empty.html",
+          "fixture": "inventory/fixtures/list_plants.empty.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "list_plants",
+            "state": "ok"
+          },
+          "mockup": "mockups/android/plant-list-ok.html",
+          "fixture": "mockups/data/list_plants.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "loading"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.loading.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "error:invalid_name"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:invalid_name.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "error:plant_not_found"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:plant_not_found.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "error:method_not_allowed"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:method_not_allowed.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "error:internal"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "inventory/fixtures/log_watering.error:internal.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "interface": "log_watering",
+            "state": "ok"
+          },
+          "mockup": "mockups/android/plant-list-watering.html",
+          "fixture": "mockups/data/log_watering.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "android",
+            "permission": "android.permission.INTERNET",
+            "state": "permission_denied:android.permission.INTERNET"
+          },
+          "mockup": "mockups/android/plant-list-unreachable.html"
+        }
+      ],
+      "layouts": [
+        "phone-portrait",
+        "phone-landscape"
+      ],
+      "conventions": {
+        "back": "The root and only screen: system Back (button or edge gesture) leaves the app as Android does by default; Waterlog intercepts nothing.",
+        "permissions": [
+          {
+            "permission": "android.permission.INTERNET",
+            "when": "install time, granted by the system without asking; the app makes no runtime request and shows no prompt",
+            "denied": "if the network is unavailable to the app, the list shows 'Can't reach Waterlog.' with Try again, as for an unreachable service"
+          }
+        ],
+        "gestures": "Taps only: Watered on a row, Try again on the unreachable state. No swipe, long-press or pull-to-refresh; touch targets are at least 48 dp."
+      },
+      "notes": "Same workflow, wording and states as the web screen. Portrait lists one card per row, each with a full-width Watered button at least 48 dp tall under the plant's details, in thumb reach; landscape lists cards in two columns, in the API's order read row by row. A successful watering shows the confirmation 'Logged a watering for <name>.' at the top of the list, as on the web, and the row shows 'Watered just now'. The app bar shows the logo slot's on_dark variant on header_bg. Drawn as simulated_html mockups only; android/simulation/index.html draws the List (a due and a watered plant), Empty and Unreachable states from these. State markers: the screen's root carries data-state (web) or testID (android) set to one of state-loading, state-ok, state-empty, state-unreachable; each plant row carries data-row-state (web) or testID suffix (android) idle, watering, failed or watered. Due is the text label 'Due' (bold, outlined amber pill with a drop glyph) plus a thick amber left edge and an amber-tinted card, never colour alone. Text is at least 16 dp (body 18 dp). The android module builds every request of this screen on the one base URL in android/src/config.js, and android/simulation/index.html is the labelled preview of this screen's List, Empty and Unreachable states."
+    }
+  ]
+}

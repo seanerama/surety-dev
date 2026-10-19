@@ -1,0 +1,46 @@
+{
+  "searched_at": "2026-10-19T18:18:36.460Z",
+  "by": "the Verifier of M540, /tmp/vm540/q/tokensearch.cjs (not kept): each secret file read by path inside the search process only; the value and any part of it never printed or written",
+  "root": "docs/acceptance/reports/M6-real-lane/2026-10-19 (this directory, this file included)",
+  "forms": [
+    "raw",
+    "json-escaped",
+    "base64",
+    "base64 unpadded"
+  ],
+  "results": [
+    {
+      "secret_file": "/home/smahoney/.config/surety/m5-subscription.token",
+      "files_searched": 190,
+      "unreadable": 0,
+      "hits": 0,
+      "hit_paths": []
+    },
+    {
+      "secret_file": "/home/smahoney/.config/surety/claude-subscription.token",
+      "files_searched": 190,
+      "unreadable": 0,
+      "hits": 0,
+      "hit_paths": []
+    }
+  ],
+  "runs_own_searches": {
+    "M519": {
+      "records_token_hits": 0,
+      "transcript_token_hits": 0,
+      "teardown_journals": 21,
+      "journal_hits": 0
+    },
+    "M535": {
+      "records_token_hits": 0,
+      "transcript_token_hits": 0,
+      "teardown_journals": 33,
+      "journal_hits": 0
+    },
+    "source": "observed/M519.json and observed/M535.json (records.token, records.transcript_token_hits, m6w_teardown and m6x_teardown journal_search)"
+  },
+  "not_searched_by_value": [
+    "the engine home api.token (a credential not to be read; only its path appears in the act records)",
+    "the run directory deploy secret secrets/ref_secret"
+  ]
+}

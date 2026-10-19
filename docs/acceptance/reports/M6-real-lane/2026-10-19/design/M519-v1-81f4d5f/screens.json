@@ -1,0 +1,669 @@
+{
+  "screens": [
+    {
+      "key": "momentum-lab",
+      "target": "web",
+      "title": "Momentum lab",
+      "flow_steps": [
+        "momentum.open",
+        "momentum.set-up",
+        "momentum.predict",
+        "momentum.run",
+        "momentum.compare",
+        "momentum.explain",
+        "momentum.replay"
+      ],
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "interfaces": [
+        "page document",
+        "main.mjs entry",
+        "design tokens",
+        "RANGES",
+        "validateMomentum / validateFriction / validateTrajectory / validateScore",
+        "simulateMomentum",
+        "score"
+      ],
+      "states": [
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.predict.html",
+          "fixture": "inventory/fixtures/page document.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "error:ELEMENT_MISSING"
+          },
+          "mockup": "mockups/momentum-lab.startup-error.html",
+          "fixture": "inventory/fixtures/page document.error:ELEMENT_MISSING.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.compare.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.scene.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "error:THREE_UNAVAILABLE"
+          },
+          "mockup": "mockups/momentum-lab.scene-unavailable.html",
+          "fixture": "inventory/fixtures/main.mjs entry.error:THREE_UNAVAILABLE.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.predict.html",
+          "fixture": "inventory/fixtures/design tokens.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "error:TOKEN_UNDEFINED"
+          },
+          "mockup": "mockups/momentum-lab.token-undefined.html",
+          "fixture": "inventory/fixtures/design tokens.error:TOKEN_UNDEFINED.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "error:none"
+          },
+          "mockup": "mockups/momentum-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.error:none.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.predict.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/momentum-lab.input-error.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateMomentum",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.compare.html",
+          "fixture": "mockups/data/simulateMomentum.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateMomentum",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/momentum-lab.input-error.html",
+          "fixture": "inventory/fixtures/simulateMomentum.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "score",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.compare.html",
+          "fixture": "mockups/data/score.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "score",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/momentum-lab.input-error.html",
+          "fixture": "inventory/fixtures/score.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateMomentum",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.no-collision.html",
+          "fixture": "inventory/fixtures/simulateMomentum.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "score",
+            "state": "ok"
+          },
+          "mockup": "mockups/momentum-lab.no-collision.html",
+          "fixture": "inventory/fixtures/score.ok.json"
+        }
+      ],
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "inputs": [
+        {
+          "interface": "simulateMomentum",
+          "property": "input.m1",
+          "label": "Mass of cart 1, m₁ (kg)",
+          "unit": "kg"
+        },
+        {
+          "interface": "simulateMomentum",
+          "property": "input.v1",
+          "label": "Velocity of cart 1, v₁ (m/s)",
+          "unit": "m/s"
+        },
+        {
+          "interface": "simulateMomentum",
+          "property": "input.m2",
+          "label": "Mass of cart 2, m₂ (kg)",
+          "unit": "kg"
+        },
+        {
+          "interface": "simulateMomentum",
+          "property": "input.v2",
+          "label": "Velocity of cart 2, v₂ (m/s)",
+          "unit": "m/s"
+        },
+        {
+          "interface": "simulateMomentum",
+          "property": "input.collision",
+          "label": "Collision type"
+        },
+        {
+          "interface": "score",
+          "property": "predicted",
+          "label": "Cart 2 after the collision, v₂′ (m/s)",
+          "unit": "m/s"
+        }
+      ],
+      "conventions": {
+        "route": "/?lab=momentum",
+        "browser_back": "Choosing a lab tab pushes a history entry (/?lab=<lab>); Back returns to the previous lab with its inputs and result as the player left them, Forward re-opens it. Back from the first lab visited leaves Mechanica. \"/\" with no query opens the momentum lab. The page itself never intercepts Back.",
+        "keyboard_path": "Tab order: \"Skip to the lab controls\" link → lab tabs (one tab stop; ←/→ move between labs, Home/End jump, Enter/Space or focus selects) → set-up fields in reading order, each number field then its slider → prediction field → Run → Play → Pause → Replay → Try another prediction. Enter in any field runs; Space toggles Play/Pause when a playback button has focus. Every focusable element shows a 3 px --color-focus ring offset 2 px (:focus-visible). The results region is aria-live=\"polite\" so the score is announced.",
+        "hover": "Hover only adds emphasis (tabs and buttons lighten, Run lifts 2 px, fields darken their border) over --duration-fast; nothing is reachable or shown only on hover."
+      },
+      "notes": "Mockups: one file per state (mockups/momentum-lab.<state>.html) and the live 3D scene (mockups/momentum-lab.scene.html, three.js 0.160.0 from the pinned jsDelivr URL). Layout: header (compact logo mark + h1 \"Mechanica\", the three labs as a segmented tab bar); lab intro; the predict → run → compare stepper; below 720 px one column in reading order (set-up, prediction + Run, 3D scene + playback, Compare, explanation); from 720 px two columns 2fr/3fr (controls and prediction left; scene, results, explanation right), 5fr/7fr from 1100 px, content capped at 1200 px. Nothing is wider than 360 px at 360 px: fields wrap to one per row, the tab bar spans the width. State markers: the lab panel carries data-state = one of \"predict\", \"compare\", \"no-collision\", \"input-error\", \"scene-unavailable\", \"startup-error\", \"token-undefined\" (the running animation is data-state=\"run\"); the stepper is an element with data-stepper and aria-current=\"step\" on the current step; a missing token sets data-tokens=\"missing\" on the panel. Inputs: each number field has a visible label naming its unit, a unit suffix, a slider bound to the same RANGES min/max/step (aria-labelledby the label) and a range hint; a value outside the range shows the RangeError message under its field and in a summary above Run, focus moves to the first bad field, nothing runs. Running: the stepper moves to Run, Run is disabled until the animation ends (or is paused), then Compare shows. Reduced motion: the run does not autoplay; the scene waits on Play with a hint, and every transition is removed. Scores: whole number, error to one decimal as a percentage (\"—\" when relativeError is null). Score bands for the verdict: 100–90 \"Bullseye!\", 89–60 \"Close!\", 59–1 \"Getting there\", 0 \"Way off — try again\". Bar colour: score-high ≥ 60, score-mid 1–59, score-low 0. The no-collision case (v₁ ≤ v₂) shows a callout and still scores v₂′ = v₂. Serving (for the Builder): each lab's address is \"/?lab=<lab>\" with <lab> one of momentum, friction, trajectory. server.mjs must answer a GET for \"/\" with public/index.html whatever the query string (\"/\", \"/?lab=friction\", \"/?lab=anything&x=1\" all get index.html, status 200); it decides by the path alone and ignores the query. The page then reads the lab from location.search: a missing or unknown lab value opens the momentum lab."
+    },
+    {
+      "key": "friction-lab",
+      "target": "web",
+      "title": "Friction lab",
+      "flow_steps": [
+        "friction.open",
+        "friction.set-up",
+        "friction.predict",
+        "friction.run",
+        "friction.compare",
+        "friction.explain",
+        "friction.replay"
+      ],
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "interfaces": [
+        "page document",
+        "main.mjs entry",
+        "design tokens",
+        "RANGES",
+        "validateMomentum / validateFriction / validateTrajectory / validateScore",
+        "simulateFriction",
+        "scoreFriction"
+      ],
+      "states": [
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.predict.html",
+          "fixture": "inventory/fixtures/page document.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "error:ELEMENT_MISSING"
+          },
+          "mockup": "mockups/friction-lab.startup-error.html",
+          "fixture": "inventory/fixtures/page document.error:ELEMENT_MISSING.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.compare.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.scene.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "error:THREE_UNAVAILABLE"
+          },
+          "mockup": "mockups/friction-lab.scene-unavailable.html",
+          "fixture": "inventory/fixtures/main.mjs entry.error:THREE_UNAVAILABLE.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.predict.html",
+          "fixture": "inventory/fixtures/design tokens.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "error:TOKEN_UNDEFINED"
+          },
+          "mockup": "mockups/friction-lab.token-undefined.html",
+          "fixture": "inventory/fixtures/design tokens.error:TOKEN_UNDEFINED.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "error:none"
+          },
+          "mockup": "mockups/friction-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.error:none.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.predict.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/friction-lab.input-error.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateFriction",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.compare.html",
+          "fixture": "mockups/data/simulateFriction.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateFriction",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/friction-lab.input-error.html",
+          "fixture": "inventory/fixtures/simulateFriction.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "scoreFriction",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.compare.html",
+          "fixture": "mockups/data/scoreFriction.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "scoreFriction",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/friction-lab.input-error.html",
+          "fixture": "inventory/fixtures/scoreFriction.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateFriction",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.never-stops.html",
+          "fixture": "inventory/fixtures/simulateFriction.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "scoreFriction",
+            "state": "ok"
+          },
+          "mockup": "mockups/friction-lab.never-stops.html",
+          "fixture": "inventory/fixtures/scoreFriction.ok.json"
+        }
+      ],
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "inputs": [
+        {
+          "interface": "simulateFriction",
+          "property": "input.mu",
+          "label": "Friction coefficient, μ (dimensionless)"
+        },
+        {
+          "interface": "simulateFriction",
+          "property": "input.v0",
+          "label": "Initial speed, v₀ (m/s)",
+          "unit": "m/s"
+        },
+        {
+          "interface": "simulateFriction",
+          "property": "input.inclineDeg",
+          "label": "Incline, θ (degrees)",
+          "unit": "deg"
+        },
+        {
+          "interface": "scoreFriction",
+          "property": "prediction.distance",
+          "label": "Stopping distance along the surface, d (m)",
+          "unit": "m"
+        },
+        {
+          "interface": "scoreFriction",
+          "property": "prediction.neverStops",
+          "label": "It never stops"
+        }
+      ],
+      "conventions": {
+        "route": "/?lab=friction",
+        "browser_back": "Choosing a lab tab pushes a history entry (/?lab=<lab>); Back returns to the previous lab with its inputs and result as the player left them, Forward re-opens it. Back from the first lab visited leaves Mechanica. \"/\" with no query opens the momentum lab. The page itself never intercepts Back.",
+        "keyboard_path": "Tab order: \"Skip to the lab controls\" link → lab tabs (one tab stop; ←/→ move between labs, Home/End jump, Enter/Space or focus selects) → set-up fields in reading order, each number field then its slider → prediction field → It never stops checkbox → Run → Play → Pause → Replay → Try another prediction. Enter in any field runs; Space toggles Play/Pause when a playback button has focus. Every focusable element shows a 3 px --color-focus ring offset 2 px (:focus-visible). The results region is aria-live=\"polite\" so the score is announced.",
+        "hover": "Hover only adds emphasis (tabs and buttons lighten, Run lifts 2 px, fields darken their border) over --duration-fast; nothing is reachable or shown only on hover."
+      },
+      "notes": "Mockups: one file per state (mockups/friction-lab.<state>.html) and the live 3D scene (mockups/friction-lab.scene.html, three.js 0.160.0 from the pinned jsDelivr URL). Layout: header (compact logo mark + h1 \"Mechanica\", the three labs as a segmented tab bar); lab intro; the predict → run → compare stepper; below 720 px one column in reading order (set-up, prediction + Run, 3D scene + playback, Compare, explanation); from 720 px two columns 2fr/3fr (controls and prediction left; scene, results, explanation right), 5fr/7fr from 1100 px, content capped at 1200 px. Nothing is wider than 360 px at 360 px: fields wrap to one per row, the tab bar spans the width. State markers: the lab panel carries data-state = one of \"predict\", \"compare\", \"never-stops\", \"input-error\", \"scene-unavailable\", \"startup-error\", \"token-undefined\" (the running animation is data-state=\"run\"); the stepper is an element with data-stepper and aria-current=\"step\" on the current step; a missing token sets data-tokens=\"missing\" on the panel. Inputs: each number field has a visible label naming its unit, a unit suffix, a slider bound to the same RANGES min/max/step (aria-labelledby the label) and a range hint; a value outside the range shows the RangeError message under its field and in a summary above Run, focus moves to the first bad field, nothing runs. Running: the stepper moves to Run, Run is disabled until the animation ends (or is paused), then Compare shows. Reduced motion: the run does not autoplay; the scene waits on Play with a hint, and every transition is removed. Scores: whole number, error to one decimal as a percentage (\"—\" when relativeError is null). Score bands for the verdict: 100–90 \"Bullseye!\", 89–60 \"Close!\", 59–1 \"Getting there\", 0 \"Way off — try again\". Bar colour: score-high ≥ 60, score-mid 1–59, score-low 0. Prediction: a distance field plus an \"It never stops\" checkbox; ticking it disables the distance field. The never-stops case shows the callout \"The block never stops: friction cannot overcome the slope.\" and the block slides off the end of a 20 m surface. Serving (for the Builder): each lab's address is \"/?lab=<lab>\" with <lab> one of momentum, friction, trajectory. server.mjs must answer a GET for \"/\" with public/index.html whatever the query string (\"/\", \"/?lab=friction\", \"/?lab=anything&x=1\" all get index.html, status 200); it decides by the path alone and ignores the query. The page then reads the lab from location.search: a missing or unknown lab value opens the momentum lab."
+    },
+    {
+      "key": "trajectory-lab",
+      "target": "web",
+      "title": "Trajectory lab",
+      "flow_steps": [
+        "trajectory.open",
+        "trajectory.set-up",
+        "trajectory.predict",
+        "trajectory.run",
+        "trajectory.compare",
+        "trajectory.explain",
+        "trajectory.replay"
+      ],
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "interfaces": [
+        "page document",
+        "main.mjs entry",
+        "design tokens",
+        "RANGES",
+        "validateMomentum / validateFriction / validateTrajectory / validateScore",
+        "simulateTrajectory",
+        "score"
+      ],
+      "states": [
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.predict.html",
+          "fixture": "inventory/fixtures/page document.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "page document",
+            "state": "error:ELEMENT_MISSING"
+          },
+          "mockup": "mockups/trajectory-lab.startup-error.html",
+          "fixture": "inventory/fixtures/page document.error:ELEMENT_MISSING.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.compare.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.scene.html",
+          "fixture": "inventory/fixtures/main.mjs entry.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "main.mjs entry",
+            "state": "error:THREE_UNAVAILABLE"
+          },
+          "mockup": "mockups/trajectory-lab.scene-unavailable.html",
+          "fixture": "inventory/fixtures/main.mjs entry.error:THREE_UNAVAILABLE.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.predict.html",
+          "fixture": "inventory/fixtures/design tokens.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "design tokens",
+            "state": "error:TOKEN_UNDEFINED"
+          },
+          "mockup": "mockups/trajectory-lab.token-undefined.html",
+          "fixture": "inventory/fixtures/design tokens.error:TOKEN_UNDEFINED.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "RANGES",
+            "state": "error:none"
+          },
+          "mockup": "mockups/trajectory-lab.predict.html",
+          "fixture": "inventory/fixtures/RANGES.error:none.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.predict.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/trajectory-lab.input-error.html",
+          "fixture": "inventory/fixtures/validateMomentum / validateFriction / validateTrajectory / validateScore.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateTrajectory",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.compare.html",
+          "fixture": "mockups/data/simulateTrajectory.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "simulateTrajectory",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/trajectory-lab.input-error.html",
+          "fixture": "inventory/fixtures/simulateTrajectory.error:RangeError.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "score",
+            "state": "ok"
+          },
+          "mockup": "mockups/trajectory-lab.compare.html",
+          "fixture": "inventory/fixtures/score.ok.json"
+        },
+        {
+          "obligation": {
+            "target": "web",
+            "interface": "score",
+            "state": "error:RangeError"
+          },
+          "mockup": "mockups/trajectory-lab.input-error.html",
+          "fixture": "inventory/fixtures/score.error:RangeError.json"
+        }
+      ],
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "inputs": [
+        {
+          "interface": "simulateTrajectory",
+          "property": "input.speed",
+          "label": "Launch speed, v (m/s)",
+          "unit": "m/s"
+        },
+        {
+          "interface": "simulateTrajectory",
+          "property": "input.angleDeg",
+          "label": "Launch angle, θ (degrees)",
+          "unit": "deg"
+        },
+        {
+          "interface": "simulateTrajectory",
+          "property": "input.drag",
+          "label": "Air drag"
+        },
+        {
+          "interface": "simulateTrajectory",
+          "property": "input.dragCoefficient",
+          "label": "Drag coefficient, c (1/m)",
+          "unit": "1/m"
+        },
+        {
+          "interface": "score",
+          "property": "predicted",
+          "label": "Horizontal range, R (m)",
+          "unit": "m"
+        }
+      ],
+      "conventions": {
+        "route": "/?lab=trajectory",
+        "browser_back": "Choosing a lab tab pushes a history entry (/?lab=<lab>); Back returns to the previous lab with its inputs and result as the player left them, Forward re-opens it. Back from the first lab visited leaves Mechanica. \"/\" with no query opens the momentum lab. The page itself never intercepts Back.",
+        "keyboard_path": "Tab order: \"Skip to the lab controls\" link → lab tabs (one tab stop; ←/→ move between labs, Home/End jump, Enter/Space or focus selects) → set-up fields in reading order, each number field then its slider → the air drag switch → prediction field → Run → Play → Pause → Replay → Try another prediction. Enter in any field runs; Space toggles Play/Pause when a playback button has focus. Every focusable element shows a 3 px --color-focus ring offset 2 px (:focus-visible). The results region is aria-live=\"polite\" so the score is announced.",
+        "hover": "Hover only adds emphasis (tabs and buttons lighten, Run lifts 2 px, fields darken their border) over --duration-fast; nothing is reachable or shown only on hover."
+      },
+      "notes": "Mockups: one file per state (mockups/trajectory-lab.<state>.html) and the live 3D scene (mockups/trajectory-lab.scene.html, three.js 0.160.0 from the pinned jsDelivr URL). Layout: header (compact logo mark + h1 \"Mechanica\", the three labs as a segmented tab bar); lab intro; the predict → run → compare stepper; below 720 px one column in reading order (set-up, prediction + Run, 3D scene + playback, Compare, explanation); from 720 px two columns 2fr/3fr (controls and prediction left; scene, results, explanation right), 5fr/7fr from 1100 px, content capped at 1200 px. Nothing is wider than 360 px at 360 px: fields wrap to one per row, the tab bar spans the width. State markers: the lab panel carries data-state = one of \"predict\", \"compare\", \"input-error\", \"scene-unavailable\", \"startup-error\", \"token-undefined\" (the running animation is data-state=\"run\"); the stepper is an element with data-stepper and aria-current=\"step\" on the current step; a missing token sets data-tokens=\"missing\" on the panel. Inputs: each number field has a visible label naming its unit, a unit suffix, a slider bound to the same RANGES min/max/step (aria-labelledby the label) and a range hint; a value outside the range shows the RangeError message under its field and in a summary above Run, focus moves to the first bad field, nothing runs. Running: the stepper moves to Run, Run is disabled until the animation ends (or is paused), then Compare shows. Reduced motion: the run does not autoplay; the scene waits on Play with a hint, and every transition is removed. Scores: whole number, error to one decimal as a percentage (\"—\" when relativeError is null). Score bands for the verdict: 100–90 \"Bullseye!\", 89–60 \"Close!\", 59–1 \"Getting there\", 0 \"Way off — try again\". Bar colour: score-high ≥ 60, score-mid 1–59, score-low 0. Air drag is a switch; the drag coefficient field and slider are disabled while it is off. The ball leaves a trail line; the predicted landing point is a ring on the ground. Serving (for the Builder): each lab's address is \"/?lab=<lab>\" with <lab> one of momentum, friction, trajectory. server.mjs must answer a GET for \"/\" with public/index.html whatever the query string (\"/\", \"/?lab=friction\", \"/?lab=anything&x=1\" all get index.html, status 200); it decides by the path alone and ignores the query. The page then reads the lab from location.search: a missing or unknown lab value opens the momentum lab."
+    }
+  ]
+}

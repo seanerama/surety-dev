@@ -1,0 +1,950 @@
+{
+  "source": "/home/smahoney/s6-1018/home/store.db, opened with better-sqlite3 {readonly: true}; read 2026-10-19 by the Verifier of M540",
+  "projects": [
+    {
+      "id": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "name": "surety-qualification-fixture",
+      "tier": "T1",
+      "created_at": "2026-10-18T01:55:59.362Z"
+    },
+    {
+      "id": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "name": "m6-m519-mechanica",
+      "tier": "T2",
+      "created_at": "2026-10-18T02:00:22.558Z"
+    },
+    {
+      "id": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "name": "m6-m535-waterlog",
+      "tier": "T2",
+      "created_at": "2026-10-18T23:01:06.747Z"
+    }
+  ],
+  "engine_revisions": [
+    {
+      "engine_revision": "0824dff6fc431d9fc84bdbc6a49f1dc785f2617f",
+      "engine_revision_unknown": null,
+      "first_at": "2026-10-18T01:55:59.467Z",
+      "last_at": "2026-10-18T02:18:20.091Z",
+      "observations": 13
+    },
+    {
+      "engine_revision": "fd5087ff081707b2cdb16a1cd0c35edc150ccd53",
+      "engine_revision_unknown": null,
+      "first_at": "2026-10-18T06:56:49.472Z",
+      "last_at": "2026-10-18T06:56:49.488Z",
+      "observations": 2
+    },
+    {
+      "engine_revision": "308230d7cd9da800df4f712f28907ae2010aa609",
+      "engine_revision_unknown": null,
+      "first_at": "2026-10-18T07:25:02.029Z",
+      "last_at": "2026-10-18T07:25:02.050Z",
+      "observations": 2
+    },
+    {
+      "engine_revision": "8cffaf09768d3b32020c214350524953fa660de5",
+      "engine_revision_unknown": null,
+      "first_at": "2026-10-18T23:01:07.309Z",
+      "last_at": "2026-10-19T10:52:28.878Z",
+      "observations": 27
+    },
+    {
+      "engine_revision": "e62cc393cf199a2f1fc50de7ae1247d033843954",
+      "engine_revision_unknown": null,
+      "first_at": "2026-10-19T13:16:14.305Z",
+      "last_at": "2026-10-19T13:16:14.367Z",
+      "observations": 3
+    }
+  ],
+  "ledger_by_project": [
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "ledger_rows": 8,
+      "runs": 7,
+      "cost_usd": 0.2532,
+      "cost_unknown": 2,
+      "usage_incomplete": 2,
+      "billable": 29882,
+      "cached": 213936,
+      "output": 4258
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "ledger_rows": 43,
+      "runs": 39,
+      "cost_usd": 16.5675,
+      "cost_unknown": 0,
+      "usage_incomplete": 0,
+      "billable": 1462583,
+      "cached": 17305009,
+      "output": 435911
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "ledger_rows": 34,
+      "runs": 26,
+      "cost_usd": 14.5055,
+      "cost_unknown": 0,
+      "usage_incomplete": 0,
+      "billable": 1265371,
+      "cached": 13261121,
+      "output": 349719
+    }
+  ],
+  "ledger_by_role": [
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "role": "verifier",
+      "runs": 6,
+      "ledger_rows": 6,
+      "cost_usd": 0.158
+    },
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "role": "vision",
+      "runs": 1,
+      "ledger_rows": 2,
+      "cost_usd": 0.0952
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "designer",
+      "runs": 2,
+      "ledger_rows": 5,
+      "cost_usd": 7.1971
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "verifier",
+      "runs": 16,
+      "ledger_rows": 16,
+      "cost_usd": 3.698
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "builder",
+      "runs": 8,
+      "ledger_rows": 8,
+      "cost_usd": 2.6943
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "architect",
+      "runs": 1,
+      "ledger_rows": 1,
+      "cost_usd": 1.0355
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "spec_writer",
+      "runs": 2,
+      "ledger_rows": 3,
+      "cost_usd": 1.0263
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "reviewer",
+      "runs": 10,
+      "ledger_rows": 10,
+      "cost_usd": 0.9163
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "designer",
+      "runs": 4,
+      "ledger_rows": 8,
+      "cost_usd": 6.2515
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "verifier",
+      "runs": 8,
+      "ledger_rows": 8,
+      "cost_usd": 3.5928
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "architect",
+      "runs": 3,
+      "ledger_rows": 7,
+      "cost_usd": 2.173
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "builder",
+      "runs": 5,
+      "ledger_rows": 5,
+      "cost_usd": 1.2421
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "spec_writer",
+      "runs": 2,
+      "ledger_rows": 2,
+      "cost_usd": 0.8202
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "reviewer",
+      "runs": 4,
+      "ledger_rows": 4,
+      "cost_usd": 0.4259
+    }
+  ],
+  "ledger_by_day": [
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "day_utc": "2026-10-18",
+      "cost_usd": 0.2532
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "day_utc": "2026-10-18",
+      "cost_usd": 16.5675
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "day_utc": "2026-10-18",
+      "cost_usd": 3.517
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "day_utc": "2026-10-19",
+      "cost_usd": 10.9886
+    }
+  ],
+  "runs_by_role": [
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "role": "verifier",
+      "kind": "one_shot",
+      "runs": 6,
+      "outcomes": "completed,stopped,completed,completed,stopped,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "role": "vision",
+      "kind": "session",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "architect",
+      "kind": "session",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "builder",
+      "kind": "one_shot",
+      "runs": 8,
+      "outcomes": "completed,completed,completed,completed,completed,completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "designer",
+      "kind": "session",
+      "runs": 2,
+      "outcomes": "completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "reviewer",
+      "kind": "one_shot",
+      "runs": 10,
+      "outcomes": "completed,completed,completed,completed,completed,completed,completed,completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "spec_writer",
+      "kind": "one_shot",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "spec_writer",
+      "kind": "session",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "role": "verifier",
+      "kind": "one_shot",
+      "runs": 16,
+      "outcomes": "completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "architect",
+      "kind": "session",
+      "runs": 3,
+      "outcomes": "completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "builder",
+      "kind": "one_shot",
+      "runs": 5,
+      "outcomes": "completed,completed,completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "designer",
+      "kind": "session",
+      "runs": 6,
+      "outcomes": "timed_out,timed_out,timed_out,timed_out,completed,completed",
+      "model_observed_null": 2
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "reviewer",
+      "kind": "one_shot",
+      "runs": 4,
+      "outcomes": "completed,completed,completed,completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "spec_writer",
+      "kind": "one_shot",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "spec_writer",
+      "kind": "session",
+      "runs": 1,
+      "outcomes": "completed",
+      "model_observed_null": 0
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "role": "verifier",
+      "kind": "one_shot",
+      "runs": 8,
+      "outcomes": "completed,completed,completed,completed,completed,completed,completed,completed",
+      "model_observed_null": 0
+    }
+  ],
+  "designer_turns": [
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "run": "run_01M56CW24FTV4XNS6TSZJKEGPP",
+      "run_outcome": "completed",
+      "number": 1,
+      "started_at": "2026-10-18T02:19:30.903Z",
+      "finished_at": "2026-10-18T02:35:03.234Z",
+      "seconds": 932.3,
+      "usage_status": "recorded",
+      "billable_in": 189163,
+      "cached_in": 4015220,
+      "out": 96762,
+      "cost_usd": 4.251308,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "run": "run_01M56CW24FTV4XNS6TSZJKEGPP",
+      "run_outcome": "completed",
+      "number": 2,
+      "started_at": "2026-10-18T02:35:21.195Z",
+      "finished_at": "2026-10-18T02:36:20.458Z",
+      "seconds": 59.3,
+      "usage_status": "recorded",
+      "billable_in": 21464,
+      "cached_in": 195109,
+      "out": 3089,
+      "cost_usd": 0.2724178,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "run": "run_01M56CW24FTV4XNS6TSZJKEGPP",
+      "run_outcome": "completed",
+      "number": 3,
+      "started_at": "2026-10-18T02:36:48.305Z",
+      "finished_at": "2026-10-18T02:38:13.839Z",
+      "seconds": 85.5,
+      "usage_status": "recorded",
+      "billable_in": 42523,
+      "cached_in": 510573,
+      "out": 7741,
+      "cost_usd": 0.5969746,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+      "run_outcome": "completed",
+      "number": 1,
+      "started_at": "2026-10-18T08:10:22.232Z",
+      "finished_at": "2026-10-18T08:16:20.423Z",
+      "seconds": 358.2,
+      "usage_status": "recorded",
+      "billable_in": 108673,
+      "cached_in": 2289273,
+      "out": 21715,
+      "cost_usd": 1.7612186,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+      "run_outcome": "completed",
+      "number": 2,
+      "started_at": "2026-10-18T08:16:47.451Z",
+      "finished_at": "2026-10-18T08:17:46.992Z",
+      "seconds": 59.5,
+      "usage_status": "recorded",
+      "billable_in": 24131,
+      "cached_in": 143424,
+      "out": 4675,
+      "cost_usd": 0.3151608,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M58VM5RV7RC3VW4JJQ749H77",
+      "run_outcome": "timed_out",
+      "number": 1,
+      "started_at": "2026-10-19T01:16:05.501Z",
+      "finished_at": "2026-10-19T01:21:26.148Z",
+      "seconds": 320.6,
+      "usage_status": "recorded",
+      "billable_in": 98157,
+      "cached_in": 993804,
+      "out": 32666,
+      "cost_usd": 1.6372088000000002,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M58VM5RV7RC3VW4JJQ749H77",
+      "run_outcome": "timed_out",
+      "number": 2,
+      "started_at": "2026-10-19T01:24:32.473Z",
+      "finished_at": "2026-10-19T01:28:23.672Z",
+      "seconds": 231.2,
+      "usage_status": "recorded",
+      "billable_in": 101536,
+      "cached_in": 1518866,
+      "out": 20000,
+      "cost_usd": 1.5158532,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M58VM5RV7RC3VW4JJQ749H77",
+      "run_outcome": "timed_out",
+      "number": 3,
+      "started_at": "2026-10-19T01:39:18.698Z",
+      "finished_at": "2026-10-19T01:41:14.865Z",
+      "seconds": 116.2,
+      "usage_status": "recorded",
+      "billable_in": 71487,
+      "cached_in": 697986,
+      "out": 7749,
+      "cost_usd": 0.8663372000000001,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M5A18XAT9YZENR2SP1M9Q1GT",
+      "run_outcome": "timed_out",
+      "number": 1,
+      "started_at": "2026-10-19T12:14:16.508Z",
+      "finished_at": "2026-10-19T12:15:53.676Z",
+      "seconds": 97.2,
+      "usage_status": "recorded",
+      "billable_in": 57341,
+      "cached_in": 575170,
+      "out": 6877,
+      "cost_usd": 0.711174,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M5AB510ZDGN65XYN8P09544P",
+      "run_outcome": "completed",
+      "number": 1,
+      "started_at": "2026-10-19T15:05:56.810Z",
+      "finished_at": "2026-10-19T15:07:53.213Z",
+      "seconds": 116.4,
+      "usage_status": "recorded",
+      "billable_in": 49998,
+      "cached_in": 407848,
+      "out": 10455,
+      "cost_usd": 0.6905416,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M5AB510ZDGN65XYN8P09544P",
+      "run_outcome": "completed",
+      "number": 2,
+      "started_at": "2026-10-19T15:08:07.828Z",
+      "finished_at": "2026-10-19T15:08:34.240Z",
+      "seconds": 26.4,
+      "usage_status": "recorded",
+      "billable_in": 12261,
+      "cached_in": 69852,
+      "out": 1969,
+      "cost_usd": 0.1513824,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M5ABSZQD5V3DATVP18VYJ530",
+      "run_outcome": "completed",
+      "number": 1,
+      "started_at": "2026-10-19T15:17:28.050Z",
+      "finished_at": "2026-10-19T15:19:06.180Z",
+      "seconds": 98.1,
+      "usage_status": "recorded",
+      "billable_in": 47435,
+      "cached_in": 274178,
+      "out": 8311,
+      "cost_usd": 0.6004476000000001,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "run": "run_01M5ABSZQD5V3DATVP18VYJ530",
+      "run_outcome": "completed",
+      "number": 2,
+      "started_at": "2026-10-19T15:19:22.366Z",
+      "finished_at": "2026-10-19T15:19:44.609Z",
+      "seconds": 22.2,
+      "usage_status": "recorded",
+      "billable_in": 6422,
+      "cached_in": 39268,
+      "out": 966,
+      "cost_usd": 0.07850960000000001,
+      "cost_status": "estimated",
+      "model_observed": "claude-opus-5-5"
+    }
+  ],
+  "designer_sessions": [
+    {
+      "run": "run_01M56CW24FTV4XNS6TSZJKEGPP",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "outcome": "completed",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-18T02:19:31.650Z",
+      "finished_at": "2026-10-18T02:38:47.734Z",
+      "turn_count": 3
+    },
+    {
+      "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "outcome": "completed",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-18T08:10:23.569Z",
+      "finished_at": "2026-10-18T08:17:56.502Z",
+      "turn_count": 2
+    },
+    {
+      "run": "run_01M58N7DKAJR9RHSAERESG100D",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "timed_out",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": null,
+      "started_at": null,
+      "finished_at": "2026-10-18T23:43:23.440Z",
+      "turn_count": 0
+    },
+    {
+      "run": "run_01M58VM5RV7RC3VW4JJQ749H77",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "timed_out",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-19T01:16:06.686Z",
+      "finished_at": "2026-10-19T02:01:21.801Z",
+      "turn_count": 3
+    },
+    {
+      "run": "run_01M58ZAMMQRSXRX07RDBBXF1RZ",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "timed_out",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": null,
+      "started_at": null,
+      "finished_at": "2026-10-19T02:40:06.198Z",
+      "turn_count": 0
+    },
+    {
+      "run": "run_01M5A18XAT9YZENR2SP1M9Q1GT",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "timed_out",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-19T12:14:17.813Z",
+      "finished_at": "2026-10-19T12:35:56.995Z",
+      "turn_count": 1
+    },
+    {
+      "run": "run_01M5AB510ZDGN65XYN8P09544P",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "completed",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-19T15:05:58.529Z",
+      "finished_at": "2026-10-19T15:08:42.801Z",
+      "turn_count": 2
+    },
+    {
+      "run": "run_01M5ABSZQD5V3DATVP18VYJ530",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "outcome": "completed",
+      "model_requested": "claude-opus-5-5",
+      "model_observed": "claude-opus-5-5",
+      "started_at": "2026-10-19T15:17:29.672Z",
+      "finished_at": "2026-10-19T15:19:47.708Z",
+      "turn_count": 2
+    }
+  ],
+  "previews": [
+    {
+      "id": "dpv_01M56DZS7Y3JKTJR809KQQW946",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "generation": 1,
+      "revision": "81f4d5fcf5a8f4332cccb9a24f54288b932b5c9f",
+      "unit": "surety-7ecab45c569f-env_01M56DZS7X2FYMAXZ0QA5P77DA-g1.service",
+      "status": "torn_down",
+      "deployed_at": "2026-10-18T02:38:24.740Z",
+      "torn_down_at": "2026-10-18T02:39:56.175Z",
+      "preview_memory_peak": null,
+      "domain": "dom_01M56DZT2M1YM6G14TECR67XQA",
+      "domain_memory_peak": null,
+      "peak_recorded_at": null
+    },
+    {
+      "id": "dpv_01M56WTMMPH2ZKV3MKDBH1JSTA",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "generation": 2,
+      "revision": "81f4d5fcf5a8f4332cccb9a24f54288b932b5c9f",
+      "unit": "surety-7ecab45c569f-env_01M56DZS7X2FYMAXZ0QA5P77DA-g3.service",
+      "status": "torn_down",
+      "deployed_at": "2026-10-18T06:57:45.631Z",
+      "torn_down_at": "2026-10-18T06:59:04.074Z",
+      "preview_memory_peak": null,
+      "domain": "dom_01M56WTN8V111WFR7GRMC10X9C",
+      "domain_memory_peak": null,
+      "peak_recorded_at": null
+    },
+    {
+      "id": "dpv_01M5A1Q1Y8NG7N3028TX725PCS",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "generation": 1,
+      "revision": "0a2ad63027f748033bf6d79b43bde6fa792d9d7e",
+      "unit": "surety-7ecab45c569f-env_01M5A1Q1Y579DXCFV7W0BARWTE-g1.service",
+      "status": "torn_down",
+      "deployed_at": "2026-10-19T12:20:54.781Z",
+      "torn_down_at": "2026-10-19T12:50:05.104Z",
+      "preview_memory_peak": null,
+      "domain": "dom_01M5A1Q2JXG42JQ153V3DE7YCN",
+      "domain_memory_peak": null,
+      "peak_recorded_at": null
+    },
+    {
+      "id": "dpv_01M5A3WEHWD2SDF0W4K1RWDBSP",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "generation": 2,
+      "revision": "0a2ad63027f748033bf6d79b43bde6fa792d9d7e",
+      "unit": "surety-7ecab45c569f-env_01M5A1Q1Y579DXCFV7W0BARWTE-g3.service",
+      "status": "torn_down",
+      "deployed_at": "2026-10-19T12:58:48.599Z",
+      "torn_down_at": "2026-10-19T12:58:51.512Z",
+      "preview_memory_peak": null,
+      "domain": "dom_01M5A3WFBE10E6ZKCX4RZBXPS9",
+      "domain_memory_peak": null,
+      "peak_recorded_at": null
+    }
+  ],
+  "domain_peaks_by_profile": [
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "profile": "role",
+      "domains": 8,
+      "peaks": 8,
+      "max_peak": 156909568
+    },
+    {
+      "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+      "profile": "service",
+      "domains": 27,
+      "peaks": 0,
+      "max_peak": null
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "profile": "check",
+      "domains": 210,
+      "peaks": 210,
+      "max_peak": 72589312
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "profile": "role",
+      "domains": 43,
+      "peaks": 43,
+      "max_peak": 283328512
+    },
+    {
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "profile": "service",
+      "domains": 3,
+      "peaks": 0,
+      "max_peak": null
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "profile": "check",
+      "domains": 99,
+      "peaks": 99,
+      "max_peak": 73584640
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "profile": "role",
+      "domains": 34,
+      "peaks": 34,
+      "max_peak": 332460032
+    },
+    {
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "profile": "service",
+      "domains": 3,
+      "peaks": 0,
+      "max_peak": null
+    }
+  ],
+  "design_revisions": [
+    {
+      "id": "dsg_01M56E0GBV1GQ1GSA4J8XH30V7",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "version": 1,
+      "scope": "full",
+      "status": "approved",
+      "revision": "81f4d5fcf5a8f4332cccb9a24f54288b932b5c9f",
+      "tree_blob": "16c66aa8f45f0ca35fc60468908fa70778f9c821",
+      "asset_manifest_version": 1,
+      "assets_held": "[]",
+      "approved_at": "2026-10-18T02:39:55.841Z",
+      "ready_at": "2026-10-18T06:56:49.644Z",
+      "effective_assets_digest": "c57b832844676236a7a3c16f290d99f9e36504ff1bf7e4ef8bbb8f2920bda6f4"
+    },
+    {
+      "id": "dsg_01M5A2JMWKM9GYY6P6PA6X39TQ",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "version": 4,
+      "scope": "full",
+      "status": "superseded",
+      "revision": "0a2ad63027f748033bf6d79b43bde6fa792d9d7e",
+      "tree_blob": "82c0c3d172020d4da24f2e9d1b5cb0192794ca0b",
+      "asset_manifest_version": 2,
+      "assets_held": "[\"logo\"]",
+      "approved_at": "2026-10-19T12:50:04.485Z",
+      "ready_at": "2026-10-19T12:58:37.152Z",
+      "effective_assets_digest": "2843a91bdd0a55f2cf0ac19e7c280713f52d6b9ef323fc5b3186f29236f4723b"
+    },
+    {
+      "id": "dsg_01M5AAD61799P86HGNX2G99XJ8",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "version": 4,
+      "scope": "asset_only",
+      "status": "approved",
+      "revision": "af1fb475d7fa20917391a5f9021b1013c6ccda91",
+      "tree_blob": "82c0c3d172020d4da24f2e9d1b5cb0192794ca0b",
+      "asset_manifest_version": 2,
+      "assets_held": "[]",
+      "approved_at": "2026-10-19T15:00:09.199Z",
+      "ready_at": "2026-10-19T12:58:37.152Z",
+      "effective_assets_digest": "43de0a3e4d34cf5cc66b99232339c9141bf105214ed2092e0077fae04ba2339a"
+    }
+  ],
+  "design_reviews": [
+    {
+      "id": "drv_01M571DG72BPRQ6SQN8S4QKQKN",
+      "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+      "design_revision": "dsg_01M56E0GBV1GQ1GSA4J8XH30V7",
+      "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+      "trigger": "alpha_complete",
+      "subject": "{\"kind\":\"candidate\",\"candidate\":\"cand_01M570AK2CKY8XG3S18PF3NMJJ\",\"deployment\":\"op_01M570RT55M80W58AE1HBXHD9K\"}",
+      "review_blob": "81596dead045864c42419c612a46b5e0e54b27b7",
+      "review_path": ".surety/design/reviews/review-1.json",
+      "confirmed_by": "human",
+      "confirmation_decision": "dec_01M571DG7571NAZ5KG6Q9A49Q4",
+      "findings": "[\"fnd_01M571DT07F2CT0JZ09YRYDY7J\",\"fnd_01M571DT0ND75BGNZPGFKYHCQW\",\"fnd_01M571DT12D1SP181G0A67DBDG\",\"fnd_01M571DT1EJ2ACZC4M7NG2E9JP\",\"fnd_01M571DT1RXMAF1227GWMXAXCE\",\"fnd_01M571DT254EPCABWRZ5FWPSAF\",\"fnd_01M571DT2EVPJTBHKY4W8X8GZQ\",\"fnd_01M571DT2RRQX4J4YYQJMQZS3H\",\"fnd_01M571DT32S6CQBZQYDFK8G8G1\",\"fnd_01M571DT3BCGF27ZSMV3EJYZSK\",\"fnd_01M571DT3N8CQYTHRP7GADXZ3S\",\"fnd_01M571DT3Y7C7N06CEBW99HWA7\",\"fnd_01M571DT48P001KS22QSMJDYCM\",\"fnd_01M571DT4GVFNZST7PC05TGBC4\",\"fnd_01M571DT4SPDPT29XAKX2YN6T6\",\"fnd_01M571DT51CP0C5F7M37SW5GYX\",\"fnd_01M571DT5A2S2R0W2HTXEA7VVN\",\"fnd_01M571DT5KDPVPK0CMF6RMCHDM\",\"fnd_01M571DT5W5XBHDFSZ9GZVKFXX\",\"fnd_01M571DT6460ATJJ4Q9HZKDCQ1\",\"fnd_01M571DT6D6A688KAVZAZRF28J\",\"fnd_01M571DT6NASJ85W8WVPKXMX2D\",\"fnd_01M571DT6ZX5BJQJ5NF759K2HT\",\"fnd_01M571DT78W1GQYJ16DAW0213E\"]"
+    },
+    {
+      "id": "drv_01M5ABABP9Z2WP3P7VC3TR2PSX",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "design_revision": "dsg_01M5AAD61799P86HGNX2G99XJ8",
+      "run": "run_01M5AB510ZDGN65XYN8P09544P",
+      "trigger": "alpha_complete",
+      "subject": "{\"kind\":\"candidate\",\"candidate\":\"cand_01M5A50BX0WWHJX5Q2QXJCSR6K\",\"deployment\":\"op_01M5A5C2X45NYG1Y3JC5RRWS9F\"}",
+      "review_blob": "3c357a5371c52da04cc32a95d000b060243c8018",
+      "review_path": ".surety/design/reviews/review-1.json",
+      "confirmed_by": "human",
+      "confirmation_decision": "dec_01M5ABABPBNJ77KZPMM6B7Q033",
+      "findings": "[]"
+    },
+    {
+      "id": "drv_01M5ABSZQHN4PZ224XTZH5QJXX",
+      "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+      "design_revision": "dsg_01M5AAD61799P86HGNX2G99XJ8",
+      "run": "run_01M5ABSZQD5V3DATVP18VYJ530",
+      "trigger": "owner_command",
+      "subject": "{\"kind\":\"owner_build\",\"target\":\"web\",\"build_ref\":\"the web Alpha: candidate cand_01M5A50BX0WWHJX5Q2QXJCSR6K, deployment op_01M5A5C2X45NYG1Y3JC5RRWS9F\",\"candidate\":\"cand_01M5A50BX0WWHJX5Q2QXJCSR6K\"}",
+      "review_blob": "21162b79a1ddbb1fae15a2e01418543f4c81da0f",
+      "review_path": ".surety/design/reviews/review-2.json",
+      "confirmed_by": "human",
+      "confirmation_decision": "dec_01M5ABYMTHPCJA15XVP6FNQY8K",
+      "findings": "[\"fnd_01M5AC4V5DAMHHCMMHAC6431VW\",\"fnd_01M5AC4V5EVD9R9TDNPVSD2C80\",\"fnd_01M5AC4V5EVD9R9TDNPVSD2C82\",\"fnd_01M5AC4V5EVD9R9TDNPVSD2C84\"]"
+    }
+  ],
+  "trust_entries": [
+    {
+      "id": "trust_01M56BPB0F5MBAGKV4PC997CZ3",
+      "model": "claude-opus-5-5",
+      "mode": "one_shot_headless",
+      "status": "active",
+      "session_qualified": 1,
+      "version": "2.1.302 (Claude Code)",
+      "binary_sha256": "60d7eb7f12fbb28a52533fe8be5884097403562aa02dc73991a021c7067e29a5",
+      "auth_mode": "subscription_token",
+      "isolation": "linux-namespaces-1",
+      "boundary": "cgroup2-delegated-scope-1",
+      "egress_hosts": "[\"api.anthropic.com\"]",
+      "usage_semantics": "delta",
+      "cost_reporting": "reported",
+      "activated_by": "dec_01M56BSAKXQMFNVFQQAYYNJCAK",
+      "qualification_attempt": "qa_01M56BJ6K2M3M6X9Z2PZ1EJ1JK",
+      "profile": "{\"memory_max\":4294967296,\"writable_bytes\":4294967296,\"writable_inodes\":200000,\"tasks_max\":1024}"
+    },
+    {
+      "id": "trust_01M56BRJYZQ4S6M8VAEZ881DM7",
+      "model": "claude-sonnet-5-5",
+      "mode": "one_shot_headless",
+      "status": "active",
+      "session_qualified": 0,
+      "version": "2.1.302 (Claude Code)",
+      "binary_sha256": "60d7eb7f12fbb28a52533fe8be5884097403562aa02dc73991a021c7067e29a5",
+      "auth_mode": "subscription_token",
+      "isolation": "linux-namespaces-1",
+      "boundary": "cgroup2-delegated-scope-1",
+      "egress_hosts": "[\"api.anthropic.com\"]",
+      "usage_semantics": "delta",
+      "cost_reporting": "reported",
+      "activated_by": "dec_01M56BSAKZ6PJ3ADY2Z9QNSVGY",
+      "qualification_attempt": "qa_01M56BPGZ2ZQ1JEKZWK34SDX59",
+      "profile": "{\"memory_max\":4294967296,\"writable_bytes\":4294967296,\"writable_inodes\":200000,\"tasks_max\":1024}"
+    }
+  ],
+  "qualification_attempts": [
+    {
+      "id": "qa_01M56BJ6K2M3M6X9Z2PZ1EJ1JK",
+      "created_at": "2026-10-18T01:56:01.761Z",
+      "model": "claude-opus-5-5",
+      "mode": "session_headless",
+      "status": "succeeded",
+      "decision": "dec_01M56BJ6WY6TPNWFDQV24NZ8A3",
+      "unexpected_contacts": "[]",
+      "trust_entry": "trust_01M56BPB0F5MBAGKV4PC997CZ3"
+    },
+    {
+      "id": "qa_01M56BPGZ2ZQ1JEKZWK34SDX59",
+      "created_at": "2026-10-18T01:58:23.457Z",
+      "model": "claude-sonnet-5-5",
+      "mode": "one_shot_headless",
+      "status": "succeeded",
+      "decision": "dec_01M56BPH8JQ2Y1N0VPE6NR7HR3",
+      "unexpected_contacts": "[]",
+      "trust_entry": "trust_01M56BRJYZQ4S6M8VAEZ881DM7"
+    }
+  ],
+  "adapter_qualifications": [
+    {
+      "id": "aq_01M56CTSWC231VECGCZY93MKG4",
+      "created_at": "2026-10-18T02:18:12.234Z",
+      "adapter": "local_service",
+      "adapter_version": "1",
+      "engine_build": "sha256:cf3ce19a8756fcd6e76cfff75ae6b33c4cc91944ab771a4eda719c1616e52a2c",
+      "status": "lapsed",
+      "lapsed_reason": "engine_build"
+    },
+    {
+      "id": "aq_01M56WTCZD2XD9VYHMRJVE77QZ",
+      "created_at": "2026-10-18T06:57:36.236Z",
+      "adapter": "local_service",
+      "adapter_version": "1",
+      "engine_build": "sha256:680aebd193a0ff9c050a65e64f7b43e06951094919994e6e96225af1f7b03bef",
+      "status": "lapsed",
+      "lapsed_reason": "engine_build"
+    },
+    {
+      "id": "aq_01M58N5SSE65SE2693M4ZGT78H",
+      "created_at": "2026-10-18T23:22:30.061Z",
+      "adapter": "local_service",
+      "adapter_version": "1",
+      "engine_build": "sha256:769387c4965d0d4edd9759378dfb6d314d8ebb424922705b693075396baf8afe",
+      "status": "current",
+      "lapsed_reason": null
+    }
+  ],
+  "host_qualifications": {
+    "count": 30,
+    "active": [
+      {
+        "id": "hq_01M5ADMZ20DZE0Q7YVNECRX1ZS",
+        "created_at": "2026-10-19T15:49:27.232Z"
+      }
+    ],
+    "without_check_runner": [
+      "2026-10-18T07:00:58.842Z",
+      "2026-10-18T07:01:02.652Z",
+      "2026-10-18T07:01:06.290Z",
+      "2026-10-18T07:01:08.226Z",
+      "2026-10-18T07:01:11.902Z",
+      "2026-10-18T07:01:15.582Z",
+      "2026-10-18T07:01:19.287Z",
+      "2026-10-18T08:18:59.975Z",
+      "2026-10-19T15:30:14.173Z",
+      "2026-10-19T15:49:27.232Z"
+    ]
+  }
+}

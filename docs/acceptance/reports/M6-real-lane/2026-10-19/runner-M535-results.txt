@@ -1,0 +1,207 @@
+9:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+10:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (613.991398ms)
+217:  ✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (12112173.530584ms)
+218:  ✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (593.105846ms)
+219:  ✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (269.643638ms)
+220:  ✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (249.472437ms)
+221:  ✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (243.736931ms)
+222:  ✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (239.439202ms)
+223:  ✖ (g) alpha_deployed under policy (241.648397ms)
+224:  ✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (239.787871ms)
+225:  ✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (240.227932ms)
+226:  ✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (243.748498ms)
+227:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (240.76588ms)
+228:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (12115591.162253ms)
+229:ℹ tests 12
+231:ℹ pass 1
+232:ℹ fail 11
+234:ℹ skipped 0
+235:ℹ todo 0
+236:ℹ duration_ms 12116171.109347
+238:✖ failing tests:
+241:✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (12112173.530584ms)
+255:✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (593.105846ms)
+269:✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (269.643638ms)
+283:✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (249.472437ms)
+297:✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (243.736931ms)
+311:✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (239.439202ms)
+325:✖ (g) alpha_deployed under policy (241.648397ms)
+339:✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (239.787871ms)
+353:✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (240.227932ms)
+367:✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (243.748498ms)
+381:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (240.76588ms)
+393:exit=1
+402:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+403:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (412.681823ms)
+456:  ✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10814019.207523ms)
+457:  ✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (501.81493ms)
+458:  ✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (281.217773ms)
+459:  ✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (259.516498ms)
+460:  ✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (252.9166ms)
+461:  ✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (251.617875ms)
+462:  ✖ (g) alpha_deployed under policy (237.179957ms)
+463:  ✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (233.35698ms)
+464:  ✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (264.699139ms)
+465:  ✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (244.80057ms)
+466:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (251.366694ms)
+467:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (10817211.823416ms)
+468:ℹ tests 12
+470:ℹ pass 1
+471:ℹ fail 11
+473:ℹ skipped 0
+474:ℹ todo 0
+475:ℹ duration_ms 10817862.612275
+477:✖ failing tests:
+480:✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10814019.207523ms)
+494:✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (501.81493ms)
+508:✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (281.217773ms)
+522:✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (259.516498ms)
+536:✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (252.9166ms)
+550:✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (251.617875ms)
+564:✖ (g) alpha_deployed under policy (237.179957ms)
+578:✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (233.35698ms)
+592:✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (264.699139ms)
+606:✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (244.80057ms)
+620:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (251.366694ms)
+632:exit=1
+641:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+642:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (387.044764ms)
+673:  ✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10805594.476603ms)
+674:  ✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (556.082569ms)
+675:  ✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (265.339689ms)
+676:  ✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (243.172621ms)
+677:  ✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (238.957725ms)
+678:  ✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (241.780318ms)
+679:  ✖ (g) alpha_deployed under policy (238.797378ms)
+680:  ✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (242.183001ms)
+681:  ✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (237.996188ms)
+682:  ✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (242.503182ms)
+683:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (291.665485ms)
+684:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (10808781.50133ms)
+685:ℹ tests 12
+687:ℹ pass 1
+688:ℹ fail 11
+690:ℹ skipped 0
+691:ℹ todo 0
+692:ℹ duration_ms 10809343.60979
+694:✖ failing tests:
+697:✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10805594.476603ms)
+711:✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (556.082569ms)
+725:✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (265.339689ms)
+739:✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (243.172621ms)
+753:✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (238.957725ms)
+767:✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (241.780318ms)
+781:✖ (g) alpha_deployed under policy (238.797378ms)
+795:✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (242.183001ms)
+809:✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (237.996188ms)
+823:✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (242.503182ms)
+837:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (291.665485ms)
+849:exit=1
+858:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+859:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (421.732992ms)
+890:  ✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10817415.663685ms)
+891:  ✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (582.650276ms)
+892:  ✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (457.234637ms)
+893:  ✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (399.819096ms)
+894:  ✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (359.029017ms)
+895:  ✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (268.191947ms)
+896:  ✖ (g) alpha_deployed under policy (246.505048ms)
+897:  ✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (242.770833ms)
+898:  ✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (240.662285ms)
+899:  ✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (241.445274ms)
+900:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (240.965573ms)
+901:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (10821118.122881ms)
+902:ℹ tests 12
+904:ℹ pass 1
+905:ℹ fail 11
+907:ℹ skipped 0
+908:ℹ todo 0
+909:ℹ duration_ms 10821629.345268
+911:✖ failing tests:
+914:✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (10817415.663685ms)
+928:✖ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (582.650276ms)
+942:✖ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (457.234637ms)
+956:✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (399.819096ms)
+970:✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (359.029017ms)
+984:✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (268.191947ms)
+998:✖ (g) alpha_deployed under policy (246.505048ms)
+1012:✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (242.770833ms)
+1026:✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (240.662285ms)
+1040:✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (241.445274ms)
+1054:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (240.965573ms)
+1066:exit=1
+1075:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+1076:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (386.766988ms)
+1184:  ✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (8440820.332564ms)
+1185:  ✔ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (550.95061ms)
+1186:  ✔ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (280.546802ms)
+1187:  ✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (261.244307ms)
+1188:  ✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (262.234541ms)
+1189:  ✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (265.222312ms)
+1190:  ✖ (g) alpha_deployed under policy (259.242865ms)
+1191:  ✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (283.031269ms)
+1192:  ✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (260.218736ms)
+1193:  ✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (255.287126ms)
+1194:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (261.295048ms)
+1195:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (8444148.329589ms)
+1196:ℹ tests 12
+1198:ℹ pass 3
+1199:ℹ fail 9
+1201:ℹ skipped 0
+1202:ℹ todo 0
+1203:ℹ duration_ms 8444663.930286
+1205:✖ failing tests:
+1208:✖ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (8440820.332564ms)
+1228:✖ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (261.244307ms)
+1242:✖ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (262.234541ms)
+1256:✖ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (265.222312ms)
+1270:✖ (g) alpha_deployed under policy (259.242865ms)
+1284:✖ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (283.031269ms)
+1298:✖ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (260.218736ms)
+1312:✖ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (255.287126ms)
+1326:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (261.295048ms)
+1338:exit=1
+1347:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+1348:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (531.081579ms)
+1349:  ✔ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (465.612952ms)
+1350:  ✔ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (264.08503ms)
+1351:  ✔ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (269.191916ms)
+1436:  ✔ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (6557545.50805ms)
+1437:  ✔ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (605.440513ms)
+1438:  ✔ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (285.314356ms)
+1439:  ✔ (g) alpha_deployed under policy (253.458993ms)
+1440:  ✔ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (258.702161ms)
+1441:  ✔ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (7148.94989ms)
+1442:  ✔ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (268.883359ms)
+1443:  ✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (255.099158ms)
+1444:✖ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (6568153.135401ms)
+1445:ℹ tests 12
+1447:ℹ pass 11
+1448:ℹ fail 1
+1450:ℹ skipped 0
+1451:ℹ todo 0
+1452:ℹ duration_ms 6568528.523812
+1454:✖ failing tests:
+1457:✖ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (255.099158ms)
+1486:exit=1
+1495:▶ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid)
+1496:  ✔ (k) its start: M519 passed with no workaround carried forward, its findings resolved on this revision, M535's rehearsal passed on this revision (491.441011ms)
+1497:  ✔ (a) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (277.683035ms)
+1498:  ✔ (b) the preview: the web mockup served bare, the android mockup inside the engine's labelled frame; SIMULATIONS.txt on export (239.160776ms)
+1499:  ✔ (c) the first approval with the logo held: the effective logo the placeholder (or an earlier approved file) (248.264078ms)
+1500:  ✔ (d) the UI stages: each Builder package holding the effective logo by digest and never the held one; each check reading the effective slot@version; bindings recorded (594.731895ms)
+1501:  ✔ (e) the held logo approved by an asset-only approval: the effective version moved; one asset_updated item from the bindings (726.887187ms)
+1502:  ✔ (f) its integration: asset_version_changed obligations resolved; the parity checks passing with the new slot@version on their results (602.965476ms)
+1503:  ✔ (g) alpha_deployed under policy (579.179621ms)
+1504:  ✔ (h) the review: web screens from the engine's observations; android not_observed no_native_runtime, its human test pending (653.73283ms)
+1505:  ✔ (i) the teardown applied, nothing left; pace.json with the Designer's figures and the preview's peak; the token nowhere (5177.374351ms)
+1506:  ✔ (j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (540.882917ms)
+1507:  ✔ (l) the owner's acts: the four central acts performed by Sean with his own entries; every other act's performer recorded; the store's human actor alone never counted (594.580996ms)
+1508:✔ M535 the real run: web, a labelled android simulation and a held logo (real lane, paid) (10728.009946ms)
+1509:ℹ tests 12
+1511:ℹ pass 12
+1512:ℹ fail 0
+1514:ℹ skipped 0
+1515:ℹ todo 0
+1516:ℹ duration_ms 11013.271649
+1517:exit=0

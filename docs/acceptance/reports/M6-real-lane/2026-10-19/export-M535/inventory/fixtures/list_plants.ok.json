@@ -1,0 +1,22 @@
+{
+  "plants": [
+    {
+      "name": "name-124",
+      "intervalDays": 26,
+      "lastWatered": "lastwatered-122",
+      "due": false
+    },
+    {
+      "name": "name-599",
+      "intervalDays": 32,
+      "lastWatered": "lastwatered-633",
+      "due": true
+    },
+    {
+      "name": "name-293",
+      "intervalDays": 129,
+      "lastWatered": "lastwatered-595",
+      "due": true
+    }
+  ]
+}

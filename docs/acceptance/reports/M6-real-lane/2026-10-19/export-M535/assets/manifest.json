@@ -1,0 +1,208 @@
+{
+  "version": 2,
+  "slots": [
+    {
+      "key": "logo",
+      "kind": "logo",
+      "purpose": "the product mark: a water drop with a leaf cut out of it, and the wordmark Waterlog; shown in the header bar of both targets",
+      "platforms": [
+        "web",
+        "android"
+      ],
+      "variants": [
+        {
+          "name": "full",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/full.svg",
+          "digest": "c50ae13c87c9883a3942fe7d96e17a26c00aed1f516aceafacfc528288f94538"
+        },
+        {
+          "name": "compact",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/compact.svg",
+          "digest": "5c62820bc1954fc3058e2263edcbc0ff3aac9653a18e34a4b2e5bd9ef55c5278"
+        },
+        {
+          "name": "monochrome",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/monochrome.svg",
+          "digest": "373931fb058d369f5be2f14d6ea92ec2721a309dec08ef99e49b87296304db88"
+        },
+        {
+          "name": "on_light",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/on_light.svg",
+          "digest": "a70e90561a9d21209281f609f1a946fd3273481b7fbd000d29bab5f8d139405f"
+        },
+        {
+          "name": "on_dark",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/logo/on_dark.svg",
+          "digest": "1b0c17abdc574104313259a60e6e11f0ffb5323ba1755ce57949926281ff711c"
+        }
+      ],
+      "alt_text": "Waterlog",
+      "slot_version": 2,
+      "status": "proposed",
+      "provenance": "designer",
+      "status_since": 1,
+      "history": [
+        {
+          "slot_version": 1,
+          "design_version": 0,
+          "status": "placeholder",
+          "files": [
+            {
+              "variant": "full",
+              "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+            },
+            {
+              "variant": "compact",
+              "digest": "4d857a8786482cb5cb199d84ab3f32bb5410f99ce1eaa162ed1e51a18f568c50"
+            },
+            {
+              "variant": "monochrome",
+              "digest": "831d57066398c34d6ead00deb7254b5824eec126b1d838f2d3d7ab89c3098bfb"
+            },
+            {
+              "variant": "on_light",
+              "digest": "9998796ed56146f3da8a22eaa16cc1915ad8d4f0663410e088c039dcc00fd708"
+            },
+            {
+              "variant": "on_dark",
+              "digest": "6a8c47e84cf667ac5b02418d93450cb622d2488c70162157643c90d08b31fddf"
+            }
+          ]
+        },
+        {
+          "slot_version": 2,
+          "design_version": 1,
+          "status": "proposed",
+          "files": [
+            {
+              "variant": "full",
+              "digest": "c50ae13c87c9883a3942fe7d96e17a26c00aed1f516aceafacfc528288f94538"
+            },
+            {
+              "variant": "compact",
+              "digest": "5c62820bc1954fc3058e2263edcbc0ff3aac9653a18e34a4b2e5bd9ef55c5278"
+            },
+            {
+              "variant": "monochrome",
+              "digest": "373931fb058d369f5be2f14d6ea92ec2721a309dec08ef99e49b87296304db88"
+            },
+            {
+              "variant": "on_light",
+              "digest": "a70e90561a9d21209281f609f1a946fd3273481b7fbd000d29bab5f8d139405f"
+            },
+            {
+              "variant": "on_dark",
+              "digest": "1b0c17abdc574104313259a60e6e11f0ffb5323ba1755ce57949926281ff711c"
+            }
+          ]
+        }
+      ],
+      "decorative": false,
+      "screens": [
+        "web-plant-list",
+        "android-plant-list"
+      ]
+    },
+    {
+      "key": "favicon",
+      "kind": "favicon",
+      "purpose": "the browser tab icon",
+      "platforms": [
+        "web"
+      ],
+      "variants": [
+        {
+          "name": "default",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/favicon/default.svg",
+          "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+        }
+      ],
+      "slot_version": 1,
+      "status": "placeholder",
+      "provenance": "engine_placeholder",
+      "status_since": 0,
+      "history": [
+        {
+          "slot_version": 1,
+          "design_version": 0,
+          "status": "placeholder",
+          "files": [
+            {
+              "variant": "default",
+              "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "app_icon",
+      "kind": "app_icon",
+      "purpose": "the launcher icon",
+      "platforms": [
+        "android"
+      ],
+      "variants": [
+        {
+          "name": "default",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/app_icon/default.svg",
+          "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+        },
+        {
+          "name": "adaptive_foreground",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/app_icon/adaptive_foreground.svg",
+          "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+        },
+        {
+          "name": "adaptive_background",
+          "format": "svg",
+          "transparency": "any",
+          "file": "assets/app_icon/adaptive_background.svg",
+          "digest": "b9dac1e300fbf997aa2549590246ff9966336303bae6c8d617ef2a6b3a2849b9"
+        }
+      ],
+      "slot_version": 1,
+      "status": "placeholder",
+      "provenance": "engine_placeholder",
+      "status_since": 0,
+      "history": [
+        {
+          "slot_version": 1,
+          "design_version": 0,
+          "status": "placeholder",
+          "files": [
+            {
+              "variant": "default",
+              "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+            },
+            {
+              "variant": "adaptive_foreground",
+              "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+            },
+            {
+              "variant": "adaptive_background",
+              "digest": "b9dac1e300fbf997aa2549590246ff9966336303bae6c8d617ef2a6b3a2849b9"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "packaging": []
+}

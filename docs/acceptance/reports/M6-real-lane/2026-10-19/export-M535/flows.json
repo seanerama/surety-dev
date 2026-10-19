@@ -1,0 +1,47 @@
+{
+  "flows": [
+    {
+      "key": "water-a-plant",
+      "title": "See which plants are due and log a watering",
+      "requirements": [
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "steps": [
+        {
+          "key": "open-list",
+          "title": "Open Waterlog and see every plant, in the order added",
+          "requirement": "R5",
+          "interfaces": [
+            "list_plants"
+          ]
+        },
+        {
+          "key": "see-due",
+          "title": "Spot the plants marked Due",
+          "requirement": "R5",
+          "interfaces": [
+            "list_plants"
+          ]
+        },
+        {
+          "key": "log-watering",
+          "title": "Press Watered on a plant; its last watering updates and its Due label goes",
+          "requirement": "R5",
+          "interfaces": [
+            "log_watering"
+          ]
+        },
+        {
+          "key": "see-elsewhere",
+          "title": "Open the other target: the same watering and due marks show there",
+          "requirement": "R5",
+          "interfaces": [
+            "list_plants"
+          ]
+        }
+      ]
+    }
+  ]
+}

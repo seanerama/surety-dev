@@ -1,0 +1,22 @@
+{
+  "result": {
+    "collided": true,
+    "v1After": 22.87,
+    "v2After": 25.24,
+    "momentumBefore": 35.05,
+    "momentumAfter": 13.3,
+    "kineticEnergyBefore": 62.61,
+    "kineticEnergyAfter": 62.46
+  },
+  "series": {
+    "t": [
+      34.01
+    ],
+    "x1": [
+      32.3
+    ],
+    "x2": [
+      6.33
+    ]
+  }
+}

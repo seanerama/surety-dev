@@ -1,0 +1,104 @@
+31:▶ M519 the real run: design before build and at Alpha, one target (real lane, paid)
+32:  ✔ (a) the attempts: session_qualified true from the continuation canary; the Opus and Sonnet entries active (270508.484806ms)
+267:  ✖ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (11921853.99825ms)
+268:  ✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (466.306379ms)
+269:  ✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (271.993581ms)
+270:  ✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (250.008229ms)
+271:  ✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (242.618944ms)
+272:  ✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (243.036594ms)
+273:  ✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (225.779644ms)
+274:  ✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (229.730146ms)
+275:  ✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (225.974089ms)
+276:✖ M519 the real run: design before build and at Alpha, one target (real lane, paid) (12194519.819472ms)
+277:ℹ tests 10
+279:ℹ pass 1
+280:ℹ fail 9
+282:ℹ skipped 0
+283:ℹ todo 0
+284:ℹ duration_ms 12194856.751011
+286:✖ failing tests:
+289:✖ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (11921853.99825ms)
+303:✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (466.306379ms)
+317:✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (271.993581ms)
+331:✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (250.008229ms)
+345:✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (242.618944ms)
+359:✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (243.036594ms)
+373:✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (225.779644ms)
+387:✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (229.730146ms)
+401:✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (225.974089ms)
+413:=== rerun m6w_design at 2026-10-18T06:38:47Z rev 292e11e ===
+422:▶ M519 the real run: design before build and at Alpha, one target (real lane, paid)
+423:  ✔ (a) the attempts: session_qualified true from the continuation canary; the Opus and Sonnet entries active (566.521014ms)
+424:  ✖ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (271.518254ms)
+425:  ✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (234.352555ms)
+426:  ✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (231.910896ms)
+427:  ✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (236.455295ms)
+428:  ✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (241.192235ms)
+429:  ✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (239.124548ms)
+430:  ✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (236.919007ms)
+431:  ✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (241.256747ms)
+432:  ✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (240.486046ms)
+433:✖ M519 the real run: design before build and at Alpha, one target (real lane, paid) (2741.052016ms)
+434:ℹ tests 10
+436:ℹ pass 1
+437:ℹ fail 9
+439:ℹ skipped 0
+440:ℹ todo 0
+441:ℹ duration_ms 3055.442067
+443:✖ failing tests:
+446:✖ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (271.518254ms)
+460:✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (234.352555ms)
+474:✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (231.910896ms)
+488:✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (236.455295ms)
+502:✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (241.192235ms)
+516:✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (239.124548ms)
+530:✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (236.919007ms)
+544:✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (241.256747ms)
+558:✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (240.486046ms)
+570:=== rerun m6w_design at 2026-10-18T06:56:44Z rev fd5087f ===
+579:▶ M519 the real run: design before build and at Alpha, one target (real lane, paid)
+580:  ✔ (a) the attempts: session_qualified true from the continuation canary; the Opus and Sonnet entries active (469.936799ms)
+619:  ✔ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (265068.581614ms)
+620:  ✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (351.748585ms)
+621:  ✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (3803.301318ms)
+622:  ✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (3639.067665ms)
+623:  ✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (3710.472371ms)
+624:  ✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (3699.594827ms)
+625:  ✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (3679.183278ms)
+626:  ✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (3677.914573ms)
+627:  ✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (3681.622994ms)
+628:✖ M519 the real run: design before build and at Alpha, one target (real lane, paid) (291783.213367ms)
+629:ℹ tests 10
+631:ℹ pass 2
+632:ℹ fail 8
+634:ℹ skipped 0
+635:ℹ todo 0
+636:ℹ duration_ms 292149.97043
+638:✖ failing tests:
+641:✖ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (351.748585ms)
+659:✖ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (3803.301318ms)
+673:✖ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (3639.067665ms)
+687:✖ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (3710.472371ms)
+701:✖ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (3699.594827ms)
+715:✖ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (3679.183278ms)
+729:✖ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (3677.914573ms)
+743:✖ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (3681.622994ms)
+755:=== rerun judge:M519 (c) at 2026-10-18T07:24:56Z rev 308230d ===
+764:▶ M519 the real run: design before build and at Alpha, one target (real lane, paid)
+765:  ✔ (a) the attempts: session_qualified true from the continuation canary; the Opus and Sonnet entries active (559.05017ms)
+766:  ✔ (b) the sessions metered, the Designer's among them; the design passing its check; the preview deployed, opened through the relay and torn down (493.487421ms)
+767:  ✔ (c) the batched approval: design_approval and its spec_change under one batch_key, recorded with the actor and its performer (229.753059ms)
+1080:  ✔ (d) the build: the UI stage held design_pending while the API stage built, released after design.ready; every check result an engine execution (3443662.554ms)
+1081:  ✔ (e) qualify-adapter; Alpha requested under policy, alpha_authorize satisfied, verified, alpha_deployed on a real unit of the run home's prefix (486.139607ms)
+1082:  ✔ (f) the review at Alpha: design_verdicts answered by the owner; the web human test carrying the confirmed verdict (266.117864ms)
+1083:  ✔ (g) the teardown applied, nothing of the prefix left; pace.json with the Designer's figures and the preview's peak; the token in no file, git object, unit property, journal output or transcript record (5848.636994ms)
+1084:  ✔ (h) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25) (260.382962ms)
+1085:  ✔ (i) every owner act: its performer (Sean or the driver) with evidence beyond the store's human actor; none unknown (253.822622ms)
+1086:  ✔ (j) the findings: each defect with its step and its workaround; no step passed only by a workaround (274.194835ms)
+1087:✔ M519 the real run: design before build and at Alpha, one target (real lane, paid) (3452335.549358ms)
+1088:ℹ tests 10
+1090:ℹ pass 10
+1091:ℹ fail 0
+1093:ℹ skipped 0
+1094:ℹ todo 0
+1095:ℹ duration_ms 3452689.682517

@@ -1,0 +1,223 @@
+{
+  "flows": [
+    {
+      "key": "momentum-loop",
+      "title": "Momentum lab: predict, run, compare",
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "steps": [
+        {
+          "key": "momentum.open",
+          "title": "Open the momentum lab from its tab or its address",
+          "requirement": "R8",
+          "interfaces": [
+            "page document",
+            "design tokens",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "momentum.set-up",
+          "title": "Set up the experiment within the allowed ranges",
+          "requirement": "R8",
+          "interfaces": [
+            "RANGES",
+            "validateMomentum / validateFriction / validateTrajectory / validateScore"
+          ]
+        },
+        {
+          "key": "momentum.predict",
+          "title": "Enter a prediction (step 1, Predict)",
+          "requirement": "R8",
+          "interfaces": [
+            "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "score"
+          ]
+        },
+        {
+          "key": "momentum.run",
+          "title": "Run: simulate and watch the run in 3D (step 2, Run)",
+          "requirement": "R7",
+          "interfaces": [
+            "simulateMomentum",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "momentum.compare",
+          "title": "Compare the prediction with the simulation: error, score and bar (step 3, Compare)",
+          "requirement": "R8",
+          "interfaces": [
+            "simulateMomentum",
+            "score"
+          ]
+        },
+        {
+          "key": "momentum.explain",
+          "title": "Read why it came out this way: the law, the equation with the numbers, why",
+          "requirement": "R6",
+          "interfaces": [
+            "simulateMomentum"
+          ]
+        },
+        {
+          "key": "momentum.replay",
+          "title": "Play, pause or replay the run",
+          "requirement": "R7",
+          "interfaces": [
+            "main.mjs entry"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "friction-loop",
+      "title": "Friction lab: predict, run, compare",
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "steps": [
+        {
+          "key": "friction.open",
+          "title": "Open the friction lab from its tab or its address",
+          "requirement": "R8",
+          "interfaces": [
+            "page document",
+            "design tokens",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "friction.set-up",
+          "title": "Set up the experiment within the allowed ranges",
+          "requirement": "R8",
+          "interfaces": [
+            "RANGES",
+            "validateMomentum / validateFriction / validateTrajectory / validateScore"
+          ]
+        },
+        {
+          "key": "friction.predict",
+          "title": "Enter a prediction (step 1, Predict)",
+          "requirement": "R8",
+          "interfaces": [
+            "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "scoreFriction"
+          ]
+        },
+        {
+          "key": "friction.run",
+          "title": "Run: simulate and watch the run in 3D (step 2, Run)",
+          "requirement": "R7",
+          "interfaces": [
+            "simulateFriction",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "friction.compare",
+          "title": "Compare the prediction with the simulation: error, score and bar (step 3, Compare)",
+          "requirement": "R8",
+          "interfaces": [
+            "simulateFriction",
+            "scoreFriction"
+          ]
+        },
+        {
+          "key": "friction.explain",
+          "title": "Read why it came out this way: the law, the equation with the numbers, why",
+          "requirement": "R6",
+          "interfaces": [
+            "simulateFriction"
+          ]
+        },
+        {
+          "key": "friction.replay",
+          "title": "Play, pause or replay the run",
+          "requirement": "R7",
+          "interfaces": [
+            "main.mjs entry"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "trajectory-loop",
+      "title": "Trajectory lab: predict, run, compare",
+      "requirements": [
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "steps": [
+        {
+          "key": "trajectory.open",
+          "title": "Open the trajectory lab from its tab or its address",
+          "requirement": "R8",
+          "interfaces": [
+            "page document",
+            "design tokens",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "trajectory.set-up",
+          "title": "Set up the experiment within the allowed ranges",
+          "requirement": "R8",
+          "interfaces": [
+            "RANGES",
+            "validateMomentum / validateFriction / validateTrajectory / validateScore"
+          ]
+        },
+        {
+          "key": "trajectory.predict",
+          "title": "Enter a prediction (step 1, Predict)",
+          "requirement": "R8",
+          "interfaces": [
+            "validateMomentum / validateFriction / validateTrajectory / validateScore",
+            "score"
+          ]
+        },
+        {
+          "key": "trajectory.run",
+          "title": "Run: simulate and watch the run in 3D (step 2, Run)",
+          "requirement": "R7",
+          "interfaces": [
+            "simulateTrajectory",
+            "main.mjs entry"
+          ]
+        },
+        {
+          "key": "trajectory.compare",
+          "title": "Compare the prediction with the simulation: error, score and bar (step 3, Compare)",
+          "requirement": "R8",
+          "interfaces": [
+            "simulateTrajectory",
+            "score"
+          ]
+        },
+        {
+          "key": "trajectory.explain",
+          "title": "Read why it came out this way: the law, the equation with the numbers, why",
+          "requirement": "R6",
+          "interfaces": [
+            "simulateTrajectory"
+          ]
+        },
+        {
+          "key": "trajectory.replay",
+          "title": "Play, pause or replay the run",
+          "requirement": "R7",
+          "interfaces": [
+            "main.mjs entry"
+          ]
+        }
+      ]
+    }
+  ]
+}

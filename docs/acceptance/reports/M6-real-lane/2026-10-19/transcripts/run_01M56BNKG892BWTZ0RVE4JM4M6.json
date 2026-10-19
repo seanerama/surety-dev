@@ -1,0 +1,74 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M56BNKGM4MPEKXM3CCWVMQWF",
+  "created_at": "2026-10-18T01:57:53.299Z",
+  "project": "proj_01M56BJ473ZAKEEQ2CY9ZCB48P",
+  "project_name": "surety-qualification-fixture",
+  "run": "run_01M56BNKG892BWTZ0RVE4JM4M6",
+  "role": "vision",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-18T01:57:53.299Z",
+      "text_ref": "rec_01M56BNKGQ5Z3VWY8H76HMJ9J6",
+      "text": "This is a qualification canary of the engine, turn 1 of 2. Follow /surety/context/canary.json exactly."
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-18T01:58:06.007Z",
+      "text_ref": "rec_01M56BNZXF7ABDKSPQWSMPFBR8",
+      "text": "Written."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-18T01:58:06.171Z",
+      "text_ref": "rec_01M56BP031W1ASH1Z1DK7QYSJ3",
+      "text": "This is a qualification canary of the engine, turn 2 of 2. Follow /surety/context/canary.json exactly."
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-18T01:58:17.031Z",
+      "text_ref": "rec_01M56BPANZY0S1A397CGWM6GMS",
+      "text": "surety-continuation-fd4e071a984b852d022ef16d"
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M56BNKGQ5Z3VWY8H76HMJ9J6",
+      "sha256": "b84621a15b5ff97e46ae3481b5be95a0fd027ddc3ff8db93986b8496f50279c9",
+      "bytes": 102,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56BNZXF7ABDKSPQWSMPFBR8",
+      "sha256": "d026d2feb6f3894d4e167ce1d34fe77e2fe187cc472821a963940d7efc750836",
+      "bytes": 8,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56BP031W1ASH1Z1DK7QYSJ3",
+      "sha256": "8a81486a5ecacf4411bf9df5e65385a0cf27f99797378d8be4ca62d214d3a8fd",
+      "bytes": 102,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56BPANZY0S1A397CGWM6GMS",
+      "sha256": "8911ff4a2b9265f3fc85726b84a3841650b9b116ff3d4591962d3e1cf39d9520",
+      "bytes": 44,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

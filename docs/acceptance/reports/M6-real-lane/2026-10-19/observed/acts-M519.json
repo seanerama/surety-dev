@@ -1,0 +1,1718 @@
+[
+  {
+    "act": "policy_widening",
+    "items": [
+      {
+        "decision": "dec_01M56BT6GZ16PVCZYYF739NWQW",
+        "kind": "policy_widening",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:00:38.204Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56BT6GZ16PVCZYYF739NWQW/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "policy_widening",
+        "step": "m6w_create",
+        "at": "2026-10-18T02:00:38.230Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56BT6GZ16PVCZYYF739NWQW",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_create"
+  },
+  {
+    "act": "spec_approval",
+    "items": [
+      {
+        "decision": "dec_01M56C1HC11PJKP6RWK0TMNVZP",
+        "kind": "spec_approval",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:04:39.835Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56C1HC11PJKP6RWK0TMNVZP/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "spec_approval",
+        "step": "m6w_spec",
+        "at": "2026-10-18T02:04:40.062Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56C1HC11PJKP6RWK0TMNVZP",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_spec"
+  },
+  {
+    "act": "spec_session",
+    "items": [
+      {
+        "run": "run_01M56BVZF5E9QR7XZM4D00VV1B",
+        "owner_turns": 2,
+        "store_actor": "owner (transcript speaker)",
+        "answered_at": "2026-10-18T02:03:56.705Z",
+        "route": "POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/sessions/run_01M56BVZF5E9QR7XZM4D00VV1B/turns"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "spec_session",
+        "step": "m6w_spec",
+        "route": "surety session open/say/save/close (spec_writer run_01M56BVZF5E9QR7XZM4D00VV1B)",
+        "at": "2026-10-18T02:04:24.421Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_spec"
+  },
+  {
+    "act": "architecture_approval",
+    "items": [
+      {
+        "decision": "dec_01M56CBEP1EP4SREX853J5PKFW",
+        "kind": "architecture_approval",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:10:08.939Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56CBEP1EP4SREX853J5PKFW/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "architecture_approval",
+        "step": "m6w_architecture",
+        "at": "2026-10-18T02:10:08.973Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56CBEP1EP4SREX853J5PKFW",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_architecture"
+  },
+  {
+    "act": "plan_approval",
+    "items": [
+      {
+        "decision": "dec_01M56CBEP23JT2H1M7QQFQP5KT",
+        "kind": "plan_approval",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:10:08.986Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56CBEP23JT2H1M7QQFQP5KT/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "plan_approval",
+        "step": "m6w_architecture",
+        "at": "2026-10-18T02:10:09.452Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56CBEP23JT2H1M7QQFQP5KT",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_architecture"
+  },
+  {
+    "act": "architect_session",
+    "items": [
+      {
+        "run": "run_01M56C2NTS2KQ23MMZXQFYG4NA",
+        "owner_turns": 1,
+        "store_actor": "owner (transcript speaker)",
+        "answered_at": "2026-10-18T02:05:01.918Z",
+        "route": "POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/sessions/run_01M56C2NTS2KQ23MMZXQFYG4NA/turns"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "architect_session",
+        "step": "m6w_architecture",
+        "route": "surety session open/say/save/close (architect run_01M56C2NTS2KQ23MMZXQFYG4NA)",
+        "at": "2026-10-18T02:09:49.319Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_architecture"
+  },
+  {
+    "act": "qualify_adapter",
+    "items": [
+      {
+        "act": "qualify_adapter",
+        "route": "surety qualify-adapter local_service",
+        "store_actor": "the owner's CLI",
+        "answered_at": "2026-10-18T02:18:16.992Z",
+        "qualification": {
+          "id": "aq_01M56CTSWC231VECGCZY93MKG4",
+          "status": "current",
+          "adapter": "local_service",
+          "cases": [
+            {
+              "case": "deploy_read_back",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTHHSP11YXV6MFW183HEP",
+                "attempt": "att_01M56CTHK3NZ0F8SHQQ1XKH3XA",
+                "unit": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service",
+                "generation": 2,
+                "receipt": "issued",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "one launch granted, the init instance recorded at the grant",
+                    "held": true,
+                    "read": {
+                      "grants": 1,
+                      "init": {
+                        "pid": 1025074,
+                        "start_time": 23472402
+                      }
+                    }
+                  },
+                  {
+                    "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 1025138,
+                        "start_time": 23472414,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "disagreement": null
+                    }
+                  },
+                  {
+                    "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6",
+                        "generation": 2,
+                        "at": "2026-10-18T02:18:04.409Z",
+                        "read": "sha256:6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "45a9a0fbc1b84d379a94b2868aac3751",
+                          "pid": 1025138,
+                          "start_time": 23472414
+                        },
+                        "detail": null,
+                        "duration_ms": 133
+                      }
+                    ]
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same read, expecting B's digest, differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:5fda6c7f21fa649e22450c1f774d95b192c6115ce989d0c74e15f8bccab64bec",
+                        "generation": 2,
+                        "at": "2026-10-18T02:18:04.560Z",
+                        "read": "unread",
+                        "match": "differs",
+                        "instance": {
+                          "pid": 1025138,
+                          "start_time": 23472414
+                        },
+                        "detail": {
+                          "field": "mounts",
+                          "expected": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s6-1018/home/artifacts/proj_01M56BJ473ZAKEEQ2CY9ZCB48P/5fda6c7f21fa649e22450c1f774d95b192c6115ce989d0c74e15f8bccab64bec"
+                          },
+                          "read": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s6-1018/home/artifacts/proj_01M56BJ473ZAKEEQ2CY9ZCB48P/6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6"
+                          }
+                        },
+                        "duration_ms": 86
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "case": "replace",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTJVX6KSKKF6Z7MBE840M",
+                "attempt": "att_01M56CTJXCVT9V5GEDN23T6HH7",
+                "unit": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g3.service",
+                "generation": 3,
+                "replaced": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service is gone",
+                    "held": true,
+                    "read": "not-found"
+                  },
+                  {
+                    "what": "verify reads B's digest",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:5fda6c7f21fa649e22450c1f774d95b192c6115ce989d0c74e15f8bccab64bec",
+                        "generation": 3,
+                        "at": "2026-10-18T02:18:05.891Z",
+                        "read": "sha256:5fda6c7f21fa649e22450c1f774d95b192c6115ce989d0c74e15f8bccab64bec",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "3dbc637a92b94f5e928c5ac81b4d66b3",
+                          "pid": 1025275,
+                          "start_time": 23472550
+                        },
+                        "detail": null,
+                        "duration_ms": 126
+                      }
+                    ]
+                  },
+                  {
+                    "what": "the new generation is recorded current",
+                    "held": true,
+                    "read": {
+                      "recorded": 3,
+                      "attempt": 3
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service read loaded and active before the replacement",
+                    "held": true,
+                    "read": {
+                      "load": "loaded",
+                      "active": "active"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "receipt_lost",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "incarnation": "inc_01M56CT405MHVDWVEN4FF6VRCB",
+                "scope": "in_process",
+                "engine_crash": false,
+                "dropped_receipt": {
+                  "result": "issued",
+                  "bound": null,
+                  "refused": null
+                },
+                "operation": "op_01M56CTKTDED8CKJ7JMGHMZYJY",
+                "attempt": "att_01M56CTKVZGFV4CRNZ9CPHHEQC",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied with no receipt recorded",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "the attempt holds no receipt",
+                    "held": true,
+                    "read": null
+                  },
+                  {
+                    "what": "the attempt succeeded",
+                    "held": true,
+                    "read": "succeeded"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the effect, the same read answered absent",
+                    "held": true,
+                    "read": "absent"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "not_issued",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTMQCJA3KAS293Y712VA2",
+                "attempt": "att_01M56CTMS48D3RZX6ZRT0QSDMF",
+                "assertions": [
+                  {
+                    "what": "reconcile answers absent",
+                    "held": true,
+                    "read": "absent"
+                  },
+                  {
+                    "what": "no launch was granted",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the running deployment's attempt read the same way answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "late_launcher",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTH1RF32RJG64KGEKJNYR",
+                "attempt": "att_01M56CTH35AVYX9WHH258HX0ZJ",
+                "unit": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g1.service",
+                "assertions": [
+                  {
+                    "what": "the launcher asked and was refused because its launch is closed",
+                    "held": true,
+                    "read": {
+                      "reason": "the launch is closed",
+                      "refusals": [
+                        {
+                          "reason": "the launch is closed",
+                          "at": "2026-10-18T02:18:03.419Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "no launch was granted: nothing of the application ran",
+                    "held": true,
+                    "read": 0
+                  },
+                  {
+                    "what": "while the unit was loaded, reconcile did not answer absent",
+                    "held": true,
+                    "read": {
+                      "unit": {
+                        "load": "loaded",
+                        "active": "active"
+                      },
+                      "outcome": "unknown"
+                    }
+                  },
+                  {
+                    "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                    "held": true,
+                    "read": {
+                      "gone": true,
+                      "before_cleanup": "partial",
+                      "outcome": "absent"
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "another attempt's launcher, its launch authorizable, was granted once",
+                    "held": true,
+                    "read": {
+                      "attempt": "att_01M56CTRBB2MRN6F3MQNNES27Q",
+                      "grants": 1
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "out_of_band",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "stopped": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service",
+                "restarted": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service",
+                "changed": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g9.service",
+                "assertions": [
+                  {
+                    "what": "the stop by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl stop surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service: exit 0"
+                  },
+                  {
+                    "what": "detected: the environment down, surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service recorded stopped out of band after the stop",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-18T02:18:08.457Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M56CTP6AATPWE4JD704JYREQ",
+                          "change": "stopped",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-18T02:18:08.457Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the restart by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl restart surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service: exit 0"
+                  },
+                  {
+                    "what": "a new invocation of the unit",
+                    "held": true,
+                    "read": {
+                      "before": "e8423cbf2c6d41228e8de31903fc6e13",
+                      "after": "de1cf569b16d47e48d2b253ef37241ac"
+                    }
+                  },
+                  {
+                    "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                    "held": true,
+                    "read": {
+                      "reason": "a launch connection of this attempt has already proved its peer",
+                      "grants": 1
+                    }
+                  },
+                  {
+                    "what": "nothing of the application runs again: the original instance is gone",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 1025780,
+                        "start_time": 23472985,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "gone": true
+                    }
+                  },
+                  {
+                    "what": "detected: surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service recorded restarted out of band after the restart",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-18T02:18:10.581Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M56CTP6AATPWE4JD704JYREQ",
+                          "change": "stopped",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service",
+                          "closed_at": "2026-10-18T02:18:09.194Z",
+                          "detected_at": "2026-10-18T02:18:08.457Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M56CTR8P38G2318P1WVZQ1Q5",
+                          "change": "restarted",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-18T02:18:10.581Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "one byte of the sealed copy changed",
+                    "held": true,
+                    "read": "/home/smahoney/s6-1018/home/artifacts/proj_01M56BJ473ZAKEEQ2CY9ZCB48P/6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6/server.js: its last byte changed"
+                  },
+                  {
+                    "what": "an identity read differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6",
+                        "generation": 9,
+                        "at": "2026-10-18T02:18:11.480Z",
+                        "read": "sha256:fe8957fad623016ce969834bfdc6b5f115691bd8f27a571277717b5a662526fb",
+                        "match": "differs",
+                        "instance": {
+                          "invocation_id": "96224d2271784673bc6420494564dc7a",
+                          "pid": 1025928,
+                          "start_time": 23473188
+                        },
+                        "detail": {
+                          "field": "tree",
+                          "expected": "sha256:6b5328d39823cdade0511e765abae52bffa8e6df2ea6b2689a3fbec8560072c6",
+                          "read": "sha256:fe8957fad623016ce969834bfdc6b5f115691bd8f27a571277717b5a662526fb"
+                        },
+                        "duration_ms": 101
+                      }
+                    ]
+                  },
+                  {
+                    "what": "detected: surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g9.service recorded with an identity that differs, after the change",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "degraded",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-18T02:18:11.738Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M56CTP6AATPWE4JD704JYREQ",
+                          "change": "stopped",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g7.service",
+                          "closed_at": "2026-10-18T02:18:09.194Z",
+                          "detected_at": "2026-10-18T02:18:08.457Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M56CTR8P38G2318P1WVZQ1Q5",
+                          "change": "restarted",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service",
+                          "closed_at": "2026-10-18T02:18:10.652Z",
+                          "detected_at": "2026-10-18T02:18:10.581Z"
+                        },
+                        {
+                          "seq": 3,
+                          "id": "oob_01M56CTRAXPBS7EBNS6R5DBHSM",
+                          "change": "stopped",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g8.service",
+                          "closed_at": "2026-10-18T02:18:11.295Z",
+                          "detected_at": "2026-10-18T02:18:10.652Z"
+                        },
+                        {
+                          "seq": 4,
+                          "id": "oob_01M56CTSCVK6HV25PVHY6G69BY",
+                          "change": "identity_differs",
+                          "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g9.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-18T02:18:11.738Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the byte restored",
+                    "held": true,
+                    "read": null
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the stop: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-18T02:18:08.264Z"
+                    }
+                  },
+                  {
+                    "what": "before the restart: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-18T02:18:09.353Z"
+                    }
+                  },
+                  {
+                    "what": "before the byte is changed: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-18T02:18:11.473Z"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "unreadable",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "bus": "/home/smahoney/s6-1018/home/run/qualify-sy21pf5td4gm-no-bus",
+                "bus_existed": false,
+                "assertions": [
+                  {
+                    "what": "status is unread (a failure), never an empty or complete inventory",
+                    "held": true,
+                    "read": {
+                      "failure": "unavailable"
+                    }
+                  },
+                  {
+                    "what": "verify reads nothing: every identity unread",
+                    "held": true,
+                    "read": [
+                      "unread"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers unknown, never absent or applied",
+                    "held": true,
+                    "read": "unknown"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "with the engine's own bus, status reads the running unit",
+                    "held": true,
+                    "read": {
+                      "resource": "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service",
+                      "kind": "unit",
+                      "recorded": true,
+                      "state": "active",
+                      "pendingJob": false,
+                      "generation": 2,
+                      "invocation_id": "45a9a0fbc1b84d379a94b2868aac3751",
+                      "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g2.service"
+                    }
+                  },
+                  {
+                    "what": "verify matches",
+                    "held": true,
+                    "read": [
+                      "match"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "refused",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTMYY7DFDPFEJCTTMQDPK",
+                "attempt": "att_01M56CTN0FW3BM24Q5PSJBWECZ",
+                "stale_attempt": "att_01M56CTMS48D3RZX6ZRT0QSDMF",
+                "assertions": [
+                  {
+                    "what": "a capability forged in environment is refused naming environment",
+                    "held": true,
+                    "read": {
+                      "member": "environment",
+                      "refused": "environment",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                    "held": true,
+                    "read": {
+                      "member": "artifact_digest",
+                      "refused": "artifact_digest",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in create_units is refused naming create_units",
+                    "held": true,
+                    "read": {
+                      "member": "create_units",
+                      "refused": "create_units",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in attempt is refused naming attempt",
+                    "held": true,
+                    "read": {
+                      "member": "attempt",
+                      "refused": "attempt",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in lease_generation is refused naming lease_generation",
+                    "held": true,
+                    "read": {
+                      "member": "lease_generation",
+                      "refused": "lease_generation",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "the adapter's effect entry was never reached",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the minted capability passes the same check",
+                    "held": true,
+                    "read": null
+                  }
+                ]
+              }
+            },
+            {
+              "case": "teardown",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M56CTSEBFJG28SSM79B82RWW",
+                "at": "2026-10-18T02:18:12.222Z",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": {
+                      "receipt": "issued",
+                      "outcome": "applied"
+                    }
+                  },
+                  {
+                    "what": "no unit of the environment is listed",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no cgroup of it",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no socket or runtime directory of it under run/, each read",
+                    "held": true,
+                    "read": {
+                      "dirs": [],
+                      "files": []
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same reads before it found units of the environment",
+                    "held": true,
+                    "read": {
+                      "units": [
+                        "surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g9.service"
+                      ],
+                      "cgroups": [
+                        "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-7ecab45c569f-env_01M56CTGYJXBFV3YQZXKGYS77T-g9.service"
+                      ],
+                      "dirs": [
+                        {
+                          "path": "/home/smahoney/s6-1018/home/run/env_01M56CTGYJXBFV3YQZXKGYS77T-g9",
+                          "state": "present"
+                        }
+                      ],
+                      "files": [
+                        "env_01M56CTGYJXBFV3YQZXKGYS77T-g9"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "qualify_adapter",
+        "step": "m6w_qualify",
+        "route": "surety qualify-adapter local_service",
+        "at": "2026-10-18T02:18:12.303Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_qualify"
+  },
+  {
+    "act": "correction_approval",
+    "items": [
+      {
+        "decision": "dec_01M56CSYN1B0NTA3YH35W1DRX5",
+        "kind": "check_correction_unclassifiable",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:18:47.916Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56CSYN1B0NTA3YH35W1DRX5/answer"
+      },
+      {
+        "decision": "dec_01M56CYVMM1TB7YK8Y0751G5Z6",
+        "kind": "check_correction_tightening",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:20:47.546Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56CYVMM1TB7YK8Y0751G5Z6/answer"
+      },
+      {
+        "decision": "dec_01M56D8DV7E5WX7AQ03HT5VQFJ",
+        "kind": "check_correction_unclassifiable",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:26:27.401Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56D8DV7E5WX7AQ03HT5VQFJ/answer"
+      },
+      {
+        "decision": "dec_01M56DNVEXXVPQK5XHEXR3DFK4",
+        "kind": "check_correction_unclassifiable",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:33:14.085Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56DNVEXXVPQK5XHEXR3DFK4/answer"
+      },
+      {
+        "decision": "dec_01M56E9X2BBRR1T0KWA8KND3V0",
+        "kind": "check_correction_tightening",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:44:16.238Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56E9X2BBRR1T0KWA8KND3V0/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "correction_approval",
+        "step": "m6w_design",
+        "at": "2026-10-18T02:44:16.270Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56E9X2BBRR1T0KWA8KND3V0",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "design_due",
+    "items": [
+      {
+        "decision": "dec_01M56CC2CKV6M8XS28CYHT2QDW",
+        "kind": "design_due",
+        "option": "open",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:18:53.212Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56CC2CKV6M8XS28CYHT2QDW/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "design_due",
+        "step": "m6w_design",
+        "at": "2026-10-18T02:18:53.239Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56CC2CKV6M8XS28CYHT2QDW",
+        "option": "open",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "finding_disposition",
+    "items": [
+      {
+        "decision": "dec_01M56DMS0PHER6JNVN594R6WGQ",
+        "kind": "finding_disposition",
+        "option": "correct_check",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:32:38.282Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56DMS0PHER6JNVN594R6WGQ/answer"
+      },
+      {
+        "decision": "dec_01M56DN9NA772VC0GFJGVNMDWE",
+        "kind": "finding_disposition",
+        "option": "reject",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:33:09.197Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56DN9NA772VC0GFJGVNMDWE/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "finding_disposition",
+        "step": "m6w_design",
+        "at": "2026-10-18T02:33:09.233Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56DN9NA772VC0GFJGVNMDWE",
+        "option": "reject",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "combined_approval",
+    "items": [
+      {
+        "decision": "dec_01M56E1ZFT5V2N1SGHPBE31G2A",
+        "kind": "design_approval",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:39:55.325Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56E1ZFT5V2N1SGHPBE31G2A/answer"
+      },
+      {
+        "decision": "dec_01M56E1ZGFGX6A05YN84GY6H90",
+        "kind": "spec_change",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T02:39:55.378Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56E1ZGFGX6A05YN84GY6H90/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "combined_approval",
+        "step": "m6w_design",
+        "at": "2026-10-18T02:39:55.890Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56E1ZGFGX6A05YN84GY6H90",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "designer_feedback",
+    "items": [
+      {
+        "run": "run_01M56CW24FTV4XNS6TSZJKEGPP",
+        "owner_turns": 3,
+        "store_actor": "owner (transcript speaker)",
+        "answered_at": "2026-10-18T02:36:48.305Z",
+        "route": "POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/sessions/run_01M56CW24FTV4XNS6TSZJKEGPP/turns"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "designer_feedback",
+        "step": "m6w_design",
+        "route": "surety session say (designer run_01M56CW24FTV4XNS6TSZJKEGPP), turns 1-2",
+        "at": "2026-10-18T02:36:22.731Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "qualify_adapter",
+    "items": [
+      {
+        "qualification": "aq_01M56WTCZD2XD9VYHMRJVE77QZ",
+        "adapter": "local_service",
+        "qualification_run": "aqr_01M56WT4TY07JN3PX4HP681V63",
+        "store_actor": "the owner's CLI (a qualification run)",
+        "answered_at": "2026-10-18T06:57:36.236Z",
+        "route": "surety qualify-adapter local_service"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "qualify_adapter",
+        "step": "m6w_design",
+        "route": "surety qualify-adapter local_service",
+        "at": "2026-10-18T06:57:40.043Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "preview_inspection",
+    "items": [
+      {
+        "act": "preview_inspection",
+        "previews": [
+          {
+            "generation": 1,
+            "unit": "surety-7ecab45c569f-env_01M56DZS7X2FYMAXZ0QA5P77DA-g1.service",
+            "status": "torn_down",
+            "deployed_at": "2026-10-18T02:38:24.740Z",
+            "torn_down_at": "2026-10-18T02:39:56.175Z"
+          },
+          {
+            "generation": 2,
+            "unit": "surety-7ecab45c569f-env_01M56DZS7X2FYMAXZ0QA5P77DA-g3.service",
+            "status": "torn_down",
+            "deployed_at": "2026-10-18T06:57:45.631Z",
+            "torn_down_at": "2026-10-18T06:59:04.074Z"
+          }
+        ],
+        "relay": [
+          {
+            "seq": 4240,
+            "at": "2026-10-18T02:38:28.093Z",
+            "type": "environment.relay_opened",
+            "subject": {
+              "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+              "environment": "env_01M56DZS7X2FYMAXZ0QA5P77DA"
+            },
+            "payload": {
+              "attempt": "att_01M56DZT2KMA5FYXXX15JQNWVQ",
+              "generation": 1,
+              "host": "127.0.0.1",
+              "port": 46571
+            }
+          },
+          {
+            "seq": 4246,
+            "at": "2026-10-18T02:38:47.309Z",
+            "type": "environment.relay_closed",
+            "subject": {
+              "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+              "environment": "env_01M56DZS7X2FYMAXZ0QA5P77DA"
+            },
+            "payload": {
+              "reason": "command",
+              "attempt": "att_01M56DZT2KMA5FYXXX15JQNWVQ",
+              "generation": 1,
+              "port": 46571
+            }
+          },
+          {
+            "seq": 7146,
+            "at": "2026-10-18T06:58:36.753Z",
+            "type": "environment.relay_opened",
+            "subject": {
+              "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+              "environment": "env_01M56DZS7X2FYMAXZ0QA5P77DA"
+            },
+            "payload": {
+              "attempt": "att_01M56WTN8TV9R889EH1WYBHH4Z",
+              "generation": 3,
+              "host": "127.0.0.1",
+              "port": 46347
+            }
+          },
+          {
+            "seq": 7153,
+            "at": "2026-10-18T06:58:49.522Z",
+            "type": "environment.relay_closed",
+            "subject": {
+              "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+              "environment": "env_01M56DZS7X2FYMAXZ0QA5P77DA"
+            },
+            "payload": {
+              "reason": "command",
+              "attempt": "att_01M56WTN8TV9R889EH1WYBHH4Z",
+              "generation": 3,
+              "port": 46347
+            }
+          }
+        ],
+        "relay_requests": {
+          "unknown": "neither the operator relay (src/deploy/service-host.ts) nor the preview server (src/design/preview/server.mts) records the requests it serves; the relay's openings and closings are the events below"
+        },
+        "route": "POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/design/preview; POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/environments/design-preview/relay",
+        "store_actor": "the owner's routes",
+        "answered_at": "2026-10-18T02:38:28.093Z"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "preview_inspection",
+        "step": "m6w_design",
+        "route": "surety design preview --revision checkpoint (generation 3 after a deploy that was not yet serving), surety env open design-preview (relay 127.0.0.1:46347), an HTTP read through the relay, surety env close design-preview, then DELETE /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/design/preview",
+        "at": "2026-10-18T06:59:10.706Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_design",
+    "window": {
+      "attempts": [
+        {
+          "from_seq": 1464,
+          "to_seq": 6874,
+          "at": "2026-10-18T02:18:16.992Z",
+          "ended_at": "2026-10-18T06:56:45.171Z",
+          "basis": "inferred: this step's earlier attempts were made before their starts were kept (M519 F3); taken to begin where m6w_qualify ended (state.json)"
+        },
+        {
+          "from_seq": 6874,
+          "to_seq": 7405,
+          "at": "2026-10-18T06:56:45.171Z",
+          "ended_at": "2026-10-18T07:00:55.476Z",
+          "basis": "kept: the last attempt's start (step-starts.json) and its end (state.json)"
+        }
+      ],
+      "performers_since": "2026-10-18T02:18:16.992Z",
+      "rebuilt_at": "2026-10-18T07:24:57.387Z"
+    }
+  },
+  {
+    "act": "blocker",
+    "items": [
+      {
+        "decision": "dec_01M56YW4MRMJ2MDKV0D1GK6J0K",
+        "kind": "blocker",
+        "option": "correct_check",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T07:53:46.604Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56YW4MRMJ2MDKV0D1GK6J0K/answer"
+      },
+      {
+        "decision": "dec_01M56YW4MYDCGEEQGQ8F3BE7M0",
+        "kind": "blocker",
+        "option": "correct_check",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T07:53:55.417Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M56YW4MYDCGEEQGQ8F3BE7M0/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "blocker",
+        "step": "m6w_build",
+        "at": "2026-10-18T07:53:55.444Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M56YW4MYDCGEEQGQ8F3BE7M0",
+        "option": "correct_check",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_build"
+  },
+  {
+    "act": "correction_approval",
+    "items": [
+      {
+        "decision": "dec_01M57027VXKE9SQG62V927QE02",
+        "kind": "check_correction_unclassifiable",
+        "option": "approve",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T07:54:46.542Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M57027VXKE9SQG62V927QE02/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "correction_approval",
+        "step": "m6w_build",
+        "at": "2026-10-18T07:54:46.579Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M57027VXKE9SQG62V927QE02",
+        "option": "approve",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_build"
+  },
+  {
+    "act": "design_due",
+    "items": [
+      {
+        "decision": "dec_01M570S45D3D1VVT8B605QZ186",
+        "kind": "design_due",
+        "option": "open",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:08:01.881Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M570S45D3D1VVT8B605QZ186/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "design_due",
+        "step": "m6w_review",
+        "at": "2026-10-18T08:08:01.909Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M570S45D3D1VVT8B605QZ186",
+        "option": "open",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_review"
+  },
+  {
+    "act": "review_confirmation",
+    "items": [
+      {
+        "decision": "dec_01M571DG7571NAZ5KG6Q9A49Q4",
+        "kind": "design_verdicts",
+        "option": "confirm",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:06.468Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DG7571NAZ5KG6Q9A49Q4/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "review_confirmation",
+        "step": "m6w_review",
+        "at": "2026-10-18T08:18:06.782Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M571DG7571NAZ5KG6Q9A49Q4",
+        "option": "confirm",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_review"
+  },
+  {
+    "act": "finding_disposition",
+    "items": [
+      {
+        "decision": "dec_01M571DT0MKG6X3STDE86BBRV7",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.399Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT0MKG6X3STDE86BBRV7/answer"
+      },
+      {
+        "decision": "dec_01M571DT111MTRPY3BW2HATPCQ",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.462Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT111MTRPY3BW2HATPCQ/answer"
+      },
+      {
+        "decision": "dec_01M571DT1C67DMHVN07GTB7X8T",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.553Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT1C67DMHVN07GTB7X8T/answer"
+      },
+      {
+        "decision": "dec_01M571DT1QRYBNWBMRQS56XSZZ",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.822Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT1QRYBNWBMRQS56XSZZ/answer"
+      },
+      {
+        "decision": "dec_01M571DT23A3YFMRX672C5W5WE",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.914Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT23A3YFMRX672C5W5WE/answer"
+      },
+      {
+        "decision": "dec_01M571DT2DR6JVJ1P2TSWA76G8",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.006Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT2DR6JVJ1P2TSWA76G8/answer"
+      },
+      {
+        "decision": "dec_01M571DT2QFJCTJ9SQBQGRJMS8",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.216Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT2QFJCTJ9SQBQGRJMS8/answer"
+      },
+      {
+        "decision": "dec_01M571DT31KCDK8XR47J68KSYZ",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.298Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT31KCDK8XR47J68KSYZ/answer"
+      },
+      {
+        "decision": "dec_01M571DT3AQP157SRPPNE5VWTB",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.389Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT3AQP157SRPPNE5VWTB/answer"
+      },
+      {
+        "decision": "dec_01M571DT3MNQ5AF9K2HC371TNB",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.592Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT3MNQ5AF9K2HC371TNB/answer"
+      },
+      {
+        "decision": "dec_01M571DT3XQYPGJJSAKKS8STSX",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.668Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT3XQYPGJJSAKKS8STSX/answer"
+      },
+      {
+        "decision": "dec_01M571DT47WBCA6R1B7FZGFTM1",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.752Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT47WBCA6R1B7FZGFTM1/answer"
+      },
+      {
+        "decision": "dec_01M571DT4FPEMTD89YA0AY5T5D",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.919Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT4FPEMTD89YA0AY5T5D/answer"
+      },
+      {
+        "decision": "dec_01M571DT4R6446NW1BZ80SWFKW",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:44.979Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT4R6446NW1BZ80SWFKW/answer"
+      },
+      {
+        "decision": "dec_01M571DT50TEJ3V3JGCPEE2NPK",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:45.042Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT50TEJ3V3JGCPEE2NPK/answer"
+      },
+      {
+        "decision": "dec_01M571DT59H9H86YYW3WWTEMA3",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:45.120Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT59H9H86YYW3WWTEMA3/answer"
+      },
+      {
+        "decision": "dec_01M571DT5JVWX3QYXBMNCQGAPS",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.244Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT5JVWX3QYXBMNCQGAPS/answer"
+      },
+      {
+        "decision": "dec_01M571DT5W5XBHDFSZ9GZVKFXV",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.317Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT5W5XBHDFSZ9GZVKFXV/answer"
+      },
+      {
+        "decision": "dec_01M571DT631HEH479KES40YGB6",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.408Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT631HEH479KES40YGB6/answer"
+      },
+      {
+        "decision": "dec_01M571DT6CKW59BD6X8BFC88GN",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.519Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT6CKW59BD6X8BFC88GN/answer"
+      },
+      {
+        "decision": "dec_01M571DT6NASJ85W8WVPKXMX2B",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.588Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT6NASJ85W8WVPKXMX2B/answer"
+      },
+      {
+        "decision": "dec_01M571DT6YWJGS9Q0XTHZAV9GV",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.703Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT6YWJGS9Q0XTHZAV9GV/answer"
+      },
+      {
+        "decision": "dec_01M571DT771D3K68DVBBZ5B25G",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.801Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT771D3K68DVBBZ5B25G/answer"
+      },
+      {
+        "decision": "dec_01M571DT7JH1A8AQBDZ842WPQC",
+        "kind": "finding_disposition",
+        "option": "accept",
+        "store_actor": "human",
+        "answered_at": "2026-10-18T08:18:43.861Z",
+        "route": "/v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/decisions/dec_01M571DT7JH1A8AQBDZ842WPQC/answer"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "finding_disposition",
+        "step": "m6w_review",
+        "at": "2026-10-18T08:18:43.903Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "decision": "dec_01M571DT7JH1A8AQBDZ842WPQC",
+        "option": "accept",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_review"
+  },
+  {
+    "act": "review_session",
+    "items": [
+      {
+        "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+        "owner_turns": 2,
+        "store_actor": "owner (transcript speaker)",
+        "answered_at": "2026-10-18T08:16:47.451Z",
+        "route": "POST /v1/projects/proj_01M56BT56F8DBWG5HM55FWEMXD/sessions/run_01M570VBQPBADD7N0ASYM4WWQK/turns"
+      }
+    ],
+    "performer": "driver",
+    "evidence": {
+      "instruction": "go ahead and drive M519's acts yourself",
+      "driver_entry": {
+        "act": "review_session",
+        "step": "m6w_review",
+        "route": "surety session say/save/close run_01M570VBQPBADD7N0ASYM4WWQK (two owner turns, review mode)",
+        "at": "2026-10-18T08:18:11.692Z",
+        "acted_by": "driver",
+        "on_instruction": "go ahead and drive M519's acts yourself",
+        "entered_via": "driver-act.mjs"
+      }
+    },
+    "step": "m6w_review"
+  }
+]

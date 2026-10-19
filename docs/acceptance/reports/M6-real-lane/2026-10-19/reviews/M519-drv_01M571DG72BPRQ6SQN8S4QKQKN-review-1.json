@@ -1,0 +1,200 @@
+{
+  "design_version": 1,
+  "subject": {
+    "kind": "candidate",
+    "candidate": "cand_01M570AK2CKY8XG3S18PF3NMJJ",
+    "target": "web"
+  },
+  "screens": [
+    {
+      "target": "web",
+      "key": "momentum-lab",
+      "verdict": "deltas",
+      "observed_on": "browser",
+      "evidence": [
+        "dev_01M570ZNTK500RBB1X562C550W"
+      ],
+      "deltas": [
+        {
+          "state": "startup-error",
+          "kind": "implementation",
+          "owner_words": "The start-up failure card has no logo and no \"Reload the page\" button. The design puts the on_light logo (on_dark in the dark theme) at the top of the card, with a Reload button under the message. The build put those two logos in a page footer instead, and the design has no logo in the footer. The asset checks R8.17 and R8.18 pass only because they compare the files' bytes, not where the logos are shown. Fix: move the <picture> into the #startup-error card and add the Reload button. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "input-error",
+          "kind": "both",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Out-of-range messages are the raw RangeError text with internal names and no units, for example \"m1 must be a number from 0.1 to 10\" (friction says \"inclineDeg\", trajectory \"angleDeg\" and \"dragCoefficient\"). An empty prediction gets the same generic message, and the summary is always headed \"Check these values\". The mockup shows \"m₁ must be from 0.1 to 10 kg — you entered 12.\", a counted heading (\"Two things to fix before you run:\") and \"Enter your prediction to run the experiment.\" The design's notes also say \"the RangeError message\", so the next design revision should make binding the player-facing wording (symbol, unit, the value entered), and the build should then follow it. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "compare",
+          "kind": "implementation",
+          "owner_words": "After a run the Run button still reads \"Run the experiment\". The mockups change it to \"Run again\". Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene-unavailable",
+          "kind": "implementation",
+          "owner_words": "The 3D-unavailable notice uses different words from the design: \"The 3D view is unavailable / Your browser could not load three.js…\" where the design has \"The 3D view couldn't load / The 3D library didn't arrive, so there's no animation this time. Everything else still works: run, score and explanation are all below.\" Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "token-undefined",
+          "kind": "implementation",
+          "owner_words": "When a --scene-* token is missing, the build sets data-tokens=\"missing\" and uses the fallback colour as designed. It does not report the missing token on the console (\"[tokens] --<name> is not defined in public/styles/tokens.css\") as the design's annotation says it should. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: The type has no letter-spacing: the mockups tighten the h1 (−0.01em) and the score number (−0.03em) and widen the eyebrow (0.08em). The build dropped all three, I assume because the tokens-only rule leaves no token for them. Known from the CSS only, not seen on screen. The next design revision should consider letter-spacing tokens. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "run",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Playback is scaled so that each run plays in 1.5 to 12 s on screen, while the clock shows simulated time. The mockups played in real time. The owner accepts this as built for now; the next design revision should record the scaled playback in the design. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene",
+          "kind": "implementation",
+          "owner_words": "The scene's grid is drawn fully opaque. The mockup scene draws it at 70% opacity to keep it subtle (R8.20). Known from the code only; nobody has seen it rendered. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: The prediction slider runs from −30 to 30 m/s in the build; the mockup shows −10 to 10. The build is right and the design is wrong: an elastic collision can give v₂′ up to about 29.6 m/s (m₁ = 10 kg, m₂ = 0.1 kg, v₁ = 10, v₂ = −10), so −10 to 10 would refuse correct answers. The owner agrees the design is wrong and the build is right; the next design revision should change it to −30 to 30. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "compare",
+          "kind": "implementation",
+          "owner_words": "The \"Why\" sentence can say something false when cart 2 is already moving (R6.1). With m₁ > m₂ it always says cart 1 \"keeps going\", but with m₁ = 2, m₂ = 1, v₁ = 1, v₂ = −10 cart 1 bounces back at −6.33 m/s. With m₁ < m₂ it always says cart 1 \"bounces back\", but with m₁ = 1, m₂ = 2, v₁ = 10, v₂ = 9 it keeps going at 8.67 m/s. The sentence should follow the sign of v₁′. The owner would fix this first. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        }
+      ]
+    },
+    {
+      "target": "web",
+      "key": "friction-lab",
+      "verdict": "deltas",
+      "observed_on": "browser",
+      "evidence": [
+        "dev_01M570ZNTZKDRA4DNMAQFVMSST"
+      ],
+      "deltas": [
+        {
+          "state": "startup-error",
+          "kind": "implementation",
+          "owner_words": "The start-up failure card has no logo and no \"Reload the page\" button. The design puts the on_light logo (on_dark in the dark theme) at the top of the card, with a Reload button under the message. The build put those two logos in a page footer instead, and the design has no logo in the footer. The asset checks R8.17 and R8.18 pass only because they compare the files' bytes, not where the logos are shown. Fix: move the <picture> into the #startup-error card and add the Reload button. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "input-error",
+          "kind": "both",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Out-of-range messages are the raw RangeError text with internal names and no units, for example \"m1 must be a number from 0.1 to 10\" (friction says \"inclineDeg\", trajectory \"angleDeg\" and \"dragCoefficient\"). An empty prediction gets the same generic message, and the summary is always headed \"Check these values\". The mockup shows \"m₁ must be from 0.1 to 10 kg — you entered 12.\", a counted heading (\"Two things to fix before you run:\") and \"Enter your prediction to run the experiment.\" The design's notes also say \"the RangeError message\", so the next design revision should make binding the player-facing wording (symbol, unit, the value entered), and the build should then follow it. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "compare",
+          "kind": "implementation",
+          "owner_words": "After a run the Run button still reads \"Run the experiment\". The mockups change it to \"Run again\". Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene-unavailable",
+          "kind": "implementation",
+          "owner_words": "The 3D-unavailable notice uses different words from the design: \"The 3D view is unavailable / Your browser could not load three.js…\" where the design has \"The 3D view couldn't load / The 3D library didn't arrive, so there's no animation this time. Everything else still works: run, score and explanation are all below.\" Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "token-undefined",
+          "kind": "implementation",
+          "owner_words": "When a --scene-* token is missing, the build sets data-tokens=\"missing\" and uses the fallback colour as designed. It does not report the missing token on the console (\"[tokens] --<name> is not defined in public/styles/tokens.css\") as the design's annotation says it should. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: The type has no letter-spacing: the mockups tighten the h1 (−0.01em) and the score number (−0.03em) and widen the eyebrow (0.08em). The build dropped all three, I assume because the tokens-only rule leaves no token for them. Known from the CSS only, not seen on screen. The next design revision should consider letter-spacing tokens. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "run",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Playback is scaled so that each run plays in 1.5 to 12 s on screen, while the clock shows simulated time. The mockups played in real time. The owner accepts this as built for now; the next design revision should record the scaled playback in the design. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene",
+          "kind": "implementation",
+          "owner_words": "The scene's grid is drawn fully opaque. The mockup scene draws it at 70% opacity to keep it subtle (R8.20). Known from the code only; nobody has seen it rendered. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "implementation",
+          "owner_words": "The \"Skip to the lab controls\" link always points to #momentum-controls. On this lab that target is inside the hidden momentum panel, so the link does nothing and the keyboard path is broken at its first step. The mockup points it at this lab's own controls. Fix: retarget the link whenever the lab changes. The owner would fix this first. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene",
+          "kind": "implementation",
+          "owner_words": "The predicted stopping point is a plain upright box. The mockup scene marks it with a thin pole and a flag. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        }
+      ]
+    },
+    {
+      "target": "web",
+      "key": "trajectory-lab",
+      "verdict": "deltas",
+      "observed_on": "browser",
+      "evidence": [
+        "dev_01M570ZNVCM0NEXVNTDBRTAK73"
+      ],
+      "deltas": [
+        {
+          "state": "startup-error",
+          "kind": "implementation",
+          "owner_words": "The start-up failure card has no logo and no \"Reload the page\" button. The design puts the on_light logo (on_dark in the dark theme) at the top of the card, with a Reload button under the message. The build put those two logos in a page footer instead, and the design has no logo in the footer. The asset checks R8.17 and R8.18 pass only because they compare the files' bytes, not where the logos are shown. Fix: move the <picture> into the #startup-error card and add the Reload button. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "input-error",
+          "kind": "both",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Out-of-range messages are the raw RangeError text with internal names and no units, for example \"m1 must be a number from 0.1 to 10\" (friction says \"inclineDeg\", trajectory \"angleDeg\" and \"dragCoefficient\"). An empty prediction gets the same generic message, and the summary is always headed \"Check these values\". The mockup shows \"m₁ must be from 0.1 to 10 kg — you entered 12.\", a counted heading (\"Two things to fix before you run:\") and \"Enter your prediction to run the experiment.\" The design's notes also say \"the RangeError message\", so the next design revision should make binding the player-facing wording (symbol, unit, the value entered), and the build should then follow it. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "compare",
+          "kind": "implementation",
+          "owner_words": "After a run the Run button still reads \"Run the experiment\". The mockups change it to \"Run again\". Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene-unavailable",
+          "kind": "implementation",
+          "owner_words": "The 3D-unavailable notice uses different words from the design: \"The 3D view is unavailable / Your browser could not load three.js…\" where the design has \"The 3D view couldn't load / The 3D library didn't arrive, so there's no animation this time. Everything else still works: run, score and explanation are all below.\" Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "token-undefined",
+          "kind": "implementation",
+          "owner_words": "When a --scene-* token is missing, the build sets data-tokens=\"missing\" and uses the fallback colour as designed. It does not report the missing token on the console (\"[tokens] --<name> is not defined in public/styles/tokens.css\") as the design's annotation says it should. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: The type has no letter-spacing: the mockups tighten the h1 (−0.01em) and the score number (−0.03em) and widen the eyebrow (0.08em). The build dropped all three, I assume because the tokens-only rule leaves no token for them. Known from the CSS only, not seen on screen. The next design revision should consider letter-spacing tokens. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "run",
+          "kind": "design",
+          "owner_words": "Recommendation for the next design revision, not decided in this review: Playback is scaled so that each run plays in 1.5 to 12 s on screen, while the clock shows simulated time. The mockups played in real time. The owner accepts this as built for now; the next design revision should record the scaled playback in the design. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene",
+          "kind": "implementation",
+          "owner_words": "The scene's grid is drawn fully opaque. The mockup scene draws it at 70% opacity to keep it subtle (R8.20). Known from the code only; nobody has seen it rendered. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "implementation",
+          "owner_words": "The \"Skip to the lab controls\" link always points to #momentum-controls. On this lab that target is inside the hidden momentum panel, so the link does nothing and the keyboard path is broken at its first step. The mockup points it at this lab's own controls. Fix: retarget the link whenever the lab changes. The owner would fix this first. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "scene",
+          "kind": "implementation",
+          "owner_words": "The predicted landing point is an upright cylinder. The design calls for a ring lying on the ground (screen notes: \"the predicted landing point is a ring on the ground\"; the mockup uses a torus). Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        },
+        {
+          "state": "predict",
+          "kind": "implementation",
+          "owner_words": "When the page loads, the script replaces the drag coefficient's hint \"Turn on air drag to set c.\" with the range text \"0 to 0.5 1/m\", so the player is never told why the field is disabled. Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered."
+        }
+      ]
+    }
+  ],
+  "revised_design": false,
+  "first_design": false
+}

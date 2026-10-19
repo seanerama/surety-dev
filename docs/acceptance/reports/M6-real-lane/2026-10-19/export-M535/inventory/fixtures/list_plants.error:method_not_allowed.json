@@ -1,0 +1,4 @@
+{
+  "code": "method_not_allowed",
+  "message": "405: a method other than GET, POST on this route; the answer carries Allow: GET, POST"
+}
