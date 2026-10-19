@@ -6,12 +6,13 @@
 // `design_observation` record and a `design_evidence` row,
 // `engine_observed`); its close records the review, every verdict only
 // proposed; `design_verdicts`, the owner's answer, alone confirms them,
-// with any verdict he edits or strikes. A web human test carries the
-// owner's confirmed `matches` as `owner_accepted`, never `verified`, for
-// the design version it was given on only; a native target is
-// `not_observed` (`no_native_runtime`) and its human test stays pending
-// (Q4). A confirmed verdict's implementation defects become findings
-// against the review's candidate; its design deltas wait in the batch.
+// with any verdict he edits or strikes. A target's human test is
+// `owner_accepted`, never `verified`, for the design version in force only,
+// when on the newest build he reviewed it on every screen of the target
+// has his counting confirmed `matches` (H2; SEAM.md §552); a native target
+// `not_observed` (`no_native_runtime`) stays pending (Q4). A confirmed
+// verdict's implementation defects become findings against the review's
+// candidate; its design deltas wait in the batch.
 // Evidence is kept by provenance and never merged: no owner item is ever
 // shown or counted as engine-observed (§10.5).
 
@@ -363,7 +364,7 @@ export const DESIGN_VERDICTS: KindSpec = {
           key: 'confirm',
           label: 'Confirm',
           consequence:
-            'The verdicts become yours, as you edit them; a struck one is not. A confirmed `matches` on a native runtime carries its target\'s human test as owner accepted for this design version (never verified); a target not observed stays pending. Each confirmed implementation defect becomes a finding against the review\'s candidate (severity medium unless you give one); a design delta waits in its batch. ' +
+            'The verdicts become yours, as you edit them; a struck one is not. A target\'s human test becomes owner accepted for this design version (never verified) only when, on the newest build reviewed, every screen of the target has a confirmed `matches` (never on a simulation, nor in a browser for a native target), the latest per screen on that build deciding; otherwise, and for a target not observed, it stays pending. Each confirmed implementation defect becomes a finding against the review\'s candidate (severity medium unless you give one); a design delta waits in its batch. ' +
             `Each finding carries the criterion and check its delta names, and neither where it names none (an edited delta carries what your edit names)${filed.length > 0 ? `; as proposed: ${filed.join('; ')}` : ''}.`,
           effect: { design_review: r.id },
         },
@@ -592,20 +593,50 @@ export function reviewsView(db: Db, project: string): Record<string, unknown>[] 
   });
 }
 
+// The build a review judged (SEAM.md §§502, 552): an owner build's
+// `build_ref` as given, else the review's `candidate`; null when it names
+// neither (such a review can never accept a human test).
+export function reviewedBuildOf(subject: { candidate?: unknown; build_ref?: unknown }): string | null {
+  if (typeof subject.build_ref === 'string') return `build_ref:${subject.build_ref}`;
+  if (typeof subject.candidate === 'string') return `candidate:${subject.candidate}`;
+  return null;
+}
+
+// Whether a confirmed verdict counts at all (Q4; S7): never a simulation,
+// and for a native target never a browser; a runtime not given never
+// counts. `not_observed` and a struck verdict never count.
+function counts(v: Verdict, native: boolean): boolean {
+  if (v.status !== 'confirmed' || (v.verdict !== 'matches' && v.verdict !== 'deltas')) return false;
+  if (v.observed_on === undefined || v.observed_on === 'simulation') return false;
+  return !(native && v.observed_on === 'browser');
+}
+
 // A target's owner evidence: one entry per confirmed verdict of that
 // target (none for a struck one), each bound to its design version,
 // candidate or build, and runtime, shown "owner accepted" (Q4), apart from
-// automated verification. `current`: the approved design revision in force.
-export function humanTestEvidence(db: Db, project: string, target: string, current: string | null): { evidence: Record<string, unknown>[]; accepted: boolean } {
+// automated verification. `current`: the approved design revision in force;
+// `screens`: that target's screens in its screens.json (null when unknown).
+// H2 (E171 item 5; SEAM.md §552): accepted only when, on the newest build of
+// `current` the owner reviewed this target on, every one of `screens` has a
+// counting confirmed `matches`, the latest counting verdict per screen of
+// that build deciding (several reviews of the build combine; a later
+// `deltas` revokes). Builds never combine, and an empty or unknown screen
+// set is never accepted.
+export function humanTestEvidence(db: Db, project: string, target: string, current: string | null, screens: readonly string[] | null): { evidence: Record<string, unknown>[]; accepted: boolean } {
   const rows = db
     .prepare(`SELECT r.*, v."version" AS "design_version" FROM "design_reviews" r LEFT JOIN "design_revisions" v ON v."id" = r."design_revision" WHERE r."project" = ? AND r."confirmation_decision" IS NOT NULL ORDER BY r.rowid`)
     .all(project) as (ReviewRow & { design_version: number | null })[];
   const evidence: Record<string, unknown>[] = [];
-  let accepted = false;
+  const native = target !== 'web';
+  // This target's confirmed reviews of the version in force, oldest first,
+  // each with the build it judged.
+  const judged: { build: string | null; verdicts: Verdict[] }[] = [];
   for (const r of rows) {
     const subject = parseJson<{ candidate?: string; build_ref?: string }>(r.subject) ?? {};
-    for (const v of parseJson<Verdict[]>(r.verdicts) ?? []) {
-      if (v.target !== target || v.status !== 'confirmed') continue;
+    const mine = (parseJson<Verdict[]>(r.verdicts) ?? []).filter((v) => v.target === target);
+    if (current !== null && r.design_revision === current && mine.length > 0) judged.push({ build: reviewedBuildOf(subject), verdicts: mine });
+    for (const v of mine) {
+      if (v.status !== 'confirmed') continue;
       const provenance = verdictProvenance(db, v, r.id);
       evidence.push({
         review: r.id,
@@ -620,12 +651,11 @@ export function humanTestEvidence(db: Db, project: string, target: string, curre
         ...(typeof subject.candidate === 'string' ? { candidate: subject.candidate } : {}),
         ...(typeof subject.build_ref === 'string' ? { build_ref: subject.build_ref } : {}),
       });
-      // Counted only for the design version it was given on, only from a
-      // `matches` on a runtime that is not a simulation (D7 §10.2; Q4), and
-      // for a native target never from a browser (S7).
-      const native = target !== 'web';
-      if (current !== null && r.design_revision === current && v.verdict === 'matches' && v.observed_on !== undefined && v.observed_on !== 'simulation' && !(native && v.observed_on === 'browser')) accepted = true;
     }
   }
-  return { evidence, accepted };
+  const newest = judged.at(-1);
+  if (screens === null || screens.length === 0 || newest === undefined || newest.build === null) return { evidence, accepted: false };
+  const latest = new Map<string, string>();
+  for (const j of judged) if (j.build === newest.build) for (const v of j.verdicts) if (counts(v, native)) latest.set(v.screen, v.verdict);
+  return { evidence, accepted: screens.every((s) => latest.get(s) === 'matches') };
 }
