@@ -30,6 +30,7 @@ import { type InventoryRefInputs, designTurnedOff, designTurnedOn, finalizeInven
 import { heldStages } from '../../design/readiness.js';
 import { reviewDesignDue } from '../../design/due.js';
 import { type AssetRefInputs, finalizeAssetRef } from '../../design/assets-submit.js';
+import { type ReviewRefusedRefInputs, finalizeReviewRefused } from '../../design/review-refused.js';
 import { recordBindings } from '../../design/asset-bindings.js';
 
 export interface WorkspaceInputs {
@@ -68,7 +69,7 @@ export interface PlanInput {
 }
 
 export interface RefInputs {
-  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved' | 'design_inventory' | 'design_asset';
+  purpose: 'integration' | 'nomination' | 'bootstrap' | 'policy' | 'oob_keep' | 'oob_discard' | 'oob_stash' | 'oob_adopt' | 'protected' | 'spec_change' | 'spec_applied' | 'spec_approved' | 'design_inventory' | 'design_asset' | 'design_review_refused';
   ref: string;
   ref_kind: RefKind;
   immutable?: boolean;
@@ -243,6 +244,9 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     // D7 §6.3: the owner's asset file committed by the engine.
     case 'design_asset':
       return finalizeAssetRef(tx, op, inputs as unknown as AssetRefInputs);
+    // H5 (SEAM.md §552): a refused review's file moved out of active review.
+    case 'design_review_refused':
+      return finalizeReviewRefused(tx, op, inputs as unknown as ReviewRefusedRefInputs);
     case 'oob_stash':
       return {};
     case 'oob_keep':

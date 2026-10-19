@@ -8,13 +8,18 @@ import { createHash } from 'node:crypto';
 
 import { Refusal } from '../refusal.js';
 
+import { messageText } from '../git/commit.js';
 import { git, repoContext } from '../git/exec.js';
 import { listTree, treeOf } from '../git/repo.js';
+import type { Journal } from '../journal/driver.js';
+import { prepareCommit } from '../projects/commands.js';
 import { writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { SaveFacts } from '../sessions/session.js';
 import { pausePoint } from '../testing/seam.js';
 import { type Observation, type ReviewTarget, DELTA_KINDS, NOT_OBSERVED_REASONS, VERDICTS, isRequestPath } from './review.js';
+import { isRefusedReview } from './paths.js';
+import { type ReviewMove, refusedMoves } from './review-refused.js';
 
 const REVIEWS = '.surety/design/reviews/';
 
@@ -134,7 +139,8 @@ export async function reviewRaise(rt: Runtime, facts: SaveFacts): Promise<Record
   // The newest by its number (review-10 after review-9; the slice-45 review's N4).
   const number = (path: string): number => Number(/review-(\d+)\.json$/.exec(path)?.[1] ?? -1);
   const files = [...entries.values()]
-    .filter((e) => e.type === 'blob' && e.path.startsWith(REVIEWS) && e.path.endsWith('.json') && !known.recorded.includes(e.oid))
+    // A refused review's file (H5) is never taken as the review.
+    .filter((e) => e.type === 'blob' && e.path.startsWith(REVIEWS) && !isRefusedReview(e.path) && e.path.endsWith('.json') && !known.recorded.includes(e.oid))
     .sort((a, b) => number(a.path) - number(b.path) || a.path.localeCompare(b.path));
   const file = files.at(-1);
   if (!file) return null;
@@ -184,4 +190,55 @@ export async function reviewRaise(rt: Runtime, facts: SaveFacts): Promise<Record
       first_design: review.first_design === true,
     },
   };
+}
+
+// A review-mode session ending without a recorded review (H5; SEAM.md §552):
+// before it closes, each unrecorded `reviews/review-<n>.json` of the head
+// moved to `reviews/refused/<run>-review-<n>.json`, the same blob, by one
+// engine intent commit naming the run, and the branch moved to it; the
+// finalizer emits one `design.review_refused` per file. Nothing to move (no
+// review file, or the Designer already removed it): nothing committed and
+// nothing emitted. Under the project's journal, from the read of the head
+// to the drive. Throws if the move is not made: the caller's session stays
+// open, to be closed again.
+export async function moveRefusedReviews(rt: Runtime, journal: Journal, project: string, run: string): Promise<{ moved: ReviewMove[]; revision: string | null }> {
+  return journal.withProject(
+    project,
+    async () => {
+      const facts = await rt.read<{ repo: string; head: string | null }>('design.repo_facts', { project });
+      if (facts.head === null) return { moved: [], revision: null };
+      const ctx = repoContext(facts.repo);
+      const tree = await treeOf(ctx, facts.head);
+      const entries = tree === null ? null : await listTree(ctx, tree);
+      if (entries === null) throw new Error(`the tree of the integration head ${facts.head} could not be read, so whether a refused review's file is left in active review is unknown`);
+      const known = await rt.read<{ recorded: string[] }>('design.review_facts', { project, run });
+      const moves = refusedMoves(entries.values(), known.recorded, run);
+      if (moves.length === 0) return { moved: [], revision: null };
+      const files: Record<string, null | { oid: string; mode: string }> = {};
+      for (const m of moves) {
+        files[m.from] = null;
+        files[m.to] = { oid: m.blob, mode: m.mode };
+      }
+      const message = messageText({
+        title: `surety: the review of session ${run} ended unrecorded; its file moved to reviews/refused/`,
+        body: moves.map((m) => `${m.from} -> ${m.to} (${m.blob})`).join('\n'),
+        trailers: [
+          ['Surety-Project', project],
+          ['Surety-Kind', 'intent'],
+          ['Surety-Review-Refused', run],
+        ],
+      });
+      const commit = await prepareCommit(facts.repo, facts.head, files, message, rt.scratch);
+      if (commit === null) throw new Error("the commit moving the refused review's file could not be prepared");
+      const made = await journal.intend('design.intend_review_refused', { project, repo: facts.repo, run, head: facts.head, commit, moves, deadlineSeconds: rt.setting('git_deadline') }, 'commit_tree');
+      if (!('operation' in made)) throw new Refusal(409, 'integration_conflict', "The integration branch moved while the refused review's file was being moved; nothing was committed and the session is still open.", 'Close the session again.', { project, run });
+      const settled = await journal.drive(made.operation);
+      const follow = (settled.receipts as { follow?: unknown }).follow;
+      if (settled.end !== 'finalized' || typeof follow !== 'string' || (await journal.drive(follow)).end !== 'finalized') {
+        throw new Error("the commit moving the refused review's file, or the branch's move to it, did not finalize");
+      }
+      return { moved: moves, revision: commit.sha };
+    },
+    `design:review_refused:${run}`,
+  );
 }

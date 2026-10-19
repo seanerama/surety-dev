@@ -1004,7 +1004,8 @@
       "design.review_recorded",
       "design.review_requested",
       "design.verdicts_confirmed",
-      "design.asset_bound"
+      "design.asset_bound",
+      "design.review_refused"
     ],
     "EngineMode": [
       "restricted",
@@ -7779,6 +7780,9 @@
     },
     "design.asset_bound": {
       "owner": "design/approval.ts"
+    },
+    "design.review_refused": {
+      "owner": "design/review-refused.ts"
     }
   },
   "config": {
