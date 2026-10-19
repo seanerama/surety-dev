@@ -85,7 +85,7 @@ export function designView(db: Database.Database, args: { project: string }): Re
     | { id: string; content: string | null }
     | undefined;
   const inForce = inForceRow?.id ?? null;
-  // Each target's screens in the in-force screens.json (H2; SEAM.md §552):
+  // Each target's screens in the in-force screens.json (H2; SEAM.md §553):
   // null when that content is not known, so never accepted by default.
   const inForceScreens = parseJson<{ screens?: { screens?: unknown } }>(inForceRow?.content ?? null)?.screens?.screens;
   const screensOf = (target: string): string[] | null =>

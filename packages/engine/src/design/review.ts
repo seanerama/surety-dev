@@ -9,7 +9,7 @@
 // with any verdict he edits or strikes. A target's human test is
 // `owner_accepted`, never `verified`, for the design version in force only,
 // when on the newest build he reviewed it on every screen of the target
-// has his counting confirmed `matches` (H2; SEAM.md §552); a native target
+// has his counting confirmed `matches` (H2; SEAM.md §553); a native target
 // `not_observed` (`no_native_runtime`) stays pending (Q4). A confirmed
 // verdict's implementation defects become findings against the review's
 // candidate; its design deltas wait in the batch.
@@ -616,7 +616,7 @@ function counts(v: Verdict, native: boolean): boolean {
 // candidate or build, and runtime, shown "owner accepted" (Q4), apart from
 // automated verification. `current`: the approved design revision in force;
 // `screens`: that target's screens in its screens.json (null when unknown).
-// H2 (E171 item 5; SEAM.md §552): accepted only when, on the newest build of
+// H2 (E171 item 5; SEAM.md §553): accepted only when, on the newest build of
 // `current` the owner reviewed this target on, every one of `screens` has a
 // counting confirmed `matches`, the latest counting verdict per screen of
 // that build deciding (several reviews of the build combine; a later

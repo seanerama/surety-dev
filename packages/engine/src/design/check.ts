@@ -350,7 +350,7 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
   // `status` (every verdict in them is a proposal, D7 §10.3), and no
   // evidence id the review does not hold. A refused review's file, moved by
   // the engine under `reviews/refused/`, is out of active review (H5;
-  // SEAM.md §552): kept as history, never checked.
+  // SEAM.md §553): kept as history, never checked.
   for (const [path, bytes] of [...tree.files].filter(([p]) => p.startsWith('reviews/') && !isRefusedReviewRel(p) && p.endsWith('.json')).sort((a, b) => a[0].localeCompare(b[0]))) {
     const file = path;
     let v: unknown;

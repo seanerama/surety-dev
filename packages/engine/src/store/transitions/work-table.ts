@@ -85,7 +85,7 @@ export const CONTINUATIONS: readonly WorkStatus[] = ['executing', 'integrating',
 // The statuses in which a run owns the work.
 export const RUN_OWNING: readonly WorkStatus[] = ['claimed', 'executing', 'integrating', 'integrated', 'verifying', 'awaiting_decision'];
 
-export type TemplateName = 'return' | 'park' | 'block' | 'continue' | 'stop' | 'abandon' | 'resume' | 'unpark' | 'cancel';
+export type TemplateName = 'return' | 'park' | 'block' | 'continue' | 'stop' | 'abandon' | 'resume' | 'unpark' | 'cancel' | 'park_at_registration';
 
 interface Template {
   from: readonly WorkStatus[];
@@ -93,6 +93,8 @@ interface Template {
   to: WorkStatus | null;
   // Applies only to kinds whose path has this status.
   onlyKindsWith?: WorkStatus;
+  // Applies only to the kinds listed, by name.
+  onlyKinds?: readonly WorkKind[];
 }
 
 export const TEMPLATES: Record<TemplateName, Template> = {
@@ -113,6 +115,12 @@ export const TEMPLATES: Record<TemplateName, Template> = {
     from: ['eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying', 'awaiting_decision', 'held', 'parked'],
     to: 'cancelled',
   },
+  // H4's cap (E171 item 5 H4; E172; SEAM.md §554): a spec change's replan
+  // registered again by the restale at the cap (a second staleness against
+  // the same active generation, plan/replace.ts) is parked at registration
+  // with blocker reason replan_restale_max, for the owner's retry or cancel;
+  // no run, no claim. The one edge given to named kinds only.
+  park_at_registration: { from: ['eligible'], to: 'parked', onlyKinds: ['replan'] },
 };
 
 export const TERMINAL: readonly WorkStatus[] = ['complete', 'cancelled'];
@@ -134,6 +142,7 @@ function edgesOf(kind: WorkKind): Edge[] {
     grew = false;
     for (const template of Object.values(TEMPLATES)) {
       if (template.onlyKindsWith !== undefined && !path.includes(template.onlyKindsWith)) continue;
+      if (template.onlyKinds !== undefined && !template.onlyKinds.includes(kind)) continue;
       for (const from of template.from) {
         if (!reach.has(from)) continue;
         const targets = template.to === null ? CONTINUATIONS.filter((c) => path.includes(c)) : [template.to];

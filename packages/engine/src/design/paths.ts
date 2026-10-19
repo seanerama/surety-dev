@@ -28,7 +28,7 @@ export function within(base: string, rel: string): string | null {
   return full.startsWith(root + sep) ? full : null;
 }
 
-// A refused review's file (H5; SEAM.md §552): moved by the engine under
+// A refused review's file (H5; SEAM.md §553): moved by the engine under
 // `.surety/design/reviews/refused/`, out of active review. The design check
 // and the review-recording step skip it; no Designer save writes there.
 export const REFUSED_REVIEWS_DIR = '.surety/design/reviews/refused/';

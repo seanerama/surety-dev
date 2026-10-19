@@ -139,7 +139,9 @@ test("(4) a parked correction's next action names the blocker question and what 
   assert.deepEqual(w.waits_on, { kind: 'check_correction', work_item: 'wi_corr' });
   assert.match(w.next_action, /dec_b/);
   assert.match(w.next_action, /cancel ends it/);
-  assert.match(w.next_action, /no route registers another correction/);
+  assert.match(w.next_action, /registers no other correction for this change by itself/);
+  // E171 item 5 H4: the owner's route back names design_due's correct.
+  assert.match(w.next_action, /correct registers the correction again with the same request, criteria and checks/);
   // Cancelled: the wait names it, never a dead end without the owner's routes.
   run(`UPDATE work_items SET status = 'cancelled' WHERE id = 'wi_corr'`);
   const [c] = readinessWaits(db, 'p');

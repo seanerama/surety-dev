@@ -192,7 +192,7 @@ export async function reviewRaise(rt: Runtime, facts: SaveFacts): Promise<Record
   };
 }
 
-// A review-mode session ending without a recorded review (H5; SEAM.md §552):
+// A review-mode session ending without a recorded review (H5; SEAM.md §553):
 // before it closes, each unrecorded `reviews/review-<n>.json` of the head
 // moved to `reviews/refused/<run>-review-<n>.json`, the same blob, by one
 // engine intent commit naming the run, and the branch moved to it; the

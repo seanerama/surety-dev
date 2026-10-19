@@ -1,4 +1,4 @@
-// Developer tests for H5 (E171 item 5; SEAM.md §552): a review-mode Designer
+// Developer tests for H5 (E171 item 5; SEAM.md §553): a review-mode Designer
 // session ending without a recorded review has each unrecorded
 // `reviews/review-<n>.json` of the head moved to
 // `reviews/refused/<run>-review-<n>.json`, the same blob, by one engine

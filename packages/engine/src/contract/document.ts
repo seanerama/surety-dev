@@ -321,7 +321,7 @@ export function exportContract(migrationsDir: string = DEFAULT_MIGRATIONS_DIR): 
 
   const templates: Record<string, Record<string, unknown>> = {};
   for (const [name, t] of Object.entries(TEMPLATES)) {
-    templates[name] = { from: [...t.from], to: t.to, ...(t.onlyKindsWith !== undefined ? { only_kinds_with: t.onlyKindsWith } : {}) };
+    templates[name] = { from: [...t.from], to: t.to, ...(t.onlyKindsWith !== undefined ? { only_kinds_with: t.onlyKindsWith } : {}), ...(t.onlyKinds !== undefined ? { only_kinds: [...t.onlyKinds] } : {}) };
   }
   const kinds: Record<string, Record<string, unknown>> = {};
   for (const kind of WORK_KINDS) {

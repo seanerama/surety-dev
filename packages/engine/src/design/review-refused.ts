@@ -1,5 +1,5 @@
 // A review that ends without being recorded (H5; E166 item 4, E171 item 5;
-// SEAM.md §552). A review-mode Designer session closed with `refuse`, or
+// SEAM.md §553). A review-mode Designer session closed with `refuse`, or
 // closed by protocol (idle timeout, spent budget) raising nothing, leaves no
 // review file where the design check and the review-recording step read one:
 // before the session closes, the engine moves each unrecorded

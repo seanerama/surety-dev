@@ -244,7 +244,7 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
     // D7 §6.3: the owner's asset file committed by the engine.
     case 'design_asset':
       return finalizeAssetRef(tx, op, inputs as unknown as AssetRefInputs);
-    // H5 (SEAM.md §552): a refused review's file moved out of active review.
+    // H5 (SEAM.md §553): a refused review's file moved out of active review.
     case 'design_review_refused':
       return finalizeReviewRefused(tx, op, inputs as unknown as ReviewRefusedRefInputs);
     case 'oob_stash':

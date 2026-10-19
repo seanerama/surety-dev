@@ -686,7 +686,7 @@ export class SessionDriver {
 
   // A review-mode Designer session that ends without recording a review
   // (closed with `refuse`, or by protocol raising nothing; H5, E171 item 5;
-  // SEAM.md §552): before it closes, each unrecorded review file of the
+  // SEAM.md §553): before it closes, each unrecorded review file of the
   // head is moved to `reviews/refused/` by one engine intent commit, with
   // one `design.review_refused` each. Throws when the move is not made,
   // before the session's close: the session stays open, to be closed again.

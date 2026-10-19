@@ -143,7 +143,7 @@ test('S7: a confirmed matches seen in a browser never accepts a native target; o
   assert.equal(humanTestEvidence(db, P, 'android', 'dsg_1', ['S2']).accepted, true);
 });
 
-// H2 (E171 item 5; SEAM.md §552): every screen of the target, on the newest
+// H2 (E171 item 5; SEAM.md §553): every screen of the target, on the newest
 // reviewed build of the version in force, the latest counting verdict per
 // screen of that build deciding.
 test('H2: a human test is accepted only when every screen of the target matches on the newest reviewed build', (t) => {

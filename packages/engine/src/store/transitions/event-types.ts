@@ -235,7 +235,7 @@ export const EVENT_OWNERS = {
   'design.review_requested': 'design/review.ts',
   'design.verdicts_confirmed': 'design/review.ts',
   'design.asset_bound': 'design/approval.ts',
-  // H5 (E171 item 5; SEAM.md §552): an unrecorded review's file moved to reviews/refused/.
+  // H5 (E171 item 5; SEAM.md §553): an unrecorded review's file moved to reviews/refused/.
   'design.review_refused': 'design/review-refused.ts',
 } as const;
 

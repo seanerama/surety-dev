@@ -6630,6 +6630,15 @@
           "parked"
         ],
         "to": "cancelled"
+      },
+      "park_at_registration": {
+        "from": [
+          "eligible"
+        ],
+        "to": "parked",
+        "only_kinds": [
+          "replan"
+        ]
       }
     },
     "run_owning": [
