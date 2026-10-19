@@ -31,7 +31,7 @@ import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderW
 import { type AlphaGapState, gapAuthoringUnderWay, gapReason, queueAlphaGapAuthoring, reopenableRefusal } from './alpha-gap.js';
 import { cancelExecution, readDue, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
-import { quarantineDomain } from './runs.js';
+import { quarantineDomain, recordPeak } from './runs.js';
 import { effectivePreviewMax, effectiveProfileMax, engineSettings, projectOptions, projectPolicy } from './settings.js';
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
@@ -2556,9 +2556,17 @@ export function openServiceDomains(db: Db, args: { project?: string }) {
 
 // A service domain's closure observed (D2 §3.2, absence in the verified
 // hierarchy; D4 §9.2): its launch closed first, then `terminated`.
-export function serviceDomainClosed(tx: Tx, args: { domain: string; observed: string; resource_events?: { oom_kill: number | null; pids_max: number | null } | null }): { terminated: boolean } {
+export function serviceDomainClosed(
+  tx: Tx,
+  args: { domain: string; observed: string; resource_events?: { oom_kill: number | null; pids_max: number | null } | null; memory_peak?: number | null },
+): { terminated: boolean } {
   const d = tx.db.prepare(`SELECT * FROM "execution_domains" WHERE "id" = ? AND "profile" = 'service'`).get(args.domain) as ServiceDomainRow | undefined;
   if (!d || d.status === 'terminated') return { terminated: false };
+  // Its memory.peak, when the stop read it from the domain's own cgroup
+  // before removing it (D7 §14, a preview's domain; D6 §6.4; E170):
+  // recorded before its termination, unknown when unread, never zero. A
+  // closure only observed (no read before it) records nothing.
+  if (args.memory_peak !== undefined) recordPeak(tx, { domain: d.id, memory_peak: args.memory_peak, why: "memory.peak of the unit's cgroup could not be read before its stop" });
   // The domain's limits as its cgroup counted them, read before its stop
   // (D4 §9.2, D4-T05; D2 A.3 `resource_events`): kept with the domain.
   if (args.resource_events) tx.db.prepare('UPDATE "execution_domains" SET "resource_events" = ? WHERE "id" = ?').run(JSON.stringify({ oom_kill: args.resource_events.oom_kill ?? null, pids_max: args.resource_events.pids_max ?? null }), d.id);
@@ -4429,8 +4437,13 @@ export function previewDeployed(tx: Tx, args: { preview: string; unit: string; i
   if (!p) throw notFound('design preview', args.preview);
   const env = previewEnvOf(tx.db, p.project)!;
   tx.db.prepare(`UPDATE "design_previews" SET "status" = 'deployed', "unit" = ?, "deployed_at" = ? WHERE "id" = ?`).run(args.unit, tx.at, p.id);
-  // An earlier preview the deploy replaced is down.
-  tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "project" = ? AND "id" <> ? AND "status" = 'deployed'`).run(tx.at, p.project, p.id);
+  // An earlier preview the deploy replaced is down, its domain's
+  // memory.peak (read at the deploy's stop of it) kept with it (E170).
+  const replaced = tx.db.prepare(`SELECT "id", "generation", "unit" FROM "design_previews" WHERE "project" = ? AND "id" <> ? AND "status" = 'deployed'`).all(p.project, p.id) as { id: string; generation: number; unit: string | null }[];
+  for (const r of replaced) {
+    tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "id" = ?`).run(tx.at, r.id);
+    keepPreviewPeak(tx, r);
+  }
   tx.emit('design.preview_deployed', { project: p.project, design_preview: p.id, environment: env.id, operation: args.operation }, {
     unit: args.unit,
     generation: p.generation,
@@ -4440,8 +4453,28 @@ export function previewDeployed(tx: Tx, args: { preview: string; unit: string; i
     identity_reads: args.identity_reads,
     mockups: parseJson<unknown[]>(p.mockups) ?? [],
     attempt: args.attempt,
+    ...(replaced.length > 0 ? { replaced: replaced.map((r) => ({ design_preview: r.id, generation: r.generation, memory_peak: previewPeakOf(tx.db, r.id) })) } : {}),
   });
 }
+
+// A preview's domain's memory.peak (D7 §14; E170): the value the service
+// domain of the preview's own deploy recorded when the engine's stop read
+// it from the unit's cgroup before removing it, kept on the preview's row;
+// nothing when it was not read (the pace read shows it unknown, never zero).
+function keepPreviewPeak(tx: Tx, r: { id: string }): void {
+  const d = tx.db
+    .prepare(
+      `SELECT d."memory_peak" FROM "execution_domains" d JOIN "operation_attempts" a ON a."id" = d."attempt" JOIN "operations" o ON o."id" = a."operation"
+       WHERE d."profile" = 'service' AND o."kind" = 'deploy' AND json_extract(o."subject", '$.design_preview') = ? AND d."memory_peak" IS NOT NULL ORDER BY d.rowid DESC LIMIT 1`,
+    )
+    .get(r.id) as { memory_peak: number } | undefined;
+  if (d) tx.db.prepare('UPDATE "design_previews" SET "memory_peak" = ? WHERE "id" = ? AND "memory_peak" IS NULL').run(d.memory_peak, r.id);
+}
+
+const previewPeakOf = (db: Db, preview: string): number | { unknown: string } =>
+  (db.prepare('SELECT "memory_peak" FROM "design_previews" WHERE "id" = ?').get(preview) as { memory_peak: number | null } | undefined)?.memory_peak ?? {
+    unknown: "the preview domain's memory.peak was not read before its removal",
+  };
 
 export function previewFailed(tx: Tx, args: { preview: string; reason: string }): void {
   const p = tx.db.prepare('SELECT * FROM "design_previews" WHERE "id" = ?').get(args.preview) as PreviewRow | undefined;
@@ -4454,9 +4487,13 @@ export function previewFailed(tx: Tx, args: { preview: string; reason: string })
 export function previewTornDown(tx: Tx, args: { project: string; operation: string; reason: string }): void {
   const env = previewEnvOf(tx.db, args.project);
   const rows = tx.db.prepare(`SELECT "id", "generation", "unit" FROM "design_previews" WHERE "project" = ? AND "status" IN ('deployed', 'deploying', 'failed')`).all(args.project) as { id: string; generation: number; unit: string | null }[];
-  for (const r of rows) tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "id" = ?`).run(tx.at, r.id);
+  for (const r of rows) {
+    tx.db.prepare(`UPDATE "design_previews" SET "status" = 'torn_down', "torn_down_at" = ? WHERE "id" = ?`).run(tx.at, r.id);
+    // Its domain's memory.peak, read by the teardown's stop before the unit's cgroup went (E170).
+    keepPreviewPeak(tx, r);
+  }
   // The generation torn down: the newest the teardown ended, else the newest of the project.
-  const latest = tx.db.prepare('SELECT "generation", "unit" FROM "design_previews" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project) as { generation: number; unit: string | null } | undefined;
+  const latest = tx.db.prepare('SELECT "id", "generation", "unit" FROM "design_previews" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1').get(args.project) as { id: string; generation: number; unit: string | null } | undefined;
   const ended = rows.length > 0 ? rows.reduce((a, b) => (b.generation > a.generation ? b : a)) : latest;
   // The units the teardown's attempt stopped, by exact name (N1).
   const op = getOp(tx.db, args.operation);
@@ -4467,6 +4504,7 @@ export function previewTornDown(tx: Tx, args: { project: string; operation: stri
     unit: ended?.unit ?? null,
     units_stopped: stopped,
     previews: rows.map((r) => r.id),
+    memory_peak: ended ? previewPeakOf(tx.db, ended.id) : { unknown: 'no preview of the project' },
   });
 }
 
