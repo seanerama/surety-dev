@@ -589,6 +589,8 @@ export function performers(ctx, acts, since) {
   const owner = ownerEntries(ctx.runDir).filter((e) => e.at >= since);
   const driver = driverEntries(ctx.runDir).filter((e) => e.at >= since);
   return acts.map((a) => {
+    // The preview inspection's relay record is on the item the step named (inspectionAct), not on the act (harness finding F7).
+    const inspection = a.relay_requests !== undefined ? a : (a.items ?? []).find((i) => i.relay_requests !== undefined);
     const o = owner.filter((e) => e.act === a.act);
     const dr = driver.filter((e) => e.act === a.act);
     let performer;
@@ -604,7 +606,7 @@ export function performers(ctx, acts, since) {
         ...(o.length > 0 ? { owner_entry: o.at(-1) } : {}),
         ...(dr.length > 0 ? { instruction: dr.at(-1).on_instruction, driver_entry: dr.at(-1) } : {}),
         ...(o.length > 0 && dr.length > 0 ? { conflict: 'both Sean and the driver recorded this act: who performed it is unknown' } : {}),
-        ...(a.relay_requests !== undefined ? { relay_requests: a.relay_requests, relay: a.relay } : {}),
+        ...(inspection ? { relay_requests: inspection.relay_requests, relay: inspection.relay } : {}),
       },
     };
   });

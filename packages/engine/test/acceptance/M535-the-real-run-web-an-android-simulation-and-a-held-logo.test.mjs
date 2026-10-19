@@ -352,8 +352,12 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
           assert.equal(a.performer, 'sean', `${c} performed by Sean (${show(a)})`);
         }
         const preview = acts.find((a) => a.act === 'preview_inspection');
-        assert.ok(Array.isArray(preview.evidence?.relay) && preview.evidence.relay.some((e) => e.type === 'environment.relay_opened'), 'the preview inspection with the relay\'s record of its opening');
-        assert.ok(preview.evidence?.relay_requests, 'and what the relay records of the paths served (here: unknown, with why)');
+        // The relay's record from the act's evidence when present, else from the act's item that carries it, the
+        // same data the store recorded (harness finding F7, errata E168: performers() looked for it on the act, while
+        // the step names it on the item, so a record made before the fix has it on the item alone).
+        const relayRecord = preview.evidence?.relay !== undefined || preview.evidence?.relay_requests !== undefined ? preview.evidence : (preview.items ?? []).find((i) => i.relay_requests !== undefined);
+        assert.ok(Array.isArray(relayRecord?.relay) && relayRecord.relay.some((e) => e.type === 'environment.relay_opened'), `the preview inspection with the relay's record of its opening (${show(preview)})`);
+        assert.ok(relayRecord?.relay_requests, 'and what the relay records of the paths served (here: unknown, with why)');
         const others = acts.filter((a) => !CENTRAL_ACTS.includes(a.act));
         assert.deepEqual(others.filter((a) => !['sean', 'driver'].includes(a.performer)).map((a) => `${a.step} ${a.act}`), [], 'every other act with its performer\'s record');
         for (const a of others.filter((x) => x.performer === 'driver')) assert.ok(a.evidence?.instruction, `${a.act}: Sean's instruction, quoted`);
