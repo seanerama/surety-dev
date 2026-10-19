@@ -4767,3 +4767,14 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 - **`M518` 2/2**, unchanged.
 
 **Fixtures the plan-check change could refuse** (a grep of `test/acceptance/` for `surface: 'ui'` and for interfaces assigned to modules): every `ui` module in the acceptance fixtures has `interfaces: []`. That covers `reference.mjs` `MODULES_JSON` (and so `modulesWith`, `SIX_MODULES_JSON`, `SC_MODULES_JSON`, M504's `AXES_MAP`), `retrofit45.mjs` `SHELF_MODULES_JSON`, `review45.mjs` and `real/m6-content.mjs` `pantryArchitecture`. No fixture other than the new ones declares an exposed interface.
+
+## The preview's memory.peak recorded (engine finding F8; Sean's ruling of 2026-10-19, errata E170)
+
+2026-10-19, by the Verifier, on `verify/f8`, cut from `main` `4e05624`. No new row. No harness file changed: the case reuses `preview42.mjs`, `exec37/peak.mjs`'s `hostMemoryPeak` and `journey/drive.mjs`'s `readPace`. The case goes to M510, the file that tears down a preview on a real unit by all four routes. M539 is on the kernel lane, which has no real domain, and its (c) (`unknown`, never zero, where the peak could not be read) stands as written. The engine's part is the Builder's.
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| the ruling | M510 (h) | `M510-the-preview-on-a-real-unit.test.mjs` (7 → 8) | After (f), the four `design_previews` rows (g1 replaced by g2, g2 by `--stop`, g3 by the TTL, g4 by the newer approved design), each `torn_down`: `memory_peak` is a number of bytes > 0, at least what the host read of the domain's `memory.peak` while it served (read just after each `design.preview_deployed`, in (a) and (e), without asserting), and at most `preview_memory_max`. The pace read's `design.previews[]` entry for each preview shows that number, not `unknown` | written; fails on `main` |
+
+**What was run, 2026-10-19, on `main` `4e05624` plus this case.** On the workstation, the engine's start recorded no `host_qualifications` row (only `engine.mode_changed` and `engine.started`), so the runner self-test was never recorded: M510's `before` timed out after 300 s, and so did the accepted M221 (a). The cause was not established. The agent sessions there run in the system's `/init.scope`, but another engine started from that scope did get its incarnation scope. The file was therefore run on mini-hp01 instead, in a fresh clone (`~/vf8`), with `npm install` (the lockfile change reverted), `npm run build`, `TMPDIR=/var/tmp/vf8` (`/tmp` there is tmpfs, which the engine refuses), and the file alone with `node --test`:
+- **`M510` 7/8**, 85 s. (a) to (g) pass. (h) fails on all four previews: `memory_peak` is `null` on each row, while the host read 29,683,712, 29,863,936, 29,609,984 and 29,474,816 bytes of their domains' `memory.peak` while they served. The pace-read half of (h) was not reached. No `surety-*` unit was left.
