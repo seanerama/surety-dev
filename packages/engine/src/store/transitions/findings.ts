@@ -13,7 +13,7 @@ import { OWED_SCOPE, blocksAnyGate, reaskOwed, changeSeverity, raiseQuestion, re
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
-import { isObjection } from './repair.js';
+import { findingVerification, isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
 import { alphaSignoffsUnsigned } from './alpha-review.js';
 
@@ -245,6 +245,7 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   }
 
   if (role === 'reviewer') {
+    const refusedFix = new Set<string>();
     for (const d of report.dispositions ?? []) {
       const f = findingOf(tx, d.finding);
       if (!f || f.project !== project || f.status === 'resolved') continue;
@@ -259,6 +260,23 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
         const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
         if (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers) continue;
         recordDisposition(tx, f, { disposition: 'fix', authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: null, remediation: d.remediation ?? null, target: 'plan' });
+        continue;
+      }
+      // H1 (E171 item 5; E166 item 4; Sean's ruling, option B; SEAM.md
+      // §552): a Reviewer's own `fix` on a finding that names no check is
+      // refused, the owner's verification rule (repair.ts findingVerifiable)
+      // on the Reviewer's route: no check can ever show such a fix done, so
+      // nothing is dispatched (no fix work, no check_correction work) and the
+      // finding is left as it was, undispositioned. The refusal is recorded
+      // once, with the finding's verification as the owed question states
+      // it; the run is still accepted, and the owner's owed question
+      // (disposition_owed, raised by askUndispositioned) stays his to answer.
+      // A finding naming a check is not refused here, whether or not the
+      // check can verify it (D3 §2.11's check_correction route, M235).
+      if (d.disposition === 'fix' && f.check === null) {
+        if (refusedFix.has(f.id)) continue;
+        refusedFix.add(f.id);
+        tx.emit('finding.fix_refused', { project, finding: f.id, run: run.id }, { reason: 'verification_missing', verification: findingVerification(tx.db, f) });
         continue;
       }
       if (d.disposition === 'fix' || deferLow) {

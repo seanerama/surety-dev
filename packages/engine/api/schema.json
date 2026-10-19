@@ -889,6 +889,7 @@
       "finding.severity_changed",
       "finding.dispositioned",
       "finding.proposal_standing",
+      "finding.fix_refused",
       "finding.resolved",
       "finding.reopened",
       "finding.check_unbound",
@@ -7430,6 +7431,9 @@
       "owner": "store/transitions/queue.ts"
     },
     "finding.proposal_standing": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "finding.fix_refused": {
       "owner": "store/transitions/findings.ts"
     },
     "finding.resolved": {

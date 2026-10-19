@@ -756,3 +756,54 @@ test("L3-1, the other order: a fix is not dispatched while the stage is being se
   assert.equal(repair.repairUnderway(db, fixOf(db, 'fnd_x')), null, 'the repair integrated');
   assert.doesNotMatch(dispatchBlocker(db, fixOf(db, 'fnd_x'), { check: false }) ?? '', /repair of wi_1/);
 });
+
+// H1 (E171 item 5; E166 item 4; Sean's ruling, option B; SEAM.md §552): a
+// Reviewer's own fix on a finding that names no check is refused.
+function reviewerReport(db, dispositions, { reviewer = 'run_rev' } = {}) {
+  db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, depends_on, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold, chain)
+     VALUES ('wi_rev', ?, 'prj_1', 7, 'review', '{"candidate":"cand_1"}', 'executing', '[]', 'fixture', 'r', 1, 0, 0, 0, 0, 1)`).run(AT);
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, chain, result_value)
+     VALUES (?, ?, 'prj_1', 8, 'wi_rev', 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, 1, ?)`,
+  ).run(reviewer, AT, A, AT, JSON.stringify({ summary: 's', report: { dispositions } }));
+  transact(db, ENGINE_ACTOR, (tx) => recordReport(tx, { run: reviewer }));
+}
+const findingRow = (db, id = 'fnd_x') => db.prepare(`SELECT * FROM findings WHERE id = ?`).get(id);
+const fixWork = (db) => db.prepare(`SELECT kind, trigger_id FROM work_items WHERE kind IN ('fix', 'check_correction', 'replan') ORDER BY seq`).all();
+const eventsOf = (db, type) => db.prepare(`SELECT subject, payload FROM events WHERE type = ? ORDER BY seq`).all(type).map((e) => ({ subject: JSON.parse(e.subject), payload: JSON.parse(e.payload) }));
+
+test("H1: a Reviewer's fix on a finding naming no check is refused: nothing recorded or registered, finding.fix_refused once with its verification", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: null });
+  const verification = repair.findingVerification(db, findingRow(db));
+  assert.equal(verification.state, 'missing', 'the fixture: no check can verify it');
+  // Named twice in one report: still one refusal.
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }, { finding: 'fnd_x', disposition: 'fix' }]);
+  const f = findingRow(db);
+  assert.deepEqual([f.status, f.disposition, f.disposition_authority, f.disposition_by, f.proposed_disposition], ['open', null, null, null, null]);
+  assert.deepEqual(fixWork(db), [], 'no fix and no check_correction work');
+  assert.deepEqual(eventsOf(db, 'finding.dispositioned'), []);
+  assert.deepEqual(eventsOf(db, 'finding.fix_refused'), [{ subject: { project: 'prj_1', finding: 'fnd_x', run: 'run_rev' }, payload: { reason: 'verification_missing', verification } }]);
+});
+
+test('H1: a fix on a finding naming a check that cannot verify it is recorded and routes check_correction, unrefused (D3 §2.11)', (t) => {
+  const db = store(t);
+  // smoke covers no criterion; the finding names R1.1.
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'smoke' });
+  assert.equal(repair.findingVerification(db, findingRow(db)).state, 'missing', 'the fixture: its check cannot verify it');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const f = findingRow(db);
+  assert.deepEqual([f.status, f.disposition, f.disposition_authority], ['dispositioned', 'fix', 'reviewer']);
+  assert.deepEqual(fixWork(db).map((w) => w.kind).sort(), ['check_correction', 'fix']);
+  assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
+});
+
+test("H1: a Reviewer's plan-targeted fix on its own contract_conflict naming no check is recorded as before (D6 §5.7)", (t) => {
+  const db = store(t);
+  objection(db, { role: 'reviewer', candidate: 'cand_1', category: 'contract_conflict', check: null });
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix', target: 'plan' }]);
+  const f = findingRow(db);
+  assert.deepEqual([f.status, f.disposition, f.disposition_authority], ['dispositioned', 'fix', 'reviewer']);
+  assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
+  assert.ok(!fixWork(db).some((w) => w.kind === 'fix'), 'no fix work');
+});
