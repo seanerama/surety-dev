@@ -337,7 +337,7 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   ARCH_TARGET_UNCOVERED: "under a design policy other than off: a target of the approved specification's **Targets:** is served by no ui module",
   ARCH_TECHNOLOGY_TARGET_MISMATCH:
     'under a design policy other than off: a ui module serves a target with a UI technology that cannot build for it (html_css, three_js, streamlit: web; react_native: android, ios; flutter, other: any target; swiftui: ios, macos; compose: android)',
-  ARCH_INTERFACE_SHAPE_MISSING: 'under a design policy other than off: an interface a ui module consumes (consumed_by) lacks request, response or errors (named <module>:<interface>)',
+  ARCH_INTERFACE_SHAPE_MISSING: 'under a design policy other than off: an interface a ui module consumes (consumed_by) or exposes lacks request, response or errors (named <module>:<interface>)',
   PLAN_SCREEN_UNKNOWN: "a stage's screens names a key the approved design does not have",
   PLAN_DESIGN_UNCOVERED:
     'under design before_build or both, with an approved design: a ui stage implements a UI requirement that no approved screen of a target its modules serve covers (named <requirement>:<target>); a new design, not a plan, covers it',

@@ -13,6 +13,7 @@ const dist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 const { checkPlan, interfaceShapesMissing, stageTargets } = await import(join(dist, 'plan', 'check.js'));
 const { parsePhasePlan } = await import(join(dist, 'plan', 'schemas.js'));
 const { placeholderManifest } = await import(join(dist, 'design', 'assets.js'));
+const { deriveInventory } = await import(join(dist, 'design', 'inventory.js'));
 
 const ITEM = { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 40 } }, required: ['name'] };
 const MODULES = {
@@ -70,6 +71,60 @@ test('clause 5: an interface a ui module consumes without request, response or e
   assert.deepEqual(reasons(r, 'ARCH_INTERFACE_SHAPE_MISSING'), ['api:add-item']);
   const off = checkPlan(baselineOf({ policy: 'off', spec_targets: ['web', 'android'], approved_screens: null }), artifactsOf(STAGES));
   assert.deepEqual(reasons(off, 'ARCH_INTERFACE_SHAPE_MISSING'), [], 'optional under off');
+});
+
+// Errata E169 (finding F5): an interface a ui module exposes (it owns it)
+// is held to the same shapes as one a ui module consumes.
+const EXPOSING = {
+  ...MODULES,
+  modules: [
+    ...MODULES.modules.filter((m) => m.name !== 'web'),
+    {
+      name: 'web',
+      surface: 'ui',
+      paths: ['web/'],
+      sensitive_areas: [],
+      interfaces: [
+        { name: 'page', kind: 'file', description: 'the page' },
+        { name: 'tokens', kind: 'file', description: 'design tokens', shape: 'unknown' },
+        { name: 'shaped', kind: 'http', description: 'shaped', request: { type: 'null' }, response: ITEM, errors: [] },
+      ],
+      targets: [{ target: 'web', ui_technology: 'html_css' }],
+    },
+  ],
+};
+
+test('clause 5 (E169): an interface a ui module exposes without request, response or errors is named; shape unknown stays exempt; optional under off', () => {
+  assert.deepEqual(interfaceShapesMissing(EXPOSING), ['api:add-item', 'web:page']);
+  const r = checkPlan(baselineOf({ policy: 'before_build', spec_targets: ['web', 'android'], approved_screens: null }), { ...artifactsOf(STAGES), modules: EXPOSING });
+  assert.deepEqual(reasons(r, 'ARCH_INTERFACE_SHAPE_MISSING'), ['api:add-item', 'web:page']);
+  const off = checkPlan(baselineOf({ policy: 'off', spec_targets: ['web', 'android'], approved_screens: null }), { ...artifactsOf(STAGES), modules: EXPOSING });
+  assert.deepEqual(reasons(off, 'ARCH_INTERFACE_SHAPE_MISSING'), [], 'optional under off');
+});
+
+test('inventory (E169): an interface whose shape is not known, for whatever reason, is listed shape_known false and derives no obligation or fixture', () => {
+  const inv = deriveInventory({
+    spec_version: 1,
+    architecture_version: 1,
+    spec_targets: ['web', 'android'],
+    cross_platform: false,
+    requirements: [],
+    modules: EXPOSING,
+    stages: [],
+    adrs: [],
+    runtime: null,
+    policy: { design_preview: 'static', design_widths: [375], design_orientations: ['portrait'] },
+    exclude: [],
+  });
+  const known = Object.fromEntries(inv.interfaces.map((i) => [i.name, i.shape_known]));
+  assert.deepEqual(known, { 'list-items': true, 'add-item': true, page: false, tokens: false, shaped: true });
+  const obliged = new Set(inv.obligations.map((o) => o.interface).filter(Boolean));
+  for (const name of ['page', 'tokens']) {
+    assert.equal(obliged.has(name), false, `no obligation for ${name}`);
+    assert.equal(inv.fixtures.some((f) => f.interface === name), false, `no fixture for ${name}`);
+  }
+  for (const name of ['list-items', 'add-item', 'shaped']) assert.ok(obliged.has(name), `obligations for ${name}`);
+  assert.ok(inv.obligations.some((o) => o.interface === 'shaped' && o.target === 'web' && o.state === 'ok'));
 });
 
 test('before any design: one planned design obligation per UI stage, with its targets; none for the API stage', () => {
