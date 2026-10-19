@@ -4781,17 +4781,17 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 
 ## H4, recovery dead ends (E171 item 5 H4; E163 item 7, E164 item 4; Sean's rulings of 2026-10-19; SEAM §552)
 
-2026-10-19, by the Verifier, on `verify/h4`, cut from `main` `0634d11`. No new row and no harness file changed. Both cases fail on `main` for the reason each ruling fixes. The engine's part is the Builder's.
+2026-10-19, by the Verifier, on `verify/h4`, cut from `main` `0634d11`. No new row. The cap adds one edge to `contract/work-items.json`, read by `harness/transitions.mjs` (below). Both cases fail on `main` for the reason each ruling fixes. The engine's part is the Builder's.
 
 | Item | Row | File | Cases | Status |
 |---|---|---|---|---|
 | H4 (a), a spec change's replan refused stale | M430 (iv) | `M430-blockers-and-reopened-dispositions.test.mjs` (3 → 4) | The spec change's replacement pending. A stage blocker's replacement publishes generation 2, so the spec change's approval is refused 409 `plan_generation_stale`. Expected: its replan re-registered (`spec_change`, same request, `trigger_generation` 2, `trigger_evidence` naming generation 2's plan and `from_work_item`) and named by `completion_held_by`; its approval publishes generation 3 carrying `spec_change`; no third generation | written; fails on `main` |
+| H4 (a)'s cap, a second staleness against the same active generation (E172) | M430 (v) | `M430-blockers-and-reopened-dispositions.test.mjs` (4 → 5) | (iv)'s start (`restaledOnce`) to the re-registered replacement awaiting the owner; a second change (spec version 3) approved meanwhile, generation 2 still active. Expected: `trigger_generation` 3 registered `parked`, `blocker.reason` `replan_restale_max`, evidence naming generation 2 and the re-registered replan; history exactly `eligible → parked`, `work.parked` from `eligible` with the reason, no `work.claimed`, no run; an open `blocker` offering `retry` and `cancel`; no fourth generation | written; fails on `main` |
 | H4 (b), a cancelled parked design correction | M507 (c) | `M507-design-readiness-and-the-third-milestone.test.mjs` (10 → 11) | The correction parks (no `correct` offered), then its blocker is answered `cancel`. Expected: not ready; `waits_on` `correction_ended` on the read and on `design_due`, which offers `correct`; answered, the correction is registered again at generation 2 with the same request, criteria and checks; once applied, `design.ready` fires once and `design_ready` is met | written; fails on `main` |
 
 **Not covered:**
-- (a)'s cap: a second staleness against the same active generation parks with a blocker. See SEAM §552 for why it was not built, and for a question to Sean on whether §415's S1 re-raise counts toward the cap.
+- (a)'s cap reached by an architecture or roadmap move, or by §415's S1 staleness; an owner `retry` or `cancel` on the replan parked at the cap. SEAM §552 keeps the question to Sean on whether §415's S1 re-raise counts toward the cap.
 - (a)'s phase-held check is trivial, because the Builders crash and the phase never completes. `completion_held_by` is the observable part.
-- An owner `cancel` on the parked re-registered replan.
 
 **M512 and M73.** M512 asserts exactly four `design_due` options in (a) and (c). Both are states with no `correction_ended` wait, so the ruling keeps them as they are, and they do not conflict. M73: the contract has no `design_due` option enumeration. If the Builder changes `DESIGN_DUE_KEYS`, `api/schema.json` must be regenerated.
 
@@ -4799,3 +4799,9 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 - **`M430-blockers-and-reopened-dispositions` 3/4.** (i) to (iii) pass. (iv) fails at "a spec change's replan refused stale is re-registered against the active generation 2, trigger_generation 2 (E171 item 5 H4; Sean's ruling) (replans [["spec_change",1,"complete"],["blocker_replan",1,"complete"]])". Everything before that point passed, including the spec change's approval refused 409 `plan_generation_stale`.
 - **`M507` 10/11.** The ten earlier cases pass. (c) H4 fails at "design_due offers correct while readiness waits on correction_ended (E171 item 5 H4; Sean's ruling) (options ["open","waive","policy_off","later"])". Everything before that point passed: the correction parked, no `correct` while it was parked, `cancel` answered, and `correction_ended` named on the read and on `design_due`.
 - **`M512` 14/14**, unchanged.
+
+**The cap's edge (E172), 2026-10-19, on `verify/h4`.** The work-item table gains one edge, `eligible → parked` for `replan` only: `contract/work-items.json` template `park_at_registration` with the new key `only_kinds`, read by `harness/transitions.mjs` (`legalEdges`; `routeTo` takes such an edge only when no other route exists, so M09's routes are unchanged). The engine's export must state it the same way (SEAM §552). Rows M09 and M73 derive their expectations from the table, so no test file of theirs changed. Run on `main` `0634d11` plus these files, after `npm run build`, each file alone with `node --test`, `TMPDIR=/tmp/v-h4b`:
+- **`M09-work-transitions` 19/20.** Every illegal-edge case passes (replan's `eligible` no longer refuses `parked`). "replan: its path, the common templates …" fails at "replan: eligible → parked (park_at_registration) is in the table": 409 `illegal_transition`, "replan eligible → parked is not a legal transition.". The engine lacks the edge: expected.
+- **`M73-executable-contract` 10/11.** "the contract holds the accepted corrections …" fails at "replan: the legal edges are the contract table's, no more and no fewer": the expected side holds `eligible→parked`, the engine's export does not. Expected.
+- **`M430-blockers-and-reopened-dispositions` 3/5.** (i) to (iii) pass; (iv) and (v) both fail at (iv)'s first H4 assertion (the re-registration, as before), which (v) shares.
+- On a scratch of `build/h4` at `141ff91` with these files: **`M430` 5/5**, (v) included. M09 and M73 were not run there; the Builder adds the edge.
