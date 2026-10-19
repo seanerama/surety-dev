@@ -1,6 +1,6 @@
 # What M6 does not claim
 
-**Written by:** the Verifier of M540, 2026-10-19, on branch `verify/m540` from `main` at `4e05624`, after the two real runs (M519 10 of 10, last judged at `308230d`; M535 12 of 12, last judged at `def6afd`) and the last gate the errata record (`b56e26d`, E169). The final split gate and the exhaustion lane at the final revision are the M6 report's sections 12 and 14. **Status:** the list behind the M6 report's section 27 (row M540; BS6 §13: "what M6 does not claim (`M6-not-claimed.md`, in `M5-not-claimed.md`'s form, starting from D7 §15)"); it decides nothing. An entry whose standing depends on a run names the run and its record; nothing here says a run passed that the M6 report does not record.
+**Written by:** the Verifier of M540, 2026-10-19, on branch `verify/m540` from `main` at `4e05624`, after the two real runs (M519 10 of 10, last judged at `308230d`; M535 12 of 12, last judged at `def6afd`) and the last gate the errata record (`b56e26d`, E169). The exhaustion lane at the final revision `4e05624` passed, 15 of 15 in 5 files (the M6 report, section 14); the final split gate is the report's section 12. **Status:** the list behind the M6 report's section 27 (row M540; BS6 §13: "what M6 does not claim (`M6-not-claimed.md`, in `M5-not-claimed.md`'s form, starting from D7 §15)"); it decides nothing. An entry whose standing depends on a run names the run and its record; nothing here says a run passed that the M6 report does not record.
 
 The classes are D7 §15's: **class A**, outside the threat model; **class B**, real behaviour no test has yet established, or that M6 does not build; **class C**, a limitation accepted by design. Each entry names its row where one bears on it, and the record that put it here.
 
@@ -15,7 +15,7 @@ The classes are D7 §15's: **class A**, outside the threat model; **class B**, r
 | **That the approved logo reached the Alpha.** M535's Alpha was deployed under policy at 13:24 UTC with the placeholder and not redeployed after the asset-only approval (15:00); the approved logo reached `main` (`53efa50`), the parity checks and the bindings, not the served Alpha. | M535 (e) to (g) | E168 item 1 |
 | **A clean M6 run.** M535 passed its design step by a governed Architect correction around F5, judgement (a) was amended by Sean before it was re-judged, and F6 and F7 were fixed during the run; M519's design step was rerun after F1. Neither run is clean under E152 item 1. | M519, M535 | E164 to E168 |
 | **The final engine on a real run.** The runs ran at `0824dff` to `308230d` (M519) and `8cffaf0` to `def6afd` (M535); F5's fix (`d91492c`) is exercised by M504, M506 and M508 only. | M504, M506, M508 | the M6 report, section 2 |
-| **The preview's memory.** No real preview's `memory.peak` was read before its removal (`unknown` in all four, null in the store); `preview_memory_max` (256 MiB) is not revisited on any measurement. Service domains' peaks are not recorded either (33 domains, none). | M510, M519 (g), M535 (i), M539 | the M6 report, sections 20, 21 |
+| **The preview's memory (finding F8).** No real preview's `memory.peak` was read before its removal (`unknown` in all four, null in the store); `preview_memory_max` (256 MiB) is not revisited on any measurement. Service domains' peaks are not recorded either (33 domains, none). | M510, M519 (g), M535 (i), M539 | the M6 report, sections 20, 21 |
 | **That the Alpha's differences are repaired.** M519's 24 findings and M535's four are accepted unresolved differences; M519's carry an erroneous association (R8.19, `design-asset-favicon`) the store keeps. | M516, M531 | E166 items 1, 5; E168 item 3 |
 | **The android target beyond its source and a labelled simulation.** `not_observed: no_native_runtime`; its human test pending; its cross-target behaviour unverified (E162 item 3). | M535 (h) | E162 item 3 |
 | **The project-lane journeys' pace figures.** M536 and M516 passed; their reads' figures were not retained. | M536, M516 | the M6 report, section 13 |
@@ -85,7 +85,7 @@ The defaults `designer_session_budget_billable_tokens` (3,000,000) and `preview_
 
 | Entry | Record |
 |---|---|
-| The preview's `memory.peak` not read before removal (section 1 above): a defect or an accepted limit, Sean's to decide. | the M6 report, sections 21, 31 |
+| F8: the preview's `memory.peak` not read before removal (section 1 above): a defect or an accepted limit, Sean's to decide. | the M6 report, sections 21, 31 |
 | The review schema has no `observed_on` value for a read that rendered nothing. | E165 item 6 |
 | Owner acts with no store event of their own: the Alpha inspection, the review session. | E165 item 9 |
 | A real run on a new engine build must re-qualify `local_service` before any preview or Alpha; only the engine's refusal says so. | E165 item 9 |
