@@ -2,7 +2,8 @@
 // it is inert (and why: never an empty design shown as complete), the
 // inventory, the revisions, the effective asset set, the design's human
 // tests with their status (`pending`, or `owner_accepted` on the owner's
-// confirmed verdict, Q4: never `verified`), and the open design_due. A read.
+// confirmed `matches` for every screen of the target on the newest build he
+// reviewed, Q4 and H2: never `verified`), and the open design_due. A read.
 
 import type Database from 'better-sqlite3';
 
@@ -80,9 +81,19 @@ export function designView(db: Database.Database, args: { project: string }): Re
     | undefined;
   // The design revision in force: a confirmed verdict counts for the
   // version it was given on only (Q4; SEAM.md §524), kept as history after.
-  const inForce = (db.prepare(`SELECT "id" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(args.project) as { id: string } | undefined)?.id ?? null;
+  const inForceRow = db.prepare(`SELECT "id", "content" FROM "design_revisions" WHERE "project" = ? AND "status" IN ('approved', 'approved_without_criteria') ORDER BY rowid DESC LIMIT 1`).get(args.project) as
+    | { id: string; content: string | null }
+    | undefined;
+  const inForce = inForceRow?.id ?? null;
+  // Each target's screens in the in-force screens.json (H2; SEAM.md §552):
+  // null when that content is not known, so never accepted by default.
+  const inForceScreens = parseJson<{ screens?: { screens?: unknown } }>(inForceRow?.content ?? null)?.screens?.screens;
+  const screensOf = (target: string): string[] | null =>
+    Array.isArray(inForceScreens)
+      ? (inForceScreens as unknown[]).flatMap((s) => (s !== null && typeof s === 'object' && (s as Record<string, unknown>).target === target && typeof (s as Record<string, unknown>).key === 'string' ? [(s as Record<string, string>).key!] : []))
+      : null;
   const human_tests = (parseJson<{ target: string; requirement: string | null; phase: number | null }[]>(approved?.assignments ?? null) ?? []).map((h) => {
-    const owner = humanTestEvidence(db, args.project, h.target, inForce);
+    const owner = humanTestEvidence(db, args.project, h.target, inForce, screensOf(h.target));
     // Never `verified`: owner_accepted on his confirmed word alone (Q4).
     return { target: h.target, requirement: h.requirement, phase: h.phase, criteria: judgedOn(h.target), status: owner.accepted ? 'owner_accepted' : 'pending', evidence: owner.evidence };
   });
