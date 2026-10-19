@@ -26,8 +26,11 @@
 // approval (the logo held) and the review's confirmation; each evidenced by
 // his own entry (owner-act.mjs, his terminal). The driver may perform the
 // others under recorded instructions (driver-act.mjs).
-//   (a) the sessions: each turn metered; the Designer's design passing its
-//       check; the preview deployed, opened through the relay, torn down;
+//   (a) the sessions: each turn metered, a Spec Writer, an Architect and a
+//       Designer session each with a turn; a session ended with no turn and
+//       no ledger row listed (observed/M535.json), not failed (Sean's ruling
+//       2026-10-19, errata E167); the Designer's design passing its check;
+//       the preview deployed, opened through the relay, torn down;
 //   (b) the preview: the web mockup served bare, the android mockup inside
 //       the engine's labelled frame (the runner's own read through its own
 //       relay, never Sean's inspection); SIMULATIONS.txt on export naming
@@ -66,7 +69,7 @@
 
 import { describe, test } from 'node:test';
 
-import { REAL_TEST_TIMEOUT_MS, judged, readObserved, stepValue } from './harness/real/lane.mjs';
+import { REAL_TEST_TIMEOUT_MS, judged, observe, readObserved, stepValue } from './harness/real/lane.mjs';
 import {
   CENTRAL_ACTS,
   M519_JOURNEY_STEPS,
@@ -138,14 +141,29 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
       await upTo(ctx, ROW, 'm6x_design');
       const project = projectOf(ctx);
       await store(ctx, (home) => {
-        const sessions = rows(home, `SELECT "id", "role" FROM "runs" WHERE "project" = ? AND "kind" = 'session' ORDER BY "seq"`, project);
-        assert.ok(['spec_writer', 'architect', 'designer'].every((r) => sessions.some((s) => s.role === r)), `a Spec Writer, an Architect and a Designer session (${show(sessions)})`);
+        const sessions = rows(home, `SELECT "id", "role", "state", "outcome", "reason_class" FROM "runs" WHERE "project" = ? AND "kind" = 'session' ORDER BY "seq"`, project);
+        // Sean's ruling 2026-10-19 (errata E167): a session that ended with
+        // no turn and no uncorrected ledger row is not failed; it is listed,
+        // with its id, role and outcome, in observed/M535.json and in this
+        // judgement's messages, never hidden. A session with no turn that is
+        // not ended, or that has any ledger row, still fails; a session with
+        // turns is metered turn for turn as before.
+        const metered = [];
+        const withoutTurns = [];
         for (const s of sessions) {
           const turns = rows(home, 'SELECT * FROM "turns" WHERE "run" = ? ORDER BY "number"', s.id);
           const ledger = rows(home, 'SELECT * FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL', s.id);
-          assert.ok(turns.length > 0 && ledger.length === turns.length, `session ${s.id} (${s.role}): every turn metered (${turns.length} turns, ${ledger.length} ledger rows)`);
+          if (turns.length === 0) {
+            withoutTurns.push({ id: s.id, role: s.role, state: s.state, outcome: s.outcome, reason_class: s.reason_class, ledger_rows: ledger.length });
+            continue;
+          }
+          assert.ok(ledger.length === turns.length, `session ${s.id} (${s.role}): every turn metered (${turns.length} turns, ${ledger.length} ledger rows)`);
           if (!ctx.rehearsal) assert.ok(ledger.every((l) => l.model_requested === MODELS.sessions), `${s.role} on ${MODELS.sessions}`);
+          metered.push(s);
         }
+        observe(ctx, ROW, 'sessions_without_turns', withoutTurns);
+        for (const z of withoutTurns) assert.ok(z.state === 'ended' && z.ledger_rows === 0, `session ${z.id} (${z.role}) with no turn: ended with no ledger row (${show(z)})`);
+        assert.ok(['spec_writer', 'architect', 'designer'].every((r) => metered.some((s) => s.role === r)), `a Spec Writer, an Architect and a Designer session, each with at least one turn, every turn metered (${show(metered.map((s) => ({ id: s.id, role: s.role })))}; ended with no turn, listed and not failed: ${show(withoutTurns)})`);
         const ready = designRevisionsOf(home, project).filter((r) => r.status === 'approved' && r.ready_at).at(-1);
         assert.ok(ready, 'an approved design, ready');
         assert.equal(rows(home, 'SELECT "outcome" FROM "design_checks" WHERE "id" = ?', ready.design_check)[0]?.outcome, 'passed', 'its design check passed');
