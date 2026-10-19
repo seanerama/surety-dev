@@ -1,0 +1,4 @@
+{
+  "code": "ELEMENT_MISSING",
+  "message": "an element the scripts bind to is absent; the lab controller throws at start-up naming the missing id"
+}

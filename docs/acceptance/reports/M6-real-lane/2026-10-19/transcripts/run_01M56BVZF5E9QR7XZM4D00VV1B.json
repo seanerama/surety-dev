@@ -1,0 +1,74 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M56BW66YXGC9S389EQNTJ98T",
+  "created_at": "2026-10-18T02:01:29.052Z",
+  "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+  "project_name": "m6-m519-mechanica",
+  "run": "run_01M56BVZF5E9QR7XZM4D00VV1B",
+  "role": "spec_writer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-18T02:01:29.052Z",
+      "text_ref": "rec_01M56BW675V1R1YSF10T0FPVVR",
+      "text": "Please write the specification from the accepted idea (Mechanica, with visual design), at the standard tier (T2).\n\n- Put `**Targets:** web` in the specification's header: the one target is a browser web page.\n- Plan it as one phase: all three labs, scoring, the explanations, the 3D animation and the visual design (R1 to R8), so that the design is settled before the build and reviewed at Alpha.\n- Keep the brief's requirements and tolerances as they are; R6 and R7 stay human tests, and the visual design's R8 checks stay as stated.\n- The environment: `alpha` on this machine, a local service. Alpha runs `node server.mjs` at the repository root, listening on 127.0.0.1 at the port in `PORT`. Node built-ins only, no dependencies installed, no build step. three.js is loaded by the browser from a pinned CDN URL and never installed.\n- State the HTTP JSON API (for example `POST /api/momentum`) so a post-deploy check can exercise a real operation of the running service.\n\nWhen the specification is complete, save it. If anything in the idea is ambiguous, say what you chose rather than asking.\n"
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-18T02:03:49.056Z",
+      "text_ref": "rec_01M56C0EXRTHHV5KKYTDS3J8T0",
+      "text": "The specification is saved at `.surety/spec/spec.md`. It's version 1, status draft, at tier T2, with you as owner and `**Targets:** web` in the header.\n\nWhat's in it:\n- **Requirements R1 to R8, all in phase 1.** The wording and tolerances are as the idea states them. R6 and R7 are marked **Human test.** R8 keeps R8.1 to R8.4 as checkable criteria and R8.5 as the criterion a person judges. R6, R7 and R8 carry `**Surface:** ui`. None of them touches a sensitive area.\n- **HTTP JSON API (section 3.4):**\n  - `GET /` and `GET /api/health`\n  - `POST /api/momentum` with `{m1, v1, m2, v2, collision}`, answering `{collided, v1After, v2After, momentumBefore, momentumAfter, kineticEnergyBefore, kineticEnergyAfter}`\n  - `POST /api/friction` with `{mu, v0, inclineDeg}`\n  - `POST /api/trajectory` with `{speed, angleDeg, drag, dragCoefficient}`\n  - `POST /api/score` with `{predicted, simulated}`\n  - Errors: 400 for bad or out-of-range input, 404 for an unknown path, 405 for a wrong method, 413 for a body over 16 KiB.\n- **Modules:** `server.mjs`, `public/physics/` (pure ES modules: no three.js, no DOM), `public/index.html`, `public/app/`, and `public/styles/` with the one tokens stylesheet `public/styles/tokens.css`.\n- **Environment `alpha`:** `node server.mjs` at the repository root, on 127.0.0.1 at `$PORT`, Node built-ins only, no install or build. three.js 0.160.0 is loaded by the browser from jsDelivr through an import map. `.surety/` and `.git/` are left out of the artifact. The post-deploy check sends the 2 kg / 1 kg elastic case to `POST /api/momentum` and expects 1 and 4 m/s (±0.01), and also checks that `GET /` returns HTML.\n\nWhere the idea was ambiguous, here's what I chose (all recorded in sections 3 and 9):\n- **Prediction targets:** in the momentum lab you predict v₂′, cart 2's velocity after the collision. In friction you predict the stopping distance or \"never stops\". In trajectory you predict the range.\n- **Momentum:** velocities are signed and cart 1 starts on the left. The carts collide only if v₁ > v₂. R1.1's 0.1% is measured against Σ|mᵢvᵢ|, so it still means something when total momentum is zero.\n- **Friction:** the block slides down the incline. It never stops when μ ≤ tan θ; the game says so and still accepts the input. In that case, predicting \"never stops\" scores 100.\n- **Drag:** quadratic, acceleration −c·|v|·v with c in m⁻¹. Launch and landing are both at ground level.\n- **Scoring:** relative error is |pred − sim| / |sim|. When |sim| is below 0.1, the denominator is 0.1 instead, so nothing divides by zero.\n- **R4.1:** \"final state\" means each lab's reported result, compared against the result at that lab's default time step.\n\nSomething to check before you approve: the project policy sets `phase_size` to a maximum of 5, and this one phase holds 8 requirements. I followed your instruction, but the engine may refuse to plan a phase that large. If it does, the natural split is the idea's own: R1, R2, R5 first, then R3, R4, R6, R7, R8.\n\nAlso, as you asked, I didn't add requirements beyond R1 to R8. That means the API's error handling and the \"never stops\" message are specified in section 3 but have no criteria of their own. Only the post-deploy check exercises the API. Tell me if you'd like them added as R9 and R10."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-18T02:03:56.705Z",
+      "text_ref": "rec_01M56C0PDCSJ993BP5ZXNXK8JS",
+      "text": "Thank you; your choices are fine. `phase_size` counts the stages of a phase, not its requirements, so one phase stands; if the Architect cannot fit it, that is the Architect's call. Do not add R9 or R10. Please save the specification as it is.\n"
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-18T02:04:12.233Z",
+      "text_ref": "rec_01M56C15J2DYV41GBHJWM9KGTR",
+      "text": "Understood. I haven't changed the specification: `.surety/spec/spec.md` is exactly as I saved it last turn (version 1, status draft, tier T2, `**Targets:** web`). R1 to R8 are all in phase 1. The API's error handling and the \"never stops\" message stay in section 3 only, with no requirements of their own. Thanks for explaining `phase_size`; I've dropped that concern. The specification is ready for you to review and approve."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M56BW675V1R1YSF10T0FPVVR",
+      "sha256": "89753377423ff96d47922c5814c169dbfa3408a21bab9edc57ba89708996fff6",
+      "bytes": 1096,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56C0EXRTHHV5KKYTDS3J8T0",
+      "sha256": "a0225cac3f56c272cdc2f9e2c3198494e0e22ad85222a2f7c74c8a3072e2015f",
+      "bytes": 3306,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56C0PDCSJ993BP5ZXNXK8JS",
+      "sha256": "587d3662af47d91d56d2f9dace413cac889a27409245fd3618aaee73032efd79",
+      "bytes": 244,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M56C15J2DYV41GBHJWM9KGTR",
+      "sha256": "88a96fbe9141a3ce14debb7b552b3e8edd77bc17c5a86832afc1226fb66d6f58",
+      "bytes": 426,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "code": "THREE_UNAVAILABLE",
+  "message": "three.js cannot be loaded from the pinned CDN; the scene region shows a notice and the labs still run, score and explain"
+}

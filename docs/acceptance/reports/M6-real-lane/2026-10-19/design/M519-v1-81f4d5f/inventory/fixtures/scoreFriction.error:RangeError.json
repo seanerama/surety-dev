@@ -1,0 +1,4 @@
+{
+  "code": "RangeError",
+  "message": "neverStops is false and distance is not a finite number"
+}

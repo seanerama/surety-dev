@@ -1,0 +1,50 @@
+{
+  "design_version": 4,
+  "subject": {
+    "kind": "candidate",
+    "candidate": "cand_01M5A50BX0WWHJX5Q2QXJCSR6K",
+    "target": "web",
+    "build_ref": "op_01M5A5C2X45NYG1Y3JC5RRWS9F"
+  },
+  "screens": [
+    {
+      "target": "web",
+      "key": "web-plant-list",
+      "verdict": "deltas",
+      "evidence": [
+        "dev_01M5AB5BCPJZP741HHTN2BTV1F"
+      ],
+      "deltas": [
+        {
+          "state": "list_plants:ok",
+          "owner_words": "The Alpha's header shows the placeholder logo (PLACEHOLDER (on_dark), digest 6a8c47e8…), not the approved logo@2 on_dark (digest 1b0c17ab…). This is not a defect of this candidate: it was deployed at 13:24 UTC, before the logo was approved at 15:00, and the placeholder was correct then. Main already holds the approved on_dark logo in public/assets/logo.svg (commit 53efa50), byte-identical to the design's on_dark.svg. The difference goes away when an Alpha is deployed from main. Nothing to change in the design or the code; only a redeploy is needed. The approved logo's 3:1 viewBox fits the page's 108x36 slot unchanged.",
+          "kind": "implementation"
+        },
+        {
+          "owner_words": "The design's favicon slot (default variant, still the engine placeholder) is not on the page. index.html has no rel=icon link, and /favicon.svg answers 404. Change: serve design/assets/favicon/default.svg as public/favicon.svg and link it from index.html with rel=icon type=image/svg+xml. No specification criterion names the favicon, so this breaks none.",
+          "kind": "implementation"
+        },
+        {
+          "state": "log_watering:loading",
+          "owner_words": "From reading app.mjs, not from use: the design says focus stays on a row's Watered button while it logs. When the button is pressed, the code rebuilds the whole list and disables the new button, so keyboard focus drops to the page body until the request ends. It then comes back to the button. Change: keep the row's button element in place while it logs (mark it aria-disabled and ignore presses rather than disabling and replacing it), so focus never leaves it.",
+          "kind": "implementation"
+        },
+        {
+          "state": "log_watering:ok",
+          "owner_words": "From reading app.mjs, not from use: the design announces 'Logged a watering for <name>.' in a polite live region above the list. The code creates a new live-region element, already holding the text, on every render. Screen readers often do not announce a live region that arrives with its text already in it, so the confirmation may go unheard. The text itself is right. Change: keep one status element in the page and change only its text.",
+          "kind": "implementation"
+        }
+      ]
+    },
+    {
+      "target": "android",
+      "key": "android-plant-list",
+      "verdict": "not_observed",
+      "not_observed_reason": "no_native_runtime",
+      "evidence": [],
+      "deltas": []
+    }
+  ],
+  "revised_design": false,
+  "first_design": false
+}

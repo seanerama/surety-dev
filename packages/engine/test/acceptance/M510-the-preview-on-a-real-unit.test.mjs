@@ -31,7 +31,16 @@
 //       generation); `--stop`; `design_preview_ttl` lowered, the session
 //       closed and the controlled clock past close plus the TTL; a newer
 //       approved design: each torn down, `design.preview_torn_down`;
-//   (f) teardown applied each time, nothing of the prefix left.
+//   (f) teardown applied each time, nothing of the prefix left;
+//   (h) each preview's `memory.peak` read from its domain's cgroup before
+//       its removal and recorded on its `design_previews` row, whichever
+//       teardown ended it (replaced by the next generation, `--stop`, the
+//       TTL, the approval): a number of bytes > 0, at least what the host
+//       read of the cgroup while it served, at most `preview_memory_max`;
+//       the pace read's `design.previews[].memory_peak` shows that number,
+//       not `unknown` (F8, Sean's ruling 2026-10-19 (errata E170); D7 §14's
+//       pace read, §6, §10; E156 Q4; BS6 §10). A peak that genuinely could
+//       not be read stays `unknown` with its reason, never zero (M539 (c)).
 //
 // SAFETY (BS6 §4.1; E64; SEAM.md §§257, 474, 488). Every unit is the
 // engine's own, `surety-<h>-…` with <h> this home's hash; the test starts
@@ -55,10 +64,12 @@ import { assertOwnUnit, cmdlineOf, exeShaOf, operatorGuard, unitShow } from './h
 import { RUNTIME, filesUnder } from './harness/deploy/kernel.mjs';
 import { qualifyByCommand } from './harness/deploy/qualify.mjs';
 import { sharedFixture } from './harness/gates.mjs';
-import { journeyContext, pump } from './harness/journey/drive.mjs';
+import { journeyContext, pump, readPace } from './harness/journey/drive.mjs';
 import { journeyEngine } from './harness/journey/project.mjs';
 import { advanceClock, tick } from './harness/runs.mjs';
 import { waitFor } from './harness/engine.mjs';
+import { hostMemoryPeak } from './harness/exec37/peak.mjs';
+import { withStore } from './harness/store.mjs';
 import { consume } from './harness/decisions.mjs';
 import { ANDROID_MOCKUP_PATH, WEB_MOCKUP_PATH } from './harness/design/reference.mjs';
 import { answerWith, batchOf, cli, createPantry, designScripts, designerSession, pantryArchitect, pantrySpec, scriptBuilders, stageRow, validDesign } from './harness/design/drive.mjs';
@@ -97,6 +108,8 @@ import {
 
 // The kinds the owner answers inside the build on this lane (as M536's).
 const BUILD_KINDS = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
+// (h): the project's design_previews rows, in order.
+const withPreviews = (home, project) => withStore(home, (db) => db.prepare('SELECT "id", "generation", "status", "unit", "torn_down_at", "memory_peak" FROM "design_previews" WHERE "project" = ? ORDER BY rowid').all(project));
 
 describe('M510 the preview on a real unit (sandbox lane)', () => {
   const shared = sharedFixture();
@@ -117,6 +130,19 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
   const deployedNth = (n, what) => pump(J.fx, J.ctx, () => deployedEvents(J.fx.home, J.p.id)[n - 1], { what, projectMs: 300_000 });
   const tornDownNth = (n, what) => pump(J.fx, J.ctx, () => (tornDownEvents(J.fx.home, J.p.id).length >= n && previewUnits(J.fx.home, J.env.id).length === 0 ? tornDownEvents(J.fx.home, J.p.id)[n - 1] : undefined), { what, projectMs: 300_000 });
   const preview = (revision = 'checkpoint') => cli(J.fx, ['design', 'preview', '--project', J.p.id, '--revision', revision]);
+  // (h): the host's read of a deployed generation's memory.peak while it serves,
+  // by its deploy attempt's domain; never throws (null when unreadable).
+  J.hostPeaks = {};
+  const notePeak = (generation) => {
+    try {
+      const op = previewOps(J.fx.home, J.p.id).at(-1);
+      const a = op ? lastAttempt(J.fx.home, op) : null;
+      const d = a ? domainOfAttempt(J.fx.home, a.id) : null;
+      J.hostPeaks[generation] = d?.cgroup_path ? hostMemoryPeak(d.cgroup_path) : null;
+    } catch {
+      J.hostPeaks[generation] = null;
+    }
+  };
 
   before(async () => {
     guard = operatorGuard();
@@ -177,6 +203,7 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.match(J.url ?? '', /^http:\/\/127\.0\.0\.1:\d+\/$/, 'the URL printed, on 127.0.0.1');
     J.deployed = await deployedNth(1, 'the first preview to be deployed');
     J.env = previewEnvRow(fx.home, p.id);
+    notePeak(1);
     assert.ok(J.env, 'the reserved environment design-preview, a row of the project (SEAM.md §499)');
     J.op = previewOps(fx.home, p.id).at(-1);
     assert.ok(J.op, 'a deploy operation on it (D4\'s operation)');
@@ -281,6 +308,7 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(second.status, 0, `the second preview asked (${second.stdout.slice(0, 300)} ${second.stderr.slice(0, 300)})`);
     const d2 = await deployedNth(2, 'the second preview to be deployed');
     assert.equal(d2.payload?.generation, 2, 'generation 2');
+    notePeak(2);
     const op2 = previewOps(fx.home, p.id).at(-1);
     const prior = (intentOf(fx.home, op2)?.prior ?? []).map((x) => x.unit);
     assert.ok(prior.includes(previewUnitName(fx.home, J.env.id, 1)), `the new generation's intent names the first's unit as its prior: stopped, then started (D4's stop-then-start) (${JSON.stringify(prior)})`);
@@ -298,6 +326,7 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(preview('checkpoint').status, 0, 'the third preview asked');
     const d3 = await deployedNth(3, 'the third preview to be deployed');
     assert.equal(d3.payload?.generation, 3);
+    notePeak(3);
     // The unit's g<n> is D4's deployment generation, which the --stop teardown
     // also took (objection 160, upheld): read from the event, not built from 3.
     const unit3 = d3.payload?.unit;
@@ -321,6 +350,7 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     assert.equal(preview('checkpoint').status, 0, 'the fourth preview asked');
     const d4 = await deployedNth(4, 'the fourth preview to be deployed');
     assert.equal(d4.payload?.generation, 4);
+    notePeak(4);
     const batch = batchOf(fx.home, p.id);
     assert.ok(batch?.design_approval && batch?.spec_change, 'the batch is open');
     const approved = await answerWith(fx, p.id, batch.design_approval, 'approve');
@@ -343,5 +373,32 @@ describe('M510 the preview on a real unit (sandbox lane)', () => {
     const leftover = existsSync(runDir) ? readdirSync(runDir, { recursive: true }).map(String).filter((n) => n.includes(J.env.id) || n.includes('design-preview')) : [];
     assert.deepEqual(leftover, [], 'no socket or runtime directory of the preview left');
     assert.deepEqual(homeUnits(fx.home).filter((u) => !J.before.units.includes(u)), [], 'no unit of this home\'s hash added by the file');
+  });
+
+  step('(h) each preview\'s memory.peak read before its removal and recorded on its design_previews row, whichever teardown ended it; the pace read shows the number, not unknown (F8, Sean\'s ruling 2026-10-19 (errata E170))', async () => {
+    const { fx, p } = J;
+    const rows = withPreviews(fx.home, p.id);
+    assert.deepEqual(rows.map((r) => [r.generation, r.status]), [[1, 'torn_down'], [2, 'torn_down'], [3, 'torn_down'], [4, 'torn_down']], `four previews, each torn down (${JSON.stringify(rows)})`);
+    const how = { 1: 'replaced by the second generation', 2: '--stop', 3: 'the TTL', 4: 'the newer approved design' };
+    assert.ok(Object.values(J.hostPeaks).some((v) => Number.isSafeInteger(v) && v > 0), `the fixture is live: the host read a preview domain's memory.peak while it served (${JSON.stringify(J.hostPeaks)})`);
+    // Every preview judged before the case fails, so its message names each one.
+    const problems = [];
+    for (const r of rows) {
+      const what = `preview g${r.generation} (${r.id}, torn down by ${how[r.generation]}; the host read ${JSON.stringify(J.hostPeaks[r.generation])} while it served)`;
+      if (!(Number.isSafeInteger(r.memory_peak) && r.memory_peak > 0)) problems.push(`${what}: design_previews.memory_peak is not its domain's memory.peak in bytes (${JSON.stringify({ memory_peak: r.memory_peak, unit: r.unit, torn_down_at: r.torn_down_at })})`);
+      else {
+        if (r.memory_peak > PREVIEW_MEMORY_MAX) problems.push(`${what}: the peak (${r.memory_peak}) is above its domain's memory.max, preview_memory_max (${PREVIEW_MEMORY_MAX}): not its own domain's`);
+        const seen = J.hostPeaks[r.generation];
+        if (Number.isSafeInteger(seen) && r.memory_peak < seen) problems.push(`${what}: the recorded peak (${r.memory_peak}) is below what the host read of its cgroup while it served (${seen})`);
+      }
+    }
+    assert.deepEqual(problems, [], 'each preview\'s memory.peak, read from its domain\'s cgroup before the cgroup\'s removal, is recorded on its design_previews row: a number of bytes > 0, at least the host\'s read while it served, at most preview_memory_max (F8, Sean\'s ruling 2026-10-19 (errata E170); D7 §14)');
+    const pace = await readPace(fx, p.id);
+    const pv = pace?.design?.previews ?? [];
+    for (const r of rows) {
+      const f = pv.find((x) => x.preview === r.id);
+      assert.ok(f, `preview g${r.generation} is in the pace read's design.previews (${JSON.stringify(pv).slice(0, 800)})`);
+      assert.equal(f.memory_peak, r.memory_peak, `preview g${r.generation}: the pace read's memory_peak is the recorded number, not unknown and never zero (F8, Sean's ruling 2026-10-19 (errata E170); D7 §14) (read ${JSON.stringify(f.memory_peak)})`);
+    }
   });
 });

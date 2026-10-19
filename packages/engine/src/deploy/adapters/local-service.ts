@@ -42,7 +42,7 @@ import { join } from 'node:path';
 
 import { nowMs } from '../../clock.js';
 import { readPopulated } from '../../boundary/cgroup.js';
-import { counters } from '../../boundary/terminate.js';
+import { counters, readPeak } from '../../boundary/terminate.js';
 import { type Runtime, log } from '../../runtime.js';
 import { seamBusAddressMissing, seamTakeDeployFault } from '../../testing/seam.js';
 import type { AdapterReadFailure, AttemptIntent, DeployCapability, DeploymentAdapter, EffectReceipt, EnvRef, IdentityRead, InventoryEntry, LogTail, OperationIntent, Reconciliation, TargetExpectation, TargetInventory, TargetStatus, TeardownCapability } from '../adapter.js';
@@ -353,6 +353,10 @@ export class LocalService implements DeploymentAdapter {
     // The domain's resource counters, read while its cgroup exists, kept
     // with the domain at its closure (D4-T05; D2 A.3 `resource_events`).
     const events = r.cgroup_path !== null ? counters(r.cgroup_path) : null;
+    // Its memory.peak, read from the same owned cgroup before the stop
+    // removes it (D7 §14, the preview's domain; D6 §6.4): null when it
+    // cannot be read, recorded unknown, never zero (E170).
+    const peak = r.cgroup_path !== null ? readPeak(r.cgroup_path) : null;
     if (this.services.term(r.attempt)) step('term', `TERM through the init of ${unit}`);
     const left = () => Math.max(1000, deadline - nowMs());
     const stop = await host('systemctl', ['--user', 'stop', '--no-ask-password', '--', unit], { timeoutMs: left(), outputBytes: this.outputBytes, signal, missingBus: this.bus(env) });
@@ -385,7 +389,7 @@ export class LocalService implements DeploymentAdapter {
       step('reset-failed', reset.ok ? `exit ${reset.code}` : reset.failure);
     }
     if (done === true) {
-      await this.rt.engine('deploy.domain_closed', { domain: r.domain, observed: `the cgroup of ${unit} is gone or empty after its stop`, resource_events: events });
+      await this.rt.engine('deploy.domain_closed', { domain: r.domain, observed: `the cgroup of ${unit} is gone or empty after its stop`, resource_events: events, memory_peak: peak });
       this.services.dispose({ attempt: r.attempt, runtimeDir: r.runtime_dir });
       step('closed', `${unit}: closure observed`);
       return true;

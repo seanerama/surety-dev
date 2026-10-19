@@ -1,0 +1,44 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M58M1KTEDRB46HE6KSFVZ9MW",
+  "created_at": "2026-10-18T23:02:44.299Z",
+  "project": "proj_01M58KYMDFHMR612C1ZRT5N203",
+  "project_name": "m6-m535-waterlog",
+  "run": "run_01M58M1EMSH624GTVT7GB5V0C3",
+  "role": "spec_writer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-18T23:02:44.299Z",
+      "text_ref": "rec_01M58M1KW8SNNWQE6XJ2EDFYVS",
+      "text": "Please write the specification from the accepted idea (Waterlog), at the standard tier (T2).\n\n- Put `**Targets:** web, android` and `**Cross-platform:** yes` in the specification's header: a browser web page and an Android app (React Native) that share one look, one logo and one workflow.\n- Plan it as one phase: the API, the web page and the Android app.\n- The API: exactly the three routes of the idea (`GET /api/plants`, `POST /api/plants` with a name and an interval in days, `POST /api/plants/:name/watered`), JSON bodies, state in memory only (nothing survives a restart). Say the request and response shapes and the error responses, so a post-deploy check can exercise a real operation of the running service.\n- The web page is HTML and CSS served by the API at `/`; it lists the plants, marks the due ones and logs a watering, and reads the design's tokens.\n- Android is source plus a labelled simulation in this version: nothing runs it, so its human test stays pending and its cross-target behaviour is unverified until a native runtime is exercised. It asks for no platform permission and has no notifications (future work).\n- The logo: the Designer proposes one; it is held at the first design approval, the UI builds with the placeholder, and the logo is then approved through an asset-only approval. State that sequence.\n- The environment: `alpha` on this machine, a local service. Alpha runs `node server.mjs` at the repository root, listening on 127.0.0.1 at the port in `PORT`. Node built-ins only, no package.json for the API, no build step for the web page.\n\nWhen the specification is complete, save it. If anything in the idea is ambiguous, say what you chose rather than asking.\n"
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-18T23:05:05.730Z",
+      "text_ref": "rec_01M58M5XXG65BN46EDVBTA3Z58",
+      "text": "The specification is saved at `.surety/spec/spec.md` as spec version 1, status draft, tier T2. The header has `**Targets:** web, android` and `**Cross-platform:** yes`. It is one phase with five requirements:\n\n- **R1, listing and adding plants (10 criteria).** Covers `GET /api/plants` returning `{\"plants\": [...]}` and `POST /api/plants` taking `{name, intervalDays}` and returning 201 with the plant. A plant is `{name, intervalDays, lastWatered, due}`. It also states the validation errors (`invalid_name`, `invalid_interval`, `invalid_json`, `body_too_large`, `plant_exists`, `too_many_plants`). State is in memory only, the service uses Node built-ins only, and it runs as `node server.mjs` on 127.0.0.1 at `PORT`.\n- **R2, logging a watering and the API's other answers (6 criteria).** Covers `POST /api/plants/:name/watered` returning 200 with the updated plant, or 404 `plant_not_found`. It also sets the 404/405/500 JSON error answers, a fixed list of error codes, and the `nosniff` and CSP headers.\n- **R3, the web page (7 criteria, UI on web).** HTML and CSS from `public/`, served at `/`. It lists the plants, marks the due ones with a text label, logs a watering, reads the design's tokens and shows the logo slot, and loads nothing from other sites.\n- **R4, the Android app (6 criteria, UI on Android).** React Native source under `android/` with the same workflow, using the neutral tokens. It asks for no permission and has no notifications. A simulation of its screens is shown only in the engine's labelled frame.\n- **R5, one workflow across both targets.** Marked **Human test.** Its test stays pending, and the Android side stays unverified until a native runtime is exercised.\n\nOther sections:\n- **Modules (section 6):** API (`server.mjs`, `api/`), Web page (`public/`), Android app (`android/`). No sensitive areas anywhere.\n- **Environment (section 7):** `alpha`. Its post-deploy check adds a plant, lists it, waters it, re-lists it, checks the 404 for an unknown plant, and loads `/`.\n- **Logo (section 8):** the held-logo sequence in five steps: Designer proposes; you hold it at the first design approval; the UI builds with the placeholder; you approve the logo through an asset-only approval; the run checks that it propagated.\n\nWhere the idea was open, I chose the following (all listed in section 9):\n- A plant that has never been watered has `lastWatered: null` and counts as due.\n- A plant is due once its interval in days has fully passed since the last watering. This is a pure function under `api/`, so checks can test it at any chosen time instead of waiting days.\n- Names are trimmed, 1 to 64 characters, with no `/`, and must match exactly (case counts) to count as the same plant.\n- Limits: intervals from 1 to 365 days, at most 200 plants, request bodies up to 4 KiB.\n- Adding a plant is through the API only. The idea gives the two apps only list, mark due and log a watering. Say if you want an add form on both.\n- I read \"no platform permission\" as no permission the user is ever asked for. The Android manifest declares only `android.permission.INTERNET`, which the system grants at install without asking and which the app needs to reach the API.\n- The post-deploy check's test plant stays until the next restart, because there is no delete route.\n\nThere are no open questions. I checked the requirement index against section 4 and they match. It's ready for your review; I can't approve it myself."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M58M1KW8SNNWQE6XJ2EDFYVS",
+      "sha256": "5bf14b3b8f721dd0d536c4a8b330f107c28d1493cab71bebcbf6278a4f47d9f0",
+      "bytes": 1701,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M58M5XXG65BN46EDVBTA3Z58",
+      "sha256": "2cc3d9cb98cedd65d77586bb838ca571931b01f85dc5852eff241c9af0153fb1",
+      "bytes": 3442,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

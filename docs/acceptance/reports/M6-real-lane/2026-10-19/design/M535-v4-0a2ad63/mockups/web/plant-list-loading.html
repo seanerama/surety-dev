@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waterlog — Loading (mockup)</title>
+<style>:root{--color-bg:#f3f6f1;--color-surface:#ffffff;--color-surface-alt:#e6ece7;--color-border:#c4d0c8;--color-text:#1b2a22;--color-text-muted:#4b5b51;--color-accent:#1f6f4a;--color-on-accent:#ffffff;--color-due-bg:#fbe3bd;--color-due-text:#6e3a00;--color-due-edge:#c26a00;--color-error-bg:#fbe4e1;--color-error-text:#9e2418;--color-header-bg:#1f5c40;--color-header-text:#ffffff;--color-banner-bg:#2b2b2b;--color-banner-text:#ffffff;--color-focus:#1a5fc4;--color-water:#2a78b8;--color-due-surface:#fff4e0;--color-done-bg:#dcecf8;--color-done-text:#154a75;--font-sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--font-size-sm:16px;--font-size-md:18px;--font-size-lg:22px;--font-size-xl:28px;--font-weight-regular:400;--font-weight-bold:700;--line-height-tight:1.25;--line-height-normal:1.5;--space-xs:4px;--space-sm:8px;--space-md:16px;--space-lg:24px;--space-xl:32px;--space-xxl:48px;--space-touch:48px;--space-edge:8px;--radius-sm:4px;--radius-md:8px;--radius-pill:999px;--duration-fast:120ms;--duration-normal:200ms;--duration-pulse:1200ms;color-scheme:light dark}@media (prefers-color-scheme: dark){:root{--color-bg:#101814;--color-surface:#18241d;--color-surface-alt:#22312a;--color-border:#34463c;--color-text:#e5eee8;--color-text-muted:#a8b7ad;--color-accent:#7fd3a3;--color-on-accent:#0b1f14;--color-due-bg:#4a3104;--color-due-text:#ffd796;--color-due-edge:#f0a640;--color-error-bg:#47201b;--color-error-text:#ffb0a6;--color-header-bg:#1f5c40;--color-header-text:#ffffff;--color-banner-bg:#f0f0f0;--color-banner-text:#111111;--color-focus:#8fb8ff;--color-water:#8cc6f0;--color-due-surface:#2b2312;--color-done-bg:#12324a;--color-done-text:#b5dcf7;}}
+*{box-sizing:border-box}
+.due{display:inline-flex;align-items:center;gap:var(--space-xs);background:var(--color-due-bg);color:var(--color-due-text);border:2px solid var(--color-due-edge);font-size:var(--font-size-sm);font-weight:var(--font-weight-bold);line-height:var(--line-height-tight);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-pill)}
+.done{display:inline-flex;align-items:center;gap:var(--space-xs);background:var(--color-done-bg);color:var(--color-done-text);font-size:var(--font-size-sm);font-weight:var(--font-weight-bold);line-height:var(--line-height-tight);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-pill)}
+.plant{background:var(--color-surface);border:1px solid var(--color-border);border-left:var(--space-edge) solid var(--color-border);border-radius:var(--radius-md);display:grid;align-items:center}
+.plant[data-due="true"]{background:var(--color-due-surface);border-left-color:var(--color-due-edge)}
+.meta{margin:0;color:var(--color-text-muted);font-size:var(--font-size-md)}
+.meta b{color:var(--color-text);font-weight:var(--font-weight-bold)}
+.row-error{grid-column:1/-1;margin:0;background:var(--color-error-bg);color:var(--color-error-text);border-radius:var(--radius-sm);padding:var(--space-sm) var(--space-md);font-size:var(--font-size-md);font-weight:var(--font-weight-bold)}
+.summary{color:var(--color-text-muted);margin:0 0 var(--space-md);font-size:var(--font-size-md)}
+.summary b{color:var(--color-due-text);font-weight:var(--font-weight-bold)}
+.panel h2{font-size:var(--font-size-lg);line-height:var(--line-height-tight);margin:0 0 var(--space-sm)}
+.panel p{margin:0 0 var(--space-lg);color:var(--color-text-muted)}
+.panel.error h2{color:var(--color-error-text)}
+.skeleton{height:112px;background:var(--color-surface-alt);border-radius:var(--radius-md);animation:pulse var(--duration-pulse) ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-sans);font-size:var(--font-size-md);line-height:var(--line-height-normal)}
+.skip{position:absolute;left:var(--space-sm);top:-64px;background:var(--color-surface);color:var(--color-text);padding:var(--space-sm) var(--space-md);border-radius:var(--radius-sm)}
+.skip:focus{top:var(--space-sm)}
+header{background:var(--color-header-bg);color:var(--color-header-text);padding:var(--space-md) var(--space-md)}
+header .bar{max-width:960px;margin:0 auto;display:flex;align-items:center;gap:var(--space-md)}
+.logo{display:block}
+main{max-width:960px;margin:0 auto;padding:var(--space-lg) var(--space-md)}
+h1{font-size:var(--font-size-xl);line-height:var(--line-height-tight);margin:0 0 var(--space-xs)}
+.status{min-height:1.5em;margin:0 0 var(--space-md);color:var(--color-text);font-weight:var(--font-weight-bold)}
+ul.plants{list-style:none;margin:0;padding:0;display:grid;gap:var(--space-md)}
+.plant{padding:var(--space-md);gap:var(--space-sm) var(--space-lg);grid-template-columns:1fr}
+.plant-head{display:flex;align-items:center;gap:var(--space-sm);flex-wrap:wrap}
+.plant-name{font-size:var(--font-size-lg);line-height:var(--line-height-tight);margin:0;font-weight:var(--font-weight-bold);overflow-wrap:anywhere}
+.water-btn{font:inherit;font-weight:var(--font-weight-bold);background:var(--color-accent);color:var(--color-on-accent);border:0;border-radius:var(--radius-md);padding:var(--space-sm) var(--space-lg);min-height:var(--space-touch);width:100%;margin-top:var(--space-xs);cursor:pointer;transition:filter var(--duration-fast)}
+.water-btn:hover{filter:brightness(1.08)}
+.water-btn[disabled]{background:var(--color-surface-alt);color:var(--color-text-muted);cursor:progress}
+:focus-visible{outline:3px solid var(--color-focus);outline-offset:2px}
+.panel{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-xl) var(--space-lg);text-align:center}
+.panel .water-btn{width:auto}
+@media (prefers-reduced-motion: reduce){.skeleton{animation:none}.water-btn{transition:none}}
+@media (min-width:720px){header{padding:var(--space-md) var(--space-lg)}main{padding:var(--space-xl) var(--space-lg)}.plant{padding:var(--space-lg);grid-template-columns:1fr auto}.plant>*{grid-column:1}.plant .water-btn{grid-column:2;grid-row:1/span 3;width:auto;min-width:160px;margin-top:0}.plant .row-error{grid-column:1/-1}}
+@media (min-width:1280px){main{padding:var(--space-xxl) var(--space-lg)}.plant{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,2fr) auto}.plant>*{grid-column:auto}.plant .water-btn{grid-column:auto;grid-row:auto}.plant .row-error{grid-column:1/-1}}
+.note{max-width:960px;margin:var(--space-xl) auto;padding:0 var(--space-lg);color:var(--color-text-muted);font-size:var(--font-size-sm)}
+</style>
+</head>
+<body>
+<a class="skip" href="#plants">Skip to the plants</a>
+<header><div class="bar"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" height="36" width="108" role="img" aria-label="Waterlog" class="logo"><path fill="#9fd3f7" fill-rule="evenodd" d="M40 8C40 8 16 36 16 50a24 24 0 0 0 48 0C64 36 40 8 40 8ZM40 64C29 58 28 45 40 34C52 45 51 58 40 64Z"/><text x="74" y="51" font-family="system-ui, sans-serif" font-size="30" font-weight="700"><tspan fill="#ffffff">Water</tspan><tspan fill="#ffffff">log</tspan></text></svg></div></header>
+<main id="plants" data-state="state-loading" aria-busy="true">
+<h1>Plants</h1><p class="summary" role="status">Loading plants…</p><ul class="plants" aria-hidden="true"><li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li></ul>
+</main>
+<p class="note">Mockup of the web screen “Plant list”, state: Loading. Light or dark follows the system setting. Resize the window to 360, 720 and 1280 px to see each layout.</p>
+</body>
+</html>

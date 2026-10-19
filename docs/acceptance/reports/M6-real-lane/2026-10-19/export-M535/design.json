@@ -1,0 +1,202 @@
+{
+  "version": 4,
+  "origin": "intended",
+  "inventory_digest": "2262138547c41a82a5d20605888d671edbe87b2e1eeb8bb713c797d07a21812c",
+  "selection": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "slots": [
+      {
+        "kind": "logo",
+        "variants": [
+          "full",
+          "compact",
+          "monochrome",
+          "on_light",
+          "on_dark"
+        ]
+      },
+      {
+        "kind": "favicon",
+        "variants": [
+          "default"
+        ]
+      },
+      {
+        "kind": "app_icon",
+        "variants": [
+          "default",
+          "adaptive_foreground",
+          "adaptive_background"
+        ]
+      }
+    ],
+    "layouts": [
+      {
+        "target": "web",
+        "layouts": [
+          360,
+          720,
+          1280
+        ]
+      },
+      {
+        "target": "android",
+        "layouts": [
+          "phone-portrait",
+          "phone-landscape"
+        ]
+      }
+    ]
+  },
+  "targets": [
+    {
+      "module": "web",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ]
+    },
+    {
+      "module": "android",
+      "target": "android",
+      "ui_technology": "react_native",
+      "form_factors": [
+        "phone"
+      ],
+      "preview_capability": "simulated",
+      "layouts": [
+        "phone-portrait",
+        "phone-landscape"
+      ]
+    }
+  ],
+  "cross_platform": {
+    "targets": [
+      "web",
+      "android"
+    ],
+    "differences": [
+      {
+        "target": "android",
+        "what": "Landscape lists the plant cards in two columns, read row by row in the API's order.",
+        "why": "A phone in landscape is short; two columns keep more plants on screen without changing the order."
+      },
+      {
+        "target": "android",
+        "what": "The unreachable state also stands for the network being unavailable to the app (android.permission.INTERNET); the web has no permission state.",
+        "why": "The inventory owes a permission_denied state on android only; INTERNET is granted at install, so no prompt or settings screen is drawn."
+      }
+    ]
+  },
+  "tokens_file": "tokens.json",
+  "flows_file": "flows.json",
+  "screens_file": "screens.json",
+  "navigation_file": "navigation.json",
+  "criteria_file": "criteria.json",
+  "assets_file": "assets/manifest.json",
+  "mockups": [
+    {
+      "path": "mockups/web/plant-list-ok.html",
+      "kind": "static_html",
+      "screens": [
+        "web-plant-list"
+      ]
+    },
+    {
+      "path": "mockups/web/plant-list-loading.html",
+      "kind": "static_html",
+      "screens": [
+        "web-plant-list"
+      ]
+    },
+    {
+      "path": "mockups/web/plant-list-empty.html",
+      "kind": "static_html",
+      "screens": [
+        "web-plant-list"
+      ]
+    },
+    {
+      "path": "mockups/web/plant-list-unreachable.html",
+      "kind": "static_html",
+      "screens": [
+        "web-plant-list"
+      ]
+    },
+    {
+      "path": "mockups/web/plant-list-watering.html",
+      "kind": "static_html",
+      "screens": [
+        "web-plant-list"
+      ]
+    },
+    {
+      "path": "mockups/android/plant-list-ok.html",
+      "kind": "simulated_html",
+      "screens": [
+        "android-plant-list"
+      ],
+      "simulates": {
+        "target": "android",
+        "form_factor": "phone",
+        "layout": "phone-portrait"
+      }
+    },
+    {
+      "path": "mockups/android/plant-list-loading.html",
+      "kind": "simulated_html",
+      "screens": [
+        "android-plant-list"
+      ],
+      "simulates": {
+        "target": "android",
+        "form_factor": "phone",
+        "layout": "phone-portrait"
+      }
+    },
+    {
+      "path": "mockups/android/plant-list-empty.html",
+      "kind": "simulated_html",
+      "screens": [
+        "android-plant-list"
+      ],
+      "simulates": {
+        "target": "android",
+        "form_factor": "phone",
+        "layout": "phone-portrait"
+      }
+    },
+    {
+      "path": "mockups/android/plant-list-unreachable.html",
+      "kind": "simulated_html",
+      "screens": [
+        "android-plant-list"
+      ],
+      "simulates": {
+        "target": "android",
+        "form_factor": "phone",
+        "layout": "phone-portrait"
+      }
+    },
+    {
+      "path": "mockups/android/plant-list-watering.html",
+      "kind": "simulated_html",
+      "screens": [
+        "android-plant-list"
+      ],
+      "simulates": {
+        "target": "android",
+        "form_factor": "phone",
+        "layout": "phone-portrait"
+      }
+    }
+  ]
+}

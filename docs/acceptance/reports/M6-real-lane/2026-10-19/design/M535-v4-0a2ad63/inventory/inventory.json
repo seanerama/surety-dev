@@ -1,0 +1,421 @@
+{
+  "inventory_digest": "2262138547c41a82a5d20605888d671edbe87b2e1eeb8bb713c797d07a21812c",
+  "spec_version": 1,
+  "architecture_version": 2,
+  "targets": [
+    {
+      "module": "web",
+      "target": "web",
+      "ui_technology": "html_css",
+      "form_factors": [],
+      "preview_capability": "native",
+      "layouts": [
+        360,
+        720,
+        1280
+      ],
+      "required_conventions": [
+        "route|transient",
+        "browser_back",
+        "keyboard_path"
+      ],
+      "permissions": [],
+      "required_slots": [
+        {
+          "kind": "logo",
+          "variants": [
+            "full",
+            "compact",
+            "monochrome",
+            "on_light",
+            "on_dark"
+          ]
+        },
+        {
+          "kind": "favicon",
+          "variants": [
+            "default"
+          ]
+        }
+      ],
+      "adrs": [],
+      "runtime": "Node.js with its built-in modules only, no package.json and no build step; node server.mjs at the repository root."
+    },
+    {
+      "module": "android",
+      "target": "android",
+      "ui_technology": "react_native",
+      "form_factors": [
+        "phone"
+      ],
+      "preview_capability": "simulated",
+      "layouts": [
+        "phone-portrait",
+        "phone-landscape"
+      ],
+      "required_conventions": [
+        "back",
+        "permissions",
+        "gestures"
+      ],
+      "permissions": [
+        "android.permission.INTERNET"
+      ],
+      "required_slots": [
+        {
+          "kind": "logo",
+          "variants": [
+            "full",
+            "compact",
+            "monochrome",
+            "on_light",
+            "on_dark"
+          ]
+        },
+        {
+          "kind": "app_icon",
+          "variants": [
+            "default",
+            "adaptive_foreground",
+            "adaptive_background"
+          ]
+        }
+      ],
+      "adrs": [],
+      "runtime": "Node.js with its built-in modules only, no package.json and no build step; node server.mjs at the repository root."
+    }
+  ],
+  "cross_platform": true,
+  "ui_requirements": [
+    {
+      "key": "R3",
+      "phase": 1,
+      "modules": [
+        "web"
+      ],
+      "targets": [
+        "web"
+      ]
+    },
+    {
+      "key": "R4",
+      "phase": 1,
+      "modules": [
+        "android"
+      ],
+      "targets": [
+        "android"
+      ]
+    },
+    {
+      "key": "R5",
+      "phase": 1,
+      "modules": [
+        "android",
+        "web"
+      ],
+      "targets": [
+        "web",
+        "android"
+      ]
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "list_plants",
+      "module": "api",
+      "kind": "http",
+      "path": "GET /api/plants",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "plants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "intervalDays": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 365,
+                  "unit": "days"
+                },
+                "lastWatered": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "due": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "intervalDays",
+                "lastWatered",
+                "due"
+              ]
+            },
+            "collection": true
+          }
+        },
+        "required": [
+          "plants"
+        ]
+      },
+      "errors": [
+        {
+          "code": "method_not_allowed",
+          "when": "405: a method other than GET, POST on this route; the answer carries Allow: GET, POST"
+        },
+        {
+          "code": "internal",
+          "when": "500: an unexpected failure; no stack trace or internal detail"
+        }
+      ],
+      "shape_known": true
+    },
+    {
+      "name": "log_watering",
+      "module": "api",
+      "kind": "http",
+      "path": "POST /api/plants/:name/watered",
+      "request": {
+        "type": "null"
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "intervalDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "unit": "days"
+          },
+          "lastWatered": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "intervalDays",
+          "lastWatered",
+          "due"
+        ]
+      },
+      "errors": [
+        {
+          "code": "invalid_name",
+          "when": "400: the path segment is not valid percent-encoding"
+        },
+        {
+          "code": "plant_not_found",
+          "when": "404: no plant has the decoded name"
+        },
+        {
+          "code": "method_not_allowed",
+          "when": "405: a method other than POST on this route; the answer carries Allow: POST"
+        },
+        {
+          "code": "internal",
+          "when": "500: an unexpected failure; no stack trace or internal detail"
+        }
+      ],
+      "shape_known": true
+    }
+  ],
+  "obligations": [
+    {
+      "target": "web",
+      "interface": "list_plants",
+      "state": "loading"
+    },
+    {
+      "target": "web",
+      "interface": "list_plants",
+      "state": "error:method_not_allowed"
+    },
+    {
+      "target": "web",
+      "interface": "list_plants",
+      "state": "error:internal"
+    },
+    {
+      "target": "web",
+      "interface": "list_plants",
+      "state": "empty"
+    },
+    {
+      "target": "web",
+      "interface": "list_plants",
+      "state": "ok"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "loading"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "error:invalid_name"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "error:plant_not_found"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "error:method_not_allowed"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "error:internal"
+    },
+    {
+      "target": "web",
+      "interface": "log_watering",
+      "state": "ok"
+    },
+    {
+      "target": "android",
+      "interface": "list_plants",
+      "state": "loading"
+    },
+    {
+      "target": "android",
+      "interface": "list_plants",
+      "state": "error:method_not_allowed"
+    },
+    {
+      "target": "android",
+      "interface": "list_plants",
+      "state": "error:internal"
+    },
+    {
+      "target": "android",
+      "interface": "list_plants",
+      "state": "empty"
+    },
+    {
+      "target": "android",
+      "interface": "list_plants",
+      "state": "ok"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "loading"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "error:invalid_name"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "error:plant_not_found"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "error:method_not_allowed"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "error:internal"
+    },
+    {
+      "target": "android",
+      "interface": "log_watering",
+      "state": "ok"
+    },
+    {
+      "target": "android",
+      "permission": "android.permission.INTERNET",
+      "state": "permission_denied:android.permission.INTERNET"
+    }
+  ],
+  "fixtures": [
+    {
+      "interface": "list_plants",
+      "state": "loading",
+      "path": "inventory/fixtures/list_plants.loading.json"
+    },
+    {
+      "interface": "list_plants",
+      "state": "error:method_not_allowed",
+      "path": "inventory/fixtures/list_plants.error:method_not_allowed.json"
+    },
+    {
+      "interface": "list_plants",
+      "state": "error:internal",
+      "path": "inventory/fixtures/list_plants.error:internal.json"
+    },
+    {
+      "interface": "list_plants",
+      "state": "empty",
+      "path": "inventory/fixtures/list_plants.empty.json"
+    },
+    {
+      "interface": "list_plants",
+      "state": "ok",
+      "path": "inventory/fixtures/list_plants.ok.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "loading",
+      "path": "inventory/fixtures/log_watering.loading.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "error:invalid_name",
+      "path": "inventory/fixtures/log_watering.error:invalid_name.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "error:plant_not_found",
+      "path": "inventory/fixtures/log_watering.error:plant_not_found.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "error:method_not_allowed",
+      "path": "inventory/fixtures/log_watering.error:method_not_allowed.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "error:internal",
+      "path": "inventory/fixtures/log_watering.error:internal.json"
+    },
+    {
+      "interface": "log_watering",
+      "state": "ok",
+      "path": "inventory/fixtures/log_watering.ok.json"
+    }
+  ]
+}

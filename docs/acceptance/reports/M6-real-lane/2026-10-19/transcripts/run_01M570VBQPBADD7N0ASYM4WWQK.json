@@ -1,0 +1,81 @@
+{
+  "source": "session_transcripts and records of kind session_transcript in /home/smahoney/s6-1018/home/store.db, read only",
+  "id": "str_01M570ZMMTJ22QPZWR7EHN3K8E",
+  "created_at": "2026-10-18T08:10:22.232Z",
+  "project": "proj_01M56BT56F8DBWG5HM55FWEMXD",
+  "project_name": "m6-m519-mechanica",
+  "run": "run_01M570VBQPBADD7N0ASYM4WWQK",
+  "role": "designer",
+  "outcome": "completed",
+  "entries": [
+    {
+      "turn": 1,
+      "speaker": "owner",
+      "at": "2026-10-18T08:10:22.232Z",
+      "text_ref": "rec_01M570ZMN0Q8CK6R6FKZTEY48D",
+      "text": "I'm the driver acting for Sean, the owner, on his instruction to drive this run's owner acts. Please review the web Alpha against the approved design and give your verdicts.\n\nWhat I observed of the Alpha, through the relay (`surety env open alpha`, 127.0.0.1), as an HTTP read: no browser rendered it, so I saw HTML, CSS and scripts, not pixels.\n\n- `/` serves \"Mechanica — predict, run, compare\" (200). `/?lab=momentum`, `/?lab=friction` and `/?lab=trajectory` serve the same page. It has the three labs (Momentum, Friction, Trajectory), each with its predict controls, \"Run the experiment\", Play, Pause, Replay, \"Try another prediction\", a Compare panel and a \"Why it came out this way\" panel, plus a \"Mechanica could not start\" startup-error region.\n- There are 13 range sliders, each with `aria-labelledby`. Every link and asset returns 200: `/app/main.mjs`, which loads the scene lazily (`import('./scene.mjs')`), the four stylesheets, `/favicon.svg`, and the compact, on-light and on-dark logos.\n- `styles/tokens.css` as served is identical to `public/styles/tokens.css` on main, and all 86 colour values of `.surety/design/tokens.json` appear in it.\n- The served logos (compact, on_light, on_dark) and the favicon are byte-identical to the design's assets in `.surety/design/assets/`. The footer swaps to the on-dark logo under `prefers-color-scheme: dark`, and `app/tokens.mjs` watches the colour scheme.\n- I did not see the 3D scene render, the motion, the layout at 360, 720 or 1280 px, or the contrast. Judge those from the code and the checks, and say where a verdict rests on a reading rather than on something observed.\n\nPlease give a verdict for each screen and state in the design, and for each human-judged criterion (R6.1, R7.1, R8.20). Say what differs from the design, if anything, and what you would change. Then I'll confirm, edit or strike your verdicts.\n"
+    },
+    {
+      "turn": 1,
+      "speaker": "role",
+      "at": "2026-10-18T08:16:20.423Z",
+      "text_ref": "rec_01M571AJDW3V8DSG1C8Y02A1S8",
+      "text": "I've written my proposed verdicts to `.surety/design/reviews/review-1.json`. They're proposals for you to confirm, edit or strike. I haven't changed the design.\n\n**What they rest on.** The engine fetched `/?lab=momentum`, `/?lab=friction` and `/?lab=trajectory` (evidence dev_01M570ZNTK…, dev_01M570ZNTZ…, dev_01M570ZNVC…). All three returned the same 36,132-byte page, byte-identical to the candidate's `public/index.html`. I compared that page, its four stylesheets and the `app/` scripts with the approved mockups. Nothing was rendered, by me or by you, so anything about pixels, motion, layout widths or contrast is my reading of the code plus the 14 design checks, all of which pass. I marked observed_on as browser because it's the web build served to a browser, but none of it was seen rendered.\n\n**Screens: all three `deltas`.** The CSS matches the mockups almost line for line: tokens, layout breakpoints, focus ring, reduced motion. What differs:\n\nIn all three labs:\n1. *startup-error* (implementation): the failure card has no logo and no \"Reload the page\" button. The on-light/on-dark logos you saw are in a page footer, which isn't in the design. R8.17/R8.18 pass only because those checks compare file bytes, not where the logo appears.\n2. *input-error* (both): the messages are raw RangeError text with internal names and no units, e.g. \"m1 must be a number from 0.1 to 10\", \"inclineDeg …\". The mockup reads \"m₁ must be from 0.1 to 10 kg — you entered 12.\" My design's own notes only say \"the RangeError message\", so I'd make the wording binding in the design, and then the build follows it.\n3. *compare* (implementation): Run never changes to \"Run again\".\n4. *scene-unavailable* (implementation): the notice uses different words from the design.\n5. *token-undefined* (implementation): there's no console report naming the missing token.\n6. Letter-spacing (design): the build dropped the mockups' letter-spacing on the h1, the eyebrow and the score. There's no token for it, so either I add letter-spacing tokens or we accept it as built.\n7. Scene grid (implementation, from the code only): drawn fully opaque, where the mockup uses 70% opacity to keep it subtle.\n\nFriction and trajectory only:\n8. Keyboard path (implementation): the \"Skip to the lab controls\" link always points to the momentum controls, so on these two labs it targets a hidden panel and does nothing.\n\nPer lab:\n9. Momentum, prediction range (design, and the build is right): the slider runs −30 to 30 m/s, where my mockup says −10 to 10. v₂′ can reach about 29.6 m/s, so my design is wrong and I'd change it to −30 to 30.\n10. Momentum, explanation (implementation): the \"Why\" sentence can contradict the numbers when cart 2 is already moving. For example, with m₁ = 2, m₂ = 1, v₁ = 1, v₂ = −10 it says cart 1 \"keeps going\", but cart 1 leaves at −6.33 m/s.\n11. Friction (implementation): the predicted stopping point is a plain box, not the pole with a flag.\n12. Trajectory (implementation): the predicted landing point is an upright cylinder, not the ring on the ground the design specifies.\n13. Trajectory (implementation): the script replaces the drag hint \"Turn on air drag to set c.\" with \"0 to 0.5 1/m\".\n\n**States.** These match on reading: predict, run, compare, no-collision (callout, v₂′ = v₂), never-stops (checkbox disables the distance field; the block slides off the 20 m surface), the stepper markers, the data-state values, data-tokens=\"missing\", and the per-lab address with Back/Forward through pushState and popstate. These have deltas: startup-error, input-error, scene-unavailable, token-undefined (items 1, 2, 4 and 5 above).\n\n**Human-judged criteria:**\n- **R6.1: deltas, on reading.** Every explanation names the law, substitutes your numbers line by line, ends in the result and gives a why, including no-collision and never-stops. The exception is the momentum \"Why\" sentence (item 10).\n- **R7.1: not observed. My reading is that it matches.** Carts, block and ball are placed from the simulated positions at each frame. Collisions, sticking, the stop distance, sliding off at 20 m, the trail and the landing all follow from those positions, and Play, Pause, Replay and Space are wired. One thing to know: playback speed is scaled so a run lasts 1.5–12 s on screen, while the clock shows simulated time. The mockups played in real time.\n- **R8.20: not observed.** Only a person looking at the page can judge it. From the code: the stepper reads predict → run → compare, the scene has soft shadows (PCFSoft) and frames the whole run, its colours come from the tokens, and the score is the 64 px number with a coloured bar. Items 6, 7, 11 and 12 are where the look will differ from the mockups.\n\nItems 9 and 2, and 6 if you choose tokens, are design changes. Once you agree to them, I'll revise the design and mark the review revised_design: true."
+    },
+    {
+      "turn": 1,
+      "speaker": "engine",
+      "at": "2026-10-18T08:16:20.437Z",
+      "text_ref": null,
+      "text": "Your defect finding about no named interface or requirement is recorded; the engine routes only contract and requirement conflicts to the owner.\nYour defect finding about no named interface or requirement is recorded; the engine routes only contract and requirement conflicts to the owner.\nYour defect finding about no named interface or requirement is recorded; the engine routes only contract and requirement conflicts to the owner.\nYour defect finding about no named interface or requirement is recorded; the engine routes only contract and requirement conflicts to the owner."
+    },
+    {
+      "turn": 2,
+      "speaker": "owner",
+      "at": "2026-10-18T08:16:47.451Z",
+      "text_ref": "rec_01M571BCV8VK37QXZM0MYVDAKN",
+      "text": "Thank you, that's a careful review. My answers, as the owner's driver:\n\n1. Do not revise the design in this review. Keep the verdicts as you proposed them (`revised_design: false`). Record your four design questions as recommendations for the next design revision, not decided now:\n   - the momentum prediction range of −30 to 30 m/s, where I agree the design is wrong and the build is right;\n   - binding input-error wording with the symbol, the unit and the value entered;\n   - letter-spacing tokens;\n   - the scaled playback speed, each run shown in 1.5 to 12 s with the clock showing simulated time. I accept it as built for now.\n2. The implementation deltas (items 1, 3, 4, 5, 7, 8, 10, 11, 12, 13) stand as deltas against this Alpha. Item 10, the momentum \"Why\" sentence contradicting the numbers, and item 8, the skip link that does nothing on two labs, are the ones I'd fix first.\n3. Please correct `observed_on`. Nothing was rendered by you or by me: I read the served HTML, CSS and scripts over HTTP through the relay. Use the value the review schema allows that does not claim a browser rendering. If the schema has no such value, keep it and state plainly in the review that nothing was rendered. R7.1 and R8.20 stay \"not observed\" as you wrote them.\n\nThen save the review as it stands.\n"
+    },
+    {
+      "turn": 2,
+      "speaker": "role",
+      "at": "2026-10-18T08:17:46.992Z",
+      "text_ref": "rec_01M571D6Z8A0S3BWCD0G68W7P3",
+      "text": "I've saved the review as it stands in `.surety/design/reviews/review-1.json`. The verdicts are the same as I proposed (all three labs `deltas`) and `revised_design` is still false. I haven't changed the design.\n\n**observed_on.** The review schema allows only browser, simulator, emulator, device and simulation. None of them means \"read over HTTP, not rendered\". \"simulation\" would say something else that is also false. So I kept `browser`, as you said. The schema has no free-text field for a whole screen, so every delta now ends with this: \"Nothing was rendered: this rests on the served HTML, CSS and scripts read over HTTP. observed_on says \"browser\" only because the review schema has no value for a read that is not rendered.\" R7.1 and R8.20 stay \"not observed\". Human-judged criteria have no place in the review schema, so there's nothing in the file to change for them.\n\n**Design recommendations.** Each design delta now begins \"Recommendation for the next design revision, not decided in this review\":\n- the momentum prediction range of −30 to 30 m/s (you agree the design is wrong and the build is right);\n- binding input-error wording with the symbol, the unit and the value entered (still `both`, because the build has to follow it);\n- letter-spacing tokens;\n- scaled playback, each run shown in 1.5 to 12 s with the clock showing simulated time. This one is new: a `design` delta on the `run` state of all three labs, noting that you accept it as built for now.\n\n**Implementation deltas.** Items 1, 3, 4, 5, 7, 8, 10, 11, 12 and 13 are unchanged as deltas against this Alpha. The deltas for the momentum \"Why\" sentence (10) and the skip link on friction and trajectory (8) now say you'd fix them first.\n\nThe verdicts are still proposals for you to confirm. Once you have, I'd propose closing this session."
+    }
+  ],
+  "records": [
+    {
+      "id": "rec_01M570ZMN0Q8CK6R6FKZTEY48D",
+      "sha256": "fc4c350851025382ef72858b1f8686f6233ccae779ad226f8a5f118944cf5cf7",
+      "bytes": 1879,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M571AJDW3V8DSG1C8Y02A1S8",
+      "sha256": "aca8491a62a6ebdfd73f10ecf247a49a57637b1b8cd2fd6b7cb5ff8c892a94a3",
+      "bytes": 4899,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M571BCV8VK37QXZM0MYVDAKN",
+      "sha256": "413be702e744b420648fbb88b61e8feba3a0322f68faa560f27e73598a3e06fc",
+      "bytes": 1301,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    },
+    {
+      "id": "rec_01M571D6Z8A0S3BWCD0G68W7P3",
+      "sha256": "0bbb3fc247c119915641a9108e39f7aca5fdd7b7f40ab73c4986fc40e614e35a",
+      "bytes": 1822,
+      "post_scan": "clean",
+      "redaction_version": "redactor-1",
+      "sha256_matches": true
+    }
+  ]
+}

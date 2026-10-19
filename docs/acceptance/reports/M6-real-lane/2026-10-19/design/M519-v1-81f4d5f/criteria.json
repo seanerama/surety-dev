@@ -1,0 +1,246 @@
+{
+  "criteria": [
+    {
+      "requirement": "R8",
+      "kind": "token_parity",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/tokens.css"
+      ],
+      "text": "public/styles/tokens.css defines every token of tokens.json as a custom property of the same name (--<name>): the light values in :root and the dark values under @media (prefers-color-scheme: dark), sizes in px and durations in ms, with the approved values."
+    },
+    {
+      "requirement": "R8",
+      "kind": "contrast_aa",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/tokens.css"
+      ],
+      "text": "Every text/background pair of tokens.json is documented in the comment block of tokens.css (one \"--text on --background\" per line) and reaches 4.5:1 in the light and the dark theme."
+    },
+    {
+      "requirement": "R8",
+      "kind": "tokens_only",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css",
+        "public/index.html",
+        "public/app/"
+      ],
+      "text": "Outside tokens.css no stylesheet, inline style or script uses a colour, font size, spacing, radius or duration literal: each is var(--…) of a token, and the 3D materials read the --scene-* tokens."
+    },
+    {
+      "requirement": "R8",
+      "kind": "layout_at_width",
+      "width": 360,
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css"
+      ],
+      "text": "At 360 px: one column, the tab bar spans the width under the logo and name, fields one per row, and nothing is wider than the viewport (no horizontal scroll)."
+    },
+    {
+      "requirement": "R8",
+      "kind": "layout_at_width",
+      "width": 720,
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css"
+      ],
+      "text": "At 720 px and wider: two columns, 2fr/3fr — set-up and prediction on the left; the 3D scene with playback, Compare and the explanation on the right; the tabs sit at the right of the header row."
+    },
+    {
+      "requirement": "R8",
+      "kind": "layout_at_width",
+      "width": 1280,
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css"
+      ],
+      "text": "At 1280 px: two columns 5fr/7fr, content capped at --size-content-max (1200 px) and centred, stepper captions shown."
+    },
+    {
+      "requirement": "R8",
+      "kind": "label_with_unit",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/index.html"
+      ],
+      "text": "Every input of the three labs has a visible <label> naming its unit in parentheses — kg, m/s, m, degrees, 1/m, or (dimensionless) for μ — and each slider is labelled by the same label."
+    },
+    {
+      "requirement": "R8",
+      "kind": "focus_visible",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css"
+      ],
+      "text": "Every focusable element keeps a visible :focus-visible ring: outline --size-focus-ring solid --color-focus, offset --size-focus-offset; no rule removes it."
+    },
+    {
+      "requirement": "R8",
+      "kind": "reduced_motion",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/styles/base.css",
+        "public/styles/layout.css",
+        "public/styles/components.css",
+        "public/app/"
+      ],
+      "text": "Transitions last --duration-fast to --duration-slow (150–250 ms); under prefers-reduced-motion: reduce every transition and animation is removed and the 3D run does not autoplay (it waits for Play)."
+    },
+    {
+      "requirement": "R8",
+      "kind": "state_marker_present",
+      "targets": [
+        "web"
+      ],
+      "paths": [
+        "public/index.html",
+        "public/app/"
+      ],
+      "text": "Each lab panel carries data-state (predict, run, compare, input-error, scene-unavailable, startup-error, and the lab's special case no-collision or never-stops); the stepper carries data-stepper with aria-current=\"step\" on the current step; a missing token sets data-tokens=\"missing\"."
+    },
+    {
+      "requirement": "R8",
+      "kind": "asset_parity",
+      "targets": [
+        "web"
+      ],
+      "slot": "logo",
+      "variant": "compact",
+      "paths": [
+        "public/assets/logo-compact.svg"
+      ],
+      "text": "The header mark is the effective logo compact variant, copied byte for byte."
+    },
+    {
+      "requirement": "R8",
+      "kind": "asset_parity",
+      "targets": [
+        "web"
+      ],
+      "slot": "logo",
+      "variant": "on_light",
+      "paths": [
+        "public/assets/logo-on-light.svg"
+      ],
+      "text": "The start-up failure card shows the effective logo on_light variant in the light theme, copied byte for byte."
+    },
+    {
+      "requirement": "R8",
+      "kind": "asset_parity",
+      "targets": [
+        "web"
+      ],
+      "slot": "logo",
+      "variant": "on_dark",
+      "paths": [
+        "public/assets/logo-on-dark.svg"
+      ],
+      "text": "The start-up failure card shows the effective logo on_dark variant in the dark theme, copied byte for byte."
+    },
+    {
+      "requirement": "R8",
+      "kind": "asset_parity",
+      "targets": [
+        "web"
+      ],
+      "slot": "favicon",
+      "variant": "default",
+      "paths": [
+        "public/favicon.svg"
+      ],
+      "text": "The page's icon (<link rel=\"icon\">) is the effective favicon default variant, copied byte for byte."
+    },
+    {
+      "requirement": "R6",
+      "kind": "human",
+      "targets": [
+        "web"
+      ],
+      "text": "After each run the explanation card names the law, shows the equation with the player's own numbers substituted line by line ending in the result, and says in a sentence or two why it came out this way (including the no-collision and never-stops cases)."
+    },
+    {
+      "requirement": "R7",
+      "kind": "human",
+      "targets": [
+        "web"
+      ],
+      "text": "Each run animates in 3D following the simulated positions: carts collide and separate (or stick), the block slides and stops at the simulated distance (or slides off), the ball flies its arc leaving a trail and lands at the simulated range; play, pause and replay work."
+    },
+    {
+      "requirement": "R8",
+      "kind": "human",
+      "targets": [
+        "web"
+      ],
+      "text": "The look and feel matches the approved mockups in both themes: confident and uncluttered; the stepper reads predict → run → compare; the scene has soft shadows, a subtle grid, the whole run in view and colours that match the page; the score is a large number with a coloured bar."
+    }
+  ],
+  "human_tests": [
+    {
+      "target": "web",
+      "screens": [
+        "momentum-lab",
+        "friction-lab",
+        "trajectory-lab"
+      ],
+      "text": "Play each lab in a browser at 360, 720 and 1280 px in the light and the dark theme: switch labs with the tabs and with the keyboard (←/→), use Back and Forward between labs, run a prediction with the keyboard alone (Tab to the fields, Enter to run, Play/Pause/Replay), and check the focus ring is always visible. Turn on reduced motion and confirm nothing animates until Play.",
+      "not_checkable_yet": [
+        {
+          "screen": "momentum-lab",
+          "convention": "browser_back"
+        },
+        {
+          "screen": "momentum-lab",
+          "convention": "keyboard_path"
+        },
+        {
+          "screen": "friction-lab",
+          "convention": "browser_back"
+        },
+        {
+          "screen": "friction-lab",
+          "convention": "keyboard_path"
+        },
+        {
+          "screen": "trajectory-lab",
+          "convention": "browser_back"
+        },
+        {
+          "screen": "trajectory-lab",
+          "convention": "keyboard_path"
+        }
+      ]
+    }
+  ]
+}

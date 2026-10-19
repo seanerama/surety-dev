@@ -1,0 +1,6 @@
+{"act":"designer_feedback","at":"2026-10-19T01:39:03.433Z","words":"I asked for readable text, more spacing, clear watering status and comfortable phone controls. I kept the logo unapproved and asked about the asset binding mismatch.","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}
+{"act":"designer_feedback","at":"2026-10-19T12:19:55.335Z","words":"Yes, that's the right inventory: its digest excludes version numbers, and version 3 changed only the android logo path, which isn't in the inventory.","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}
+{"act":"preview_inspection","at":"2026-10-19T12:49:39.992Z","words":"checked all the mockups. they look good","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}
+{"act":"combined_approval","at":"2026-10-19T12:50:27.527Z","words":"everything looks good.","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}
+{"act":"asset_approval","at":"2026-10-19T15:00:24.989Z","words":"i looked at the logo.","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}
+{"act":"review_confirmation","at":"2026-10-19T15:29:57.966Z","words":"I reviewed and accepted it","entered_via":"owner-act.mjs","tty":true,"uid":1000,"user":"smahoney"}

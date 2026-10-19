@@ -1,0 +1,28 @@
+{
+  "plants": [
+    {
+      "name": "Monstera",
+      "intervalDays": 7,
+      "lastWatered": "2026-10-09T08:30:00.000Z",
+      "due": true
+    },
+    {
+      "name": "Basil",
+      "intervalDays": 2,
+      "lastWatered": "2026-10-18T07:15:00.000Z",
+      "due": false
+    },
+    {
+      "name": "Fiddle-leaf fig",
+      "intervalDays": 10,
+      "lastWatered": null,
+      "due": true
+    },
+    {
+      "name": "Snake plant",
+      "intervalDays": 21,
+      "lastWatered": "2026-10-01T18:00:00.000Z",
+      "due": false
+    }
+  ]
+}

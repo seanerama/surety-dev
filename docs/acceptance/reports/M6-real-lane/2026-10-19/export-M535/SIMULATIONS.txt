@@ -1,0 +1,10 @@
+# Written by the Surety engine (D7 §5.7). Each line names a mockup that is a simulation:
+# an HTML drawing of a screen of a target this preview cannot run natively. It is not
+# native behaviour: back, safe areas, permissions, gestures, window chrome and menus are
+# drawn, not exercised. Columns: path, target, form factor (- if none), layout.
+
+mockups/android/plant-list-ok.html	android	phone	phone-portrait
+mockups/android/plant-list-loading.html	android	phone	phone-portrait
+mockups/android/plant-list-empty.html	android	phone	phone-portrait
+mockups/android/plant-list-unreachable.html	android	phone	phone-portrait
+mockups/android/plant-list-watering.html	android	phone	phone-portrait
