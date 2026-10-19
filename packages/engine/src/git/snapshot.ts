@@ -18,6 +18,7 @@ import { join, posix } from 'node:path';
 import { type GitContext, SHA, gitOk, repoContext, worktreeContext } from './exec.js';
 import { mapBounded } from './bounded.js';
 import { isProtected, isUnderRoot } from '../protected/set.js';
+import { REFUSED_REVIEWS_DIR, isRefusedReview } from '../design/paths.js';
 import { type Baseline, type Change, type TreeEntry, blobSizes, catBlob, checkoutBaseline, checkoutBaselineRemembered, contentHash, diffTrees, listTree, readAllRefs, readHeadFile } from './repo.js';
 import { workspaceLink } from './worktree.js';
 
@@ -133,6 +134,8 @@ function pathRule(role: string, path: string, roots: readonly string[]): string 
   if (role === 'verifier') return `${path} is not in the protected set, and a verifier may change only the protected set`;
   if (role === 'designer') {
     if (path.startsWith(INVENTORY_PREFIX)) return `DESIGN_INVENTORY_MODIFIED: ${path} is under ${INVENTORY_PREFIX}, the engine's inventory, which the Designer may read and may not change`;
+    // H5 (SEAM.md §552): a refused review's file, moved there by the engine, out of active review.
+    if (isRefusedReview(path)) return `${path} is under ${REFUSED_REVIEWS_DIR}, the engine's record of refused reviews, which the Designer may read and may not change`;
     if (!path.startsWith(DESIGN_PREFIX)) return `${path} is not under ${DESIGN_PREFIX}, the only path a designer may change`;
     return null;
   }

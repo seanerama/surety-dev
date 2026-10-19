@@ -24,6 +24,7 @@ import { ownerReviewFacts, ownerReviewOfRun, releaseEvidenceRecords } from './ow
 import { designerReadsFacts, reviewPackageFacts } from './review-package.js';
 import { noteAlphaReview, notObservedScreens, observationsOf, recordObservation, reviewTarget } from './review.js';
 import { approvedRevisionFacts, assetFacts, intendAsset, submitAssets } from './assets-submit.js';
+import { intendReviewRefused } from './review-refused.js';
 import { bindingsView } from './asset-bindings.js';
 import { completeAssetFixes, executionAssetFiles } from './asset-inputs.js';
 import { raiseDeferredBatches } from '../spec/change.js';
@@ -119,6 +120,7 @@ export const DESIGN_READS: Record<string, (db: Db, args: any) => unknown> = {
 export const DESIGN_ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'design.intend_inventory': (tx, a) => intendInventory(tx, a),
   'design.intend_asset': (tx, a) => intendAsset(tx, a),
+  'design.intend_review_refused': (tx, a) => intendReviewRefused(tx, a),
   'design.record_inventory': (tx, a: { id?: string; project?: string; digest?: string }) => {
     const id = a.id ?? (tx.db.prepare('SELECT "id" FROM "design_inventories" WHERE "project" = ? AND "inventory_digest" = ?').get(a.project, a.digest) as { id: string } | undefined)?.id;
     return id ? recordInventory(tx, { id }) : { recorded: false };
