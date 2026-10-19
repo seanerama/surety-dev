@@ -657,6 +657,41 @@ export function rebuildRerunActs(ctx, row, name, { project, named = () => [] }) 
   return stamped;
 }
 
+// Harness finding F6 (errata E168), a run directory whose record predates
+// the re-read after the wait (`recordActs`): the step's acts were read once,
+// when its goal was reached, so an owner decision answered while it waited
+// for the entries is not in its record (M535's m6x_review: the second web
+// review's confirmation and the four findings it filed). A step `done` whose
+// attempts are kept with their ends (`ended_seq`), and whose attempts'
+// ranges hold a decision answered by the `human` actor that its record
+// lacks, has its acts rebuilt from the store (read only) over those ranges,
+// with the performers from the entries made since its first attempt's start.
+// The acts it named itself (an owner command observed by its effect, the
+// preview inspection) are kept as recorded: the store does not hold them as
+// acts. No performer is waited for: an act without an entry is `unknown`.
+// Once rebuilt, nothing is lacking, so it is never rebuilt again. Returns
+// the rebuilt acts, or null (nothing to rebuild).
+export function rebuildUnrecordedActs(ctx, row, name, { project }) {
+  const list = readAttempts(ctx.runDir)[name] ?? [];
+  if (loadState(ctx).steps?.[name]?.status !== 'done' || list.length === 0 || list.some((a) => a.seq === null || a.seq === undefined) || list.at(-1).ended_seq === null || list.at(-1).ended_seq === undefined) return null;
+  const home = homeOfRun(ctx);
+  if (!existsSync(join(home, 'store.db'))) return null;
+  const ranges = attemptRanges(home, list);
+  if (ranges.some((r) => r.from === null || r.to === null)) return null;
+  const recorded = readActs(ctx, row).filter((a) => a.step === name);
+  const has = new Set(recorded.flatMap((a) => (a.items ?? []).map((i) => i.decision).filter(Boolean)));
+  const named = recorded.flatMap((a) => (a.items ?? []).filter((i) => i.act !== undefined));
+  const acts = storeActs(home, project, ranges, named);
+  const missing = acts.flatMap((a) => a.items.filter((i) => i.decision && !has.has(i.decision)).map((i) => `${i.kind} ${i.decision}`));
+  if (missing.length === 0) return null;
+  const window = { ranges, since: ranges[0].at, earlier: ranges.slice(0, -1), unknown: [] };
+  const stamped = performers(ctx, acts, window.since).map((a) => ({ ...a, step: name, window: { ...windowNote(window), rebuilt_at: new Date().toISOString(), finding: 'F6' } }));
+  const summary = (a) => ({ act: a.act, items: a.items.length, performer: a.performer });
+  writeStepActs(ctx, row, name, stamped);
+  observe(ctx, row, `acts_rebuilt_${name}`, { finding: 'F6', missing, before: recorded.map(summary), after: stamped.map(summary), window: windowNote(window) });
+  return stamped;
+}
+
 // A step's acts, their evidence waited for and recorded: Sean's central acts
 // (M535) up to SURETY_REAL_WAIT_MINUTES, then the step fails naming each one
 // not performed by him; every other act up to SURETY_REAL_ACT_RECORD_MINUTES,
@@ -665,9 +700,19 @@ export function rebuildRerunActs(ctx, row, name, { project, named = () => [] }) 
 // acts with those of all its attempts, never with its own alone; when it
 // covers more than one attempt each act carries the `window`. `named` is
 // the acts the step names, or a function of the window giving them.
+//
+// The store's acts are read again while waiting for the entries and once
+// after the wait (harness finding F6, errata E168): an owner decision
+// answered while the step waited (M535's second web review, confirmed by
+// Sean, and the four findings it filed, accepted by the driver) is in the
+// record, over the same window through the step's end, and the performers
+// are derived after that last read. An act first seen while waiting is
+// waited for as the others are; one first seen after the wait has no entry
+// waited for (`unknown` without one).
 export async function recordActs(ctx, row, name, { home, project, sinceSeq, since, named = [], central = [] }) {
   const window = actWindow(ctx, name, home, { sinceSeq, since });
-  const acts = storeActs(home, project, window.ranges, typeof named === 'function' ? named(window) : named);
+  const read = () => storeActs(home, project, window.ranges, typeof named === 'function' ? named(window) : named);
+  let acts = read();
   for (const c of central) if (!acts.some((a) => a.act === c)) throw new Error(`${name}: the owner act ${c} was not observed in the store (E156 Q6)`);
   const needed = (list) => list.filter((a) => a.performer === 'unknown');
   since = window.since;
@@ -684,8 +729,15 @@ export async function recordActs(ctx, row, name, { home, project, sinceSeq, sinc
       ].join('\n'),
     );
     const startedWait = performance.now();
+    const told = new Set(needed(rec).map((a) => a.act));
     for (;;) {
+      acts = read();
       rec = performers(ctx, acts, since);
+      const fresh = needed(rec).filter((a) => !told.has(a.act));
+      if (fresh.length > 0) {
+        for (const a of fresh) told.add(a.act);
+        tellSean(ctx, [`SURETY REAL LANE: owner acts of ${name} answered while waiting; who performed them? (README §3)`, ...fresh.map((a) => `  ${a.act}${central.includes(a.act) ? '   <- yours, Sean, in your own terminal' : ''}`)].join('\n'));
+      }
       const missingCentral = rec.filter((a) => central.includes(a.act) && a.performer !== 'sean');
       const missingOther = needed(rec).filter((a) => !central.includes(a.act));
       const waited = (performance.now() - startedWait) / 60_000;
@@ -694,6 +746,9 @@ export async function recordActs(ctx, row, name, { home, project, sinceSeq, sinc
       await sleep(10_000);
     }
   }
+  // F6 (errata E168): the decisions answered while waiting, read through the step's end; the performers after it.
+  acts = read();
+  rec = performers(ctx, acts, since);
   const stamped = rec.map((a) => ({ ...a, step: name, ...(window.earlier.length > 0 || window.unknown.length > 0 ? { window: windowNote(window) } : {}) }));
   writeStepActs(ctx, row, name, stamped);
   if (!ctx.rehearsal) {
@@ -1284,6 +1339,10 @@ export async function m6BuildToReview(ctx, row) {
   const project = projectOf(ctx, row);
   const order = row === 'M519' ? ['build', 'alpha', 'review'] : ['build', 'asset', 'alpha', 'review'];
   const st = loadState(ctx).steps ?? {};
+  // A record from before the re-read after the wait (harness finding F6, errata E168): each step done is rebuilt once
+  // where its attempts hold an owner decision it lacks, before any judgement reads it (a judge rerun runs no step and
+  // reaches here). No engine of the row runs here: the store is read directly.
+  for (const s of STEPS[row].filter((x) => x.startsWith(PREFIX[row]))) if (st[s]?.status === 'done') rebuildUnrecordedActs(ctx, row, s, { project });
   const allDone = order.every((s) => st[stepName(row, s)]?.status === 'done');
   if (allDone && st[stepName(row, 'teardown')]?.status === 'done') return st[stepName(row, 'review')].value;
   // Before any engine starts or the project resumes (BS5 §12; M5's S3): a
