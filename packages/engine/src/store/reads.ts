@@ -2,7 +2,7 @@
 
 import { designCatalogueFacts, designChangeFacts } from '../design/review-package.js';
 import { replanFacts } from '../plan/replan-package.js';
-import { activeStages, dependsOnNumbers } from '../plan/active.js';
+import { activeStages, dependsOnEntries, dependsOnNumbers } from '../plan/active.js';
 import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
@@ -165,18 +165,22 @@ export function contextFacts(db: Database, args: { run: string }) {
   if (stage && run.role === 'builder') {
     const keyOf = (r: string): string => (db.prepare('SELECT "key" FROM "requirements" WHERE "project" = ? AND ("id" = ? OR "key" = ?)').get(item.project, r, r) as { key: string } | undefined)?.key ?? r;
     // The stage row holds its dependencies by stage id (registerPlan); a
-    // number is taken as it is.
-    const dependsOn = parse<unknown[]>(stage.depends_on, [])
-      .map((d) => (typeof d === 'number' ? d : typeof d === 'string' ? ((db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined)?.number ?? null) : null))
-      .filter((n): n is number => typeof n === 'number');
+    // number is taken as it is. Every stored entry is stated, none dropped
+    // (E171 item 5, H3; E163 item 7): one that resolves to no active stage
+    // of the generation is stated as stored and listed unresolved, its
+    // interfaces unknown (null), never none.
     const siblings = activeStages<{ number: number; modules: string }>(db, activePlanOf(db, String(stage.phase_plan)));
+    const deps = dependsOnEntries(stage.depends_on).map((entry) => {
+      const n = dependsOnNumbers(db, [entry])[0];
+      const sib = typeof n === 'number' ? siblings.find((x) => x.number === n) : undefined;
+      return sib ? { entry, number: sib.number, modules: sib.modules } : { entry, number: null, modules: null };
+    });
+    const dependsOn = deps.map((d) => (d.number === null ? d.entry : d.number));
+    const unresolved = deps.filter((d) => d.number === null).map((d) => ({ entry: d.entry, interfaces: null }));
     // A stage row names its modules by id (plan/bundle.ts) or, in a
     // fixture, by name: each resolved to its name in the module map.
     const moduleName = (m: string): string => (db.prepare('SELECT "name" FROM "modules" WHERE "project" = ? AND ("id" = ? OR "name" = ?)').get(item.project, m, m) as { name: string } | undefined)?.name ?? m;
-    const depModules = dependsOn.flatMap((n) => {
-      const sib = siblings.find((x) => x.number === n);
-      return sib ? parse<string[]>(sib.modules, []).map((m) => ({ stage: n, module: moduleName(m) })) : [];
-    });
+    const depModules = deps.flatMap((d) => (d.number === null ? [] : parse<string[]>(d.modules, []).map((m) => ({ stage: d.number as number, module: moduleName(m) }))));
     builderStage = {
       number: Number(stage.number),
       goal: String(stage.goal),
@@ -184,6 +188,7 @@ export function contextFacts(db: Database, args: { run: string }) {
       implements: parse<string[]>(stage.implements, []).map(keyOf),
       integration_obligations: parse<string[]>(stage.integration_obligations, []),
       depends_on: dependsOn,
+      unresolved_dependencies: unresolved,
       dependency_interfaces:
         moduleMap === null
           ? null

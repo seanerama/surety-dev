@@ -17,6 +17,17 @@ export const activeStages = <T = Record<string, unknown>>(db: Database, plan: st
 // to no stage is left as stored, never dropped: unknown, not "no
 // dependency".
 export function dependsOnNumbers(db: Database, stored: unknown): (number | unknown)[] {
+  return dependsOnEntries(stored).map((d) => {
+    if (typeof d === 'number') return d;
+    if (typeof d !== 'string') return d;
+    const row = db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined;
+    return row ? row.number : d;
+  });
+}
+
+// A stage row's `depends_on` entries as stored, one per entry: JSON that
+// does not parse is one entry, the text as stored; null or absent is none.
+export function dependsOnEntries(stored: unknown): unknown[] {
   let deps: unknown = stored;
   if (typeof stored === 'string') {
     try {
@@ -26,10 +37,5 @@ export function dependsOnNumbers(db: Database, stored: unknown): (number | unkno
     }
   }
   if (!Array.isArray(deps)) return deps === null || deps === undefined ? [] : [deps];
-  return deps.map((d) => {
-    if (typeof d === 'number') return d;
-    if (typeof d !== 'string') return d;
-    const row = db.prepare('SELECT "number" FROM "stages" WHERE "id" = ?').get(d) as { number: number } | undefined;
-    return row ? row.number : d;
-  });
+  return deps;
 }

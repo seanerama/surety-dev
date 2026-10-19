@@ -120,6 +120,21 @@ test('dependsOnNumbers: ids read back to numbers (a kept stage on an earlier row
   assert.deepEqual(dependsOnNumbers(db, '[]'), []);
 });
 
+test('GET …/plan states a stage\'s depends_on as stage numbers, an entry naming no stage as stored, never dropped (E163 item 7)', (t) => {
+  const db = store(t);
+  const first = publish(db, [stage(1), stage(2, { depends_on: [1] })]);
+  const [s1, s2] = first.stages;
+  db.prepare('UPDATE stages SET depends_on = ? WHERE id = ?').run(JSON.stringify([s1.id, 'stage_gone']), s2.id);
+  const view = planView(db, { project: 'prj_1' });
+  assert.deepEqual(
+    view.plan.stages.map((x) => [x.number, x.depends_on]),
+    [
+      [1, []],
+      [2, [1, 'stage_gone']],
+    ],
+  );
+});
+
 // ---- 2. the phase waits for a pending replacement --------------------------------------------
 
 // A T1 phase at its completion step: every stage integrated with its work

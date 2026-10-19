@@ -253,6 +253,7 @@ test("a stage's Builder is told its tasks, what it implements, its obligations a
     implements: ['R2'],
     integration_obligations: ['keep sum pure'],
     depends_on: [1],
+    unresolved_dependencies: [],
     dependency_interfaces: [{ stage: 1, module: 'lib', name: 'sum', kind: 'module', path: 'src/lib/sum.mjs', description: 'adds' }],
   });
   assert.deepEqual(facts.modules[0].interfaces, [{ name: 'GET /sum', kind: 'http', path: null, description: 'serves' }], "the stage's own modules carry the map's interfaces");
@@ -264,7 +265,43 @@ test("a stage's Builder is told its tasks, what it implements, its obligations a
   assert.deepEqual(b['builder.implements'], { implements: ['R2'] });
   assert.deepEqual(b['builder.integration_obligations'], { integration_obligations: ['keep sum pure'] });
   assert.deepEqual(b['builder.dependency_interfaces'].depends_on, [1]);
+  assert.deepEqual(b['builder.dependency_interfaces'].unresolved, [], 'unresolved is [] when every entry resolves');
   assert.deepEqual(JSON.parse(read(out, 'interfaces/web.json')).interfaces, [{ name: 'GET /sum', kind: 'http', path: null, description: 'serves' }]);
+});
+
+test("a stage's Builder is told every dependency it stores: one resolving to no active stage is named as stored, its interfaces unknown, never dropped (E171 item 5, H3)", (t) => {
+  const dir = scratch(t);
+  const db = new Database(join(dir, 'store.db'));
+  t.after(() => db.close());
+  migrate(db, join(root, 'migrations'));
+  db.pragma('foreign_keys = OFF');
+  const run = (sql, ...a) => db.prepare(sql).run(...a);
+  run(`INSERT INTO projects (id, created_at, name, tier, dev_repo_path, integration_branch, baseline_state, registration_state, management) VALUES ('prj_1', ?, 'p', 'T1', '/nowhere', 'main', 'spec_ready', 'registered', '{}')`, AT);
+  const artifacts = { modules: { version: 1, modules: [{ name: 'lib', paths: ['src/lib/'], sensitive_areas: [], interfaces: [{ name: 'sum', kind: 'module', path: 'src/lib/sum.mjs', description: 'adds' }] }, { name: 'web', paths: ['src/web/'], sensitive_areas: [], interfaces: [] }], mapping_from_spec: [] } };
+  run(`INSERT INTO plan_bundles (id, created_at, project, head, blobs, artifacts, versions, status) VALUES ('pb_1', ?, 'prj_1', ?, '{}', ?, '{}', 'published')`, AT, 'c'.repeat(40), JSON.stringify(artifacts));
+  run(`INSERT INTO phase_plans (id, created_at, project, phase_number, prepared_against_revision, git_path, generation, active, bundle) VALUES ('pp_1', ?, 'prj_1', 1, ?, '.surety/phases/phase-1.json', 1, 1, 'pb_1')`, AT, 'c'.repeat(40));
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, tasks, depends_on, integration_obligations) VALUES ('stg_1', ?, 'prj_1', 'pp_1', 1, 'the library', '["lib"]', '[]', '[]', 'integrated', '[]', '[]', '[]')`, AT);
+  // A cancelled stage 3: its id resolves to a number, but to no active stage.
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, tasks, depends_on, integration_obligations, cancelled_at) VALUES ('stg_3', ?, 'prj_1', 'pp_1', 3, 'gone', '["lib"]', '[]', '[]', 'planned', '[]', '[]', '[]', ?)`, AT, AT);
+  // Stage 2 stores: stage 1's id, an id naming no stage, the cancelled stage's id and a number no active stage has.
+  const stored = ['stg_1', 'stage_NOSUCH', 'stg_3', 9];
+  run(`INSERT INTO stages (id, created_at, project, phase_plan, number, goal, modules, requirement_ids, implements, status, work_item, tasks, depends_on, integration_obligations) VALUES ('stg_2', ?, 'prj_1', 'pp_1', 2, 'the service', '["web"]', '[]', '[]', 'building', 'wrk_2', '["write server.mjs"]', ?, '[]')`, AT, JSON.stringify(stored));
+  run(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wrk_2', ?, 'prj_1', 2, 'stage_build', '{"stage":"stg_2"}', 'executing', 'plan', 'pp_1', 1, 0, 0, 0, 0)`, AT);
+  run(`INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined) VALUES ('run_b', ?, 'prj_1', 1, 'wrk_2', 'builder', 'one_shot', 'executing', 'scripted', '1', 'sonnet', ?, ?, 0)`, AT, 'c'.repeat(40), AT);
+  const facts = contextFacts(db, { run: 'run_b' });
+  const unresolved = [
+    { entry: 'stage_NOSUCH', interfaces: null },
+    { entry: 'stg_3', interfaces: null },
+    { entry: 9, interfaces: null },
+  ];
+  assert.deepEqual(facts.builder_stage.depends_on, [1, 'stage_NOSUCH', 'stg_3', 9], 'every stored entry stated: the resolved one by number, the rest as stored');
+  assert.deepEqual(facts.builder_stage.unresolved_dependencies, unresolved);
+  assert.deepEqual(facts.builder_stage.dependency_interfaces, [{ stage: 1, module: 'lib', name: 'sum', kind: 'module', path: 'src/lib/sum.mjs', description: 'adds' }], "the resolved stage's interfaces still stated");
+  const out = scratch(t);
+  writeContextPackage(out, { run: 'run_b', role: 'builder', work_item: 'wrk_2', work_kind: 'stage_build', base_revision: 'c'.repeat(40), attempt: null, check_outputs: [] }, facts, { probe: false });
+  const d = blocks(read(out, 'prompt.md'))['builder.dependency_interfaces'];
+  assert.deepEqual(d.depends_on, [1, 'stage_NOSUCH', 'stg_3', 9]);
+  assert.deepEqual(d.unresolved, unresolved, 'unresolved in the block, interfaces null (unknown), never []');
 });
 
 test('the seam lists every element with its packages, and an omission removes the element from the prompt, the block, the result schema and the manifest (harness mode only)', (t) => {
