@@ -1,6 +1,6 @@
 # What M6 does not claim
 
-**Written by:** the Verifier of M540, 2026-10-19, on branch `verify/m540` from `main` at `4e05624`, completed from `main` at `5521699`, after the two real runs (M519 10 of 10, last judged at `308230d`; M535 12 of 12, last judged at `def6afd`) and the final split gate (`12ee772`, E170; merged at `19afc9f`; the M6 report, section 12). The exhaustion lane at `4e05624` passed, 15 of 15 in 5 files (the M6 report, section 14); it has not been run at `19afc9f`, after F8's fix. **Status:** the list behind the M6 report's section 27 (row M540; BS6 §13: "what M6 does not claim (`M6-not-claimed.md`, in `M5-not-claimed.md`'s form, starting from D7 §15)"); it decides nothing. An entry whose standing depends on a run names the run and its record; nothing here says a run passed that the M6 report does not record.
+**Written by:** the Verifier of M540, 2026-10-19, on branch `verify/m540` from `main` at `4e05624`, completed from `main` at `5521699`, after the two real runs (M519 10 of 10, last judged at `308230d`; M535 12 of 12, last judged at `def6afd`) and the final split gate (`12ee772`, E170; merged at `19afc9f`; the M6 report, section 12). The exhaustion lane at the final revision `19afc9f` (run at `12ee772`, the same tree) passed, 15 of 15 in 5 files, as it had at `4e05624` (the M6 report, section 14). **Status:** the list behind the M6 report's section 27 (row M540; BS6 §13: "what M6 does not claim (`M6-not-claimed.md`, in `M5-not-claimed.md`'s form, starting from D7 §15)"); it decides nothing. An entry whose standing depends on a run names the run and its record; nothing here says a run passed that the M6 report does not record.
 
 The classes are D7 §15's: **class A**, outside the threat model; **class B**, real behaviour no test has yet established, or that M6 does not build; **class C**, a limitation accepted by design. Each entry names its row where one bears on it, and the record that put it here.
 
@@ -86,7 +86,6 @@ The defaults `designer_session_budget_billable_tokens` (3,000,000) and `preview_
 | Entry | Record |
 |---|---|
 | F8: the preview's `memory.peak` not read before removal in either run (section 1 above); decided by Sean (E170): fixed at `19afc9f`, the measurement left to the next clean real run. | E170; the M6 report, section 21 |
-| The exhaustion lane ran at `4e05624`, before F8's fix; not rerun at `19afc9f`. | the M6 report, sections 14, 31 |
 | The review schema has no `observed_on` value for a read that rendered nothing. | E165 item 6 |
 | Owner acts with no store event of their own: the Alpha inspection, the review session. | E165 item 9 |
 | A real run on a new engine build must re-qualify `local_service` before any preview or Alpha; only the engine's refusal says so. | E165 item 9 |
