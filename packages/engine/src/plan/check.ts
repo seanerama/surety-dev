@@ -150,15 +150,16 @@ export const TECHNOLOGY_TARGETS: Readonly<Record<string, readonly string[]>> = {
 export const technologyAdmits = (technology: string, target: string): boolean => (TECHNOLOGY_TARGETS[technology] ?? []).includes(target);
 
 // D7 §4.1 (clause 5, SEAM.md §§495, 513): each interface a `ui` module
-// consumes that lacks `request`, `response` or `errors`, as
+// consumes or exposes that lacks `request`, `response` or `errors`, as
 // `<module>:<interface>`. Told to the Architect's session at its save and
-// refusing the plan under any design policy but off.
+// refusing the plan under any design policy but off (errata E169: an exposed
+// interface without shapes deadlocked the design check, finding F5).
 export function interfaceShapesMissing(map: ModuleMap): string[] {
   const ui = new Set(map.modules.filter((m) => m.surface === 'ui').map((m) => m.name));
   const out: string[] = [];
   for (const m of map.modules) {
     for (const i of m.interfaces ?? []) {
-      if (!(i.consumed_by ?? []).some((c) => ui.has(c))) continue;
+      if (!ui.has(m.name) && !(i.consumed_by ?? []).some((c) => ui.has(c))) continue;
       // Declared unshapeable by an adopted project's map (D7 §12; objection
       // 150): listed shape unknown in the inventory, never refused here.
       if (i.shape === 'unknown') continue;
@@ -513,7 +514,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // design policy other than off: the spec states the targets (the engine
   // assumes none), the `ui` modules serve exactly them, each with a UI
   // technology the admissibility table admits on it; and every interface a
-  // `ui` module consumes has its shapes (ARCH_INTERFACE_SHAPE_MISSING).
+  // `ui` module consumes or exposes has its shapes (ARCH_INTERFACE_SHAPE_MISSING).
   let targetsMissing = false;
   if (baseline.design && baseline.design.policy !== 'off') {
     const ui = a.modules.modules.filter((m) => m.surface === 'ui');
