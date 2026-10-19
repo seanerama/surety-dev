@@ -22,6 +22,16 @@
 // replan whose stage validates R3 in full, naming its human-kind design
 // criterion among the validated criteria, is accepted and published; one
 // omitting it is accepted too (it owes nothing).
+//
+// F5 (an engine finding of the paid M535 run; Sean's ruling 2026-10-19,
+// errata E169): (a) holds for an interface a `ui` module EXPOSES as for one
+// it consumes (D7 §4.1: "for an interface a ui module consumes or exposes,
+// request, response and errors"): under `before_build` one lacking any of
+// the three refused ARCH_INTERFACE_SHAPE_MISSING naming
+// `<ui module>:<interface>`, one with all three not named; under `off` the
+// same map publishes; one declared `shape: "unknown"` in an adopted
+// project's retrofit map (D7 §12) is not refused, and nothing is derived
+// from it.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -30,8 +40,10 @@ import { decisionsOfKind } from './harness/decisions.mjs';
 import { phaseCompleted, planChecks, planOfPhase, pump, runsOfProject, workOf } from './harness/journey/drive.mjs';
 import { scriptedEngine } from './harness/runs.mjs';
 import { closeSession, transcriptEntries } from './harness/sessions.mjs';
-import { INTERFACES, MODULES_JSON } from './harness/design/reference.mjs';
-import { assertHoldsAccounted, createPantry, pantryArchitect, pantrySpec, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
+import { EXPOSED, INTERFACES, MODULES_JSON, modulesExposing } from './harness/design/reference.mjs';
+import { retrofitEngine, toConformancePublished } from './harness/retrofit/drive.mjs';
+import { PAGE_CHECKS, SHELF_ANSWERS, SHELF_ARCHITECT, SHELF_EXTRA, SHELF_MODULES_JSON, SHELF_SPEC } from './harness/design/retrofit45.mjs';
+import { assertHoldsAccounted, createPantry, inventoryOf, pantryArchitect, pantrySpec, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
 import { BEFORE_BUILD, approveBatch, designModel, latestPlanCheck, planSubjects } from './harness/design/check41.mjs';
 import { withStore } from './harness/store.mjs';
 import { PHASE_TWO_STAGES, TWO_PHASE, currentRevision, currentRoadmap, designedPantry, replanWith, stageIdsOf, stageScreens } from './harness/design/plan44.mjs';
@@ -91,6 +103,43 @@ describe('M508 the plan check\'s design clauses', () => {
     const off = latestPlanCheck(fx.home, q.id);
     assert.equal(off?.outcome, 'passed', `under off the plan check passes (${JSON.stringify(off?.reasons)})`);
     assert.ok(planOfPhase(fx.home, q.id, 1).some((x) => x.published_at), 'and phase 1 is published');
+  });
+
+  test('F5 (errata E169): interfaces ui modules expose without request, response or errors under before_build: ARCH_INTERFACE_SHAPE_MISSING naming <ui module>:<interface>, told at the save and refusing the close; one with all three not named; under off the map publishes', async (t) => {
+    const fx = await scriptedEngine(t);
+    // web exposes page (none of the three) and design_tokens (no errors); mobile exposes api_base_url (none) and simulation (all three).
+    const map = modulesExposing({ web: [EXPOSED.page, EXPOSED.designTokens], mobile: [EXPOSED.apiBaseUrl, EXPOSED.simulation] });
+    const p = await createPantry(fx, { policy: BEFORE_BUILD, name: 'pantry-exposed' });
+    await pantrySpec(fx, p.id);
+    const arch = await pantryArchitect(fx, p.id, p.repo, { answer: 'none', files: { modules: map } });
+    const check = latestPlanCheck(fx.home, p.id);
+    if (arch.closeRes.status !== 200) await closeSession(fx, p.id, arch.run.id, { refuse: true });
+    // Under off: the same map publishes.
+    const { p: q } = await toPublished(fx, { policy: OFF, name: 'pantry-exposed-off', files: { modules: map } });
+    const off = latestPlanCheck(fx.home, q.id);
+    assert.equal(off?.outcome, 'passed', `under off the plan check passes (${JSON.stringify(off?.reasons)})`);
+    assert.ok(planOfPhase(fx.home, q.id, 1).some((x) => x.published_at), 'and phase 1 is published');
+    assert.deepEqual(planSubjects(check, 'ARCH_INTERFACE_SHAPE_MISSING').sort(), ['mobile:api_base_url', 'web:design_tokens', 'web:page'], `ARCH_INTERFACE_SHAPE_MISSING naming each exposed interface lacking request, response or errors as <ui module>:<interface>, and not simulation, which has all three (F5; Sean's ruling 2026-10-19, errata E169) (${check?.outcome} ${JSON.stringify(check?.reasons)})`);
+    assert.equal(check?.outcome, 'refused', `the plan check refused (${JSON.stringify(check?.reasons)})`);
+    assert.equal(arch.closeRes.status, 422, `the close is refused (→ ${arch.closeRes.status} ${arch.closeRes.text?.slice(0, 600)})`);
+    assert.equal(arch.closeRes.body?.code, 'plan_refused', 'plan_refused');
+    const told = `${JSON.stringify(arch.saved?.findings ?? [])}\n${transcriptEntries(fx.home, arch.run.id).filter((e) => e.speaker === 'engine').map((e) => e.text ?? '').join('\n')}`;
+    for (const i of ['page', 'design_tokens', 'api_base_url']) assert.ok(told.includes('ARCH_INTERFACE_SHAPE_MISSING') && told.includes(i), `the Architect's session is told ARCH_INTERFACE_SHAPE_MISSING naming ${i} before close (${told.slice(0, 800)})`);
+  });
+
+  test('F5 (errata E169): an interface a ui module exposes declared shape "unknown" in an adopted project\'s retrofit map, under before_build: not refused; listed shape_known false, nothing derived from it', async (t) => {
+    const fx = await retrofitEngine(t, { extraAuthoring: PAGE_CHECKS });
+    const modules = structuredClone(SHELF_MODULES_JSON);
+    modules.modules.find((m) => m.name === 'web').interfaces.push({ name: 'page', kind: 'file', path: 'web/index.html', description: 'the sum page the service serves; what it holds is not shaped by the code', shape: 'unknown' });
+    const J = await toConformancePublished(fx, { policy: { design: 'before_build' }, answers: SHELF_ANSWERS, spec: SHELF_SPEC, architect: { ...SHELF_ARCHITECT, modules }, repoOpts: { extra: SHELF_EXTRA } });
+    const check = latestPlanCheck(fx.home, J.p.id);
+    assert.deepEqual(planSubjects(check, 'ARCH_INTERFACE_SHAPE_MISSING'), [], `shape "unknown" stays exempt for an exposed interface (D7 §12) (${JSON.stringify(check?.reasons)})`);
+    assert.equal(J.architect.closeRes.status, 200, `the retrofit Architect's close is accepted (${J.architect.closeRes.status} ${J.architect.closeRes.text?.slice(0, 800)}; save findings ${JSON.stringify(J.architect.saved?.findings)?.slice(0, 600)})`);
+    const inventory = inventoryOf(J.p);
+    const page = (inventory.interfaces ?? []).find((i) => i.name === 'page');
+    assert.ok(page, `page, which web exposes, is listed (${JSON.stringify(inventory.interfaces)})`);
+    assert.equal(page.shape_known, false, 'shape_known false');
+    assert.deepEqual((inventory.obligations ?? []).filter((o) => o.interface === 'page'), [], 'nothing derived from it');
   });
 
   test('(d) the first plan, before any design: published, a planned design obligation per UI stage carried by the hold; (f) stage_screens computed at the design\'s approval', async (t) => {

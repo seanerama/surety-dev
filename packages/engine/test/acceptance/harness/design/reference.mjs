@@ -283,7 +283,26 @@ export const MODULES_JSON = {
   ],
 };
 
-export const ARCHITECTURE_MD = `# Pantry: architecture
+// Interfaces a `ui` module EXPOSES (no consumed_by from a ui module), as M535's
+// Architect declared them (finding F5; Sean's ruling 2026-10-19, errata
+// E169): `page` and `api_base_url` with no request, response or errors (the
+// inventory's `shape_known: false`); `design_tokens` with request and
+// response and no errors; `simulation` with all three.
+export const EXPOSED = Object.freeze({
+  page: Object.freeze({ name: 'page', kind: 'file', path: 'web/index.html', description: 'the web page the API serves' }),
+  apiBaseUrl: Object.freeze({ name: 'api_base_url', kind: 'module', path: 'mobile/config.js', description: 'the API base URL the app reads' }),
+  designTokens: Object.freeze({ name: 'design_tokens', kind: 'file', path: 'web/tokens.css', description: 'the tokens the web page reads', request: { type: 'null' }, response: { type: 'string' } }),
+  simulation: Object.freeze({ name: 'simulation', kind: 'file', path: 'mobile/simulation.html', description: 'the simulated Android preview', request: { type: 'null' }, response: { type: 'string' }, errors: [] }),
+});
+// Pantry's map with `exposed` ({module: [interface]}) appended to each named
+// `ui` module's interfaces.
+export function modulesExposing(exposed) {
+  const m = structuredClone(MODULES_JSON);
+  for (const [name, list] of Object.entries(exposed)) m.modules.find((x) => x.name === name).interfaces.push(...structuredClone(list));
+  return m;
+}
+
+export const ARCHITECTURE_MD =`# Pantry: architecture
 
 \`api\` (\`server.mjs\`, Node's own \`http\`) holds the list in memory and serves the web module's files; \`web\` is a static page in HTML and CSS; \`mobile\` is a React Native app (source only in M6).
 `;
