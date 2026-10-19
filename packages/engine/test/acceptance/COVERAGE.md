@@ -4748,3 +4748,22 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 
   Every act is `driver`. The window is seqs 1464 to 6874 (`inferred`, from `m6w_qualify`'s end at 02:18:16.992Z) and 6874 to 7405 (to the step's end at 07:00:55.476Z). The spec and architect sessions are not taken in. All 14 human decisions of the project are in the record; no performer is `unknown`. A second call returns `null`.
 - **Then `upTo(…, 'm6w_design')` on a fresh copy** (every step done, so no engine starts and the store's sequence is unchanged): the record is rebuilt and (c)'s act is found. `upTo(…, 'm6w_build')` on the copy, still halted by judge (c), is refused by `refuseIfStopped` before any engine starts, and the store's sequence is unchanged.
+
+## Interfaces a ui module exposes (M535 finding F5; Sean's ruling of 2026-10-19, errata E169)
+
+2026-10-19, by the Verifier, on `verify/f5`, cut from `main` `def6afd`. No new row. Harness: `harness/design/reference.mjs` gains `EXPOSED` (M535's four kinds of exposed interface: `page` and `api_base_url` with none of `request`, `response`, `errors`; `design_tokens` with no `errors`; `simulation` with all three) and `modulesExposing` (Pantry's map with them appended to a `ui` module). No other part of the harness changed. The cases go to M508 (the plan check), M504 (the inventory) and M506 (the design check). The engine's part is the Builder's.
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| ruling item 1 | M508 (a) | `M508-plan-check-additions.test.mjs` (6 → 8) | Under `off` the map with the four exposed interfaces publishes. Under `before_build`: `ARCH_INTERFACE_SHAPE_MISSING` naming exactly `mobile:api_base_url`, `web:design_tokens`, `web:page` (not `simulation`), told at the save, the close refused `plan_refused` | written; fails on `main` |
+| ruling item 1, the exemption | M508 (a) | the same | Shelf (M518's adopted fixture) with `web` exposing `page` declared `shape: "unknown"`, under `before_build`: not named, the close accepted; the inventory lists it `shape_known: false` with no obligation | written; passes on `main` |
+| ruling item 2 | M504 | `M504-the-interface-inventory.test.mjs` (6 → 7) | Pantry with `page` (web) and `api_base_url` (mobile) exposed and unshaped, published under `off`, the policy then `before_build`: both listed with their module, `shape_known: false`, no shape; the shaped interfaces keep their obligations; no obligation and no fixture for the two | written; fails on `main` |
+| ruling item 2 | M506 | `M506-the-design-check.test.mjs` (10 → 11) | The same route. The web screen naming `page`: `DESIGN_INTERFACE_SHAPE_UNKNOWN` naming the screen, `web` and `page`. A design naming neither: no `DESIGN_STATE_UNCOVERED`, passing | written; fails on `main` |
+
+**What was run, 2026-10-19, on `main` `def6afd`** (this worktree, `npm install` with the lockfile change reverted, `npm run build`, a private `TMPDIR` under `/tmp/vf5` per file, each file alone with `node --test`):
+- **`M508` 7/8.** The six earlier cases and the exemption case pass. The exposed case fails after its `off` part passes: "ARCH_INTERFACE_SHAPE_MISSING naming each exposed interface … (passed [])". The plan check passed with no reason.
+- **`M504` 6/7.** The six earlier cases pass. The F5 case's listing and the shaped obligations pass; it fails on "page: no state obligation derived … ([{"target":"web","interface":"page","state":"ok"}])".
+- **`M506` 10/11.** The ten earlier cases pass. In the F5 case, the screen naming `page` gets `DESIGN_INTERFACE_SHAPE_UNKNOWN`. The design naming neither fails with `DESIGN_STATE_UNCOVERED` for `web`/`page`/`ok` and `android`/`api_base_url`/`ok`. This is the deadlock.
+- **`M518` 2/2**, unchanged.
+
+**Fixtures the plan-check change could refuse** (a grep of `test/acceptance/` for `surface: 'ui'` and for interfaces assigned to modules): every `ui` module in the acceptance fixtures has `interfaces: []`. That covers `reference.mjs` `MODULES_JSON` (and so `modulesWith`, `SIX_MODULES_JSON`, `SC_MODULES_JSON`, M504's `AXES_MAP`), `retrofit45.mjs` `SHELF_MODULES_JSON`, `review45.mjs` and `real/m6-content.mjs` `pantryArchitecture`. No fixture other than the new ones declares an exposed interface.

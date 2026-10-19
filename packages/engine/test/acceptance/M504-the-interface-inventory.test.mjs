@@ -18,16 +18,23 @@
 //     between the commit and its record;
 // (g) `design: off`; `at_alpha`; a project with no `ui` module;
 // (h) an interface no `ui` module consumes or exposes.
+//
+// F5 (an engine finding of the paid M535 run; Sean's ruling 2026-10-19,
+// errata E169): interfaces `ui` modules expose with no `request`,
+// `response` or `errors`, in a map approved under `design: off` and the
+// policy then turned to `before_build`: listed `shape_known: false`, and no
+// state obligation (and so no fixture) derived from them, exactly as for
+// `shape: "unknown"` (D7 §12: "nothing is derived from it").
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { consume, decision, decisionsOfKind, reachBarrier } from './harness/decisions.mjs';
 import { createWithIdea, architectSession, specSession, waitPublished } from './harness/journey/drive.mjs';
-import { armBarrier } from './harness/journal.mjs';
+import { armBarrier, changePolicy } from './harness/journal.mjs';
 import { changedPaths } from './harness/repos.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
-import { INTERFACES, INVENTORY_PATH, MANIFEST_PATH, MODULES_JSON, ROADMAP_JSON, SPEC_MODULES, STAGES, specText } from './harness/design/reference.mjs';
+import { EXPOSED, INTERFACES, INVENTORY_PATH, MANIFEST_PATH, MODULES_JSON, ROADMAP_JSON, SPEC_MODULES, STAGES, modulesExposing, specText } from './harness/design/reference.mjs';
 import { createPantry, designEvents, gitJson, gitText, inventoryOf, openDesignDue, pantryArchitect, pantrySpec, readDesign, revisionsOfKind, stageWork, toPublished } from './harness/design/drive.mjs';
 
 const BEFORE_BUILD = Object.freeze({ design: 'before_build', phase_size: { min: 1, max: 5 } });
@@ -212,6 +219,28 @@ describe('M504 the interface inventory', () => {
     const { p } = await toPublished(fx, { policy: BEFORE_BUILD });
     const names = (inventoryOf(p).interfaces ?? []).map((i) => i.name).sort();
     assert.deepEqual(names, ['add-item', 'list-items'], `health is not listed (${names})`);
+  });
+  test('F5 (errata E169): ui modules exposing interfaces with no request, response or errors, the map approved under off and the policy turned to before_build: listed shape_known false, no obligation and no fixture derived from them', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p } = await toPublished(fx, { policy: { phase_size: { min: 1, max: 5 } }, name: 'pantry-exposed', files: { modules: modulesExposing({ web: [EXPOSED.page], mobile: [EXPOSED.apiBaseUrl] }) } });
+    assert.equal(gitText(p, INVENTORY_PATH), null, 'the fixture is live: no inventory under off');
+    await changePolicy(fx.engine, p.id, { design: 'before_build' });
+    for (let i = 0; i < 6 && designEvents(fx.home, 'design.inventory_derived', p.id).length === 0; i++) await tick(fx.engine, p.id, { rounds: 1 });
+    assert.equal(designEvents(fx.home, 'design.inventory_derived', p.id).length, 1, 'the fixture is live: the inventory derived on the policy revision');
+    const inventory = inventoryOf(p);
+    const UNSHAPED = [['page', 'web'], ['api_base_url', 'mobile']];
+    for (const [name, module] of UNSHAPED) {
+      const f = (inventory.interfaces ?? []).find((i) => i.name === name);
+      assert.ok(f, `${name}, which ${module} exposes, is listed (D7 §4.2) (${JSON.stringify(inventory.interfaces)})`);
+      assert.equal(f.module, module, `${name}: its module`);
+      assert.equal(f.shape_known, false, `${name}: shape_known false (B.9)`);
+      assert.ok(f.request === undefined && f.response === undefined, `${name}: no shape invented (${JSON.stringify(f)})`);
+    }
+    for (const target of ['web', 'android']) for (const name of ['list-items', 'add-item']) assert.ok((inventory.obligations ?? []).some((o) => o.target === target && o.interface === name && o.state === 'ok'), `the shaped interfaces still derive their obligations: ${name} ok on ${target}`);
+    for (const [name] of UNSHAPED) {
+      assert.deepEqual((inventory.obligations ?? []).filter((o) => o.interface === name), [], `${name}: no state obligation derived from an interface whose shape is not known (F5; Sean's ruling 2026-10-19, errata E169) (${JSON.stringify((inventory.obligations ?? []).filter((o) => o.interface === name))})`);
+      assert.deepEqual((inventory.fixtures ?? []).filter((x) => x.interface === name), [], `${name}: no fixture generated for it`);
+    }
   });
 });
 
