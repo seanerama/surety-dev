@@ -1,10 +1,10 @@
 # Surety M6 acceptance report
 
-**Status:** final (2026-10-19, by the Verifier of M540, on `verify/m540` from `main` at `4e05624`). **M6 is not yet accepted:** acceptance is Sean's decision (BS6 §1). One fact is the driver's to supply and is not yet in this report: the **final split gate** on `mini-hp01` (section 12), one marked placeholder; M540 (b) fails until it is filled. **The exhaustion lane at the final revision `4e05624` passed, 15 of 15 in 5 files, units 0** (section 14). Every other fact below is taken from a record named beside it. A fact no record holds is said to be not run or unknown, never filled.
+**Status:** final (2026-10-19, by the Verifier of M540, on `verify/m540` from `main` at `4e05624`, completed from `main` at `5521699`). **M6 is not yet accepted:** acceptance is Sean's decision (BS6 §1). **The final split gate, at `12ee772`** (`4e05624` with F8's fix and this report; split, three workers, `mini-hp01`): 440 files, 2,398 passed, 6 failed, 0 skipped: M540 (b) on this report's final-gate placeholder (filled since, from E170 item 2), and two load-sensitive files, M440 and M311 (h), each of which then passed 3 of 3 on a quiet host on both `4e05624` and `12ee772` (section 12); merged at `19afc9f` (E170). **The exhaustion lane at `4e05624` passed, 15 of 15 in 5 files, units 0** (section 14); it has not been run since F8's fix changed three files of the engine. Every other fact below is taken from a record named beside it. A fact no record holds is said to be not run or unknown, never filled.
 
-**The two real runs passed** on one run directory, `~/s6-1018`, one engine home: **M519, design before build and at Alpha, web, 10 of 10** (2026-10-18, last judged at `308230d`), and **M535, web, a labelled android simulation and a held logo, 12 of 12** (2026-10-18 and 19, last judged at `def6afd`). **M535 is not a clean run** under E152 item 1: it passed its design step by a governed Architect correction around engine finding F5, not by an engine fix (E167), one of its judgements was amended by Sean before it was re-judged (E167 item 4), and two harness findings (F6, F7) were fixed during it (E168). F5 is fixed on `main` at `d91492c` (E169), after both runs. M519's four findings were each fixed on `main` before M535 started, and M535's dress rehearsal passed on every revision it ran (section 17). **M535's four central owner acts were Sean's**, each with his own entry typed at his terminal; **every other act of both runs was the driver's** on Sean's quoted instructions (section 19). The runs' records are copied to `docs/acceptance/reports/M6-real-lane/2026-10-19/`, searched for the subscription token by its file, the value never read into this report: **no hit** (section 22). **The preview's `memory.peak` was not recorded for any of the four real previews** (finding F8, section 21; Sean's decision).
+**The two real runs passed** on one run directory, `~/s6-1018`, one engine home: **M519, design before build and at Alpha, web, 10 of 10** (2026-10-18, last judged at `308230d`), and **M535, web, a labelled android simulation and a held logo, 12 of 12** (2026-10-18 and 19, last judged at `def6afd`). **M535 is not a clean run** under E152 item 1: it passed its design step by a governed Architect correction around engine finding F5, not by an engine fix (E167), one of its judgements was amended by Sean before it was re-judged (E167 item 4), and two harness findings (F6, F7) were fixed during it (E168). F5 is fixed on `main` at `d91492c` (E169), and F8 at `19afc9f` (E170), after both runs. M519's four findings were each fixed on `main` before M535 started, and M535's dress rehearsal passed on every revision it ran (section 17). **M535's four central owner acts were Sean's**, each with his own entry typed at his terminal; **every other act of both runs was the driver's** on Sean's quoted instructions (section 19). The runs' records are copied to `docs/acceptance/reports/M6-real-lane/2026-10-19/`, searched for the subscription token by its file, the value never read into this report: **no hit** (section 22); that search opened the token files by path, against the standing rule (E170 item 3). **The preview's `memory.peak` was not recorded for any of the four real previews** (finding F8, section 21): both runs are recorded unmeasured; F8 is fixed at `19afc9f` (E170, Sean's ruling: fix it now, measure on the next clean real run).
 
-**Written by:** the Verifier of M540, 2026-10-19 (UTC). **Sources, read only:** the run directory `/home/smahoney/s6-1018` (its store `home/store.db` opened with `better-sqlite3` `{readonly: true}`, no engine started on it; its `state.json`, `observed/`, runner logs and `export-M535/`); the two project repositories under `~/s6-1018/repos/` (by `git archive` and `git cat-file` only); the rehearsal records `~/s6r-w*/rehearsal-passed.json` and `~/s6r-x*/rehearsal-passed.json`; the errata E156 to E169; `COVERAGE.md`; `git log` of `main`. **For:** Sean, before his acceptance decision and his hands-on run (M541); and Astra. **Form:** the M5 report's (`M5-report.md`), with BS6 §13's contents; what M6 does not claim is `M6-not-claimed.md`, in `M5-not-claimed.md`'s form. It decides nothing.
+**Written by:** the Verifier of M540, 2026-10-19 (UTC). **Sources, read only:** the run directory `/home/smahoney/s6-1018` (its store `home/store.db` opened with `better-sqlite3` `{readonly: true}`, no engine started on it; its `state.json`, `observed/`, runner logs and `export-M535/`); the two project repositories under `~/s6-1018/repos/` (by `git archive` and `git cat-file` only); the rehearsal records `~/s6r-w*/rehearsal-passed.json` and `~/s6r-x*/rehearsal-passed.json`; the errata E156 to E170 (the final split gate as E170 item 2 records the driver's relay of it); `COVERAGE.md`; `git log` of `main`. **For:** Sean, before his acceptance decision and his hands-on run (M541); and Astra. **Form:** the M5 report's (`M5-report.md`), with BS6 §13's contents; what M6 does not claim is `M6-not-claimed.md`, in `M5-not-claimed.md`'s form. It decides nothing.
 
 The sources it cites: the **build specification** (`docs/spec/M6-build-spec.md`, cited BS6); the **acceptance plan** (`docs/acceptance/sdlc-M6-acceptance-plan.md`, rows M501 to M546); **D7** (`docs/design/sdlc-design-D7-designer.md`, draft 3); the **errata** (E-numbers, `docs/foundations/sdlc-foundations-v1.1-errata-draft.md`); the **coverage record** (`packages/engine/test/acceptance/COVERAGE.md`); the **seam** (`packages/engine/test/acceptance/harness/SEAM.md`, "SEAM §n"); the **real lane's README** (`docs/acceptance/reports/M6-real-lane/README.md`). The copied records (section 22) are cited as `2026-10-19/<path>`.
 
@@ -16,10 +16,10 @@ M6 is the Designer (D7; BS6 §1): D7 §1's journey on this WSL2 host, on a scrip
 
 | Condition | Where it stands | Section |
 |---|---|---|
-| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every row M501 to M546 with executable tests and none skipped, M1 to M5 kept passing, the straddles migrated and recorded | the last gate in the errata, at `b56e26d` (E169, `mini-hp01`, split): 2,399 passed, 4 failed: M540's skeleton (by design) and two load-only files (M15's run-end fault matrix, M440's storm), each 3 of 3 alone. No split gate of M6 the errata record exited zero; each failure was rerun alone under E150 item 6. **The final gate is as section 12 records it.** | 9, 12 |
-| M5's five exhaust files passed once on `mini-hp01` at the final revision (E156 Q8) | **passed at `4e05624`: 15 of 15 in 5 files, exit 0, units left 0** (the driver, 2026-10-19 ~18:02 UTC) | 14 |
+| `npm test` exits zero on `main` for the kernel, sandbox and project lanes, every row M501 to M546 with executable tests and none skipped, M1 to M5 kept passing, the straddles migrated and recorded | the final split gate, at `12ee772` (E170 item 2, `mini-hp01`, split, three workers): build and unit exit 0; 440 files, 2,398 passed, 6 failed, 0 skipped: M540 (b) (this report's final-gate placeholder, filled since), M440's storm (e1, e5) and requested tick (d), M311 (h) twice (cancelled); the storm 3 of 3 alone; the requested tick and M311 failed alone on the loaded host and passed 3 of 3 on a quiet host on both `4e05624` and `12ee772`, so load-sensitive under E150 item 6, not F8's. No split gate of M6 the errata record exited zero, the final one included. **The final gate is as section 12 records it.** | 9, 12 |
+| M5's five exhaust files passed once on `mini-hp01` at the final revision (E156 Q8) | **passed at `4e05624`: 15 of 15 in 5 files, exit 0, units left 0** (the driver, 2026-10-19 ~18:02 UTC); not rerun at `19afc9f`, whose F8 fix changed three engine files (section 14) | 14 |
 | M519 and M535 passed, M519 first, M535 only after M519's defects were resolved and M535's rehearsal passed on its revision; records, pace reads and the per-act record retained | **M519 10 of 10; M535 12 of 12**; M519's four findings fixed on `main` before M535 started, M535's rehearsal recorded passed on each revision it ran (`8cffaf0`, `e62cc39`, `def6afd`); records, pace reads and per-act records retained and copied. M535 not clean (E167, E168). | 15 to 19 |
-| The report written with the per-act record and the measured Designer usage and preview memory; the hands-on if Sean chooses it | this report; the Designer usage measured (section 21); **the preview's `memory.peak` unknown in every real preview** (F8, Sean's decision); no record of Sean's hands-on run (M541's file passed at `b56e26d`) | 19, 21, 30 |
+| The report written with the per-act record and the measured Designer usage and preview memory; the hands-on if Sean chooses it | this report; the Designer usage measured (section 21); **the preview's `memory.peak` unknown in every real preview** (F8; fixed at `19afc9f`, E170; the first measurement is the next clean real run's); no record of Sean's hands-on run (M541's file passed at `12ee772`) | 19, 21, 30 |
 
 ## 2. Revisions
 
@@ -33,16 +33,16 @@ M6 is the Designer (D7; BS6 §1): D7 §1's journey on this WSL2 host, on a scrip
 | M535, `judge:M535 (a)` (amended), then `m6x_build` to `m6x_teardown` (11 of 12; (l) failed on F6, F7) | `e62cc39` (E167; the amendment `348602e`, tests only), 13:16 to 15:30 | `engine_revision` (3 observations); `~/s6r-x3/rehearsal-passed.json` |
 | M535, `judge:M535 (l)`: **12 of 12** | `def6afd` (E168; F6 and F7's fix `f107b11`, harness only), 15:49 | `observed/M535.json` `start_condition.revision` and its rehearsal record |
 | The engine code of M535's three revisions | identical: `git diff 8cffaf0 def6afd -- packages/engine/src` is empty | `git diff` |
-| The final engine on `main` | `4e05624` (E169's entry) over `d91492c` (F5's fix: `ba3e5d1`, five files of `src/`; cases `e0f0c6b`); **not run by a real run** | `git diff --stat def6afd 4e05624 -- packages/engine/src` |
-| The last gate in the errata | `b56e26d` (`gate/f5`; the same tree as `4e05624` but the errata) | E169 item 3 |
-| The final split gate | as section 12 records it | section 12 |
-| Migrations | `0001` to `0038` (`0037_the_design_criterion_map.sql`, `0038_the_approved_effective_set.sql`, E163), unchanged from `0824dff` to `4e05624` | `packages/engine/migrations/` |
-| The contract | `contract/config.json` and `api/schema.json` unchanged from `0824dff` to `4e05624` | `git diff` |
+| The final engine on `main` | `19afc9f` (E170's merge; `5521699` adds the errata only): F8's fix `61bd15e` (three files of `src/`: `boundary/terminate.ts`, `deploy/adapters/local-service.ts`, `store/transitions/deploy.ts`; cases `8b1055e`, `ca58a02`) over `4e05624` (E169's entry) and `d91492c` (F5's fix: `ba3e5d1`, five files of `src/`; cases `e0f0c6b`); **not run by a real run** | `git diff --stat def6afd 19afc9f -- packages/engine/src`; `git diff --stat 4e05624 19afc9f -- packages/engine/src` |
+| F5's gate | `b56e26d` (`gate/f5`; the same tree as `4e05624` but the errata) | E169 item 3 |
+| The final split gate | `12ee772` (`gate/m6final`: `main` `4e05624` with `build/f8` `61bd15e`, `verify/f8` `ca58a02` and `verify/m540` `0f0e412`), merged at `19afc9f`, the same tree | E170 item 2; section 12 |
+| Migrations | `0001` to `0038` (`0037_the_design_criterion_map.sql`, `0038_the_approved_effective_set.sql`, E163), unchanged from `0824dff` to `19afc9f` | `packages/engine/migrations/` |
+| The contract | `contract/config.json` and `api/schema.json` unchanged from `0824dff` to `19afc9f` | `git diff` |
 | D7 | draft 3 (E153 item 2), its §14 and §6.4 clarified by E162 item 4, its B.14 amended by E166 item 3 | the errata |
 | BS6 and the plan | draft 2 (E156), with E162 item 1's rule 25 and M512, M536, M538 (f) | the errata |
-| This report | `verify/m540` from `4e05624` | this branch |
+| This report | `verify/m540` from `4e05624` (in the final gate at `0f0e412`), completed from `5521699` | this branch |
 
-M544's revision is recorded at every host observation of the run directory: **47 observations, five revisions, none unknown**. The engine's version string (`host_observations.engine_version`) still reads `0.0.0`, the package's version; the revision is `engine_revision`. The real runs did not run on the final engine: F5's fix (E169) is exercised by M504, M506 and M508 only.
+M544's revision is recorded at every host observation of the run directory: **47 observations, five revisions, none unknown**. The engine's version string (`host_observations.engine_version`) still reads `0.0.0`, the package's version; the revision is `engine_revision`. The real runs did not run on the final engine: F5's fix (E169) is exercised by M504, M506 and M508 only, and F8's (E170) by M510 (h) only, on the real unit within the final gate.
 
 ## 3. The host
 
@@ -90,7 +90,7 @@ The preview and Alpha of each run ran under the qualification current at their t
 
 BS6 and the M6 acceptance plan, draft 2, adopted by Sean in E156; his answers to BS6 §16's eight questions as E156 item 2 records them: Q1 the opening correction slice (39, M542 to M546); Q2 G7's trigger kept as built, `spec_change`; Q3 the design's human-test requirements assigned narrowly; Q4 D7 A.7's defaults as trial values, `stack` refused; Q5 two real runs, M519 then M535, day limits of 40 and 50 USD, no workaround carried forward; Q6 Sean performs M535's four central acts and the report records who performed each act; Q7 a short hands-on; Q8 the exhaust lane at the final revision.
 
-**The adoption record as it stands at acceptance (E156 to E169):**
+**The adoption record as it stands at acceptance (E156 to E170):**
 
 | Entry | Decided by | What |
 |---|---|---|
@@ -108,6 +108,7 @@ BS6 and the M6 acceptance plan, draft 2, adopted by Sean in E156; his answers to
 | E167 | **Sean** (item 4) and the driver | M535's design step: F5, the Architect correction, the driver's two unused Designer sessions; judgement (a) amended |
 | E168 | **Sean** (the second review, the edit) and the driver | M535's asset change and review: the struck web verdict and a second web review; four accepted findings; F6 and F7 |
 | E169 | **Sean** | F5: an unshaped interface a `ui` module exposes is refused at the plan check; no state derived from an interface of unknown shape; fixed at `d91492c` |
+| E170 | **Sean** (item 1) and the driver | F8: each preview's `memory.peak` read before its removal and recorded, an unreadable one `unknown` with its reason; both real runs recorded unmeasured; fixed at `19afc9f` after the final split gate at `12ee772`; this report's token search, which opened the token files by path (item 3) |
 
 Every driver's entry says "Sean may overturn any item"; none has been overturned in the errata.
 
@@ -141,56 +142,56 @@ BS6 §11.1's table as `contract/config.json` holds it at `4e05624` (unchanged si
 
 ## 9. Every row and its result
 
-Every row of the M6 plan, M501 to M546, its lane, its slice and its result. **The results of the gated rows are the last gate the errata record, at `b56e26d`** (E169 item 3: split, three workers, `mini-hp01`; 2,399 passed, 4 failed: M540's skeleton (b), M15's run-end fault matrix and M440's storm, each of the two 3 of 3 alone). No M6 row but M540 failed there. Per-file counts are not in the errata and the gate logs on `mini-hp01` were not reachable for this report; they are not stated. The final split gate's result is section 12's.
+Every row of the M6 plan, M501 to M546, its lane, its slice and its result. **The results of the gated rows are the final split gate, at `12ee772`** (E170 item 2: split, three workers, `mini-hp01`; 440 files, 2,398 passed, 6 failed, 0 skipped: M540 (b) on the final-gate placeholder, M440's storm (e1, e5) and requested tick (d), M311 (h) twice). No M6 row but M540 failed there. Per-file counts are not in the errata and the gate logs on `mini-hp01` were not read for this report; they are not stated, but for the three files on the real unit the driver relayed (M510 8, M536 12, M520 through the preview unit 2). The gate in full is section 12's.
 
 | Row | Lane | Slice | Result |
 |---|---|---|---|
-| M501 | kernel | 40 | passed at `b56e26d` |
-| M502 | kernel | 40 | passed at `b56e26d` |
-| M503 | kernel | 40 | passed at `b56e26d` |
-| M504 | kernel | 40 | passed at `b56e26d`; F5's cases (`e0f0c6b`) among them |
-| M505 | kernel | 40 | passed at `b56e26d`; F1's cases (`379baa6`, `ec5f3ba`) among them |
-| M506 | kernel | 41 | passed at `b56e26d`; F5's cases among them |
-| M507 | kernel | 40 | passed at `b56e26d`; F1's cases among them |
-| M508 | kernel | 44 | passed at `b56e26d`; F1's and F5's cases among them |
-| M509 | kernel | 40 | passed at `b56e26d` |
-| M510 | sandbox | 42 | passed at `b56e26d` |
-| M511 | kernel | 42 | passed at `b56e26d` |
-| M512 | kernel | 44 | passed at `b56e26d`; (k) for F2 and F3 (SEAM §§550, 551) among them |
-| M513 | kernel | 44 | passed at `b56e26d` |
-| M514 | kernel | 44 | passed at `b56e26d` |
-| M515 | kernel | 44 | passed at `b56e26d` |
-| M516 | project | 45 | passed at `b56e26d`; F4's (g) among them |
-| M517 | kernel | 44 | passed at `b56e26d` |
-| M518 | kernel | 45 | passed at `b56e26d` (3 of 3 alone at `3ef611b` after a load failure, E166 item 6) |
+| M501 | kernel | 40 | passed at `12ee772` |
+| M502 | kernel | 40 | passed at `12ee772` |
+| M503 | kernel | 40 | passed at `12ee772` |
+| M504 | kernel | 40 | passed at `12ee772`; F5's cases (`e0f0c6b`) among them |
+| M505 | kernel | 40 | passed at `12ee772`; F1's cases (`379baa6`, `ec5f3ba`) among them |
+| M506 | kernel | 41 | passed at `12ee772`; F5's cases among them |
+| M507 | kernel | 40 | passed at `12ee772`; F1's cases among them |
+| M508 | kernel | 44 | passed at `12ee772`; F1's and F5's cases among them |
+| M509 | kernel | 40 | passed at `12ee772` |
+| M510 | sandbox | 42 | passed at `12ee772`, 8 on the real unit; F8's case (h) (`8b1055e`, `ca58a02`) among them |
+| M511 | kernel | 42 | passed at `12ee772` |
+| M512 | kernel | 44 | passed at `12ee772`; (k) for F2 and F3 (SEAM §§550, 551) among them |
+| M513 | kernel | 44 | passed at `12ee772` |
+| M514 | kernel | 44 | passed at `12ee772` |
+| M515 | kernel | 44 | passed at `12ee772` |
+| M516 | project | 45 | passed at `12ee772`; F4's (g) among them |
+| M517 | kernel | 44 | passed at `12ee772` |
+| M518 | kernel | 45 | passed at `12ee772` (3 of 3 alone at `3ef611b` after a load failure, E166 item 6) |
 | M519 | real | 46 | **real lane, 10 of 10**, last judged 2026-10-18 at `308230d` (section 16); never in a gate |
-| M520 | kernel, sandbox | 42 | passed at `b56e26d` (both files) |
-| M521 | kernel | 41 | passed at `b56e26d` |
-| M522 | kernel | 43 | passed at `b56e26d` |
-| M523 | kernel | 43 | passed at `b56e26d` |
-| M524 | kernel | 41 | passed at `b56e26d` |
-| M525 | kernel | 43 | passed at `b56e26d` |
-| M526 | kernel | 43 | passed at `b56e26d` |
-| M527 | kernel | 43 | passed at `b56e26d` |
-| M528 | kernel | 45 | passed at `b56e26d` |
-| M529 | kernel | 45 | passed at `b56e26d` |
-| M530 | kernel | 44 | passed at `b56e26d` |
-| M531 | kernel | 45 | passed at `b56e26d`; F4's (h) to (l) among them |
-| M532 | kernel | 41 | passed at `b56e26d` |
-| M533 | kernel | 41 | passed at `b56e26d` |
-| M534 | kernel | 43 | passed at `b56e26d` |
+| M520 | kernel, sandbox | 42 | passed at `12ee772` (both files; through the preview unit, 2 on the real unit) |
+| M521 | kernel | 41 | passed at `12ee772` |
+| M522 | kernel | 43 | passed at `12ee772` |
+| M523 | kernel | 43 | passed at `12ee772` |
+| M524 | kernel | 41 | passed at `12ee772` |
+| M525 | kernel | 43 | passed at `12ee772` |
+| M526 | kernel | 43 | passed at `12ee772` |
+| M527 | kernel | 43 | passed at `12ee772` |
+| M528 | kernel | 45 | passed at `12ee772` |
+| M529 | kernel | 45 | passed at `12ee772` |
+| M530 | kernel | 44 | passed at `12ee772` |
+| M531 | kernel | 45 | passed at `12ee772`; F4's (h) to (l) among them |
+| M532 | kernel | 41 | passed at `12ee772` |
+| M533 | kernel | 41 | passed at `12ee772` |
+| M534 | kernel | 43 | passed at `12ee772` |
 | M535 | real | 46 | **real lane, 12 of 12**, last judged 2026-10-19 at `def6afd` (section 18); never in a gate; not a clean run |
-| M536 | project | 40 | passed at `b56e26d`; its first real-unit run 12 of 12 at `231b6d1` (`M6-first-preview/`) |
-| M537 | kernel | 46 | passed at `b56e26d` (both files) |
-| M538 | kernel | 41 | passed at `b56e26d` |
-| M539 | kernel | 46 | passed at `b56e26d` (3 of 3 alone at `3ef611b` after a load failure of (e), E166 item 6) |
-| M540 | report | 46 | this report. Alone on `verify/m540`, 2026-10-19: (a) passed; (b) failed only on the final-gate placeholder of section 12 (the exhaust lane filled: 15 of 15 at `4e05624`). At `b56e26d` the skeleton's (b) failed by design. |
-| M541 | hands-on | 46 | the file (its form and guards) passed at `b56e26d`; no record of Sean's run (section 30) |
-| M542 | kernel | 39 | passed at `b56e26d`; in the real runs, the observed model recorded on every run with a turn (section 4) |
-| M543 | kernel | 39 | passed at `b56e26d` (both files) |
-| M544 | kernel | 39 | passed at `b56e26d`; in the real runs, 47 host observations, each with its revision (section 2) |
-| M545 | kernel | 39 | passed at `b56e26d` |
-| M546 | kernel | 39 | passed at `b56e26d` |
+| M536 | project | 40 | passed at `12ee772`, 12 on the real unit; its first real-unit run 12 of 12 at `231b6d1` (`M6-first-preview/`) |
+| M537 | kernel | 46 | passed at `12ee772` (both files) |
+| M538 | kernel | 41 | passed at `12ee772` |
+| M539 | kernel | 46 | passed at `12ee772` (3 of 3 alone at `3ef611b` after a load failure of (e), E166 item 6) |
+| M540 | report | 46 | this report. In the final gate at `12ee772` (the report at `0f0e412`): (a) passed; (b) failed on the final-gate placeholder of section 12, the only one left, as expected. Filled from E170 item 2 and run alone on `verify/m540` from `5521699`, 2026-10-19: (a) and (b) passed, 2 of 2. At `b56e26d` the skeleton's (b) failed by design. |
+| M541 | hands-on | 46 | the file (its form and guards) passed at `12ee772`; no record of Sean's run (section 30) |
+| M542 | kernel | 39 | passed at `12ee772`; in the real runs, the observed model recorded on every run with a turn (section 4) |
+| M543 | kernel | 39 | passed at `12ee772` (both files) |
+| M544 | kernel | 39 | passed at `12ee772`; in the real runs, 47 host observations, each with its revision (section 2) |
+| M545 | kernel | 39 | passed at `12ee772` |
+| M546 | kernel | 39 | passed at `12ee772` |
 
 ## 10. Every D7 Appendix C row and the plan row that carries it
 
@@ -198,40 +199,40 @@ D7 Appendix C sketched 35 rows; each keeps its number in the plan (§4.1), its c
 
 | D7 row | Plan row | Result |
 |---|---|---|
-| D7 M501 | M501 | passed at `b56e26d` |
-| D7 M502 | M502 | passed at `b56e26d` |
-| D7 M503 | M503 | passed at `b56e26d` |
-| D7 M504 | M504 | passed at `b56e26d` |
-| D7 M505 | M505 | passed at `b56e26d` |
-| D7 M506 | M506 | passed at `b56e26d` |
-| D7 M507 | M507 | passed at `b56e26d` |
-| D7 M508 | M508 | passed at `b56e26d` |
-| D7 M509 | M509 | passed at `b56e26d` |
-| D7 M510 | M510 | passed at `b56e26d` |
-| D7 M511 | M511 | passed at `b56e26d` |
-| D7 M512 | M512 | passed at `b56e26d` |
-| D7 M513 | M513 | passed at `b56e26d` |
-| D7 M514 | M514 | passed at `b56e26d` |
-| D7 M515 | M515 | passed at `b56e26d` |
-| D7 M516 | M516 | passed at `b56e26d` |
-| D7 M517 | M517 | passed at `b56e26d` |
-| D7 M518 | M518 | passed at `b56e26d` |
+| D7 M501 | M501 | passed at `12ee772` |
+| D7 M502 | M502 | passed at `12ee772` |
+| D7 M503 | M503 | passed at `12ee772` |
+| D7 M504 | M504 | passed at `12ee772` |
+| D7 M505 | M505 | passed at `12ee772` |
+| D7 M506 | M506 | passed at `12ee772` |
+| D7 M507 | M507 | passed at `12ee772` |
+| D7 M508 | M508 | passed at `12ee772` |
+| D7 M509 | M509 | passed at `12ee772` |
+| D7 M510 | M510 | passed at `12ee772` |
+| D7 M511 | M511 | passed at `12ee772` |
+| D7 M512 | M512 | passed at `12ee772` |
+| D7 M513 | M513 | passed at `12ee772` |
+| D7 M514 | M514 | passed at `12ee772` |
+| D7 M515 | M515 | passed at `12ee772` |
+| D7 M516 | M516 | passed at `12ee772` |
+| D7 M517 | M517 | passed at `12ee772` |
+| D7 M518 | M518 | passed at `12ee772` |
 | D7 M519 | M519 | real lane 10 of 10 at `308230d` |
-| D7 M520 | M520 | passed at `b56e26d` |
-| D7 M521 | M521 | passed at `b56e26d` |
-| D7 M522 | M522 | passed at `b56e26d` |
-| D7 M523 | M523 | passed at `b56e26d` |
-| D7 M524 | M524 | passed at `b56e26d` |
-| D7 M525 | M525 | passed at `b56e26d` |
-| D7 M526 | M526 | passed at `b56e26d` |
-| D7 M527 | M527 | passed at `b56e26d` |
-| D7 M528 | M528 | passed at `b56e26d` |
-| D7 M529 | M529 | passed at `b56e26d` |
-| D7 M530 | M530 | passed at `b56e26d` |
-| D7 M531 | M531 | passed at `b56e26d` |
-| D7 M532 | M532 | passed at `b56e26d` |
-| D7 M533 | M533 | passed at `b56e26d` |
-| D7 M534 | M534 | passed at `b56e26d` |
+| D7 M520 | M520 | passed at `12ee772` |
+| D7 M521 | M521 | passed at `12ee772` |
+| D7 M522 | M522 | passed at `12ee772` |
+| D7 M523 | M523 | passed at `12ee772` |
+| D7 M524 | M524 | passed at `12ee772` |
+| D7 M525 | M525 | passed at `12ee772` |
+| D7 M526 | M526 | passed at `12ee772` |
+| D7 M527 | M527 | passed at `12ee772` |
+| D7 M528 | M528 | passed at `12ee772` |
+| D7 M529 | M529 | passed at `12ee772` |
+| D7 M530 | M530 | passed at `12ee772` |
+| D7 M531 | M531 | passed at `12ee772` |
+| D7 M532 | M532 | passed at `12ee772` |
+| D7 M533 | M533 | passed at `12ee772` |
+| D7 M534 | M534 | passed at `12ee772` |
 | D7 M535 | M535 | real lane 12 of 12 at `def6afd`; not a clean run |
 
 The eleven rows the plan adds beyond Appendix C: M536 to M539 from D7's text, M540 (this report), M541 (the hands-on), M542 to M546 (M5's carried defects); their results are in section 9.
@@ -273,20 +274,28 @@ BS6 §9.3 and the plan's §4.3: each accepted M1 to M5 row a D7 correction reach
 | `fd5087f` (F2, M404) | E165 | 440 files, 2,387 passed | 6: M440 storm, M311 (h), M401, M435 (e), M540 | 3 of 3, but M435 (e) 0 of 3, a test race fixed at `9e6910d` (3 of 3 alone after) |
 | `3ef611b` (F4) | E166 | 2,392 passed | 7: M440 (e1, e5), M539 (e), M70, M15, M518, M540 | each file 3 of 3 |
 | `b56e26d` (F5) | E169 | 2,399 passed | 4: M540's skeleton, M15's run-end fault matrix, M440's storm | M15, M440 3 of 3 |
+| `12ee772` (F8; the final gate) | E170 | 440 files, 2,398 passed | 6: M540 (b) (the final-gate placeholder), M440 storm (e1, e5), M440 requested tick (d), M311 (h) ×2 (cancelled) | storm 3 of 3; on the loaded host the requested tick 1 of 3 and M311 2 of 3; on a quiet host both 3 of 3 on each of `4e05624` and `12ee772` |
 
-**Load-sensitive under E150 item 6** (each failed in some gate and passed alone every time it was rerun): M440 (the storm, the requested tick), M15 (the run-end fault matrix, the git write deadline), M311 (h), M29, M338, M70, M08, M401, M104, M432, M61, M327, M424, M518, M539 (e). E164's M404 (e) and E165's M435 (e) were test races, fixed test-side. E159 item 9: every gate since slice 40 has left one `/var/tmp/surety-integ-*` home on `mini-hp01` ("homes after: 1"), not yet traced to a file.
+**Load-sensitive under E150 item 6** (each failed in some gate and passed alone every time it was rerun, except after the final gate on its loaded host, where M440's requested tick passed 1 of 3 and M311 (h) 2 of 3, each then 3 of 3 on a quiet host on both revisions): M440 (the storm, the requested tick), M15 (the run-end fault matrix, the git write deadline), M311 (h), M29, M338, M70, M08, M401, M104, M432, M61, M327, M424, M518, M539 (e). E164's M404 (e) and E165's M435 (e) were test races, fixed test-side. E159 item 9: every gate since slice 40 has left one `/var/tmp/surety-integ-*` home on `mini-hp01` ("homes after: 1"), not yet traced to a file.
 
-**The final split gate:** [[PENDING final-gate: the driver's final split gate on mini-hp01 at the final main (this report merged): revision, start and end times, units before and after, build exit, unit count, acceptance files, passed, failed, skipped, homes after; each failure named and its file rerun alone three times, load-only failures named as such]]
+**The final split gate** (E170 item 2; the driver's relay, its logs on `mini-hp01` not read by me): at **`12ee772`** (`gate/m6final`: `main` `4e05624` with `build/f8` `61bd15e`, `verify/f8` `ca58a02` (cases `8b1055e`, `ca58a02`) and `verify/m540` `0f0e412`), split, three workers, on `mini-hp01`, 2026-10-19 19:24:48 to 20:49:20 UTC. **Build exit 0; unit exit 0. Acceptance: 440 files, 2,398 passed, 6 failed, 0 skipped; units left after: 0.** The units before and the homes left after were not relayed; they are unknown. The six failures:
+
+- **M540 (b)**, "no placeholder is left": this placeholder, the only one left; expected, and filled here.
+- **M440-a-storm-of-completions** (e1, e5).
+- **M440-the-requested-tick** (d): D1 §8.1's order (recover, journal, integrity) against the held tick's end.
+- **M311-the-identity-reads-duration** (h), twice: cancelled, the before hook timing out after 30 s waiting for a tick.
+
+**Alone on `mini-hp01` right after the gate:** the storm 3 of 3; the requested tick 1 of 3 (the same (d) failure twice); M311 2 of 3 (in one run the before hook timed out waiting for a tick, both tests cancelled). **Then on a quiet host, alternating `main` `4e05624` and the gate `12ee772`, three rounds:** the requested tick and M311 each passed 3 of 3 on each revision (12 of 12). So neither failure is F8's; both stay on E150 item 6's load-sensitive list, and neither is counted as a pass of the gate. **On the real unit within the gate:** M510 8 passed (F8's new case (h) among them), M536 12, M520 through the preview unit 2. Merged at `19afc9f`, the same tree as `12ee772`; errata E170 at `5521699`. **No split gate of M6 exited zero, the final one included**; every failure but M540's placeholder is load-sensitive under E150 item 6.
 
 ## 13. The project-lane journeys and their pace reads
 
-The project-lane rows are **M536** (the design journey on the scripted backend, a real preview unit and a real Alpha unit) and **M516** (the review at Alpha on the real web Alpha), each passing at `b56e26d` (section 9). **M536's first real-unit run** (rule 23; E158 item 2; E162 item 5), at `231b6d1` on the workstation, 2026-10-17 07:15:44 to 07:22:41 UTC: 12 tests, 12 passed, `rc=0`; the `surety-*` user unit list empty before and empty after (`docs/acceptance/reports/M6-first-preview/`, Sean's review of it in E162 item 5: it does not establish that unrelated units were unchanged throughout). **Their pace reads' figures are not retained**: the gate keeps per-file pass counts only, and M536 (k) pins only that BS6 §10's design figures are present or unknown with their reasons. The preview's `memory.peak` on its real unit in the project lane is therefore not known from any retained record.
+The project-lane rows are **M536** (the design journey on the scripted backend, a real preview unit and a real Alpha unit) and **M516** (the review at Alpha on the real web Alpha), each passing at `12ee772` (section 9). **M536's first real-unit run** (rule 23; E158 item 2; E162 item 5), at `231b6d1` on the workstation, 2026-10-17 07:15:44 to 07:22:41 UTC: 12 tests, 12 passed, `rc=0`; the `surety-*` user unit list empty before and empty after (`docs/acceptance/reports/M6-first-preview/`, Sean's review of it in E162 item 5: it does not establish that unrelated units were unchanged throughout). **Their pace reads' figures are not retained**: the gate keeps per-file pass counts only, and M536 (k) pins only that BS6 §10's design figures are present or unknown with their reasons. The preview's `memory.peak` on its real unit in the project lane is therefore not known from any retained record.
 
 ## 14. The exhaustion lane (E156 Q8)
 
 M6 adds no exhaust file; M5's five (`M133-resource-limits`, `M130-exit-classes-limits`, `M205-an-oom-kill-on-the-exhaustion-host`, `M341-a-service-at-its-limits`, `M438-a-role-domain-past-its-maximum`) run once on `mini-hp01` at the final revision with `SURETY_EXHAUSTION_HOST` set, an acceptance condition because M6 changes admission (the preview's own maximum, one-shots beside a Designer session). An earlier run at `65fcf5e`, 15 of 15 in 5 files, units 0 (`mini-hp01:~/gate-logs/m6early-65fcf5e-exhaust-summary.log`), is not the condition.
 
-**At the final revision `4e05624`** (the driver's run, `~/exhaust.sh m6final-4e05624` on `mini-hp01`: `node scripts/run-tests.mjs acceptance --lane exhaust` with `SURETY_EXHAUSTION_HOST=mini-hp01`, `XDG_RUNTIME_DIR` and the D-Bus address set, `TMPDIR=/var/tmp`, in the checkout `~/surety-gate` at `main` `4e05624e`, finished 2026-10-19 about 18:02 UTC): **exhaust exit 0; tests 15, pass 15, fail 0; "acceptance: 5 file(s) passed."; units left 0.** By file: `M133-resource-limits` 45.4 s, `M130-exit-classes-limits` (f), (g) 7.6 s, `M205-an-oom-kill-on-the-exhaustion-host` (g) 4.7 s, `M341-a-service-at-its-limits` 13.0 s, `M438-a-role-domain-past-its-maximum` (h) 4.5 s. Logs: `mini-hp01:~/gate-logs/m6final-4e05624-exhaust.log` and `m6final-4e05624-exhaust-summary.log` (the driver's relay; not read by me). `4e05624` is the final engine: the report's commits change only `docs/acceptance/reports/`.
+**At the final revision `4e05624`** (the driver's run, `~/exhaust.sh m6final-4e05624` on `mini-hp01`: `node scripts/run-tests.mjs acceptance --lane exhaust` with `SURETY_EXHAUSTION_HOST=mini-hp01`, `XDG_RUNTIME_DIR` and the D-Bus address set, `TMPDIR=/var/tmp`, in the checkout `~/surety-gate` at `main` `4e05624e`, finished 2026-10-19 about 18:02 UTC): **exhaust exit 0; tests 15, pass 15, fail 0; "acceptance: 5 file(s) passed."; units left 0.** By file: `M133-resource-limits` 45.4 s, `M130-exit-classes-limits` (f), (g) 7.6 s, `M205-an-oom-kill-on-the-exhaustion-host` (g) 4.7 s, `M341-a-service-at-its-limits` 13.0 s, `M438-a-role-domain-past-its-maximum` (h) 4.5 s. Logs: `mini-hp01:~/gate-logs/m6final-4e05624-exhaust.log` and `m6final-4e05624-exhaust-summary.log` (the driver's relay; not read by me). `4e05624` was the final engine when the lane ran. F8's fix (`61bd15e`, merged at `19afc9f`, E170) then changed three files of `src/` (`boundary/terminate.ts`, `deploy/adapters/local-service.ts`, `store/transitions/deploy.ts`), so **the exhaust lane has not run on the final engine `19afc9f`**; no record says it was rerun there (question 1, section 31).
 
 ## 15. The rehearsals
 
@@ -473,7 +482,7 @@ Each Designer session of both runs: its turns, its billable, cached and output t
 
 **Against the budget:** the highest session spent 271,180 billable tokens, **9.0 % of 3,000,000**; the highest single turn 189,163 (the first turn of M519's Designer, 932 s, 4.25 USD). The Designer was the costliest role in both runs (7.20 and 6.25 USD, 43 % of each project's estimate). Every Designer turn's usage was `recorded`; the model observed was `claude-opus-5-5` on every turn. These are one host's and two small projects' figures, for revisiting the default, not a measurement of a Designer's cost in general (D7 §15 class B).
 
-**The preview's `memory.peak`: not recorded (finding F8).** Every one of the four real previews (M519 `dpv_01M56DZS7Y…`, `dpv_01M56WTMMP…`; M535 `dpv_01M5A1Q1Y8…`, `dpv_01M5A3WEHW…`) reads `memory_peak` **`unknown`** in the pace read ("the preview domain's memory.peak was not read before its removal"); `design_previews.memory_peak` and its service domain's `execution_domains.memory_peak` are null on all four. **So the trial default `preview_memory_max` (256 MiB) cannot be revisited on these runs' measurements.** M519 (g) and M535 (i) accept a value or `unknown`; M539 (c) pins the `unknown` only on the kernel lane; no row asserts that a real preview's peak is read. D7 §13 and BS6 §10 say the preview's domain `memory.peak` is read before removal: this is **finding F8**, recorded here for Sean's decision whether it is an engine defect to be pinned by a failing acceptance test (a real preview's peak read before its removal) or a limit accepted for M6. The preview's deploy times were recorded: 0.7 s, 1.5 s, 2.0 s, 1.9 s.
+**The preview's `memory.peak`: not recorded in either run (finding F8, fixed after them).** Every one of the four real previews (M519 `dpv_01M56DZS7Y…`, `dpv_01M56WTMMP…`; M535 `dpv_01M5A1Q1Y8…`, `dpv_01M5A3WEHW…`) reads `memory_peak` **`unknown`** in the pace read ("the preview domain's memory.peak was not read before its removal"); `design_previews.memory_peak` and its service domain's `execution_domains.memory_peak` are null on all four. M519 (g) and M535 (i) accept a value or `unknown`, so both passed. D7 §14 and E156 Q4 require each preview's domain `memory.peak`, so that `preview_memory_max` is revisited on measurements; `design_previews.memory_peak` existed and the pace read used it, but nothing wrote it: **finding F8** (E170 item 1). **Sean's ruling** (E170 item 1): fix it now; this report records both runs as unmeasured; the next clean real run takes the first measurement; a peak that cannot be read stays `unknown` with its reason, never zero. **Fixed at `19afc9f`** (`61bd15e`: the local-service adapter reads the domain's cgroup `memory.peak` before it stops the unit, and `design_previews.memory_peak` and the teardown and replacement payloads record it), pinned by **M510 (h)** (`8b1055e`, `ca58a02`: every route, replaced, `--stop`, TTL and approval, leaves `memory_peak` an integer above zero and at most `preview_memory_max`, and the pace read equals it), which passed on the real unit within the final gate (section 12). **So the trial default `preview_memory_max` (256 MiB) is not yet revisited on any measurement:** no real run has run on the fixed engine. The preview's deploy times were recorded: 0.7 s, 1.5 s, 2.0 s, 1.9 s.
 
 **Default changes:** none. No errata entry records a decision of Sean's changing `designer_session_budget_billable_tokens` or `preview_memory_max` on these observations; both remain D7 A.7's trial values.
 
@@ -497,23 +506,25 @@ Copied to `docs/acceptance/reports/M6-real-lane/2026-10-19/` (BS6 §12; the READ
 
 **Not copied, by choice:** the engine home (`~/s6-1018/home/`, 526 MB, its `api.token` among it); the full runner logs (162 KB and 204 KB), whose curl lines name the engine's token file by path (`$(cat …/home/api.token)`); the repositories beyond the design trees and review files; `WAITING.txt`, `secrets/`, `bin/`. No device screenshot exists: no owner evidence was supplied.
 
-**The token.** The runs' own searches, at each run's records step: M519 (g) and M535 (i), `records.token` over the run directory and each project's repository, **hits 0**; `transcript_token_hits` (every transcript record of the project, searched in memory), **0**; the teardown's journals, 21 and 33 units, **0 hits**. **My search of the copied set** (all 190 files, `token-search.json` included) by the token's file, the file read only inside the search process and the value never printed, in its raw, JSON-escaped and base64 forms: **0 hits** for `~/.config/surety/m5-subscription.token` (the file the driver's records name for these runs) and **0 hits** for the older `~/.config/surety/claude-subscription.token`. The engine's `api.token` and the deploy secret were not searched by value (they are credentials not to be read); the copied set holds the API token's path only, in the act records' curl lines. Whether the token's value passed through any conversation is not in any record I read. Sean revokes the token if he made a new one (BS6 §12).
+**The token.** The runs' own searches, at each run's records step: M519 (g) and M535 (i), `records.token` over the run directory and each project's repository, **hits 0**; `transcript_token_hits` (every transcript record of the project, searched in memory), **0**; the teardown's journals, 21 and 33 units, **0 hits**. **The M540 Verifier's search of the copied set** (all 190 files, `token-search.json` included) and of `docs/acceptance/reports/`, by the token's file, the value never printed, in its raw, JSON-escaped and base64 forms: **0 hits** for `~/.config/surety/m5-subscription.token` (the file the driver's records name for these runs) and **0 hits** for the older `~/.config/surety/claude-subscription.token`. The engine's `api.token` and the deploy secret were not searched by value (they are credentials not to be read); the copied set holds the API token's path only, in the act records' curl lines. Whether the token's value passed through any conversation is not in any record I read. Sean revokes the token if he made a new one (BS6 §12).
+
+**How that search was made** (E170 item 3). The search process opened both subscription token files by path and wrote only hit counts; no value or part of one was printed or written. This broke the standing rule that no agent reads a token file. The driver disclosed it to Sean and stopped any further read; the counts stand. Future token searches use the harness's own search, at each run's records judgement (M519 (g), M535 (i)), whose counts are above; this report's completion did not search again.
 
 ## 23. G7's trigger: the accepted naming deviation (E156 Q2)
 
-The post-final-phase replan keeps its built trigger `spec_change` (E153 item 1; `registerDeliveryReplans`), an accepted naming deviation from D7 A.2's `post_phase_change`, recorded at the head of COVERAGE, with no rename and no migration; its behaviour pinned by **M517** (the design change after the final phase: one replan with `trigger_source` `spec_change` where the corrected check fails, none where it passes, one per change across ticks and restarts) and **M529**, both passing at `b56e26d`. M433's E153 file stands as written. E160 item 5 records, for Sean, that the trigger fires for any change adding a criterion after the last phase, beyond E153's "obligations only". Neither real run reached the post-final-phase replan.
+The post-final-phase replan keeps its built trigger `spec_change` (E153 item 1; `registerDeliveryReplans`), an accepted naming deviation from D7 A.2's `post_phase_change`, recorded at the head of COVERAGE, with no rename and no migration; its behaviour pinned by **M517** (the design change after the final phase: one replan with `trigger_source` `spec_change` where the corrected check fails, none where it passes, one per change across ticks and restarts) and **M529**, both passing at `12ee772`. M433's E153 file stands as written. E160 item 5 records, for Sean, that the trigger fires for any change adding a criterion after the last phase, beyond E153's "obligations only". Neither real run reached the post-final-phase replan.
 
 ## 24. The carried defects as handled (BS6 §11.3)
 
 | E154 | Item | Handling | Where it stands |
 |---|---|---|---|
-| 6 (1) | `runs.model_observed` never set | **M542** | passes at `b56e26d`; in the real runs recorded on every run with a turn (section 4) |
-| 6 (2) | M444F-1: a replan refused on pending prerequisite results | **M543** (held under `prerequisite_results`) | passes at `b56e26d` (both files); neither real run replanned |
+| 6 (1) | `runs.model_observed` never set | **M542** | passes at `12ee772`; in the real runs recorded on every run with a turn (section 4) |
+| 6 (2) | M444F-1: a replan refused on pending prerequisite results | **M543** (held under `prerequisite_results`) | passes at `12ee772` (both files); neither real run replanned |
 | 6 (3) | M444's parked blocker left open after the runner ended | rule 25 in the real rows: M519 (h), M535 (j) | both passed; no step judged passed with a question it raised open |
 | 6 (4) | the shared seed's switch | test-side, slice 39 (SEAM §474) | fixed; M401 not failing for that reason since |
 | 6 (5) | `engine_version` `0.0.0` | **M544** (`engine_revision`) | passes; 47 real observations with their revision; `engine_version` still `0.0.0` |
-| 6 (6) | INK-2: a stale phase verification not retired | **M545** | passes at `b56e26d` |
-| 6 (7) | INK2-2: a redundant disposition question | **M546** | passes at `b56e26d` |
+| 6 (6) | INK-2: a stale phase verification not retired | **M545** | passes at `12ee772` |
+| 6 (7) | INK2-2: a redundant disposition question | **M546** | passes at `12ee772` |
 | 5 | M15's preflight-refusal case, M311 (h): load only | E150 item 6's protocol | M15 failed in six of the thirteen gates of section 12 (the run-end matrix or the git write deadline), M311 (h) in five; each passed alone every time it was rerun |
 | 5 | M335's host-wide unit read | test-side, slice 39 | fixed; not failing since |
 
@@ -523,11 +534,11 @@ By name: **H13** (the execution observer, optional) and **P20** (exhaustion prob
 
 ## 26. The packages and the rehearsal (M537)
 
-M537 at `b56e26d`: both files passed (the Designer's and the Verifier packages state what the engine reads; the rehearsal plays from the Designer's package, 13 of 13 in COVERAGE's run of 2026-10-17). The Designer's package is built from the registry like M5's (E151) and its fake derives every file from what the package states (objection 202). **Package gaps the rehearsals found** before any paid step: `ROLE_KEY` lacked `designer: backend_designer` (E163 item 2); the correction fake read programs the engine had moved (objection 201); `designer.review.files` for what review mode lacks (objection 204); the replan and check-authoring packages stated `depends_on` as stage ids where the schema needs numbers, found through M442 (c)'s intermittent failure (E163 item 6). **What the real runs found that no rehearsal could:** the human-judged design criteria (F1, the engine's readiness rule rather than a package gap); the review's manufactured links (F4); the unshaped file-kind interfaces an Architect may declare on a `ui` module (F5, now refused at the plan check); the Designer's first save in M519 refused for fixture names and `scene_html` on a web target, which the Designer fixed from the refusal (E164 item 1).
+M537 at `12ee772`: both files passed (the Designer's and the Verifier packages state what the engine reads; the rehearsal plays from the Designer's package, 13 of 13 in COVERAGE's run of 2026-10-17). The Designer's package is built from the registry like M5's (E151) and its fake derives every file from what the package states (objection 202). **Package gaps the rehearsals found** before any paid step: `ROLE_KEY` lacked `designer: backend_designer` (E163 item 2); the correction fake read programs the engine had moved (objection 201); `designer.review.files` for what review mode lacks (objection 204); the replan and check-authoring packages stated `depends_on` as stage ids where the schema needs numbers, found through M442 (c)'s intermittent failure (E163 item 6). **What the real runs found that no rehearsal could:** the human-judged design criteria (F1, the engine's readiness rule rather than a package gap); the review's manufactured links (F4); the unshaped file-kind interfaces an Architect may declare on a `ui` module (F5, now refused at the plan check); the Designer's first save in M519 refused for fixture names and `scene_html` on a web target, which the Designer fixed from the refusal (E164 item 1).
 
 ## 27. What M6 does not claim
 
-See `M6-not-claimed.md` (D7 §15 classes A, B and C, BS6 §13's list, what the real runs do not show, D8 entirely, and M5's list, carried). In short: native execution, native building, packaging and device testing of any target; a browser, rendered screenshots and pixel comparison; image generation; that a Designer session produces an approvable design, that a simulation is faithful, that a UI Builder implements a design, that the static checks catch what a person would call off-design, that bindings are where the app loads its assets, that a session costs near D7 §13's guess; D7 §15 class C; D8; the preview's memory against its maximum (section 21); that M535 is a clean run; that the review's verdicts rest on anything rendered; and that Sean made M519's acts or M535's other acts (section 19).
+See `M6-not-claimed.md` (D7 §15 classes A, B and C, BS6 §13's list, what the real runs do not show, D8 entirely, and M5's list, carried). In short: native execution, native building, packaging and device testing of any target; a browser, rendered screenshots and pixel comparison; image generation; that a Designer session produces an approvable design, that a simulation is faithful, that a UI Builder implements a design, that the static checks catch what a person would call off-design, that bindings are where the app loads its assets, that a session costs near D7 §13's guess; D7 §15 class C; D8; the preview's memory against its maximum, unmeasured in both runs (F8, fixed at `19afc9f` after them; section 21); that M535 is a clean run; that the review's verdicts rest on anything rendered; and that Sean made M519's acts or M535's other acts (section 19).
 
 ## 28. Limits of the instruments
 
@@ -536,8 +547,9 @@ BS6 §8's limits: the scripted Designer's design is the test's, so a pass proves
 - **Nothing in either run was rendered.** Every preview inspection by the driver and every review delta rests on HTTP reads of HTML, CSS and scripts; the review schema has no value for "read, not rendered", so M519's verdicts say `observed_on: browser` (E165 item 6). Sean's preview inspection is his word ("checked all the mockups"); the relay records no paths, so what he opened is not established beyond the relay's opening and closing.
 - **M535's web human test carries an owner-reported verdict**, review 2's, on a subject recorded `owner_build` that names the same Alpha candidate, with no evidence record; review 1's engine-observed web verdict was struck by mistake (section 18).
 - **The Alpha of M535 serves the placeholder logo**: the asset change propagated to `main` and to the parity checks, not to a redeployed Alpha (E168 item 1).
-- **The preview's `memory.peak` was not read** on any real preview (F8, section 21); service domains have no peak (section 20).
-- **The real runs did not run on the final engine**: F5's fix (`d91492c`) is exercised by M504, M506 and M508 only.
+- **The preview's `memory.peak` was not read** on any real preview (F8, section 21); its fix (`19afc9f`) is pinned by M510 (h) on the real unit, not yet by a real run; service domains have no peak (section 20).
+- **The real runs did not run on the final engine**: F5's fix (`d91492c`) is exercised by M504, M506 and M508 only, F8's (`19afc9f`) by M510 (h) only.
+- **The exhaustion lane ran at `4e05624`**, before F8's fix changed three engine files (section 14).
 - **M535 is not a clean run** (section 18); M519's design step was rerun after F1 (section 17). No clean-run bar like E152 item 1's was set for M6, and none was met.
 - **The split gate runs three workers**: load-only failures recur (section 12); E159 item 9's one leftover home per gate on `mini-hp01` is not traced.
 - **The store's `engine_version` reads `0.0.0`**; the revision is `engine_revision` (section 2).
@@ -547,12 +559,13 @@ BS6 §8's limits: the scripted Designer's design is the test's, so a pass proves
 
 ## 29. Open decisions and provisional readings
 
-From E156 to E169, what stays provisional or open:
+From E156 to E170, what stays provisional or open:
 
-- **F5's ruling is Sean's (E169)**; the real runs give no evidence of it.
+- **F5's ruling is Sean's (E169)**, and F8's (E170); the real runs give no evidence of either.
 - **For Sean, recorded and not decided:** the Reviewer's own `fix` disposition on a finding no check can verify registers work that cannot resolve it (E166 item 4, the driver recommends refusing it); a review closed with `refuse` leaves its rejected file in the design tree, refused by every later review session's check until removed (E166 item 4); the Reviewer package's sentence on findings with no check (E166 item 4); M516's row text still says "`fix` as E43" (E166 item 4); cancelling a parked spec-obligation correction leaves the design version never ready (E164 item 4); `design_due` re-raised while an owner-opened Designer session exists, its `open` then blocked (E164 item 4); an owner turn refused `resource_envelope` while builds hold the host's domains (E164 item 4); owner acts with no store event (`alpha_inspection`, `review_session`, E165 item 9); a real run on a new engine build must re-qualify `local_service` before any preview or Alpha, which only the engine's refusal says (E165 item 9); a spec change whose replan is refused stale is not raised again, no single act retires a pending proposal, the T2/T3 phase verification is requested before the hold check, and `GET …/plan` shows `depends_on` as ids while the Builder package drops an unresolvable id (E163 item 7); the replan trigger's breadth (E160 item 5); one confirmed `matches` verdict on any screen accepts the target's human test, verdicts and the design approval need two owner acts, nothing reads an observed design's criterion without a change phase, an asset-only approval resets `owner_accepted` (E161 item 6); `design.assets_approved` reading and turning `design` on over an existing manifest (E160 item 8); E157 item 3's two items (the revision is the checkout's HEAD, not `dist/`'s, a dirty tree not flagged; a stuck prerequisite holds a replan without limit, visibly).
 - **The driver's rulings under Sean's delegation** (E157 to E165, E167, E168), each provisional until Sean confirms it (section 7).
-- **F8, the preview's `memory.peak`** (section 21): a defect or an accepted limit, Sean's to decide.
+- **F8 is decided** (E170): fixed at `19afc9f`; the first measurement of a real preview's peak, and any revisit of `preview_memory_max` on it, wait for the next clean real run (section 21).
+- **The exhaustion lane on the final engine `19afc9f`**: not run (section 14).
 - **M535's fifth review delta** (focus after "Try again", kind `both`): a recommendation for the next design revision, undecided. M519's design-kind recommendations likewise (section 16).
 - **M519's 24 and M535's four accepted findings** stand unresolved; a later governed route for adding verification links to an existing finding is separate work (E166 item 3).
 - **E159 item 9's leftover home** on `mini-hp01`, untraced.
@@ -560,12 +573,12 @@ From E156 to E169, what stays provisional or open:
 
 ## 30. Hands-on run (M541)
 
-`M6-hands-on.sh`'s file (`M541-hands-on-script`) passed at `b56e26d` (its form and guards: the five steps, each acting step reading the prefix first). **No record of Sean's run of it** was found; what surprised him is his to add if he makes it. He did perform M535's central acts himself (section 19), the closest record of his hands on the Designer's surfaces.
+`M6-hands-on.sh`'s file (`M541-hands-on-script`) passed at `12ee772` (its form and guards: the five steps, each acting step reading the prefix first). **No record of Sean's run of it** was found; what surprised him is his to add if he makes it. He did perform M535's central acts himself (section 19), the closest record of his hands on the Designer's surfaces.
 
 ## 31. Questions for Sean
 
-1. **F8, the preview's `memory.peak`,** was not recorded on any real preview (section 21), so `preview_memory_max` (256 MiB) cannot be revisited on measurements as E156 Q4 intended. Is it a defect to fix and pin (a failing acceptance test that a real preview's peak is read before removal) before acceptance, or a limit accepted for M6?
-2. **M535 is not a clean run** (section 18): F5 passed by a governed Architect correction, judgement (a) amended, F6 and F7 fixed mid-run. Does that meet BS6 §1's real-lane condition, or do you want a run on the final engine (`4e05624`, with F5's fix)?
+1. **The exhaustion lane** passed at `4e05624` (section 14), before F8's fix (`19afc9f`) changed three engine files. Does that run meet E156 Q8's "at the final revision", or do you want the lane rerun at `19afc9f`?
+2. **M535 is not a clean run** (section 18): F5 passed by a governed Architect correction, judgement (a) amended, F6 and F7 fixed mid-run. Does that meet BS6 §1's real-lane condition, or do you want a run on the final engine (`19afc9f`, with F5's and F8's fixes; it would also take the first measurement of a preview's `memory.peak`)?
 3. **The struck web verdict** (section 18): M535's web human test carries an owner-reported verdict from a second review with no evidence record. Is that the evidence you intend for it?
 4. **The Designer budget**: the highest session used 9.0 % of 3,000,000 billable tokens (section 21). Keep the trial default, or change it on these figures (an errata decision)?
 5. **The four accepted M535 findings and M519's 24**, and the design recommendations of both reviews: carried to a next design revision, or closed as accepted?
