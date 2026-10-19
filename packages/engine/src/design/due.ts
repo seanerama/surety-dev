@@ -30,6 +30,7 @@ import { designPolicyOf } from './policy.js';
 import { currentStaleScreens } from './stale.js';
 import { deferredBatches, readinessWaits } from './approval.js';
 import { currentInventory } from './store.js';
+import { registerCorrectionAgain } from '../spec/change.js';
 
 export const DESIGN_DUE_KEYS = ['stage', 'held_stages', 'stale_screens', 'policy_revision', 'inventory_failure', 'reason'];
 
@@ -141,6 +142,10 @@ export const DESIGN_DUE: KindSpec = {
           : readiness.length > 0
             ? `${held.length} UI stage(s) wait for the approved design to be ready.`
             : `${held.length} UI stage(s) wait for an approved design before they build.`;
+    // E171 item 5 H4 (Sean's ruling; SEAM.md §552): a design whose
+    // correction ended without a covering version (correction_ended) may
+    // have it registered again; offered only in that state.
+    const ended = endedCorrections(readiness);
     const also = [
       ...readiness.map((w) => `Design version ${w.version} is approved and not ready yet: it waits on ${w.detail.join('; ')}; next: ${w.next_action}.`),
       ...(deferred.length > 0 ? [`A design batch is not raised yet: it waits for ${deferred.reduce((n, b) => n + b.pending_corrections.length, 0)} pending correction(s) of the protected checks; answer those first.`] : []),
@@ -149,7 +154,7 @@ export const DESIGN_DUE: KindSpec = {
     ].join(' ');
     return {
       manifest,
-      question: `${what}${also ? ` ${also}` : ''} Open a Designer session (${command}), waive the design for the held stages, turn design off, or ask again later.`,
+      question: `${what}${also ? ` ${also}` : ''} ${ended.length > 0 ? 'Register the correction again, open' : 'Open'} a Designer session (${command}), waive the design for the held stages, turn design off, or ask again later.`,
       options: [
         {
           key: 'open',
@@ -174,6 +179,16 @@ export const DESIGN_DUE: KindSpec = {
           consequence: 'Asked again at a time you give, at most design_due_max_defer from now, or at once when a new cause appears (a stage held, a screen staled, a design rejected or sent back).',
           effect: { project },
         },
+        ...(ended.length > 0
+          ? [
+              {
+                key: 'correct',
+                label: 'Correct again',
+                consequence: `The Verifier's correction of the protected checks for the design's change is registered again at its next generation, with the same request, criteria and checks (${ended.map((w) => w.spec_change_request).join(', ')}); the design becomes ready once its proposal is applied.`,
+                effect: { project, register: 'check_correction', spec_change_requests: ended.map((w) => w.spec_change_request), after: ended.map((w) => w.waits_on.work_item ?? null) },
+              },
+            ]
+          : []),
       ],
       evidence: evidence as never,
     };
@@ -214,6 +229,12 @@ export const DESIGN_DUE: KindSpec = {
       writeDueState(tx, project, { ...state, deferred: deferralBinding(tx, project, { until: until!, decision: d.id }) });
       return consumed(d);
     }
+    if (option === 'correct') {
+      // The correction registered again for each design whose readiness
+      // waits on its ended correction (the preview offered it only then).
+      for (const w of endedCorrections(readinessWaits(tx.db, project))) registerCorrectionAgain(tx, { project, request: w.spec_change_request!, decision: d.id });
+      return { ...consumed(d), effects: [{ kind: 'tick' }] };
+    }
     if (option === 'policy_off') {
       // A policy revision through the policy's own commit (D1 §11.4): the
       // widening route's effect, with the change named (a narrowing: it
@@ -229,6 +250,10 @@ export const DESIGN_DUE: KindSpec = {
     return { ...consumed(d), effects: [{ kind: 'tick' }] };
   },
 };
+
+// The readiness waits on a correction that ended with no covering version.
+const endedCorrections = <W extends { waits_on: { kind: string; work_item?: unknown }; spec_change_request: string | null }>(waits: W[]): (W & { waits_on: { work_item?: string } })[] =>
+  waits.filter((w) => w.waits_on.kind === 'correction_ended' && w.spec_change_request !== null) as (W & { waits_on: { work_item?: string } })[];
 
 const untilRefused = (reason: string, max: number, subject: Record<string, unknown> = {}) =>
   new Refusal(422, 'invalid_value', reason, `Give a time from now to at most design_due_max_defer (${max} s) from now, as YYYY-MM-DDTHH:MM[:SS[.sss]] with Z or an offset; nothing was changed.`, { field: 'until', ...subject });

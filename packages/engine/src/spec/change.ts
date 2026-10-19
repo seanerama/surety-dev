@@ -1586,6 +1586,27 @@ export function lateObligations(tx: Tx, args: { project: string; proposal: strin
   return n;
 }
 
+// design_due's `correct` (E171 item 5 H4; Sean's ruling of 2026-10-19;
+// SEAM.md §552): a change's `spec_obligation` correction that ended without
+// applying a covering version registered again, at its next generation,
+// with the same request, criteria and checks (its latest generation's
+// subject and evidence). Nothing when one is still pending or none was
+// ever registered. Returns the new item's id, or null.
+export function registerCorrectionAgain(tx: Tx, args: { project: string; request: string; decision: string }): string | null {
+  const items = tx.db
+    .prepare(`SELECT "id", "status", "subject", "trigger_evidence", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? ORDER BY "trigger_generation", "seq"`)
+    .all(args.project, args.request) as { id: string; status: string; subject: string; trigger_evidence: string | null; trigger_generation: number }[];
+  const last = items[items.length - 1];
+  if (!last || items.some((w) => w.status !== 'complete' && w.status !== 'cancelled')) return null;
+  const evidence = parseJson<Record<string, unknown>>(last.trigger_evidence) ?? {};
+  const made = observeTrigger(
+    tx,
+    { project: args.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: args.request, trigger_generation: last.trigger_generation + 1, subject: parseJson<Record<string, unknown>>(last.subject) ?? { request: args.request }, trigger_evidence: evidence, chain: 0 },
+    { spec_change_request: args.request, decision: args.decision, from_work_item: last.id, criteria: evidence.criteria ?? null, checks: evidence.checks ?? null },
+  );
+  return made.created ? made.work_item.id : null;
+}
+
 // What a protected proposal captured before a specification change's
 // approval was authored against (the driver's ruling (A), slice 37): the
 // specification version current at its capture, and the criteria the

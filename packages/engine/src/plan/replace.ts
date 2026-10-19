@@ -433,6 +433,70 @@ export function settleReplacements(tx: Tx, project: string): void {
       .run(JSON.stringify({ disposition: 'fix', linked_issue: null, defer_target: null, run: by }), f.id);
     raiseQuestion(tx, { project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id });
   }
+  restaleSpecChanges(tx, project);
+}
+
+// A spec change's replan whose proposal went stale (E171 item 5 H4; Sean's
+// ruling of 2026-10-19; SEAM.md §552): a competing replacement published,
+// or the specification, architecture or roadmap moved, while the plan of
+// its phase is still open. Every generation of the trigger ended without a
+// publication and the latest completed with its last proposal `stale`: the
+// spec change is registered again as the next generation of its trigger,
+// against the active generation (as requestEarlyReplan takes it), carrying
+// the original evidence and stale list; it routes normally (the owner's
+// `plan_approval` included) and holds completion while pending
+// (pendingReplacement). Once per active generation: a second staleness
+// against the same active generation registers the next generation parked
+// with a blocker for the owner (retry or cancel; a cancel holds nothing).
+// The review's S1 re-raise (nextReplanGeneration, the stages changed) is
+// not this one and does not count. The cause is recorded in
+// `trigger_evidence.restaled: {why, from_work_item, bundle}`, beside the
+// original `stale` list, which it never overwrites.
+export const RESTALE_PARK_REASON = 'replan_restale_max';
+
+function restaleSpecChanges(tx: Tx, project: string): void {
+  const open = activePlan(tx.db, project);
+  if (!open) return;
+  const triggers = tx.db.prepare(`SELECT DISTINCT "trigger_id" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'spec_change'`).all(project) as { trigger_id: string }[];
+  for (const { trigger_id } of triggers) {
+    if (!replanAbandoned(tx.db, project, 'spec_change', trigger_id)) continue;
+    const items = tx.db
+      .prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = 'spec_change' AND "trigger_id" = ? ORDER BY "trigger_generation"`)
+      .all(project, trigger_id) as (WorkRow & { trigger_evidence: string | null })[];
+    const latest = items[items.length - 1];
+    if (!latest || latest.status !== 'complete') continue;
+    const bundle = tx.db
+      .prepare(`SELECT b."id", b."status", b."stale_reason" FROM "plan_bundles" b JOIN "runs" r ON r."id" = b."run" WHERE r."work_item" = ? ORDER BY b.rowid DESC LIMIT 1`)
+      .get(latest.id) as { id: string; status: string; stale_reason: string | null } | undefined;
+    if (!bundle || bundle.status !== 'stale') continue;
+    // The plan still open: the active generation is of the phase the stale
+    // replan replaced (a phase since completed is planned by §5.6's replan).
+    const target = replacementOf(tx.db, latest);
+    if (!target) continue;
+    const phase = (tx.db.prepare('SELECT "phase_number" FROM "phase_plans" WHERE "id" = ?').get(target.phase_plan) as { phase_number: number } | undefined)?.phase_number;
+    if (phase !== open.phase_number) continue;
+    const prior = parseJson<Record<string, unknown>>(latest.trigger_evidence ?? null) ?? {};
+    const restaled = { why: bundle.stale_reason ?? 'the proposal is stale', from_work_item: latest.id, bundle: bundle.id };
+    // The cap: one automatic re-raise against this active generation.
+    const capped = items.some((w) => {
+      const ev = parseJson<{ restaled?: unknown; phase_plan?: string; generation?: number }>(w.trigger_evidence ?? null);
+      return ev?.restaled !== undefined && ev.phase_plan === open.id && ev.generation === open.generation;
+    });
+    const trigger_evidence = { ...prior, phase_plan: open.id, generation: open.generation, from_work_item: latest.id, restaled };
+    const subject = { ...(parseJson<Record<string, unknown>>(latest.subject) ?? {}), phase_plan: open.id };
+    const made = observeTrigger(
+      tx,
+      { project, kind: 'replan', trigger_source: 'spec_change', trigger_id, trigger_generation: latest.trigger_generation + 1, subject, trigger_evidence, chain: 0 },
+      { restaled: { from_work_item: latest.id, bundle: bundle.id }, ...(capped ? { parked: RESTALE_PARK_REASON } : {}) },
+    );
+    if (!capped || !made.created) continue;
+    // Registered parked: the owner retries it against the active generation
+    // or cancels it, which holds nothing.
+    const blocker = JSON.stringify({ reason: RESTALE_PARK_REASON, raised_at: tx.at, decision: null });
+    tx.db.prepare(`UPDATE "work_items" SET "status" = 'parked', "blocker" = ? WHERE "id" = ? AND "status" = 'eligible'`).run(blocker, made.work_item.id);
+    tx.emit('work.parked', { project, work_item: made.work_item.id }, { from: 'eligible', to: 'parked', reason: RESTALE_PARK_REASON, restaled });
+    raiseQuestion(tx, { project, kind: 'blocker', subjectType: 'work_item', subjectId: made.work_item.id });
+  }
 }
 
 // What holds an open plan generation's completion (the driver's ruling on
