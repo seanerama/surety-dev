@@ -28,6 +28,13 @@
 // (i) the check at every save and at close: one design_check record per
 //     save, design.checked; close refused until one passes.
 // (a) to (f): the reasons are the next turn's engine entry.
+//
+// F5 (an engine finding of the paid M535 run; Sean's ruling 2026-10-19,
+// errata E169): with interfaces `ui` modules expose with no shape (a map
+// approved under `design: off`, the policy then turned to `before_build`),
+// a design that does not name them passes, no DESIGN_STATE_UNCOVERED for
+// them (nothing is derived from them); a screen naming one:
+// DESIGN_INTERFACE_SHAPE_UNKNOWN naming the screen, target and interface.
 
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
@@ -43,6 +50,8 @@ import { postCloseRaw, postSaveRaw } from './harness/session-lane.mjs';
 import { sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
 import { withStore } from './harness/store.mjs';
 import { designEvents, inventoryOf, openDesigner, toPublished } from './harness/design/drive.mjs';
+import { EXPOSED, modulesExposing } from './harness/design/reference.mjs';
+import { pump } from './harness/journey/drive.mjs';
 import {
   BEFORE_BUILD,
   assertNoReason,
@@ -59,6 +68,7 @@ import {
   icoOf,
   mockupEntry,
   screenOf,
+  screenOfTarget,
   scriptVariant,
   svgOf,
   toSixPublished,
@@ -424,5 +434,34 @@ describe('M506 the design check', () => {
     assert.ok(JSON.stringify(tooBig.body).includes('design_tree_max_bytes'), `naming design_tree_max_bytes (${tooBig.text?.slice(0, 400)})`);
     assert.equal(refOid(p.repo.path, p.repo.ref), heads[1], 'the refused save committed nothing');
     await postCloseRaw(fx, p.id, out.run.id, { refuse: true });
+  });
+
+  test('F5 (errata E169): ui modules exposing interfaces with no shape, the map approved under off and the policy turned to before_build: a design not naming them passes, no DESIGN_STATE_UNCOVERED; a screen naming one: DESIGN_INTERFACE_SHAPE_UNKNOWN', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p } = await toPublished(fx, { policy: { autonomy: 'phase', phase_size: { min: 1, max: 5 } }, name: 'pantry-exposed', files: { modules: modulesExposing({ web: [EXPOSED.page], mobile: [EXPOSED.apiBaseUrl] }) } });
+    const ctx = scriptVariant(fx, p);
+    await changePolicy(fx.engine, p.id, { design: 'before_build' });
+    await pump(fx, ctx, () => (designEvents(fx.home, 'design.inventory_derived', p.id).length > 0 ? true : undefined), { what: 'the inventory derived on the policy revision', max: 6 });
+    const inventory = inventoryOf(p);
+    const unshaped = ['page', 'api_base_url'];
+    for (const name of unshaped) assert.equal((inventory.interfaces ?? []).find((i) => i.name === name)?.shape_known, false, `the fixture is live: ${name} listed shape_known false (${JSON.stringify(inventory.interfaces)})`);
+    // The design drawn without them: no screen names them, no state for them.
+    const without = variantOf(designModel(inventory), (m) => {
+      for (const s of m.screens.screens) {
+        s.interfaces = s.interfaces.filter((i) => !unshaped.includes(i));
+        s.states = s.states.filter((x) => !unshaped.includes(x.obligation.interface));
+      }
+    });
+    const naming = variantOf(without, (m) => screenOfTarget(m, 'web').interfaces.push('page'));
+    const cases = [
+      { name: 'the design not naming the unshaped interfaces', model: without },
+      { name: 'the web screen naming page', model: naming },
+    ];
+    const out = await checkSession(fx, p.id, cases);
+    const saves = Object.fromEntries(out.saves.map((s) => [s.name, s.res]));
+    await postCloseRaw(fx, p.id, out.run.id, { refuse: true });
+    assertReason(saves[cases[1].name], 'DESIGN_INTERFACE_SHAPE_UNKNOWN', [screenOfTarget(naming, 'web').key, 'web', 'page'], cases[1].name);
+    assertNoReason(saves[cases[0].name], 'DESIGN_STATE_UNCOVERED', `${cases[0].name} (F5; Sean's ruling 2026-10-19, errata E169: no obligation from an interface whose shape is not known)`);
+    assertPassed(saves[cases[0].name], cases[0].name);
   });
 });

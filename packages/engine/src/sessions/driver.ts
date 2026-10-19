@@ -524,14 +524,14 @@ export class SessionDriver {
     const base = await this.rt.read<BaselineFacts>('session.bundle_baseline', { project: facts.project, head: facts.base_revision, withPlan: false });
     const r = architectFindings({ files: texts }, { requirement_keys: base.requirement_keys, spec_modules: base.spec_modules, descriptive_keys: base.descriptive_keys, adopted: base.baseline.adopted === true });
     // Told before close (D7 §4.1; SEAM.md §513): an interface a `ui` module
-    // consumes without its shapes, under any design policy but off; the
+    // consumes or exposes without its shapes, under any design policy but off; the
     // close's plan check then refuses it.
     const shapes = (base.baseline.design?.policy ?? 'off') !== 'off' && r.parsed.modules ? interfaceShapesMissing(r.parsed.modules) : [];
     const told = shapes.map((subject) => ({
       code: 'ARCH_INTERFACE_SHAPE_MISSING',
       path: MODULES_FILE,
       subject: { interface: subject },
-      message: `${MODULES_FILE}: the interface ${subject} is consumed by a ui module and lacks request, response or errors (D7 §4.1); the plan check refuses the close until each is given`,
+      message: `${MODULES_FILE}: the interface ${subject} is consumed or exposed by a ui module and lacks request, response or errors (D7 §4.1); the plan check refuses the close until each is given`,
     }));
     return { blobs, findings: [...r.findings, ...told], products: {} };
   }

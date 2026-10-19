@@ -171,7 +171,8 @@ export function deriveInventory(input: InventoryInputs): Inventory {
   // Interfaces a `ui` module consumes or exposes (§4.2).
   const interfaces: InventoryInterface[] = [];
   const consumersOf = new Map<string, string[]>();
-  // Declared unshapeable (D7 §12): nothing is derived from it.
+  // Shape not known, declared unshapeable (D7 §12) or without its request
+  // and response: nothing is derived from it (errata E169, finding F5).
   const unshaped = new Set<string>();
   for (const m of map.modules) {
     for (const f of m.interfaces) {
@@ -179,6 +180,7 @@ export function deriveInventory(input: InventoryInputs): Inventory {
       const exposed = uiNames.has(m.name);
       if (consumers.length === 0 && !exposed) continue;
       consumersOf.set(f.name, [...new Set([...consumers, ...(exposed ? [m.name] : [])])]);
+      const shape_known = f.shape !== 'unknown' && f.request !== undefined && f.response !== undefined;
       interfaces.push({
         name: f.name,
         module: m.name,
@@ -187,9 +189,9 @@ export function deriveInventory(input: InventoryInputs): Inventory {
         ...(f.request ? { request: f.request } : {}),
         ...(f.response ? { response: f.response } : {}),
         errors: [...(f.errors ?? [])],
-        shape_known: f.shape !== 'unknown' && f.request !== undefined && f.response !== undefined,
+        shape_known,
       });
-      if (f.shape === 'unknown') unshaped.add(f.name);
+      if (!shape_known) unshaped.add(f.name);
     }
   }
   // State obligations, per target the consuming modules serve (§4.2).

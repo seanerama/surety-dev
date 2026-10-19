@@ -67,7 +67,7 @@ const RETROFIT: Record<string, string[]> = {
     '- ADRs reconstructed from the code carry `reconstructed: true` in their front matter.',
     '- The roadmap\'s phase 1 is the conformance phase: the confirmed requirements, carried unchanged through the protected acceptance path to Alpha. Later phases hold the intended changes and the confirmed defects.',
     '- `phase-1.json` has exactly one stage with `conformance: true`, no tasks, implementing the confirmed requirements the roadmap assigns to phase 1 and never a defect; no source changes in phase 1.',
-    '- Under a design policy other than off, an interface a `ui` module consumes states its `request`, `response` and `errors`; where the code does not let you shape one, write `"shape": "unknown"` in their place (D7 §12). The engine lists it shape unknown and derives nothing from it; never invent a shape.',
+    '- Under a design policy other than off, an interface a `ui` module consumes or exposes states its `request`, `response` and `errors`; where the code does not let you shape one, write `"shape": "unknown"` in their place (D7 §12). The engine lists it shape unknown and derives nothing from it; never invent a shape.',
   ],
 };
 
