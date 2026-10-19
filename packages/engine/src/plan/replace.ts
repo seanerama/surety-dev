@@ -490,12 +490,13 @@ function restaleSpecChanges(tx: Tx, project: string): void {
       { restaled: { from_work_item: latest.id, bundle: bundle.id }, ...(capped ? { parked: RESTALE_PARK_REASON } : {}) },
     );
     if (!capped || !made.created) continue;
-    // Registered parked: the owner retries it against the active generation
-    // or cancels it, which holds nothing.
+    // Parked at registration (the table's park_at_registration, replan only;
+    // E172): the owner retries it against the active generation or cancels
+    // it, which holds nothing.
+    const item = getWorkItem(tx, made.work_item.id)!;
     const blocker = JSON.stringify({ reason: RESTALE_PARK_REASON, raised_at: tx.at, decision: null });
-    tx.db.prepare(`UPDATE "work_items" SET "status" = 'parked', "blocker" = ? WHERE "id" = ? AND "status" = 'eligible'`).run(blocker, made.work_item.id);
-    tx.emit('work.parked', { project, work_item: made.work_item.id }, { from: 'eligible', to: 'parked', reason: RESTALE_PARK_REASON, restaled });
-    raiseQuestion(tx, { project, kind: 'blocker', subjectType: 'work_item', subjectId: made.work_item.id });
+    transitionWork(tx, item, 'parked', { blocker }, { reason: RESTALE_PARK_REASON, restaled });
+    raiseQuestion(tx, { project, kind: 'blocker', subjectType: 'work_item', subjectId: item.id });
   }
 }
 

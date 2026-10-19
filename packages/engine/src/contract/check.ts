@@ -160,6 +160,11 @@ export function checkContract(doc: unknown, schema: RealSchema = realSchema()): 
       if (name !== 'continue') lexical(['work_items', 'templates', name, 'to'], `Only "continue" leads to the stored continuation; ${name} must name its status.`);
     } else status(['work_items', 'templates', name, 'to'], t.to);
     if (t.only_kinds_with !== undefined) status(['work_items', 'templates', name, 'only_kinds_with'], t.only_kinds_with);
+    // The kinds a template is limited to, by name (H4's park_at_registration; E172).
+    if (t.only_kinds !== undefined) {
+      if (!Array.isArray(t.only_kinds) || t.only_kinds.length === 0) structural(['work_items', 'templates', name, 'only_kinds'], `The template ${name}'s "only_kinds" is not a list of one or more work kinds.`);
+      else t.only_kinds.forEach((value, i) => { if (!inEnum('WorkItemKind', value)) lexical(['work_items', 'templates', name, 'only_kinds', i], `${JSON.stringify(value)} is not a WorkItemKind.`); });
+    }
   }
 
   // ---- transitions ----

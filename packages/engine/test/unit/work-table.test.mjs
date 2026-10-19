@@ -52,6 +52,13 @@ test('terminal statuses have no exit, and held and parked leave only by their ca
   assert.equal(legal('fix', 'parked', 'claimed'), false);
 });
 
+test("H4's cap (E171 item 5, E172): eligible → parked for replan only", () => {
+  assert.ok(legal('replan', 'eligible', 'parked'));
+  for (const kind of ['stage_build', 'fix', 'verification', 'review', 'phase_verification', 'assessment', 'spec_change', 'check_correction', 'check_authoring']) {
+    assert.equal(legal(kind, 'eligible', 'parked'), false, `${kind} never parks without a run`);
+  }
+});
+
 test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring and K8\'s phase_verification and spec_change', () => {
   assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_authoring', 'check_correction', 'fix', 'phase_verification', 'replan', 'review', 'spec_change', 'stage_build', 'verification']);
 });

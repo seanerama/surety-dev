@@ -52,7 +52,7 @@ export function generateAppendix(doc: unknown): string {
   for (const [name, t] of Object.entries(isObj(work.templates) ? work.templates : {})) {
     const s = isObj(t) ? t : {};
     const to = s.to === null ? 'the stored continuation' : text(s.to);
-    out.push(`- \`${name}\`: ${list(s.from).map(text).join(', ')} → ${to}${typeof s.only_kinds_with === 'string' ? ` (kinds whose path has ${s.only_kinds_with})` : ''}`);
+    out.push(`- \`${name}\`: ${list(s.from).map(text).join(', ')} → ${to}${typeof s.only_kinds_with === 'string' ? ` (kinds whose path has ${s.only_kinds_with})` : ''}${Array.isArray(s.only_kinds) ? ` (${s.only_kinds.map(text).join(', ')} only)` : ''}`);
   }
   out.push('');
   out.push(`Statuses that own a run: ${list(work.run_owning).map(text).join(', ')}. Continuations: ${list(work.continuations).map(text).join(', ')}. Terminal: ${list(work.terminal).map(text).join(', ')}.`);

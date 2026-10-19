@@ -271,6 +271,7 @@ Common transitions, applied to a kind only from the statuses it can reach:
 - `resume`: held → eligible
 - `unpark`: parked → eligible
 - `cancel`: eligible, claimed, executing, integrating, integrated, verifying, awaiting_decision, held, parked → cancelled
+- `park_at_registration`: eligible → parked (replan only)
 
 Statuses that own a run: claimed, executing, integrating, integrated, verifying, awaiting_decision. Continuations: executing, integrating, verifying. Terminal: complete, cancelled.
 
