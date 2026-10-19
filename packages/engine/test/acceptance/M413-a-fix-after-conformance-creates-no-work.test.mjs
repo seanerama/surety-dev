@@ -38,7 +38,9 @@ describe('M413 (f) S2: a fix after conformance creates no work', () => {
     await advance(fx, ctx, () => (conformanceStages(fx.home, p.id)[0]?.conformance_state === 'conformed' ? true : undefined), { what: 'the stage conformed', exits: holdPhase, max: 30 });
     const c1 = withStore(fx.home, (db) => db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').get(p.id));
     assert.equal(planOfPhase(fx.home, p.id, 1).find((x) => x.active === 1 || x.active === true)?.completed_at ?? null, null, 'the fixture is live: phase 1 not complete (its checks held)');
-    const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'high', message: 'the service echoes its PORT secret in an error', sensitive_area: SENSITIVE_AREA }], { kind: 'verification' });
+    // H1 (E171 item 5; SEAM.md §552): a Reviewer's fix on a finding naming no check is refused, so the finding names
+    // `accept-r2` and the criterion it covers, R2.1 (the service's sum route), as M413 (f)'s does.
+    const [found] = await raiseFindings(fx, p.id, c1.id, [{ category: 'defect', severity: 'high', message: 'the service echoes its PORT secret in an error', sensitive_area: SENSITIVE_AREA, check: 'accept-r2', criterion: 'R2.1' }], { kind: 'verification' });
     await review(fx, p.id, c1.id, { dispositions: [{ finding: found.id, disposition: 'fix', remediation: 'Phase 2: stop echoing the port.' }] });
     await advance(fx, ctx, () => undefined, { exits: holdPhase, max: 4 }).catch(() => null);
     const after = findingsOf(fx.home, p.id).find((f) => f.id === found.id);

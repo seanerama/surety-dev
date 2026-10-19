@@ -4790,3 +4790,28 @@ On a scratch merge of `build/m6-ready` `a803c2b` with this branch's tests (`scra
 Not pinned: an entry naming a stage that exists but is cancelled or superseded (no active stage of the generation). SEAM §454 states it is unresolved too; the case plants only an id naming no stage.
 
 **What was run, 2026-10-19, on `main` `0634d11` plus this case** (this worktree, `npm ci`, `npm run build`, `TMPDIR=/tmp/v-h3`, the file alone with `node --test`): **10/11**, 25 s. The ten earlier cases pass. (a11) fails at its first assertion, the entry dropped: "depends_on states every stored entry, stage 1 by its number and the unresolvable one as stored, none dropped (stored ["stage_…","stage_H3UNRESOLVABLE000000000000"]; stated [1])". In a temporary probe run first (reverted), stage 1's interfaces were stated `lib:sum`, `lib:tally`, as expected, so only the dropped entry and the missing `unresolved` fail.
+
+## H1: a Reviewer's own `fix` on a finding that names no check (E171 item 5; E166 item 4; Sean's ruling, option B, and his refinement; SEAM §552)
+
+2026-10-19, by the Verifier, on `verify/h1`, cut from `main` `0634d11`. No new row. The case goes to M546 as (d). No harness file changed apart from SEAM §552 and §74's paragraph on the Reviewer's dispositions. The engine's part is the Builder's.
+
+| Item | Row | File | Cases | Status |
+|---|---|---|---|---|
+| the ruling | M546 (d) | `M546-no-redundant-disposition-question.test.mjs` (3 → 4) | A Verifier's Medium finding names no check and no criterion (`withFinding` gains `kind`; (a) to (c) are unchanged). Its owed question is open with no `fix`. A Reviewer reports `fix` on it. Then: the finding stays `open` with disposition, authority, `disposition_by` and proposal null, and no `finding.dispositioned` is emitted. No `fix` or `check_correction` work is made for it. `finding.fix_refused` † is emitted once, with subject `{project, finding, run}` and payload `reason` `verification_missing` plus `verification` equal to the owed question's `manifest.verification`. The Reviewer's run is accepted. The same owed question is still open, the only question on the finding, with no `fix`. The owner's `fix` is refused 400 `invalid_value` with nothing consumed, and his `accept` is recorded | written; fails on `main` |
+| the refinement (1) | M546 (d), its control | the same | After the owner's accept, a Reviewer's own `contract_conflict` that names no check gets a plan-targeted `fix`. It is recorded (`fix`, `reviewer`), makes one `replan` with trigger `(contract_conflict, <finding>)`, makes no `fix` work, and emits no `finding.fix_refused` | written; passes on `main` (a scratch copy of (d) without its H1 part) |
+| the refinement (2) | M235 (c), (a) S2 | `M235-finding-resolution.test.mjs` (9), unchanged | A `fix` on a finding naming a check that does not cover its criterion is recorded, with one `check_correction` | already pinned; passes on `main` |
+
+**Fixtures moved under Sean's authorisation** (for the M6 plan's §4.3). These are accepted tests whose Reviewer `fix` fell on a finding naming no check. Each finding now names a check that can verify it, and each file passes on `main`:
+- **M42**, first case: the finding names `session`, an acceptance check covering R1.1 that is required at `alpha_authorize` only. It is never executed, and the stage gate does not require it, so the planned fix still resolves nothing and the gate's one reason stays `FINDING_UNSATISFIED`.
+- **M51**, the finding's status between preview and answer: the High finding names the failed check `import` and R1.1 (`findingOf` gains `link`).
+- **M105 (e)**: the High finding names the failed check `import` and R1.1 (`reviewed` gains `highLink`). The other cases are unchanged.
+- **M436 (c)**: the first Verifier's Low finding names `login` and R1.1. That Verifier holds (`m436c-checks`) until `login` is declared, because a finding's check is judged when its result arrives.
+- **M413-a-fix-after-conformance-creates-no-work**: the High finding names `accept-r2` and R2.1, as M413 (f)'s does.
+
+Every other Reviewer `fix` in `test/acceptance/` names a check, or is plan-targeted (M430-blockers (iii), M430-early-replanning (a): the route that is kept).
+
+**What was run, 2026-10-19, on `main` `0634d11` plus these changes** (this worktree, `npm ci`, `npm run build`, `TMPDIR=/tmp/v-h1`, each file alone with `node --test`):
+- **`M546` 3/4.** (a) to (c) pass. (d) fails at its first read after the Reviewer's run: "the Reviewer's fix on a finding naming no check is refused: the finding is as it was", where the row reads `dispositioned`, `fix`, `reviewer`, the Reviewer's run.
+- **`M42` 7/7, `M51` 6/6, `M105` 7/7, `M413-a-fix-after-conformance-creates-no-work` 1/1, `M436-the-autonomy-profiles` 9/9, `M235` 9/9.**
+- M430-blockers and M430-early-replanning were not run; neither file was changed.
+

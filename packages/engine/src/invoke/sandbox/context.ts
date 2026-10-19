@@ -406,7 +406,7 @@ const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
   dispositions: {
     type: 'array',
     description:
-      `What is to be done about each open finding listed in /surety/context/findings.json, one entry per finding, named by its id: ${DISPOSITIONS.join(', ')}. fix: the engine registers fix work for it. defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides. ${OWED_TEXT}`,
+      `What is to be done about each open finding listed in /surety/context/findings.json, one entry per finding, named by its id: ${DISPOSITIONS.join(', ')}. fix: the engine registers fix work for it, on a finding that names a check; a fix on a finding that names no check is refused (no check could show it done): nothing is registered, and the finding is put to the human owner (target plan excepted). defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides. ${OWED_TEXT}`,
     items: {
       type: 'object',
       required: ['finding', 'disposition'],
@@ -591,7 +591,7 @@ export function writeContextPackage(
           ? [
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
-              `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it. Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
+              `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it where the finding names a \`check\`; a \`fix\` on a finding that names no \`check\` is refused (nothing is registered, and the finding is put to the human owner), unless it is your own contract_conflict with \`target\` \`plan\`. Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
               "A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both.",
               FIX_IS_CODE_TEXT,
               '',

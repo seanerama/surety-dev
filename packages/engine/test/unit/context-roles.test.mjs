@@ -243,6 +243,9 @@ test("the Reviewer's package: the diff, the findings by id, the review facts, it
   assert.ok('dispositions' in JSON.parse(pkg.read('result-schema.json')).properties);
   const prompt = pkg.read('prompt.md');
   for (const want of ['fnd_1 (high)', 'fnd_2 (medium)', 'candidate.diff', '`dispositions`', '`fix` registers fix work']) assert.ok(prompt.includes(want), `the prompt says ${want}`);
+  // H1 (E171 item 5; SEAM.md §552): a fix on a finding naming no check is refused, and the package says so.
+  assert.match(prompt, /a `fix` on a finding that names no `check` is refused \(nothing is registered, and the finding is put to the human owner\), unless it is your own contract_conflict with `target` `plan`/);
+  assert.match(JSON.parse(pkg.read('result-schema.json')).properties.dispositions.description, /a fix on a finding that names no check is refused \(no check could show it done\): nothing is registered, and the finding is put to the human owner/);
   assert.ok(pkg.read('acceptance-content-hash.txt').includes('hash_2'));
 });
 

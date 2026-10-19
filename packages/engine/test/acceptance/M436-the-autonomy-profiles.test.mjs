@@ -214,13 +214,16 @@ describe('M436 (c) phase and max_chained_roles', () => {
   test('(c) max_chained_roles 2: depth inherited (Builder 0, Verifier 1, Reviewer 2 at the cap); after continue the cap is counted again from the continued item', async (t) => {
     const fx = await scriptedEngine(t);
     fx.scripted.defaultScript(script.complete());
-    // The first Verifier reports a Low finding; later ones complete.
-    fx.scripted.kindScript('verification', [roleThat([], { findings: [{ category: 'defect', severity: 'low', message: 'src/app.js: the answer is not documented.' }] }), script.complete()]);
+    // The first Verifier reports a Low finding; later ones complete. H1 (E171 item 5; SEAM.md §552): a Reviewer's fix on
+    // a finding naming no check is refused, so the finding names `login` and R1.1. A finding's check is judged against
+    // the effective version when the result arrives, so the Verifier holds until `login` is declared below.
+    fx.scripted.kindScript('verification', [roleThat([step.hold('m436c-checks')], { findings: [{ category: 'defect', severity: 'low', message: 'src/app.js: the answer is not documented.', check: 'login', criterion: 'R1.1' }] }), script.complete()]);
     fx.scripted.kindScript('fix', roleThat([step.write('src/app.js', 'export const answer = 42; // the answer\n')]));
     const ctx = await nominated(fx, { tier: 'T2', policy: { max_chained_roles: 2 } });
     const project = ctx.project;
     const [build] = ctx.items;
     const k = (await installChecks(fx.engine, project.id, [check('login', { requirements: ['R1'] })])).id;
+    fx.scripted.release('all', 'm436c-checks');
     await passAll(fx.engine, project.id, ctx.candidate.id, [k.login]);
 
     const first = await waitFor(
