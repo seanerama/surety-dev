@@ -459,6 +459,10 @@ const curlBody = (fx, path, body) => `curl -sS -H "X-Surety-Token: $(cat ${join(
 // rounds, each after a tick) when the project has nothing runnable, nothing
 // in flight and nothing asked (rule 25), naming what is held.
 export async function driveM6(ctx, fx, project, done, { expect = [], answer = () => 'approve', extra = () => ({}), what, timeoutMs = 4 * HOURS, everyMs, stall = false }) {
+  // A Reviewer's disposition differing from the owner's (scope reviewer_disagrees; S1, Sean's ruling of
+  // 2026-10-20; SEAM.md §555) is answered `keep`, the owner's standing disposition (the driver's ruling): the
+  // conservative routine answer. Every other question keeps its answer.
+  const choose = (d) => (d.kind === 'finding_disposition' && d.scope === 'reviewer_disagrees' ? 'keep' : answer(d));
   const shownIds = new Set();
   const answered = [];
   const started = performance.now();
@@ -468,11 +472,11 @@ export async function driveM6(ctx, fx, project, done, { expect = [], answer = ()
     const value = await done();
     if (value !== undefined && value !== null && value !== false) return { value, shown: [...shownIds], answered };
     const open = openDecisions(fx.home, project);
-    const blockedOf = (d) => ((d.options ?? []).find((o) => o.key === answer(d))?.blockers ?? []).length > 0;
+    const blockedOf = (d) => ((d.options ?? []).find((o) => o.key === choose(d))?.blockers ?? []).length > 0;
     open.sort((a, b) => Number(blockedOf(a)) - Number(blockedOf(b)));
     for (const d of open) {
       if (shownIds.has(d.id)) continue;
-      const option = answer(d);
+      const option = choose(d);
       // A kind the rehearsal leaves to the engine (`answer` null): under the
       // rehearsal the harness opens each Designer session itself, so a
       // design_due raised beside it (or beside the batch after its close) is
