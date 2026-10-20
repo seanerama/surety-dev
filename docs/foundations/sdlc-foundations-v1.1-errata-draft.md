@@ -2847,3 +2847,34 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - **S1. A Reviewer's disposition can override the owner's** (highest priority: an authority defect if confirmed). *Trigger:* a finding the owner has dispositioned (e.g. `accept`) is named again in a later Reviewer report with `fix`; `recordReport` does not skip dispositioned findings. *Consequence:* an agent silently replaces the owner's standing decision, and work is registered against it. *Planned:* first after this batch: a failing case (the owner's disposition stands, nothing is registered; changed evidence may raise a new owner question, never override the answer), then the fix. Not yet confirmed by a test.
    - **S2. Retained stages' dependencies are not re-validated at a replan.** *Trigger:* a replacement keeps a stage whose dependency is superseded or changed; the plan check validates listed stages' `depends_on` only. *Consequence:* a retained stage could become runnable on stale dependency validation. *Planned:* a failing case (refused at the check, or held until re-validated), then the fix; after S1.
    - **S3. A cancelled correction of an ordinary (non-design) spec change has no recovery.** *Trigger:* a spec change's `check_correction` parks and its blocker is answered `cancel`. *Consequence:* its `check_obligations` stay open and gates show `ACCEPTANCE_SCOPE_INCOMPLETE` with no route that moves the project on; H4 (b)'s `correct` covers only the design readiness wait. *Planned:* a failing case for a reachable recovery route, its form Sean's decision (the driver proposes it with the case); after S1.
+
+## E173. S1 decided: a Reviewer's disposition never overrides the owner's, and the owner is asked when a Reviewer differs; S2 and S3 confirmed, their forms open (decided by Sean and the driver, 2026-10-20)
+
+**Status:** item 1's refusal is the driver's, under Sean's direction of 2026-10-19 ("an agent should not silently replace your standing decision"); item 2 decided by Sean (his choice of the recommended option); items 3 and 4 the driver's record, with their forms open for Sean.
+
+1. **S1 confirmed and refused** (E172 item 7). On `main` `a2e3075` a later Reviewer's report replaced an owner's disposition:
+   - a `fix` replaced his `accept` or his `defer` (clearing his issue and target) and registered fix work;
+   - a Low `defer` replaced his `accept`;
+   - a plan-targeted `fix` on his accepted `contract_conflict` registered a replan, whose ending without landing then reopened the finding and erased his answer;
+   - a `fix` matching his own `fix` replaced his authority.
+   
+   **Now:**
+   - On a finding whose disposition authority is `human`, any entry the Reviewer's authority would have recorded (a `fix`, plan-targeted or matching his, and a Low `defer`) is refused.
+   - Its row stays exactly as he left it, nothing is registered, and the Reviewer's run is still accepted.
+   - One `finding.disposition_refused` is recorded per entry, with subject project, finding and run, and payload `reason: owner_decided`, the Reviewer's `disposition`, `target` and the `standing` disposition.
+   - The owner check runs before H1's, so a no-check `fix` on his finding is `disposition_refused`, not `fix_refused`.
+   - The Reviewer's package states each finding's `disposition_authority`, so it can tell the owner's.
+   
+   Case M546 (e).
+2. **Sean: "Ask only if it differs."** When the Reviewer's entry on an owner-dispositioned finding differs from his (a refused entry, or a differing `accept` or Medium `defer` proposal; for `defer`, a different issue or target), the engine raises one `finding_disposition` question.
+   - **Scope and options:** scope `reviewer_disagrees`, with options `keep` plus the Reviewer's disposition where the owner's own route allows it (`fix` only when verifiable; `lower_and_accept` for `accept` on High or Critical), never his standing one.
+   - **Manifest:** `disposition`, `proposed_disposition`, `proposed_by_run`.
+   - **Repeats:** the question is idempotent while open, and withdrawn once his disposition no longer stands or matches.
+   - **Answers:** `keep` changes nothing; another answer is recorded with authority `human` and registers what his route registers.
+   - **Matching entries:** a matching entry raises nothing.
+   - *Driver:* where the Reviewer's disposition cannot be offered (plan-targeted, or a `fix` no check can verify), the question offers `keep` alone and says why, a notice rather than a choice. The real lane's pumps answer this scope `keep`, the conservative routine answer, so a rehearsal never stalls on it.
+   
+   Case M546 (f).
+3. **S2 confirmed, its form open.** On `main` `a2e3075` (verify/s2 `45009b9`), answering a stage's blocker `replan` while a built (integrated or verified) stage depends on it supersedes the subject and keeps the dependent. Its `depends_on` still names the superseded stage, it is neither rebuilt nor rechecked, and the phase completes on it. A stage still building is already safe (superseded and registered fresh). The driver's first ruling, refusing at the plan check, is withdrawn: under it no replacement could ever pass once a built stage depends on the replanned one. Options for Sean: (A, recommended) cascade, superseding the dependents and registering them fresh against the new dependency, as for building stages; (B) hold them until re-verified; (C) refuse with a manual way out.
+4. **S3 confirmed by code reading, its form open.** Once a spec change's parked correction is cancelled, no route registers another; its obligations hold every gate with `ACCEPTANCE_SCOPE_INCOMPLETE`, and the owner is not told afterwards. Options for Sean: (A) a standing blocker offering `correct`; (B, recommended) an owner command `surety spec correct --project P --request R` reusing `registerCorrectionAgain`, named in the cancel text and in `GET …/spec`; (C) a new decision kind at cancel.
+5. **The fix (items 1 and 2).** Cases verify/s1 `6a67639` (M546 (e)), verify/s1b `efeb3d0` (M546 (f)) and `9b1edb2` (the pumps answer `keep`); builds build/s1 `922f283` and build/s1b `b5d1120`; merged at `05a2a56` after the gate at `093c277` (split, 3 workers, mini-hp01: 440 files, 2,410 passed, 3 failed: one case of the M15 run-end fault matrix and the M440 storm's (e1) and (e5); alone 3 of 3 each, M15 87/87 and the storm 5/5; M546 6/6 in the gate; no units left).
