@@ -249,6 +249,9 @@ The accepted M1 to M5 rows keep passing. `design: off` is the default, so their 
 | G7 (built, E153) | 44 | M433's E153 file unchanged; the trigger keeps its built name `spec_change` (E156 Q2; COVERAGE's declared deviation) |
 | D7 §13 (pace) | 46 | M441 unchanged if it asserts no closed key set (the Verifier confirms) |
 | E154 item 6 (E156 Q1) | 39 | M441 (the model and the revision become figures where recorded); M444's runner's end condition (rule 25) is M519 (h) and M535 (j), M444's file unchanged; M429 (d) unchanged, M545 added beside it |
+| H1, a Reviewer's no-check `fix` refused (E171 item 5; E172 item 1) | after 46 | Fixtures moved under Sean's authorisation, each case's intent kept: in M42's first case, M51, M105 (e), M436 (c) and M413-a-fix-after-conformance-creates-no-work the finding a Reviewer dispositions `fix` now names a check (COVERAGE.md, H1); the case itself is M546 (d) |
+| H3, an unresolvable dependency named (E172 item 3) | after 46 | M442 gains (a11); `builder.dependency_interfaces` gains `unresolved` (empty when every entry resolves) |
+| H4, recovery dead ends (E172 item 4) | after 46 | M430-blockers gains (iv) and (v); the contract table (`contract/work-items.json`) gains `eligible → parked` for `replan` only, so M09's and M73's expectations, read from it, include that edge |
 
 **Unchanged and kept passing:** every other M1 to M5 row; M5's exhaust files; M74 over the new seams.
 
