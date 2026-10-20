@@ -25,6 +25,21 @@
 //     stages' `depends_on` stated as stage numbers, the plan's own form, so
 //     that a replan copying unbuilt stages that depend on one another as
 //     the package states them is not refused, and publishes;
+// (c), (d) S2 (E172 item 7; Sean's ruling of 2026-10-20, "cascade";
+//     SEAM.md §556): when the swap supersedes a stage, every stage it keeps
+//     that depends on it, transitively, is superseded too and registered
+//     fresh against the new dependency (as a `building` stage already is):
+//     rebuilt and rechecked, the replacement's entry used when it lists one
+//     with new inputs, and the phase never completing on the superseded
+//     work. Stage 1 integrated, its work parked, its blocker answered
+//     `replan` (the swap supersedes the trigger's own subject) while the
+//     stages built on it are integrated: (i) stage 2, (ii) transitively
+//     stage 3, (iii) to completion; (iv) the control, stage 2 listed with
+//     new inputs. A replacement leaving a kept dependent's dependency number
+//     with no active stage (stage 1 dropped for a stage 3) is refused at the
+//     plan check, `PLAN_UNKNOWN_STAGE` naming the dependent and the number
+//     (the driver's ruling under Sean's delegation, E174); listing the
+//     dependent with new inputs resolves it.
 // (e) is in `M430-two-replacements-and-a-restart.test.mjs`. The floor of
 // (f) has no case: the reference project has no sensitive area (COVERAGE).
 
@@ -35,7 +50,8 @@ import { answer, decisionsOn } from './harness/decisions.mjs';
 import { findingsOf, raiseFindings, review } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { ROUTED_KINDS, builderScript, candidatesOfProject, phasePlansOf, planOfPhase, pump, readPlan, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
-import { journey35, nextReplanOutcome, openPlanApprovals, outcomes, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
+import { journey35, nextReplanOutcome, openPlanApprovals, outcomes, phaseOf, planCheckRows, replan35, roadmapWith, subjectsOf, afterRefusal } from './harness/journey/plan35.mjs';
+import { advanceHolding, changed, openBlockerAbout } from './harness/journey/review35.mjs';
 import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { CHECK_DEFS, CHECK_PROGRAMS, REQUIREMENTS, STAGES, authoringFiles, specText } from './harness/journey/reference.mjs';
 import { tick } from './harness/runs.mjs';
@@ -89,6 +105,63 @@ async function replacementPendingWithS2Held(t, replacementStages) {
   const states = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s.status]));
   assert.deepEqual(states, { 1: 'integrated', 2: 'building', 3: 'planned' }, 'the fixture is live: integrated, building and planned at the swap');
   return { fx, p, ctx, plan, stagesBefore, answerKinds };
+}
+
+// S2 (E172 item 7; Sean's ruling of 2026-10-20, "cascade"; SEAM.md §556):
+// phase 1 built as a chain, stage 2 on stage 1 (the T2 reference project)
+// or, with `three`, stage 3 on stage 2 too (T1, M430's three-stage phase).
+// Every check is held queued until the last stage integrates, then
+// accept-r1 fails: stage 1 integrated with its work parked
+// (`repair_attempts_max` 0) and its blocker answered `replan`, every stage
+// depending on it integrated. The replan writes `replacement`, its
+// repair (or retry) `repair`; the Builders that rebuild the chain are scripted. Returns
+// the replan's next outcome and generation 1's stages by number before.
+async function builtDependentsOfTheSubject(t, replacement, { three = false, repair = replacement } = {}) {
+  const { fx, p, ctx, plan } = await journey35(t, { policy: { repair_attempts_max: 0 }, ...(three ? { tier: 'T1', over: ROADMAP3, stages: THREE } : {}) });
+  const chain = three ? [1, 2, 3] : [1, 2];
+  if (three) fx.scripted.kindScript('check_authoring', [authoring3]);
+  fx.scripted.kindScript('stage_build', [...chain, ...chain].map((n) => builderScript(n)));
+  fx.scripted.kindScript('replan', [replan35({ phase: 1, stages: replacement }), replan35({ phase: 1, stages: repair }), replan35({})]);
+  const numbered = () => Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s]));
+  const last = chain.at(-1);
+  await advanceHolding(fx, ctx, () => (numbered()[last]?.status === 'integrated' ? true : undefined), { exits: () => null, what: `stage ${last} integrated, the checks held` });
+  const blocker = await advanceHolding(fx, ctx, () => {
+    const w = stageWorkOf(fx.home, p.id, numbered()[1]);
+    return w?.status === 'parked' ? openBlockerAbout(fx.home, w.id) : undefined;
+  }, { exits: (x) => (x.key === 'accept-r1' ? 1 : 0), what: 'stage 1\'s work parked', max: 120 });
+  const before = numbered();
+  const live = before[1].status === 'integrated' && chain.slice(1).every((n) => ['integrated', 'verified'].includes(before[n].status) && JSON.stringify(before[n].depends_on) === JSON.stringify([before[n - 1].id]));
+  assert.ok(live, `the fixture is live: stage 1 integrated and parked, each later stage built on the one before (${JSON.stringify(Object.values(before).map((s) => [s.number, s.status, s.depends_on]))})`);
+  assert.ok(blocker.options.some((o) => o.key === 'replan'), 'stage 1\'s blocker offers replan');
+  assert.equal((await answer(fx.engine, p.id, blocker, 'replan')).status, 200, 'the owner answers replan');
+  const seen = outcomes([plan.id]);
+  const out = await nextReplanOutcome(fx, ctx, 1, seen, { max: 200 });
+  return { fx, p, ctx, plan, out, seen, before, check: planCheckRows(fx.home, p.id).at(-1) };
+}
+
+// The replacement published (approved if it routed to the owner); returns
+// generation 2 and the stages it registered, by number.
+async function publishedReplacement({ fx, p, ctx, out, check }, how) {
+  assert.ok(!out.failed, `a replacement that ${how} is not refused: the stages built on stage 1 are superseded with it (E172 item 7 S2; Sean's ruling, cascade) (${out.failed ? `${out.failed.reason_text}; check ${check?.outcome} ${JSON.stringify(check?.reasons)}` : Object.keys(out).join(', ')})`);
+  if (out.approval) assert.equal((await answer(fx.engine, p.id, out.approval, 'approve')).status, 200, 'the owner approves the replacement');
+  const g2 = await pumpNoIdle(fx, ctx, () => replacementOf(fx.home, p.id).find((x) => active(x) && x.generation === 2 && x.published_at), { what: 'generation 2 published', max: 40 });
+  return { g2, fresh: Object.fromEntries(stagesOfPlan(fx.home, g2.id).map((s) => [s.number, s])) };
+}
+
+// Stage `n` of generation 1, built on the superseded stage `n - 1`, is
+// superseded too, and generation 2 registers one fresh stage `n` depending
+// on generation 2's stage `dep` (`n - 1` unless given), with `tasks`.
+function assertCascaded({ fx, plan, before }, { g2, fresh }, n, tasks, label, dep = n - 1) {
+  const old = stagesOfPlan(fx.home, plan.id).find((s) => s.id === before[n].id);
+  const named = (key) => JSON.stringify(g2.replacement?.[key] ?? []).includes(before[n].id);
+  assert.ok(
+    old.cancelled_at && named('superseded') && !named('kept'),
+    `${label} stage ${n} (${before[n].status}, built on stage ${n - 1}) is superseded by the swap, not kept (E172 item 7 S2; Sean's ruling, cascade) (stage ${n} ${old.status}, cancelled_at ${old.cancelled_at}; replacement ${JSON.stringify({ kept: g2.replacement?.kept, superseded: g2.replacement?.superseded })}; generation 2 registered ${JSON.stringify(Object.keys(fresh))})`,
+  );
+  assert.equal(stagesOfPlan(fx.home, g2.id).filter((s) => s.number === n).length, 1, `${label} generation 2 registers stage ${n} once`);
+  assert.ok(fresh[n] && fresh[n].id !== before[n].id && fresh[dep], `${label} a fresh stage ${n} and its dependency stage ${dep} registered in generation 2 (${JSON.stringify(Object.values(fresh).map((s) => [s.number, s.id]))})`);
+  assert.deepEqual(fresh[n].depends_on, [fresh[dep].id], `${label} the fresh stage ${n} depends on generation 2's stage ${dep}, the new dependency`);
+  assert.deepEqual(fresh[n].tasks, tasks, `${label} the fresh stage ${n}'s tasks`);
 }
 
 describe('M430 early replanning as a compare-and-swap', () => {
@@ -253,6 +326,48 @@ describe('M430 early replanning as a compare-and-swap', () => {
     const after = findingsOf(fx.home, p.id).find((f) => f.id === found.id);
     assert.ok(after, '(f) the finding kept after the replacement');
     assert.equal(after.disposition, 'fix', 'with its disposition');
+  });
+
+  test('(c), (d) E172 S2, cascade: stage 1\'s blocker answered replan with stages 2 and 3 built on it in a chain, the replacement listing only stage 1 changed: stage 2 and, transitively, stage 3 superseded and registered fresh against the new dependency; the phase completes on the rebuilt chain, not the superseded work', async (t) => {
+    const J = await builtDependentsOfTheSubject(t, [changed(S1)], { three: true });
+    const { fx, p, ctx, before } = J;
+    const g = await publishedReplacement(J, 'lists only stage 1, changed');
+    assertCascaded(J, g, 2, S2.tasks, '(i)');
+    assertCascaded(J, g, 3, S3.tasks, '(ii) transitively,');
+    // (iii) to completion: the rebuilt chain, never the superseded stages.
+    const runsBefore = Object.fromEntries([2, 3].map((n) => [n, runOf(fx.home, p.id, stageWorkOf(fx.home, p.id, before[n]).id).length]));
+    const done = await pump(fx, ctx, () => planOfPhase(fx.home, p.id, 1).find((x) => x.id === g.g2.id && x.completed_at), { what: 'phase 1 complete on generation 2', max: 200 });
+    assert.equal(done.completion_binding?.generation, 2, '(iii) phase 1 completed on generation 2');
+    for (const n of [1, 2, 3]) {
+      const s = stagesOfPlan(fx.home, g.g2.id).find((x) => x.number === n);
+      assert.ok(['integrated', 'verified'].includes(s.status) && !s.cancelled_at, `(iii) generation 2's stage ${n} built when the phase completed (${s.status})`);
+      assert.ok(runOf(fx.home, p.id, stageWorkOf(fx.home, p.id, s).id).some((r) => r.state === 'ended' && r.outcome === 'completed'), `(iii) generation 2's stage ${n} rebuilt by its own Builder run`);
+    }
+    for (const n of [2, 3]) assert.equal(runOf(fx.home, p.id, stageWorkOf(fx.home, p.id, before[n]).id).length, runsBefore[n], `(iii) the superseded stage ${n}'s work not dispatched again`);
+  });
+
+  test('(c), (d) E172 S2, cascade, control: the replacement lists stage 2, built on stage 1, with new inputs: not PLAN_DUPLICATE_STAGE; the replacement\'s stage 2 registered once against the new stage 1', async (t) => {
+    const J = await builtDependentsOfTheSubject(t, [changed(S1), changed(S2)]);
+    const g = await publishedReplacement(J, 'lists stage 1 changed and stage 2 with new inputs');
+    assertCascaded(J, g, 2, changed(S2).tasks, '(iv) the replacement\'s entry:');
+    assert.equal(workOf(J.fx.home, J.p.id, 'stage_build').filter((w) => w.subject?.stage === g.fresh[2].id).length, 1, '(iv) one stage_build for the replacement\'s stage 2');
+  });
+
+  test('(c), (d) E172 S2, the dependency vanished: the replacement drops stage 1 for a stage 3 and omits stage 2, built on stage 1: refused PLAN_UNKNOWN_STAGE (stage 2, 1), nothing published; control: the repair listing stage 2 with new inputs, depending on 3, publishes and stage 2 cascades onto stage 3', async (t) => {
+    const S1as3 = changed(S1, { number: 3 });
+    const J = await builtDependentsOfTheSubject(t, [S1as3], { repair: [S1as3, changed(S2, { depends_on: [3] })] });
+    const { fx, p, ctx, out, check, seen } = J;
+    const named = subjectsOf(check, 'PLAN_UNKNOWN_STAGE').some((s) => /^stage 2\s*(->|:)\s*(stage\s*)?1\b/.test(s));
+    assert.ok(
+      out.failed && check?.outcome === 'refused' && named,
+      `a replacement superseding stage 1 that leaves stage 2's dependency number 1 with no active stage is refused at the plan check, PLAN_UNKNOWN_STAGE naming stage 2 and 1 (E172 item 7 S2; the driver's ruling, E174) (outcome ${Object.keys(out).join(', ')}${out.failed ? `: ${out.failed.reason_text}` : ''}; check ${check?.outcome} ${JSON.stringify(check?.reasons)})`,
+    );
+    assert.deepEqual(phasePlansOf(fx.home, p.id).filter((x) => x.phase_number === 1 && x.generation > 1 && x.published_at).map((x) => x.generation), [], 'nothing published');
+    // The control: not a deadlock. The repair lists stage 2 itself, with new inputs.
+    await afterRefusal(fx, ctx, out.failed);
+    const next = await nextReplanOutcome(fx, ctx, 1, seen, { max: 200 });
+    const g = await publishedReplacement({ ...J, out: next, check: planCheckRows(fx.home, p.id).at(-1) }, 'drops stage 1 for a stage 3 and lists stage 2 with new inputs depending on 3');
+    assertCascaded(J, g, 2, changed(S2).tasks, 'the control:', 3);
   });
 });
 
