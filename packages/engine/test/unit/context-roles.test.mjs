@@ -246,6 +246,11 @@ test("the Reviewer's package: the diff, the findings by id, the review facts, it
   // H1 (E171 item 5; SEAM.md §552): a fix on a finding naming no check is refused, and the package says so.
   assert.match(prompt, /a `fix` on a finding that names no `check` is refused \(nothing is registered, and the finding is put to the human owner\), unless it is your own contract_conflict with `target` `plan`/);
   assert.match(JSON.parse(pkg.read('result-schema.json')).properties.dispositions.description, /a fix on a finding that names no check is refused \(no check could show it done\): nothing is registered, and the finding is put to the human owner/);
+  // S1 (E172 item 7; SEAM.md §555): a disposition on a finding the owner dispositioned is refused, and the package says so and lists who dispositioned each.
+  const ownerRule = /A finding listed with `disposition_authority` `human` was dispositioned by the human owner, and his decision stands: .* is refused and recorded as refused; the finding is left as he left it and nothing is registered/;
+  assert.match(prompt, ownerRule);
+  assert.match(JSON.parse(pkg.read('result-schema.json')).properties.dispositions.description, ownerRule);
+  for (const f of JSON.parse(pkg.read('findings.json')).findings) assert.ok('disposition_authority' in f, `${f.id} says who dispositioned it`);
   assert.ok(pkg.read('acceptance-content-hash.txt').includes('hash_2'));
 });
 

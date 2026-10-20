@@ -380,6 +380,10 @@ const curlLine = (fx, project, d, option) =>
 // kind is printed for Sean too; in a rehearsal it is "not established".
 // Returns {value, shown}.
 export async function drive(ctx, fx, project, done, { expect = [], answer = () => 'approve', what, timeoutMs = STEP_HOURS * HOURS, everyMs }) {
+  // A Reviewer's disposition differing from the owner's (scope reviewer_disagrees; S1, Sean's ruling of
+  // 2026-10-20; SEAM.md §555) is answered `keep`, the owner's standing disposition (the driver's ruling): the
+  // conservative routine answer. Every other question keeps its answer.
+  const choose = (d) => (d.kind === 'finding_disposition' && d.scope === 'reviewer_disagrees' ? 'keep' : answer(d));
   const shown = [];
   const seen = new Set();
   const started = performance.now();
@@ -390,11 +394,11 @@ export async function drive(ctx, fx, project, done, { expect = [], answer = () =
     const open = openDecisions(fx.home, project);
     // The decisions whose chosen option carries no blocker first (a spec
     // approval waits for each requirement_confirm, D6 §8.1 step 2).
-    const blockedOf = (d) => ((d.options ?? []).find((o) => o.key === answer(d))?.blockers ?? []).length > 0;
+    const blockedOf = (d) => ((d.options ?? []).find((o) => o.key === choose(d))?.blockers ?? []).length > 0;
     open.sort((a, b) => Number(blockedOf(a)) - Number(blockedOf(b)));
     for (const d of open) {
       if (seen.has(d.id)) continue;
-      const option = answer(d);
+      const option = choose(d);
       const options = (d.options ?? []).map((o) => `${o.key}${(o.blockers ?? []).length > 0 ? ` (blocked: ${(o.blockers ?? []).join(', ')})` : ''}`);
       // Under the rehearsal a blocked option waits while another decision is open to answer.
       if (ctx.rehearsal && blockedOf(d) && open.some((x) => x.id !== d.id && !seen.has(x.id))) continue;

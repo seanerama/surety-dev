@@ -167,6 +167,8 @@ export type FindingFacts = {
   sensitive_area: string | null;
   status: string;
   disposition: string | null;
+  // Who dispositioned it: `human` (the owner), `reviewer`, or null.
+  disposition_authority?: string | null;
   source_role: string | null;
 };
 
@@ -281,6 +283,11 @@ const ROLE_TASK: Record<string, string> = {
 // from any role but the Reviewer makes the result invalid.
 const SEVERITY = { enum: ['critical', 'high', 'medium', 'low'] };
 const FINDING_ID = { type: 'string', pattern: '^fnd_', description: 'A finding id, as listed in /surety/context/findings.json.' };
+// A finding the human owner has dispositioned keeps his decision (S1; E172
+// item 7; store/transitions/findings.ts recordReport; SEAM.md §555).
+const OWNER_DECIDED_TEXT =
+  "A finding listed with `disposition_authority` `human` was dispositioned by the human owner, and his decision stands: a disposition you report on it that your own authority would record (a `fix`, plan-targeted or not, or a `defer` of a Low finding) is refused and recorded as refused; the finding is left as he left it and nothing is registered. An `accept` or another `defer` on it is a proposal, as on any finding: its disposition stays his.";
+
 // What happens to a finding left with no disposition (store/transitions/
 // findings.ts askUndispositioned; the driver's ruling on the real M443 run).
 const OWED_TEXT = `A finding you raise in this result's \`findings\` has no id yet, so it cannot be named here. Every finding left with no disposition (one you raise, or a listed one you do not name) is put to the human owner, who chooses fix (offered only when the \`check\` the finding names can verify it: a required acceptance check of the finding's scope covering its \`criterion\`, or, for a finding naming no \`criterion\`, one covering no criterion), accept (a High or Critical finding is lowered to medium first, since it holds the gates at its severity whatever its disposition), or for a ${CHANGE_SPEC_CATEGORIES.join(' or ')} finding a specification change; say in its message what the fix or the change would be.`;
@@ -406,7 +413,7 @@ const REVIEWER_FIELDS: Record<string, Record<string, unknown>> = {
   dispositions: {
     type: 'array',
     description:
-      `What is to be done about each open finding listed in /surety/context/findings.json, one entry per finding, named by its id: ${DISPOSITIONS.join(', ')}. fix: the engine registers fix work for it, on a finding that names a check; a fix on a finding that names no check is refused (no check could show it done): nothing is registered, and the finding is put to the human owner (target plan excepted). defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides. ${OWED_TEXT}`,
+      `What is to be done about each open finding listed in /surety/context/findings.json, one entry per finding, named by its id: ${DISPOSITIONS.join(', ')}. fix: the engine registers fix work for it, on a finding that names a check; a fix on a finding that names no check is refused (no check could show it done): nothing is registered, and the finding is put to the human owner (target plan excepted). defer: taken on your authority only for a Low finding with linked_issue and defer_target; otherwise, like accept, it is a proposal the human owner decides. ${OWNER_DECIDED_TEXT} ${OWED_TEXT}`,
     items: {
       type: 'object',
       required: ['finding', 'disposition'],
@@ -591,7 +598,7 @@ export function writeContextPackage(
           ? [
               '- /surety/context/review.json: the sign-offs this project\'s tier requires, and the applicability assessments that await your verdict.',
               '',
-              `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it where the finding names a \`check\`; a \`fix\` on a finding that names no \`check\` is refused (nothing is registered, and the finding is put to the human owner), unless it is your own contract_conflict with \`target\` \`plan\`. Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
+              `Give every open finding listed above a disposition in your result's \`dispositions\` (${DISPOSITIONS.join(', ')}), named by its id: \`fix\` registers fix work for it where the finding names a \`check\`; a \`fix\` on a finding that names no \`check\` is refused (nothing is registered, and the finding is put to the human owner), unless it is your own contract_conflict with \`target\` \`plan\`. ${OWNER_DECIDED_TEXT} Record new findings in \`findings\`, and your sign-offs in \`signoffs\`. ${OWED_TEXT}`,
               "A fix is shown done, and the finding resolved, when the finding's `check` is a required acceptance check covering the finding's `criterion` and passes after your disposition. A finding with no check, or no criterion, cannot be resolved that way: if you raise one, name both.",
               FIX_IS_CODE_TEXT,
               '',

@@ -1129,6 +1129,165 @@ const DISPOSITION_PROPOSED: KindSpec = {
   },
 };
 
+// ---- a Reviewer disagrees with the owner (S1; SEAM.md §555) -----------------------------
+
+// Sean's ruling of 2026-10-20, "ask only if it differs": a later Reviewer's
+// disposition on a finding the owner dispositioned (status dispositioned,
+// authority human) that differs from his is never recorded (findings.ts),
+// and asks him once, keep his or change. The Reviewer's entry is carried in
+// the `keep` option's effect plan (`proposed`), so the finding's own
+// columns stay exactly as he left them (no proposal held on it).
+export const REVIEWER_DISAGREES_SCOPE = 'reviewer_disagrees';
+
+export interface ReviewerEntry {
+  disposition: 'fix' | 'defer' | 'accept';
+  linked_issue: string | null;
+  defer_target: string | null;
+  target: 'plan' | null;
+  run: string;
+}
+
+// The seed findings.ts raises the question with: the Reviewer's entry, as
+// the `keep` option's plan.
+export function reviewerDisagreesSeed(f: Pick<FindingRow, 'id'>, entry: ReviewerEntry): string {
+  return JSON.stringify([{ key: 'keep', effect_plan: { finding: f.id, keep: true, proposed: entry } }]);
+}
+
+const reviewerEntryOf = (d: Subject): ReviewerEntry | null =>
+  ((parseJson<{ key: string; effect_plan?: { proposed?: ReviewerEntry } }[]>(d.options) ?? []).find((o) => o.key === 'keep')?.effect_plan?.proposed ?? null) as ReviewerEntry | null;
+
+// Does a Reviewer's entry differ from the owner's standing disposition? Read
+// as standingOwnerAnswer (findings.ts) reads it: the same disposition, and
+// for a deferral the same issue and target. A plan-targeted `fix` is a `fix`.
+export function differsFromOwner(f: Pick<FindingRow, 'disposition' | 'linked_issue' | 'defer_target'>, e: { disposition: string; linked_issue?: string | null; defer_target?: string | null }): boolean {
+  if (f.disposition !== e.disposition) return true;
+  return e.disposition === 'defer' && ((f.linked_issue ?? null) !== (e.linked_issue ?? null) || (f.defer_target ?? null) !== (e.defer_target ?? null));
+}
+
+const describeEntry = (e: { disposition: string; linked_issue?: string | null; defer_target?: string | null; target?: string | null }): string =>
+  e.disposition === 'defer'
+    ? `defer (issue ${e.linked_issue ?? 'none'}, until ${e.defer_target ?? 'no target'})`
+    : e.disposition === 'fix' && e.target === 'plan'
+      ? 'fix by replanning'
+      : e.disposition;
+
+function reviewerDisagreesManifest(tx: Tx, f: FindingRow, e: ReviewerEntry | null): Record<string, unknown> {
+  const row = f as FindingRow & { disposition_by?: string | null; disposition_at?: string | null };
+  return {
+    ...dispositionManifest(tx, f),
+    // The Reviewer's entry beside the owner's standing disposition.
+    proposed_disposition: e?.disposition ?? null,
+    proposed_target: e?.target ?? null,
+    defer_target: e?.defer_target ?? null,
+    linked_issue: e?.linked_issue ?? null,
+    proposed_by_run: e?.run ?? null,
+    standing: {
+      disposition: f.disposition,
+      authority: f.disposition_authority,
+      by: row.disposition_by ?? null,
+      at: row.disposition_at ?? null,
+      linked_issue: f.linked_issue,
+      defer_target: f.defer_target,
+    },
+  };
+}
+
+const REVIEWER_DISAGREES: KindSpec = {
+  preview(tx, d) {
+    const f = findingRow(tx.db, d.subject_id);
+    const e = reviewerEntryOf(d);
+    // The question stands while the owner's disposition does and the
+    // Reviewer's entry still differs from it (withdrawn otherwise: the
+    // finding resolved, or his disposition changed by another route).
+    if (!f || !e || f.status !== 'dispositioned' || f.disposition_authority !== 'human' || !differsFromOwner(f, e)) return null;
+    const blocking = BLOCKING_SEVERITIES.includes(f.effective_severity);
+    const verification = findingVerification(tx.db, f);
+    const options: OptionSpec[] = [
+      {
+        key: 'keep',
+        label: 'Keep yours',
+        consequence: `Your disposition stands (${describeEntry({ ...f, disposition: f.disposition! })}): nothing is changed and nothing is registered.`,
+        effect: { finding: f.id, keep: true, proposed: e },
+      },
+    ];
+    // The Reviewer's disposition under its own key, where the owner's own
+    // route allows it (the owed question's rules): `fix` only when a check
+    // can verify the finding (F4), never one targeted at the plan; `defer`
+    // with the Reviewer's issue and target while that target is ahead, on a
+    // severity a human deferral covers; `accept`, or lower_and_accept in its
+    // place on a blocking severity.
+    let unavailable: string | null = null;
+    if (e.disposition === 'fix') {
+      if (e.target === 'plan') unavailable = 'A fix by replanning is not yours to choose here.';
+      else if (verification.state !== 'verifiable') unavailable = verification.reason;
+      else
+        options.push({
+          key: 'fix',
+          label: 'Fix',
+          consequence: inConformancePhase(tx.db, f.project)
+            ? `The finding is dispositioned fix by the human owner. This adopted project is in its conformance phase, so nothing else is registered now: no fix work, and no source change before conformance. It holds the gates until its check ${f.check} passes after this disposition, which resolves it.`
+            : `The finding is dispositioned fix by the human owner: the engine registers fix work for it, and a Builder run changes the code. It holds the gates until its check ${f.check} passes after the fix, which resolves it.`,
+          effect: { finding: f.id, disposition: 'fix' },
+        });
+    } else if (e.disposition === 'defer') {
+      if (blocking) unavailable = `A ${f.effective_severity} finding cannot be deferred.`;
+      else if (!e.linked_issue || !e.defer_target || Date.parse(e.defer_target) <= Date.parse(nowIso())) unavailable = 'The deferral has no issue, or its target has passed.';
+      else
+        options.push({
+          key: 'defer',
+          label: 'Defer',
+          consequence: `The finding is dispositioned defer by the human owner, linked to ${e.linked_issue}, until ${e.defer_target}.`,
+          effect: { finding: f.id, disposition: 'defer', linked_issue: e.linked_issue, defer_target: e.defer_target },
+        });
+    } else {
+      options.push(
+        blocking
+          ? {
+              key: LOWER_AND_ACCEPT,
+              label: 'Lower and accept',
+              consequence: `Its severity is lowered from ${f.effective_severity} to ${LOWERED_TO} by the human owner (recorded in its severity history with your authority and this decision), and it is dispositioned accept by the human owner: it stays recorded and no longer holds the gates.`,
+              effect: { finding: f.id, lower_to: LOWERED_TO, disposition: 'accept' },
+            }
+          : { key: 'accept', label: 'Accept', consequence: 'The finding is dispositioned accept by the human owner: it stays recorded and no longer holds the gates.', effect: { finding: f.id, disposition: 'accept' } },
+      );
+    }
+    return {
+      manifest: reviewerDisagreesManifest(tx, f, e),
+      options,
+      question: `A Reviewer (run ${e.run}) proposes to ${describeEntry(e)} finding ${f.id} (${f.category}, ${f.effective_severity}), which you dispositioned ${describeEntry({ ...f, disposition: f.disposition! })}. ${
+        unavailable === null ? 'Keep yours, or change it to the Reviewer\'s.' : `${unavailable} Keep yours.`
+      }`,
+    };
+  },
+  manifest: (tx, d) => reviewerDisagreesManifest(tx, findingRow(tx.db, d.subject_id)!, reviewerEntryOf(d)),
+  reraise: true,
+  answer(tx, d, option, note) {
+    const f = findingRow(tx.db, d.subject_id)!;
+    consumeDecision(tx, d, option, note);
+    // keep: the owner's disposition stands, exactly as he left it.
+    if (option === 'keep') return consumed(d);
+    const plan = (JSON.parse(d.options) as { key: string; effect_plan: { disposition: 'fix' | 'defer' | 'accept'; lower_to?: string; linked_issue?: string; defer_target?: string } }[]).find((o) => o.key === option)!.effect_plan;
+    const lower = plan.lower_to !== undefined && BLOCKING_SEVERITIES.includes(f.effective_severity);
+    recordApproval(tx, d, {
+      consequence: `finding ${f.id}${lower ? ` lowered from ${f.effective_severity} to ${LOWERED_TO} and` : ''} dispositioned ${plan.disposition}, as a Reviewer proposed`,
+      subjectType: 'finding',
+      subjectId: f.id,
+      contentHash: findingBinding(tx, f).acceptance_content_hash,
+    });
+    if (lower) changeSeverity(tx, f, { to: LOWERED_TO, actor: tx.actor.actor_kind, authority: 'human', decision: d.id });
+    // What the owner's own route registers (recordDisposition): for `fix`,
+    // one fix work item (or check_correction, or nothing in conformance).
+    recordDisposition(tx, findingRow(tx.db, f.id)!, {
+      disposition: plan.disposition,
+      authority: 'human',
+      by: tx.actor.actor_kind,
+      linked_issue: plan.linked_issue ?? null,
+      defer_target: plan.defer_target ?? null,
+    });
+    return consumed(d, [{ kind: 'tick' }]);
+  },
+};
+
 // ---- the Alpha exception (D2 §5 C1) -------------------------------------------------------
 
 interface ProposedAlpha {
@@ -1406,12 +1565,22 @@ const DISPOSITION_OWED: KindSpec = {
   },
 };
 
-// finding_disposition asks three questions about a finding: a disposition a
+// finding_disposition asks these questions about a finding: a disposition a
 // Reviewer proposed beyond its authority, (scope alpha_exception) an Alpha
-// exception (D2 §5 C1), and (scope disposition_owed) a disposition no one
-// gave.
+// exception (D2 §5 C1), (scope disposition_owed) a disposition no one
+// gave, (scope design_conflict) a Designer's conflict, and (scope
+// reviewer_disagrees, S1) a Reviewer's disposition differing from the
+// owner's standing one.
 const byScope = (d: Pick<Subject, 'scope'>): KindSpec =>
-  d.scope === ALPHA_SCOPE ? ALPHA_EXCEPTION : d.scope === OWED_SCOPE ? DISPOSITION_OWED : d.scope === DESIGN_CONFLICT_SCOPE ? DESIGN_CONFLICT : DISPOSITION_PROPOSED;
+  d.scope === ALPHA_SCOPE
+    ? ALPHA_EXCEPTION
+    : d.scope === OWED_SCOPE
+      ? DISPOSITION_OWED
+      : d.scope === DESIGN_CONFLICT_SCOPE
+        ? DESIGN_CONFLICT
+        : d.scope === REVIEWER_DISAGREES_SCOPE
+          ? REVIEWER_DISAGREES
+          : DISPOSITION_PROPOSED;
 const DISPOSITION: KindSpec = {
   preview: (tx, d, facts) => byScope(d).preview(tx, d, facts),
   manifest: (tx, d, facts) => byScope(d).manifest(tx, d, facts),

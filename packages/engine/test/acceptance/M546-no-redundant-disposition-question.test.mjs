@@ -20,7 +20,34 @@
 //       same id and no `fix` option. Its control: a Reviewer's plan-targeted
 //       `fix` on its own `contract_conflict` naming no check is recorded and
 //       makes its early replan, as before (D6 §5.7).
-// (d)'s pin is SEAM.md §552. A `fix` on a finding that names a check, even
+//   (e) S1 (E172 item 7; Sean's direction of 2026-10-19 that an agent never
+//       overrides the owner's standing decision; the driver's ruling under
+//       his delegation): a finding the owner has dispositioned (his `accept`,
+//       his `defer`, his `fix`) is left exactly as he left it by any entry a
+//       later Reviewer's report makes on it. An entry the Reviewer's own
+//       authority would otherwise record (a `fix` on a finding naming a
+//       check, a plan-targeted `fix`, a Low `defer` with issue and target)
+//       registers nothing (no fix work, no check_correction, no replan), is
+//       recorded once by the event `finding.disposition_refused` † (subject
+//       {project, finding, run}, payload `reason` `owner_decided`, the
+//       Reviewer's `disposition`, and `target` where the entry had one), and
+//       the run is still accepted. The proposals beyond its authority
+//       (`accept`, a Medium `defer`) change nothing on the finding either.
+//       (e) reads no question: which the owner is asked is (f)'s.
+//   (f) S1, Sean's ruling of 2026-10-20 ("ask only if it differs"): a later
+//       Reviewer's disposition on a finding the owner dispositioned that
+//       differs from his raises one `finding_disposition` question to the
+//       owner, scope `reviewer_disagrees`, offering `keep` (his stands) and
+//       the Reviewer's disposition where his own route allows it (`fix` only
+//       on a finding a check can verify), not his own; its manifest names his
+//       standing disposition (`disposition`), the Reviewer's
+//       (`proposed_disposition`) and the Reviewer's run (`proposed_by_run`).
+//       His disposition stands until he answers. A further differing report
+//       while it is open raises no second question. `keep` changes nothing
+//       and consumes it; `fix` is recorded with authority `human` and its fix
+//       work registered once, as his own route does. A matching Reviewer
+//       disposition raises nothing.
+// (d)'s pin is SEAM.md §552; (e)'s and (f)'s are SEAM.md §555. A `fix` on a finding that names a check, even
 // one that does not cover its criterion, is unchanged (D3 §2.11's
 // check_correction route, M235); so is the `unknown` state with a named check.
 // The pin (SEAM.md §474): the proposal is recorded by the event
@@ -38,7 +65,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { answer, consume, decision, decisionsOn, openDecision } from './harness/decisions.mjs';
+import { answer, assertPreview, consume, decision, decisionsOn, openDecision } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
 import { check, finding, installChecks, nominated, passAll, raiseFindings, review } from './harness/gates.mjs';
 import { eventsOfType, workItemsOf } from './harness/journal.mjs';
@@ -196,5 +223,198 @@ describe('M546 no redundant disposition question', () => {
     assert.equal(replans.length, 1, `one early replan triggered by the finding (${show(workItemsOf(fx.home, project).map((w) => [w.kind, w.trigger_source, w.trigger_id]))})`);
     assert.deepEqual(workItemsOf(fx.home, project).filter((w) => w.kind === 'fix' && (w.subject?.finding === conflict.id || w.trigger_id === conflict.id)).map((w) => w.id), [], 'no fix work for it');
     assert.equal(eventsOfType(fx.home, 'finding.fix_refused').filter((e) => e.subject?.finding === conflict.id).length, 0, 'and no refusal');
+  });
+
+  test("(e) S1: a finding the owner dispositioned stays as he left it whatever a later Reviewer reports on it: nothing registered, finding.disposition_refused recorded once per entry the Reviewer's authority would have recorded, the run accepted", async (t) => {
+    const fx = await scriptedEngine(t);
+    // Every run the case can cause is scripted by kind (the race M546 (d) met): the owner's fix registers fix work,
+    // and on main the Reviewer's entries register fix work and an early replan, which are dispatched at once.
+    for (const kind of ['fix', 'check_correction', 'replan']) fx.scripted.kindScript(kind, script.complete());
+    const ctx = await nominated(fx, { autonomy: 'step' });
+    const project = ctx.project.id;
+    const c1 = ctx.candidate;
+    const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+    await passAll(fx.engine, project, c1.id, [k.login]);
+    const named = (severity, message) => ({ category: 'defect', severity, message, check: 'login', criterion: 'R1.1' });
+    const target = inDays(30);
+
+    // The owner's fix, through the owed question: a Verifier's finding, raised before any review of the candidate
+    // exists (T1 queues none, so it is owed to the owner, SEAM.md §466), naming a check that verifies it.
+    const [fFix] = await raiseFindings(fx, project, c1.id, [named('medium', 'the session cookie outlives logout')], { kind: 'verification' });
+    const owed = await openDecision(fx, project, 'finding_disposition', fFix.id, { max: 6 });
+    assert.ok(owed.options.some((o) => o.key === 'fix'), `the fixture is live: fix is offered on the owed question (offered ${show(owed.options.map((o) => o.key))})`);
+    await consume(fx, project, owed, 'fix');
+
+    // The owner's accept (a Medium and a Low finding naming the check, and the Reviewer's own contract_conflict
+    // naming none) and his defer, through a Reviewer's proposals and his approvals (M42).
+    const [fAccept, fLow, fConflict, fDefer] = await raiseFindings(fx, project, c1.id, [
+      named('medium', 'a session survives logout'),
+      named('low', 'the logout link is misaligned'),
+      { category: 'contract_conflict', severity: 'medium', message: 'the plan has the export send floats; the module map says integers' },
+      named('medium', 'the login form keeps the password after a failure'),
+    ]);
+    await review(fx, project, c1.id, {
+      dispositions: [
+        { finding: fAccept.id, disposition: 'accept' },
+        { finding: fLow.id, disposition: 'accept' },
+        { finding: fConflict.id, disposition: 'accept' },
+        { finding: fDefer.id, disposition: 'defer', linked_issue: 'ISSUE-9', defer_target: target },
+      ],
+    });
+    for (const f of [fAccept, fLow, fConflict, fDefer]) await consume(fx, project, await openDecision(fx, project, 'finding_disposition', f.id), 'approve');
+
+    const all = [fAccept, fLow, fConflict, fDefer, fFix];
+    const ids = new Set(all.map((f) => f.id));
+    const owner = (f) => {
+      const row = finding(fx.home, f.id);
+      return [row.status, row.disposition, row.disposition_authority, row.disposition_by, row.disposition_at, row.linked_issue, row.defer_target];
+    };
+    const left = Object.fromEntries(all.map((f) => [f.id, owner(f)]));
+    assert.deepEqual(
+      all.map((f) => left[f.id].slice(0, 3)),
+      [
+        ['dispositioned', 'accept', 'human'],
+        ['dispositioned', 'accept', 'human'],
+        ['dispositioned', 'accept', 'human'],
+        ['dispositioned', 'defer', 'human'],
+        ['dispositioned', 'fix', 'human'],
+      ],
+      `the fixture is live: the owner dispositioned all five (${show(left)})`,
+    );
+    assert.deepEqual([fConflict.check, fConflict.source_role, fLow.effective_severity], [null, 'reviewer', 'low'], 'the fixture is live: the Reviewer\'s own contract_conflict names no check; the Low finding is Low');
+    const since = withStore(fx.home, (db) => db.prepare('SELECT MAX("seq") AS "n" FROM "events"').get().n);
+    const workBefore = new Set(workItemsOf(fx.home, project).map((w) => w.id));
+    const registered = () => workItemsOf(fx.home, project).filter((w) => !workBefore.has(w.id) && ['fix', 'check_correction', 'replan'].includes(w.kind)).map((w) => [w.kind, w.trigger_source, w.trigger_id]);
+    const dispositioned = () => eventsOfType(fx.home, 'finding.dispositioned', since).filter((e) => ids.has(e.subject?.finding)).map((e) => [e.subject.finding, e.payload?.disposition, e.payload?.authority]);
+
+    // A later Reviewer reports, on each, an entry its own authority would record on a finding no one dispositioned.
+    const entries = [
+      { finding: fAccept.id, disposition: 'fix' },
+      { finding: fLow.id, disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: target },
+      { finding: fConflict.id, disposition: 'fix', target: 'plan' },
+      { finding: fDefer.id, disposition: 'fix' },
+      { finding: fFix.id, disposition: 'fix' },
+    ];
+    const { run } = await review(fx, project, c1.id, { dispositions: entries });
+    await tick(fx.engine, project);
+
+    assert.deepEqual(
+      Object.fromEntries(all.map((f) => [f.id, owner(f)])),
+      left,
+      "a Reviewer's later disposition leaves every finding the owner dispositioned exactly as he left it: status, disposition, authority human, who and when, issue and target (S1)",
+    );
+    assert.deepEqual(dispositioned(), [], 'no disposition is recorded on them');
+    assert.deepEqual(registered(), [], 'nothing is registered: no fix work, no check_correction work, no replan');
+    const ran = withStore(fx.home, (db) => db.prepare('SELECT "outcome", "reason_class" FROM "runs" WHERE "id" = ?').get(run.id));
+    assert.deepEqual([ran.outcome, ran.reason_class], ['completed', 'none'], "the Reviewer's run is still accepted");
+    for (const e of entries) {
+      const refused = eventsOfType(fx.home, 'finding.disposition_refused', since).filter((x) => x.subject?.finding === e.finding);
+      assert.equal(refused.length, 1, `the attempt on ${e.finding} recorded once: finding.disposition_refused † (${show(refused)})`);
+      assert.deepEqual(
+        [refused[0].subject?.project, refused[0].subject?.finding, refused[0].subject?.run, refused[0].payload?.reason, refused[0].payload?.disposition, refused[0].payload?.target ?? null],
+        [project, e.finding, run.id, 'owner_decided', e.disposition, e.target ?? null],
+        `naming the project, the finding and the Reviewer's run, reason owner_decided, the Reviewer's disposition (${show(refused[0])})`,
+      );
+    }
+    assert.deepEqual(eventsOfType(fx.home, 'finding.fix_refused', since).filter((e) => ids.has(e.subject?.finding)).map((e) => e.subject.finding), [], 'refused as the owner\'s decision, not for missing verification');
+
+    // The proposals beyond a Reviewer's authority, matching or differing: the findings stay as he left them, and
+    // nothing is registered. (Which of these asks him again, and how, is (f)'s: Sean's ruling of 2026-10-20.)
+    await review(fx, project, c1.id, {
+      dispositions: [
+        { finding: fAccept.id, disposition: 'accept' },
+        { finding: fConflict.id, disposition: 'defer', linked_issue: 'ISSUE-8', defer_target: target },
+        { finding: fDefer.id, disposition: 'defer', linked_issue: 'ISSUE-9', defer_target: target },
+        { finding: fFix.id, disposition: 'accept' },
+      ],
+    });
+    await tick(fx.engine, project);
+    assert.deepEqual(Object.fromEntries(all.map((f) => [f.id, owner(f)])), left, "a Reviewer's later proposals leave them as the owner left them too");
+    assert.deepEqual(dispositioned(), [], 'still no disposition recorded on them');
+    assert.deepEqual(registered(), [], 'still nothing registered');
+  });
+
+  test("(f) S1, ask only if it differs (Sean, 2026-10-20): a Reviewer's differing disposition on the owner's asks him once, keep or change; keep changes nothing, fix is his; a matching one asks nothing", async (t) => {
+    const fx = await scriptedEngine(t);
+    // The owner's fix registers fix work, dispatched at once: scripted by kind so its run ends (the race M546 (d) met).
+    for (const kind of ['fix', 'check_correction', 'replan']) fx.scripted.kindScript(kind, script.complete());
+    const ctx = await nominated(fx, { autonomy: 'step' });
+    const project = ctx.project.id;
+    const c1 = ctx.candidate;
+    const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] })])).id;
+    await passAll(fx.engine, project, c1.id, [k.login]);
+    const named = (message) => ({ category: 'defect', severity: 'medium', message, check: 'login', criterion: 'R1.1' });
+
+    // The owner accepts two Medium findings naming login/R1.1, through a Reviewer's proposals and his approvals (M42).
+    const [fKeep, fFix] = await raiseFindings(fx, project, c1.id, [named('a session survives logout'), named('the login form keeps the password after a failure')]);
+    await review(fx, project, c1.id, { dispositions: [fKeep, fFix].map((f) => ({ finding: f.id, disposition: 'accept' })) });
+    const approved = [];
+    for (const f of [fKeep, fFix]) approved.push(await consume(fx, project, await openDecision(fx, project, 'finding_disposition', f.id), 'approve'));
+    const owner = (f) => {
+      const row = finding(fx.home, f.id);
+      return [row.status, row.disposition, row.disposition_authority, row.disposition_by, row.disposition_at, row.linked_issue, row.defer_target];
+    };
+    const left = owner(fKeep);
+    assert.deepEqual(
+      [owner(fKeep).slice(0, 3), owner(fFix).slice(0, 3), approved.map((d) => d.manifest.verification?.state)],
+      [['dispositioned', 'accept', 'human'], ['dispositioned', 'accept', 'human'], ['verifiable', 'verifiable']],
+      `the fixture is live: the owner accepted both, and a check can verify each (${show([owner(fKeep), owner(fFix), approved.map((d) => d.manifest.verification)])})`,
+    );
+    const earlier = new Set([fKeep, fFix].flatMap((f) => questionsOn(fx, f.id).map((d) => d.id)));
+    const asked = (f) => questionsOn(fx, f.id).filter((d) => !earlier.has(d.id)).map((d) => [d.id, d.status, d.scope]);
+    const since = withStore(fx.home, (db) => db.prepare('SELECT MAX("seq") AS "n" FROM "events"').get().n);
+    const workBefore = new Set(workItemsOf(fx.home, project).map((w) => w.id));
+    const registered = () => workItemsOf(fx.home, project).filter((w) => !workBefore.has(w.id) && ['fix', 'check_correction', 'replan'].includes(w.kind)).map((w) => [w.kind, w.trigger_source, w.trigger_id]);
+    const dispositioned = () => eventsOfType(fx.home, 'finding.dispositioned', since).filter((e) => [fKeep.id, fFix.id].includes(e.subject?.finding)).map((e) => [e.subject.finding, e.payload?.disposition, e.payload?.authority]);
+
+    // A Reviewer reports fix on each: refused as (e), and the owner is asked whether to keep his accept.
+    const { run } = await review(fx, project, c1.id, { dispositions: [fKeep, fFix].map((f) => ({ finding: f.id, disposition: 'fix' })) });
+    await tick(fx.engine, project);
+    assert.deepEqual([owner(fKeep), owner(fFix).slice(0, 3), registered()], [left, ['dispositioned', 'accept', 'human'], []], "the Reviewer's fix is refused as (e): his accept stands, nothing registered");
+    const raised = asked(fKeep);
+    assert.deepEqual(
+      raised.map(([, status, scope]) => [status, scope]),
+      [['open', 'reviewer_disagrees']],
+      `one finding_disposition question raised to the owner, scope reviewer_disagrees: the Reviewer proposes fix, keep his accept or change (${show(questionsOn(fx, fKeep.id).map((d) => [d.id, d.status, d.scope]))})`,
+    );
+    const q = assertPreview(decision(fx.home, raised[0][0]));
+    const keys = q.options.map((o) => o.key);
+    assert.deepEqual([keys.includes('keep'), keys.includes('fix'), keys.includes('accept')], [true, true, false], `offering keep and fix (a check can verify it), not his own accept (offered ${show(keys)})`);
+    assert.deepEqual(
+      [q.manifest.disposition, q.manifest.proposed_disposition, q.manifest.proposed_by_run],
+      ['accept', 'fix', run.id],
+      `its manifest names his standing accept, the Reviewer's fix and the Reviewer's run (${show(q.manifest)})`,
+    );
+
+    // A second Reviewer's fix while it is open: no second question.
+    await review(fx, project, c1.id, { dispositions: [{ finding: fKeep.id, disposition: 'fix' }] });
+    await tick(fx.engine, project);
+    assert.deepEqual(asked(fKeep), [[q.id, 'open', 'reviewer_disagrees']], `a further differing report while it is open raises no second question (${show(asked(fKeep))})`);
+
+    // keep: nothing changes, the question consumed, and nothing asked again.
+    await consume(fx, project, decision(fx.home, q.id), 'keep');
+    await tick(fx.engine, project);
+    assert.deepEqual(
+      [[...owner(fKeep), finding(fx.home, fKeep.id).proposed_disposition], registered(), dispositioned(), asked(fKeep)],
+      [[...left, null], [], [], [[q.id, 'consumed', 'reviewer_disagrees']]],
+      'keep: the finding as he left it, no proposal held, nothing registered or recorded, the question consumed and none raised again',
+    );
+
+    // A matching Reviewer disposition (his accept) asks nothing.
+    await review(fx, project, c1.id, { dispositions: [{ finding: fKeep.id, disposition: 'accept' }] });
+    await tick(fx.engine, project);
+    assert.deepEqual(asked(fKeep), [[q.id, 'consumed', 'reviewer_disagrees']], `a matching disposition raises no question (${show(asked(fKeep))})`);
+
+    // fix on the other: recorded with his authority, its fix work registered once.
+    const [[qFix, status]] = asked(fFix);
+    assert.equal(status, 'open', `the fixture is live: the owner is asked about the other finding too (${show(asked(fFix))})`);
+    await consume(fx, project, decision(fx.home, qFix), 'fix');
+    await tick(fx.engine, project);
+    const row = finding(fx.home, fFix.id);
+    assert.deepEqual(
+      [row.disposition, row.disposition_authority, dispositioned(), registered().filter(([kind]) => kind === 'fix')],
+      ['fix', 'human', [[fFix.id, 'fix', 'human']], [['fix', 'finding', fFix.id]]],
+      `his fix is recorded with authority human and its fix work registered once (${show(row)})`,
+    );
   });
 });
