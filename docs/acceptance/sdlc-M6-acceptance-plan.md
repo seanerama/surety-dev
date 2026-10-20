@@ -252,6 +252,9 @@ The accepted M1 to M5 rows keep passing. `design: off` is the default, so their 
 | H1, a Reviewer's no-check `fix` refused (E171 item 5; E172 item 1) | after 46 | Fixtures moved under Sean's authorisation, each case's intent kept: in M42's first case, M51, M105 (e), M436 (c) and M413-a-fix-after-conformance-creates-no-work the finding a Reviewer dispositions `fix` now names a check (COVERAGE.md, H1); the case itself is M546 (d) |
 | H3, an unresolvable dependency named (E172 item 3) | after 46 | M442 gains (a11); `builder.dependency_interfaces` gains `unresolved` (empty when every entry resolves) |
 | H4, recovery dead ends (E172 item 4) | after 46 | M430-blockers gains (iv) and (v); the contract table (`contract/work-items.json`) gains `eligible → parked` for `replan` only, so M09's and M73's expectations, read from it, include that edge |
+| S1, a Reviewer's disposition never overrides the owner's (E173 items 1 and 2) | after 46 | M546 gains (e) and (f); the real lane's pumps (`harness/real/m5-lane.mjs` `drive`, `m6-lane.mjs` `driveM6`) answer a `finding_disposition` question of scope `reviewer_disagrees` with `keep` |
+| S2, a replan cascades to built dependents (E174 items 1 and 2) | after 46 | M430-early-replanning's (c) and (d) gain three cases: a built dependent of a superseded stage is superseded and rebuilt, transitively; a replacement listing it uses its entry; a vanished dependency is refused `PLAN_UNKNOWN_STAGE` |
+| S3, a cancelled correction registered again (E174 items 3 and 4) | after 46 | M433 gains (h): `surety spec correct`, its refusals, and the texts and `GET …/spec` that name it |
 
 **Unchanged and kept passing:** every other M1 to M5 row; M5's exhaust files; M74 over the new seams.
 
