@@ -27,12 +27,24 @@
 //     the open obligation (`retry`, `cancel`), never completes; the owner's
 //     rejection of its proposal does the same; the obligation stays
 //     unresolved and named by the gate.
+// (h) S3 (E172 item 7; E173 item 4; Sean's ruling of 2026-10-20, option B;
+//     SEAM.md §557): once B's parked correction is cancelled, the owner's
+//     command `surety spec correct --project P --request R` (route
+//     `POST …/spec/change-requests/R/correct`) registers the correction
+//     again at its next generation, with the same request, criteria and
+//     checks; landed, it resolves the obligation and the gate no longer
+//     names it. Refused 409 `correction_pending` while a correction of R is
+//     live, 409 `nothing_owed` once R owes nothing, 404 for an unknown
+//     request or project. The owner is told: the blocker's question and its
+//     `cancel` option name the command, and `GET …/spec` lists R's open
+//     obligations with a `next_action` naming it.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { CODES, answer, decision, decisionsOn } from './harness/decisions.mjs';
 import { assertRefused } from './harness/fixtures.mjs';
+import { newId } from './harness/ids.mjs';
 import { drive, entryOf, operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { executionRow } from './harness/checks/fixtures.mjs';
 import { effectiveVersion, evaluate } from './harness/gates.mjs';
@@ -43,7 +55,7 @@ import { withStore } from './harness/store.mjs';
 import { ROUTED_KINDS, authoringReady, candidatesOfProject, checkRows, obligationsOf, planOfPhase, projectRow, queuedExecutions, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
 import { journey35 } from './harness/journey/plan35.mjs';
 import { CORRECTED_SERVICE_TEST, REQUIREMENTS, authoringFiles, specText } from './harness/journey/reference.mjs';
-import { SPEC_CHANGES, changeScript, pumpHolding, untilProposedOrFailed } from './harness/journey/change36.mjs';
+import { SPEC_CHANGES, changeScript, pumpHolding, surety, untilProposedOrFailed } from './harness/journey/change36.mjs';
 
 const LISTED = ['accept-r2', 'integration'];
 const SUM_TEST = '.surety/checks/tests/sum.test.mjs';
@@ -97,6 +109,40 @@ async function stage2Candidate(fx, ctx) {
     const queued = queuedExecutions(fx.home, ctx.project).filter((x) => x.candidate === c?.id && LISTED.includes(x.key));
     return queued.length === 2 ? { candidate: c, ex: Object.fromEntries(queued.map((x) => [x.key, x.id])) } : undefined;
   }, { what: 'stage 2\'s candidate with accept-r2 and integration queued', max: 300, ...ctx.holdOpts });
+}
+
+// (h)'s start: B's fixture with no repair, so the request's correction parks
+// at its first launch (nothing applied, no assessment) with its blocker open.
+// The second check_correction launch, the one the owner's command registers,
+// corrects accept-r2's test and proposes it; every launch is scripted.
+async function parkedCorrection(t) {
+  const { fx, p, ctx } = await journey35(t, { policy: { repair_attempts_max: 0 } });
+  ctx.holdOpts = {};
+  fx.scripted.kindScript('check_correction', [
+    roleThat([], {}),
+    roleThat([step.write('.surety/checks/tests/service.test.mjs', CORRECTED_SERVICE_TEST)], { proposal: { rationale: 'R2.1 names the content type; accept-r2 reads it.', requested_change_kind: 'tightening' } }),
+  ]);
+  await authoringReady(fx, ctx, 1);
+  const request = await proposeAndApprove(fx, ctx, R2_1_ONLY, [{ key: 'R2', kind: 'criteria_changed', reason: 'R2.1 content type' }], 2);
+  const corrections = () => workOf(fx.home, p.id, 'check_correction').filter((w) => w.trigger_source === 'spec_obligation' && w.trigger_id === request.id);
+  const blocker = await pumpHolding(fx, ctx, () => {
+    const w = corrections().at(-1);
+    return w?.status === 'parked' ? decisionsOn(fx.home, 'blocker', w.id).find((d) => d.status === 'open') : undefined;
+  }, { what: 'the request\'s correction parked with its blocker open', max: 60, answerKinds: ['spec_change'] });
+  const [first] = corrections();
+  assert.equal(corrections().length, 1, 'the fixture is live: one correction of the request, parked');
+  const open = () => obligationsOf(fx.home, p.id).filter((o) => o.reason === 'spec_changed' && o.request === request.id && o.resolved_at === null).map((o) => o.key);
+  assert.deepEqual(open(), ['accept-r2'], 'the fixture is live: the request owes accept-r2');
+  const command = `surety spec correct --project ${p.id} --request ${request.id}`;
+  const route = `/v1/projects/${p.id}/spec/change-requests/${request.id}/correct`;
+  const stage2Gate = async () => {
+    const candidate = candidatesOfProject(fx.home, p.id).at(-1);
+    const plan1 = planOfPhase(fx.home, p.id, 1).find(active);
+    const stage2 = stagesOfPlan(fx.home, plan1.id).find((s) => s.number === 2);
+    return { candidate, evaluation: await evaluate(fx.engine, p.id, candidate.id, 'stage', { stage: stage2.id }, { inventory: false }) };
+  };
+  const owesAccept = (evaluation) => names(reasonSubjects(evaluation, 'ACCEPTANCE_SCOPE_INCOMPLETE'), keyIds(fx.home, p.id, 'accept-r2'), 'accept-r2');
+  return { fx, p, ctx, request, first, blocker, corrections, open, command, route, stage2Gate, owesAccept };
 }
 
 describe('M433 (f), (g): old-generation runs, and what resolves an obligation; the 31b review\'s M2', () => {
@@ -292,5 +338,75 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
     const stage2 = stagesOfPlan(fx.home, plan1.id).find((s) => s.number === 2);
     const evaluation = await evaluate(fx.engine, p.id, candidate.id, 'stage', { stage: stage2.id }, { inventory: false });
     assert.ok(names(reasonSubjects(evaluation, 'ACCEPTANCE_SCOPE_INCOMPLETE'), keyIds(fx.home, p.id, 'accept-r2'), 'accept-r2'), `the gate names the obligation's check (${JSON.stringify(evaluation.reasons)})`);
+  });
+
+  test('(h) S3, the owner\'s command: after the cancel, `surety spec correct` registers the correction again with the same request, criteria and checks; landed, it resolves the obligation and the gate no longer names it; refused 409 correction_pending, 409 nothing_owed, 404', async (t) => {
+    const { fx, p, ctx, request, first, blocker, corrections, open, route, stage2Gate, owesAccept } = await parkedCorrection(t);
+    // While its correction is parked (live, not cancelled), the command is refused.
+    let res = await fx.engine.post(route, {});
+    assertRefused(res, 409, 'correction_pending', `S3: POST …/spec/change-requests/${request.id}/correct while the request's correction is parked (not cancelled)`);
+    assert.equal(corrections().length, 1, 'the refusal registers nothing');
+    assert.equal((await answer(fx.engine, p.id, decision(fx.home, blocker.id), 'cancel')).status, 200, 'the owner answers cancel');
+    // The dead end S3 names: nothing registers another correction by itself.
+    await pumpHolding(fx, ctx, () => false, { max: 3 }).catch(() => null);
+    assert.deepEqual(corrections().map((w) => [w.id, w.status]), [[first.id, 'cancelled']], 'the fixture is live: the cancelled correction, and no other');
+    assert.deepEqual(open(), ['accept-r2'], 'the fixture is live: the obligation stays open after the cancel');
+    assert.ok(owesAccept((await stage2Gate()).evaluation), 'the fixture is live: the gate names accept-r2 (ACCEPTANCE_SCOPE_INCOMPLETE)');
+    // Unknown request, unknown project: 404, nothing registered.
+    assertRefused(await fx.engine.post(`/v1/projects/${p.id}/spec/change-requests/${newId('scr_')}/correct`, {}), 404, 'not_found', 'an unknown request');
+    assertRefused(await fx.engine.post(`/v1/projects/${newId(`${p.id.split('_')[0]}_`)}/spec/change-requests/${request.id}/correct`, {}), 404, 'not_found', 'an unknown project');
+    assert.equal(corrections().length, 1, 'the 404s register nothing');
+    // The owner's command, by the CLI.
+    const out = surety(fx, ['spec', 'correct', '--project', p.id, '--request', request.id]);
+    assert.equal(out.status, 0, `S3: surety spec correct --project P --request R exits 0 (stdout ${out.stdout.slice(0, 600)}; stderr ${out.stderr.slice(0, 600)})`);
+    assert.equal(out.stdout.trim().split('\n').length, 1, 'one line of JSON on standard output');
+    const again = corrections();
+    assert.equal(again.length, 2, 'one correction registered again');
+    const fresh = again[1];
+    assert.equal(out.body?.work_item?.id, fresh.id, `the answer names the registered work item (${out.stdout.slice(0, 400)})`);
+    assert.deepEqual(
+      [fresh.kind, fresh.trigger_source, fresh.trigger_id, fresh.trigger_generation, fresh.subject?.request],
+      ['check_correction', 'spec_obligation', request.id, first.trigger_generation + 1, request.id],
+      'a check_correction from (spec_obligation, R) at the next generation, about the same request',
+    );
+    const ev = (w) => JSON.parse(w.trigger_evidence ?? '{}');
+    assert.deepEqual([ev(fresh).criteria, ev(fresh).checks], [ev(first).criteria, ev(first).checks], 'with the same criteria and checks');
+    // Asked again while the fresh one is live: refused, nothing more.
+    res = await fx.engine.post(route, {});
+    assertRefused(res, 409, 'correction_pending', 'the command again while the correction it registered is pending');
+    assert.equal(corrections().length, 2, 'no third correction');
+    // It lands: its proposal approved by the owner, the obligation resolved.
+    await pumpHolding(fx, ctx, () => open().length === 0 && corrections()[1].status === 'complete', { what: 'the registered correction applied and the obligation resolved', max: 60, answerKinds: ROUTED_KINDS });
+    const resolved = obligationsOf(fx.home, p.id).find((o) => o.reason === 'spec_changed' && o.request === request.id && o.key === 'accept-r2');
+    assert.equal(resolved.resolved_by, effectiveVersion(fx.home, p.id).id, 'resolved_by the protected version the registered correction applied');
+    // Fresh evidence under the current generation: the gate no longer names accept-r2.
+    const { candidate } = await stage2Gate();
+    if (!queuedExecutions(fx.home, p.id).some((x) => x.candidate === candidate.id && x.key === 'accept-r2')) await operatorRequest(fx.engine, p.id, candidate.id, ['accept-r2']);
+    for (const x of queuedExecutions(fx.home, p.id).filter((q) => q.candidate === candidate.id && q.key === 'accept-r2')) await recordExit(fx.engine, x.id, 0);
+    const { evaluation } = await stage2Gate();
+    assert.ok(!owesAccept(evaluation), `ACCEPTANCE_SCOPE_INCOMPLETE no longer names accept-r2 (${JSON.stringify(evaluation.reasons)})`);
+    // R owes nothing now: refused, by the route and by the CLI.
+    res = await fx.engine.post(route, {});
+    assertRefused(res, 409, 'nothing_owed', 'the command once the request has no open obligation');
+    const late = surety(fx, ['spec', 'correct', '--project', p.id, '--request', request.id]);
+    assert.equal(late.status, 1, `the CLI exits 1 on a refusal (${late.stderr.slice(0, 400)})`);
+    assert.match(late.stderr, /^409 .*nothing_owed/, 'printing the status and the refusal on standard error');
+    assert.equal(corrections().length, 2, 'nothing registered by the refusals');
+  });
+
+  test('(h) S3, the owner is told: the parked correction\'s question and its cancel option name `surety spec correct`; after the cancel, GET …/spec lists the request\'s open obligation with a next_action naming it', async (t) => {
+    const { fx, p, ctx, request, blocker, corrections, command } = await parkedCorrection(t);
+    assert.ok(blocker.question.includes(command), `S3: the blocker's question (the obligation's text) names ${command} (${blocker.question})`);
+    const cancel = blocker.options.find((o) => o.key === 'cancel');
+    assert.ok(cancel?.consequence?.includes(command), `S3: the cancel option's consequence names ${command} (${JSON.stringify(cancel)})`);
+    assert.equal((await answer(fx.engine, p.id, decision(fx.home, blocker.id), 'cancel')).status, 200, 'the owner answers cancel');
+    await pumpHolding(fx, ctx, () => false, { max: 2 }).catch(() => null);
+    assert.equal(corrections().at(-1).status, 'cancelled', 'the fixture is live: the correction cancelled');
+    const res = await fx.engine.get(`/v1/projects/${p.id}/spec`);
+    assert.equal(res.status, 200, `GET …/spec (${res.text})`);
+    const entry = (res.body.change_requests ?? []).find((c) => c.id === request.id);
+    assert.ok(entry, `S3: GET …/spec change_requests lists the request with an open obligation (${JSON.stringify(res.body.change_requests)})`);
+    assert.deepEqual((entry.open_obligations ?? []).map((o) => o.key), ['accept-r2'], `its open obligations (${JSON.stringify(entry)})`);
+    assert.ok(JSON.stringify(entry.next_action ?? null).includes(command), `its next_action names ${command} (${JSON.stringify(entry.next_action)})`);
   });
 });
