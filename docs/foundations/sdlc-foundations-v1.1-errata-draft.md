@@ -2878,3 +2878,45 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 3. **S2 confirmed, its form open.** On `main` `a2e3075` (verify/s2 `45009b9`), answering a stage's blocker `replan` while a built (integrated or verified) stage depends on it supersedes the subject and keeps the dependent. Its `depends_on` still names the superseded stage, it is neither rebuilt nor rechecked, and the phase completes on it. A stage still building is already safe (superseded and registered fresh). The driver's first ruling, refusing at the plan check, is withdrawn: under it no replacement could ever pass once a built stage depends on the replanned one. Options for Sean: (A, recommended) cascade, superseding the dependents and registering them fresh against the new dependency, as for building stages; (B) hold them until re-verified; (C) refuse with a manual way out.
 4. **S3 confirmed by code reading, its form open.** Once a spec change's parked correction is cancelled, no route registers another; its obligations hold every gate with `ACCEPTANCE_SCOPE_INCOMPLETE`, and the owner is not told afterwards. Options for Sean: (A) a standing blocker offering `correct`; (B, recommended) an owner command `surety spec correct --project P --request R` reusing `registerCorrectionAgain`, named in the cancel text and in `GET …/spec`; (C) a new decision kind at cancel.
 5. **The fix (items 1 and 2).** Cases verify/s1 `6a67639` (M546 (e)), verify/s1b `efeb3d0` (M546 (f)) and `9b1edb2` (the pumps answer `keep`); builds build/s1 `922f283` and build/s1b `b5d1120`; merged at `05a2a56` after the gate at `093c277` (split, 3 workers, mini-hp01: 440 files, 2,410 passed, 3 failed: one case of the M15 run-end fault matrix and the M440 storm's (e1) and (e5); alone 3 of 3 each, M15 87/87 and the storm 5/5; M546 6/6 in the gate; no units left).
+
+## E174. S2 and S3 decided: a replan cascades to built dependents; a cancelled correction is registered again by the owner's command (decided by Sean and the driver, 2026-10-20)
+
+**Status:** items 1 and 3 decided by Sean (his choice of the recommended option in each, E173 items 3 and 4); items 2 and 4 the driver's, under his delegation, for his veto.
+
+1. **S2: cascade (Sean, option A).** When the early-replanning swap supersedes a stage, every kept stage depending on it, transitively, is superseded too and registered fresh against the new dependency. This is the rule the engine already applied to stages still building.
+   - The dependents are rebuilt and rechecked, and the phase cannot complete on superseded work.
+   - A replacement that lists a dependent itself with new inputs is not refused `PLAN_DUPLICATE_STAGE`. The dependent cascades with the replacement's entry and is registered once.
+
+   Cases M430 (c) and (d), the cascade cases (SEAM §556); they replace the cases written for the withdrawn ruling of E173 item 3.
+2. **S2, a vanished dependency (driver).** A replacement can supersede a stage that a kept built dependent depends on while leaving that dependency number with no active stage. Such a replacement is refused at the plan check with `PLAN_UNKNOWN_STAGE`, naming the dependent and the missing dependency; there is no new reason code.
+   - This is not E173's deadlock: the replacement resolves it by listing the dependent with new inputs.
+   - Not pinned: the same one level further down (a dependent of the dependent).
+
+   Case M430's third S2 case (SEAM §556).
+3. **S3: the owner's command (Sean, option B).** `surety spec correct --project P --request R` (`POST /v1/projects/:p/spec/change-requests/:r/correct`, body `{}`) registers a cancelled spec change's correction again at the next generation, with the same request, criteria and checks. It reuses H4's `registerCorrectionAgain` (E172).
+   - **Refusals:** 409 `correction_pending` (a correction of R is neither complete nor cancelled); 409 `nothing_owed` (R has no open obligation); 404 `not_found`.
+   - **How the owner is told:** the parked blocker's question and its `cancel` consequence name the command with the real ids. `GET …/spec`'s `change_requests`, until now always `[]`, lists each request with open obligations as `{id, open_obligations, next_action}`, and `next_action` names the command.
+   - **Unchanged:** no new event, no schema change, no new decision kind.
+
+   Cases M433 (h) (SEAM §557).
+4. **S3, the readings (driver).**
+   - The open obligations are listed under `change_requests`, one `next_action` per request, because the command takes a request.
+   - No agent-capability refusal is pinned, because the API answers only the owner's `api.token`.
+   - "The obligation's text" is the blocker question's text.
+   - Not pinned, the Builder's choices recorded in SEAM §557:
+     - success answers 201, as `POST …/spec/change-requests` does, with `{request, work_item, obligations}`;
+     - `correction_pending` is checked before `nothing_owed`;
+     - another project's request is 404;
+     - `next_action` is `{kind: correct, command, route}` after a cancel and `{kind: correction_pending, work_item, status}` while a correction is live.
+   - Not exercised: the phase and `alpha_authorize` gates (the stage gate stands for them, as in M2 B).
+   - Objection 207: the case first read `consequence`, which no stored option has (D1 App. A stores `consequence_text`); the Verifier corrected the read.
+5. **Owed in Sean's documents:** D6 §4.5 and its route list gain the command (item 3). Still owed from E172: D1 App. A.5's WorkItem table, the replan-only `eligible → parked` edge (for his veto); D7 A.2 and BS6 §8, `correct`.
+6. **The fix.** Cases verify/s2 `b644fac`, `a355699` and `dcb1e53` (M430), verify/s3 `042605d` and `df1b39b` (M433 (h)); builds build/s2 `4a36be7` and build/s3 `662ec6d`. Merged at `ddcde43` after the gate at `c26bb39`:
+   - split, 3 workers, mini-hp01: 440 files, 2,415 passed, 3 failed: the M440 storm's (e1) and (e5), and one case of M433-the-decision-stales;
+   - alone, 3 of 3 each: M433-the-decision-stales 3/3, the storm 5/5;
+   - in the gate: M430 compare-and-swap 9/9, M433 old-generation 5/5;
+   - no units left.
+7. **Side finding S4, a race in a test (driver).**
+   - *Trigger:* M433-the-decision-stales's Q4 case opens a Spec Writer session as soon as `proposeR2` sees the decision raised, without waiting for the spec_change one-shot run that raised it to end.
+   - *Consequence:* under load the session is refused `session_busy`. It was seen once in 31 gates, first here at `c26bb39`, and the file was clean alone 3 of 3. It is not an engine defect: one session at a time, and none beside a one-shot run, is the rule (SEAM §344).
+   - *Planned:* the Verifier waits for the project at rest (the file's `quiet`) before the session opens. A test-only change, at the next Verifier pass.
