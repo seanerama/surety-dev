@@ -11,18 +11,23 @@
 // generation with their ids, revisions, work and findings; a `building`
 // stage is retained only when every execution and acceptance input is
 // unchanged (its execution-inputs digest, and each stage it depends on kept
-// or retained under its identity); every other stage is superseded: a
+// or retained under its identity); a kept stage is carried only while each
+// stage it depends on is kept, transitively, and one built on a superseded
+// stage is superseded with it and registered fresh from its own inputs
+// against the new dependency, unless the replacement lists it (E172 item 7
+// S2, Sean's ruling "cascade"); every other stage is superseded: a
 // `planned` one `cancelled` with its work, any other `cancelled_at` with
 // its idle work cancelled and a running one finishing as history (its late
 // integration fulfils no replacement work, finalize.ts). Only the remainder
 // is registered. Filing alone triggers nothing.
 
 import { parseJson } from '../store/transitions/common.js';
-import { activeStages as activeStagesOf } from './active.js';
+import { activeStages as activeStagesOf, dependsOnEntries, dependsOnNumbers } from './active.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { raiseQuestion } from '../store/transitions/queue.js';
+import type { PlanStageInput } from '../store/transitions/work.js';
 
 type Db = Tx['db'];
 
@@ -93,7 +98,8 @@ const stagesOf = (db: Db, plan: string): StageRow[] => activeStagesOf<StageRow>(
 
 // The work a replacement's trigger is about (D6 §5.7; the review's M4): a
 // stage's work parked or waiting on a decision whose owner answered
-// `replan`. Only that stage, if integrated, is superseded by the swap.
+// `replan`. Only that stage, if integrated, is superseded by the swap, with
+// the kept stages built on it (the cascade, keptAndRebuilt).
 export function subjectWorkOf(r: { trigger?: { source: string; id: string } | null; evidence?: unknown } | null | undefined): string | null {
   if (!r?.trigger) return null;
   if (r.trigger.source !== 'blocker_replan' && r.trigger.source !== 'objection_upheld') return null;
@@ -109,33 +115,99 @@ function isKept(s: StageRow, subjectWork: string | null): boolean {
   return s.work_item === null || s.work_item !== subjectWork;
 }
 
+// The cascade (E172 item 7 S2; Sean's ruling of 2026-10-20, "cascade";
+// SEAM.md §556): of the stages isKept names, one stays kept only while every
+// stage it depends on stays kept, to a fixpoint. The others (`rebuilt`) were
+// built on a stage the swap supersedes (the trigger's own subject, or one
+// rebuilt itself): the swap supersedes them too, and the replacement
+// registers each fresh against its new dependency, from the replacement's
+// entry when it lists the number, otherwise from its own inputs as built
+// (rebuiltInput), as it already does for a building stage (classifyStages).
+// A stage is never `building` once integrated, so a kept stage's dependency
+// is itself kept or superseded: the split needs no digests.
+function keptAndRebuilt(stages: StageRow[], subjectWork: string | null): { kept: StageRow[]; rebuilt: StageRow[] } {
+  const base = stages.filter((s) => isKept(s, subjectWork));
+  let kept = base;
+  for (let shrank = true; shrank; ) {
+    const ids = new Set(kept.map((s) => s.id));
+    const next = kept.filter((s) => dependsOnEntries(s.depends_on).every((d) => typeof d === 'string' && ids.has(d)));
+    shrank = next.length !== kept.length;
+    kept = next;
+  }
+  const keptIds = new Set(kept.map((s) => s.id));
+  return { kept, rebuilt: base.filter((s) => !keptIds.has(s.id)) };
+}
+
 // The kept stages of a plan, for the check (BundleBaseline.kept): numbers,
 // digests and the requirement keys they implement.
 // `validated`: the criteria its validation named when it was built.
-export function keptOf(db: Db, plan: string, subjectWork: string | null = null): { number: number; digest: string | null; implements: string[]; validated: string[] }[] {
+// `rebuilt` (the cascade): superseded with its dependency and registered
+// fresh, under its number; `depends_on` its dependencies' numbers, which an
+// omitted rebuilt stage needs the replacement to hold.
+export function keptOf(
+  db: Db,
+  plan: string,
+  subjectWork: string | null = null,
+): { number: number; digest: string | null; implements: string[]; validated: string[]; rebuilt?: true; depends_on?: number[] }[] {
   const keyOf = (r: string) => (db.prepare('SELECT "key" FROM "requirements" WHERE "id" = ?').get(r) as { key: string } | undefined)?.key ?? r;
-  return stagesOf(db, plan)
+  const stages = stagesOf(db, plan);
+  const { rebuilt } = keptAndRebuilt(stages, subjectWork);
+  const again = new Set(rebuilt.map((s) => s.id));
+  return stages
     .filter((s) => isKept(s, subjectWork))
     .map((s) => ({
       number: s.number,
       digest: s.execution_inputs_digest,
       implements: (parseJson<string[]>(s.implements) ?? []).map(keyOf),
       validated: parseJson<{ criteria?: string[] }>((s as StageRow & { validation?: string | null }).validation ?? null)?.criteria ?? [],
+      ...(again.has(s.id) ? { rebuilt: true as const, depends_on: dependsOnNumbers(db, s.depends_on).filter((d): d is number => typeof d === 'number') } : {}),
     }));
+}
+
+// A rebuilt stage registered from its own inputs as built (the cascade):
+// the row's fields, its dependencies by number (each read back from the id
+// it stored; one that resolves to no stage is passed on as stored, so the
+// registration refuses it, never drops it).
+export function rebuiltInput(db: Db, id: string): PlanStageInput {
+  const s = db.prepare('SELECT * FROM "stages" WHERE "id" = ?').get(id) as StageRow & {
+    goal: string;
+    modules: string | null;
+    adrs: string | null;
+    tasks: string | null;
+    validation: string | null;
+    integration_obligations: string | null;
+    screens: string | null;
+  };
+  const screens = parseJson<string[]>(s.screens);
+  return {
+    number: s.number,
+    goal: s.goal,
+    implements: parseJson<string[]>(s.implements) ?? [],
+    modules: parseJson<string[]>(s.modules) ?? [],
+    tasks: parseJson<string[]>(s.tasks) ?? [],
+    depends_on: dependsOnNumbers(db, s.depends_on) as number[],
+    validation: parseJson<{ criteria: string[]; kinds: string[]; sensitive_areas: string[] }>(s.validation) ?? { criteria: [], kinds: [], sensitive_areas: [] },
+    integration_obligations: parseJson<string[]>(s.integration_obligations) ?? [],
+    adrs: parseJson<string[]>(s.adrs) ?? [],
+    conformance: s.conformance === 1,
+    execution_inputs_digest: s.execution_inputs_digest,
+    ...(Array.isArray(screens) ? { screens } : {}),
+  };
 }
 
 
 export type StageClass = 'kept' | 'retained' | 'superseded' | 'cancelled';
 
 // What the swap does with each active stage of a generation, given the new
-// plan's execution-inputs digests by number: kept; retained (building, its
+// plan's execution-inputs digests by number: kept (and not rebuilt by the
+// cascade, which supersedes it); retained (building, its
 // run live or due, the digest unchanged, every stage it depends on carried,
 // to a fixpoint); otherwise cancelled (no code and no live run) or
 // superseded. The check counts it, and publication compares it again
 // (the review's S1).
 export function classifyStages(db: Db, plan: string, digests: Map<number, string | null>, subjectWork: string | null): Map<string, StageClass> {
   const stages = stagesOf(db, plan);
-  const kept = stages.filter((s) => isKept(s, subjectWork));
+  const { kept } = keptAndRebuilt(stages, subjectWork);
   let retained = stages.filter((s) => {
     if (s.status !== 'building' || isKept(s, subjectWork)) return false;
     const w = workStatus(db, s.work_item);
@@ -211,6 +283,9 @@ export interface SwapResult {
   retained: string[];
   cancelled: string[];
   superseded: string[];
+  // Of the superseded, the kept stages the cascade rebuilds (E172 item 7
+  // S2): registerPlan registers each fresh the replacement does not list.
+  rebuilt: string[];
 }
 
 // The swap (B08): the CAS on the named generation, then each stage of the
@@ -219,12 +294,13 @@ export interface SwapResult {
 // caller refuses `plan_generation_stale`).
 export function swapGeneration(tx: Tx, args: { project: string; replaces: ReplacementTarget; plan: string; generation: number; digests: Map<number, string | null>; subjectWork: string | null }): SwapResult | null {
   const classes = classifyStages(tx.db, args.replaces.phase_plan, args.digests, args.subjectWork);
+  const rebuilt = keptAndRebuilt(stagesOf(tx.db, args.replaces.phase_plan), args.subjectWork).rebuilt.map((s) => s.id);
   const changed = tx.db
     .prepare(`UPDATE "phase_plans" SET "active" = 0, "status" = 'replaced', "replaced_by" = ? WHERE "id" = ? AND "project" = ? AND "active" = 1 AND "status" = 'published' AND "generation" = ? AND "completed_at" IS NULL`)
     .run(args.plan, args.replaces.phase_plan, args.project, args.replaces.generation).changes;
   if (changed !== 1) return null;
   const stages = stagesOf(tx.db, args.replaces.phase_plan);
-  const out: SwapResult = { carried: new Map(), kept: [], retained: [], cancelled: [], superseded: [] };
+  const out: SwapResult = { carried: new Map(), kept: [], retained: [], cancelled: [], superseded: [], rebuilt: rebuilt.filter((id) => classes.get(id) === 'superseded') };
   for (const s of stages) {
     const cls = classes.get(s.id) ?? 'superseded';
     if (cls === 'kept' || cls === 'retained') {
@@ -241,8 +317,9 @@ export function swapGeneration(tx: Tx, args: { project: string; replaces: Replac
     }
     // Superseded: a stage with no code and no live run is `cancelled` with
     // its work; one whose Builder still runs finishes it as history (its
-    // status left to the integration); the trigger's own integrated stage
-    // keeps its integration as history. Each has `cancelled_at`.
+    // status left to the integration); the trigger's own integrated stage,
+    // and each the cascade rebuilds, keeps its integration as history. Each
+    // has `cancelled_at`.
     if (cls === 'cancelled') {
       tx.db.prepare(`UPDATE "stages" SET "status" = 'cancelled', "cancelled_at" = ? WHERE "id" = ?`).run(tx.at, s.id);
       out.cancelled.push(s.id);

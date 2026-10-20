@@ -12,7 +12,7 @@
 // refused.
 
 import { activeStages, dependsOnNumbers } from './active.js';
-import { KEPT_STAGE_RULE, touchedCriteria } from './check.js';
+import { KEPT_STAGE_RULE, REBUILT_STAGE_RULE, touchedCriteria } from './check.js';
 import { keptOf, replacementOf, subjectWorkOf } from './replace.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import type { Tx } from '../store/transitions/tx.js';
@@ -76,6 +76,10 @@ export interface ReplanFacts {
   // (plan/replace.ts keptOf; KEPT_STAGE_RULE): number and the requirement
   // keys each implements. Empty for any other replan.
   kept?: { number: number; implements: string[]; validated?: string[] }[];
+  // The integrated or verified stages built on a stage this replacement
+  // supersedes (E172 item 7 S2, the cascade): superseded with it and
+  // registered fresh against the new dependency; `depends_on` by number.
+  rebuilt?: { number: number; implements: string[]; depends_on: number[] }[];
   // The criteria the replacement's trigger touched (its stale `criterion:`
   // entries): what a new stage must validate.
   touched?: string[];
@@ -209,7 +213,7 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     deferrals: { findings: deferred, obligations },
     objections,
     refusal: last ? { run: last.id, reason_class: last.reason_class, reason_text: last.reason_text, plan_check: check ? { id: check.id, phase: check.phase_number, reasons: json(check.reasons) } : null } : null,
-    kept: keptStagesOf(db, item),
+    ...keptStagesOf(db, item),
     touched: touchedOf(item),
   };
 }
@@ -217,11 +221,17 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
 // The kept stages the plan check will count for this replan (the driver's
 // ruling on the real M443 run's replan, E135): from the store, as
 // plan/bundle.ts replacementFacts takes them.
-function keptStagesOf(db: Db, item: { trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null }): { number: number; implements: string[]; validated: string[] }[] {
-  if (item.trigger_source === null || item.trigger_id === null || item.trigger_generation === null) return [];
+// The stages the cascade rebuilds are named apart (E172 item 7 S2).
+function keptStagesOf(
+  db: Db,
+  item: { trigger_source: string | null; trigger_id: string | null; trigger_generation: number | null; subject?: string | null; trigger_evidence?: string | null },
+): { kept: { number: number; implements: string[]; validated: string[] }[]; rebuilt?: { number: number; implements: string[]; depends_on: number[] }[] } {
+  if (item.trigger_source === null || item.trigger_id === null || item.trigger_generation === null) return { kept: [] };
   const target = replacementOf(db, { trigger_source: item.trigger_source, trigger_id: item.trigger_id, trigger_generation: item.trigger_generation, subject: item.subject ?? '{}', trigger_evidence: item.trigger_evidence ?? null });
-  if (!target) return [];
-  return keptOf(db, target.phase_plan, subjectWorkOf(target)).map((k) => ({ number: k.number, implements: k.implements, validated: k.validated }));
+  if (!target) return { kept: [] };
+  const all = keptOf(db, target.phase_plan, subjectWorkOf(target));
+  const rebuilt = all.filter((k) => k.rebuilt === true).map((k) => ({ number: k.number, implements: k.implements, depends_on: k.depends_on ?? [] }));
+  return { kept: all.filter((k) => k.rebuilt !== true).map((k) => ({ number: k.number, implements: k.implements, validated: k.validated })), ...(rebuilt.length > 0 ? { rebuilt } : {}) };
 }
 
 function touchedOf(item: { trigger_evidence?: string | null }): string[] {
@@ -315,6 +325,13 @@ export function replanPromptText(r: ReplanFacts): string[] {
                 `Kept stages: ${(r.kept ?? []).map((k) => `stage ${k.number} (implements ${k.implements.join(', ') || 'nothing'}${(k.validated ?? []).length > 0 ? `; validates ${(k.validated ?? []).join(', ')}` : ''})`).join('; ')}. Their inputs as built are in /surety/context/open-plan.json.`,
                 ...((r.touched ?? []).length > 0 ? [`Criteria this replan's trigger touched (gained or changed): ${(r.touched ?? []).join(', ')}. A kept stage's validation does not settle these; every other criterion a kept stage validates stays validated.`] : []),
                 KEPT_STAGE_RULE,
+              ]
+            : []),
+          ...((r.rebuilt ?? []).length > 0
+            ? [
+                '',
+                `Rebuilt stages: ${(r.rebuilt ?? []).map((k) => `stage ${k.number} (implements ${k.implements.join(', ') || 'nothing'}; depends on ${k.depends_on.map((d) => `stage ${d}`).join(', ') || 'nothing'})`).join('; ')}.`,
+                REBUILT_STAGE_RULE,
               ]
             : []),
         ]

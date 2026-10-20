@@ -403,7 +403,9 @@ test('M4: an integrated stage whose work is parked is kept, unless it is the tri
   const plain = classifyStages(db, first.plan.id, digests, null);
   assert.deepEqual([plain.get(s1.id), plain.get(s2.id)], ['kept', 'kept'], 'a parked integrated stage is kept');
   const subject = classifyStages(db, first.plan.id, digests, s1.work_item);
-  assert.deepEqual([subject.get(s1.id), subject.get(s2.id)], ['superseded', 'kept'], 'the trigger\'s own subject is superseded');
+  // Stage 2 is built on stage 1: superseded with it (E172 item 7 S2, the
+  // cascade; replan-cascade.test.mjs pins a kept stage built on no subject).
+  assert.deepEqual([subject.get(s1.id), subject.get(s2.id)], ['superseded', 'superseded'], 'the trigger\'s own subject is superseded, and by the cascade the stage built on it');
   const counted = countStages(db, first.plan.id, digests, null);
   const listed = listedSame(db, first.plan.id, digests);
   assert.equal(classesDiffer(counted, countStages(db, first.plan.id, digests, null), listed), null, 'nothing moved');
