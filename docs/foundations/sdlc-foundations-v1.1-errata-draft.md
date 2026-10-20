@@ -2927,3 +2927,26 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
 
 1. **The fix (E174 item 7).** M433-the-decision-stales's Q4 case, and the same race found in M432-a-proposal-that-cannot-be-recomputed's S2 case, now wait for the project's runs to end (`waitForIdle`, which sends no ticks, so the open `spec_change` decision stays un-stale) before opening the Spec Writer session. No other `specSaves` caller follows a one-shot run without a wait.
 2. **Evidence.** verify/s4 `df26458`, merged at `74240e4`. On mini-hp01, each file alone 3 of 3 (M433 3/3, M432 2/2); on the workstation, M433 5 of 5 alone and once under load beside M430 and M433-old-generation. A full gate was not run for this test-only change; the next gate carries it.
+
+## E176. The amendments of E172 and E174 approved; one fresh real journey prepared, not started (decided by Sean, 2026-10-20; recorded by the driver)
+
+**Status:** items 1 and 2 decided by Sean; item 3 the driver's preparation under his authorisation ("Preparation is authorized; wait for my explicit start before spending").
+
+1. **The document amendments approved as E172 and E174 specify**, committed at `4002f61` by explicit path:
+   - **D1 A.5:** the WorkItem table gains `eligible→parked` for `replan` only.
+   - **D7:** `design_due` and A.2's `DesignDueOption` gain `correct`.
+   - **BS6 §8:** the scripted owner acts gain `correct`.
+   - **D6 §4.5 and A.8:** `surety spec correct`.
+   - `scripts/d1-consistency.mjs` reports 0 findings.
+2. **No veto of the replan-only edge.** Sean kept its scope and its retry-cap condition explicit. D1 A.5's row states both: the edge applies at registration only, when a `spec_change` replan's bundle goes stale a second time against the same active generation, with blocker `replan_restale_max`. The stages-changed re-raise does not count toward the cap. No other kind and no other cause takes it.
+3. **One fresh real journey prepared, not started.** Nothing paid has run. The run starts only on Sean's explicit word.
+   - **Revision:** `4002f61`, in a clean detached checkout `~/s7src`. Its engine source is identical to `ddcde43`, gated at `c26bb39` (E174 item 6); S4 was test-only (E175).
+   - **Exhaust lane:** at `4002f61` on mini-hp01, 15 of 15, no units left.
+   - **Kernel lane** on `~/s7src`: M537 6/6 and 13/13; M442 42/42 and 3/3.
+   - **M535's dress rehearsal:** twice at `4002f61`, in `~/s7r-x1` and `~/s7r-x2`; 12 of 12 each time, `rehearsal-passed.json` clean, no units left. A rehearsal is never evidence.
+   - **The measurements of E171 item 3 the engine does not record:** Designer retries, and whether the reserved budget held back other work.
+     - **Hold-back:** the driver samples it with a read-only sampler (`~/s7-tools/budget-sampler.mjs`). It asks the engine's own `exhaustedLimits` with and without the running reservation, and reports samples, never a per-item cause.
+     - **Sampler status:** in `~/s7r-x2` it saw the Designer turns and the eligible work, and returned the limit results with no errors. No hold-back occurred there, so a sampled hold-back has not yet been seen.
+     - **Retries:** an owner turn refused for `resource_envelope` writes nothing to the store, so a resent turn is counted only from Sean's own record, otherwise `unknown`.
+   - **The rehearsal's previews recorded `memory.peak`:** 27,459,584 and 27,140,096 bytes. These were fakes, so the figures are not evidence of the real application's figure.
+   - **Hazard:** the workstation's clock is stepping (clocksource `tsc`; 24 "Time jumped backwards" in six hours). Rule 17's shutdown of WSL at a pause is due before the start.
