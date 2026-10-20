@@ -9,7 +9,7 @@ import { parseJson } from './common.js';
 import { type CandidateRow, contentHash, getCandidate, markStale } from './evidence.js';
 import { type FindingRow, findingApplies, tierQueuesReview } from './gates.js';
 import { reviewerApprove } from './classification.js';
-import { OWED_SCOPE, blocksAnyGate, reaskOwed, changeSeverity, raiseQuestion, recordDisposition } from './queue.js';
+import { OWED_SCOPE, REVIEWER_DISAGREES_SCOPE, blocksAnyGate, differsFromOwner, reaskOwed, changeSeverity, raiseQuestion, recordDisposition, reviewerDisagreesSeed } from './queue.js';
 import { getRun, parkWork } from './runs.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, workItemOfRun } from './work.js';
@@ -256,9 +256,37 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // A `fix` targeted at the plan (D6 §5.7; the driver's ruling 2): valid
       // only on a Reviewer's own `contract_conflict`; any other entry with
       // the target is not one this engine takes, and records nothing.
-      if (d.target === 'plan') {
-        const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
-        if (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers) continue;
+      const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
+      const planTarget = d.target === 'plan';
+      if (planTarget && (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers)) continue;
+      // S1 (E172 item 7; Sean's direction that an agent never overrides the
+      // owner's standing decision; SEAM.md §555): on a finding the human
+      // owner has dispositioned, an entry the Reviewer's own authority would
+      // record (any `fix`, plan-targeted or not, matching his or not; a Low
+      // `defer`) is refused before anything else (H1's refusal included):
+      // the finding is left exactly as he left it, nothing is registered,
+      // and the attempt is recorded once per entry. The run is still
+      // accepted. The proposals beyond a Reviewer's authority (`accept`, a
+      // Medium `defer`) go on below: they never change the finding's
+      // disposition. Either kind of entry, differing from his, asks him
+      // once (askOwnerAgain); a matching one asks nothing.
+      if (f.status === 'dispositioned' && f.disposition_authority === 'human' && (d.disposition === 'fix' || deferLow)) {
+        tx.emit(
+          'finding.disposition_refused',
+          { project, finding: f.id, run: run.id },
+          {
+            reason: 'owner_decided',
+            disposition: d.disposition,
+            target: planTarget ? 'plan' : null,
+            standing: { disposition: f.disposition, authority: 'human', by: (f as FindingRow & { disposition_by?: string | null }).disposition_by ?? null },
+          },
+        );
+        // Sean's ruling of 2026-10-20 ("ask only if it differs"): a refused
+        // entry that differs from his disposition asks him once.
+        if (differsFromOwner(f, d)) askOwnerAgain(tx, f, d, run.id);
+        continue;
+      }
+      if (planTarget) {
         recordDisposition(tx, f, { disposition: 'fix', authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: null, remediation: d.remediation ?? null, target: 'plan' });
         continue;
       }
@@ -290,6 +318,14 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // A severity this same report changes (processed after the
       // dispositions, below) is a change since the owner's answer too: the
       // proposal does not stand on it (the review's finding 4).
+      // A proposal beyond its authority (`accept`, a Medium `defer`) that
+      // differs from the owner's standing disposition asks him once, keep or
+      // change (S1; Sean's ruling of 2026-10-20; SEAM.md §555): never the
+      // approve/reject of a proposal on a finding no one dispositioned.
+      if (f.status === 'dispositioned' && f.disposition_authority === 'human' && differsFromOwner(f, d)) {
+        askOwnerAgain(tx, f, d, run.id);
+        continue;
+      }
       const severityChanging = (report.severity_changes ?? []).some((c) => c.finding === f.id && c.to !== f.effective_severity);
       const standing = severityChanging ? null : standingOwnerAnswer(tx.db, f, d);
       if (standing !== null) {
@@ -517,6 +553,38 @@ function raisedOpenFindings(db: Tx['db'], run: string): boolean {
 function fromPhaseVerification(db: Tx['db'], run: string | null): boolean {
   if (run === null) return false;
   return db.prepare(`SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ? AND w."kind" = 'phase_verification'`).get(run) !== undefined;
+}
+
+// A later Reviewer's disposition differing from the owner's (S1; Sean's
+// ruling of 2026-10-20; SEAM.md §555): one finding_disposition question,
+// scope reviewer_disagrees, keep his or change. While one is open about the
+// finding, a further differing entry raises nothing: the open question keeps
+// its id and generation (it names the first Reviewer's run and entry).
+// Nothing on the finding changes and nothing is registered until he answers.
+function askOwnerAgain(
+  tx: Tx,
+  f: FindingRow,
+  d: { disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string; target?: string },
+  run: string,
+): void {
+  const open = tx.db
+    .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_type" = 'finding' AND "subject_id" = ? AND "scope" = ? AND "status" = 'open' LIMIT 1`)
+    .get(f.id, REVIEWER_DISAGREES_SCOPE);
+  if (open) return;
+  raiseQuestion(tx, {
+    project: f.project,
+    kind: 'finding_disposition',
+    subjectType: 'finding',
+    subjectId: f.id,
+    scope: REVIEWER_DISAGREES_SCOPE,
+    options: reviewerDisagreesSeed(f, {
+      disposition: d.disposition,
+      linked_issue: d.linked_issue ?? null,
+      defer_target: d.defer_target ?? null,
+      target: d.target === 'plan' ? 'plan' : null,
+      run,
+    }),
+  });
 }
 
 // The owner's standing answer a Reviewer's proposed disposition repeats

@@ -890,6 +890,7 @@
       "finding.dispositioned",
       "finding.proposal_standing",
       "finding.fix_refused",
+      "finding.disposition_refused",
       "finding.resolved",
       "finding.reopened",
       "finding.check_unbound",
@@ -7444,6 +7445,9 @@
       "owner": "store/transitions/findings.ts"
     },
     "finding.fix_refused": {
+      "owner": "store/transitions/findings.ts"
+    },
+    "finding.disposition_refused": {
       "owner": "store/transitions/findings.ts"
     },
     "finding.resolved": {

@@ -96,6 +96,8 @@ export const EVENT_OWNERS = {
   'finding.proposal_standing': 'store/transitions/findings.ts',
   // H1 (E171 item 5; SEAM.md §552): a Reviewer's own fix on a finding naming no check, refused; nothing dispatched.
   'finding.fix_refused': 'store/transitions/findings.ts',
+  // S1 (E172 item 7; SEAM.md §555): a Reviewer's disposition on a finding the owner dispositioned, refused; the finding as he left it, nothing registered.
+  'finding.disposition_refused': 'store/transitions/findings.ts',
   'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
   // The driver's ruling on loop run 1: a finding's check its own proposal did not bring into effect.
