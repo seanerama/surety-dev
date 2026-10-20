@@ -74,8 +74,12 @@ export interface BundleBaseline {
   // verified in the generation it replaces), by number, with their
   // execution-inputs digest and the requirement keys they implement. Each
   // is a stage of the plan whether the file lists it or not; listed with
-  // other inputs it is a second stage under its number.
-  kept?: { number: number; digest: string | null; implements: string[]; validated?: string[] }[];
+  // other inputs it is a second stage under its number. One `rebuilt` (E172
+  // item 7 S2, the cascade) was built on a stage the replacement
+  // supersedes: it is registered fresh, from the file's entry when listed
+  // (any inputs), otherwise from its own inputs, whose `depends_on`
+  // numbers the plan must then hold.
+  kept?: { number: number; digest: string | null; implements: string[]; validated?: string[]; rebuilt?: boolean; depends_on?: number[] }[];
   // The criteria the replacement's trigger touched (a specification
   // change's changed or gained criteria): a kept stage's validation does
   // not settle them (KEPT_STAGE_RULE).
@@ -293,6 +297,12 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
     }
     for (const d of s.depends_on) if ((!stageNumbers.includes(d) && !keptNumbers.includes(d)) || d === s.number) unknownStage.push(`stage ${s.number} -> ${d}`);
   }
+  // A rebuilt stage the file omits is registered from its inputs as built:
+  // each stage number it depends on must still be a stage of the plan, or
+  // the dependency vanished with the superseded stage (E172 item 7 S2; the
+  // driver's ruling, E174). Listing it with new inputs resolves it.
+  const rebuiltOmitted = kept.filter((k) => k.rebuilt === true && !stageNumbers.includes(k.number));
+  for (const k of rebuiltOmitted) for (const d of k.depends_on ?? []) if ((!stageNumbers.includes(d) && !keptNumbers.includes(d)) || d === k.number) unknownStage.push(`stage ${k.number} -> ${d}`);
   add('PLAN_UNKNOWN_REQUIREMENT', unknownReq);
   add('PLAN_UNKNOWN_MODULE', unknownModule);
   // Every module path in the form the matcher reads (checks/scope.ts): one
@@ -324,9 +334,11 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   // A kept stage listed with other inputs would be a second stage under
   // its number: the replacement keeps the stage as it is (D6 §5.7; the
   // driver's ruling 1).
+  // A rebuilt one is registered fresh: listed with new inputs it is the
+  // replacement's entry (E172 item 7 S2).
   const keptChanged = plan.stages.filter((st) => {
     const k = kept.find((x) => x.number === st.number);
-    return k !== undefined && k.digest !== executionInputsDigest(st);
+    return k !== undefined && k.rebuilt !== true && k.digest !== executionInputsDigest(st);
   });
   add('PLAN_DUPLICATE_STAGE', [...dup.map((n) => `stage ${n}`), ...keptChanged.map((st) => `stage ${st.number}: kept (integrated) with other inputs`)]);
   // A question with no phase hint whose requirement no phase holds blocks
@@ -368,7 +380,7 @@ export function checkPlan(baseline: BundleBaseline, a: BundleArtifacts): PlanChe
   add('PLAN_STALE_BASELINE', stale);
 
   // 3. Dependencies.
-  const stageCycle = cycle(plan.stages);
+  const stageCycle = cycle([...plan.stages, ...rebuiltOmitted.map((k) => ({ number: k.number, depends_on: k.depends_on ?? [] }))]);
   add('PLAN_CYCLE', stageCycle ? [`stages:${stageCycle.join('->')}`] : []);
   if (!phase) add('PLAN_REQUIREMENT_UNPLANNED', [`phase ${plan.phase} is not in the roadmap`]);
   else {
@@ -579,6 +591,12 @@ export function touchedCriteria(stale: unknown): string[] {
 // the plan a replan replaces is kept as built.
 export const KEPT_STAGE_RULE =
   "Omitting a kept stage is always valid: it stays as built. Listing one is valid only with exactly the inputs it was built with (number, goal, implements, tasks, modules, adrs, depends_on, validation, integration_obligations); a kept stage listed with any other input is refused (PLAN_DUPLICATE_STAGE). Criteria a kept stage's requirement gained or changed since it was built are planned in a new stage, under a new number, that implements that requirement and validates only those gained or changed criteria; the requirement's other criteria stay validated by the kept stage.";
+
+// The cascade (E172 item 7 S2; Sean's ruling, "cascade"; the driver's
+// ruling on a vanished dependency, E174), stated to the Architect as this
+// check and the swap apply it.
+export const REBUILT_STAGE_RULE =
+  "These were integrated or verified, but each is built on a stage this replacement supersedes, so it is superseded too and registered fresh against the new dependency, rebuilt and rechecked. Omit one to rebuild it from its inputs as built (its depends_on numbers unchanged), or list it under its number with new inputs. Every stage number an omitted one depends on must remain a stage of the plan; otherwise the plan is refused (PLAN_UNKNOWN_STAGE).";
 
 // The per-stage validation rule (the driver's ruling on the real M443 run
 // and loop run 1: two stages split R12 and validated its criteria between

@@ -6,7 +6,7 @@
 import { bindStageScreensTo } from '../../design/stage-screens.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
-import { type Replaces, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
+import { type Replaces, rebuiltInput, subjectWorkOf, swapGeneration } from '../../plan/replace.js';
 import { authoringShortfall, stageScopeGaps } from '../../plan/phase.js';
 import { effectiveVersion } from './protected.js';
 import { Refusal } from '../../refusal.js';
@@ -497,8 +497,14 @@ export function registerPlan(
       tx.emit('finding.resolved', { project: args.project, finding: f }, { phase_plan: plan, generation, bundle: publication?.bundle ?? null });
     }
   }
+  // The cascade (E172 item 7 S2): each kept stage the swap superseded with
+  // its dependency is registered fresh, from the replacement's entry when it
+  // lists the number, otherwise from its own inputs as built, against the
+  // new dependency.
+  const listed = new Set(args.stages.map((st) => st.number));
+  const rebuilt = (swap?.rebuilt ?? []).map((id) => rebuiltInput(tx.db, id)).filter((st) => !listed.has(st.number));
   const carried = new Set(ids.keys());
-  const fresh = args.stages.filter((st) => !carried.has(st.number));
+  const fresh = [...args.stages, ...rebuilt].filter((st) => !carried.has(st.number));
   const seen = new Set<number>();
   for (const stage of fresh) {
     if (seen.has(stage.number)) throw illegal(`a plan with stage ${stage.number} twice`, { project: args.project, phase, stage: stage.number });

@@ -1592,7 +1592,7 @@ export function lateObligations(tx: Tx, args: { project: string; proposal: strin
 // with the same request, criteria and checks (its latest generation's
 // subject and evidence). Nothing when one is still pending or none was
 // ever registered. Returns the new item's id, or null.
-export function registerCorrectionAgain(tx: Tx, args: { project: string; request: string; decision: string }): string | null {
+export function registerCorrectionAgain(tx: Tx, args: { project: string; request: string; decision: string | null }): string | null {
   const items = tx.db
     .prepare(`SELECT "id", "status", "subject", "trigger_evidence", "trigger_generation" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? ORDER BY "trigger_generation", "seq"`)
     .all(args.project, args.request) as { id: string; status: string; subject: string; trigger_evidence: string | null; trigger_generation: number }[];
@@ -1602,9 +1602,51 @@ export function registerCorrectionAgain(tx: Tx, args: { project: string; request
   const made = observeTrigger(
     tx,
     { project: args.project, kind: 'check_correction', trigger_source: 'spec_obligation', trigger_id: args.request, trigger_generation: last.trigger_generation + 1, subject: parseJson<Record<string, unknown>>(last.subject) ?? { request: args.request }, trigger_evidence: evidence, chain: 0 },
-    { spec_change_request: args.request, decision: args.decision, from_work_item: last.id, criteria: evidence.criteria ?? null, checks: evidence.checks ?? null },
+    { spec_change_request: args.request, ...(args.decision !== null ? { decision: args.decision } : {}), from_work_item: last.id, criteria: evidence.criteria ?? null, checks: evidence.checks ?? null },
   );
   return made.created ? made.work_item.id : null;
+}
+
+// The owner's command that registers a request's correction again (E173
+// item 4 S3; Sean's ruling of 2026-10-20, option B; SEAM.md §557), as the
+// owner is told it: the parked correction's question and its cancel option,
+// and `GET …/spec`'s `change_requests`.
+export const correctCommand = (project: string, request: string): string => `surety spec correct --project ${project} --request ${request}`;
+
+// POST /v1/projects/:p/spec/change-requests/:r/correct {} (S3; SEAM.md
+// §557): the request's `spec_obligation` correction registered again as
+// design_due's `correct` does (registerCorrectionAgain), with no decision to
+// name. Refused while one of its corrections is live (`correction_pending`)
+// and when the request owes nothing (`nothing_owed`); each refusal registers
+// nothing.
+export function correctRequestAgain(tx: Tx, args: { project: string; request: string }): CommandResult {
+  if (!tx.db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
+  const r = getRequest(tx.db, args.request);
+  if (!r || r.project !== args.project) throw notFound('spec_change_request', args.request);
+  const live = tx.db
+    .prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') ORDER BY "trigger_generation", "seq"`)
+    .all(args.project, r.id) as { id: string; status: string }[];
+  if (live.length > 0) {
+    throw new Refusal(
+      409,
+      'correction_pending',
+      `A correction of specification change request ${r.id} is still live (${live.map((w) => `${w.id}, ${w.status}`).join('; ')}); nothing was registered.`,
+      'Answer its open question, or let it finish; if it is cancelled with the obligations still open, run this command again.',
+      { project: args.project, spec_change_request: r.id, work_items: live.map((w) => w.id) },
+    );
+  }
+  const open = openObligationsOf(tx.db, r.id);
+  if (open.length === 0) {
+    throw new Refusal(409, 'nothing_owed', `Specification change request ${r.id} has no open obligation; nothing was registered.`, 'Nothing to correct: read GET /v1/projects/:p/spec for the requests that still owe a check.', {
+      project: args.project,
+      spec_change_request: r.id,
+    });
+  }
+  const id = registerCorrectionAgain(tx, { project: args.project, request: r.id, decision: null });
+  if (id === null) {
+    throw illegal(`Registering a correction of specification change request ${r.id} again (none was ever registered for it)`, { project: args.project, spec_change_request: r.id });
+  }
+  return { status: 201, body: { request: { id: r.id }, work_item: { id }, obligations: open.map((o) => o.check) }, effects: [{ kind: 'tick' }] };
 }
 
 // What a protected proposal captured before a specification change's

@@ -568,31 +568,41 @@ async function projectCommand(argv: string[]): Promise<never> {
 // `surety spec change-request --project <p> --file <path>` (D6 §4.2, A.8;
 // SEAM.md §417): the owner's change request, one POST of
 // /v1/projects/:p/spec/change-requests to the engine of $SURETY_HOME with the
-// file's text as the owner's own, never interpolated into a command. A 2xx
-// answer is printed as one line of JSON, exit 0; any other answer as
+// file's text as the owner's own, never interpolated into a command.
+// `surety spec correct --project <p> --request <r>` (S3; SEAM.md §557): one
+// POST of /v1/projects/:p/spec/change-requests/:r/correct, body {}. Each
+// prints a 2xx answer as one line of JSON, exit 0; any other answer as
 // `<status> <body>` on standard error, exit 1; a usage problem exits 2.
 async function specCommand(argv: string[]): Promise<never> {
   const [sub, ...rest] = argv;
-  if (sub !== 'change-request') usage('spec takes change-request: surety spec change-request --project <p> --file <path>');
+  const SPEC_USAGE = 'spec takes change-request or correct: surety spec change-request --project <p> --file <path>; surety spec correct --project <p> --request <r>';
+  if (sub !== 'change-request' && sub !== 'correct') usage(SPEC_USAGE);
+  const needed = sub === 'correct' ? ['--project', '--request'] : ['--project', '--file'];
   const flags: Record<string, string> = {};
   for (let i = 0; i < rest.length; i += 2) {
     const flag = rest[i]!;
     const value = rest[i + 1];
-    if (!['--project', '--file'].includes(flag) || value === undefined) usage(`unknown or incomplete argument ${flag} for spec change-request`);
+    if (!needed.includes(flag) || value === undefined) usage(`unknown or incomplete argument ${flag} for spec ${sub}`);
     if (flag in flags) usage(`${flag} is given twice`);
     flags[flag] = value!;
   }
-  for (const f of ['--project', '--file']) if (!(f in flags)) usage(`spec change-request needs ${f}`);
-  let text = '';
-  try {
-    text = readFileSync(flags['--file']!, 'utf8');
-  } catch (err) {
-    usage(`--file ${flags['--file']} could not be read: ${(err as Error).message}`);
+  for (const f of needed) if (!(f in flags)) usage(`spec ${sub} needs ${f}`);
+  let request: { path: string; body: unknown };
+  if (sub === 'correct') {
+    request = { path: `/v1/projects/${encodeURIComponent(flags['--project']!)}/spec/change-requests/${encodeURIComponent(flags['--request']!)}/correct`, body: {} };
+  } else {
+    let text = '';
+    try {
+      text = readFileSync(flags['--file']!, 'utf8');
+    } catch (err) {
+      usage(`--file ${flags['--file']} could not be read: ${(err as Error).message}`);
+    }
+    request = { path: `/v1/projects/${encodeURIComponent(flags['--project']!)}/spec/change-requests`, body: { text } };
   }
   const home = process.env.SURETY_HOME;
   if (!home || !isAbsolute(home)) usage('SURETY_HOME must name an absolute directory');
   try {
-    const { status, text: answer } = await sendEnv(home, { method: 'POST', path: `/v1/projects/${encodeURIComponent(flags['--project']!)}/spec/change-requests`, body: { text } });
+    const { status, text: answer } = await sendEnv(home, { method: 'POST', ...request });
     let shown: string;
     try {
       shown = JSON.stringify(JSON.parse(answer));
