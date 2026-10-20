@@ -2920,3 +2920,10 @@ B01 to B08 are now decided by Sean in E110 to E117. This completes the requested
    - *Trigger:* M433-the-decision-stales's Q4 case opens a Spec Writer session as soon as `proposeR2` sees the decision raised, without waiting for the spec_change one-shot run that raised it to end.
    - *Consequence:* under load the session is refused `session_busy`. It was seen once in 31 gates, first here at `c26bb39`, and the file was clean alone 3 of 3. It is not an engine defect: one session at a time, and none beside a one-shot run, is the rule (SEAM §344).
    - *Planned:* the Verifier waits for the project at rest (the file's `quiet`) before the session opens. A test-only change, at the next Verifier pass.
+
+## E175. S4 closed: two test races (the driver, 2026-10-20)
+
+**Status:** the driver's, a test-only change under Sean's direction of 2026-10-20 ("continue, merge when the gate is clean").
+
+1. **The fix (E174 item 7).** M433-the-decision-stales's Q4 case, and the same race found in M432-a-proposal-that-cannot-be-recomputed's S2 case, now wait for the project's runs to end (`waitForIdle`, which sends no ticks, so the open `spec_change` decision stays un-stale) before opening the Spec Writer session. No other `specSaves` caller follows a one-shot run without a wait.
+2. **Evidence.** verify/s4 `df26458`, merged at `74240e4`. On mini-hp01, each file alone 3 of 3 (M433 3/3, M432 2/2); on the workstation, M433 5 of 5 alone and once under load beside M430 and M433-old-generation. A full gate was not run for this test-only change; the next gate carries it.
