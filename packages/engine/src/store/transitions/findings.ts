@@ -256,9 +256,33 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
       // A `fix` targeted at the plan (D6 §5.7; the driver's ruling 2): valid
       // only on a Reviewer's own `contract_conflict`; any other entry with
       // the target is not one this engine takes, and records nothing.
-      if (d.target === 'plan') {
-        const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
-        if (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers) continue;
+      const reviewers = (f as FindingRow & { source_role: string | null }).source_role === 'reviewer';
+      const planTarget = d.target === 'plan';
+      if (planTarget && (d.disposition !== 'fix' || f.category !== 'contract_conflict' || !reviewers)) continue;
+      // S1 (E172 item 7; Sean's direction that an agent never overrides the
+      // owner's standing decision; SEAM.md §555): on a finding the human
+      // owner has dispositioned, an entry the Reviewer's own authority would
+      // record (any `fix`, plan-targeted or not, matching his or not; a Low
+      // `defer`) is refused before anything else (H1's refusal included):
+      // the finding is left exactly as he left it, nothing is registered,
+      // and the attempt is recorded once per entry. The run is still
+      // accepted. The proposals beyond a Reviewer's authority (`accept`, a
+      // Medium `defer`) go on below as before (standing, or a question to
+      // the owner): they never change the finding's disposition.
+      if (f.status === 'dispositioned' && f.disposition_authority === 'human' && (d.disposition === 'fix' || deferLow)) {
+        tx.emit(
+          'finding.disposition_refused',
+          { project, finding: f.id, run: run.id },
+          {
+            reason: 'owner_decided',
+            disposition: d.disposition,
+            target: planTarget ? 'plan' : null,
+            standing: { disposition: f.disposition, authority: 'human', by: (f as FindingRow & { disposition_by?: string | null }).disposition_by ?? null },
+          },
+        );
+        continue;
+      }
+      if (planTarget) {
         recordDisposition(tx, f, { disposition: 'fix', authority: 'reviewer', by: run.id, linked_issue: d.linked_issue ?? null, defer_target: null, remediation: d.remediation ?? null, target: 'plan' });
         continue;
       }

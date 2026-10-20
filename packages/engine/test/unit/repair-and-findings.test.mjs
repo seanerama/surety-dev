@@ -807,3 +807,88 @@ test("H1: a Reviewer's plan-targeted fix on its own contract_conflict naming no 
   assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
   assert.ok(!fixWork(db).some((w) => w.kind === 'fix'), 'no fix work');
 });
+
+// S1 (E172 item 7; SEAM.md §555): a Reviewer's disposition never overrides
+// the owner's. The owner's standing answer is written as recordDisposition
+// leaves it (authority human).
+function ownerDecided(db, disposition, { severity = 'medium', linked_issue = null, defer_target = null } = {}) {
+  db.prepare(`UPDATE findings SET effective_severity = ?, proposed_severity = ? WHERE id = 'fnd_x'`).run(severity, severity);
+  transact(db, ENGINE_ACTOR, (tx) => recordDisposition(tx, findingRow(db), { disposition, authority: 'human', by: 'human', linked_issue, defer_target }));
+  const f = findingRow(db);
+  assert.deepEqual([f.status, f.disposition, f.disposition_authority], ['dispositioned', disposition, 'human'], 'the fixture: the owner dispositioned it');
+  return f;
+}
+const ownerColumns = (f) => [f.status, f.disposition, f.disposition_authority, f.disposition_by, f.disposition_at, f.linked_issue, f.defer_target, f.proposed_disposition];
+const TARGET = '2026-11-08T00:00:00.000Z';
+
+for (const [label, setup, entry] of [
+  ["a fix on the owner's accept (a finding naming a check)", { disposition: 'accept' }, { finding: 'fnd_x', disposition: 'fix' }],
+  ["a fix matching the owner's fix", { disposition: 'fix' }, { finding: 'fnd_x', disposition: 'fix' }],
+  ["a fix on the owner's defer", { disposition: 'defer', linked_issue: 'ISSUE-9', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'fix' }],
+  ["a Low defer on the owner's accept", { disposition: 'accept', severity: 'low' }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }],
+  ["a Low defer matching the owner's defer", { disposition: 'defer', severity: 'low', linked_issue: 'ISSUE-7', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }],
+]) {
+  test(`S1: ${label} is refused: the owner's finding unchanged, nothing registered, finding.disposition_refused once`, (t) => {
+    const db = store(t);
+    objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+    const { disposition, ...opts } = setup;
+    const before = ownerDecided(db, disposition, opts);
+    const work = fixWork(db);
+    const recorded = eventsOf(db, 'finding.dispositioned').length;
+    reviewerReport(db, [entry]);
+    assert.deepEqual(ownerColumns(findingRow(db)), ownerColumns(before), 'the finding as the owner left it');
+    assert.deepEqual(fixWork(db), work, 'nothing registered');
+    assert.equal(eventsOf(db, 'finding.dispositioned').length, recorded, 'no disposition recorded');
+    const refused = eventsOf(db, 'finding.disposition_refused');
+    assert.equal(refused.length, 1);
+    assert.deepEqual(refused[0].subject, { project: 'prj_1', finding: 'fnd_x', run: 'run_rev' });
+    assert.deepEqual([refused[0].payload.reason, refused[0].payload.disposition, refused[0].payload.target], ['owner_decided', entry.disposition, null]);
+    assert.deepEqual(refused[0].payload.standing, { disposition, authority: 'human', by: 'human' });
+    assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'finding_disposition'`).get().n, 0, 'no question raised');
+  });
+}
+
+test("S1: a plan-targeted fix on the owner's accept of the Reviewer's contract_conflict is refused with target plan; no replan", (t) => {
+  const db = store(t);
+  objection(db, { role: 'reviewer', candidate: 'cand_1', category: 'contract_conflict', check: null });
+  const before = ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix', target: 'plan' }]);
+  assert.deepEqual(ownerColumns(findingRow(db)), ownerColumns(before));
+  assert.deepEqual(fixWork(db), [], 'no replan, no fix work');
+  const refused = eventsOf(db, 'finding.disposition_refused');
+  assert.deepEqual(refused.map((e) => [e.payload.reason, e.payload.disposition, e.payload.target]), [['owner_decided', 'fix', 'plan']]);
+});
+
+test("S1: an owner-dispositioned finding naming no check: the owner's refusal, not H1's; one event per entry", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: null });
+  const before = ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }, { finding: 'fnd_x', disposition: 'fix' }]);
+  assert.deepEqual(ownerColumns(findingRow(db)), ownerColumns(before));
+  assert.equal(eventsOf(db, 'finding.disposition_refused').length, 2, 'once per entry');
+  assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
+});
+
+test("S1: proposals on the owner's finding change no disposition: matching stands, differing asks as before (M546 (a), (b))", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  const before = ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'accept' }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-8', defer_target: TARGET }]);
+  const after = findingRow(db);
+  assert.deepEqual(ownerColumns(after).slice(0, 7), ownerColumns(before).slice(0, 7), 'the disposition as the owner left it');
+  assert.deepEqual(fixWork(db), []);
+  assert.equal(eventsOf(db, 'finding.proposal_standing').length, 1);
+  assert.deepEqual(eventsOf(db, 'finding.disposition_refused'), [], 'proposals are not refusals');
+});
+
+test("S1: a Reviewer's own disposition is still replaced by a later Reviewer's (only the owner's is kept)", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  db.prepare(`UPDATE findings SET effective_severity = 'low' WHERE id = 'fnd_x'`).run();
+  transact(db, ENGINE_ACTOR, (tx) => recordDisposition(tx, findingRow(db), { disposition: 'defer', authority: 'reviewer', by: 'run_x', linked_issue: 'ISSUE-1', defer_target: TARGET }));
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const f = findingRow(db);
+  assert.deepEqual([f.disposition, f.disposition_authority, f.disposition_by], ['fix', 'reviewer', 'run_rev']);
+  assert.deepEqual(eventsOf(db, 'finding.disposition_refused'), []);
+});

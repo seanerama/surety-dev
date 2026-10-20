@@ -253,6 +253,7 @@ export function contextFacts(db: Database, args: { run: string }) {
     sensitive_area: f.sensitive_area,
     status: f.status,
     disposition: f.disposition,
+    disposition_authority: f.disposition_authority ?? null,
     source_role: f.source_role,
   });
   // What a Verifier or a Reviewer of a candidate reports against (D2 §1.3;
