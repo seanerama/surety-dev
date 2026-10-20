@@ -52,7 +52,7 @@ import { answerConflict, conflictPreview, correctionFor, findingVerification, ro
 import { REPLAN_OPTION, answerReplan, replanOffered, requestEarlyReplan } from '../../plan/replace.js';
 import { hostIdentity } from '../../trust/host.js';
 import { CHANGE_SPEC_CATEGORIES } from '../../runs/report.js';
-import { correctionOpenKeys, correctionProposalDecided, requestFromFinding, requestsFromFindings, specChangeKind } from '../../spec/change.js';
+import { correctCommand, correctionOpenKeys, correctionProposalDecided, correctionRequestOf, requestFromFinding, requestsFromFindings, specChangeKind } from '../../spec/change.js';
 import { ADOPTION_MODE, ADOPTION_MODE_KEYS, REQUIREMENT_CONFIRM, REQUIREMENT_CONFIRM_KEYS } from '../../adopt/records.js';
 import { ARCHITECTURE_APPROVAL, BUNDLE_KEYS, IDEA_ACCEPT, IDEA_ACCEPT_KEYS, PLAN_APPROVAL, PLAN_KEYS, SPEC_APPROVAL, SPEC_APPROVAL_KEYS } from '../../sessions/decisions.js';
 import { DESIGN_DUE, DESIGN_DUE_KEYS, requestDesignerSession } from '../../design/due.js';
@@ -212,11 +212,31 @@ function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
 
 // A specification change's correction parked with its obligations open
 // (the driver's ruling Q13): the question names their checks.
-function obligationText(db: Db, item: { id: string; kind: string }): string {
+// S3 (SEAM.md §557): the question, and its cancel option, name the owner's
+// command that registers the correction again after a cancel.
+function obligationText(db: Db, item: { id: string; kind: string; project: string }): string {
   if (item.kind !== 'check_correction') return '';
   const keys = correctionOpenKeys(db, item.id);
-  return keys.length === 0 ? '' : ` Nothing was applied and nothing assessed: the specification change's obligations on ${keys.join(', ')} stay open, and every gate names them until a correction or the Verifier's assessment resolves them.`;
+  const command = correctionCommand(db, item);
+  return keys.length === 0 || command === null
+    ? ''
+    : ` Nothing was applied and nothing assessed: the specification change's obligations on ${keys.join(', ')} stay open, and every gate names them until a correction or the Verifier's assessment resolves them. If you cancel it, \`${command}\` registers the correction again.`;
 }
+
+// The owner's command for a specification change's correction that leaves
+// obligations open (S3); null for any other item.
+function correctionCommand(db: Db, item: { id: string; kind: string; project: string }): string | null {
+  if (item.kind !== 'check_correction') return null;
+  const request = correctionRequestOf(db, item.id);
+  if (request === null || correctionOpenKeys(db, item.id).length === 0) return null;
+  return correctCommand(item.project, request);
+}
+
+const CANCEL_CONSEQUENCE = 'The item is cancelled and never dispatched again.';
+const cancelConsequence = (db: Db, item: { id: string; kind: string; project: string }): string => {
+  const command = correctionCommand(db, item);
+  return command === null ? CANCEL_CONSEQUENCE : `${CANCEL_CONSEQUENCE} The specification change's obligations stay open; \`${command}\` registers its correction again.`;
+};
 
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
@@ -277,7 +297,7 @@ function blockerPreview(tx: Tx, d: Subject): Preview | null {
           ...(replanConflicts(tx.db, item).length > 0
             ? [{ key: 'change_spec', label: 'Change the spec', consequence: 'spec_change work is raised for each conflict the Architect reported; nothing of the spec changes until it is approved. This replan is cancelled: the approved change replans.', effect: { work_item: item.id, register: 'spec_change', findings: replanConflicts(tx.db, item) } }]
             : []),
-          { key: 'cancel', label: 'Cancel', consequence: 'The item is cancelled and never dispatched again.', effect: { work_item: item.id, to: 'cancelled' } },
+          { key: 'cancel', label: 'Cancel', consequence: cancelConsequence(tx.db, item), effect: { work_item: item.id, to: 'cancelled' } },
           // D6 §6.2, A.2 (F §5.1): a phase's authoring parked, the owner may
           // let its Builders build first, with a reason and an independent
           // review; nothing of the coverage is waived.
