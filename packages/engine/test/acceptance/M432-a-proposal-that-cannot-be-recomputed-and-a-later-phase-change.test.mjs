@@ -22,7 +22,7 @@ import { describe, test } from 'node:test';
 
 import { answer, decision, decisionsOn } from './harness/decisions.mjs';
 import { script } from './harness/scripted.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { scriptedEngine, waitForIdle } from './harness/runs.mjs';
 import { ROUTED_KINDS, authoringReady, builderScript, journeyContext, planOfPhase, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
 import { journey35, specReady } from './harness/journey/plan35.mjs';
 import { REQUIREMENTS, specText } from './harness/journey/reference.mjs';
@@ -54,7 +54,9 @@ describe('M432: a pending proposal the current version voids; a change to a late
     const first = await post(fx, p.id, SPEC_CHANGES.r2Both, [{ key: 'R2', kind: 'criteria_changed', reason: 'content type' }], 'R2.1 and R2.2 name the content type.');
     const proposed = await untilProposedOrFailed(fx, ctx, first);
     assert.ok(proposed.decision, `the fixture is live: the change is proposed and awaits the owner (${proposed.request.status})`);
-    // A Spec Writer's version 2 withdraws R2.
+    // A Spec Writer's version 2 withdraws R2, once the spec_change run that
+    // raised the proposal has ended: no session opens beside a one-shot run (SEAM §344; S4, E174 item 7).
+    await waitForIdle(fx.home, p.id);
     const { approval } = await specSaves(fx, p.id, [withoutR2(2)]);
     assert.ok(approval, 'the fixture is live: the session\'s close raises spec_approval');
     assert.equal((await answer(fx.engine, p.id, approval, 'approve')).status, 200, 'the owner approves version 2');
