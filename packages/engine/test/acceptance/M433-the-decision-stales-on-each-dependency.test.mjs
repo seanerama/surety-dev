@@ -31,7 +31,7 @@ import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { executionRow } from './harness/checks/fixtures.mjs';
 import { script } from './harness/scripted.mjs';
 import { ROUTED_KINDS, builderScript, candidatesOfProject, ownerPolicy, planOfPhase, queuedExecutions, runsOfProject, specRevisions, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
-import { tick } from './harness/runs.mjs';
+import { tick, waitForIdle } from './harness/runs.mjs';
 import { journey35, replan35 } from './harness/journey/plan35.mjs';
 import { STAGES } from './harness/journey/reference.mjs';
 import { pumpNoIdle } from './harness/journey/review31b.mjs';
@@ -162,6 +162,9 @@ describe('M433 (a) the decision stales on each dependency the impact touches', (
     const { fx, p, ctx } = await journey35(t);
     ctx.holdOpts = {};
     const { request, decision: d1 } = await proposeR2(fx, ctx, SPEC_CHANGES.r1Reworded, [{ key: 'R1', kind: 'criteria_changed', reason: 'R1.1 names the type' }]);
+    // The spec_change run that raised the decision ends first (no tick, so the
+    // decision stands as raised): no session opens beside a one-shot run (SEAM §344; S4, E174 item 7).
+    await waitForIdle(fx.home, p.id);
     const { approval } = await specSaves(fx, p.id, [SPEC_CHANGES.r3Statement]);
     assert.ok(approval, 'its close raises spec_approval');
     assert.equal((await answer(fx.engine, p.id, approval, 'approve')).status, 200, 'the owner approves it');
