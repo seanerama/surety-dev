@@ -26,7 +26,7 @@ const { parseReport, fieldAllowed } = await import(join(dist, 'runs', 'report.js
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { evaluateGate } = await import(join(dist, 'store', 'transitions', 'gates.js'));
 const { recordReport } = await import(join(dist, 'store', 'transitions', 'findings.js'));
-const { answerQueued } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { answerQueued, refreshDecisions } = await import(join(dist, 'store', 'transitions', 'queue.js'));
 const { recordPaths } = await import(join(dist, 'store', 'reads.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
@@ -759,13 +759,15 @@ test("L3-1, the other order: a fix is not dispatched while the stage is being se
 
 // H1 (E171 item 5; E166 item 4; Sean's ruling, option B; SEAM.md §552): a
 // Reviewer's own fix on a finding that names no check is refused.
-function reviewerReport(db, dispositions, { reviewer = 'run_rev' } = {}) {
+function reviewerReport(db, dispositions, { reviewer = 'run_rev', n = 0 } = {}) {
+  // n: a later review (its own work item and run).
+  const wi = n === 0 ? 'wi_rev' : `wi_rev${n}`;
   db.prepare(`INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, depends_on, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold, chain)
-     VALUES ('wi_rev', ?, 'prj_1', 7, 'review', '{"candidate":"cand_1"}', 'executing', '[]', 'fixture', 'r', 1, 0, 0, 0, 0, 1)`).run(AT);
+     VALUES (?, ?, 'prj_1', ?, 'review', '{"candidate":"cand_1"}', 'executing', '[]', 'fixture', ?, 1, 0, 0, 0, 0, 1)`).run(wi, AT, 7 + 20 * n, `r${n}`);
   db.prepare(
     `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, chain, result_value)
-     VALUES (?, ?, 'prj_1', 8, 'wi_rev', 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, 1, ?)`,
-  ).run(reviewer, AT, A, AT, JSON.stringify({ summary: 's', report: { dispositions } }));
+     VALUES (?, ?, 'prj_1', ?, ?, 'reviewer', 'one_shot', 'validating', 'scripted', '1', 'm', ?, ?, 0, 1, ?)`,
+  ).run(reviewer, AT, 8 + 20 * n, wi, A, AT, JSON.stringify({ summary: 's', report: { dispositions } }));
   transact(db, ENGINE_ACTOR, (tx) => recordReport(tx, { run: reviewer }));
 }
 const findingRow = (db, id = 'fnd_x') => db.prepare(`SELECT * FROM findings WHERE id = ?`).get(id);
@@ -821,12 +823,15 @@ function ownerDecided(db, disposition, { severity = 'medium', linked_issue = nul
 const ownerColumns = (f) => [f.status, f.disposition, f.disposition_authority, f.disposition_by, f.disposition_at, f.linked_issue, f.defer_target, f.proposed_disposition];
 const TARGET = '2026-11-08T00:00:00.000Z';
 
-for (const [label, setup, entry] of [
-  ["a fix on the owner's accept (a finding naming a check)", { disposition: 'accept' }, { finding: 'fnd_x', disposition: 'fix' }],
-  ["a fix matching the owner's fix", { disposition: 'fix' }, { finding: 'fnd_x', disposition: 'fix' }],
-  ["a fix on the owner's defer", { disposition: 'defer', linked_issue: 'ISSUE-9', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'fix' }],
-  ["a Low defer on the owner's accept", { disposition: 'accept', severity: 'low' }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }],
-  ["a Low defer matching the owner's defer", { disposition: 'defer', severity: 'low', linked_issue: 'ISSUE-7', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }],
+// The fourth column: whether the entry differs from the owner's and so asks
+// him (Sean's ruling of 2026-10-20, "ask only if it differs").
+for (const [label, setup, entry, differs] of [
+  ["a fix on the owner's accept (a finding naming a check)", { disposition: 'accept' }, { finding: 'fnd_x', disposition: 'fix' }, true],
+  ["a fix matching the owner's fix", { disposition: 'fix' }, { finding: 'fnd_x', disposition: 'fix' }, false],
+  ["a fix on the owner's defer", { disposition: 'defer', linked_issue: 'ISSUE-9', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'fix' }, true],
+  ["a Low defer on the owner's accept", { disposition: 'accept', severity: 'low' }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }, true],
+  ["a Low defer matching the owner's defer", { disposition: 'defer', severity: 'low', linked_issue: 'ISSUE-7', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-7', defer_target: TARGET }, false],
+  ["a Low defer on the owner's defer with another issue", { disposition: 'defer', severity: 'low', linked_issue: 'ISSUE-7', defer_target: TARGET }, { finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-6', defer_target: TARGET }, true],
 ]) {
   test(`S1: ${label} is refused: the owner's finding unchanged, nothing registered, finding.disposition_refused once`, (t) => {
     const db = store(t);
@@ -845,7 +850,8 @@ for (const [label, setup, entry] of [
     assert.deepEqual([refused[0].payload.reason, refused[0].payload.disposition, refused[0].payload.target], ['owner_decided', entry.disposition, null]);
     assert.deepEqual(refused[0].payload.standing, { disposition, authority: 'human', by: 'human' });
     assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
-    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'finding_disposition'`).get().n, 0, 'no question raised');
+    const asked = db.prepare(`SELECT scope, status FROM decisions WHERE kind = 'finding_disposition'`).all();
+    assert.deepEqual(asked, differs ? [{ scope: 'reviewer_disagrees', status: 'open' }] : [], differs ? 'differing: the owner asked once' : 'matching: no question raised');
   });
 }
 
@@ -870,7 +876,7 @@ test("S1: an owner-dispositioned finding naming no check: the owner's refusal, n
   assert.deepEqual(eventsOf(db, 'finding.fix_refused'), []);
 });
 
-test("S1: proposals on the owner's finding change no disposition: matching stands, differing asks as before (M546 (a), (b))", (t) => {
+test("S1: proposals on the owner's finding change no disposition: matching stands, differing asks him keep or change (M546 (a), (b))", (t) => {
   const db = store(t);
   objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
   const before = ownerDecided(db, 'accept');
@@ -880,6 +886,9 @@ test("S1: proposals on the owner's finding change no disposition: matching stand
   assert.deepEqual(fixWork(db), []);
   assert.equal(eventsOf(db, 'finding.proposal_standing').length, 1);
   assert.deepEqual(eventsOf(db, 'finding.disposition_refused'), [], 'proposals are not refusals');
+  assert.equal(after.proposed_disposition, null, 'no proposal held on the finding');
+  const [q] = questions(db);
+  assert.deepEqual([q.scope, keys(q), [q.manifest.disposition, q.manifest.proposed_disposition, q.manifest.linked_issue, q.manifest.defer_target]], ['reviewer_disagrees', ['keep', 'defer'], ['accept', 'defer', 'ISSUE-8', TARGET]]);
 });
 
 test("S1: a Reviewer's own disposition is still replaced by a later Reviewer's (only the owner's is kept)", (t) => {
@@ -891,4 +900,111 @@ test("S1: a Reviewer's own disposition is still replaced by a later Reviewer's (
   const f = findingRow(db);
   assert.deepEqual([f.disposition, f.disposition_authority, f.disposition_by], ['fix', 'reviewer', 'run_rev']);
   assert.deepEqual(eventsOf(db, 'finding.disposition_refused'), []);
+});
+
+// S1, "ask only if it differs" (Sean's ruling of 2026-10-20; SEAM.md §555):
+// the owner's question, its options, idempotency and answers.
+const questions = (db) =>
+  db
+    .prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' ORDER BY seq`)
+    .all()
+    .map((d) => ({ ...d, options: JSON.parse(d.options), manifest: JSON.parse(d.dependency_manifest) }));
+const keys = (d) => d.options.map((o) => o.key);
+const answerOwner = (db, d, option) => transact(db, ENGINE_ACTOR, (tx) => answerQueued(tx, { project: 'prj_1', decision: d.id, option, preview_hash: d.preview_hash, note: null }));
+const refresh = (db) => transact(db, ENGINE_ACTOR, (tx) => refreshDecisions(tx, 'prj_1'));
+
+test("S1 ask: a fix on the owner's accept asks keep or fix (a check verifies it), never his accept; the manifest names both and the Reviewer's run", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const [q] = questions(db);
+  assert.deepEqual([q.scope, q.status, q.subject_type, q.subject_id, keys(q)], ['reviewer_disagrees', 'open', 'finding', 'fnd_x', ['keep', 'fix']]);
+  assert.deepEqual([q.manifest.disposition, q.manifest.proposed_disposition, q.manifest.proposed_by_run, q.manifest.verification.state], ['accept', 'fix', 'run_rev', 'verifiable']);
+  assert.equal(findingRow(db).proposed_disposition, null, 'nothing held on the finding');
+  // A tick's refresh keeps it: same id, no new generation.
+  refresh(db);
+  assert.deepEqual(questions(db).map((d) => [d.id, d.status, d.semantic_generation]), [[q.id, 'open', 1]]);
+});
+
+test('S1 ask: a further differing report while it is open raises nothing: the same id, no generation, its first run', (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const [q] = questions(db);
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'defer', linked_issue: 'ISSUE-2', defer_target: TARGET }], { reviewer: 'run_rev2', n: 1 });
+  refresh(db);
+  const after = questions(db);
+  assert.deepEqual(after.map((d) => [d.id, d.status, d.semantic_generation, d.manifest.proposed_by_run]), [[q.id, 'open', 1, 'run_rev']]);
+  assert.equal(eventsOf(db, 'decision.invalidated').length, 0);
+});
+
+test("S1 ask: keep consumes it and changes nothing; a later tick asks nothing", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  const before = ownerDecided(db, 'accept');
+  const recorded = eventsOf(db, 'finding.dispositioned').length;
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const [q] = questions(db);
+  answerOwner(db, q, 'keep');
+  refresh(db);
+  assert.deepEqual(ownerColumns(findingRow(db)), ownerColumns(before));
+  assert.deepEqual(fixWork(db), []);
+  assert.equal(eventsOf(db, 'finding.dispositioned').length, recorded);
+  assert.deepEqual(questions(db).map((d) => [d.id, d.status]), [[q.id, 'consumed']]);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM approvals WHERE decision = ?`).get(q.id).n, 0, 'keep approves nothing');
+});
+
+test("S1 ask: fix is recorded with the human's authority and registers one fix work item, as his own route does", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const [q] = questions(db);
+  answerOwner(db, q, 'fix');
+  const f = findingRow(db);
+  assert.deepEqual([f.status, f.disposition, f.disposition_authority, f.proposed_disposition], ['dispositioned', 'fix', 'human', null]);
+  assert.deepEqual(fixWork(db), [{ kind: 'fix', trigger_id: 'fnd_x' }]);
+  assert.deepEqual(eventsOf(db, 'finding.dispositioned').at(-1).payload, { disposition: 'fix', authority: 'human' });
+  refresh(db);
+  assert.deepEqual(questions(db).map((d) => d.status), ['consumed']);
+});
+
+test("S1 ask: fix is not offered where no check verifies it, nor a plan-targeted fix: keep alone, the reason stated", (t) => {
+  for (const [check, category, entry] of [
+    ['smoke', 'defect', { finding: 'fnd_x', disposition: 'fix' }],
+    [null, 'contract_conflict', { finding: 'fnd_x', disposition: 'fix', target: 'plan' }],
+  ]) {
+    const db = store(t);
+    objection(db, { role: 'reviewer', candidate: 'cand_1', category, check });
+    ownerDecided(db, 'accept');
+    reviewerReport(db, [entry]);
+    const [q] = questions(db);
+    assert.deepEqual([q.scope, keys(q), q.manifest.proposed_target ?? null], ['reviewer_disagrees', ['keep'], entry.target ?? null]);
+    assert.match(q.question, /Keep yours\.$/);
+  }
+});
+
+test("S1 ask: an accept differing from the owner's fix on a High finding offers lower_and_accept in its place; answered, lowered and accepted by the human", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  ownerDecided(db, 'fix', { severity: 'high' });
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'accept' }]);
+  const [q] = questions(db);
+  assert.deepEqual(keys(q), ['keep', 'lower_and_accept']);
+  answerOwner(db, q, 'lower_and_accept');
+  const f = findingRow(db);
+  assert.deepEqual([f.effective_severity, f.disposition, f.disposition_authority], ['medium', 'accept', 'human']);
+});
+
+test("S1 ask: the question is withdrawn once the owner's disposition changes by another route to the Reviewer's", (t) => {
+  const db = store(t);
+  objection(db, { role: 'verifier', candidate: 'cand_1', category: 'defect', check: 'acc' });
+  ownerDecided(db, 'accept');
+  reviewerReport(db, [{ finding: 'fnd_x', disposition: 'fix' }]);
+  const [q] = questions(db);
+  transact(db, ENGINE_ACTOR, (tx) => recordDisposition(tx, findingRow(db), { disposition: 'fix', authority: 'human', by: 'human', linked_issue: null, defer_target: null }));
+  refresh(db);
+  assert.deepEqual(questions(db).map((d) => [d.id, d.status]), [[q.id, 'invalidated']]);
 });
