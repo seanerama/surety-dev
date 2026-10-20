@@ -43,6 +43,7 @@ import { assertRefused } from './harness/fixtures.mjs';
 import { check, finding, installChecks, nominated, passAll, raiseFindings, review } from './harness/gates.mjs';
 import { eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { scriptedEngine, tick } from './harness/runs.mjs';
+import { script } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 
 const DAY = 86_400;
@@ -182,9 +183,15 @@ describe('M546 no redundant disposition question', () => {
     // routing check_correction (D3 §2.11), is M235 (c)'s and (a) S2's contrast, unchanged.
     const [conflict] = await raiseFindings(fx, project, c1.id, [{ category: 'contract_conflict', severity: 'medium', message: 'the plan has the export send floats; the module map says integers' }]);
     assert.deepEqual([conflict.check, conflict.source_role], [null, 'reviewer'], `the fixture is live: the Reviewer's own contract_conflict, naming no check (${show(conflict)})`);
+    // The early replan this registers is dispatched at once, often by the engine's own requested tick before the
+    // review's ticks return. With no script the scripted role holds until killed, and those ticks wait for every
+    // run of the project to end, so it is scripted by kind and ends. What it reports is not this control's.
+    fx.scripted.kindScript('replan', script.complete());
     await review(fx, project, c1.id, { dispositions: [{ finding: conflict.id, disposition: 'fix', target: 'plan' }] });
-    const planned = finding(fx.home, conflict.id);
-    assert.deepEqual([planned.status, planned.disposition, planned.disposition_authority], ['dispositioned', 'fix', 'reviewer'], `the plan-targeted fix is recorded, as before H1 (${show(planned)})`);
+    // Read from what the route recorded, not the row: the scripted replan may already have ended, and a replan that
+    // does not land reopens the plan-targeted disposition (M430 (iii)).
+    const planned = eventsOfType(fx.home, 'finding.dispositioned').filter((e) => e.subject?.finding === conflict.id);
+    assert.deepEqual(planned.map((e) => [e.payload?.disposition, e.payload?.authority]), [['fix', 'reviewer']], `the plan-targeted fix is recorded once with the Reviewer's authority, as before H1 (${show(planned)})`);
     const replans = workItemsOf(fx.home, project).filter((w) => w.kind === 'replan' && w.trigger_source === 'contract_conflict' && w.trigger_id === conflict.id);
     assert.equal(replans.length, 1, `one early replan triggered by the finding (${show(workItemsOf(fx.home, project).map((w) => [w.kind, w.trigger_source, w.trigger_id]))})`);
     assert.deepEqual(workItemsOf(fx.home, project).filter((w) => w.kind === 'fix' && (w.subject?.finding === conflict.id || w.trigger_id === conflict.id)).map((w) => w.id), [], 'no fix work for it');
