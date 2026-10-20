@@ -25,6 +25,15 @@
 //     stages' `depends_on` stated as stage numbers, the plan's own form, so
 //     that a replan copying unbuilt stages that depend on one another as
 //     the package states them is not refused, and publishes;
+// (c), (d) S2 (E172 item 7; the driver's ruling of 2026-10-20 under Sean's
+//     delegation; SEAM.md §556): a replacement that keeps a stage (integrated
+//     or verified) whose dependency it supersedes is refused at the plan
+//     check, `PLAN_UNKNOWN_STAGE` naming the kept stage and that dependency:
+//     nothing published, the kept stage not dispatched. Stage 2 (depending on
+//     stage 1) integrated; stage 1 integrated, its work parked, its blocker
+//     answered `replan`, so the swap supersedes it (the trigger's own
+//     subject) and keeps stage 2; the replacement lists stage 1 changed under
+//     its number (stage 2 omitted, or listed as built), or renumbered 3.
 // (e) is in `M430-two-replacements-and-a-restart.test.mjs`. The floor of
 // (f) has no case: the reference project has no sensitive area (COVERAGE).
 
@@ -35,7 +44,8 @@ import { answer, decisionsOn } from './harness/decisions.mjs';
 import { findingsOf, raiseFindings, review } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { ROUTED_KINDS, builderScript, candidatesOfProject, phasePlansOf, planOfPhase, pump, readPlan, runsOfProject, stagesOfPlan, workOf } from './harness/journey/drive.mjs';
-import { journey35, nextReplanOutcome, openPlanApprovals, outcomes, phaseOf, replan35, roadmapWith } from './harness/journey/plan35.mjs';
+import { journey35, nextReplanOutcome, openPlanApprovals, outcomes, phaseOf, planCheckRows, replan35, roadmapWith, subjectsOf } from './harness/journey/plan35.mjs';
+import { advanceHolding, changed, openBlockerAbout } from './harness/journey/review35.mjs';
 import { postChange, pumpNoIdle } from './harness/journey/review31b.mjs';
 import { CHECK_DEFS, CHECK_PROGRAMS, REQUIREMENTS, STAGES, authoringFiles, specText } from './harness/journey/reference.mjs';
 import { tick } from './harness/runs.mjs';
@@ -89,6 +99,44 @@ async function replacementPendingWithS2Held(t, replacementStages) {
   const states = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s.status]));
   assert.deepEqual(states, { 1: 'integrated', 2: 'building', 3: 'planned' }, 'the fixture is live: integrated, building and planned at the swap');
   return { fx, p, ctx, plan, stagesBefore, answerKinds };
+}
+
+// S2 (E172 item 7; SEAM.md §556): the T2 reference project (stage 2 depends
+// on stage 1), every check held queued until stage 2 integrates, then
+// accept-r1 failing: stage 1 integrated with its work parked
+// (`repair_attempts_max` 0) and its blocker answered `replan`, stage 2
+// integrated. The replan (and its repair) writes `replacement`. Returns the
+// replan's next outcome, the last plan check and stage 2's runs before.
+async function keptDependentOfTheSubject(t, replacement) {
+  const { fx, p, ctx, plan } = await journey35(t, { policy: { repair_attempts_max: 0 } });
+  fx.scripted.kindScript('stage_build', [builderScript(1), builderScript(2), builderScript(1), builderScript(1)]);
+  fx.scripted.kindScript('replan', [replan35({ phase: 1, stages: replacement }), replan35({ phase: 1, stages: replacement })]);
+  const [s1, s2] = stagesOfPlan(fx.home, plan.id);
+  await advanceHolding(fx, ctx, () => (stagesOfPlan(fx.home, plan.id)[1]?.status === 'integrated' ? true : undefined), { exits: () => null, what: 'stage 2 integrated, the checks held' });
+  const blocker = await advanceHolding(fx, ctx, () => {
+    const w = stageWorkOf(fx.home, p.id, s1);
+    return w?.status === 'parked' ? openBlockerAbout(fx.home, w.id) : undefined;
+  }, { exits: (x) => (x.key === 'accept-r1' ? 1 : 0), what: 'stage 1\'s work parked', max: 120 });
+  const now = Object.fromEntries(stagesOfPlan(fx.home, plan.id).map((s) => [s.number, s]));
+  assert.ok(now[1].status === 'integrated' && ['integrated', 'verified'].includes(now[2].status) && JSON.stringify(json(now[2].depends_on)) === JSON.stringify([s1.id]), `the fixture is live: stage 1 integrated and parked, stage 2 built on it (${JSON.stringify(Object.values(now).map((s) => [s.number, s.status, s.depends_on]))})`);
+  assert.ok(blocker.options.some((o) => o.key === 'replan'), 'stage 1\'s blocker offers replan');
+  const s2work = stageWorkOf(fx.home, p.id, s2);
+  const s2runs = runOf(fx.home, p.id, s2work.id).length;
+  assert.equal((await answer(fx.engine, p.id, blocker, 'replan')).status, 200, 'the owner answers replan');
+  const out = await nextReplanOutcome(fx, ctx, 1, outcomes([plan.id]), { max: 200 });
+  return { fx, p, plan, out, check: planCheckRows(fx.home, p.id).at(-1), s2work, s2runs };
+}
+
+// The ruling's three observables: refused naming stage 2 and its dependency
+// 1, nothing published, stage 2 not dispatched.
+function assertKeptDependentRefused({ fx, p, out, check, s2work, s2runs }, how) {
+  const named = subjectsOf(check, 'PLAN_UNKNOWN_STAGE').some((s) => /^stage 2\s*(->|:)\s*(stage\s*)?1\b/.test(s));
+  assert.ok(
+    out.failed && check?.outcome === 'refused' && named,
+    `a replacement keeping stage 2 while ${how} is refused at the plan check, PLAN_UNKNOWN_STAGE naming stage 2 and its dependency 1 (E172 item 7 S2; the driver's ruling) (outcome ${Object.keys(out).join(', ')}${out.failed ? `: ${out.failed.reason_text}` : ''}; check ${check?.outcome} ${JSON.stringify(check?.reasons)})`,
+  );
+  assert.deepEqual(phasePlansOf(fx.home, p.id).filter((x) => x.phase_number === 1 && x.generation > 1 && x.published_at).map((x) => x.generation), [], 'nothing published');
+  assert.equal(runOf(fx.home, p.id, s2work.id).length, s2runs, 'the kept stage 2 not dispatched');
 }
 
 describe('M430 early replanning as a compare-and-swap', () => {
@@ -253,6 +301,17 @@ describe('M430 early replanning as a compare-and-swap', () => {
     const after = findingsOf(fx.home, p.id).find((f) => f.id === found.id);
     assert.ok(after, '(f) the finding kept after the replacement');
     assert.equal(after.disposition, 'fix', 'with its disposition');
+  });
+  test('(c), (d) E172 S2: a replacement keeping stage 2 while it supersedes stage 1, its dependency, and lists stage 1 changed under its number: refused PLAN_UNKNOWN_STAGE (stage 2, 1); nothing published; stage 2 not dispatched', async (t) => {
+    assertKeptDependentRefused(await keptDependentOfTheSubject(t, [changed(S1)]), 'stage 1 is replaced by a changed stage 1');
+  });
+
+  test('(c), (d) E172 S2: the same with stage 2 listed as built: refused PLAN_UNKNOWN_STAGE (stage 2, 1); nothing published; stage 2 not dispatched', async (t) => {
+    assertKeptDependentRefused(await keptDependentOfTheSubject(t, [changed(S1), S2]), 'stage 1 is replaced by a changed stage 1 and stage 2 is listed as built');
+  });
+
+  test('(c), (d) E172 S2: a replacement keeping stage 2 while it drops stage 1 for stage 3: refused PLAN_UNKNOWN_STAGE (stage 2, 1); nothing published; stage 2 not dispatched', async (t) => {
+    assertKeptDependentRefused(await keptDependentOfTheSubject(t, [changed(S1, { number: 3 })]), 'stage 1 is dropped for a stage 3');
   });
 });
 
