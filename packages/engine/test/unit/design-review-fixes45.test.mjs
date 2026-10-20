@@ -135,12 +135,71 @@ test('S7: a confirmed matches seen in a browser never accepts a native target; o
   const { db, at } = scratch(t);
   const confirmed = (id, target, observed_on) =>
     db
-      .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "verdicts", "confirmation_decision") VALUES (?, ?, ?, 'dsg_1', ?, 'owner_command', '{}', ?, 'dec_x')`)
+      .prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "verdicts", "confirmation_decision") VALUES (?, ?, ?, 'dsg_1', ?, 'owner_command', '{"kind":"owner_build","target":"android","build_ref":"b1"}', ?, 'dec_x')`)
       .run(id, at, P, `run_${id}`, JSON.stringify([{ target, screen: 'S2', verdict: 'matches', status: 'confirmed', observed_on, evidence: [], deltas: [] }]));
   confirmed('drv_1', 'android', 'browser');
-  assert.equal(humanTestEvidence(db, P, 'android', 'dsg_1').accepted, false);
+  assert.equal(humanTestEvidence(db, P, 'android', 'dsg_1', ['S2']).accepted, false);
   confirmed('drv_2', 'android', 'device');
-  assert.equal(humanTestEvidence(db, P, 'android', 'dsg_1').accepted, true);
+  assert.equal(humanTestEvidence(db, P, 'android', 'dsg_1', ['S2']).accepted, true);
+});
+
+// H2 (E171 item 5; SEAM.md §553): every screen of the target, on the newest
+// reviewed build of the version in force, the latest counting verdict per
+// screen of that build deciding.
+test('H2: a human test is accepted only when every screen of the target matches on the newest reviewed build', (t) => {
+  const { db, at } = scratch(t);
+  let n = 0;
+  const v = (screen, verdict, observed_on, extra = {}) => ({ target: 'android', screen, verdict, status: 'confirmed', observed_on, evidence: [], deltas: [], ...extra });
+  const confirmed = (subject, verdicts, { revision = 'dsg_1', decision = 'dec_x' } = {}) => {
+    n += 1;
+    db.prepare(`INSERT INTO "design_reviews" ("id", "created_at", "project", "design_revision", "run", "trigger", "subject", "verdicts", "confirmation_decision") VALUES (?, ?, ?, ?, ?, 'owner_command', ?, ?, ?)`).run(
+      `drv_${n}`, at, P, revision, `run_${n}`, JSON.stringify(subject), JSON.stringify(verdicts), decision,
+    );
+  };
+  const A = { kind: 'owner_build', target: 'android', build_ref: 'A' };
+  const B = { kind: 'owner_build', target: 'android', build_ref: 'B' };
+  const both = ['S2', 'S5'];
+  const accepted = (screens = both, current = 'dsg_1') => humanTestEvidence(db, P, 'android', current, screens).accepted;
+  confirmed(A, [v('S2', 'matches', 'device')]);
+  assert.equal(accepted(), false, 'S5 unreviewed');
+  assert.equal(accepted(['S2']), true, 'a target of one screen, matched');
+  assert.equal(accepted([]), false, 'an empty screen set is never accepted');
+  assert.equal(accepted(null), false, 'an unknown screen set is never accepted');
+  assert.equal(accepted(both, null), false, 'no design version in force');
+  confirmed(A, [v('S5', 'matches', 'simulation')]);
+  assert.equal(accepted(), false, 'a simulation never counts');
+  confirmed(A, [v('S5', 'not_observed', undefined, { not_observed_reason: 'not_reached' })]);
+  assert.equal(accepted(), false, 'not_observed counts as unreviewed');
+  confirmed(A, [v('S5', 'matches', 'device', { status: 'struck' })]);
+  assert.equal(accepted(), false, 'a struck matches counts as unreviewed');
+  confirmed(A, [v('S5', 'matches', 'device')], { decision: null });
+  assert.equal(accepted(), false, 'a review not confirmed counts for nothing');
+  confirmed(A, [v('S5', 'matches', 'emulator')], { revision: 'dsg_0' });
+  assert.equal(accepted(), false, 'a verdict of another design version counts for nothing');
+  confirmed(A, [v('S5', 'matches', 'emulator')]);
+  assert.equal(accepted(), true, 'S2 and S5 match on build A, over two reviews of it');
+  confirmed(A, [v('S5', 'deltas', 'device', { deltas: [{ owner_words: 'no quantity', kind: 'implementation' }] })]);
+  assert.equal(accepted(), false, 'a later deltas on the same build revokes it');
+  confirmed(A, [v('S5', 'matches', 'simulation')]);
+  assert.equal(accepted(), false, 'a later simulation does not restore it');
+  confirmed(A, [v('S5', 'matches', 'device')]);
+  assert.equal(accepted(), true, 'a later counting matches restores it');
+  confirmed({ kind: 'owner_build', target: 'web', build_ref: 'W' }, [{ ...v('S1', 'deltas', 'browser'), target: 'web' }]);
+  assert.equal(accepted(), true, 'another target\'s review is not a review of this target');
+  confirmed(B, [v('S5', 'matches', 'device')]);
+  assert.equal(accepted(), false, 'S2 on A and S5 on the newer B never combine');
+  confirmed(B, [v('S2', 'matches', 'device')]);
+  assert.equal(accepted(), true, 'both on B');
+  confirmed({ kind: 'owner_build', target: 'android', candidate: 'cnd_1' }, [v('S2', 'matches', 'device'), v('S5', 'matches', 'device', { status: 'struck' })]);
+  assert.equal(accepted(), false, 'a newer build (a candidate) reviewed on S2 only: B\'s acceptance does not carry');
+  confirmed({ kind: 'owner_build', target: 'android', candidate: 'cnd_1', build_ref: 'C' }, [v('S2', 'matches', 'device'), v('S5', 'matches', 'device')]);
+  confirmed({ kind: 'owner_build', target: 'android', build_ref: 'C' }, [v('S5', 'deltas', 'device')]);
+  assert.equal(accepted(), false, 'the build_ref names the build before the candidate');
+  confirmed({}, [v('S2', 'matches', 'device'), v('S5', 'matches', 'device')]);
+  assert.equal(accepted(), false, 'a review naming no build never accepts');
+  const evidence = humanTestEvidence(db, P, 'android', 'dsg_1', both).evidence;
+  assert.equal(evidence.some((e) => e.observed_on === 'device' && e.verdict === 'matches' && e.label === 'owner accepted'), true, 'every confirmed verdict kept as evidence');
+  assert.equal(evidence.some((e) => e.design_revision === 'dsg_0'), true, 'an older design version\'s verdict kept as history');
 });
 
 test('N10, S7: observed_on with no evidence refused, naming it; owner evidence only from a device, emulator or simulator', async () => {

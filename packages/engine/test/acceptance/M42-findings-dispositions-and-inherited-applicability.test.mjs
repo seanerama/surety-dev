@@ -96,9 +96,12 @@ const onlyReason = (evaluation, code, subject) => {
 
 describe('M42 the findings a gate asks about', () => {
   test('an unresolved finding stays in the query through a planned fix and across two successor lineages: a fix that is only planned resolves nothing', async (t) => {
-    const { fx, ctx, project, k, c1 } = await clean(t);
+    // H1 (E171 item 5; SEAM.md §552): a Reviewer's fix on a finding naming no check is refused, so the finding names
+    // `session`, a required acceptance check covering R1.1 at alpha_authorize only: it can verify the finding, it is
+    // never executed here, and the stage gate does not require it, so the gate's one reason is still the finding.
+    const { fx, ctx, project, k, c1 } = await clean(t, [check('login', { requirements: ['R1'] }), check('session', { gates: ['alpha_authorize'], requirements: ['R1'] })]);
     await passAll(fx.engine, project, c1.id, [k.login]);
-    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'the logout link is missing on the settings page')]);
+    const [found] = await raiseFindings(fx, project, c1.id, [defect('medium', 'the logout link is missing on the settings page', { check: 'session', criterion: 'R1.1' })]);
     assert.deepEqual([found.status, found.effective_severity, found.candidate], ['open', 'medium', c1.id]);
     onlyReason(await stageGate(fx, ctx), 'FINDING_UNSATISFIED', found.id);
 

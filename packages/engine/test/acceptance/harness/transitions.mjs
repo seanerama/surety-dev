@@ -23,7 +23,16 @@ const kindOf = (kind, table) => {
   return spec;
 };
 
-const templateApplies = (template, spec) => !template.only_kinds_with || spec.path.includes(template.only_kinds_with);
+// `only_kinds_with`: kinds whose path has that status. `only_kinds`: the
+// kinds listed, by name. The one such template is `park_at_registration`,
+// eligible → parked for `replan` only: H4's cap (E171 item 5 H4; E172, the
+// driver's ruling under Sean's delegation; SEAM.md §554), a spec change's
+// replan registered by the restale at the cap parked at registration with
+// blocker reason `replan_restale_max` (work.parked; no run, no claim). The
+// engine's exported contract states it the same way (M73 reads its edges
+// through legalEdges).
+const templateApplies = (template, spec, kind) =>
+  (!template.only_kinds_with || spec.path.includes(template.only_kinds_with)) && (!template.only_kinds || template.only_kinds.includes(kind));
 
 // Every edge the kind may take, each with where it comes from: its path, or
 // a template. `continue` edges are listed for each continuation the kind can
@@ -39,7 +48,7 @@ export function legalEdges(kind, table = WORK) {
   for (let grew = true; grew; ) {
     grew = false;
     for (const [name, template] of templates) {
-      if (!templateApplies(template, spec)) continue;
+      if (!templateApplies(template, spec, kind)) continue;
       for (const from of template.from) {
         if (!reach.has(from)) continue;
         const targets = name === 'continue' ? table.continuations.filter((c) => spec.path.includes(c)) : [template.to];
@@ -122,8 +131,14 @@ export function routeTo(kind, target, { continuation } = {}, table = WORK) {
   // kind's own path, for a kind whose path waits for a decision before it
   // ends (D6 A.5's spec_change: … → executing → awaiting_decision →
   // complete; SEAM.md §371).
+  // An edge of a template limited to named kinds (`only_kinds`: replan's
+  // eligible → parked, H4's cap) is taken only when no route avoids it, so
+  // the routes every other edge's case is driven along stay as they were
+  // (parked by claimed → parked).
+  const kindOnly = (e) => table.templates[e.via]?.only_kinds !== undefined;
   const route =
-    search(all.filter((e) => e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision')) ??
+    search(all.filter((e) => !kindOnly(e) && e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision')) ??
+    search(all.filter((e) => !kindOnly(e) && ((e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision') || e.via === 'path'))) ??
     search(all.filter((e) => (e.from !== 'awaiting_decision' && e.to !== 'awaiting_decision') || e.via === 'path'));
   if (route === null) throw new Error(`${kind} cannot reach ${target}`);
   return route;

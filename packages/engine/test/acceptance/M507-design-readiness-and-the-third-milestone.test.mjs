@@ -26,6 +26,14 @@
 // (g) once ready, a checkable design criterion the applied correction left
 //     uncovered (R2.2) still carries ACCEPTANCE_SCOPE_INCOMPLETE on the gate
 //     of the stage that validates it; the human-kind R2.4 does not.
+//
+// E171 item 5 H4 (Sean's ruling, 2026-10-19; SEAM.md §554):
+// (c) the correction parked and its blocker answered `cancel`: no
+//     readiness, the wait `correction_ended`; the open design_due offers
+//     `correct` (not while the correction is pending); answered, the
+//     `spec_obligation` correction registered again at generation 2 with the
+//     same request, criteria and checks; applied: design.ready once, the UI
+//     stages' design_ready met.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -158,6 +166,46 @@ describe('M507 design readiness and the third milestone', () => {
     const runs = rows(fx.home, 'SELECT * FROM "runs" WHERE "work_item" = ?', item.id);
     assert.ok(runs.length >= 2 || item.blocker, `the item's repair or blocker (${runs.length} runs; blocker ${item.blocker})`);
     assert.deepEqual(uiLaunches(fx, p), [], 'no UI Builder');
+  });
+
+  test('(c) H4: the correction parked and its blocker answered cancel: no readiness, the wait correction_ended; design_due offers correct, which registers the correction again at generation 2 with the same request, criteria and checks; applied: design.ready once, design_ready met', async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, ctx } = await project(fx, { policy: { ...BEFORE_BUILD, repair_attempts_max: 0 } });
+    ctx.answerKinds = [...OWNER];
+    await designed(fx, p);
+    const batch = await untilBatch(fx, ctx);
+    await consume(fx, p.id, batch.design_approval, 'approve');
+    await consume(fx, p.id, batch.spec_change, 'approve');
+    const captured = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'check_correction_tightening')[0], { what: 'the correction captured', max: 40 });
+    await consume(fx, p.id, decision(fx.home, captured.id), 'reject');
+    const corrections = () => rows(fx.home, `SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' ORDER BY "trigger_generation"`, p.id);
+    const [first] = corrections();
+    const blocker = await pump(fx, ctx, () => (corrections()[0]?.status === 'parked' ? rows(fx.home, `SELECT "id" FROM "decisions" WHERE "kind" = 'blocker' AND "subject_id" = ? AND "status" = 'open'`, first.id)[0] : undefined), { what: 'the rejected correction parked with its blocker', max: 20 });
+    const dueParked = openOfKind(fx.home, p.id, 'design_due')[0];
+    assert.ok(dueParked, 'the fixture is live: design_due open while the correction is parked');
+    assert.equal((dueParked.options ?? []).some((o) => o.key === 'correct'), false, 'no correct while the correction is pending (parked)');
+    await consume(fx, p.id, decision(fx.home, blocker.id), 'cancel');
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.equal(readyAt(fx.home, p.id), null, 'cancelled: no readiness');
+    const rev = designRevisions(fx.home, p.id).find((r) => r.status === 'approved');
+    assert.equal(revisionRead(await readDesign(fx, p.id), rev.id)?.readiness?.waits_on?.kind, 'correction_ended', 'GET …/design: readiness waits on correction_ended');
+    // The open design_due names the wait and offers `correct` (E171 item 5 H4; Sean's ruling).
+    const due = await pump(fx, { ...ctx, answerKinds: [] }, () => {
+      const d = openOfKind(fx.home, p.id, 'design_due')[0];
+      return d?.evidence?.readiness?.waits_on?.kind === 'correction_ended' ? d : undefined;
+    }, { what: 'design_due naming correction_ended', max: 10 });
+    assert.ok((due.options ?? []).some((o) => o.key === 'correct'), `design_due offers correct while readiness waits on correction_ended (E171 item 5 H4; Sean's ruling) (options ${JSON.stringify((due.options ?? []).map((o) => o.key))})`);
+    assert.equal((await answerWith(fx, p.id, due, 'correct')).status, 200, 'correct answered');
+    const again = corrections().find((w) => w.trigger_generation === 2);
+    assert.ok(again, `the correction registered again at generation 2 (${JSON.stringify(corrections().map((w) => [w.trigger_generation, w.status]))})`);
+    const ev = (w) => JSON.parse(w.trigger_evidence);
+    assert.deepEqual([again.trigger_id, JSON.parse(again.subject).request, ev(again).criteria, ev(again).checks], [first.trigger_id, JSON.parse(first.subject).request, ev(first).criteria, ev(first).checks], 'with the same request, criteria and checks');
+    const next = await pump(fx, ctx, () => openOfKind(fx.home, p.id, 'check_correction_tightening')[0], { what: 'the new correction captured', max: 40 });
+    await consume(fx, p.id, decision(fx.home, next.id), 'approve');
+    await pump(fx, ctx, () => readyAt(fx.home, p.id) ?? undefined, { what: 'readiness once the new correction is applied', max: 20 });
+    assert.equal(eventsAbout(fx.home, 'design.ready', p.id).length, 1, 'design.ready once');
+    await tick(fx.engine, p.id, { rounds: 1 });
+    for (const n of [2, 3]) assert.ok(stageWork(fx.home, p.id, n).milestones_met.includes('design_ready'), `stage ${n}'s design_ready milestone met`);
   });
 
   test('(d) approved without criteria: ready at approval', async (t) => {

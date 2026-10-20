@@ -71,7 +71,9 @@ const PURPOSE = 'Exercise the import path with real-shaped data before the fix l
 // 1, so under Q2 (D3 §2.10; E90 item 2) it would send the stage back to its
 // Builder; this row is not about that repair, so at repair_attempts_max 0 the
 // work is parked instead (objection 030).
-async function reviewed(t) {
+// `highLink` ({check, criterion}) is what the High finding names, if anything
+// (H1, SEAM.md §552: (e)'s Reviewer dispositions it `fix`, so it names one).
+async function reviewed(t, { highLink = {} } = {}) {
   const fx = await scriptedEngine(t);
   const ctx = await nominated(fx, { policy: { repair_attempts_max: 0 }, autonomy: 'step' });
   const project = ctx.project.id;
@@ -85,7 +87,7 @@ async function reviewed(t) {
     project,
     ctx.candidate.id,
     [
-      { category: 'defect', severity: 'high', message: 'the importer rejects files over 1 MB' },
+      { category: 'defect', severity: 'high', message: 'the importer rejects files over 1 MB', ...highLink },
       { category: 'defect', severity: 'medium', message: 'the export omits the header row' },
       { category: 'defect', severity: 'high', message: 'a reset link stays valid after use', sensitive_area: 'authentication' },
     ],
@@ -239,7 +241,8 @@ describe('M105 the Alpha exception proposal', () => {
   });
 
   test('(e) a change to what the manifest binds: the acceptance content before the answer (the question is withdrawn), the finding\'s status before the answer, and the sensitive area between the answer and the effect; each stales it with no write', async (t) => {
-    const { fx, ctx, project, high, proposal, propose } = await reviewed(t);
+    // H1 (SEAM.md §552): step 2's Reviewer dispositions the High finding fix, so it names the failed check `import` and the criterion it covers.
+    const { fx, ctx, project, high, proposal, propose } = await reviewed(t, { highLink: { check: 'import', criterion: 'R1.1' } });
     await propose([proposal(high.id)]);
     const first = await openProposal(fx, project, high.id);
     assert.equal(first.manifest.acceptance_content_hash, await contentNow(fx, ctx), 'the fixture is live: the preview binds the content the Reviewer reviewed, which is the content in force');

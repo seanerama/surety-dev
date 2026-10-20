@@ -10,7 +10,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { isSlug } from './paths.js';
+import { isRefusedReviewRel, isSlug } from './paths.js';
 import { fixtureProblem } from './shape.js';
 import { AA_RATIO, contrastRatio } from './contrast.js';
 import { ASSET_FORMATS, ASSET_KINDS, ASSET_PROVENANCES, ASSET_STATUSES, ASSET_VARIANTS, type AssetManifest, headerReasons, sha256hex } from './assets.js';
@@ -348,8 +348,10 @@ export function checkDesign(tree: DesignTree, ctx: CheckContext): CheckOutcome {
   }
   // The review files (B.14): closed, their values A.2's, never a verdict's
   // `status` (every verdict in them is a proposal, D7 §10.3), and no
-  // evidence id the review does not hold.
-  for (const [path, bytes] of [...tree.files].filter(([p]) => p.startsWith('reviews/') && p.endsWith('.json')).sort((a, b) => a[0].localeCompare(b[0]))) {
+  // evidence id the review does not hold. A refused review's file, moved by
+  // the engine under `reviews/refused/`, is out of active review (H5;
+  // SEAM.md §553): kept as history, never checked.
+  for (const [path, bytes] of [...tree.files].filter(([p]) => p.startsWith('reviews/') && !isRefusedReviewRel(p) && p.endsWith('.json')).sort((a, b) => a[0].localeCompare(b[0]))) {
     const file = path;
     let v: unknown;
     try {

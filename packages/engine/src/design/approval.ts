@@ -1042,12 +1042,15 @@ export interface ReadinessWait {
   detail: string[];
 }
 
-// What follows a cancelled correction: no route registers another
-// correction for the same change, so this design does not become ready;
-// the owner's routes are design_due's waive or policy_off for the held
-// stages, or a revised design whose new batch registers its own correction.
+// What follows a cancelled correction: the engine registers no other
+// correction for the same change by itself, so this design does not become
+// ready until the owner acts; the owner's routes are design_due's `correct`
+// (the correction registered again at its next generation, with the same
+// request, criteria and checks: E171 item 5 H4, Sean's ruling), its waive
+// or policy_off for the held stages, or a revised design whose new batch
+// registers its own correction.
 const AFTER_CANCEL =
-  "and no route registers another correction for this change, so this design version does not become ready: answer design_due (waive the held stages, or turn design off), or open a Designer session to revise the design, whose new batch registers its own correction";
+  "and the engine registers no other correction for this change by itself, so this design version does not become ready until you act: answer design_due (correct registers the correction again with the same request, criteria and checks; or waive the held stages, or turn design off), or open a Designer session to revise the design, whose new batch registers its own correction";
 
 export function readinessWaitOf(db: Db, rev: RevisionRow): ReadinessWait | null {
   const r = requestRow(db, rev.spec_change_request);

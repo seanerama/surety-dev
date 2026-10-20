@@ -6,7 +6,7 @@
 // checkpoint's plan file no bundle carries yet (reading 2: `proposed` is a
 // listing, never a `phase_plans` row).
 
-import { activeStages } from './active.js';
+import { activeStages, dependsOnNumbers } from './active.js';
 import { pendingReplacement } from './replace.js';
 import type { Database } from 'better-sqlite3';
 
@@ -164,7 +164,9 @@ export function planView(db: Database, args: { project: string }) {
       number: s.number,
       goal: s.goal,
       status: s.status,
-      depends_on: json<string[]>(s.depends_on, []),
+      // As the plan states them (B.5): stage numbers; an entry naming no
+      // stage as stored, never dropped (E163 item 7).
+      depends_on: dependsOnNumbers(db, s.depends_on),
       implements: json<string[]>(s.implements, []),
       validation: json<unknown>(s.validation, null),
       work_item: s.work_item,

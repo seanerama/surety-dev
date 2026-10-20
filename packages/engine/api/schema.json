@@ -889,6 +889,7 @@
       "finding.severity_changed",
       "finding.dispositioned",
       "finding.proposal_standing",
+      "finding.fix_refused",
       "finding.resolved",
       "finding.reopened",
       "finding.check_unbound",
@@ -1004,7 +1005,8 @@
       "design.review_recorded",
       "design.review_requested",
       "design.verdicts_confirmed",
-      "design.asset_bound"
+      "design.asset_bound",
+      "design.review_refused"
     ],
     "EngineMode": [
       "restricted",
@@ -6628,6 +6630,15 @@
           "parked"
         ],
         "to": "cancelled"
+      },
+      "park_at_registration": {
+        "from": [
+          "eligible"
+        ],
+        "to": "parked",
+        "only_kinds": [
+          "replan"
+        ]
       }
     },
     "run_owning": [
@@ -7432,6 +7443,9 @@
     "finding.proposal_standing": {
       "owner": "store/transitions/findings.ts"
     },
+    "finding.fix_refused": {
+      "owner": "store/transitions/findings.ts"
+    },
     "finding.resolved": {
       "owner": "store/transitions/gates.ts, store/transitions/work.ts"
     },
@@ -7779,6 +7793,9 @@
     },
     "design.asset_bound": {
       "owner": "design/approval.ts"
+    },
+    "design.review_refused": {
+      "owner": "design/review-refused.ts"
     }
   },
   "config": {

@@ -38,7 +38,7 @@ import { type CheckContext, type DesignReason, checkDesign } from '../design/che
 import { DESIGN_ROOT } from '../design/inventory.js';
 import { reasonFinding } from '../design/records.js';
 import { designTreeAt, designTreeSize } from '../design/tree.js';
-import { reviewRaise } from '../design/review-driver.js';
+import { moveRefusedReviews, reviewRaise } from '../design/review-driver.js';
 import type { OwnerEvidence } from '../design/owner-review.js';
 
 const inPaths = (role: SessionRole, path: string): boolean => SESSION_PATHS[role].some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
@@ -668,6 +668,8 @@ export class SessionDriver {
       else if (facts.role === 'designer') raise = await this.designRaise(facts);
       else raise = await this.bundle(facts);
     }
+    // H5: a review ending unrecorded leaves no review file in active review.
+    await this.refusedReviewsOut(facts, raise);
     let closed: { decisions: { id: string; kind: string; batch_key: string | null }[] };
     try {
       closed = await this.rt.engine('session.close', { project, run, raise, admittedAt });
@@ -680,6 +682,19 @@ export class SessionDriver {
     await this.ender.endRun(run, { outcome: 'completed', reason: 'none' });
     const summary = await this.rt.read<{ run: Record<string, unknown> }>('session.view', { project, run });
     return { run: summary.run, saved, decisions: closed.decisions.map((d) => ({ id: d.id, kind: d.kind, ...(d.batch_key ? { batch_key: d.batch_key } : {}) })) };
+  }
+
+  // A review-mode Designer session that ends without recording a review
+  // (closed with `refuse`, or by protocol raising nothing; H5, E171 item 5;
+  // SEAM.md §553): before it closes, each unrecorded review file of the
+  // head is moved to `reviews/refused/` by one engine intent commit, with
+  // one `design.review_refused` each. Throws when the move is not made,
+  // before the session's close: the session stays open, to be closed again.
+  private async refusedReviewsOut(facts: SaveFacts, raise: Record<string, unknown>): Promise<void> {
+    if (facts.role !== 'designer' || raise.kind === 'review') return;
+    const mode = await this.rt.read<string | null>('design.session_mode', { run: facts.run });
+    if (mode !== 'review') return;
+    await moveRefusedReviews(this.rt, this.journal, facts.project, facts.run);
   }
 
   // ---- idle timeout and budget exhaustion: one protocol (D6 §2.4; B01) ----------------
@@ -734,6 +749,8 @@ export class SessionDriver {
       else if (facts.role === 'designer') raise = await this.designRaise(facts).catch(() => ({ kind: 'none' }));
       else raise = await this.bundle(facts).catch(() => ({ kind: 'none' }));
     }
+    // H5, as close()'s: a failure leaves the session open, closed again at a later tick.
+    await this.refusedReviewsOut(facts, raise);
     try {
       await this.rt.engine('session.close', { project, run, raise, admittedAt, cause });
     } catch (err) {

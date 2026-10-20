@@ -586,6 +586,8 @@ export const PARK_TEXT: Record<string, string> = {
   budget_day_unknown_tokens: "the project's tokens of unknown cost today passed their limit (budget_day_unknown_tokens), and its run was stopped",
   budget_day_verified_usd: "the project's verified cost today passed its limit (budget_day_verified_usd), and its run was stopped",
   budget_unreadable: 'its budget could not be read, and its run was stopped rather than run on without one',
+  // E171 item 5 H4 (plan/replace.ts restaleSpecChanges): the cap.
+  replan_restale_max: "a spec change's replan went stale again against the same active plan generation after its one automatic re-registration; retry plans it again against the active generation, cancel holds nothing",
   integration_conflict:
     "its result could not be integrated: the compare-and-swap of the integration branch failed, or the branch moved and the change does not apply to it after its Builder was already sent back once on a moved branch, or with its repair attempts spent. No role resolves it",
 };

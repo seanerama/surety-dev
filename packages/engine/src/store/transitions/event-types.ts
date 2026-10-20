@@ -94,6 +94,8 @@ export const EVENT_OWNERS = {
   'finding.dispositioned': 'store/transitions/queue.ts',
   // M546 (INK2-2): a Reviewer's proposal the owner's standing answer already gave, recorded against it, no question raised.
   'finding.proposal_standing': 'store/transitions/findings.ts',
+  // H1 (E171 item 5; SEAM.md §552): a Reviewer's own fix on a finding naming no check, refused; nothing dispatched.
+  'finding.fix_refused': 'store/transitions/findings.ts',
   'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
   'finding.reopened': 'store/transitions/protected.ts',
   // The driver's ruling on loop run 1: a finding's check its own proposal did not bring into effect.
@@ -233,6 +235,8 @@ export const EVENT_OWNERS = {
   'design.review_requested': 'design/review.ts',
   'design.verdicts_confirmed': 'design/review.ts',
   'design.asset_bound': 'design/approval.ts',
+  // H5 (E171 item 5; SEAM.md §553): an unrecorded review's file moved to reviews/refused/.
+  'design.review_refused': 'design/review-refused.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

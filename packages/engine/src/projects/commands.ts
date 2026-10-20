@@ -28,15 +28,22 @@ const repoUnreadable = (path: string) =>
   new Refusal(409, 'repo_unreadable', `${path} is not a git repository the engine can read.`, 'Give the path of a readable git repository; nothing was created.', { path });
 
 // A tree: `base` with `files` added or replaced, built in a scratch index.
-// A file is its text (mode 100644), or its bytes with the mode it keeps.
-export async function treeWith(repo: string, base: string, files: Record<string, string | { bytes: Buffer; mode: string }>, scratch: string): Promise<string | null> {
+// A file is its text (mode 100644), or its bytes with the mode it keeps, or
+// a blob already in the repository with its mode (a move keeps its blob);
+// null removes the path.
+export type TreeFile = string | { bytes: Buffer; mode: string } | { oid: string; mode: string } | null;
+export async function treeWith(repo: string, base: string, files: Record<string, TreeFile>, scratch: string): Promise<string | null> {
   const ctx = repoContext(repo);
   const index = join(scratch, `prepare-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const env = { GIT_INDEX_FILE: index };
   try {
     if ((await gitOk(ctx, ['read-tree', base], { env })) === null) return null;
     for (const [path, content] of Object.entries(files)) {
-      const blob = await writeBlob(ctx, typeof content === 'string' ? content : content.bytes);
+      if (content === null) {
+        if ((await gitOk(ctx, ['update-index', '--force-remove', '--', path], { env })) === null) return null;
+        continue;
+      }
+      const blob = typeof content === 'object' && 'oid' in content ? (SHA.test(content.oid) ? content.oid : null) : await writeBlob(ctx, typeof content === 'string' ? content : content.bytes);
       if (blob === null) return null;
       const mode = typeof content === 'string' ? '100644' : content.mode;
       if ((await gitOk(ctx, ['update-index', '--add', '--cacheinfo', `${mode},${blob},${path}`], { env })) === null) return null;
@@ -48,7 +55,7 @@ export async function treeWith(repo: string, base: string, files: Record<string,
   }
 }
 
-export async function prepareCommit(repo: string, base: string, files: Record<string, string | { bytes: Buffer; mode: string }>, message: string, scratch: string) {
+export async function prepareCommit(repo: string, base: string, files: Record<string, TreeFile>, message: string, scratch: string) {
   const tree = await treeWith(repo, base, files, scratch);
   if (tree === null) return null;
   const content = commitContent({ tree, parent: base, message, at: nowIso() });

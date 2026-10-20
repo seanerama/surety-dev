@@ -614,7 +614,11 @@ export interface BuilderStageFacts {
   tasks: string[];
   implements: string[];
   integration_obligations: string[];
-  depends_on: number[];
+  // Stage numbers; an entry that resolves to no active stage of the
+  // generation as stored, never dropped (E171 item 5, H3).
+  depends_on: (number | unknown)[];
+  // Each such entry, its interfaces unknown (null, never []).
+  unresolved_dependencies: { entry: unknown; interfaces: null }[];
   // The module map's interfaces of the modules of the stages it depends
   // on, from the plan's approved bundle; null when the map could not be
   // read (unknown, never none).
@@ -633,8 +637,9 @@ export function builderElements(s: BuilderStageFacts | null): Built {
     'builder.integration_obligations': { id: 'builder.integration_obligations', gloss: 'What your change must keep or provide for the stages around it.', data: { integration_obligations: s.integration_obligations } },
     'builder.dependency_interfaces': {
       id: 'builder.dependency_interfaces',
-      gloss: 'The interfaces the stages you depend on created, which your code uses as they are.',
-      data: { depends_on: s.depends_on, interfaces: s.dependency_interfaces },
+      gloss:
+        'The interfaces the stages you depend on created, which your code uses as they are. An entry in unresolved names no stage the engine could find: what it provides is unknown, not nothing.',
+      data: { depends_on: s.depends_on, interfaces: s.dependency_interfaces, unresolved: s.unresolved_dependencies },
     },
   };
 }

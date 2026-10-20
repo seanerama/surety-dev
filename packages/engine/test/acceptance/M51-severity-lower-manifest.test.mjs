@@ -23,15 +23,17 @@ import { withStore } from './harness/store.mjs';
 // the stage's work is verifying on the candidate, so under Q2 (D3 §2.10; E90
 // item 2) it would send the stage back to its Builder; this row is not about
 // that repair, so at repair_attempts_max 0 the work is parked instead
-// (objection 030).
-async function findingOf(t, severity) {
+// (objection 030). `link` ({check, criterion}) is what the finding names, if
+// anything (H1, SEAM.md §552: a case whose Reviewer dispositions it `fix`
+// names a check).
+async function findingOf(t, severity, link = {}) {
   const fx = await scriptedEngine(t);
   const ctx = await nominated(fx, { autonomy: 'step', policy: { repair_attempts_max: 0 } });
   const project = ctx.project.id;
   const k = (await installChecks(fx.engine, project, [check('login', { requirements: ['R1'] }), check('import', { requirements: ['R1'] })])).id;
   await passAll(fx.engine, project, ctx.candidate.id, [k.login]);
   await postResult(fx.engine, project, { candidate: ctx.candidate.id, check: k.import, exit_status: 1 });
-  const [found] = await raiseFindings(fx, project, ctx.candidate.id, [{ category: 'defect', severity, message: 'totals are wrong for refunded orders' }]);
+  const [found] = await raiseFindings(fx, project, ctx.candidate.id, [{ category: 'defect', severity, message: 'totals are wrong for refunded orders', ...link }]);
   const lower = (to) => review(fx, project, ctx.candidate.id, { severity_changes: [{ finding: found.id, to }] });
   const checkStates = async () => (await stageGate(fx, ctx)).check_states;
   return { fx, ctx, project, k, found, lower, checkStates };
@@ -98,7 +100,8 @@ describe('M51 the severity_lower manifest', () => {
 
   // M2 slice 2, B1 (SEAM.md §105): the finding's status.
   test("the finding's status changes between preview and answer (a Reviewer dispositions it fix): the old preview is stale, the severity stays, and the next generation binds the status as it now is", async (t) => {
-    const { fx, ctx, project, found, lower } = await findingOf(t, 'high');
+    // H1 (SEAM.md §552): the finding names the failed check `import` and the criterion it covers, so the Reviewer's fix is recorded.
+    const { fx, ctx, project, found, lower } = await findingOf(t, 'high', { check: 'import', criterion: 'R1.1' });
     await lower('medium');
     const previewed = await openDecision(fx, project, 'severity_lower', found.id);
     assert.equal(previewed.manifest.finding_status, 'open', 'the fixture is live: the preview binds the finding as open');
