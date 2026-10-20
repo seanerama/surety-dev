@@ -398,7 +398,7 @@ describe('M433 (f), (g): old-generation runs, and what resolves an obligation; t
     const { fx, p, ctx, request, blocker, corrections, command } = await parkedCorrection(t);
     assert.ok(blocker.question.includes(command), `S3: the blocker's question (the obligation's text) names ${command} (${blocker.question})`);
     const cancel = blocker.options.find((o) => o.key === 'cancel');
-    assert.ok(cancel?.consequence?.includes(command), `S3: the cancel option's consequence names ${command} (${JSON.stringify(cancel)})`);
+    assert.ok(cancel?.consequence_text?.includes(command), `S3: the cancel option's consequence_text names ${command} (${JSON.stringify(cancel)})`);
     assert.equal((await answer(fx.engine, p.id, decision(fx.home, blocker.id), 'cancel')).status, 200, 'the owner answers cancel');
     await pumpHolding(fx, ctx, () => false, { max: 2 }).catch(() => null);
     assert.equal(corrections().at(-1).status, 'cancelled', 'the fixture is live: the correction cancelled');
