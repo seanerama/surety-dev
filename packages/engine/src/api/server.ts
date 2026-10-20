@@ -714,6 +714,20 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // S3 (E173 item 4; SEAM.md §557): the owner's command registering the
+      // request's cancelled `spec_obligation` correction again.
+      if (rest.length === 4 && rest[0] === 'spec' && rest[1] === 'change-requests' && rest[3] === 'correct' && post) {
+        const request = decodeSegment(rest[2]!);
+        if (request === null) return null;
+        return {
+          kind: 'command',
+          name: 'spec.correct',
+          args: (b) => {
+            noFields(b);
+            return { project, request };
+          },
+        };
+      }
       // D6 §7.6 (SEAM.md §355): the pace read, a projection.
       // D7 A.8 (M6): the design's read.
       if (rest.length === 1 && rest[0] === 'design' && get) {

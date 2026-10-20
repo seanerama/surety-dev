@@ -203,7 +203,7 @@ import {
 import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
-import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
+import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
 import { approvedRepresentation, previousRepresentation } from '../spec/approval.js';
@@ -343,6 +343,9 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'environment.configure': (tx, a) => writeConfigVersion(tx, a),
   // D6 §4.2 (SEAM.md §353): the owner's specification change request.
   'spec.change_request': (tx, a) => requestSpecChange(tx, a),
+  // S3 (SEAM.md §557): the owner's command registering a request's
+  // cancelled correction again.
+  'spec.correct': (tx, a: { project: string; request: string }) => correctRequestAgain(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
   // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run

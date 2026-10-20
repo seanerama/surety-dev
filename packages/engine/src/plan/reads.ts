@@ -16,6 +16,7 @@ import { notFound } from '../store/transitions/common.js';
 import { buildComplete } from './phase.js';
 import { alphaBarrier, conformancePhaseComplete, conformanceStateOf } from '../adopt/conformance.js';
 import { isAdopted } from '../adopt/records.js';
+import { correctCommand } from '../spec/change.js';
 
 const json = <T>(text: unknown, fallback: T): T => {
   try {
@@ -146,7 +147,49 @@ export function specView(db: Database, args: { project: string }) {
     tier_override: m.tier_override,
   }));
   const environments = db.prepare('SELECT "name", "adapter" FROM "environments" WHERE "project" = ? ORDER BY "name"').all(args.project);
-  return { versions, requirements, modules, environments, change_requests: [], ...(isAdopted(db, args.project) ? { conformance: conformanceStateOf(db, args.project) } : {}) };
+  return { versions, requirements, modules, environments, change_requests: changeRequestsOwing(db, args.project), ...(isAdopted(db, args.project) ? { conformance: conformanceStateOf(db, args.project) } : {}) };
+}
+
+// `GET …/spec`'s `change_requests` (S3; SEAM.md §557): each request with an
+// open obligation, its unresolved obligations and what the owner can do
+// next: while a correction of it is live, that correction; otherwise the
+// command that registers its correction again.
+function changeRequestsOwing(db: Database, project: string) {
+  // An obligation's criteria as stored; unknown, never empty, when unreadable.
+  const criteriaOf = (text: string): string[] | { unknown: string } => {
+    try {
+      const list = JSON.parse(text) as unknown;
+      if (Array.isArray(list)) return list as string[];
+    } catch {
+      // fall through
+    }
+    return { unknown: "the obligation's criteria could not be read" };
+  };
+  const open = db
+    .prepare(`SELECT "id", "check", "key", "criteria", "generation", "reason", "request" FROM "check_obligations" WHERE "project" = ? AND "request" IS NOT NULL AND "resolved_at" IS NULL ORDER BY rowid`)
+    .all(project) as { id: string; check: string | null; key: string | null; criteria: string; generation: number; reason: string; request: string }[];
+  const byRequest = new Map<string, typeof open>();
+  for (const o of open) byRequest.set(o.request, [...(byRequest.get(o.request) ?? []), o]);
+  const requests = db
+    .prepare('SELECT "id", "seq", "source", "status" FROM "spec_change_requests" WHERE "project" = ? ORDER BY "seq"')
+    .all(project) as { id: string; seq: number; source: string; status: string }[];
+  return requests
+    .filter((r) => byRequest.has(r.id))
+    .map((r) => {
+      const live = db
+        .prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_correction' AND "trigger_source" = 'spec_obligation' AND "trigger_id" = ? AND "status" NOT IN ('complete', 'cancelled') ORDER BY "trigger_generation" DESC, "seq" DESC LIMIT 1`)
+        .get(project, r.id) as { id: string; status: string } | undefined;
+      return {
+        id: r.id,
+        seq: r.seq,
+        source: r.source,
+        status: r.status,
+        open_obligations: byRequest.get(r.id)!.map((o) => ({ id: o.id, key: o.key, check: o.check, criteria: criteriaOf(o.criteria), generation: o.generation, reason: o.reason })),
+        next_action: live
+          ? { kind: 'correction_pending', work_item: live.id, status: live.status }
+          : { kind: 'correct', command: correctCommand(project, r.id), route: `POST /v1/projects/${project}/spec/change-requests/${r.id}/correct` },
+      };
+    });
 }
 
 export function planView(db: Database, args: { project: string }) {
