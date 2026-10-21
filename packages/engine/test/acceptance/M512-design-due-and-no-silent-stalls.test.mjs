@@ -1,6 +1,6 @@
 // M512, `design_due` and no silent stalls (slice 44; kernel lane). M6 plan
 // §3.6 M512 as amended by E162 item 1; D7 §11 as corrected, §2, §10.1; G5;
-// BS6 §4.1 rule 25 as amended; SEAM.md §§485, 491, 514, 547.
+// BS6 §4.1 rule 25 as amended; SEAM.md §§485, 491, 514, 547, 550, 551, 558.
 //
 // (a) its causes: the UI stages first held `design_pending` (at
 //     derivation); `alpha_complete` under `at_alpha` and under `both`; sent
@@ -44,6 +44,13 @@
 //     is held, not earlier work that could be dispatched; an item not held
 //     still refuses the rerun; a stage the store as it stands releases is
 //     counted, and a design milestone that cannot be judged is never held;
+//     likewise (E177 finding F6; SEAM.md §558) an eligible stage the engine
+//     holds `authoring_readiness` (its phase's authoring parked on an open
+//     blocker) is held, not earlier work; once the store releases it (the
+//     authoring retried and applied) it is counted and refuses; an item not
+//     held and a run not ended still refuse; the recorded `held` is never
+//     the judge, either way; an authoring milestone that cannot be judged is
+//     never held;
 //     and a rerun's act record (M519 finding F3; SEAM.md §551): a step's
 //     per-act record covers every attempt of it from the first (the
 //     store's acts and their performers' entries), never the rerun's alone;
@@ -57,14 +64,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, write
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { CODES, decision } from './harness/decisions.mjs';
+import { CODES, consume, decision } from './harness/decisions.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { changePolicy, getPolicy, policyRevisions } from './harness/journal.mjs';
-import { alphaDeployed, alphaReady, journeyContext, pump, runsOfProject } from './harness/journey/drive.mjs';
-import { addWork, advanceClock, engineTimeMs, pauseProject, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
+import { alphaDeployed, alphaReady, journeyContext, pump, runsOfProject, workOf } from './harness/journey/drive.mjs';
+import { addWork, advanceClock, engineTimeMs, forceTransition, pauseProject, resumeProject, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
 import { openSession, runRow, sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
-import { step } from './harness/scripted.mjs';
+import { script, step } from './harness/scripted.mjs';
 import { answerWith, assertHoldsAccounted, assertReRaised, designRevisions, designScripts, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
 import { designHoldAccounts } from './harness/design/holds.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS } from './harness/design/check41.mjs';
@@ -74,6 +81,7 @@ import { activity, quietState, ruleTwentyFive, stepVerdicts } from './harness/re
 import * as m6lane from './harness/real/m6-lane.mjs';
 import { approveBatch } from './harness/design/check41.mjs';
 import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
+import { authoringItems, authoringRuns, authoringWith, builderRuns, go, openOf, pausedDeveloping, planRow, until } from './harness/exec37/authoring.mjs';
 import { copyStore, openStore, withStore } from './harness/store.mjs';
 
 const OWNER_NO_TIGHTENING = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
@@ -457,6 +465,127 @@ describe('M512 design_due and no silent stalls', () => {
       assert.deepEqual(read[0].dispatchable.filter((w) => w.id === work2).map((w) => w.design_hold), ['unknown'], `${name}: stage 2 counted, marked unknown (${JSON.stringify(read)})`);
       assert.throws(() => refuseLeftovers(path, read, { evenIfPaused: true }), (err) => err.message.includes(work2), `${name}: the rerun refused, naming it`);
     }
+  });
+
+  // E177 finding F6 (SEAM.md §558): the M535 Waterlog rerun refused for a stage whose phase's authoring was parked.
+  test("(k) E177 F6, a rerun's leftovers: an eligible stage the engine holds authoring_readiness (its phase's authoring parked on an open blocker) is held, not earlier work; the hold cleared, it is counted; an item not held and a run not ended still refuse; the recorded hold is never the judge; unknown is never held", async (t) => {
+    const { fx, p, ctx, plan } = await pausedDeveloping(t, { policy: { repair_attempts_max: 0 } });
+    // Phase 1's authoring: its first run ends with no valid result (parked, a blocker owed: the Waterlog run's timeout stands so); its retry authors the checks.
+    fx.scripted.kindScript('check_authoring', [script.invalid({ status: 'not-a-result' }), authoringWith(1)]);
+    await go(fx, p);
+    const [authoring] = authoringItems(fx.home, p.id);
+    const blocker = await until(fx, ctx, () => openOf(fx.home, p.id, 'blocker').find((d) => d.subject_id === authoring.id), { what: "phase 1's authoring parked with a blocker" });
+    const path = 'M512 (k) F6 rerun';
+    const stages = workOf(fx.home, p.id, 'stage_build');
+    const stageIds = stages.map((w) => w.id);
+    const [stage1] = stageIds;
+    // The fixture is live: the authoring parked, no readiness, every stage eligible on the phase's milestone and no design milestone, no Builder.
+    assert.equal(authoringItems(fx.home, p.id)[0].status, 'parked', 'the authoring item parked');
+    assert.equal(planRow(fx.home, plan.id).authoring_ready_at ?? null, null, 'no readiness');
+    assert.ok(stages.length >= 1, 'the phase has stage work');
+    for (const w of stages) {
+      assert.equal(w.status, 'eligible', `${w.id} eligible`);
+      assert.ok((w.depends_on ?? []).some((d) => d.milestone === 'authoring_ready' && d.phase_plan === plan.id), `${w.id} depends on the phase's authoring readiness (${JSON.stringify(w.depends_on)})`);
+      assert.ok(!(w.depends_on ?? []).some((d) => d.milestone === 'design_ready'), `${w.id} has no design milestone`);
+    }
+    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder');
+    // A step that ended "not established": its project paused, its engine stopped. The rerun reads the store before any engine starts.
+    await pauseProject(fx.engine, p.id);
+    await fx.engine.kill();
+    const facts = (home) => withStore(home, (db) => db.prepare(`SELECT "id", "kind", "status", "held", "dispatch_hold", "chain", "depends_on" FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(p.id));
+    const first = leftovers(fx.home, [p.id]);
+    assert.equal(first.length, 1, `one project read (${JSON.stringify(first)})`);
+    assert.equal(first[0].paused, true, 'the project paused');
+    assert.deepEqual(first[0].dispatchable, [], `nothing of the project could be dispatched: the stages wait on the parked authoring (${JSON.stringify(first)}; eligible: ${JSON.stringify(facts(fx.home))})`);
+    assert.deepEqual(sortedIds((first[0].authoring_held ?? []).map((w) => w.id)), sortedIds(stageIds), `every stage held authoring_readiness, not leftover work (${JSON.stringify(first)})`);
+    for (const w of first[0].authoring_held) assert.deepEqual(w, { id: w.id, kind: 'stage_build', held: 'authoring_readiness' }, `${w.id} listed with its hold`);
+    assert.equal(first[0].design_held, undefined, "no design hold: §550's field absent");
+    assert.deepEqual(first[0].live, [], 'no run not ended');
+    assert.doesNotThrow(() => refuseLeftovers(path, first, { evenIfPaused: true }), 'the rerun is not refused for the stages held on authoring readiness');
+
+    // Copies of the store, changed as the store would stand (never the engine's home).
+    const copyOf = (name, change) => {
+      const home = join(fx.root, `f6-copy-${name}`, 'home');
+      mkdirSync(home, { recursive: true, mode: 0o700 });
+      copyStore(fx.home, home);
+      const db = openStore(join(home, 'store.db'));
+      try {
+        change(db);
+      } finally {
+        db.close();
+      }
+      return home;
+    };
+    const setHeld = (db, held) => {
+      for (const id of stageIds) db.prepare('UPDATE "work_items" SET "held" = ? WHERE "id" = ?').run(held, id);
+    };
+    const READY_AT = '2026-10-21T00:00:00.000Z';
+    // A stale recorded hold, one way: recorded authoring_readiness, the store releasing it (the phase ready): counted.
+    const recordedHeld = copyOf('recorded-held', (db) => {
+      db.prepare('UPDATE "phase_plans" SET "authoring_ready_at" = ? WHERE "id" = ?').run(READY_AT, plan.id);
+      setHeld(db, 'authoring_readiness');
+    });
+    const released = leftovers(recordedHeld, [p.id]);
+    assert.ok(released[0].dispatchable.some((w) => w.id === stage1), `released by the store as it stands, stage 1 is counted whatever its recorded hold (${JSON.stringify(released)}; recorded: ${JSON.stringify(facts(recordedHeld).map((w) => w.held))})`);
+    assert.equal(released[0].authoring_held, undefined, `nothing held on authoring readiness (${JSON.stringify(released)})`);
+    assert.throws(() => refuseLeftovers(path, released, { evenIfPaused: true }), (err) => err.message.includes(stage1), 'the rerun refused, naming stage 1');
+    // The other way: the store holding it, the recorded hold none or another reason: held by the store as it stands.
+    for (const recorded of [null, 'open_decision', 'resource_envelope']) {
+      const home = copyOf(`recorded-${recorded ?? 'none'}`, (db) => setHeld(db, recorded));
+      const read = leftovers(home, [p.id]);
+      assert.deepEqual(read[0].dispatchable, [], `recorded ${recorded}: nothing counted, the store holds every stage (${JSON.stringify(read)})`);
+      assert.deepEqual(sortedIds((read[0].authoring_held ?? []).map((w) => w.id)), sortedIds(stageIds), `recorded ${recorded}: every stage held authoring_readiness`);
+      assert.doesNotThrow(() => refuseLeftovers(path, read, { evenIfPaused: true }), `recorded ${recorded}: not refused`);
+    }
+    // A recorded value that is no HoldReason cannot stand in the store (the column's CHECK): the check never reads the column, so no recorded value holds an item.
+    assert.throws(() => copyOf('recorded-unknown', (db) => setHeld(db, 'not_a_hold_reason')), /CHECK constraint failed/, 'the store refuses a held value that is no HoldReason');
+    // Unknown is never held: a milestone naming no plan of the project, one naming none at all, and the engine's predicate throwing.
+    for (const [name, change] of [
+      ['missing-plan', (db) => db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(stages[0].depends_on.map((d) => (d && d.milestone === 'authoring_ready' ? { ...d, phase_plan: 'plan_00000000000000000000000000' } : d))), stage1)],
+      ['no-plan', (db) => db.prepare('UPDATE "work_items" SET "depends_on" = ? WHERE "id" = ?').run(JSON.stringify(stages[0].depends_on.map((d) => (d && d.milestone === 'authoring_ready' ? { milestone: 'authoring_ready' } : d))), stage1)],
+      ['predicate-throws', (db) => db.prepare('ALTER TABLE "phase_plans" RENAME COLUMN "authoring_ready_at" TO "authoring_ready_at_gone"').run()],
+    ]) {
+      const read = leftovers(copyOf(name, change), [p.id]);
+      assert.deepEqual(read[0].dispatchable.filter((w) => w.id === stage1).map((w) => w.authoring_hold), ['unknown'], `${name}: stage 1 counted, marked unknown (${JSON.stringify(read)})`);
+      assert.ok(!(read[0].authoring_held ?? []).some((w) => w.id === stage1), `${name}: stage 1 not held`);
+      assert.throws(() => refuseLeftovers(path, read, { evenIfPaused: true }), (err) => err.message.includes(stage1), `${name}: the rerun refused, naming stage 1`);
+    }
+    // A run not ended still refuses, the stages held or not.
+    const authoringRun = authoringRuns(fx.home, p.id)[0];
+    assert.ok(authoringRun, 'the authoring run recorded');
+    const liveRead = leftovers(copyOf('live-run', (db) => db.prepare(`UPDATE "runs" SET "state" = 'executing' WHERE "id" = ?`).run(authoringRun.id)), [p.id]);
+    assert.deepEqual(liveRead[0].live.map((r) => r.id), [authoringRun.id], `the run not ended read (${JSON.stringify(liveRead)})`);
+    assert.deepEqual(liveRead[0].dispatchable, [], 'nothing counted dispatchable');
+    assert.throws(() => refuseLeftovers(path, liveRead, { evenIfPaused: true }), (err) => err.message.includes(authoringRun.id), 'a run not ended: refused, naming it');
+    assert.throws(() => refuseLeftovers(path, liveRead, { evenIfPaused: false }), (err) => err.message.includes(authoringRun.id), 'a run not ended: refused with evenIfPaused false too');
+
+    // An eligible item not held beside them: counted with the row as before, the rerun refused naming it; then cancelled through the engine.
+    await fx.start();
+    const loose = await addWork(fx.engine, p.id, 'review');
+    await fx.engine.kill();
+    const second = leftovers(fx.home, [p.id]);
+    assert.deepEqual(second[0].dispatchable, [{ id: loose, kind: 'review', status: 'eligible', chain: 0, dispatch_hold: 0 }], `only the item not held is counted, its row as before (${JSON.stringify(second)})`);
+    assert.deepEqual(sortedIds(second[0].authoring_held.map((w) => w.id)), sortedIds(stageIds), 'the stages still held');
+    assert.throws(() => refuseLeftovers(path, second, { evenIfPaused: true }), (err) => err.message.includes('could be dispatched') && err.message.includes(loose), 'refused, naming the item not held');
+    assert.doesNotThrow(() => refuseLeftovers(path, second, { evenIfPaused: false }), 'paused, with evenIfPaused false: not refused, as before');
+    await fx.start();
+    const cancelled = await forceTransition(fx.engine, loose, 'cancelled');
+    assert.equal(cancelled.status, 200, `the loose item cancelled through the engine (${cancelled.text})`);
+
+    // The hold cleared through the engine: the owner retries the authoring, its proposal is approved and applied, the phase ready.
+    await resumeProject(fx.engine, p.id);
+    await consume(fx, p.id, decision(fx.home, blocker.id), 'retry');
+    const proposal = await until(fx, ctx, () => openOf(fx.home, p.id, 'check_correction_unclassifiable')[0], { what: "the retry's proposal routed to the owner" });
+    // Paused before the approval, so that the phase's readiness dispatches nothing.
+    await pauseProject(fx.engine, p.id);
+    await consume(fx, p.id, decision(fx.home, proposal.id), 'approve');
+    await waitFor(() => planRow(fx.home, plan.id).authoring_ready_at ?? undefined, { what: "phase 1's authoring readiness", timeoutMs: 30000 });
+    await fx.engine.kill();
+    assert.deepEqual(builderRuns(fx.home, p.id), [], 'no Builder: the project paused at readiness');
+    const third = leftovers(fx.home, [p.id]);
+    assert.ok(third[0].dispatchable.some((w) => w.id === stage1), `the hold cleared, stage 1 is counted (${JSON.stringify(third)}; eligible: ${JSON.stringify(facts(fx.home))})`);
+    assert.equal(third[0].authoring_held, undefined, `nothing held on authoring readiness (${JSON.stringify(third)})`);
+    assert.throws(() => refuseLeftovers(path, third, { evenIfPaused: true }), (err) => err.message.includes('could be dispatched') && err.message.includes(stage1), 'the rerun refused, naming stage 1');
   });
 
   test("(k) M519 F3, a rerun's act record: every attempt of the step from the first, never the rerun's alone; a first run's record as before; a run directory from before the attempts were kept rebuilt once, bounded by the step's end", async (t) => {
