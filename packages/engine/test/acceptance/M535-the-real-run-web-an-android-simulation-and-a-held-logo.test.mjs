@@ -49,7 +49,12 @@
 //       observations; android `not_observed` `no_native_runtime`, its human
 //       test pending;
 //   (i) as M519 (g): teardown, records, pace, the token nowhere;
-//   (j) as M519 (h): rule 25 at every step's end;
+//   (j) as M519 (h): rule 25 at every step's end; under errata E179 alone
+//       (this continuation's two Designer requirement_conflict questions,
+//       SEAM.md §560), a question Sean acknowledged by his own record and
+//       holding no gate may stay open at the review's and the run's end,
+//       recorded open and acknowledged: the run is then "completed under
+//       E179", not (j) as written, and not clean;
 //   (k) its start: refused unless M519's state.json records every step
 //       passed with none passed only by a workaround, each M519 finding
 //       resolved by a fix commit this revision contains (or none found), and
@@ -77,6 +82,7 @@ import {
   assert,
   bindingsOf,
   designRevisionsOf,
+  e179RunEnd,
   homeOfRun,
   m6Preflight,
   m6Records,
@@ -317,7 +323,7 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
     });
   }));
 
-  test('(j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25)', { timeout: REAL_TEST_TIMEOUT_MS }, kase('j', async () => {
+  test('(j) every step: none judged passed with a question raised before its end still open, or with nothing runnable, in flight or asked (rule 25); a question the owner acknowledged under E179 stays open only under E179, the run then completed under E179, not as written', { timeout: REAL_TEST_TIMEOUT_MS }, kase('j', async () => {
     const ctx = preflight();
     await judged(ctx, 'M535 (j)', async () => {
       await upTo(ctx, ROW, 'm6x_review');
@@ -327,7 +333,15 @@ describe('M535 the real run: web, a labelled android simulation and a held logo 
         if (s === 'm6x_design') assert.ok(!v.rule_25.handed_over.some((d) => ['design_due', 'design_approval', 'spec_change'].includes(d.kind)), 'the design step leaves no design question open');
         if (s === 'm6x_review') assert.deepEqual(v.rule_25.handed_over, [], 'the review leaves no question open');
       }
-      await store(ctx, (home) => assert.deepEqual(rows(home, `SELECT "id", "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`, projectOf(ctx)), [], 'at the end, no question open'));
+      // At the end, no question open; or, under errata E179 only (SEAM.md §560), each one still open acknowledged by
+      // Sean's own record and recorded open and acknowledged at the review's end: the run then "completed under E179",
+      // not (j) as written, and not clean. The judgement and its statement are kept in observed/M535.json.
+      const end = await store(ctx, (home) => e179RunEnd(ctx, ROW, home, projectOf(ctx)));
+      observe(ctx, ROW, 'judgement_j', { satisfied_as_written: end.satisfied_as_written, completed_under: end.completed_under, clean: end.clean, statement: end.statement, open_acknowledged: end.open_acknowledged });
+      if (!end.satisfied_as_written) {
+        assert.equal(end.completed_under, 'E179', `open at the end only under E179 (${end.statement})`);
+        process.stderr.write(`M535 (j): ${end.statement}\n`);
+      }
     });
   }));
 

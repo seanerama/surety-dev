@@ -17,6 +17,16 @@
 // `preview_inspection`, `combined_approval` and `review_confirmation`; any
 // other act of README §3's list may be recorded the same way.
 //
+// `question_acknowledged` (errata E179; SEAM.md §560) records Sean's own
+// acknowledgement of an open owner question he leaves open at the review's
+// end: it asks, one line each, for the decision id (dec_…), the requirement
+// it affects (R…), its implications and its deferred follow-up, refuses a
+// malformed id or key, and adds them to the line as `decision`,
+// `requirement`, `implications` and `follow_up`, its `words` naming the
+// decision and the requirement. The runner counts it only under E179's
+// conditions (the two questions it names, no gate held, dated after the
+// question was raised); it answers nothing and resolves nothing.
+//
 // It writes nothing else, starts nothing, calls no model and reads no
 // credential. A rehearsal's run directory is refused: there the harness
 // acts and records itself as `rehearsal`.
@@ -46,7 +56,10 @@ const ACTS = Object.freeze({
   asset_approval: 'the asset-only design_approval',
   finding_disposition: 'a finding_disposition answer',
   deploy: 'surety deploy',
+  question_acknowledged: 'your acknowledgement, under errata E179, of an open owner question you leave open at the review\'s end (its decision, its requirement, its implications and its deferred follow-up)',
 });
+const DECISION_ID = /^dec_[0-9A-Z]{26}$/;
+const REQUIREMENT_KEY = /^R\d+(\.\d+)*$/;
 const MIN_WORDS = 3;
 
 const [runDir, act] = process.argv.slice(2);
@@ -68,9 +81,29 @@ if (kind?.rehearsal === true) refuse("this is a rehearsal's run directory: there
 if (!process.stdin.isTTY || !process.stdout.isTTY) refuse('this records your own words and runs only in your own terminal (standard input and output must be a terminal); nobody else enters them for you');
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
-process.stdout.write(`\nRecording the owner act "${act}": ${ACTS[act]}.\nIn your own words, what did you look at or do? (one line; at least ${MIN_WORDS} words)\n`);
-let words = '';
-for (let tries = 0; tries < 3; tries++) {
+process.stdout.write(`\nRecording the owner act "${act}": ${ACTS[act]}.\n`);
+// E179's acknowledgement: its four fields, each in Sean's own words.
+const ask = async (prompt, ok, hint) => {
+  for (let tries = 0; tries < 3; tries++) {
+    const v = (await rl.question(`${prompt}\n> `)).trim();
+    if (ok(v)) return v;
+    process.stdout.write(`${hint}\n`);
+  }
+  rl.close();
+  refuse(`nothing was recorded (${hint})`, 1);
+};
+const enough = (v) => v.split(/\s+/).filter(Boolean).length >= MIN_WORDS;
+let extra = {};
+if (act === 'question_acknowledged') {
+  const decision = await ask('The decision id you acknowledge (dec_…):', (v) => DECISION_ID.test(v), 'A decision id, dec_ and 26 characters.');
+  const requirement = await ask('The requirement it affects (R…):', (v) => REQUIREMENT_KEY.test(v), 'A requirement key, such as R10.');
+  const implications = await ask(`Its implications, in your own words (at least ${MIN_WORDS} words):`, enough, `At least ${MIN_WORDS} words, please.`);
+  const follow_up = await ask(`Its deferred follow-up, in your own words (at least ${MIN_WORDS} words):`, enough, `At least ${MIN_WORDS} words, please.`);
+  extra = { decision, requirement, implications, follow_up };
+}
+if (act !== 'question_acknowledged') process.stdout.write(`In your own words, what did you look at or do? (one line; at least ${MIN_WORDS} words)\n`);
+let words = act === 'question_acknowledged' ? `${extra.decision} (${extra.requirement}) acknowledged open: implications: ${extra.implications}; deferred follow-up: ${extra.follow_up}` : '';
+for (let tries = 0; tries < 3 && act !== 'question_acknowledged'; tries++) {
   words = (await rl.question('> ')).trim();
   if (words.split(/\s+/).filter(Boolean).length >= MIN_WORDS) break;
   process.stdout.write(`At least ${MIN_WORDS} words, please.\n`);
@@ -80,7 +113,7 @@ rl.close();
 if (!words) refuse('nothing was recorded', 1);
 
 const u = userInfo();
-const entry = { act, at: new Date().toISOString(), words, entered_via: 'owner-act.mjs', tty: true, uid: u.uid, user: u.username };
+const entry = { act, at: new Date().toISOString(), words, ...extra, entered_via: 'owner-act.mjs', tty: true, uid: u.uid, user: u.username };
 mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
 appendFileSync(join(runDir, 'observed', 'owner-acts.jsonl'), `${JSON.stringify(entry)}\n`, { mode: 0o600 });
 process.stdout.write(`Recorded in ${join(runDir, 'observed', 'owner-acts.jsonl')} at ${entry.at}.\n`);

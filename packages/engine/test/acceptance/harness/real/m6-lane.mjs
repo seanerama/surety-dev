@@ -477,6 +477,152 @@ const handedEntry = (home, name, to) => (d) => ({
 });
 const describeHanded = (h) => `${h.kind} ${h.id} (${h.scope}${h.subject?.category ? `; ${h.subject.type} ${h.subject.id} ${h.subject.category}${h.subject.requirement ? ` ${h.subject.requirement}` : ''}${h.subject.interface ? ` ${h.subject.interface}` : ''}: ${JSON.stringify(h.subject.message ?? '')}` : ''}); options: ${h.options.join(', ') || 'none'}`;
 
+// ---- E179: an owner-acknowledged question open at the review's end -----------------------------
+
+// Errata E179 (Sean's decision of 2026-10-22, items 2 to 4; SEAM.md §560).
+// For the M535 continuation's recovery only, and for the two questions it
+// names (the Designer's requirement_conflict dispositions on R10 and R7,
+// `change_spec` their only option), an open `finding_disposition` may stay
+// open at the review's end and the run's end if, and only if, Sean has
+// acknowledged it by his own record (owner-act.mjs `question_acknowledged`,
+// in his terminal), naming the decision, its requirement, its implications
+// and its deferred follow-up, dated after the question was raised, and the
+// question holds no gate. It is recorded open and acknowledged, never
+// resolved, accepted or verified; every other open question fails the step
+// as before; the run so completed is "completed under E179", not M519 (h) /
+// M535 (j) as written, and is not clean. `ctx.e179Scope` (the decisions in
+// scope) is set by the kernel lane's cases only; a real run's is E179's.
+export const E179 = Object.freeze({
+  ref: 'E179',
+  kind: 'finding_disposition',
+  act: 'question_acknowledged',
+  decisions: Object.freeze(['dec_01M5G1R5MT93JTCC54ZGRWZVEA', 'dec_01M5G1R5MVP7DRKJBPKRG233GK']),
+});
+const namesKey = (text, key) => new RegExp(`(^|[^A-Za-z0-9_.])${key.replace(/\./g, '\\.')}([^0-9.]|\\.(?![0-9])|$)`).test(String(text ?? ''));
+// What a question holds while open: its `blocked_while_open` (D1 A), any non-empty member a gate it holds.
+const holdsOf = (raw) => {
+  let v = null;
+  try {
+    v = json(raw);
+  } catch {
+    return [{ unreadable: String(raw) }];
+  }
+  if (v === null || v === undefined) return [];
+  if (Array.isArray(v)) return v.length > 0 ? [v] : [];
+  if (typeof v === 'object') return Object.entries(v).filter(([, x]) => (Array.isArray(x) ? x.length > 0 : x !== null && x !== undefined && x !== false && x !== '')).map(([k, x]) => ({ [k]: x }));
+  return [v];
+};
+// The owner's own acknowledgement entries: owner-act.mjs's, in his terminal; never the driver's.
+const acknowledgementsOf = (ctx) => ownerEntries(ctx.runDir).filter((e) => e.act === E179.act && e.entered_via === 'owner-act.mjs' && e.tty === true);
+
+// Which open questions the owner has acknowledged under E179, and each
+// acknowledgement refused with its reason. `open` the open decisions read.
+export function e179Exception(ctx, home, open) {
+  const scope = ctx.e179Scope ?? E179.decisions;
+  const entries = acknowledgementsOf(ctx);
+  const acknowledged = [];
+  const refused = [];
+  for (const d of open) {
+    const naming = entries.filter((e) => e.decision === d.id || String(e.words ?? '').includes(d.id));
+    if (naming.length === 0) continue;
+    const refuse = (reason) => refused.push({ kind: d.kind, id: d.id, reason });
+    if (d.kind !== E179.kind) {
+      refuse(`E179 covers an open finding_disposition only, never a ${d.kind}`);
+      continue;
+    }
+    if (!scope.includes(d.id)) {
+      refuse(`not one of the questions E179 names (${scope.join(', ')})`);
+      continue;
+    }
+    const subject = handedSubject(home, d);
+    const req = subject.requirement ?? null;
+    if (d.subject_type !== 'design_finding' || subject.category !== 'requirement_conflict' || !req) {
+      refuse(`E179 covers a Designer requirement_conflict naming a requirement; this question is about ${subject.type} ${subject.id}${subject.category ? ` (${subject.category})` : ''}`);
+      continue;
+    }
+    const holds = holdsOf(d.blocked_while_open);
+    if (holds.length > 0) {
+      refuse(`it holds a gate while open (blocked_while_open ${JSON.stringify(holds)}): no acknowledgement takes it into exception`);
+      continue;
+    }
+    if (subject.interface) {
+      refuse(`its finding disputes the interface ${subject.interface}, which holds a design approval (DESIGN_INTERFACE_DISPUTED): no acknowledgement takes it into exception`);
+      continue;
+    }
+    const why = (e) => {
+      if (e.decision !== d.id || !String(e.words ?? '').includes(d.id)) return 'it does not name the decision in its decision field and its words';
+      if (e.requirement !== req || !namesKey(e.words, req)) return `it does not name the question's requirement ${req} in its requirement field and its words`;
+      if (!String(e.implications ?? '').trim()) return 'it states no implications';
+      if (!String(e.follow_up ?? '').trim()) return 'it states no deferred follow-up';
+      const at = Date.parse(e.at);
+      const raised = Date.parse(d.raised_at);
+      if (!Number.isFinite(at) || !Number.isFinite(raised)) return `its date or the question's cannot be read (${e.at}; raised ${d.raised_at})`;
+      if (at <= raised) return `it is dated ${e.at}, not after the question was raised (${d.raised_at})`;
+      return null;
+    };
+    const valid = naming.filter((e) => why(e) === null);
+    if (valid.length === 0) {
+      refuse(`no acknowledgement of it counts: ${naming.map((e) => `${e.at}: ${why(e)}`).join('; ')}`);
+      continue;
+    }
+    const e = valid.at(-1);
+    acknowledged.push({
+      kind: d.kind,
+      id: d.id,
+      status: d.status,
+      answered: d.answer !== null && d.answer !== undefined,
+      scope: d.scope,
+      raised_at: d.raised_at,
+      options: (d.options ?? []).map((o) => o.key),
+      subject,
+      requirement: req,
+      exception: E179.ref,
+      acknowledgement: { at: e.at, decision: e.decision, requirement: e.requirement, implications: e.implications, follow_up: e.follow_up, words: e.words, entered_via: e.entered_via, user: e.user ?? null },
+      verification_gap: `requirement ${req}: the Designer's requirement_conflict (${JSON.stringify(subject.message ?? '')}) is open and unrouted; ${req} is not verified against it, and no check, review or approval covers it`,
+      note: `open and acknowledged by the owner under ${E179.ref}: not answered, not resolved, not dispositioned, nothing it names verified; its follow-up deferred as his record states`,
+    });
+  }
+  return { scope, acknowledged, refused };
+}
+
+// The run's end under rule 25 and E179 (M535 (j); the records): every
+// question open in the store, each acknowledged one, each acknowledgement
+// refused. Never throws: `e179RunEnd` judges it.
+export function e179Record(ctx, home, project) {
+  const open = openDecisions(home, project);
+  const ex = e179Exception(ctx, home, open);
+  const ids = new Set(ex.acknowledged.map((a) => a.id));
+  const unacknowledged = open.filter((d) => !ids.has(d.id)).map((d) => ({ kind: d.kind, id: d.id, refused: ex.refused.filter((r) => r.id === d.id).map((r) => r.reason) }));
+  const satisfied = open.length === 0;
+  return {
+    ref: E179.ref,
+    open: open.map((d) => ({ kind: d.kind, id: d.id })),
+    open_acknowledged: ex.acknowledged,
+    unacknowledged,
+    refused: ex.refused,
+    satisfied_as_written: satisfied,
+    completed_under: !satisfied && unacknowledged.length === 0 ? E179.ref : null,
+    clean: satisfied,
+    statement: satisfied
+      ? 'no question open at the run\'s end: M519 (h) / M535 (j) satisfied as written'
+      : unacknowledged.length === 0
+        ? `completed under ${E179.ref}, not as written: M519 (h) / M535 (j) ("at the end, no question open") are not satisfied; ${ex.acknowledged.map((a) => `${a.kind} ${a.id} (${a.requirement})`).join(', ')} open and acknowledged by the owner, not resolved or verified; the run is not clean`
+        : `not passed: open at the run's end and not acknowledged under ${E179.ref}: ${unacknowledged.map((u) => `${u.kind} ${u.id}${u.refused.length > 0 ? ` (acknowledgement refused: ${u.refused.join('; ')})` : ''}`).join(', ')}`,
+  };
+}
+
+// The run's end judged (M535 (j)): every open question acknowledged under
+// E179 and listed so in the review's own value, or the judgement fails.
+export function e179RunEnd(ctx, row, home, project) {
+  const rec = e179Record(ctx, home, project);
+  if (rec.unacknowledged.length > 0) throw new Error(`${row}: ${rec.statement} (BS6 §4.1 rule 25; ${E179.ref})`);
+  const review = stepValue(ctx, stepName(row, 'review'));
+  const atReview = new Set((review.rule_25?.acknowledged_open ?? []).map((a) => a.id));
+  const missing = rec.open_acknowledged.filter((a) => !atReview.has(a.id));
+  if (missing.length > 0) throw new Error(`${row}: open at the run's end and acknowledged, but not recorded open and acknowledged at the review's end: ${missing.map((a) => `${a.kind} ${a.id}`).join(', ')} (${E179.ref})`);
+  return rec;
+}
+
 // Rule 25 at a step's end: every open question fails the step but those of
 // the kinds it hands to the next step (`to`, when named), which are recorded
 // open and unanswered with what they are about (F29). Every design-held
@@ -484,14 +630,22 @@ const describeHanded = (h) => `${h.kind} ${h.id} (${h.scope}${h.subject?.categor
 // fails the step; and a step that ends in an intentional wait (an unexpired
 // deferral, or a Designer session open while a stage is held) is not passed
 // but recorded `waiting` (StepWaiting): a deferral is never success.
-export function ruleTwentyFive(home, project, name, { handover = [], to = null, nowMs = Date.now() } = {}) {
-  const open = openDecisions(home, project);
+// With `exception` (the review's run context, E179), a finding_disposition
+// the owner acknowledged under E179 stays open without failing the step,
+// recorded in `acknowledged_open`, and the step is `completed_under` E179;
+// an acknowledgement refused is named beside the question it fails.
+export function ruleTwentyFive(home, project, name, { handover = [], to = null, exception = null, nowMs = Date.now() } = {}) {
+  const all = openDecisions(home, project);
+  const ex = exception ? e179Exception(exception, home, all) : { acknowledged: [], refused: [] };
+  const excepted = new Set(ex.acknowledged.map((a) => a.id));
+  const open = all.filter((d) => !excepted.has(d.id));
   const kept = open.filter((d) => !handover.includes(d.kind));
-  if (kept.length > 0) throw new Error(`${name} not passed: questions raised before its end are still open (BS6 §4.1 rule 25): ${kept.map((d) => `${d.kind} ${d.id}`).join(', ')}`);
+  const refusedOf = (d) => ex.refused.filter((r) => r.id === d.id).map((r) => ` (acknowledgement under ${E179.ref} refused: ${r.reason})`).join('');
+  if (kept.length > 0) throw new Error(`${name} not passed: questions raised before its end are still open (BS6 §4.1 rule 25): ${kept.map((d) => `${d.kind} ${d.id}${refusedOf(d)}`).join(', ')}`);
   const design = designHoldAccounts(home, project, { nowMs });
   if (design.unaccounted.length > 0) throw new Error(`${name} not passed: design-held stages accounted for by nothing (no open question, no Designer session, no engine work, no unexpired deferral; BS6 §4.1 rule 25, E162 item 1): ${describeHolds(design)}`);
   if (design.waits.length > 0) throw new StepWaiting(`${name} not passed: it ends waiting on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(design.waits)}; holds: ${describeHolds(design)}`, design.waits);
-  return { handed_over: open.map(handedEntry(home, name, to)), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
+  return { handed_over: open.map(handedEntry(home, name, to)), ...(exception ? { acknowledged_open: ex.acknowledged, completed_under: ex.acknowledged.length > 0 ? E179.ref : null } : {}), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
 }
 
 // ---- driving the project: Sean's answers, the rehearsal's, the stall check -------------------
@@ -1366,11 +1520,23 @@ export async function reviewStep(ctx, row, fx, project) {
         const review = rows(fx.home, 'SELECT * FROM "design_reviews" WHERE "project" = ? ORDER BY rowid', project).filter((r) => !reviewsBefore.has(r.id)).at(-1);
         if (!review?.confirmation_decision) return undefined;
         const a = activity(fx.home, project);
-        return a.asked.length === 0 && a.live.length === 0 && a.runnable.length === 0 && a.executions.length === 0 ? review : undefined;
+        // A question the owner acknowledged under E179 stays open; every other one is asked (E179; SEAM.md §560).
+        const excepted = new Set(e179Exception(ctx, fx.home, openDecisions(fx.home, project)).acknowledged.map((x) => x.id));
+        const asked = a.asked.filter((x) => !excepted.has(x.id));
+        return asked.length === 0 && a.live.length === 0 && a.runnable.length === 0 && a.executions.length === 0 ? review : undefined;
       },
       stall: false,
     });
-    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.review });
+    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.review, exception: ctx });
+    if (r25.acknowledged_open.length > 0) {
+      tellSean(
+        ctx,
+        [
+          `SURETY REAL LANE: ${name} ends completed under ${E179.ref}, not as M519 (h) / M535 (j) are written: these questions stay open, acknowledged by your own record, not resolved or verified; the run is not clean:`,
+          ...r25.acknowledged_open.map((a) => `  ${a.kind} ${a.id} (${a.requirement}): ${a.verification_gap}`),
+        ].join('\n'),
+      );
+    }
     const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt, central });
     const review = s.value;
     const design = (await fx.engine.get(`/v1/projects/${project}/design`)).body ?? null;
@@ -1469,6 +1635,8 @@ export async function m6Records(ctx, row) {
       results: resultsOfProject(fx.home, project).map((r) => ({ id: r.id, execution_seq: r.execution_seq, runner_id: r.runner_id, execution_established: r.execution_established })),
       token: tokenSearch(ctx, [repo]),
       transcript_token_hits: transcriptTokenHits(ctx, fx.home, project),
+      // The questions open at the run's end, each acknowledged under E179 or not (SEAM.md §560).
+      e179: e179Record(ctx, fx.home, project),
       left: unitsOfRunHome(ctx, `${row} records`),
     };
     observe(ctx, row, 'records', out);
