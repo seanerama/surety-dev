@@ -56,7 +56,17 @@
 //     store's acts and their performers' entries), never the rerun's alone;
 //     a first run's record is as before; and a run directory from before
 //     the attempts were kept is rebuilt once over every attempt, bounded by
-//     the step's end.
+//     the step's end;
+//     and the Alpha step's end (finding F29 of the M535 Waterlog
+//     continuation; SEAM.md §559): with Alpha deployed under policy and
+//     design_due (alpha_review) raised before the step starts, an owner
+//     finding_disposition left open (a Designer requirement_conflict,
+//     change_spec its only option) is handed to the review, recorded open
+//     and unanswered with its finding and options, and printed; nothing is
+//     answered or routed; a genuine question (blocker, plan_approval,
+//     spec_change, design_approval, a check correction) open at its end
+//     still fails it, the step's condition holding at its first poll; the
+//     review presents the handed question and does not end while it is open.
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
@@ -82,7 +92,7 @@ import * as m6lane from './harness/real/m6-lane.mjs';
 import { approveBatch } from './harness/design/check41.mjs';
 import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
 import { authoringItems, authoringRuns, authoringWith, builderRuns, go, openOf, pausedDeveloping, planRow, until } from './harness/exec37/authoring.mjs';
-import { copyStore, openStore, withStore } from './harness/store.mjs';
+import { copyStore, openStore, storePath, withStore } from './harness/store.mjs';
 
 const OWNER_NO_TIGHTENING = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
 const TO_ALPHA = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', phase_size: { min: 1, max: 5 } });
@@ -400,6 +410,154 @@ describe('M512 design_due and no silent stalls', () => {
     assert.equal((await answerWith(fx, p.id, again, 'open')).status, 200, 'open answered');
     await pump(fx, { project: p.id, ...NO_ANSWER }, () => designerRuns(fx, p.id).find((r) => !before.has(r.id)), { what: 'the Designer session allocated', max: 4 });
     await waitingOnReads('(k) during the open session', 'session');
+  });
+
+  test("(k) F29, the Alpha step's end: an owner finding_disposition open at Alpha (a Designer requirement_conflict, change_spec its only option) is handed to the review, recorded open and unanswered, never dropped; the review presents it and does not end until it is answered; a genuine question still fails the Alpha step; Alpha deployed before the step starts bypasses neither", async (t) => {
+    const fx = await scriptedEngine(t);
+    // The Waterlog continuation's shape (F29): the Designer reports a requirement_conflict in the design session; the owner
+    // leaves its question open (routing it starts a Spec Writer run whose approval re-derives the inventory and stales the
+    // design); the design approved, the phase built and complete, Alpha deployed under policy and design_due (alpha_review)
+    // raised, all before the Alpha step starts.
+    const CONFLICT = { category: 'requirement_conflict', severity: 'medium', message: 'R3 needs the list offline, which no interface offers', requirement: 'R3' };
+    const d = await designedPantry(fx, { policy: { ...TO_ALPHA, design: 'both' }, name: 'pantry-f29', findings: [CONFLICT] });
+    const project = d.p.id;
+    const conflictQuestion = () => openOf(fx.home, project, 'finding_disposition').filter((q) => q.subject_type === 'design_finding');
+    const [fd] = conflictQuestion();
+    assert.ok(fd, `the Designer's requirement_conflict is an open owner question (${JSON.stringify(openOf(fx.home, project, 'finding_disposition'))})`);
+    assert.deepEqual([fd.scope, (fd.options ?? []).map((o) => o.key)], ['design_conflict', ['change_spec']], `its only option is change_spec (D7 §4.5) (${JSON.stringify(fd.options)})`);
+    const findingOf = () => withStore(fx.home, (db) => db.prepare('SELECT "id", "category", "requirement", "status", "message" FROM "design_findings" WHERE "id" = ?').get(fd.subject_id));
+    assert.deepEqual([findingOf().category, findingOf().requirement, findingOf().status], ['requirement_conflict', 'R3', 'open'], 'the finding, open');
+    await alphaReady(fx, d.ctx, { port: 8082 });
+    await alphaDeployed(fx, d.ctx, { max: 200 });
+    const due = await pump(fx, d.ctx, () => (openDesignDue(fx.home, project)?.evidence?.stage === 'alpha_review' ? openDesignDue(fx.home, project) : undefined), { what: 'design_due (alpha_review)', max: 20 });
+    assert.deepEqual(conflictQuestion().map((q) => q.id), [fd.id], 'the finding_disposition still open at Alpha, unanswered');
+    await waitForIdle(fx.home, project);
+
+    // A run directory of the real-lane runner's form per judgement, inside this test's root (removed with it).
+    const runCtx = (tag, home) => {
+      const runDir = join(fx.root, `k-f29-${tag}`);
+      mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
+      symlinkSync(home, join(runDir, 'home'));
+      return { runDir, keyValue: null, rehearsal: false, waitMinutes: 0 };
+    };
+    // The engine as the step sees it, every call kept: a step whose condition holds at its first poll ticks nothing.
+    const watched = (home, engine) => {
+      const calls = [];
+      const proxy = new Proxy(engine, {
+        get(target, prop) {
+          const v = Reflect.get(target, prop);
+          return typeof v === 'function' ? (...args) => (calls.push(`${String(prop)} ${args[0] ?? ''}`), v.apply(target, args)) : v;
+        },
+      });
+      return { fx: { ...fx, home, engine: proxy }, calls };
+    };
+    // What the step prints for Sean (tellSean writes standard error).
+    const printedBy = async (fn) => {
+      const printed = [];
+      const write = process.stderr.write;
+      process.stderr.write = function (chunk, ...rest) {
+        printed.push(String(chunk));
+        return write.call(this, chunk, ...rest);
+      };
+      try {
+        return { outcome: await fn().then((value) => ({ value, error: null }), (error) => ({ value: null, error })), printed: printed.join('') };
+      } finally {
+        process.stderr.write = write;
+      }
+    };
+    const previousMinutes = process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+    process.env.SURETY_REAL_ACT_RECORD_MINUTES = '0';
+    t.after(() => {
+      if (previousMinutes === undefined) delete process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+      else process.env.SURETY_REAL_ACT_RECORD_MINUTES = previousMinutes;
+    });
+    const ALPHA = 'm6x_alpha';
+    const REVIEW = 'm6x_review';
+
+    // The Alpha step on this home: its condition holds at its first poll (Alpha deployed, design_due raised).
+    const live = runCtx('alpha', fx.home);
+    const w = watched(fx.home, fx.engine);
+    const a = await printedBy(() => m6lane.alphaStep(live, 'M535', w.fx, project));
+    assert.equal(a.outcome.error, null, `the Alpha step passes, the open finding_disposition handed to the review (it failed: ${a.outcome.error?.message})`);
+    assert.deepEqual(w.calls, [], `the step ended at its first poll: the engine not ticked (${JSON.stringify(w.calls)})`);
+    // Not dropped: the step's value records it open and unanswered, handed to the review, with its finding and options.
+    const handed = a.outcome.value.rule_25.handed_over;
+    const entry = handed.find((h) => h.id === fd.id);
+    assert.ok(entry, `recorded in rule_25.handed_over (${JSON.stringify(handed)})`);
+    assert.deepEqual(
+      [entry.kind, entry.status, entry.answered, entry.scope, entry.options, entry.handed_to],
+      ['finding_disposition', 'open', false, 'design_conflict', ['change_spec'], REVIEW],
+      `kind, open, not answered, its options, handed to the review (${JSON.stringify(entry)})`,
+    );
+    assert.deepEqual(
+      [entry.subject?.type, entry.subject?.id, entry.subject?.category, entry.subject?.requirement, entry.subject?.status],
+      ['design_finding', fd.subject_id, 'requirement_conflict', 'R3', 'open'],
+      `naming its finding, still open (${JSON.stringify(entry.subject)})`,
+    );
+    assert.match(entry.note ?? '', /not answered/, `the record says it was not answered (${entry.note})`);
+    assert.match(entry.note ?? '', /verified/, `and that nothing it names is verified by the handover (${entry.note})`);
+    assert.ok(handed.some((h) => h.kind === 'design_due' && h.id === due.id && h.handed_to === REVIEW), `design_due (alpha_review) handed to the review as before (${JSON.stringify(handed)})`);
+    // The observation says so: the step's recorded value, and the notice printed at its end.
+    const observed = JSON.parse(readFileSync(join(live.runDir, 'observed', 'M535.json'), 'utf8'));
+    assert.ok(observed.alpha.rule_25.handed_over.some((h) => h.id === fd.id && h.status === 'open'), 'observed/M535.json records it');
+    assert.match(a.printed, new RegExp(`finding_disposition ${fd.id}[^\\n]*`), `the step's end tells Sean of it (${a.printed.slice(-1200)})`);
+    assert.match(a.printed, new RegExp(`${REVIEW}`), 'naming the review it is handed to');
+    assert.deepEqual(stepVerdicts(live.runDir, [ALPHA]).map((v) => v.status), ['done'], 'the step recorded done');
+    // Not resolved: nothing answered, nothing routed.
+    assert.deepEqual([decision(fx.home, fd.id).status, decision(fx.home, fd.id).answer], ['open', null], 'the question still open, unanswered');
+    assert.equal(findingOf().status, 'open', 'the finding still open, not routed');
+
+    // Genuine questions still fail the Alpha step, with its condition holding at the first poll: on copies of the store
+    // (never the engine's home), each with one more open question of the kind, the step ticks nothing and fails naming it.
+    const GENUINE = ['blocker', 'plan_approval', 'spec_change', 'design_approval', 'check_correction_unclassifiable', 'check_correction_tightening', 'check_correction_loosening'];
+    const noEngine = (calls) => new Proxy({}, { get: (_, prop) => (...args) => { calls.push(`${String(prop)} ${args[0] ?? ''}`); throw new Error(`no engine call expected (${String(prop)} ${args[0] ?? ''})`); } });
+    for (const kind of GENUINE) {
+      const snap = join(fx.root, `k-f29-store-${kind}`);
+      mkdirSync(snap, { recursive: true, mode: 0o700 });
+      const src = openStore(storePath(fx.home), { readonly: true });
+      try {
+        await src.backup(join(snap, 'store.db'));
+      } finally {
+        src.close();
+      }
+      const id = `dec_f29_${kind}`;
+      withStore(snap, (db) => {
+        const row = db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(fd.id);
+        const seq = db.prepare('SELECT MAX("seq") AS n FROM "decisions" WHERE "project" = ?').get(project).n + 1;
+        const clone = { ...row, id, kind, seq, status: 'open', answer: null, consumed_at: null };
+        const cols = Object.keys(clone);
+        db.prepare(`INSERT INTO "decisions" (${cols.map((c) => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map((c) => clone[c]));
+      }, { readonly: false });
+      const ctx = runCtx(`alpha-${kind}`, snap);
+      const calls = [];
+      const g = await printedBy(() => m6lane.alphaStep(ctx, 'M535', { ...fx, home: snap, engine: noEngine(calls) }, project));
+      assert.ok(g.outcome.error, `${kind}: the Alpha step fails`);
+      assert.equal(g.outcome.error.message, `${ALPHA} not passed: questions raised before its end are still open (BS6 §4.1 rule 25): ${kind} ${id}`, `${kind}: naming it alone, the finding_disposition and design_due handed over`);
+      assert.deepEqual(calls, [], `${kind}: its condition held at the first poll, nothing ticked`);
+      assert.deepEqual(stepVerdicts(ctx.runDir, [ALPHA]).map((v) => [v.status, v.passed]), [['failed', false]], `${kind}: the step recorded failed`);
+    }
+
+    // The next owner checkpoint, the review: it presents the question and does not end while it is open (its rule 25
+    // hands over nothing). Its wait here is 0 minutes, so it ends at its first poll, not passed, naming it.
+    const r = await printedBy(() => m6lane.reviewStep(live, 'M535', watched(fx.home, fx.engine).fx, project));
+    assert.ok(r.outcome.error, 'the review does not end while the question is open');
+    assert.match(r.outcome.error.message, new RegExp(`finding_disposition", ?"${fd.id}`), `naming it (${r.outcome.error.message})`);
+    const shown = r.printed.split('\n').find((l) => l.startsWith(`Decision finding_disposition ${fd.id}`));
+    assert.ok(shown, `presented to Sean at the review (${r.printed.slice(-2000)})`);
+    assert.ok(!shown.includes('not one this step expects'), `as one the review expects (${shown})`);
+    assert.match(shown, /options: change_spec/, `with its option (${shown})`);
+    assert.deepEqual(stepVerdicts(live.runDir, [REVIEW]).map((v) => [v.status, v.passed]), [['failed', false]], 'the review recorded failed, never passed');
+    assert.deepEqual(m6lane.HANDOVER.review, [], 'the review hands over nothing');
+    assert.throws(() => ruleTwentyFive(fx.home, project, REVIEW, { handover: m6lane.HANDOVER.review }), new RegExp(`finding_disposition ${fd.id}`), "the review's rule 25 names it while it is open");
+    // Answered by the owner, its question no longer stands against the review.
+    await consume(fx, project, fd, 'change_spec');
+    let after = null;
+    try {
+      ruleTwentyFive(fx.home, project, REVIEW, { handover: m6lane.HANDOVER.review });
+    } catch (err) {
+      after = err.message;
+    }
+    assert.ok(!String(after ?? '').includes(fd.id), `answered, it is not named (${after})`);
   });
 
   test('(k) M519 F2, a rerun\'s leftovers: an eligible UI stage the engine holds design_pending is held, not earlier work; an item not held still refuses; a stage the store releases is counted; unknown is never held', async (t) => {

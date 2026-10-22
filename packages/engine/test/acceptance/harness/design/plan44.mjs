@@ -291,7 +291,10 @@ export const API_ONLY = Object.freeze({
 // `approve` is false, approved through the owner's routes. The UI stages
 // are dispatched only as the case pumps. Returns {p, ctx, inventory, model,
 // v2, batch, approved}.
-export async function designedPantry(fx, { policy = BEFORE_BUILD, name, variant = null, model: draw = designModel, approve = true, answerKinds = KERNEL_KINDS } = {}) {
+// With `findings`, the same Designer session's first turn reports them (D7
+// §4.5; B.12) before the design's turn, and their owner questions are left
+// open (M512 (k), F29: a requirement_conflict open from the design to Alpha).
+export async function designedPantry(fx, { policy = BEFORE_BUILD, name, variant = null, model: draw = designModel, approve = true, answerKinds = KERNEL_KINDS, findings = null } = {}) {
   const { p } = await toPublished(fx, { policy, name, ...(variant ? { spec: variant.spec, files: variant.files } : {}) });
   const inventory = inventoryOf(p);
   const model = draw(inventory);
@@ -299,7 +302,13 @@ export async function designedPantry(fx, { policy = BEFORE_BUILD, name, variant 
   const ctx = scriptVariant(fx, p, v2);
   authoringByPhase(fx, variant?.checks ?? {});
   ctx.answerKinds = [...answerKinds];
-  const out = await checkSession(fx, p.id, [{ name: 'the design', model }]);
+  let run = null;
+  if (findings) {
+    run = await openDesigner(fx, p.id);
+    scriptTurns(fx, run.id, [{ steps: [step.result(turnResult({ reply: 'What the inventory lacks, first.', findings }))] }]);
+    await sayAndSettle(fx, p.id, run.id, 'Is anything missing from the inventory?');
+  }
+  const out = await checkSession(fx, p.id, [{ name: 'the design', model }], run ? { run } : {});
   assertPassed(out.saves[0].res, 'the design');
   const closed = await postCloseRaw(fx, p.id, out.run.id, {});
   assert.equal(closed.status, 200, `the Designer's close (${closed.text?.slice(0, 600)})`);
