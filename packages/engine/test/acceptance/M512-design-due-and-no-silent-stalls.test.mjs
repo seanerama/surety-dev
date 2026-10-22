@@ -1,6 +1,6 @@
 // M512, `design_due` and no silent stalls (slice 44; kernel lane). M6 plan
 // §3.6 M512 as amended by E162 item 1; D7 §11 as corrected, §2, §10.1; G5;
-// BS6 §4.1 rule 25 as amended; SEAM.md §§485, 491, 514, 547, 550, 551, 558, 559.
+// BS6 §4.1 rule 25 as amended; errata E179; SEAM.md §§485, 491, 514, 547, 550, 551, 558, 559, 560.
 //
 // (a) its causes: the UI stages first held `design_pending` (at
 //     derivation); `alpha_complete` under `at_alpha` and under `both`; sent
@@ -66,20 +66,33 @@
 //     answered or routed; a genuine question (blocker, plan_approval,
 //     spec_change, design_approval, a check correction) open at its end
 //     still fails it, the step's condition holding at its first poll; the
-//     review presents the handed question and does not end while it is open.
+//     review presents the handed question and does not end while it is open;
+//     and the review's end under errata E179 (SEAM.md §560): a Designer
+//     requirement_conflict question the owner acknowledged by his own record
+//     (owner-act.mjs `question_acknowledged`, after it was raised, naming the
+//     decision, its requirement, implications and follow-up), holding no
+//     gate, stays open at the review's end, recorded open and acknowledged
+//     with its verification gap, and the run's end is "completed under
+//     E179", not M535 (j) as written, and not clean; unacknowledged, its
+//     acknowledgement refused (dated before, another decision or
+//     requirement, the driver's or a non-terminal record, no follow-up, a
+//     gate held, an interface disputed, another kind, outside E179's two
+//     questions) or beside a genuine question, the step fails naming it.
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { CODES, consume, decision } from './harness/decisions.mjs';
-import { waitFor } from './harness/engine.mjs';
+import { REPO_ROOT, waitFor } from './harness/engine.mjs';
 import { changePolicy, getPolicy, policyRevisions } from './harness/journal.mjs';
 import { alphaDeployed, alphaReady, journeyContext, pump, runsOfProject, workOf } from './harness/journey/drive.mjs';
 import { addWork, advanceClock, engineTimeMs, forceTransition, pauseProject, resumeProject, scriptedEngine, tick, waitForIdle } from './harness/runs.mjs';
-import { openSession, runRow, sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
+import { openSession, runRow, saveSession, sayAndSettle, scriptTurns, turnResult } from './harness/sessions.mjs';
+import { REVIEW_PATH } from './harness/design/reference.mjs';
 import { postCloseRaw } from './harness/session-lane.mjs';
 import { script, step } from './harness/scripted.mjs';
 import { answerWith, assertHoldsAccounted, assertReRaised, designRevisions, designScripts, openDesignDue, readDesign, scriptBuilders, stageRow, stageWork, toPublished } from './harness/design/drive.mjs';
@@ -558,6 +571,196 @@ describe('M512 design_due and no silent stalls', () => {
       after = err.message;
     }
     assert.ok(!String(after ?? '').includes(fd.id), `answered, it is not named (${after})`);
+  });
+
+  test("(k) E179, the review's end under E179: a Designer requirement_conflict question the owner acknowledged by his own record, holding no gate, stays open, recorded open and acknowledged, and the run is completed under E179, not as M535 (j) is written; unacknowledged, refused (dated before it was raised, another decision, another requirement, the driver's or a non-terminal record, a gate held, another kind, a question E179 does not name) or beside a genuine question, it fails", async (t) => {
+    const fx = await scriptedEngine(t);
+    const CONFLICT = { category: 'requirement_conflict', severity: 'medium', message: 'R3 needs the list offline, which no interface offers', requirement: 'R3' };
+    const d = await designedPantry(fx, { policy: { ...TO_ALPHA, design: 'both' }, name: 'pantry-e179', findings: [CONFLICT] });
+    const project = d.p.id;
+    const [fd] = openOf(fx.home, project, 'finding_disposition').filter((q) => q.subject_type === 'design_finding');
+    assert.ok(fd, 'the fixture is live: the requirement_conflict question open');
+    assert.deepEqual((fd.options ?? []).map((o) => o.key), ['change_spec'], 'change_spec its only option');
+    const findingOf = () => withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "design_findings" WHERE "id" = ?').get(fd.subject_id));
+    await alphaReady(fx, d.ctx, { port: 8083 });
+    await alphaDeployed(fx, d.ctx, { max: 200 });
+    await pump(fx, d.ctx, () => (openDesignDue(fx.home, project)?.evidence?.stage === 'alpha_review' ? openDesignDue(fx.home, project) : undefined), { what: 'design_due (alpha_review)', max: 20 });
+    await waitForIdle(fx.home, project);
+
+    const REVIEW = 'm6x_review';
+    // A run directory of the runner's form, inside this test's root; `scope` the decisions E179 covers here (a real run's are E179's own).
+    const runCtx = (tag, home, scope) => {
+      const runDir = join(fx.root, `k-e179-${tag}`);
+      mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
+      symlinkSync(home, join(runDir, 'home'));
+      return { runDir, keyValue: null, rehearsal: false, waitMinutes: 2, ...(scope ? { e179Scope: scope } : {}) };
+    };
+    // Lines as owner-act.mjs writes them (its own terminal check is the script's; SEAM.md §542), or as driver-act.mjs does.
+    const line = (ctx, entry, file = 'owner-acts.jsonl') => appendFileSync(join(ctx.runDir, 'observed', file), `${JSON.stringify(entry)}\n`);
+    const after = (ms) => new Date(Math.max(Date.now(), Date.parse(fd.raised_at) + ms)).toISOString();
+    const ack = (over = {}) => {
+      const decision = over.decision ?? fd.id;
+      const requirement = over.requirement ?? 'R3';
+      return {
+        act: 'question_acknowledged',
+        at: after(1000),
+        decision,
+        requirement,
+        implications: 'R3 stays as written; the list is not designed or verified for offline use.',
+        follow_up: 'Route it change_spec after this run, then design the offline list.',
+        words: `${decision} (${requirement}) acknowledged open: implications: offline use not designed or verified; deferred follow-up: route it change_spec after this run`,
+        entered_via: 'owner-act.mjs',
+        tty: true,
+        uid: process.getuid?.() ?? null,
+        user: 'owner',
+        ...over,
+      };
+    };
+    const printedBy = async (fn) => {
+      const printed = [];
+      const write = process.stderr.write;
+      process.stderr.write = function (chunk, ...rest) {
+        printed.push(String(chunk));
+        return write.call(this, chunk, ...rest);
+      };
+      try {
+        return { outcome: await fn().then((value) => ({ value, error: null }), (error) => ({ value: null, error })), printed: printed.join('') };
+      } finally {
+        process.stderr.write = write;
+      }
+    };
+    const previousMinutes = process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+    process.env.SURETY_REAL_ACT_RECORD_MINUTES = '0';
+    t.after(() => {
+      if (previousMinutes === undefined) delete process.env.SURETY_REAL_ACT_RECORD_MINUTES;
+      else process.env.SURETY_REAL_ACT_RECORD_MINUTES = previousMinutes;
+    });
+    const reviewJudgement = (ctx, home = fx.home) => {
+      try {
+        return { value: ruleTwentyFive(home, project, REVIEW, { handover: m6lane.HANDOVER.review, exception: ctx }), error: null };
+      } catch (error) {
+        return { value: null, error };
+      }
+    };
+
+    // (a) Acknowledged by the owner's own record, after it was raised, naming the decision and R3, with its implications and
+    // follow-up: the review step, run as the runner runs it while the owner reviews the Alpha (a review-mode session, its
+    // verdicts confirmed and his confirmation recorded), ends with the question still open.
+    const a = runCtx('a', fx.home, [fd.id]);
+    line(a, ack());
+    const step$ = printedBy(() => m6lane.reviewStep(a, 'M535', fx, project));
+    const run = await openSession(fx, project, 'designer', { mode: 'review' });
+    const reviewJson = `${JSON.stringify({ design_version: 1, subject: { kind: 'candidate' }, screens: [{ target: 'web', key: 'S1', verdict: 'not_observed', not_observed_reason: 'owner_skipped', evidence: [], deltas: [] }, { target: 'android', key: 'S2', verdict: 'not_observed', not_observed_reason: 'no_native_runtime', evidence: [], deltas: [] }], revised_design: false, first_design: false }, null, 2)}\n`;
+    scriptTurns(fx, run.id, [{ steps: [step.write(REVIEW_PATH, reviewJson), step.result(turnResult({ reply: 'The review is written.', artifact_changed: true, done: true }))] }]);
+    await sayAndSettle(fx, project, run.id, 'Review the Alpha.');
+    await saveSession(fx, project, run.id);
+    const closed = await postCloseRaw(fx, project, run.id, {});
+    assert.equal(closed.status, 200, `the review's close (${closed.text?.slice(0, 400)})`);
+    let verdicts = null;
+    for (let i = 0; i < 30 && !verdicts; i++) {
+      await tick(fx.engine, project);
+      verdicts = openOf(fx.home, project, 'design_verdicts')[0] ?? null;
+    }
+    assert.ok(verdicts, 'design_verdicts raised at the review\'s close');
+    assert.equal((await answerWith(fx, project, verdicts, 'confirm')).status, 200, 'design_verdicts confirmed by the owner');
+    line(a, { act: 'review_confirmation', at: new Date().toISOString(), words: 'I confirmed the review verdicts after reading them.', entered_via: 'owner-act.mjs', tty: true, uid: process.getuid?.() ?? null, user: 'owner' });
+    const r = await step$;
+    assert.equal(r.outcome.error, null, `the review ends with the acknowledged question open (it failed: ${r.outcome.error?.message})`);
+    const r25 = r.outcome.value.rule_25;
+    assert.deepEqual(r25.handed_over, [], 'the review hands over nothing');
+    assert.equal(r25.completed_under, 'E179', 'completed under E179');
+    assert.deepEqual(r25.acknowledged_open.map((x) => x.id), [fd.id], `recorded open and acknowledged (${JSON.stringify(r25.acknowledged_open)})`);
+    const entry = r25.acknowledged_open[0];
+    assert.deepEqual(
+      [entry.kind, entry.status, entry.answered, entry.requirement, entry.exception, entry.options, entry.subject?.id, entry.subject?.category],
+      ['finding_disposition', 'open', false, 'R3', 'E179', ['change_spec'], fd.subject_id, 'requirement_conflict'],
+      `its record: open, not answered, R3, E179, its options and finding (${JSON.stringify(entry)})`,
+    );
+    assert.match(entry.verification_gap ?? '', /R3 is not verified/, `its verification gap (${entry.verification_gap})`);
+    assert.deepEqual([entry.acknowledgement?.decision, entry.acknowledgement?.requirement], [fd.id, 'R3'], 'the owner\'s record it rests on');
+    assert.doesNotMatch(JSON.stringify(entry), /"status":"(resolved|accepted|verified|dispositioned)"/, 'never recorded resolved, accepted or verified');
+    assert.match(r.printed, /completed under E179, not as M519 \(h\) \/ M535 \(j\) are written/, 'the review\'s end says so');
+    assert.deepEqual(stepVerdicts(a.runDir, [REVIEW]).map((v) => v.status), ['done'], 'the review recorded done');
+    const observedA = JSON.parse(readFileSync(join(a.runDir, 'observed', 'M535.json'), 'utf8'));
+    assert.deepEqual(observedA.review.rule_25.acknowledged_open.map((x) => x.id), [fd.id], 'observed/M535.json records it');
+    // M535 (j)'s end judgement: completed under E179, the rows not satisfied as written, not clean; the final record says both.
+    const end = m6lane.e179RunEnd(a, 'M535', fx.home, project);
+    assert.deepEqual([end.completed_under, end.satisfied_as_written, end.clean], ['E179', false, false], `the run's end (${JSON.stringify(end)})`);
+    assert.match(end.statement, /completed under E179, not as written: M519 \(h\) \/ M535 \(j\) .* are not satisfied/, end.statement);
+    assert.deepEqual(end.open_acknowledged.map((x) => [x.id, x.requirement]), [[fd.id, 'R3']], 'the final record lists it with its requirement');
+    assert.deepEqual(end.unacknowledged, [], 'nothing else open');
+    assert.deepEqual([decision(fx.home, fd.id).status, decision(fx.home, fd.id).answer, findingOf().status], ['open', null, 'open'], 'nothing answered or routed');
+    // The owner's record is his own: owner-act.mjs records an acknowledgement only in his terminal.
+    const typed = spawnSync(process.execPath, [join(REPO_ROOT, 'docs', 'acceptance', 'reports', 'M6-real-lane', 'owner-act.mjs'), a.runDir, 'question_acknowledged'], { input: '', encoding: 'utf8' });
+    assert.deepEqual([typed.status, /only in your own terminal/.test(typed.stderr)], [2, true], `owner-act.mjs refuses an acknowledgement typed by no terminal (${typed.status} ${typed.stderr})`);
+
+    // (b) The same question unacknowledged: the review's judgement and the run's end fail naming it.
+    const b = runCtx('b', fx.home, [fd.id]);
+    const jb = reviewJudgement(b);
+    assert.match(jb.error?.message ?? 'it passed', new RegExp(`${REVIEW} not passed: .*finding_disposition ${fd.id}`), '(b) unacknowledged: the review fails naming it');
+    assert.throws(() => m6lane.e179RunEnd(b, 'M535', fx.home, project), new RegExp(`not acknowledged under E179: finding_disposition ${fd.id}`), '(b) and the run\'s end');
+
+    // (e) Records that do not count: dated before it was raised; naming another decision; another requirement; the driver's
+    // record; a line not from owner-act.mjs in a terminal; no follow-up stated.
+    const notCounted = [
+      ['dated before', ack({ at: new Date(Date.parse(fd.raised_at) - 1000).toISOString() }), 'owner-acts.jsonl', /not after the question was raised/],
+      ['another decision', ack({ decision: 'dec_00000000000000000000000000' }), 'owner-acts.jsonl', null],
+      ['another requirement', ack({ requirement: 'R2' }), 'owner-acts.jsonl', /does not name the question's requirement R3/],
+      ['the driver\'s', { ...ack(), acted_by: 'driver', entered_via: 'driver-act.mjs' }, 'driver-acts.jsonl', null],
+      ['no terminal', ack({ tty: false }), 'owner-acts.jsonl', null],
+      ['no follow-up', ack({ follow_up: '' }), 'owner-acts.jsonl', /states no deferred follow-up/],
+    ];
+    for (const [tag, e, file, reason] of notCounted) {
+      const c = runCtx(`e-${tag.replace(/\W+/g, '-')}`, fx.home, [fd.id]);
+      line(c, e, file);
+      const j = reviewJudgement(c);
+      assert.match(j.error?.message ?? 'it passed', new RegExp(`finding_disposition ${fd.id}`), `(e) ${tag}: not counted, the review fails naming it`);
+      if (reason) assert.match(j.error.message, reason, `(e) ${tag}: the refusal's reason named`);
+    }
+    // Scope: a question E179 does not name (a real run's scope, E179's two decisions) is refused.
+    const outside = runCtx('e-outside', fx.home, null);
+    line(outside, ack());
+    assert.match(reviewJudgement(outside).error?.message ?? 'it passed', /refused: not one of the questions E179 names/, '(4) a question E179 does not name: refused');
+
+    // (c), (d), (4) on copies of the store (a backup, never the engine's home).
+    const snapshot = async (tag, change) => {
+      const dir = join(fx.root, `k-e179-store-${tag}`);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const src = openStore(storePath(fx.home), { readonly: true });
+      try {
+        await src.backup(join(dir, 'store.db'));
+      } finally {
+        src.close();
+      }
+      withStore(dir, change, { readonly: false });
+      return dir;
+    };
+    const cloneAs = (db, kind, id) => {
+      const row = db.prepare('SELECT * FROM "decisions" WHERE "id" = ?').get(fd.id);
+      const seq = db.prepare('SELECT MAX("seq") AS n FROM "decisions" WHERE "project" = ?').get(project).n + 1;
+      const clone = { ...row, id, kind, seq, status: 'open', answer: null, consumed_at: null };
+      const cols = Object.keys(clone);
+      db.prepare(`INSERT INTO "decisions" (${cols.map((c) => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map((c) => clone[c]));
+    };
+    // (c) An acknowledged question that holds a gate: refused, the reason named.
+    const gated = await snapshot('gate', (db) => db.prepare('UPDATE "decisions" SET "blocked_while_open" = ? WHERE "id" = ?').run(JSON.stringify({ work_items: ['wi_e179_held'] }), fd.id));
+    const c1 = runCtx('c-gate', gated, [fd.id]);
+    line(c1, ack());
+    assert.match(reviewJudgement(c1, gated).error?.message ?? 'it passed', new RegExp(`finding_disposition ${fd.id} \\(acknowledgement under E179 refused: it holds a gate while open`), '(c) holding a gate: refused, named');
+    const disputed = await snapshot('interface', (db) => db.prepare('UPDATE "design_findings" SET "interface" = ? WHERE "id" = ?').run('add-item', fd.subject_id));
+    const c2 = runCtx('c-interface', disputed, [fd.id]);
+    line(c2, ack());
+    assert.match(reviewJudgement(c2, disputed).error?.message ?? 'it passed', /refused: its finding disputes the interface add-item/, '(c) disputing an interface (a design approval held): refused, named');
+    // (d) A genuine question open beside the acknowledged one: the step fails naming it alone.
+    for (const kind of ['blocker', 'plan_approval', 'spec_change', 'design_approval', 'check_correction_tightening']) {
+      const id = `dec_e179_${kind}`;
+      const home = await snapshot(`d-${kind}`, (db) => cloneAs(db, kind, id));
+      const c = runCtx(`d-${kind}`, home, [fd.id, id]);
+      line(c, ack());
+      line(c, ack({ decision: id, words: `${id} (R3) acknowledged open` }));
+      const j = reviewJudgement(c, home);
+      assert.match(j.error?.message ?? 'it passed', new RegExp(`still open \\(BS6 §4\\.1 rule 25\\): ${kind} ${id} \\(acknowledgement under E179 refused: E179 covers an open finding_disposition only, never a ${kind}\\)$`), `(d), (4) ${kind}: fails naming it alone, its acknowledgement refused (${j.error?.message})`);
+    }
   });
 
   test('(k) M519 F2, a rerun\'s leftovers: an eligible UI stage the engine holds design_pending is held, not earlier work; an item not held still refuses; a stage the store releases is counted; unknown is never held', async (t) => {
