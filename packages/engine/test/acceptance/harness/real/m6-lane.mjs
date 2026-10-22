@@ -153,6 +153,17 @@ export const stepName = (row, s) => `${PREFIX[row]}_${s}`;
 export const CENTRAL_ACTS = Object.freeze(['designer_feedback', 'preview_inspection', 'combined_approval', 'review_confirmation']);
 const CORRECTIONS = ['check_correction_unclassifiable', 'check_correction_tightening', 'check_correction_loosening'];
 const HOURS = 3_600_000;
+
+// The kinds each judged step hands to the next step at its end (BS6 §4.1
+// rule 25 as amended, E162 item 1; SEAM.md §541): every other open question
+// fails the step. Read by the steps below and by the kernel lane's cases.
+export const HANDOVER = Object.freeze({
+  spec: Object.freeze([]),
+  architecture: Object.freeze(['design_due', ...CORRECTIONS]),
+  design: Object.freeze([...CORRECTIONS, 'plan_approval', 'finding_disposition']),
+  alpha: Object.freeze(['design_due']),
+  review: Object.freeze([]),
+});
 const ACT_RECORD_MINUTES = () => Number(process.env.SURETY_REAL_ACT_RECORD_MINUTES ?? 15);
 
 const json = (t) => (t === null || t === undefined ? t : typeof t === 'string' ? JSON.parse(t) : t);
@@ -882,7 +893,7 @@ export async function m6Spec(ctx, row) {
         expect: ['spec_approval'],
         done: () => specVersions(fx.home, project)[0],
       });
-      const r25 = ruleTwentyFive(fx.home, project, name);
+      const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.spec });
       const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt });
       const out = { ...s, spec: specVersions(fx.home, project), rule_25: r25, acts };
       observe(ctx, row, 'spec', out);
@@ -908,7 +919,7 @@ export async function m6Architecture(ctx, row) {
         },
       });
       // The UI stage's hold raises design_due; the phase's authoring may ask for its toolchain: the next steps' questions.
-      const r25 = ruleTwentyFive(fx.home, project, name, { handover: ['design_due', ...CORRECTIONS] });
+      const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.architecture });
       const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt });
       const out = { ...s, value: { id: s.value.id, generation: s.value.generation }, setup: alpha, rule_25: r25, acts };
       observe(ctx, row, 'architecture', out);
@@ -1117,7 +1128,7 @@ export async function m6Design(ctx, row) {
         }, { expect, answer, extra, what: 'the design approved, its criteria\'s checks applied (design_ready), the preview inspected through the relay and torn down', timeoutMs: ctx.waitMinutes * 60_000 });
       })();
       const relay = relayEvents(fx.home, project, sinceSeq);
-      const r25 = ruleTwentyFive(fx.home, project, name, { handover: [...CORRECTIONS, 'plan_approval', 'finding_disposition'] });
+      const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.design });
       const readback = row === 'M535' ? await previewReadback(ctx, fx, project, row) : null;
       const acts = await recordActs(ctx, row, name, {
         home: fx.home,
@@ -1253,7 +1264,8 @@ async function assetStep(ctx, row, fx, project) {
   });
 }
 
-async function alphaStep(ctx, row, fx, project) {
+// Exported for the kernel lane's case of its end (M512 (k), F29).
+export async function alphaStep(ctx, row, fx, project) {
   const name = stepName(row, 'alpha');
   return m6Step(ctx, name, async ({ startedAt }) => {
     const sinceSeq = maxSeq(fx.home);
@@ -1262,7 +1274,7 @@ async function alphaStep(ctx, row, fx, project) {
       const due = openDecisions(fx.home, project).find((x) => x.kind === 'design_due');
       return c && due ? c : undefined;
     }, { expect: [...CORRECTIONS, 'plan_approval', 'finding_disposition'], what: 'phase 1 complete, Alpha requested under policy, deployed and verified (alpha_deployed); design_due (alpha_review) raised', stall: true, timeoutMs: 4 * HOURS });
-    const r25 = ruleTwentyFive(fx.home, project, name, { handover: ['design_due'] });
+    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.alpha });
     const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt });
     const out = {
       candidate: { id: d.value.id, progress: d.value.progress },
@@ -1281,7 +1293,8 @@ async function alphaStep(ctx, row, fx, project) {
 // The review at Alpha (D7 §10): design_due answered, the review-mode
 // Designer session (Sean browses the Alpha through `surety env open alpha`
 // and types what he sees), its close, design_verdicts confirmed by Sean.
-async function reviewStep(ctx, row, fx, project) {
+// Exported for the kernel lane's case of its end (M512 (k), F29).
+export async function reviewStep(ctx, row, fx, project) {
   const name = stepName(row, 'review');
   const central = row === 'M535' ? ['review_confirmation'] : [];
   return m6Step(ctx, name, async ({ startedAt }) => {
@@ -1304,7 +1317,7 @@ async function reviewStep(ctx, row, fx, project) {
       },
       stall: false,
     });
-    const r25 = ruleTwentyFive(fx.home, project, name);
+    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.review });
     const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt, central });
     const review = s.value;
     const design = (await fx.engine.get(`/v1/projects/${project}/design`)).body ?? null;
