@@ -1,6 +1,6 @@
 // M512, `design_due` and no silent stalls (slice 44; kernel lane). M6 plan
 // §3.6 M512 as amended by E162 item 1; D7 §11 as corrected, §2, §10.1; G5;
-// BS6 §4.1 rule 25 as amended; SEAM.md §§485, 491, 514, 547, 550, 551, 558.
+// BS6 §4.1 rule 25 as amended; SEAM.md §§485, 491, 514, 547, 550, 551, 558, 559.
 //
 // (a) its causes: the UI stages first held `design_pending` (at
 //     derivation); `alpha_complete` under `at_alpha` and under `both`; sent

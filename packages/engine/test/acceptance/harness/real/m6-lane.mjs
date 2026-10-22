@@ -157,11 +157,16 @@ const HOURS = 3_600_000;
 // The kinds each judged step hands to the next step at its end (BS6 §4.1
 // rule 25 as amended, E162 item 1; SEAM.md §541): every other open question
 // fails the step. Read by the steps below and by the kernel lane's cases.
+// The Alpha step hands over `finding_disposition` too (finding F29 of the
+// M535 Waterlog continuation; SEAM.md §559): Alpha deployed under policy
+// can end the step at its first poll, leaving no window to answer one
+// inside it, so it is carried, recorded open, to the review, the last owner
+// checkpoint, which hands over nothing and does not end while one is open.
 export const HANDOVER = Object.freeze({
   spec: Object.freeze([]),
   architecture: Object.freeze(['design_due', ...CORRECTIONS]),
   design: Object.freeze([...CORRECTIONS, 'plan_approval', 'finding_disposition']),
-  alpha: Object.freeze(['design_due']),
+  alpha: Object.freeze(['design_due', 'finding_disposition']),
   review: Object.freeze([]),
 });
 const ACT_RECORD_MINUTES = () => Number(process.env.SURETY_REAL_ACT_RECORD_MINUTES ?? 15);
@@ -441,20 +446,52 @@ export function quietState(a) {
 }
 const describeWaits = (waits) => waits.map((w) => (w.cause === 'deferral' ? `the owner's deferral ${w.decision} until ${w.until}` : `the owner's Designer session ${w.run} open (${w.session_state})`)).join('; ');
 
+// What a handed-over question is about (F29; SEAM.md §559): its finding as
+// the store holds it, or its subject's type and id; a finding the store
+// does not hold is said so, never left out.
+function handedSubject(home, d) {
+  if (d.subject_type === 'design_finding') {
+    const f = one(home, 'SELECT "id", "category", "severity", "message", "interface", "requirement", "status" FROM "design_findings" WHERE "id" = ?', d.subject_id);
+    return f ? { type: 'design_finding', ...f } : { type: 'design_finding', id: d.subject_id, unknown: 'no design_findings row' };
+  }
+  if (d.subject_type === 'finding') {
+    const f = one(home, 'SELECT "id", "category", "effective_severity" AS "severity", "message", "check", "criterion", "status", "disposition" FROM "findings" WHERE "id" = ?', d.subject_id);
+    return f ? { type: 'finding', ...f } : { type: 'finding', id: d.subject_id, unknown: 'no findings row' };
+  }
+  return { type: d.subject_type, id: d.subject_id };
+}
+
+// The record of one question a step hands over: open and not answered, with
+// its options and what it is about; the harness answers nothing.
+const handedEntry = (home, name, to) => (d) => ({
+  kind: d.kind,
+  id: d.id,
+  status: d.status,
+  answered: d.answer !== null && d.answer !== undefined,
+  scope: d.scope,
+  raised_at: d.raised_at,
+  options: (d.options ?? []).map((o) => o.key),
+  subject: handedSubject(home, d),
+  ...(to ? { handed_to: to } : {}),
+  note: `open at ${name}'s end and not answered: handed to ${to ?? 'the next step'} (BS6 §4.1 rule 25 as amended); the harness answers nothing, and nothing it names is resolved, dispositioned or verified by the handover`,
+});
+const describeHanded = (h) => `${h.kind} ${h.id} (${h.scope}${h.subject?.category ? `; ${h.subject.type} ${h.subject.id} ${h.subject.category}${h.subject.requirement ? ` ${h.subject.requirement}` : ''}${h.subject.interface ? ` ${h.subject.interface}` : ''}: ${JSON.stringify(h.subject.message ?? '')}` : ''}); options: ${h.options.join(', ') || 'none'}`;
+
 // Rule 25 at a step's end: every open question fails the step but those of
-// the kinds it hands to the next step, which are recorded. Every design-held
+// the kinds it hands to the next step (`to`, when named), which are recorded
+// open and unanswered with what they are about (F29). Every design-held
 // stage must be accounted for (E162 item 1): one accounted for by nothing
 // fails the step; and a step that ends in an intentional wait (an unexpired
 // deferral, or a Designer session open while a stage is held) is not passed
 // but recorded `waiting` (StepWaiting): a deferral is never success.
-export function ruleTwentyFive(home, project, name, { handover = [], nowMs = Date.now() } = {}) {
+export function ruleTwentyFive(home, project, name, { handover = [], to = null, nowMs = Date.now() } = {}) {
   const open = openDecisions(home, project);
   const kept = open.filter((d) => !handover.includes(d.kind));
   if (kept.length > 0) throw new Error(`${name} not passed: questions raised before its end are still open (BS6 §4.1 rule 25): ${kept.map((d) => `${d.kind} ${d.id}`).join(', ')}`);
   const design = designHoldAccounts(home, project, { nowMs });
   if (design.unaccounted.length > 0) throw new Error(`${name} not passed: design-held stages accounted for by nothing (no open question, no Designer session, no engine work, no unexpired deferral; BS6 §4.1 rule 25, E162 item 1): ${describeHolds(design)}`);
   if (design.waits.length > 0) throw new StepWaiting(`${name} not passed: it ends waiting on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(design.waits)}; holds: ${describeHolds(design)}`, design.waits);
-  return { handed_over: open.map((d) => ({ kind: d.kind, id: d.id })), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
+  return { handed_over: open.map(handedEntry(home, name, to)), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
 }
 
 // ---- driving the project: Sean's answers, the rehearsal's, the stall check -------------------
@@ -1274,7 +1311,20 @@ export async function alphaStep(ctx, row, fx, project) {
       const due = openDecisions(fx.home, project).find((x) => x.kind === 'design_due');
       return c && due ? c : undefined;
     }, { expect: [...CORRECTIONS, 'plan_approval', 'finding_disposition'], what: 'phase 1 complete, Alpha requested under policy, deployed and verified (alpha_deployed); design_due (alpha_review) raised', stall: true, timeoutMs: 4 * HOURS });
-    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.alpha });
+    // Judged even when the step's condition held at its first poll (Alpha deployed before it started): an open
+    // finding_disposition is carried to the review, recorded and printed, never dropped or answered (F29; SEAM.md §559).
+    const review = stepName(row, 'review');
+    const r25 = ruleTwentyFive(fx.home, project, name, { handover: HANDOVER.alpha, to: review });
+    const carried = r25.handed_over.filter((h) => h.kind !== 'design_due');
+    if (carried.length > 0) {
+      tellSean(
+        ctx,
+        [
+          `SURETY REAL LANE: ${name} ends with owner questions open, handed to ${review} (BS6 §4.1 rule 25; SEAM.md §559). None is answered, resolved or verified by the handover; ${review} presents each and does not end until each is answered:`,
+          ...carried.map((h) => `  ${describeHanded(h)}`),
+        ].join('\n'),
+      );
+    }
     const acts = await recordActs(ctx, row, name, { home: fx.home, project, sinceSeq, since: startedAt });
     const out = {
       candidate: { id: d.value.id, progress: d.value.progress },
@@ -1299,6 +1349,9 @@ export async function reviewStep(ctx, row, fx, project) {
   const central = row === 'M535' ? ['review_confirmation'] : [];
   return m6Step(ctx, name, async ({ startedAt }) => {
     const sinceSeq = maxSeq(fx.home);
+    // The questions carried in (the Alpha step's handover, F29): this review does not end while one is open (rule 25).
+    const carriedIn = openDecisions(fx.home, project).filter((d) => d.kind !== 'design_due').map(handedEntry(fx.home, stepName(row, 'alpha'), name));
+    if (!ctx.rehearsal && carriedIn.length > 0) tellSean(ctx, [`SURETY REAL LANE: open owner questions carried into the review (${row}); it does not end until each is answered (BS6 §4.1 rule 25; SEAM.md §559). Each is printed again with its answer lines below:`, ...carriedIn.map((h) => `  ${describeHanded(h)}`)].join('\n'));
     if (!ctx.rehearsal) tellSean(ctx, [`SURETY REAL LANE: the review at Alpha (${row}). Browse the Alpha yourself through the relay:`, `  ${cliLine(fx.home, ['env', 'open', 'alpha', '--project', project])}`, `  ${cliLine(fx.home, ['env', 'close', 'alpha', '--project', project])}`, `Answer design_due \`open\`, then the review-mode session (printed next); confirm, edit or strike the verdicts at design_verdicts.${row === 'M535' ? ` Record your confirmation: owner-act.mjs ${ctx.runDir} review_confirmation` : ''}`].join('\n'));
     // Under the rehearsal the harness opens and closes the owner's relay to Alpha itself (rule 24), reading nothing through it.
     const relay = ctx.rehearsal ? { open: seanTypes(ctx, fx.home, ['env', 'open', 'alpha', '--project', project], 'the relay to Alpha, on 127.0.0.1'), close: seanTypes(ctx, fx.home, ['env', 'close', 'alpha', '--project', project], 'the relay to Alpha closed') } : null;
