@@ -37,7 +37,7 @@ import {
   stale,
 } from './decisions.js';
 import { contentHash, getCandidate, markStale, predecessors, requiredSet } from './evidence.js';
-import { BLOCKING_SEVERITIES, type FindingRow, blocks, findingApplies } from './gates.js';
+import { BLOCKING_SEVERITIES, type FindingRow, blocks, findingApplies, fixJudgement } from './gates.js';
 import { intendOperation, opDetail } from './journal.js';
 import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCompletionFacts, requestVerification, rolloutPartialPreview } from './deploy.js';
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
@@ -238,9 +238,100 @@ const cancelConsequence = (db: Db, item: { id: string; kind: string; project: st
   return command === null ? CANCEL_CONSEQUENCE : `${CANCEL_CONSEQUENCE} The specification change's obligations stay open; \`${command}\` registers its correction again.`;
 };
 
+// ---- fix_unjudged (D-3; objection 209; Sean's ruling of 2026-10-23, errata E180; SEAM.md §562) ----
+
+// The scope of the one blocker a plain verifying fix gets when no
+// evaluation the engine supports can judge it (gates.ts fixJudgement): apart
+// from the item's other blockers, so neither replaces the other.
+export const FIX_UNJUDGED_SCOPE = 'fix_unjudged';
+
+// The question stands while the fix is in that state. The manifest names the
+// fix, its finding, the named check, the current candidate and the missing
+// prerequisite; nothing in it moves while the state holds, so the open
+// question keeps its generation (no duplicate on ticks).
+function fixUnjudgedPreview(tx: Tx, item: WorkRow): Preview | null {
+  const j = fixJudgement(tx.db, item);
+  if (j === null || j.state !== 'unjudged') return null;
+  return {
+    manifest: {
+      work_item: item.id,
+      subject_status: item.status,
+      cause: 'fix_unjudged',
+      finding: j.finding,
+      check: j.check,
+      candidate: j.candidate,
+      missing: j.missing,
+      quarantined: false,
+      evidence: workEvidence(tx, item.id),
+      continuation: null,
+    },
+    options: [
+      {
+        key: 'retry',
+        label: 'Retry',
+        consequence:
+          'Nothing is dispatched and no Builder runs: the fix stays verifying and the engine judges again, at its next tick, whether a gate it evaluates can resolve the finding. If one can, that gate is evaluated; if none can yet, you are asked again.',
+        effect: { work_item: item.id, judge: 'again' },
+      },
+      {
+        key: 'cancel',
+        label: 'Cancel',
+        consequence: `The fix ${item.id} is cancelled, and nothing else. Finding ${j.finding} stays unresolved: its fix disposition is withdrawn and you are asked again how to disposition it.`,
+        effect: { work_item: item.id, to: 'cancelled', finding: j.finding },
+      },
+    ],
+    question:
+      `Fix ${item.id} for finding ${j.finding} (check ${j.check}) is verifying, and no gate the engine evaluates${j.candidate ? ` on ${j.candidate}` : ''} can judge it: ${j.missing}. ` +
+      'Retry to judge it again, or cancel the fix (the finding stays unresolved and its disposition is asked again).',
+    blockedWorkItems: [item.id],
+  };
+}
+
+// At the tick, after the gates (scheduler/tick.ts): each plain verifying fix
+// no supported evaluation can judge gets one fix_unjudged blocker, never a
+// second while one is open. An answered one is not raised again by itself:
+// `retry` leaves the fix as it is, so the next tick asks once more only if it
+// is still unjudged; `cancel` ends the fix. Returns the questions raised.
+export function askUnjudgedFixes(tx: Tx, args: { project: string }): number {
+  const fixes = tx.db.prepare(`SELECT "id" FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND "status" = 'verifying' ORDER BY "seq"`).all(args.project) as { id: string }[];
+  let n = 0;
+  for (const { id } of fixes) {
+    const open = tx.db
+      .prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'blocker' AND "subject_type" = 'work_item' AND "subject_id" = ? AND "scope" = ? AND "status" = 'open' LIMIT 1`)
+      .get(id, FIX_UNJUDGED_SCOPE);
+    if (open) continue;
+    if (fixJudgement(tx.db, getWorkItem(tx, id)!)?.state !== 'unjudged') continue;
+    if (raiseQuestion(tx, { project: args.project, kind: 'blocker', subjectType: 'work_item', subjectId: id, scope: FIX_UNJUDGED_SCOPE })) n++;
+  }
+  return n;
+}
+
+// `cancel`: the fix only. Its finding is not resolved: the `fix`
+// disposition the cancelled work carried out is withdrawn (the finding
+// open again, `finding.reopened`), and the disposition it owes is put to the
+// owner again (scope disposition_owed). Nothing is dispatched.
+function cancelUnjudgedFix(tx: Tx, item: WorkRow, decision: string): void {
+  const finding = parseJson<{ finding?: string }>(item.subject)?.finding ?? null;
+  transitionWork(tx, item, 'cancelled', {}, { decision, cause: 'fix_unjudged', finding });
+  const f = finding === null ? undefined : findingRow(tx.db, finding);
+  if (!f) return;
+  if (f.status === 'dispositioned' && f.disposition === 'fix') {
+    tx.db
+      .prepare(
+        `UPDATE "findings" SET "status" = 'open', "disposition" = NULL, "disposition_authority" = NULL, "disposition_by" = NULL, "disposition_at" = NULL, "disposition_seq" = NULL,
+           "linked_issue" = NULL, "defer_target" = NULL WHERE "id" = ?`,
+      )
+      .run(f.id);
+    tx.emit('finding.reopened', { project: f.project, finding: f.id }, { cause: 'fix_cancelled', work_item: item.id, decision, disposition: 'fix' });
+    markStale(tx, { project: f.project });
+  }
+  raiseQuestion(tx, { project: f.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE });
+}
+
 function blockerPreview(tx: Tx, d: Subject): Preview | null {
   if (d.subject_type === 'work_item') {
     const item = getWorkItem(tx, d.subject_id);
+    if (item && d.scope === FIX_UNJUDGED_SCOPE) return fixUnjudgedPreview(tx, item);
     const blocker = parseJson<{ reason: string; worktree?: string; replan?: string }>(item?.blocker ?? null);
     if (!item || !blocker) return null;
     // Answered `replan` (D6 §5.7): the item waits for the replacement; no
@@ -620,6 +711,13 @@ const BLOCKER: KindSpec = {
   answer(tx, d, option, note, _facts, extra) {
     if (d.subject_type === 'work_item') {
       const item = getWorkItem(tx, d.subject_id)!;
+      // D-3: retry judges again at the next tick and dispatches nothing;
+      // cancel ends the fix only (cancelUnjudgedFix).
+      if (d.scope === FIX_UNJUDGED_SCOPE) {
+        consumeDecision(tx, d, option, note);
+        if (option === 'cancel') cancelUnjudgedFix(tx, item, d.id);
+        return consumed(d, [{ kind: 'tick' }]);
+      }
       // The exception (D6 §6.2; F §5.1): validated before anything is
       // consumed, so a refused answer changes nothing.
       const exception = option === 'build_first' ? buildFirstOf(tx, item, extra ?? {}) : null;

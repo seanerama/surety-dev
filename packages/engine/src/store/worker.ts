@@ -283,7 +283,7 @@ import { recordRefusedReplan } from '../plan/bundle.js';
 import { registerAwaiting, settleAwaiting, sweepAwaiting } from './transitions/awaiting.js';
 import { registerAfterTransition } from './transitions/tx.js';
 import { CORRECTION_KIND as AWAIT_CORRECTION_KIND } from './transitions/protected.js';
-import { dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion, reverifyResolvedCompletions } from './transitions/queue.js';
+import { askUnjudgedFixes, dropBlockQuestion as awaitDropBlocker, raiseQuestion as awaitRaiseQuestion, reverifyResolvedCompletions } from './transitions/queue.js';
 import { correctionProposalDecided as awaitProposalDecided, settleDeferredBatch as awaitDeferredBatch } from '../spec/change.js';
 
 // No work item awaits a decision without one it waits on (slice 37).
@@ -656,6 +656,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.delivery_replans': (tx, a: { project: string }) => registerDeliveryReplans(tx, a),
   'deferral.resolve_unowed': (tx, a: { project: string }) => resolveUnowedDeferrals(tx, a.project),
   'findings.ask_undispositioned': (tx, a: { project: string }) => askUndispositioned(tx, a),
+  'fixes.ask_unjudged': (tx, a: { project: string }) => askUnjudgedFixes(tx, a),
   'deploy.reverify_resolved': (tx, a: { project: string }) => reverifyResolvedCompletions(tx, a),
   'checks.register_due': (tx, a) => registerDue(tx, a),
   'checks.admit': (tx, a) => admitExecution(tx, a),

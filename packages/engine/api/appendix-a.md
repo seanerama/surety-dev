@@ -422,7 +422,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `finding.fix_refused`: emitted by store/transitions/findings.ts
 - `finding.disposition_refused`: emitted by store/transitions/findings.ts
 - `finding.resolved`: emitted by store/transitions/gates.ts, store/transitions/work.ts
-- `finding.reopened`: emitted by store/transitions/protected.ts
+- `finding.reopened`: emitted by store/transitions/protected.ts, store/transitions/queue.ts
 - `finding.check_unbound`: emitted by store/transitions/protected.ts
 - `assessment.proposed`: emitted by store/transitions/findings.ts
 - `assessment.assessed`: emitted by store/transitions/findings.ts

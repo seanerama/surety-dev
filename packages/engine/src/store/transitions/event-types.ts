@@ -99,7 +99,7 @@ export const EVENT_OWNERS = {
   // S1 (E172 item 7; SEAM.md §555): a Reviewer's disposition on a finding the owner dispositioned, refused; the finding as he left it, nothing registered.
   'finding.disposition_refused': 'store/transitions/findings.ts',
   'finding.resolved': 'store/transitions/gates.ts, store/transitions/work.ts',
-  'finding.reopened': 'store/transitions/protected.ts',
+  'finding.reopened': 'store/transitions/protected.ts, store/transitions/queue.ts',
   // The driver's ruling on loop run 1: a finding's check its own proposal did not bring into effect.
   'finding.check_unbound': 'store/transitions/protected.ts',
   'assessment.proposed': 'store/transitions/findings.ts',

@@ -225,6 +225,11 @@ export class Scheduler {
     // The phase (D6 §5.8): its checks registered, its gate evaluated on the
     // facts read here, its completion; once per tick.
     await this.phase(project).catch((err) => log('phase', err, { project }));
+    // D-3 (objection 209; errata E180): a plain verifying fix that no gate the
+    // engine evaluates can judge, with nothing of it in flight, is asked of
+    // the owner once (store/transitions/queue.ts askUnjudgedFixes): never a
+    // silent hold.
+    await this.rt.engine('fixes.ask_unjudged', { project }).catch((err) => log('unjudged fixes', err, { project }));
     // E153 item 1: an approved change left with an implementation obligation
     // after every phase is complete schedules one replan (spec/change.ts
     // registerDeliveryReplans), from durable state at every tick.

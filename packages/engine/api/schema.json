@@ -7454,7 +7454,7 @@
       "owner": "store/transitions/gates.ts, store/transitions/work.ts"
     },
     "finding.reopened": {
-      "owner": "store/transitions/protected.ts"
+      "owner": "store/transitions/protected.ts, store/transitions/queue.ts"
     },
     "finding.check_unbound": {
       "owner": "store/transitions/protected.ts"

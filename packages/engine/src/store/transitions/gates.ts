@@ -17,7 +17,7 @@ import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, parseJson, sha256 } from './common.js';
-import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet } from './evidence.js';
+import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet, stagesHeld } from './evidence.js';
 import { type Missing, missingSubjects } from '../../checks/scope.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
@@ -25,8 +25,8 @@ import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
-import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
-import { findingVerifiable, isObjection, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
+import { type WorkRow, getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
+import { currentCandidate, findingVerifiable, isObjection, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 import { assetFixStages } from '../../design/asset-bindings.js';
@@ -1160,7 +1160,138 @@ export function dueStageGates(db: Db, args: { project: string }): { candidate: s
     // A conformance stage's gate (K11): due through its own lifecycle.
     for (const stage of dueConformanceGates(db, c)) out.push({ candidate: c.id, stage });
   }
+  // D-2 (objection 209; Sean's ruling of 2026-10-23, errata E180; SEAM.md
+  // §562): a plain fix in `verifying` is judged as an `asset_updated` one
+  // is (D7 §6.5): the stage gates, on its current candidate, of the stages
+  // whose scope requires its finding's named check (fixStageGates).
+  const fixes = db.prepare(`SELECT "id", "project", "kind", "status", "subject" FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND "status" = 'verifying' ORDER BY "seq"`).all(args.project) as FixItem[];
+  for (const item of fixes) {
+    const judged = fixStageGates(db, item);
+    if (judged === null) continue;
+    for (const stage of judged.stages) {
+      if (out.some((o) => o.candidate === judged.candidate.id && o.stage === stage)) continue;
+      const latest = db
+        .prepare(`SELECT "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' AND "stage" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`)
+        .get(judged.candidate.id, stage) as { stale: number } | undefined;
+      if (!latest || latest.stale === 1) out.push({ candidate: judged.candidate.id, stage });
+    }
+  }
   return out;
+}
+
+type FixItem = Pick<WorkRow, 'id' | 'project' | 'kind' | 'status' | 'subject'>;
+
+// A plain fix (not `asset_updated`) in `verifying`, its finding, and the
+// check that resolves it; null for any other item. Only a finding that is
+// open or dispositioned `fix` and names a check is judged here: one that
+// names none, or whose check cannot verify it, takes D3 §2.11's
+// check_correction route.
+function plainFix(db: Db, item: FixItem): FindingRow & { source_role: string | null; check: string } | null {
+  if (item.kind !== 'fix' || item.status !== 'verifying') return null;
+  const subject = parseJson<{ finding?: string; cause?: string }>(item.subject) ?? {};
+  if (typeof subject.finding !== 'string' || subject.cause === 'asset_updated') return null;
+  const f = db.prepare('SELECT * FROM "findings" WHERE "id" = ? AND "project" = ?').get(subject.finding, item.project) as (FindingRow & { source_role: string | null }) | undefined;
+  if (!f || f.check === null) return null;
+  if (f.status !== 'open' && !(f.status === 'dispositioned' && f.disposition === 'fix')) return null;
+  return f as FindingRow & { source_role: string | null; check: string };
+}
+
+// The stages held by the candidate whose `stage` scope, under the version,
+// requires the finding's named check as a check that verifies it (its
+// criterion, or for a finding naming none a check covering none). No scope
+// is widened to make one (Sean's D-2: "Do not ... expand check coverage
+// merely to manufacture an evaluation").
+function stagesRequiring(db: Db, project: string, candidate: CandidateRow, f: FindingRow & { check: string }, version: string): string[] {
+  const out: string[] = [];
+  for (const stage of stagesHeld(db, candidate)) {
+    const named = requiredSet(db, { project, candidate, kind: 'stage', stage, version }).required.find((c) => c.key === f.check);
+    const verifies = (f.criterion ?? null) === null ? verifiesByCheck(named) : verifiesCriterion(named, f.criterion ?? null);
+    if (named !== undefined && verifies) out.push(stage);
+  }
+  return out;
+}
+
+// D-2: the stage gates a plain verifying fix is judged at: on its current
+// candidate (D-4: the latest candidate not superseded holding it, itself or
+// by ancestry; repair.ts currentCandidate), once that candidate's
+// verification work is complete, for a finding that applies to it, each
+// stage it holds whose scope requires the named check. null when there is
+// none to make (fixJudgement says why).
+export function fixStageGates(db: Db, item: FixItem): { candidate: CandidateRow; stages: string[] } | null {
+  const f = plainFix(db, item);
+  if (f === null) return null;
+  const candidate = currentCandidate(db, item);
+  if (!candidate || candidate.superseded_by) return null;
+  if (verificationOf(db, candidate.id)?.status !== 'complete') return null;
+  if (!findingApplies(db, f, candidate)) return null;
+  const version = effectiveVersion(db, item.project);
+  if (!version) return null;
+  const stages = stagesRequiring(db, item.project, candidate, f, version.id);
+  return stages.length === 0 ? null : { candidate, stages };
+}
+
+// D-3 (`fix_unjudged`, Sean's ruling of 2026-10-23, errata E180; SEAM.md
+// §562): what can judge a plain verifying fix now.
+// - `judgeable`: D-2 has stage gates for it (due, or evaluated and current).
+// - `in_flight`: ordinary work will still move it: a run of it not ended; a
+//   nomination due; a verification, review or phase verification of its
+//   current candidate not complete or cancelled; a stage's own work that
+//   candidate holds not complete or cancelled; a stage gate due on it.
+// - `unjudged`: none of these, and no supported evaluation can judge it:
+//   no candidate not superseded holds it; its candidate's verification is
+//   not complete; its finding does not apply there; or no stage scope of
+//   it requires the named check. `missing` names the prerequisite.
+// - null: not a plain verifying fix of a finding its check can verify
+//   (another route owns it), or unknown (no effective version): never
+//   called unjudged.
+export type FixJudgement =
+  | { state: 'judgeable'; candidate: string; stages: string[] }
+  | { state: 'in_flight'; candidate: string | null; why: string }
+  | { state: 'unjudged'; candidate: string | null; finding: string; check: string; missing: string };
+
+export function fixJudgement(db: Db, item: FixItem): FixJudgement | null {
+  const f = plainFix(db, item);
+  if (f === null) return null;
+  const version = effectiveVersion(db, item.project);
+  if (!version || !findingVerifiable(db, f, version.id)) return null;
+  if (db.prepare(`SELECT 1 FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended' LIMIT 1`).get(item.id) !== undefined) return { state: 'in_flight', candidate: null, why: 'a run of it has not ended' };
+  const nomination = db.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(item.project) as { nomination_due: string | null } | undefined;
+  if (nomination?.nomination_due) return { state: 'in_flight', candidate: null, why: 'a nomination is due' };
+  const unjudged = (candidate: string | null, missing: string): FixJudgement => ({ state: 'unjudged', candidate, finding: f.id, check: f.check, missing });
+  const candidate = currentCandidate(db, item);
+  if (!candidate || candidate.superseded_by) return unjudged(null, 'no candidate that is not superseded holds the fix, itself or by ancestry');
+  const pending = db
+    .prepare(
+      `SELECT "id", "kind" FROM "work_items" WHERE "project" = ? AND "kind" IN ('verification', 'review', 'phase_verification') AND json_extract("subject", '$.candidate') = ?
+         AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" LIMIT 1`,
+    )
+    .get(item.project, candidate.id) as { id: string; kind: string } | undefined;
+  if (pending) return { state: 'in_flight', candidate: candidate.id, why: `${pending.kind} ${pending.id} of ${candidate.id} is not complete` };
+  for (const w of heldByAncestry(db, candidate)) {
+    const held = db.prepare('SELECT "kind", "status" FROM "work_items" WHERE "id" = ?').get(w) as { kind: string; status: string } | undefined;
+    if (held?.kind === 'stage_build' && held.status !== 'complete' && held.status !== 'cancelled') return { state: 'in_flight', candidate: candidate.id, why: `the stage work ${w} it holds is ${held.status}` };
+  }
+  const verification = verificationOf(db, candidate.id);
+  if (verification?.status !== 'complete') {
+    return unjudged(
+      candidate.id,
+      verification === undefined ? `candidate ${candidate.id} has no verification work, so no stage gate of it is ever due` : `the verification ${verification.id} of candidate ${candidate.id} is ${verification.status}, so no stage gate of it is due`,
+    );
+  }
+  if (dueStageGates(db, { project: item.project }).some((g) => g.candidate === candidate.id)) return { state: 'in_flight', candidate: candidate.id, why: `a stage gate of ${candidate.id} is due` };
+  if (!findingApplies(db, f, candidate)) return unjudged(candidate.id, `finding ${f.id} does not apply to candidate ${candidate.id} (an approved applicability assessment excludes it)`);
+  const stages = stagesRequiring(db, item.project, candidate, f, version.id);
+  if (stages.length > 0) return { state: 'judgeable', candidate: candidate.id, stages };
+  // Where the check is required instead, as the owner reads it.
+  const at: string[] = [];
+  if (requiredSet(db, { project: item.project, candidate, kind: 'alpha_authorize', stage: null, version: version.id }).required.some((c) => c.key === f.check)) {
+    at.push('at alpha_authorize, which the engine evaluates only for a proposed deployment authorization');
+  }
+  if (phaseScopeChecks(db, item.project, candidate, version.id).some((c) => c.key === f.check)) at.push('at the phase gate, which the engine evaluates only at the phase completion');
+  return unjudged(
+    candidate.id,
+    `no stage scope of candidate ${candidate.id} requires check ${f.check}${at.length > 0 ? `; it is required only ${at.join(' and ')}` : ''}, so no stage gate the engine evaluates can resolve finding ${f.id}`,
+  );
 }
 
 // What the main thread reads before an evaluation (gates/prepare.ts): the
