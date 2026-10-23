@@ -20,6 +20,17 @@
 // a check of its stage scope failing on a fix's candidate sends the stage
 // back; a fix keeps E43's fix candidate.
 //
+// D-4 (Sean's ruling of 2026-10-23 on objection 209, errata E180, amending
+// E100 item 1 narrowly; SEAM.md §562): a fix's current candidate may be the
+// latest non-superseded candidate holding it, directly or by ancestry. Case
+// (a) D-4: fix 1's candidate superseded by fix 2's (which holds fix 1 by
+// ancestry), its stage verified before either: supersession alone dispatches
+// nothing and sends nothing back; a failure recorded on the superseded
+// candidate triggers nothing; its named check failing on the current
+// candidate sends fix 1 back once (`check_repair` naming that candidate),
+// under the existing limits and deduplication (ticks, a restart and a second
+// failure there take no second repair).
+//
 // Kernel lane: checks discovered from the project's definitions, registered
 // at nomination and moved through the scripted check boundary (SEAM.md
 // §190); case (f) declares its checks with the fixture after the nomination
@@ -51,6 +62,7 @@ import {
   stepsOf,
   x2Blocker,
 } from './harness/checks/repair.mjs';
+import { supersededFix } from './harness/checks/stuck-fix.mjs';
 
 const REPAIR_WRITE = roleThat([step.write('src/repair.js', 'export const repaired = true;\n')]);
 const treeOf = (repo, rev) => gitQuiet(repo, ['rev-parse', `${rev}^{tree}`]);
@@ -301,5 +313,43 @@ describe('M234 the repair loop', () => {
     await tick(fx.engine, p.id);
     assert.equal(runsOf(fx.home, item).length, 1, 'no second Builder run');
   });
-});
 
+  test("(a) D-4 (objection 209; E180): a fix's current candidate is the latest non-superseded candidate holding it by ancestry: supersession alone sends nothing back and dispatches no Builder; a superseded candidate's failure triggers nothing; its named check failing on the current candidate sends it back once, naming that candidate, and ticks, a restart and a second failure there take no second repair", async (t) => {
+    const fx = await scriptedEngine(t);
+    // The stage verified first (no stage work verifying to be repaired instead); two owner fixes on its candidate's
+    // findings; fix 1's candidate superseded by fix 2's before either is verified.
+    const s = await supersededFix(fx, { verifyC2: false, verifyC3: false });
+    const [fix1] = s.fixes;
+    const p = s.p;
+    await pauseProject(fx.engine, p.id);
+    const runs = runsOf(fx.home, fix1.id).length;
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.deepEqual([itemRow(fx.home, fix1.id).status, repairsOf(fx.home, fix1.id).length, runsOf(fx.home, fix1.id).length], ['verifying', 0, runs], 'supersession alone: fix 1 still verifying, nothing sent back, no Builder run');
+    // A failure on the superseded candidate: never current evidence, it triggers nothing (D3 §2.5; Q9).
+    const ids = checkIds(fx.home, p.id);
+    await postResult(fx.engine, p.id, { candidate: s.c2.id, check: ids.login, exit_status: 1 });
+    await tick(fx.engine, p.id, { rounds: 2 });
+    assert.deepEqual([itemRow(fx.home, fix1.id).status, repairsOf(fx.home, fix1.id).length], ['verifying', 0], "a superseded candidate's failure sends nothing back");
+    // The named check failing on the current candidate, which holds fix 1 by ancestry.
+    const reg = await tickUntil(fx.engine, p.id, () => registrationsBy(fx.home, s.c3.id).login, { max: 8, what: "the current candidate's registration of login" });
+    await recordExit(fx.engine, reg.id, 1, { output: 'D-4: login failed on the current candidate\n' });
+    const row = itemRow(fx.home, fix1.id);
+    assert.deepEqual(
+      [row.status, row.repair_attempts, repairsOf(fx.home, fix1.id).length, row.check_repair?.candidate ?? null],
+      ['eligible', 1, 1, s.c3.id],
+      `D-4: fix 1's named check failed on ${s.c3.id}, the latest non-superseded candidate holding it by ancestry: it must be sent back once, check_repair naming that candidate ` +
+        `(observed: ${row.status}, repair_attempts ${row.repair_attempts}, ${repairsOf(fx.home, fix1.id).length} repairs, check_repair ${JSON.stringify(row.check_repair)}; ` +
+        `its current candidate is still its own ${s.c2.id}, superseded by ${s.c2.superseded_by} (E100 item 1 as built, repair.ts currentCandidate), whose results trigger nothing)`,
+    );
+    await tick(fx.engine, p.id, { rounds: 2 });
+    await fx.engine.kill();
+    await fx.start();
+    await tick(fx.engine, p.id);
+    const { login: again } = await operatorRequest(fx.engine, p.id, s.c3.id, ['login']);
+    await recordExit(fx.engine, again, 1, { output: 'D-4: login fails again on the same candidate\n' });
+    await tick(fx.engine, p.id);
+    const after = itemRow(fx.home, fix1.id);
+    assert.deepEqual([after.repair_attempts, repairsOf(fx.home, fix1.id).length, after.check_repair?.candidate], [1, 1, s.c3.id], 'one repair for the item, candidate and generation, however many ticks, restarts and failures');
+    assert.equal(runsOf(fx.home, fix1.id).length, runs, 'paused: no Builder run yet; the repair is the existing loop, under its limits');
+  });
+});

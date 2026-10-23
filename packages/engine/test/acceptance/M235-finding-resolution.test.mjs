@@ -61,7 +61,7 @@ import { rmSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 import { consume, openDecision } from './harness/decisions.mjs';
-import { postResult, raiseFindings, reasonSubjects, review, stageGate, successor } from './harness/gates.mjs';
+import { acceptedRun, postResult, raiseFindings, reasonSubjects, review, stageGate, successor } from './harness/gates.mjs';
 import { permittedEdit, roleThat, roleThatHolds, runToHold, waitForCandidates } from './harness/gitruns.mjs';
 import { eventsOfType, outOfBand, workItemsOf } from './harness/journal.mjs';
 import { readGate } from './harness/reads.mjs';
@@ -73,7 +73,7 @@ import { withStore } from './harness/store.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { buildAndNominate, checkIds, def, findingRow, missingFor, missingVerifications, registrationsBy, repairProject, workFor } from './harness/checks/repair.mjs';
-import { fixState, judgedOrAsked, supersededFix, uncandidatedFix } from './harness/checks/stuck-fix.mjs';
+import { ALPHA_ONLY, ALPHA_ONLY_REQUIRED, defect, fixProject, fixState, fixUnjudged, legacyShape, ownerFix, supersededFix, uncandidatedFix, verified } from './harness/checks/stuck-fix.mjs';
 
 const DEFS = Object.freeze({
   login: def('acceptance', { criteria: ['R1.1'] }),
@@ -416,39 +416,172 @@ describe('M235 finding resolution', () => {
     assert.deepEqual(findingsOfProject(fx, p.id), [], 'no finding is stored');
   });
 
-  test("(a) F26 (objection 209): a finding a Verifier's check_correction run raises (its work names no candidate), dispositioned fix by the owner, its fix built and its candidate verified with login passing after the disposition, the stage gate the engine evaluates by itself satisfied: the finding is resolved and the fix complete, or an open owner question names them; never the fix left verifying with nothing asked", async (t) => {
+  // ---- Objection 209 under Sean's rulings of 2026-10-23 (errata E180; SEAM.md §562) ----------------------------------
+
+  test("(a) F26, D-1 and D-2 (objection 209; E180): a finding a Verifier's check_correction run raises (its work names no candidate, its reported scope candidate) is stored at project scope, its reported scope and the reason kept in finding.raised; dispositioned fix by the owner, its fix's candidate verified with login passing after the disposition, the stage gate the engine evaluates by itself resolves it and the fix completes; no blocker is raised", async (t) => {
     const fx = await scriptedEngine(t);
     const s = await uncandidatedFix(fx);
-    const verdict = judgedOrAsked(fx.home, s.p.id, s.fix.id, s.finding.id);
+    const st = fixState(fx.home, s.p.id, s.fix.id, s.finding.id);
     assert.ok(
-      verdict.ok,
-      `F26: the fix ${s.fix.id} is left ${verdict.state.fix} and its finding ${s.finding.id} ${verdict.state.finding?.status} with nothing asked about either, ` +
-        `although login passed on the fix's candidate ${s.c2.id} after the disposition and the engine's own stage gate there was satisfied: ` +
-        `the finding is recorded scope ${verdict.state.finding?.scope} with candidate ${verdict.state.finding?.candidate}, so it applies to no candidate (D1 §9.3 (5); gates.ts findingApplies) ` +
-        `and no evaluation read it (read by ${JSON.stringify(verdict.state.read_by)} of ${JSON.stringify(verdict.state.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}); ` +
-        `D3 §2.11 resolves a fix only in an evaluation of a candidate it applies to, and E36 item 4 completes the fix only with that resolution, so it can never complete; ` +
-        `the owner was told ${JSON.stringify((s.owed.options ?? []).find((o) => o.key === 'fix')?.consequence_text)}${verdict.dropped ? '; and the fix is complete with its finding unresolved, a drop' : ''}`,
+      st.finding?.status === 'resolved' && st.fix === 'complete',
+      `F26 (D-1, D-2): a judgeable fix must resolve its finding and complete: the fix ${s.fix.id} is ${st.fix} and its finding ${s.finding.id} ${st.finding?.status}, ` +
+        `although login passed on the fix's candidate ${s.c2.id} after the disposition and the engine's own stage gate there was satisfied; ` +
+        `the finding is stored scope ${st.finding?.scope}, candidate ${st.finding?.candidate}, which applies to no candidate (gates.ts findingApplies), and no evaluation read it ` +
+        `(read by ${JSON.stringify(st.read_by)} of ${JSON.stringify(st.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}); the owner was told ${JSON.stringify((s.owed.options ?? []).find((o) => o.key === 'fix')?.consequence_text)}`,
     );
+    const by = st.finding.resolution_verification;
+    const evaluation = st.evaluations.find((e) => e.id === by.evaluation);
+    assert.deepEqual([evaluation?.candidate, evaluation?.gate_kind], [s.c2.id, 'stage'], `resolved by a stage evaluation of the fix's candidate (${JSON.stringify(evaluation)})`);
+    assert.equal(by.check_result, s.results.login.id, "through login's result on the fix's candidate, registered after the disposition");
+    // D-1: stored at project scope; the reported scope and the reason kept in the audit record.
+    const row = findingRow(fx.home, s.finding.id);
+    assert.deepEqual([row.scope, row.candidate, row.subject_id], ['project', null, s.p.id], `D-1: a role finding with no source candidate is stored at project scope (stored ${JSON.stringify([row.scope, row.candidate, row.subject_id])})`);
+    const raised = eventsOfType(fx.home, 'finding.raised').filter((e) => e.subject?.finding === s.finding.id);
+    assert.equal(raised.length, 1, 'one finding.raised');
+    assert.deepEqual(
+      [raised[0].payload?.scope, raised[0].payload?.reported_scope, raised[0].payload?.scope_reason],
+      ['project', 'candidate', 'no_source_candidate'],
+      `D-1: finding.raised records the scope applied, the scope the role reported and the reason for the normalization (payload ${JSON.stringify(raised[0].payload)})`,
+    );
+    // A judgeable fix is judged, never asked about: no blocker of any reason about it.
+    assert.deepEqual(fixUnjudged(fx.home, s.fix.id), [], 'no fix_unjudged blocker about it');
+    const open = withStore(fx.home, (db) => db.prepare(`SELECT "id", "kind" FROM "decisions" WHERE "subject_id" = ? AND "status" = 'open'`).all(s.fix.id));
+    assert.deepEqual(open, [], `and no open question about it (${JSON.stringify(open)})`);
   });
 
-  test("(a) F33 (objection 209): a plain fix whose candidate a later fix's candidate supersedes (holding it by ancestry), the stage verified before either, login passing on both fix candidates after the dispositions, every verification complete and the engine ticked: the finding is resolved and the fix complete, or an open owner question names them; never the fix left verifying with nothing due and nothing asked", async (t) => {
+  test("(a) F33, D-2 (objection 209; E180): two plain fixes whose findings were raised after their stage was verified, fix 1's candidate superseded by fix 2's before it was verified (holding fix 1 by ancestry), fix 2's candidate verified with login passing after both dispositions: the engine schedules the stage gate on that current candidate by itself, which resolves both findings from its own results and completes both fixes; no superseded candidate's result is evidence, no other candidate is evaluated, the verified stage is not reopened and its scope gains no check", async (t) => {
     const fx = await scriptedEngine(t);
-    const s = await supersededFix(fx);
-    const [fix1] = s.fixes;
-    const [f1] = s.findings;
-    const verdict = judgedOrAsked(fx.home, s.p.id, fix1.id, f1.id);
-    const second = fixState(fx.home, s.p.id, s.fixes[1].id, s.findings[1].id);
-    assert.ok(
-      verdict.ok,
-      `F33: the fix ${fix1.id} is left ${verdict.state.fix}, held by its own candidate ${s.c2.id} (superseded by ${s.c2.superseded_by}) and by ${s.c3.id} by ancestry, and its finding ${f1.id} ${verdict.state.finding?.status}, with nothing asked about either, ` +
-        `although login passed on both candidates after the disposition: no evaluation read it (evaluations: ${JSON.stringify(verdict.state.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}), ` +
-        `because the engine's due gates (gates.ts dueStageGates) are only those of a verifying stage_build or an asset_updated fix held by a candidate, and its stage was verified before the finding; ` +
-        `the superseded candidate is skipped (Q9) and the fix's current candidate for a repair is that superseded one (E100 item 1), so nothing will ever judge it (fix 2: ${second.fix}, its finding ${second.finding?.status})` +
-        `${verdict.dropped ? '; and the fix is complete with its finding unresolved, a drop' : ''}`,
+    const s = await supersededFix(fx, { verifyC2: false });
+    // A superseded candidate's pass, recorded after both dispositions: never evidence (D3 Q9).
+    const ids = checkIds(fx.home, s.p.id);
+    const stale = await postResult(fx.engine, s.p.id, { candidate: s.c2.id, check: ids.login, exit_status: 0 });
+    await tick(fx.engine, s.p.id, { rounds: 4 });
+    const disposedAt = s.findings.map((f) => f.disposition_at).sort()[0];
+    for (const [i, fix] of s.fixes.entries()) {
+      const f = s.findings[i];
+      const st = fixState(fx.home, s.p.id, fix.id, f.id);
+      assert.ok(
+        st.finding?.status === 'resolved' && st.fix === 'complete',
+        `F33 (D-2): a judgeable fix must resolve its finding and complete: fix ${i + 1} ${fix.id} is ${st.fix}, held by ${JSON.stringify(st.holders)} and by ${s.c3.id} by ancestry, its finding ${f.id} ${st.finding?.status}, ` +
+          `although login passed on ${s.c3.id}, the current candidate holding it, after the disposition and that candidate's verification is complete: no gate was scheduled for it ` +
+          `(evaluations: ${JSON.stringify(st.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}); gates.ts dueStageGates makes due only a verifying stage_build's gates or an asset_updated fix's`,
+      );
+      const by = st.finding.resolution_verification;
+      const evaluation = st.evaluations.find((e) => e.id === by.evaluation);
+      assert.deepEqual([evaluation?.candidate, evaluation?.gate_kind], [s.c3.id, 'stage'], `fix ${i + 1}: resolved by a stage evaluation of the current candidate (${JSON.stringify(evaluation)})`);
+      assert.equal(by.check_result, s.onC3.login.id, `fix ${i + 1}: from the current candidate's own login result, never the superseded one's (${stale.id})`);
+      assert.ok(s.onC3.login.execution_seq > f.disposition_seq, `fix ${i + 1}: fresh evidence, registered after the disposition`);
+    }
+    const evaluations = withStore(fx.home, (db) => db.prepare('SELECT "id", "candidate", "gate_kind", "stage", "check_states", "created_at" FROM "gate_evaluations" WHERE "project" = ? ORDER BY rowid').all(s.p.id));
+    const later = evaluations.filter((e) => e.created_at >= disposedAt);
+    assert.deepEqual([...new Set(later.map((e) => e.candidate))], [s.c3.id], `after the dispositions only the current holder is evaluated: neither the superseded candidate nor candidate 1, which does not hold the fixes (${JSON.stringify(later.map((e) => [e.candidate, e.gate_kind]))})`);
+    const before = evaluations.find((e) => e.candidate === s.c1.id && e.gate_kind === 'stage');
+    for (const e of later.filter((x) => x.gate_kind === 'stage')) {
+      assert.deepEqual(Object.keys(JSON.parse(e.check_states)).sort(), Object.keys(JSON.parse(before.check_states)).sort(), `the stage scope evaluated is the stage's own, no check added to make an evaluation (${e.check_states})`);
+    }
+    const stageWork = workItem(fx.home, s.stage);
+    assert.equal(stageWork.status, 'complete', 'the verified stage is not reopened: its work still complete');
+    const stageEvents = eventsOfType(fx.home, 'work.advanced').concat(eventsOfType(fx.home, 'work.transitioned')).filter((e) => e.subject?.work_item === s.stage && e.at >= disposedAt);
+    assert.deepEqual(stageEvents.map((e) => [e.type, e.payload?.from, e.payload?.to]), [], 'and no transition of it after the dispositions');
+    assert.equal(withStore(fx.home, (db) => db.prepare('SELECT "status" FROM "stages" WHERE "id" = ?').get(s.p.stages[0].id)).status, 'verified', 'the stage still verified');
+    for (const fix of s.fixes) assert.deepEqual(fixUnjudged(fx.home, fix.id), [], `no fix_unjudged blocker about a judgeable fix ${fix.id}`);
+  });
+
+  test("(c) D-3 (objection 209; E180): a fix no supported evaluation can judge (its named check login required at alpha_authorize only, in no stage scope of the candidate holding it) gets exactly one actionable fix_unjudged blocker naming the fix, its finding, the check and the missing prerequisite, never while its run or its candidate's verification is in flight; repeated ticks raise no second; retry re-judges and dispatches no Builder; cancel cancels the fix only, the finding unresolved and its owed disposition presented again", async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, c1, ctx } = await fixProject(fx, { defs: ALPHA_ONLY, required: ALPHA_ONLY_REQUIRED });
+    await verified(fx, p, c1, { required: ALPHA_ONLY_REQUIRED });
+    const stage = p.stages[0].work_item;
+    await tickUntil(fx.engine, p.id, () => workItem(fx.home, stage).status === 'complete', { max: 8, what: 'the stage verified on candidate 1' });
+    const [found] = await raiseFindings(fx, p.id, c1.id, [defect('D-3: login refuses a valid session')], { kind: 'verification' });
+    const { fix } = await ownerFix(fx, p, found);
+    assert.deepEqual(workFor(fx.home, p.id, 'check_correction', found.id), [], 'the fixture is live: login, a required acceptance check covering R1.1 at alpha_authorize, verifies the finding (no missing verification, no check_correction)');
+    // Ordinary work in flight is not the condition: the fix's run held, then its candidate's verification pending.
+    fx.scripted.script(fix.id, [roleThatHolds([], [step.write('src/fix-d3.js', 'export const fixed = true;\n')], { nominate: true })]);
+    await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'continue');
+    await runToHold(fx, p.id, fix.id);
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.deepEqual(fixUnjudged(fx.home, fix.id), [], "the fix's run in flight: no fix_unjudged");
+    fx.scripted.release(fix.id);
+    await waitForRun(fx.home, fix.id, { state: 'ended' });
+    const [, c2] = await waitForCandidates(fx, p.id, 2);
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.deepEqual(fixUnjudged(fx.home, fix.id), [], "its candidate's verification pending: no fix_unjudged");
+    await verified(fx, p, c2, { required: ALPHA_ONLY_REQUIRED });
+    await tick(fx.engine, p.id, { rounds: 4 });
+    const raised = fixUnjudged(fx.home, fix.id);
+    const st = fixState(fx.home, p.id, fix.id, found.id);
+    assert.equal(
+      raised.length,
+      1,
+      `D-3: a fix no supported evaluation can judge gets one fix_unjudged blocker: ${raised.length} raised; the fix ${fix.id} is ${st.fix}, its finding ${st.finding?.status}, nothing asked about either (${JSON.stringify(st.asked)}), ` +
+        `login passed on ${c2.id} after the disposition but no stage scope requires it and no evaluation read it (${JSON.stringify(st.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))})`,
     );
+    const [blocker] = raised;
+    assert.equal(blocker.status, 'open', 'open');
+    assert.deepEqual([blocker.dependency_manifest.cause, blocker.dependency_manifest.finding, blocker.dependency_manifest.check], ['fix_unjudged', found.id, 'login'], `naming the finding and the check (${JSON.stringify(blocker.dependency_manifest)})`);
+    assert.ok(typeof blocker.dependency_manifest.missing === 'string' && blocker.dependency_manifest.missing.length > 0, `and the missing prerequisite (${JSON.stringify(blocker.dependency_manifest.missing)})`);
+    for (const named of [fix.id, found.id, 'login']) assert.ok(blocker.question.includes(named), `its question names ${named} (${blocker.question})`);
+    assert.deepEqual((blocker.options ?? []).map((o) => o.key).sort(), ['cancel', 'retry'], `retry or cancel (${JSON.stringify((blocker.options ?? []).map((o) => o.key))})`);
+    assert.equal(workItem(fx.home, fix.id).status, 'verifying', 'the fix not sent back');
+    const checksAdded = withStore(fx.home, (db) => db.prepare(`SELECT "check_states" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage'`).all(c2.id)).filter((e) => Object.keys(JSON.parse(e.check_states)).includes(checkIds(fx.home, p.id).login));
+    assert.deepEqual(checksAdded, [], 'no stage scope gains login to manufacture an evaluation');
+    await tick(fx.engine, p.id, { rounds: 4 });
+    assert.equal(fixUnjudged(fx.home, fix.id).length, 1, 'repeated ticks raise no second');
+    const runsBefore = runsOf(fx.home, fix.id).length;
+    // retry: eligibility judged again; still impossible, so no Builder run and the question asked again, once.
+    await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'retry');
+    await tick(fx.engine, p.id, { rounds: 5 });
+    assert.equal(runsOf(fx.home, fix.id).length, runsBefore, 'retry dispatches no Builder run while evaluation stays impossible');
+    assert.equal(workItem(fx.home, fix.id).status, 'verifying', 'the fix still verifying, not eligible');
+    assert.equal(fixUnjudged(fx.home, fix.id, { open: true }).length, 1, 'still unjudgeable: one fix_unjudged open again, never none (no silent hold)');
+    assert.ok(fixUnjudged(fx.home, fix.id).length <= 2, `no automatic retry loop: at most one more raised (${fixUnjudged(fx.home, fix.id).length})`);
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.equal(fixUnjudged(fx.home, fix.id).length <= 2 && fixUnjudged(fx.home, fix.id, { open: true }).length === 1, true, 'and no more on further ticks');
+    // cancel: the fix only; the finding unresolved, its owed disposition presented again.
+    const cancelledBefore = workItemsOf(fx.home, p.id).filter((w) => w.status === 'cancelled').map((w) => w.id);
+    await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'cancel');
+    await tick(fx.engine, p.id, { rounds: 3 });
+    assert.equal(workItem(fx.home, fix.id).status, 'cancelled', 'cancel cancels the fix');
+    assert.deepEqual(workItemsOf(fx.home, p.id).filter((w) => w.status === 'cancelled').map((w) => w.id).filter((id) => !cancelledBefore.includes(id)), [fix.id], 'and nothing else');
+    assert.notEqual(findingRow(fx.home, found.id).status, 'resolved', 'the finding unresolved');
+    const owedAgain = withStore(fx.home, (db) => db.prepare(`SELECT "id", "scope" FROM "decisions" WHERE "kind" = 'finding_disposition' AND "subject_id" = ? AND "status" = 'open'`).all(found.id));
+    assert.equal(owedAgain.length, 1, `its owed finding_disposition presented again (${JSON.stringify(owedAgain)})`);
+    assert.equal(runsOf(fx.home, fix.id).length, runsBefore, 'no Builder run');
+    assert.equal(workItem(fx.home, stage).status, 'complete', 'the stage untouched');
+  });
+
+  test("(a) D-1 legacy rows (objection 209; E180): findings already stored with scope candidate and no candidate (the shape the engine wrote before D-1, made in the test's own store with the engine stopped) are read by future evaluations as project findings: a dispositioned fix one is resolved when its check passes after the disposition and its fix completes, an open one stands at the gate; neither row's stored scope is rewritten and an evaluation recorded before is unchanged", async (t) => {
+    const fx = await scriptedEngine(t);
+    const { p, c1, ctx } = await fixProject(fx);
+    // An evaluation recorded before: candidate 1's stage gate, its checks not yet run.
+    const historical = await stageGate(fx, ctx, c1);
+    const columns = (id) => withStore(fx.home, (db) => db.prepare('SELECT "id", "candidate", "gate_kind", "outcome", "reasons", "check_states", "inputs_snapshot", "inputs_hash", "missing_verifications" FROM "gate_evaluations" WHERE "id" = ?').get(id));
+    const then = columns(historical.id);
+    const { run } = await acceptedRun(fx, p.id, 'check_correction', {
+      result: { findings: [defect('legacy: dispositioned fix', { scope: 'candidate' }), defect('legacy: left open', { scope: 'candidate' })] },
+    });
+    const [fixed, open] = withStore(fx.home, (db) => db.prepare('SELECT * FROM "findings" WHERE "source_run" = ? ORDER BY "seq"').all(run.id));
+    const { fix } = await ownerFix(fx, p, fixed);
+    const c2 = await successor(fx, ctx, { work: fix.id });
+    const stored = await legacyShape(fx, p.id, [fixed.id, open.id]);
+    assert.deepEqual(stored.map((r) => [r.scope, r.candidate]), [['candidate', null], ['candidate', null]], 'the fixture is live: both rows in the malformed shape');
+    const results = await verified(fx, p, c2);
+    await tick(fx.engine, p.id, { rounds: 4 });
+    const st = fixState(fx.home, p.id, fix.id, fixed.id);
+    assert.ok(
+      st.finding?.status === 'resolved' && st.fix === 'complete',
+      `D-1 legacy: a stored finding with scope candidate and no candidate must be read as a project finding by future evaluations: the dispositioned one ${fixed.id} is ${st.finding?.status}, its fix ${st.fix}, ` +
+        `read by ${JSON.stringify(st.read_by)} of ${JSON.stringify(st.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}, although login passed on ${c2.id} after its disposition`,
+    );
+    assert.equal(st.finding.resolution_verification.check_result, results.login.id, "resolved through login's fresh result on the fix's candidate");
+    const latest = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage' ORDER BY rowid DESC LIMIT 1`).get(c2.id));
+    const unsatisfied = (JSON.parse(latest.reasons) ?? []).filter((r) => r.code === 'FINDING_UNSATISFIED').flatMap((r) => r.subjects ?? []);
+    assert.ok(unsatisfied.includes(open.id), `the open legacy finding stands at the gate as a project finding (FINDING_UNSATISFIED: ${JSON.stringify(unsatisfied)})`);
+    assert.deepEqual([fixed.id, open.id].map((id) => [findingRow(fx.home, id).scope, findingRow(fx.home, id).candidate]), [['candidate', null], ['candidate', null]], "neither row's stored scope is rewritten");
+    assert.deepEqual(columns(historical.id), then, 'the evaluation recorded before is unchanged');
   });
 });
-
 
 const withResult = (fx, id) => withStore(fx.home, (db) => db.prepare('SELECT * FROM "check_results" WHERE "id" = ?').get(id));
 const findingsOfProject = (fx, project) => withStore(fx.home, (db) => db.prepare('SELECT * FROM "findings" WHERE "project" = ?').all(project));
