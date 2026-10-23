@@ -73,7 +73,7 @@ import { withStore } from './harness/store.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { buildAndNominate, checkIds, def, findingRow, missingFor, missingVerifications, registrationsBy, repairProject, workFor } from './harness/checks/repair.mjs';
-import { ALPHA_ONLY, ALPHA_ONLY_REQUIRED, defect, fixProject, fixState, fixUnjudged, legacyShape, ownerFix, supersededFix, uncandidatedFix, verified } from './harness/checks/stuck-fix.mjs';
+import { ALPHA_ONLY, ALPHA_ONLY_REQUIRED, defect, fixProject, fixState, fixUnjudged, legacyShape, ownerFix, supersededFix, uncandidatedFix, unjudgedFix, verified } from './harness/checks/stuck-fix.mjs';
 
 const DEFS = Object.freeze({
   login: def('acceptance', { criteria: ['R1.1'] }),
@@ -580,6 +580,25 @@ describe('M235 finding resolution', () => {
     assert.ok(unsatisfied.includes(open.id), `the open legacy finding stands at the gate as a project finding (FINDING_UNSATISFIED: ${JSON.stringify(unsatisfied)})`);
     assert.deepEqual([fixed.id, open.id].map((id) => [findingRow(fx.home, id).scope, findingRow(fx.home, id).candidate]), [['candidate', null], ['candidate', null]], "neither row's stored scope is rewritten");
     assert.deepEqual(columns(historical.id), then, 'the evaluation recorded before is unchanged');
+  });
+  test("(c) D-3, the blocked fix (objection 209; E180; Sean's acceptance of 2026-10-23: a blocked fix may stay verifying \"provided the blocker is visible, prevents inappropriate dispatch and is distinguished from runnable work by the harness\"): its fix_unjudged blocker is open and readable through the decisions reads, naming the fix, its finding and check; while it is open, nothing is dispatched for the fix and no Builder runs, however many ticks of the unpaused project", async (t) => {
+    const fx = await scriptedEngine(t);
+    const s = await unjudgedFix(fx);
+    // Visible: in the open decisions read and the decision read, with its cause and what it names.
+    const list = await fx.engine.get(`/v1/projects/${s.p.id}/decisions`);
+    assert.equal(list.status, 200, 'the decisions read answers');
+    assert.ok(JSON.stringify(list.body).includes(s.blocker.id), `the blocker is in the open decisions read (${JSON.stringify(list.body).slice(0, 400)})`);
+    const one = await fx.engine.get(`/v1/projects/${s.p.id}/decisions/${s.blocker.id}`);
+    assert.equal(one.status, 200, 'the decision read answers');
+    const text = JSON.stringify(one.body);
+    for (const named of ['fix_unjudged', s.fix.id, s.finding.id, 'login']) assert.ok(text.includes(named), `the decision read shows ${named} (${text.slice(0, 600)})`);
+    // Held from dispatch: the project unpaused, ticks run; no run of the fix, no Builder run of anything.
+    const builders = () => withStore(fx.home, (db) => db.prepare(`SELECT "id", "work_item", "role" FROM "runs" WHERE "project" = ? AND "role" = 'builder' ORDER BY rowid`).all(s.p.id));
+    const runsBefore = builders();
+    await tick(fx.engine, s.p.id, { rounds: 6 });
+    assert.deepEqual(builders(), runsBefore, 'no Builder run while the blocker is open');
+    assert.deepEqual([workItem(fx.home, s.fix.id).status, runsOf(fx.home, s.fix.id).length], ['verifying', 1], 'the fix still verifying, its one run the one that built it');
+    assert.deepEqual(fixUnjudged(fx.home, s.fix.id, { open: true }).map((d) => d.id), [s.blocker.id], 'the same blocker still open, alone');
   });
 });
 

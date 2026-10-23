@@ -90,7 +90,10 @@ export async function verified(fx, p, candidate, { required = REQUIRED, exits = 
   const v = workItemsOf(fx.home, p.id).find((w) => w.kind === 'verification' && w.subject?.candidate === candidate.id);
   assert.ok(v, `the fixture is live: candidate ${candidate.seq}'s nomination registered its verification`);
   fx.scripted.script(v.id, [roleThat([], {})]);
-  await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', v.id), 'continue');
+  // At the chain boundary a person lets it through; work below the chain limit (a fixture's fix's candidate) is not held there.
+  await tick(fx.engine, p.id);
+  const boundary = withStore(fx.home, (db) => db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'blocker' AND "subject_id" = ? AND "status" = 'open'`).get(v.id));
+  if (boundary) await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', v.id), 'continue');
   await tickUntil(fx.engine, p.id, () => workItem(fx.home, v.id).status === 'complete', { what: `candidate ${candidate.seq}'s verification to complete` });
   return results;
 }
@@ -227,4 +230,24 @@ export function judgedOrAsked(home, project, fixId, findingId) {
   const judged = s.fix === 'complete' && resolved;
   const dropped = s.fix === 'complete' && !resolved;
   return { ok: !dropped && (judged || s.asked.length > 0), judged, dropped, state: s };
+}
+
+// D-3's state (Sean's ruling of 2026-10-23, errata E180): `login` required at
+// `alpha_authorize` only (ALPHA_ONLY), the stage verified on candidate 1, a
+// Verifier's finding there naming login dispositioned `fix` by the owner, the
+// fix built and its candidate verified: no supported evaluation can judge it,
+// and the engine raises its one `fix_unjudged` blocker. `tier` T1 by default.
+export async function unjudgedFix(fx, { tier = 'T1' } = {}) {
+  const p = await repairProject(fx, { tier, defs: ALPHA_ONLY, governed: { required_checks: [...ALPHA_ONLY_REQUIRED] }, index: INDEX, policy: { autonomy: 'step' } });
+  const { candidate: c1 } = await buildAndNominate(fx, p, { keys: [...ALPHA_ONLY_REQUIRED] });
+  const ctx = { project: p, stage: p.stages[0].id, candidate: c1 };
+  await verified(fx, p, c1, { required: ALPHA_ONLY_REQUIRED });
+  const stage = p.stages[0].work_item;
+  await tickUntil(fx.engine, p.id, () => workItem(fx.home, stage).status === 'complete', { max: 8, what: 'the stage verified on candidate 1' });
+  const [finding] = await raiseFindings(fx, p.id, c1.id, [defect('D-3: login refuses a valid session')], { kind: 'verification' });
+  const { fix } = await ownerFix(fx, p, finding);
+  const c2 = await successor(fx, ctx, { work: fix.id });
+  await verified(fx, p, c2, { required: ALPHA_ONLY_REQUIRED });
+  const blocker = await tickUntil(fx.engine, p.id, () => fixUnjudged(fx.home, fix.id, { open: true })[0], { max: 8, what: "the fix's fix_unjudged blocker" });
+  return { p, c1, c2, ctx, stage, finding: findingRow(fx.home, finding.id), fix: workItem(fx.home, fix.id), blocker };
 }

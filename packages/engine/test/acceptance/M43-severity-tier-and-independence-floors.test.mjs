@@ -19,6 +19,23 @@
 // fixture and never let the candidate's verification run, so no review is
 // queued in them.
 //
+// Objection 209 at T2 and T3 (Sean's request of 2026-10-23 on the D-2 ruling,
+// errata E180; SEAM.md §564): a plain fix on a stage verified earlier makes
+// the engine evaluate that stage's gate again, on the fix's candidate (D-2).
+// The review that evaluation queues is the one the fix's candidate needs: its
+// acceptance content (the fix) is new and unreviewed, and every gate of it at
+// T2 and T3 needs a Reviewer's sign-off bound to that content (D1 §9.3 (6);
+// E36 item 3: the engine queues a candidate's review once its verification
+// passes; E41 item 4: a sign-off binds the content reviewed; E43: on the
+// fix's candidate "the engine queues its review and the Reviewer signs it
+// off"). Exactly one is queued per candidate and content (the trigger
+// identity, reviewGeneration); the verified stage's own candidate gets no new
+// one; ticks, a restart, a stale re-evaluation, evaluations asked for, an
+// evaluation after the sign-off and a second fix on the same stage queue no
+// duplicate; a fix no evaluation can judge (D-3) gets none, before or after
+// retry; and an `asset_updated` fix (D7 §6.5) on the same stage queues the
+// same, one for its candidate, observed in the same project.
+//
 // The group before it is the slice-5 review's finding (E41 item 4): a
 // sign-off binds the acceptance content its Reviewer's run was started on.
 // The engine the review ran bound it to the content in force when the report
@@ -54,6 +71,14 @@ import { addGitProject, roleThatHolds, runToHold } from './harness/gitruns.mjs';
 import { changePolicy, eventsOfType, workItemsOf } from './harness/journal.mjs';
 import { addWork, runsOf, scriptedEngine, tick, tickUntil, waitForRunState, workItem } from './harness/runs.mjs';
 import { script } from './harness/scripted.mjs';
+import { withStore as withStoreReadOnly } from './harness/store.mjs';
+import { step } from './harness/scripted.mjs';
+import { roleThat } from './harness/gitruns.mjs';
+import { successor } from './harness/gates.mjs';
+import { buildAndNominate, findingRow, repairProject } from './harness/checks/repair.mjs';
+import { def, inventoryDefs } from './harness/checks/scope.mjs';
+import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
+import { fixUnjudged, ownerFix, verified } from './harness/checks/stuck-fix.mjs';
 
 // One check of each kind F §5.7 names, with the tier from which it is required.
 const CHECKS = [
@@ -291,3 +316,117 @@ describe('M43 the engine queues the review a tier requires', () => {
     assert.deepEqual(reviewsOf(fx, project), [], 'a tier that needs no sign-off gets no review');
   });
 });
+
+// The reviews the engine queued (trigger: the candidate's verification), of a candidate or all.
+const engineReviews = (fx, project, candidate) =>
+  workItemsOf(fx.home, project).filter((w) => w.kind === 'review' && w.trigger_source === 'verification' && (candidate === undefined || w.subject?.candidate === candidate));
+const SIGNOFFS = Object.freeze({ T2: [{ scope: 'candidate' }], T3: [{ scope: 'candidate' }, { scope: 'security' }] });
+const defect209 = (message, check = 'acc') => ({ category: 'defect', severity: 'medium', message, check, criterion: 'R1.1' });
+
+// A queued review let through the chain boundary by a person, its Reviewer signing what the tier needs.
+async function signedOff(fx, project, item, tier) {
+  fx.scripted.script(item.id, [roleThat([], { signoffs: SIGNOFFS[tier] })]);
+  await consume(fx, project, await openDecision(fx, project, 'blocker', item.id), 'continue');
+  await tickUntil(fx.engine, project, () => workItem(fx.home, item.id).status === 'complete', { what: `the review ${item.id} to complete` });
+}
+
+describe('M43 the review a tier requires when a fix makes a verified stage gate evaluate again (objection 209, D-2; E180)', () => {
+  for (const tier of ['T2', 'T3']) {
+    test(`${tier}: a plain fix on a verified stage queues exactly one review, for the fix's candidate, whose content is new; the verified stage's candidate gets none; ticks, a restart, a stale re-evaluation, evaluations asked for, one after the sign-off and a second fix on the same stage queue no duplicate; an unjudgeable fix gets none, before or after retry; an asset_updated fix's candidate gets one, as the plain fix's`, async (t) => {
+      const fx = await scriptedEngine(t);
+      // The tier's inventory, all covering or beside R1.1, and `login` (R1.1) required at alpha_authorize only (D-3's check).
+      const defs = { ...inventoryDefs(tier, ['R1.1']), login: def('acceptance', { criteria: ['R1.1'], gates: ['alpha_authorize'] }) };
+      const keys = Object.keys(defs);
+      const p = await repairProject(fx, { tier, defs, governed: { required_checks: keys }, index: [{ key: 'R1', criteria: ['R1.1'] }], policy: { autonomy: 'step' } });
+      const { candidate: c1 } = await buildAndNominate(fx, p, { keys });
+      const ctx = { project: p, stage: p.stages[0].id, candidate: c1 };
+      const stage = p.stages[0].work_item;
+      const count = (candidate) => engineReviews(fx, p.id, candidate).length;
+
+      // The stage verified on candidate 1: its review queued once, signed, the stage complete.
+      await verified(fx, p, c1, { required: keys });
+      const [r1] = await tickUntil(fx.engine, p.id, () => (engineReviews(fx, p.id, c1.id).length > 0 ? engineReviews(fx, p.id, c1.id) : undefined), { max: 8, what: "candidate 1's review" });
+      await signedOff(fx, p.id, r1, tier);
+      await tickUntil(fx.engine, p.id, () => workItem(fx.home, stage).status === 'complete', { max: 12, what: 'the stage verified on candidate 1' });
+      assert.equal(count(c1.id), 1, 'the fixture is live: one review of candidate 1, signed, the stage verified');
+
+      // (a)/(b) A plain fix on the verified stage: D-2 evaluates the stage's gate again on the fix's candidate.
+      const [f1] = await raiseFindings(fx, p.id, c1.id, [defect209(`${tier} fix 1`)], { kind: 'verification' });
+      const { fix: fix1 } = await ownerFix(fx, p, f1);
+      const c2 = await successor(fx, ctx, { work: fix1.id });
+      await verified(fx, p, c2, { required: keys });
+      await tick(fx.engine, p.id, { rounds: 4 });
+      assert.deepEqual([findingRow(fx.home, f1.id).status, workItem(fx.home, fix1.id).status], ['resolved', 'complete'], "the fixture is live: D-2 evaluated the verified stage's gate on the fix's candidate, resolving the finding");
+      const onC2 = engineReviews(fx, p.id, c2.id);
+      assert.equal(onC2.length, 1, `${tier} (b): the fix's candidate, whose content (the fix) no Reviewer has signed, gets exactly one review (${JSON.stringify(onC2.map((w) => [w.id, w.trigger_generation, w.status]))})`);
+      assert.deepEqual([onC2[0].trigger_id, onC2[0].trigger_generation], [c2.id, 1], "triggered by the fix candidate's verification, generation 1");
+      assert.ok(eventsOfType(fx.home, 'work.created').some((e) => e.subject.work_item === onC2[0].id && e.payload?.test_fixture !== true), "the engine's, no fixture");
+      assert.deepEqual([workItem(fx.home, onC2[0].id).status, runsOf(fx.home, onC2[0].id).length], ['eligible', 0], 'chained work: it waits at the chain boundary for a person, no Reviewer launched');
+      assert.equal(count(c1.id), 1, "the verified stage's own candidate gets no new review");
+
+      // (c) No duplicate: ticks, a restart, a stale re-evaluation (a new result), and evaluations asked for.
+      await tick(fx.engine, p.id, { rounds: 3 });
+      await fx.engine.kill();
+      await fx.start();
+      await tick(fx.engine, p.id);
+      const { acc: again } = await operatorRequest(fx.engine, p.id, c2.id, ['acc']);
+      await recordExit(fx.engine, again, 0, { output: 'acc passed again\n' });
+      await tick(fx.engine, p.id, { rounds: 2 });
+      await stageGate(fx, ctx, c2);
+      await stageGate(fx, ctx, c2);
+      assert.deepEqual(engineReviews(fx, p.id, c2.id).map((w) => w.id), [onC2[0].id], `${tier} (c): one review of the fix's candidate however many ticks, restarts and evaluations`);
+      // Signed: an evaluation after it queues none (the content it signed is the content in force).
+      await signedOff(fx, p.id, onC2[0], tier);
+      await stageGate(fx, ctx, c2);
+      await tick(fx.engine, p.id, { rounds: 2 });
+      assert.deepEqual(engineReviews(fx, p.id, c2.id).map((w) => [w.id, w.status]), [[onC2[0].id, 'complete']], `${tier} (c): signed, an evaluation after the sign-off queues no second`);
+
+      // (c) A second fix on the same stage: one review for its own candidate, none more for the earlier ones.
+      const [f2] = await raiseFindings(fx, p.id, c2.id, [defect209(`${tier} fix 2`)], { kind: 'verification' });
+      const { fix: fix2 } = await ownerFix(fx, p, f2);
+      const c3 = await successor(fx, ctx, { work: fix2.id });
+      await verified(fx, p, c3, { required: keys });
+      await tick(fx.engine, p.id, { rounds: 4 });
+      assert.deepEqual([findingRow(fx.home, f2.id).status, workItem(fx.home, fix2.id).status], ['resolved', 'complete'], 'the fixture is live: the second fix judged on its candidate');
+      await stageGate(fx, ctx, c3);
+      await tick(fx.engine, p.id, { rounds: 2 });
+      assert.deepEqual([count(c1.id), count(c2.id), count(c3.id)], [1, 1, 1], `${tier} (c): a second fix on the same stage: one review for its candidate, none more for the earlier ones`);
+
+      // The asset_updated path (D7 §6.5) on the same stage, observed: its candidate's stage gate evaluated by the engine, one review.
+      const asset = await addWork(fx.engine, p.id, 'fix', { subject: { cause: 'asset_updated', slot: 'logo', bindings: [{ stage: p.stages[0].id, slot: 'logo' }] } });
+      fx.scripted.script(asset, [roleThat([step.write('src/logo-ref.js', 'export const logo = 2;\n')], { nominate: true })]);
+      const before = workItemsOf(fx.home, p.id).length;
+      const c4 = await tickUntil(fx.engine, p.id, () => withStoreCandidates(fx, p.id)[3], { max: 12, what: "the asset_updated fix's candidate" });
+      assert.ok(JSON.parse(c4.held_work).includes(asset), `the fixture is live: candidate 4 holds the asset_updated fix (${c4.held_work}; ${before} items before)`);
+      await verified(fx, p, c4, { required: keys });
+      await tick(fx.engine, p.id, { rounds: 4 });
+      const assetEvaluations = withStoreEvaluations(fx, c4.id);
+      assert.ok(assetEvaluations.length > 0, `the fixture is live: the engine evaluated the stage's gate on the asset fix's candidate (D7 §6.5) (${JSON.stringify(assetEvaluations)})`);
+      await stageGate(fx, ctx, c4);
+      await tick(fx.engine, p.id, { rounds: 2 });
+      assert.equal(count(c4.id), 1, `${tier}: the asset_updated path queues one review for its candidate, as the plain fix's path does (${JSON.stringify(engineReviews(fx, p.id, c4.id).map((w) => [w.id, w.trigger_generation]))})`);
+      assert.deepEqual([count(c1.id), count(c2.id), count(c3.id)], [1, 1, 1], 'and none more for the earlier candidates');
+      // Its review signed (so that the next finding's disposition is owed to the owner, no review being due).
+      await signedOff(fx, p.id, engineReviews(fx, p.id, c4.id)[0], tier);
+      await tick(fx.engine, p.id, { rounds: 2 });
+      assert.equal(count(c4.id), 1, 'signed: still one');
+
+      // A fix no evaluation can judge (D-3; login at alpha_authorize only): no evaluation, no review, before or after retry.
+      const [f3] = await raiseFindings(fx, p.id, c4.id, [defect209(`${tier} fix 3, alpha only`, 'login')], { kind: 'verification' });
+      const { fix: fix3 } = await ownerFix(fx, p, f3);
+      const c5 = await successor(fx, ctx, { work: fix3.id });
+      await verified(fx, p, c5, { required: keys });
+      const blocker = await tickUntil(fx.engine, p.id, () => fixUnjudged(fx.home, fix3.id, { open: true })[0], { max: 8, what: 'the fix_unjudged blocker' });
+      assert.equal(count(c5.id), 0, `${tier}: an unjudgeable fix's candidate gets no review (no stage evaluation of it is made)`);
+      const runs = runsOf(fx.home, fix3.id).length;
+      await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix3.id), 'retry');
+      await tick(fx.engine, p.id, { rounds: 4 });
+      assert.deepEqual([count(c5.id), runsOf(fx.home, fix3.id).length], [0, runs], `${tier}: after retry, still no review and no Builder run (${blocker.id})`);
+      assert.deepEqual([count(c1.id), count(c2.id), count(c3.id), count(c4.id)], [1, 1, 1, 1], 'and none more anywhere');
+    });
+  }
+});
+
+const withStoreCandidates = (fx, project) => withStoreRead(fx, (db) => db.prepare('SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"').all(project));
+const withStoreEvaluations = (fx, candidate) => withStoreRead(fx, (db) => db.prepare(`SELECT "id", "gate_kind", "stage", "outcome" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'stage'`).all(candidate));
+const withStoreRead = (fx, fn) => withStoreReadOnly(fx.home, fn);

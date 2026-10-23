@@ -97,7 +97,14 @@
 //     2026-10-23, errata E180; SEAM.md §563): each step's rule-25 judgement
 //     records it (`stuck`) without changing an intermediate step's
 //     acceptance; the run's end (M535 (j)'s `e179Record`/`e179RunEnd`, M519
-//     (h)'s `runEndStuck`) never passes with it.
+//     (h)'s `runEndStuck`) never passes with it; M519 (h)'s own end
+//     judgement (`m519EndJudgement`, factored from the real file, which now
+//     calls it) driven on run directories of the runner's form whose steps'
+//     rule-25 values were recorded through `realStep` (SEAM.md §564); and a
+//     fix the engine of D-3 blocks with `fix_unjudged` (Sean's acceptance of
+//     2026-10-23) is accounted for by its open question: listed `blocked`,
+//     neither runnable nor stuck, the project not silent, the review not
+//     ended and not stalled (SEAM.md §564).
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
@@ -119,14 +126,14 @@ import { answerWith, assertHoldsAccounted, assertReRaised, designRevisions, desi
 import { designHoldAccounts } from './harness/design/holds.mjs';
 import { BEFORE_BUILD, KERNEL_KINDS } from './harness/design/check41.mjs';
 import { TWO_DAYS, designDues, designWithCriterion, designedPantry, engineNow, escalations, openDues, policyEffective, stageIdsOf, waivedEvents } from './harness/design/plan44.mjs';
-import { realStep } from './harness/real/lane.mjs';
+import { realStep, stepValue } from './harness/real/lane.mjs';
 import { activity, quietState, ruleTwentyFive, stepVerdicts } from './harness/real/m6-lane.mjs';
 import * as m6lane from './harness/real/m6-lane.mjs';
 import { approveBatch } from './harness/design/check41.mjs';
 import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
 import { authoringItems, authoringRuns, authoringWith, builderRuns, go, openOf, pausedDeveloping, planRow, until } from './harness/exec37/authoring.mjs';
 import { copyStore, openStore, storePath, withStore } from './harness/store.mjs';
-import { ALPHA_ONLY, ALPHA_ONLY_REQUIRED, supersededFix } from './harness/checks/stuck-fix.mjs';
+import { ALPHA_ONLY, ALPHA_ONLY_REQUIRED, supersededFix, unjudgedFix } from './harness/checks/stuck-fix.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 
 const OWNER_NO_TIGHTENING = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
@@ -1294,6 +1301,59 @@ describe('M512 design_due and no silent stalls', () => {
     const clean = m6lane.e179Record(ctx, done, project);
     assert.deepEqual([clean.stuck, clean.satisfied_as_written, clean.clean], [[], true, true], `nothing stuck and nothing open: satisfied as written (${clean.statement})`);
     assert.doesNotThrow(() => m6lane.runEndStuck('M519', done, project), "M519 (h)'s run end passes with nothing stuck");
+  });
+  test("(k) D-3 (objection 209; E180), a blocked fix as the harness reads it (Sean's acceptance of 2026-10-23: a blocked fix may stay verifying provided it is \"distinguished from runnable work by the harness\"): a fix the engine asks about with fix_unjudged is listed blocked by its open question, neither runnable nor stuck; the project is asked, not silent; it is no stuck work at a step boundary or the run's end; the review's end neither ends nor stalls on it", async (t) => {
+    const fx = await scriptedEngine(t);
+    const s = await unjudgedFix(fx);
+    const project = s.p.id;
+    await waitForIdle(fx.home, project);
+    const a = activity(fx.home, project, { nowMs: engineTimeMs(fx.engine) });
+    assert.ok(!a.runnable.some((w) => w.id === s.fix.id), `not runnable (${JSON.stringify(a.runnable)})`);
+    assert.ok(
+      !(a.stuck ?? []).some((x) => x.id === s.fix.id),
+      `D-3: the blocked fix ${s.fix.id} is accounted for by its open question ${s.blocker.id} (fix_unjudged), so it is not stuck work; activity() lists it stuck (${JSON.stringify(a.stuck)})`,
+    );
+    const entry = (a.blocked ?? []).find((x) => x.id === s.fix.id);
+    assert.deepEqual([entry?.kind, entry?.status, entry?.decision, entry?.cause], ['fix', 'verifying', s.blocker.id, 'fix_unjudged'], `listed blocked, by its question (${JSON.stringify(a.blocked)})`);
+    assert.ok(a.asked.some((d) => d.id === s.blocker.id), 'its question asked');
+    assert.equal(quietState(a).state, 'busy', 'the project asked, never a silent stall');
+    assert.deepEqual(m6lane.stuckOf(fx.home, project), [], 'no stuck work recorded at a step boundary');
+    assert.doesNotThrow(() => m6lane.runEndStuck('M519', fx.home, project), "no stuck work at the run's end (its open question fails the end by rule 25, as any)");
+    const judge = m6lane.reviewEndJudge('m6x_review');
+    for (let i = 0; i < 4; i++) assert.equal(judge(a, { confirmed: true, excepted: new Set() }), false, `poll ${i + 1}: the review not ended (a question is open), and no stall`);
+  });
+
+  test("(k) D-5 (objection 209; E180), M519 (h)'s end judgement as the real file runs it: on run directories of the runner's form whose steps' rule-25 values were recorded through realStep, the stuck work is recorded at every step and m519EndJudgement fails naming it; with nothing stuck it passes; with a question open it fails as before", async (t) => {
+    const fx = await scriptedEngine(t);
+    const s = await supersededFix(fx, { defs: ALPHA_ONLY, required: ALPHA_ONLY_REQUIRED });
+    const project = s.p.id;
+    const ids = sortedIds(s.fixes.map((w) => w.id));
+    await waitForIdle(fx.home, project);
+    const nowMs = engineTimeMs(fx.engine);
+    const STEPS519 = ['m6w_spec', 'm6w_architecture', 'm6w_design', 'm6w_alpha', 'm6w_review'];
+    // A run directory of the runner's form over a backup (its `home` the backup), each step of M519's journey recorded
+    // through realStep with its rule-25 value as the steps record it.
+    const runOn = async (tag, home) => {
+      const runDir = join(fx.root, tag);
+      mkdirSync(join(runDir, 'observed'), { recursive: true, mode: 0o700 });
+      symlinkSync(home, join(runDir, 'home'));
+      const ctx = { runDir, keyValue: null, rehearsal: false };
+      await realStep(ctx, 'm6w_create', async () => ({ project }));
+      for (const name of STEPS519) await realStep(ctx, name, async () => ({ rule_25: ruleTwentyFive(home, project, name, { handover: [], nowMs }) }));
+      return ctx;
+    };
+    assert.equal(typeof m6lane.m519EndJudgement, 'function', "M519 (h)'s end judgement is the harness's (factored from the real file, which calls it)");
+    const stuckCtx = await runOn('k-h519-stuck', await observedCopy(fx, 'k-h519-stuck-store', ids));
+    for (const name of STEPS519) assert.deepEqual(sortedIds((stepValue(stuckCtx, name).rule_25.stuck ?? []).map((x) => x.id)), ids, `${name}: the stuck work recorded at its boundary, in state.json`);
+    assert.throws(() => m6lane.m519EndJudgement(stuckCtx), (err) => /M519 \(h\)/.test(err.message) && ids.every((id) => err.message.includes(id)), "M519 (h): the run's end fails naming the stuck work");
+    // Nothing stuck: it passes.
+    const done = await observedCopy(fx, 'k-h519-done-store', ids);
+    withStore(done, (db) => db.prepare(`UPDATE "work_items" SET "status" = 'complete' WHERE "id" IN (${ids.map(() => '?').join(', ')})`).run(...ids), { readonly: false });
+    const doneCtx = await runOn('k-h519-done', done);
+    assert.doesNotThrow(() => m6lane.m519EndJudgement(doneCtx), "nothing stuck and nothing open: M519 (h)'s end passes");
+    // A question open at the end: it fails as before, naming the open question rule.
+    withStore(done, (db) => db.prepare(`UPDATE "decisions" SET "status" = 'open', "consumed_at" = NULL, "answer" = NULL WHERE "id" = (SELECT "id" FROM "decisions" WHERE "project" = ? ORDER BY rowid DESC LIMIT 1)`).run(project), { readonly: false });
+    assert.throws(() => m6lane.m519EndJudgement(doneCtx), /at the end, no question open/, 'a question open at the end still fails it');
   });
 });
 
