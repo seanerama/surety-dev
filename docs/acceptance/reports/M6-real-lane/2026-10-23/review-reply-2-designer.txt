@@ -1,0 +1,15 @@
+Turn 2 admitted; waiting for the role's reply.
+The review is saved at .surety/design/reviews/review-1.json. It already said what you asked for, so I didn't change it this turn.
+
+1. **Verdicts.** Both screens are not_observed. Neither confirms anything visual or native, and the review has no deltas.
+   - **web-plants:** owner_skipped. The engine's fetch of the markup (dev_01M5KBG0F7VH3H020MVQP0CWHH) is listed as supporting evidence only. It still needs a person to view the page in a browser.
+   - **android-plants:** no_native_runtime, with no evidence. It still needs a native Android run.
+   - The file has no status or observed_on field, because nothing was observed.
+
+2. **.watered-button.** The finding stays as I raised it and goes to the owner to decide. It is not routed to a builder, and the design still calls for the class. The evidence: the candidate uses the generic .button class (app.js line 145, app.css lines 27–32), and .watered-button appears nowhere.
+
+3. **Logo.** I read the manifest again. At version 3, the logo slot's status field reads "proposed", and its full variant's digest (84d3031e…) is the one the Alpha serves. That is what I read. I accept your correction that the engine's own record makes slot version 3 the effective logo. I made no design change over it.
+
+I've added nothing else. I propose closing the session.
+
+The role proposes closing the session (surety session close).

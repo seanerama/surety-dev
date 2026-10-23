@@ -1,0 +1,40 @@
+#!/bin/bash
+# M535 Waterlog: the CONTINUATION at m6x_review on run directory ~/s7-1020, prepared 2026-10-23 by the
+# driver after the review step of 2026-10-22/23 ended at its 180-minute deadline: Sean deferred the
+# review's design_due dec_01M5K19ABKPJFE5EBQJFG9RN4P with `later` (until 2026-10-24T02:30:00Z) through
+# the driver's recorded act at 02:21:20Z, both E179 acknowledgements (R10 02:14:54Z, R7 02:15:57Z)
+# recorded in observed/owner-acts.jsonl and counted by the harness.
+# Supersedes continue-m6x_review.sh of 2026-10-21 (pre-F29 revision). NOT STARTED. Runs only on
+# Sean's explicit authorization, when he can type the review's first turn within the 20-minute idle
+# timeout (the driver runs it with `bash <this file>`; the file is deliberately not executable).
+#
+# Revision: f8c27db3 (main), clean detached checkout ~/s9src; rehearsal evidence ~/s7r-x5
+# (rehearsal-passed.json for f8c27db3). SURETY_REAL_RERUN=m6x_review clears the review and the
+# teardown after it; build, asset and alpha stand as recorded (the Alpha step's handover of the two
+# R10/R7 questions included). Nothing before the review is run or paid again.
+# Launch consequences: the step starts an engine on a new port (printed in runner-M535.log and
+# WAITING.txt), resumes the project, and waits SURETY_REAL_WAIT_MINUTES (180, total from the step's
+# start) for the owner's acts. The previous attempt's `finally` tore the Alpha down, so the review
+# begins with the Alpha down (as F31): Sean's redeploy of the approved-logo candidate
+# cand_01M5HS2MW5VA1JJ0367JDG5TRQ is the owner route (last time it raised a fresh design_due); no paid
+# work starts by itself; a review-mode Designer session (Opus, paid) opens only on Sean's design_due
+# answer `open` or his own POST …/sessions {"role":"designer","mode":"review"}, after his "ready".
+set -u
+cd /home/smahoney/s9src || exit 2
+[ "$(git rev-parse HEAD)" = "f8c27db38299f63cd581c2bd03914bc2d155dff4" ] || { echo "checkout is not f8c27db3; stop"; exit 2; }
+[ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "checkout is dirty; stop"; exit 2; }
+[ -z "$(cd /home/smahoney/projects/sdlc-x && git diff f8c27db3 main -- packages scripts package.json package-lock.json tsconfig.json)" ] || { echo "main has moved beyond f8c27db3 outside docs; stop"; exit 2; }
+grep -q '"revision": "f8c27db38299f63cd581c2bd03914bc2d155dff4"' $HOME/s7r-x5/rehearsal-passed.json || { echo "no passed rehearsal at f8c27db3 in ~/s7r-x5; stop"; exit 2; }
+grep -q 'EXIT' <(tail -3 $HOME/s7-1020/runner-M535.log) || { echo "the previous attempt has not exited (no EXIT line at the log's end); stop"; exit 2; }
+pgrep -f -u "$USER" 'dist/cli.js serve --harness' >/dev/null && { echo "an engine of a previous attempt may still run (check argv[0] before anything); stop"; exit 2; }
+export SURETY_REAL_RUN_DIR=$HOME/s7-1020 TMPDIR=/tmp/drv-s7-1020
+mkdir -p -m 700 "$TMPDIR"
+echo "=== CONTINUATION m6x_review started $(date -u +%FT%TZ) by the driver on Sean's authorization, revision f8c27db3" >> $SURETY_REAL_RUN_DIR/runner-M535.log
+SURETY_REAL_RERUN=m6x_review \
+SURETY_M535_REHEARSAL_DIR=$HOME/s7r-x5 SURETY_M519_RUN_DIR=$HOME/s6-1018 \
+SURETY_REAL_CREDENTIAL_REF=$HOME/.config/surety/m5-subscription.token SURETY_REAL_AUTH_MODE=subscription_token \
+SURETY_REAL_CLAUDE_BINARY=$HOME/s6-1018/home/backends/claude-2.1.302-60d7eb7f12fbb28a \
+SURETY_REAL_WAIT_MINUTES=${SURETY_REAL_WAIT_MINUTES:-180} \
+SURETY_REAL_CONFIRM_SPEND='I accept the M6 real run M535 (web and a labelled android simulation, a held logo) on my Claude subscription, a guess of 15 to 25 USD, capped at 2000000 tokens a run, 3000000 a Designer session and 50 USD a day' \
+node --test --test-reporter=spec packages/engine/test/acceptance/M535-the-real-run-web-an-android-simulation-and-a-held-logo.test.mjs >> $SURETY_REAL_RUN_DIR/runner-M535.log 2>&1
+echo "EXIT $?" >> $SURETY_REAL_RUN_DIR/runner-M535.log

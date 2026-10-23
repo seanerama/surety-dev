@@ -1,0 +1,3777 @@
+{
+  "version": 1,
+  "created_at": "2026-10-20T21:28:40.397Z",
+  "steps": {
+    "m6_attempt": {
+      "status": "done",
+      "at": "2026-10-20T22:03:49.547Z",
+      "value": {
+        "opus": {
+          "path": "attempt",
+          "attempt": "qa_01M5DKEZHMGTH37HC21QH81PMN",
+          "status": "succeeded",
+          "entry": "trust_01M5DN45TN7R78CTACA9EK0N8G",
+          "rehearsal_expected": null,
+          "drained": {
+            "paused": [],
+            "waited_only": [
+              "proj_01M5DKEX8DJW6JCM71WKCHWK64"
+            ],
+            "waited_for": [],
+            "waited_ms": 6,
+            "still_live": []
+          }
+        },
+        "sonnet": {
+          "path": "attempt",
+          "attempt": "qa_01M5DN4ESANF8V4PTC8Y9PMH8V",
+          "status": "succeeded",
+          "entry": "trust_01M5DNF3AZ9MHW8R7YF4B548DV",
+          "rehearsal_expected": null,
+          "drained": {
+            "paused": [],
+            "waited_only": [
+              "proj_01M5DKEX8DJW6JCM71WKCHWK64"
+            ],
+            "waited_for": [],
+            "waited_ms": 6,
+            "still_live": []
+          }
+        }
+      }
+    },
+    "m5_attempt_opus": {
+      "status": "done",
+      "at": "2026-10-20T21:57:52.901Z",
+      "value": {
+        "path": "attempt",
+        "attempt": "qa_01M5DKEZHMGTH37HC21QH81PMN",
+        "status": "succeeded",
+        "entry": "trust_01M5DN45TN7R78CTACA9EK0N8G",
+        "rehearsal_expected": null,
+        "drained": {
+          "paused": [],
+          "waited_only": [
+            "proj_01M5DKEX8DJW6JCM71WKCHWK64"
+          ],
+          "waited_for": [],
+          "waited_ms": 6,
+          "still_live": []
+        }
+      }
+    },
+    "m5_attempt_sonnet": {
+      "status": "done",
+      "at": "2026-10-20T22:03:49.546Z",
+      "value": {
+        "path": "attempt",
+        "attempt": "qa_01M5DN4ESANF8V4PTC8Y9PMH8V",
+        "status": "succeeded",
+        "entry": "trust_01M5DNF3AZ9MHW8R7YF4B548DV",
+        "rehearsal_expected": null,
+        "drained": {
+          "paused": [],
+          "waited_only": [
+            "proj_01M5DKEX8DJW6JCM71WKCHWK64"
+          ],
+          "waited_for": [],
+          "waited_ms": 6,
+          "still_live": []
+        }
+      }
+    },
+    "m6_activation": {
+      "status": "done",
+      "at": "2026-10-20T22:19:54.831Z",
+      "value": {
+        "opus": {
+          "entry": "trust_01M5DN45TN7R78CTACA9EK0N8G"
+        },
+        "sonnet": {
+          "entry": "trust_01M5DNF3AZ9MHW8R7YF4B548DV"
+        },
+        "drained": {
+          "paused": [],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 0,
+          "still_live": []
+        }
+      }
+    },
+    "m5_activation": {
+      "status": "done",
+      "at": "2026-10-20T22:19:54.829Z",
+      "value": {
+        "opus": {
+          "entry": "trust_01M5DN45TN7R78CTACA9EK0N8G"
+        },
+        "sonnet": {
+          "entry": "trust_01M5DNF3AZ9MHW8R7YF4B548DV"
+        },
+        "drained": {
+          "paused": [],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 0,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_create": {
+      "status": "done",
+      "at": "2026-10-20T23:19:36.687Z",
+      "value": {
+        "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+        "name": "m6-m535-waterlog",
+        "repo": "/home/smahoney/s7-1020/repos/m535-waterlog",
+        "brief_from": "/home/smahoney/s7src/docs/acceptance/reports/M6-real-lane/m535-brief.md",
+        "policy": {
+          "setup": "policy",
+          "what": "the project's policy (budget_day_verified_usd, deadline_builder, deadline_verifier, deadline_reviewer, model_vision, model_spec_writer, model_architect, model_builder, model_verifier, model_reviewer, backend_builder, backend_verifier, backend_reviewer, backend_architect, backend_spec_writer, backend_vision, phase_size, model_designer, backend_designer, design, autonomy, designer_session_budget_billable_tokens); then, confirmed by the owner, budget_run_billable_tokens 2000000, budget_day_unknown_tokens 4000000, alpha_deploy \"on_phase_complete\"",
+          "detail": {
+            "change": {
+              "budget_day_verified_usd": 50,
+              "deadline_builder": 900,
+              "deadline_verifier": 600,
+              "deadline_reviewer": 600,
+              "model_vision": "claude-opus-5-5",
+              "model_spec_writer": "claude-opus-5-5",
+              "model_architect": "claude-opus-5-5",
+              "model_builder": "claude-sonnet-5-5",
+              "model_verifier": "claude-sonnet-5-5",
+              "model_reviewer": "claude-sonnet-5-5",
+              "backend_builder": "claude",
+              "backend_verifier": "claude",
+              "backend_reviewer": "claude",
+              "backend_architect": "claude",
+              "backend_spec_writer": "claude",
+              "backend_vision": "claude",
+              "phase_size": {
+                "min": 1,
+                "max": 5
+              },
+              "model_designer": "claude-opus-5-5",
+              "backend_designer": "claude",
+              "design": "both",
+              "autonomy": "phase",
+              "designer_session_budget_billable_tokens": 3000000
+            },
+            "widen": {
+              "budget_run_billable_tokens": 2000000,
+              "budget_day_unknown_tokens": 4000000,
+              "alpha_deploy": "on_phase_complete"
+            },
+            "ordinary": {
+              "status": 409,
+              "confirmed": true
+            },
+            "widened": {
+              "status": 409,
+              "confirmed": true
+            }
+          }
+        },
+        "acts": [
+          {
+            "act": "policy_widening",
+            "items": [
+              {
+                "decision": "dec_01M5DPCS0D0AZCXAZNKF7CQZ6W",
+                "kind": "policy_widening",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-20T22:23:09.520Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5DPCS0D0AZCXAZNKF7CQZ6W/answer"
+              },
+              {
+                "decision": "dec_01M5DPJQP0H6XDH8ZA16A2VV07",
+                "kind": "policy_widening",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-20T23:14:38.163Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5DPJQP0H6XDH8ZA16A2VV07/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "policy_widening",
+                "at": "2026-10-20T23:19:30.409Z",
+                "words": "I reviewed and personally submitted both policy-widening approvals for this run.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_create"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 9,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_spec": {
+      "status": "done",
+      "at": "2026-10-21T00:09:57.907Z",
+      "value": {
+        "value": {
+          "id": "spec_01M5DVTV06GE4421R7GEB1J8CZ",
+          "version": 1,
+          "approved_by": "engine"
+        },
+        "shown": [
+          "dec_01M5DVDRF1NM9WP51CA0GV3JZ6"
+        ],
+        "answered": [],
+        "spec": [
+          {
+            "id": "spec_01M5DVTV06GE4421R7GEB1J8CZ",
+            "version": 1,
+            "approved_by": "engine"
+          }
+        ],
+        "rule_25": {
+          "handed_over": [],
+          "design_holds": []
+        },
+        "acts": [
+          {
+            "act": "spec_approval",
+            "items": [
+              {
+                "decision": "dec_01M5DVDRF1NM9WP51CA0GV3JZ6",
+                "kind": "spec_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-20T23:55:02.683Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5DVDRF1NM9WP51CA0GV3JZ6/answer"
+              }
+            ],
+            "performer": "unknown",
+            "evidence": {},
+            "step": "m6x_spec"
+          },
+          {
+            "act": "spec_session",
+            "items": [
+              {
+                "run": "run_01M5DSXKQQBXVXX9S4HY3VT7DX",
+                "owner_turns": 5,
+                "store_actor": "owner (transcript speaker)",
+                "answered_at": "2026-10-20T23:45:25.868Z",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/sessions/run_01M5DSXKQQBXVXX9S4HY3VT7DX/turns"
+              }
+            ],
+            "performer": "unknown",
+            "evidence": {},
+            "step": "m6x_spec"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 8,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_architecture": {
+      "status": "done",
+      "at": "2026-10-21T01:16:52.969Z",
+      "value": {
+        "value": {
+          "id": "plan_01M5DZNBPDSHY9F9RNMJ46AKZP",
+          "generation": 1
+        },
+        "shown": [
+          "dec_01M5DZ6KWK19J1XT7BCR0BMZAW",
+          "dec_01M5DZ6KWK19J1XT7BCR0BMZAY"
+        ],
+        "answered": [],
+        "setup": {
+          "setup": "alpha",
+          "what": "alpha's configuration (PUT /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/environments/alpha/config): local_service, target app, `node server.mjs` on port 44841, the disposable secret deploy/ref_secret (also allowed its checks)",
+          "detail": {
+            "environment": "env_01M5DVTV0DMG9TMPPE5S1M3YCV",
+            "config": "envc_01M5DWP96A801HGSAK11KX7MEE",
+            "config_identity": "sha256:3f0b704d6fda13233aa202a78728d9ac2ff9c34e8a4f77201f98a488e22cf81c",
+            "port": 44841
+          }
+        },
+        "rule_25": {
+          "handed_over": [
+            {
+              "kind": "design_due",
+              "id": "dec_01M5DZNC09SBTHSK9HE1ZCTX9M"
+            }
+          ],
+          "design_holds": []
+        },
+        "acts": [
+          {
+            "act": "architecture_approval",
+            "items": [
+              {
+                "decision": "dec_01M5DZ6KWK19J1XT7BCR0BMZAW",
+                "kind": "architecture_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T01:01:57.798Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5DZ6KWK19J1XT7BCR0BMZAW/answer"
+              }
+            ],
+            "performer": "unknown",
+            "evidence": {},
+            "step": "m6x_architecture"
+          },
+          {
+            "act": "plan_approval",
+            "items": [
+              {
+                "decision": "dec_01M5DZ6KWK19J1XT7BCR0BMZAY",
+                "kind": "plan_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T01:01:57.816Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5DZ6KWK19J1XT7BCR0BMZAY/answer"
+              }
+            ],
+            "performer": "unknown",
+            "evidence": {},
+            "step": "m6x_architecture"
+          },
+          {
+            "act": "architect_session",
+            "items": [
+              {
+                "run": "run_01M5DXZ6NPG3XPQFAVE87JW5SS",
+                "owner_turns": 3,
+                "store_actor": "owner (transcript speaker)",
+                "answered_at": "2026-10-21T00:50:01.182Z",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/sessions/run_01M5DXZ6NPG3XPQFAVE87JW5SS/turns"
+              }
+            ],
+            "performer": "unknown",
+            "evidence": {},
+            "step": "m6x_architecture"
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 6,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_qualify": {
+      "status": "done",
+      "at": "2026-10-21T01:32:37.162Z",
+      "value": {
+        "by": "Sean's command",
+        "cli": null,
+        "row": {
+          "id": "aq_01M5E1DE1ZMCFRMEGDDRS964GQ",
+          "status": "current",
+          "adapter": "local_service",
+          "cases": [
+            {
+              "case": "deploy_read_back",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1D4H7QBFTBKPPR2488F7E",
+                "attempt": "att_01M5E1D4JKJKNTMJ4416WZV7QA",
+                "unit": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service",
+                "generation": 2,
+                "receipt": "issued",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "one launch granted, the init instance recorded at the grant",
+                    "held": true,
+                    "read": {
+                      "grants": 1,
+                      "init": {
+                        "pid": 71114,
+                        "start_time": 1607192
+                      }
+                    }
+                  },
+                  {
+                    "what": "the application instance recorded at the init's report, with no disagreement with the host read",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 71151,
+                        "start_time": 1607221,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "disagreement": null
+                    }
+                  },
+                  {
+                    "what": "verify reads A's digest on the target, the recorded instance at its generation",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8",
+                        "generation": 2,
+                        "at": "2026-10-21T01:32:26.372Z",
+                        "read": "sha256:1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "51645a537343420982481e1d7e61ae12",
+                          "pid": 71151,
+                          "start_time": 1607221
+                        },
+                        "detail": null,
+                        "duration_ms": 128
+                      }
+                    ]
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same read, expecting B's digest, differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:f2409042c671e7fd446e001f12604a5648ed47fa354343cef9453301d1b7512a",
+                        "generation": 2,
+                        "at": "2026-10-21T01:32:26.511Z",
+                        "read": "unread",
+                        "match": "differs",
+                        "instance": {
+                          "pid": 71151,
+                          "start_time": 1607221
+                        },
+                        "detail": {
+                          "field": "mounts",
+                          "expected": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s7-1020/home/artifacts/proj_01M5DKEX8DJW6JCM71WKCHWK64/f2409042c671e7fd446e001f12604a5648ed47fa354343cef9453301d1b7512a"
+                          },
+                          "read": {
+                            "dev": "8:48",
+                            "root": "/home/smahoney/s7-1020/home/artifacts/proj_01M5DKEX8DJW6JCM71WKCHWK64/1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8"
+                          }
+                        },
+                        "duration_ms": 89
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "case": "replace",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1D602A70X525WM8FTMVKD",
+                "attempt": "att_01M5E1D61K8JFBW2GJSK0PGGGM",
+                "unit": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g3.service",
+                "generation": 3,
+                "replaced": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service",
+                "assertions": [
+                  {
+                    "what": "the reconcile read answers applied",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service is gone",
+                    "held": true,
+                    "read": "not-found"
+                  },
+                  {
+                    "what": "verify reads B's digest",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:f2409042c671e7fd446e001f12604a5648ed47fa354343cef9453301d1b7512a",
+                        "generation": 3,
+                        "at": "2026-10-21T01:32:27.837Z",
+                        "read": "sha256:f2409042c671e7fd446e001f12604a5648ed47fa354343cef9453301d1b7512a",
+                        "match": "match",
+                        "instance": {
+                          "invocation_id": "9559a8898a974ecb8d9f869c80ad959a",
+                          "pid": 71273,
+                          "start_time": 1607368
+                        },
+                        "detail": null,
+                        "duration_ms": 120
+                      }
+                    ]
+                  },
+                  {
+                    "what": "the new generation is recorded current",
+                    "held": true,
+                    "read": {
+                      "recorded": 3,
+                      "attempt": 3
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service read loaded and active before the replacement",
+                    "held": true,
+                    "read": {
+                      "load": "loaded",
+                      "active": "active"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "receipt_lost",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "incarnation": "inc_01M5E0GP5E428QZYAS50AC9SW4",
+                "scope": "in_process",
+                "engine_crash": false,
+                "dropped_receipt": {
+                  "result": "issued",
+                  "bound": null,
+                  "refused": null
+                },
+                "operation": "op_01M5E1D6Y1VZVW6X6SK5ET9H5C",
+                "attempt": "att_01M5E1D6ZFX8A7RVWV0PFFZQEA",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied with no receipt recorded",
+                    "held": true,
+                    "read": "applied"
+                  },
+                  {
+                    "what": "the attempt holds no receipt",
+                    "held": true,
+                    "read": null
+                  },
+                  {
+                    "what": "the attempt succeeded",
+                    "held": true,
+                    "read": "succeeded"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the effect, the same read answered absent",
+                    "held": true,
+                    "read": "absent"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "not_issued",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1D7QY5RETGCTSXWVXK9MZ",
+                "attempt": "att_01M5E1D7SS9TPSS1V282YN74T5",
+                "assertions": [
+                  {
+                    "what": "reconcile answers absent",
+                    "held": true,
+                    "read": "absent"
+                  },
+                  {
+                    "what": "no launch was granted",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the running deployment's attempt read the same way answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "late_launcher",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1D43EEGMHT4H3N42N55QD",
+                "attempt": "att_01M5E1D44P7RAKZDQ669J1JNDP",
+                "unit": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g1.service",
+                "assertions": [
+                  {
+                    "what": "the launcher asked and was refused because its launch is closed",
+                    "held": true,
+                    "read": {
+                      "reason": "the launch is closed",
+                      "refusals": [
+                        {
+                          "reason": "the launch is closed",
+                          "at": "2026-10-21T01:32:25.231Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "no launch was granted: nothing of the application ran",
+                    "held": true,
+                    "read": 0
+                  },
+                  {
+                    "what": "while the unit was loaded, reconcile did not answer absent",
+                    "held": true,
+                    "read": {
+                      "unit": {
+                        "load": "loaded",
+                        "active": "active"
+                      },
+                      "outcome": "unknown"
+                    }
+                  },
+                  {
+                    "what": "once the unit was gone and its domain closed, reconcile answered absent",
+                    "held": true,
+                    "read": {
+                      "gone": true,
+                      "before_cleanup": "partial",
+                      "outcome": "absent"
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "another attempt's launcher, its launch authorizable, was granted once",
+                    "held": true,
+                    "read": {
+                      "attempt": "att_01M5E1DCHE7GT3D3WM079162NT",
+                      "grants": 1
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "out_of_band",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "stopped": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service",
+                "restarted": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service",
+                "changed": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g9.service",
+                "assertions": [
+                  {
+                    "what": "the stop by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl stop surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service: exit 0"
+                  },
+                  {
+                    "what": "detected: the environment down, surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service recorded stopped out of band after the stop",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-21T01:32:31.295Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M5E1DA60NPH7YP1AK316YJ5G",
+                          "change": "stopped",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-21T01:32:31.295Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the restart by hand was made on the owned unit",
+                    "held": true,
+                    "read": "systemctl restart surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service: exit 0"
+                  },
+                  {
+                    "what": "a new invocation of the unit",
+                    "held": true,
+                    "read": {
+                      "before": "f4ddbe7d6236483baeb240d9e2535edc",
+                      "after": "d6550f5dd9c8439e9f1256d5b8ec7f1b"
+                    }
+                  },
+                  {
+                    "what": "its launcher refused because the launch is single-use and spent, and no second grant",
+                    "held": true,
+                    "read": {
+                      "reason": "a launch connection of this attempt has already proved its peer",
+                      "grants": 1
+                    }
+                  },
+                  {
+                    "what": "nothing of the application runs again: the original instance is gone",
+                    "held": true,
+                    "read": {
+                      "app": {
+                        "pid": 71628,
+                        "start_time": 1607785,
+                        "exe": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                        "exe_sha256": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
+                        "argv": [
+                          "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node",
+                          "server.js"
+                        ]
+                      },
+                      "gone": true
+                    }
+                  },
+                  {
+                    "what": "detected: surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service recorded restarted out of band after the restart",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "down",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-21T01:32:33.356Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M5E1DA60NPH7YP1AK316YJ5G",
+                          "change": "stopped",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service",
+                          "closed_at": "2026-10-21T01:32:31.986Z",
+                          "detected_at": "2026-10-21T01:32:31.295Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M5E1DC6D0BVB426R5P4TWQBV",
+                          "change": "restarted",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-21T01:32:33.356Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "one byte of the sealed copy changed",
+                    "held": true,
+                    "read": "/home/smahoney/s7-1020/home/artifacts/proj_01M5DKEX8DJW6JCM71WKCHWK64/1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8/server.js: its last byte changed"
+                  },
+                  {
+                    "what": "an identity read differs",
+                    "held": true,
+                    "read": [
+                      {
+                        "target": "app",
+                        "method": "tree_digest",
+                        "expected": "sha256:1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8",
+                        "generation": 9,
+                        "at": "2026-10-21T01:32:34.531Z",
+                        "read": "sha256:4c709df7d6f0d772e41133802fc7186af21be0787d232443f1d338d42564b4b6",
+                        "match": "differs",
+                        "instance": {
+                          "invocation_id": "a247e8ad5a484e07a3a9ad0ef68da264",
+                          "pid": 71757,
+                          "start_time": 1608021
+                        },
+                        "detail": {
+                          "field": "tree",
+                          "expected": "sha256:1748df520f961e3457b0ecf697292d8f595b619f1ea6d9478b16ae0b9276add8",
+                          "read": "sha256:4c709df7d6f0d772e41133802fc7186af21be0787d232443f1d338d42564b4b6"
+                        },
+                        "duration_ms": 92
+                      }
+                    ]
+                  },
+                  {
+                    "what": "detected: surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g9.service recorded with an identity that differs, after the change",
+                    "held": true,
+                    "read": {
+                      "observation": {
+                        "condition": "degraded",
+                        "detail": {
+                          "code": "out_of_band"
+                        },
+                        "observed_at": "2026-10-21T01:32:34.776Z"
+                      },
+                      "changes": [
+                        {
+                          "seq": 1,
+                          "id": "oob_01M5E1DA60NPH7YP1AK316YJ5G",
+                          "change": "stopped",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g7.service",
+                          "closed_at": "2026-10-21T01:32:31.986Z",
+                          "detected_at": "2026-10-21T01:32:31.295Z"
+                        },
+                        {
+                          "seq": 2,
+                          "id": "oob_01M5E1DC6D0BVB426R5P4TWQBV",
+                          "change": "restarted",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service",
+                          "closed_at": "2026-10-21T01:32:33.694Z",
+                          "detected_at": "2026-10-21T01:32:33.356Z"
+                        },
+                        {
+                          "seq": 3,
+                          "id": "oob_01M5E1DCGZQYPDJ9X1KPPR9QX8",
+                          "change": "stopped",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g8.service",
+                          "closed_at": "2026-10-21T01:32:34.359Z",
+                          "detected_at": "2026-10-21T01:32:33.694Z"
+                        },
+                        {
+                          "seq": 4,
+                          "id": "oob_01M5E1DDJSMZGPM6492FHYDBF0",
+                          "change": "identity_differs",
+                          "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g9.service",
+                          "closed_at": null,
+                          "detected_at": "2026-10-21T01:32:34.776Z"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "what": "the byte restored",
+                    "held": true,
+                    "read": null
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "before the stop: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-21T01:32:30.152Z"
+                    }
+                  },
+                  {
+                    "what": "before the restart: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-21T01:32:32.147Z"
+                    }
+                  },
+                  {
+                    "what": "before the byte is changed: an observation reads healthy",
+                    "held": true,
+                    "read": {
+                      "condition": "healthy",
+                      "detail": null,
+                      "observed_at": "2026-10-21T01:32:34.523Z"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "case": "unreadable",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "bus": "/home/smahoney/s7-1020/home/run/qualify-f52p0jm178xd-no-bus",
+                "bus_existed": false,
+                "assertions": [
+                  {
+                    "what": "status is unread (a failure), never an empty or complete inventory",
+                    "held": true,
+                    "read": {
+                      "failure": "unavailable"
+                    }
+                  },
+                  {
+                    "what": "verify reads nothing: every identity unread",
+                    "held": true,
+                    "read": [
+                      "unread"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers unknown, never absent or applied",
+                    "held": true,
+                    "read": "unknown"
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "with the engine's own bus, status reads the running unit",
+                    "held": true,
+                    "read": {
+                      "resource": "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service",
+                      "kind": "unit",
+                      "recorded": true,
+                      "state": "active",
+                      "pendingJob": false,
+                      "generation": 2,
+                      "invocation_id": "51645a537343420982481e1d7e61ae12",
+                      "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g2.service"
+                    }
+                  },
+                  {
+                    "what": "verify matches",
+                    "held": true,
+                    "read": [
+                      "match"
+                    ]
+                  },
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": "applied"
+                  }
+                ]
+              }
+            },
+            {
+              "case": "refused",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1D7ZP9AG9ZMWQH64MWT8A",
+                "attempt": "att_01M5E1D816XPCG01GS2ZKDGDNX",
+                "stale_attempt": "att_01M5E1D7SS9TPSS1V282YN74T5",
+                "assertions": [
+                  {
+                    "what": "a capability forged in environment is refused naming environment",
+                    "held": true,
+                    "read": {
+                      "member": "environment",
+                      "refused": "environment",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in artifact_digest is refused naming artifact_digest",
+                    "held": true,
+                    "read": {
+                      "member": "artifact_digest",
+                      "refused": "artifact_digest",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in create_units is refused naming create_units",
+                    "held": true,
+                    "read": {
+                      "member": "create_units",
+                      "refused": "create_units",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in attempt is refused naming attempt",
+                    "held": true,
+                    "read": {
+                      "member": "attempt",
+                      "refused": "attempt",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "a capability forged in lease_generation is refused naming lease_generation",
+                    "held": true,
+                    "read": {
+                      "member": "lease_generation",
+                      "refused": "lease_generation",
+                      "result": "refused"
+                    }
+                  },
+                  {
+                    "what": "the adapter's effect entry was never reached",
+                    "held": true,
+                    "read": 0
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the minted capability passes the same check",
+                    "held": true,
+                    "read": null
+                  }
+                ]
+              }
+            },
+            {
+              "case": "teardown",
+              "result": "passed",
+              "control": "passed",
+              "detail": {
+                "operation": "op_01M5E1DDM79FXPNRETKAJ6K1RM",
+                "at": "2026-10-21T01:32:35.241Z",
+                "assertions": [
+                  {
+                    "what": "reconcile answers applied",
+                    "held": true,
+                    "read": {
+                      "receipt": "issued",
+                      "outcome": "applied"
+                    }
+                  },
+                  {
+                    "what": "no unit of the environment is listed",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no cgroup of it",
+                    "held": true,
+                    "read": []
+                  },
+                  {
+                    "what": "no socket or runtime directory of it under run/, each read",
+                    "held": true,
+                    "read": {
+                      "dirs": [],
+                      "files": []
+                    }
+                  }
+                ],
+                "control": [
+                  {
+                    "what": "the same reads before it found units of the environment",
+                    "held": true,
+                    "read": {
+                      "units": [
+                        "surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g9.service"
+                      ],
+                      "cgroups": [
+                        "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/surety-8be726ee7b6c-env_01M5E1D4002F7KXGQ6VV5J5153-g9.service"
+                      ],
+                      "dirs": [
+                        {
+                          "path": "/home/smahoney/s7-1020/home/run/env_01M5E1D4002F7KXGQ6VV5J5153-g9",
+                          "state": "present"
+                        }
+                      ],
+                      "files": [
+                        "env_01M5E1D4002F7KXGQ6VV5J5153-g9"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "runs": [
+          {
+            "id": "aqr_01M5E1D3ZZS5CMF52P0JM178XD",
+            "status": "qualified"
+          }
+        ],
+        "environment": null,
+        "left": [],
+        "drained": {
+          "paused": [
+            "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+          ],
+          "waited_only": [],
+          "waited_for": [],
+          "waited_ms": 7,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_design": {
+      "status": "done",
+      "at": "2026-10-21T21:13:03.555Z",
+      "value": {
+        "ready": {
+          "id": "dsg_01M5G38C2E86R3YKEXQZ7CRWRC",
+          "version": 1,
+          "ready_at": "2026-10-21T21:09:58.773Z",
+          "assets_held": [
+            "logo"
+          ],
+          "selection": {
+            "themes": [
+              "light",
+              "dark"
+            ],
+            "slots": [
+              {
+                "kind": "logo",
+                "variants": [
+                  "full",
+                  "compact",
+                  "monochrome",
+                  "on_light",
+                  "on_dark"
+                ]
+              },
+              {
+                "kind": "favicon",
+                "variants": [
+                  "default"
+                ]
+              },
+              {
+                "kind": "app_icon",
+                "variants": [
+                  "default",
+                  "adaptive_foreground",
+                  "adaptive_background"
+                ]
+              }
+            ],
+            "layouts": [
+              {
+                "target": "web",
+                "layouts": [
+                  360,
+                  720,
+                  1280
+                ]
+              },
+              {
+                "target": "android",
+                "layouts": [
+                  "phone-portrait",
+                  "phone-landscape"
+                ]
+              }
+            ]
+          }
+        },
+        "revisions": [
+          {
+            "id": "dsg_01M5G38C2E86R3YKEXQZ7CRWRC",
+            "version": 1,
+            "scope": "full",
+            "status": "approved",
+            "ready_at": "2026-10-21T21:09:58.773Z",
+            "batch_key": "design:dsg_01M5G38C2E86R3YKEXQZ7CRWRC",
+            "design_check": "dchk_01M5G2CP15QDJVSSWN47EN1E4N"
+          }
+        ],
+        "checks": [
+          {
+            "id": "dchk_01M5G2CP15QDJVSSWN47EN1E4N",
+            "outcome": "passed",
+            "reasons": []
+          }
+        ],
+        "previews": [
+          {
+            "id": "dpv_01M5G2KHECGRHY8PJ8HGDR44AD",
+            "created_at": "2026-10-21T20:31:52.776Z",
+            "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+            "generation": 1,
+            "revision": "42bbfb8be1e87da642e74c2631eb4f4e37070cbd",
+            "tree_digest": "sha256:0f10945a5fb03c935cec17474657cf69cf02df715abcf84dc145f044df43d34d",
+            "server_digest": "sha256:d2729179e1799229c53eb0718bc27d877a43306ab9a6de8fa5da285ffbd3736f",
+            "unit": "surety-8be726ee7b6c-env_01M5G2KHE939BTYW9WCAV1290T-g1.service",
+            "port": 37737,
+            "status": "torn_down",
+            "mockups": [
+              {
+                "path": "mockups/web/list.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/empty.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/loading.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-405.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-413.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-network.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/watering.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/watered.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-404.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-405.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-413.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-network.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/list-dark.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/layouts.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/index.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/android/list.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/empty.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/loading.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-405.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-413.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-network.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/watering.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/watered.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-404.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-405.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-413.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-network.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/no-connection.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/list-landscape.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/list-dark.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/index.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              }
+            ],
+            "deployed_at": "2026-10-21T20:31:54.928Z",
+            "torn_down_at": "2026-10-21T21:01:21.236Z",
+            "ttl_until": "2026-10-22T20:31:52.776Z",
+            "memory_peak": 73818112
+          },
+          {
+            "id": "dpv_01M5G4SQDGJ2F8EQND97PEP1T8",
+            "created_at": "2026-10-21T21:10:12.655Z",
+            "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+            "generation": 2,
+            "revision": "42bbfb8be1e87da642e74c2631eb4f4e37070cbd",
+            "tree_digest": "sha256:0f10945a5fb03c935cec17474657cf69cf02df715abcf84dc145f044df43d34d",
+            "server_digest": "sha256:d2729179e1799229c53eb0718bc27d877a43306ab9a6de8fa5da285ffbd3736f",
+            "unit": "surety-8be726ee7b6c-env_01M5G2KHE939BTYW9WCAV1290T-g3.service",
+            "port": 38193,
+            "status": "torn_down",
+            "mockups": [
+              {
+                "path": "mockups/web/list.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/empty.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/loading.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-405.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-413.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/load-error-network.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/watering.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/watered.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-404.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-405.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-413.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/water-error-network.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/list-dark.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/layouts.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/web/index.html",
+                "target": "web",
+                "preview_capability": "native"
+              },
+              {
+                "path": "mockups/android/list.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/empty.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/loading.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-405.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-413.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/load-error-network.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/watering.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/watered.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-404.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-405.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-413.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/water-error-network.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/no-connection.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/list-landscape.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/list-dark.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              },
+              {
+                "path": "mockups/android/index.html",
+                "target": "android",
+                "preview_capability": "simulated"
+              }
+            ],
+            "deployed_at": "2026-10-21T21:10:14.511Z",
+            "torn_down_at": "2026-10-21T21:10:17.296Z",
+            "ttl_until": "2026-10-22T21:10:12.655Z",
+            "memory_peak": 28135424
+          }
+        ],
+        "effective": [
+          {
+            "slot": "app_icon",
+            "variant": "adaptive_background",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "b9dac1e300fbf997aa2549590246ff9966336303bae6c8d617ef2a6b3a2849b9"
+          },
+          {
+            "slot": "app_icon",
+            "variant": "adaptive_foreground",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+          },
+          {
+            "slot": "app_icon",
+            "variant": "default",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+          },
+          {
+            "slot": "favicon",
+            "variant": "default",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+          },
+          {
+            "slot": "logo",
+            "variant": "compact",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "4d857a8786482cb5cb199d84ab3f32bb5410f99ce1eaa162ed1e51a18f568c50"
+          },
+          {
+            "slot": "logo",
+            "variant": "full",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+          },
+          {
+            "slot": "logo",
+            "variant": "monochrome",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "831d57066398c34d6ead00deb7254b5824eec126b1d838f2d3d7ab89c3098bfb"
+          },
+          {
+            "slot": "logo",
+            "variant": "on_dark",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "6a8c47e84cf667ac5b02418d93450cb622d2488c70162157643c90d08b31fddf"
+          },
+          {
+            "slot": "logo",
+            "variant": "on_light",
+            "slot_version": 1,
+            "source": "placeholder",
+            "digest": "9998796ed56146f3da8a22eaa16cc1915ad8d4f0663410e088c039dcc00fd708"
+          }
+        ],
+        "held": [
+          {
+            "slot": "logo",
+            "slot_version": 3,
+            "variants": [
+              {
+                "name": "full",
+                "format": "svg",
+                "digest": "84d3031e3ada9ea267b796f683b40d78144f71ca848cbf4c3e23d9e0aff92fa4"
+              },
+              {
+                "name": "compact",
+                "format": "svg",
+                "digest": "3d261c9f59d3f1bf2cad12d28a30bdcc83d90c17e1e1eca01824eefc1f7ba0f3"
+              },
+              {
+                "name": "monochrome",
+                "format": "svg",
+                "digest": "ae1cdbf11345c0460bd7ff560e3e57428c59853bdcd07e6c27b55e12a2543c4d"
+              },
+              {
+                "name": "on_light",
+                "format": "svg",
+                "digest": "6544ac19ecd80b6c4e571e344f14a48e637595d8bf0abfbf79a75230b35d13ae"
+              },
+              {
+                "name": "on_dark",
+                "format": "svg",
+                "digest": "78393c0ef3a8796dde1a85bed7ee6a9c88852268995b81b3fe0ad528a9dc53cb"
+              }
+            ]
+          }
+        ],
+        "inspection": {
+          "by": "printed for Sean"
+        },
+        "readback": {
+          "preview": {
+            "status": 0,
+            "stdout": "{\"preview\":{\"design_preview\":\"dpv_01M5G4SQDGJ2F8EQND97PEP1T8\",\"environment\":\"design-preview\",\"environment_id\":\"env_01M5G2KHE939BTYW9WCAV1290T\",\"generation\":2,\"revision\":\"42bbfb8be1e87da642e74c2631eb4f4e37070cbd\",\"url\":\"http://127.0.0.1:38193/\",\"mockups\":[{\"path\":\"mockups/web/list.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/empty.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/loading.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/load-error-405.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/load-error-413.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/load-error-network.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/watering.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/watered.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/water-error-404.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/water-error-405.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/water-error-413.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/water-error-network.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/list-dark.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/layouts.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/web/index.html\",\"target\":\"web\",\"preview_capability\":\"native\"},{\"path\":\"mockups/android/list.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/empty.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/loading.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/load-error-405.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/load-error-413.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/load-error-network.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/watering.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/watered.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/water-error-404.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/water-error-405.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/water-error-413.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/water-error-network.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/no-connection.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/list-landscape.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/list-dark.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"},{\"path\":\"mockups/android/index.html\",\"target\":\"android\",\"preview_capability\":\"simulated\"}]}}\n",
+            "stderr": ""
+          },
+          "url": "http://127.0.0.1:38193/",
+          "relay_open": {
+            "status": 0,
+            "stdout": "{\"environment\":{\"id\":\"env_01M5G2KHE939BTYW9WCAV1290T\",\"name\":\"design-preview\"},\"relay\":{\"attempt\":\"att_01M5G4SR8R0WZC96V50PD26QW6\",\"generation\":3,\"port\":38193,\"opened_at\":\"2026-10-21T21:10:16.644Z\",\"host\":\"127.0.0.1\"}}\n",
+            "stderr": ""
+          },
+          "mockups": [
+            {
+              "path": "mockups/web/list.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12627,
+              "error": null
+            },
+            {
+              "path": "mockups/web/empty.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 10595,
+              "error": null
+            },
+            {
+              "path": "mockups/web/loading.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 10413,
+              "error": null
+            },
+            {
+              "path": "mockups/web/load-error-405.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 10376,
+              "error": null
+            },
+            {
+              "path": "mockups/web/load-error-413.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 10294,
+              "error": null
+            },
+            {
+              "path": "mockups/web/load-error-network.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 10487,
+              "error": null
+            },
+            {
+              "path": "mockups/web/watering.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12572,
+              "error": null
+            },
+            {
+              "path": "mockups/web/watered.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12720,
+              "error": null
+            },
+            {
+              "path": "mockups/web/water-error-404.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12763,
+              "error": null
+            },
+            {
+              "path": "mockups/web/water-error-405.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12679,
+              "error": null
+            },
+            {
+              "path": "mockups/web/water-error-413.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12648,
+              "error": null
+            },
+            {
+              "path": "mockups/web/water-error-network.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12796,
+              "error": null
+            },
+            {
+              "path": "mockups/web/list-dark.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 12140,
+              "error": null
+            },
+            {
+              "path": "mockups/web/layouts.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 1240,
+              "error": null
+            },
+            {
+              "path": "mockups/web/index.html",
+              "target": "web",
+              "preview_capability": "native",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": false,
+              "sandbox": false,
+              "bytes": 1237,
+              "error": null
+            },
+            {
+              "path": "mockups/android/list.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 799,
+              "error": null
+            },
+            {
+              "path": "mockups/android/empty.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 802,
+              "error": null
+            },
+            {
+              "path": "mockups/android/loading.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 808,
+              "error": null
+            },
+            {
+              "path": "mockups/android/load-error-405.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 829,
+              "error": null
+            },
+            {
+              "path": "mockups/android/load-error-413.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 829,
+              "error": null
+            },
+            {
+              "path": "mockups/android/load-error-network.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 841,
+              "error": null
+            },
+            {
+              "path": "mockups/android/watering.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 811,
+              "error": null
+            },
+            {
+              "path": "mockups/android/watered.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 808,
+              "error": null
+            },
+            {
+              "path": "mockups/android/water-error-404.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 832,
+              "error": null
+            },
+            {
+              "path": "mockups/android/water-error-405.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 832,
+              "error": null
+            },
+            {
+              "path": "mockups/android/water-error-413.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 832,
+              "error": null
+            },
+            {
+              "path": "mockups/android/water-error-network.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 844,
+              "error": null
+            },
+            {
+              "path": "mockups/android/no-connection.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 826,
+              "error": null
+            },
+            {
+              "path": "mockups/android/list-landscape.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 830,
+              "error": null
+            },
+            {
+              "path": "mockups/android/list-dark.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 814,
+              "error": null
+            },
+            {
+              "path": "mockups/android/index.html",
+              "target": "android",
+              "preview_capability": "simulated",
+              "status": 200,
+              "type": "text/html; charset=utf-8",
+              "framed": true,
+              "sandbox": true,
+              "bytes": 807,
+              "error": null
+            }
+          ],
+          "relay_close": {
+            "status": 0,
+            "stdout": "{\"environment\":{\"id\":\"env_01M5G2KHE939BTYW9WCAV1290T\",\"name\":\"design-preview\"},\"relay\":null,\"closed\":true}\n",
+            "stderr": ""
+          },
+          "stop": {
+            "status": 0,
+            "stdout": "{\"preview\":{\"environment\":\"design-preview\",\"environment_id\":\"env_01M5G2KHE939BTYW9WCAV1290T\",\"stopping\":true}}\n",
+            "stderr": ""
+          },
+          "export": {
+            "status": 0,
+            "stdout": "{\"exported\":{\"project\":\"proj_01M5DPCQXYP28KMKPQ5PET0PZ7\",\"revision\":\"approved\",\"dir\":\"/home/smahoney/s7-1020/export-M535\",\"files\":[\"SIMULATIONS.txt\",\"assets/app_icon/adaptive_background.svg\",\"assets/app_icon/adaptive_foreground.svg\",\"assets/app_icon/default.svg\",\"assets/favicon/default.svg\",\"assets/logo/compact.svg\",\"assets/logo/full.svg\",\"assets/logo/monochrome.svg\",\"assets/logo/on_dark.svg\",\"assets/logo/on_light.svg\",\"assets/logo/proposed/compact.svg\",\"assets/logo/proposed/full.svg\",\"assets/logo/proposed/monochrome.svg\",\"assets/logo/proposed/on_dark.svg\",\"assets/logo/proposed/on_light.svg\",\"assets/manifest.json\",\"criteria.json\",\"design.json\",\"flows.json\",\"inventory/fixtures/list-plants.error:405.json\",\"inventory/fixtures/list-plants.error:413.json\",\"inventory/fixtures/list-plants.loading.json\",\"inventory/fixtures/list-plants.ok.json\",\"inventory/fixtures/record-watering.error:404.json\",\"inventory/fixtures/record-watering.error:405.json\",\"inventory/fixtures/record-watering.error:413.json\",\"inventory/fixtures/record-watering.loading.json\",\"inventory/fixtures/record-watering.ok.json\",\"inventory/inventory.json\",\"mockups/android/empty.html\",\"mockups/android/index.html\",\"mockups/android/list-dark.html\",\"mockups/android/list-landscape.html\",\"mockups/android/list.html\",\"mockups/android/load-error-405.html\",\"mockups/android/load-error-413.html\",\"mockups/android/load-error-network.html\",\"mockups/android/loading.html\",\"mockups/android/no-connection.html\",\"mockups/android/water-error-404.html\",\"mockups/android/water-error-405.html\",\"mockups/android/water-error-413.html\",\"mockups/android/water-error-network.html\",\"mockups/android/watered.html\",\"mockups/android/watering.html\",\"mockups/data/list-plants.ok.json\",\"mockups/data/record-watering.ok.json\",\"mockups/web/empty.html\",\"mockups/web/index.html\",\"mockups/web/layouts.html\",\"mockups/web/list-dark.html\",\"mockups/web/list.html\",\"mockups/web/load-error-405.html\",\"mockups/web/load-error-413.html\",\"mockups/web/load-error-network.html\",\"mockups/web/loading.html\",\"mockups/web/water-error-404.html\",\"mockups/web/water-error-405.html\",\"mockups/web/water-error-413.html\",\"mockups/web/water-error-network.html\",\"mockups/web/watered.html\",\"mockups/web/watering.html\",\"navigation.json\",\"screens.json\",\"tokens.json\"]}}\n",
+            "stderr": ""
+          },
+          "simulations": "# Written by the Surety engine (D7 §5.7). Each line names a mockup that is a simulation:\n# an HTML drawing of a screen of a target this preview cannot run natively. It is not\n# native behaviour: back, safe areas, permissions, gestures, window chrome and menus are\n# drawn, not exercised. Columns: path, target, form factor (- if none), layout.\n\nmockups/android/list.html\tandroid\tphone\tphone-portrait\nmockups/android/empty.html\tandroid\tphone\tphone-portrait\nmockups/android/loading.html\tandroid\tphone\tphone-portrait\nmockups/android/load-error-405.html\tandroid\tphone\tphone-portrait\nmockups/android/load-error-413.html\tandroid\tphone\tphone-portrait\nmockups/android/load-error-network.html\tandroid\tphone\tphone-portrait\nmockups/android/watering.html\tandroid\tphone\tphone-portrait\nmockups/android/watered.html\tandroid\tphone\tphone-portrait\nmockups/android/water-error-404.html\tandroid\tphone\tphone-portrait\nmockups/android/water-error-405.html\tandroid\tphone\tphone-portrait\nmockups/android/water-error-413.html\tandroid\tphone\tphone-portrait\nmockups/android/water-error-network.html\tandroid\tphone\tphone-portrait\nmockups/android/no-connection.html\tandroid\tphone\tphone-portrait\nmockups/android/list-landscape.html\tandroid\tphone\tphone-landscape\nmockups/android/list-dark.html\tandroid\tphone\tphone-portrait\nmockups/android/index.html\tandroid\tphone\tlayout not declared\n"
+        },
+        "relay": [
+          {
+            "seq": 7434,
+            "at": "2026-10-21T20:32:14.482Z",
+            "type": "environment.relay_opened",
+            "subject": {
+              "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+              "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+            },
+            "payload": {
+              "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+              "generation": 1,
+              "host": "127.0.0.1",
+              "port": 37737
+            }
+          },
+          {
+            "seq": 7513,
+            "at": "2026-10-21T20:37:59.149Z",
+            "type": "environment.relay_closed",
+            "subject": {
+              "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+              "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+            },
+            "payload": {
+              "reason": "command",
+              "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+              "generation": 1,
+              "port": 37737
+            }
+          }
+        ],
+        "designer_runs": [
+          {
+            "id": "run_01M5G13KV19G1D7YCTCDJQXYJJ",
+            "outcome": "completed",
+            "model_requested": "claude-opus-5-5"
+          }
+        ],
+        "shown": [
+          "dec_01M5DZNC09SBTHSK9HE1ZCTX9M",
+          "dec_01M5E07Q3ASZJ20CHHEHQJD6GT",
+          "dec_01M5E6GV1AF2CY9807QSETSBZ8",
+          "dec_01M5G0EZ6CYYC1957P5QZPT50Q",
+          "dec_01M5G12QH7GW0BNJCQPB4N2T8M",
+          "dec_01M5G12QH8BKC8NCZ0M6MRMJC1",
+          "dec_01M5G12QKK6EM7E601WSVGH64D",
+          "dec_01M5G13M1558M7ETNGZ4B1SA4S",
+          "dec_01M5G1R5MT93JTCC54ZGRWZVEA",
+          "dec_01M5G1R5MVP7DRKJBPKRG233GK",
+          "dec_01M5G25VAXTFHPJ1M39MY5KYM5",
+          "dec_01M5G2CP0N4MQ97T1VH2VNZTFQ",
+          "dec_01M5G38C7Q99HFXJCK9GW322SC",
+          "dec_01M5G3B154E914GV813937A79Z",
+          "dec_01M5G3HR330MP61MX0K7MW27SD",
+          "dec_01M5G3HR3BNSBZEPGNMA4CZAQ6",
+          "dec_01M5G3HR3M33FM5N3CYVZDX797",
+          "dec_01M5G3NX5WD4F2616MCT9N0EGF",
+          "dec_01M5G49G0EQWDCA3WMY84N10D7",
+          "dec_01M5G4JBB16NK3T6FZRSNETCCK",
+          "dec_01M5G4JBBD1V1Z7PP2DH2WXVC6"
+        ],
+        "rule_25": {
+          "handed_over": [
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G12QH7GW0BNJCQPB4N2T8M"
+            },
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G12QH8BKC8NCZ0M6MRMJC1"
+            },
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G1R5MT93JTCC54ZGRWZVEA"
+            },
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G1R5MVP7DRKJBPKRG233GK"
+            }
+          ],
+          "design_holds": []
+        },
+        "acts": [
+          {
+            "act": "policy_widening",
+            "items": [
+              {
+                "decision": "dec_01M5E6GV1AF2CY9807QSETSBZ8",
+                "kind": "policy_widening",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T19:54:25.726Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5E6GV1AF2CY9807QSETSBZ8/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "policy_widening",
+                "at": "2026-10-21T19:57:29.130Z",
+                "words": "I approved increasing Waterlog’s Verifier deadline from 600 to 1800 seconds, with all other policy settings unchanged",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "blocker",
+            "items": [
+              {
+                "decision": "dec_01M5E07Q3ASZJ20CHHEHQJD6GT",
+                "kind": "blocker",
+                "option": "retry",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T19:54:59.842Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5E07Q3ASZJ20CHHEHQJD6GT/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "After I approve it, perform and record one authoring retry. [...] No automatic further retry or new acceptance of findings.",
+              "driver_entry": {
+                "act": "blocker",
+                "step": "m6x_design",
+                "route": "the same act as the driver's blocker_retry record of 19:55 UTC (the harness names it blocker): POST .../decisions/dec_01M5E07Q3ASZJ20CHHEHQJD6GT/answer {option: retry} after the owner's widening approval",
+                "at": "2026-10-21T21:10:47.155Z",
+                "acted_by": "driver",
+                "on_instruction": "After I approve it, perform and record one authoring retry. [...] No automatic further retry or new acceptance of findings.",
+                "decision": "dec_01M5E07Q3ASZJ20CHHEHQJD6GT",
+                "option": "retry",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "design_due",
+            "items": [
+              {
+                "decision": "dec_01M5G0EZ6CYYC1957P5QZPT50Q",
+                "kind": "design_due",
+                "option": "open",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T20:05:42.234Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G0EZ6CYYC1957P5QZPT50Q/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "I'm ready for the Designer. Check whether it can run concurrently with this project's active check-authoring run. If supported, open it under my existing delegation and send the exact session command.",
+              "driver_entry": {
+                "act": "design_due",
+                "step": "m6x_design",
+                "route": "POST .../decisions/dec_01M5G0EZ6CYYC1957P5QZPT50Q/answer {option: open}; the Designer beside the executing authoring run (G12's exception; M532 (b))",
+                "at": "2026-10-21T20:05:42.265Z",
+                "acted_by": "driver",
+                "on_instruction": "I'm ready for the Designer. Check whether it can run concurrently with this project's active check-authoring run. If supported, open it under my existing delegation and send the exact session command.",
+                "decision": "dec_01M5G0EZ6CYYC1957P5QZPT50Q",
+                "option": "open",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "correction_approval",
+            "items": [
+              {
+                "decision": "dec_01M5G2CP0N4MQ97T1VH2VNZTFQ",
+                "kind": "check_correction_unclassifiable",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T20:48:21.919Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G2CP0N4MQ97T1VH2VNZTFQ/answer"
+              },
+              {
+                "decision": "dec_01M5G4JBB16NK3T6FZRSNETCCK",
+                "kind": "check_correction_tightening",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T21:09:58.327Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G4JBB16NK3T6FZRSNETCCK/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "correction_approval",
+                "at": "2026-10-21T21:10:07.396Z",
+                "words": "I approved the seven added design checks, retaining the recorded F7/F8 Android logo-derivation exception and the stated limits of static UI checks.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "combined_approval",
+            "items": [
+              {
+                "decision": "dec_01M5G3HR330MP61MX0K7MW27SD",
+                "kind": "design_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T20:52:59.078Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G3HR330MP61MX0K7MW27SD/answer"
+              },
+              {
+                "decision": "dec_01M5G3NX5WD4F2616MCT9N0EGF",
+                "kind": "spec_change",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T21:01:20.487Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G3NX5WD4F2616MCT9N0EGF/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "combined_approval",
+                "at": "2026-10-21T20:54:58.678Z",
+                "words": "I inspected the web mockups and labelled Android simulations and approved the combined design and specification change with the logo held. Native Android behavior remains unverified, and the recorded F7 exception applies to Android logo derivation, including R14.7.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "designer_feedback",
+            "items": [
+              {
+                "run": "run_01M5G13KV19G1D7YCTCDJQXYJJ",
+                "owner_turns": 3,
+                "store_actor": "owner (transcript speaker)",
+                "answered_at": "2026-10-21T20:25:22.007Z",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/sessions/run_01M5G13KV19G1D7YCTCDJQXYJJ/turns"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "designer_feedback",
+                "at": "2026-10-21T20:43:04.004Z",
+                "words": "I directed the Designer’s visual style, logo treatment and validation corrections, reviewed its replies, and inspected the resulting preview.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          },
+          {
+            "act": "preview_inspection",
+            "items": [
+              {
+                "act": "preview_inspection",
+                "previews": [
+                  {
+                    "generation": 1,
+                    "unit": "surety-8be726ee7b6c-env_01M5G2KHE939BTYW9WCAV1290T-g1.service",
+                    "status": "torn_down",
+                    "deployed_at": "2026-10-21T20:31:54.928Z",
+                    "torn_down_at": "2026-10-21T21:01:21.236Z"
+                  },
+                  {
+                    "generation": 2,
+                    "unit": "surety-8be726ee7b6c-env_01M5G2KHE939BTYW9WCAV1290T-g3.service",
+                    "status": "torn_down",
+                    "deployed_at": "2026-10-21T21:10:14.511Z",
+                    "torn_down_at": "2026-10-21T21:10:17.296Z"
+                  }
+                ],
+                "relay": [
+                  {
+                    "seq": 7434,
+                    "at": "2026-10-21T20:32:14.482Z",
+                    "type": "environment.relay_opened",
+                    "subject": {
+                      "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                      "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                    },
+                    "payload": {
+                      "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+                      "generation": 1,
+                      "host": "127.0.0.1",
+                      "port": 37737
+                    }
+                  },
+                  {
+                    "seq": 7513,
+                    "at": "2026-10-21T20:37:59.149Z",
+                    "type": "environment.relay_closed",
+                    "subject": {
+                      "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                      "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                    },
+                    "payload": {
+                      "reason": "command",
+                      "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+                      "generation": 1,
+                      "port": 37737
+                    }
+                  },
+                  {
+                    "seq": 8605,
+                    "at": "2026-10-21T21:10:16.644Z",
+                    "type": "environment.relay_opened",
+                    "subject": {
+                      "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                      "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                    },
+                    "payload": {
+                      "attempt": "att_01M5G4SR8R0WZC96V50PD26QW6",
+                      "generation": 3,
+                      "host": "127.0.0.1",
+                      "port": 38193
+                    }
+                  },
+                  {
+                    "seq": 8608,
+                    "at": "2026-10-21T21:10:16.841Z",
+                    "type": "environment.relay_closed",
+                    "subject": {
+                      "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                      "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                    },
+                    "payload": {
+                      "reason": "command",
+                      "attempt": "att_01M5G4SR8R0WZC96V50PD26QW6",
+                      "generation": 3,
+                      "port": 38193
+                    }
+                  }
+                ],
+                "relay_requests": {
+                  "unknown": "neither the operator relay (src/deploy/service-host.ts) nor the preview server (src/design/preview/server.mts) records the requests it serves; the relay's openings and closings are the events below"
+                },
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/design/preview; POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/environments/design-preview/relay",
+                "store_actor": "the owner's routes",
+                "answered_at": "2026-10-21T20:32:14.482Z"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "preview_inspection",
+                "at": "2026-10-21T20:38:15.516Z",
+                "words": "I inspected the web mockups and labelled Android simulations through the preview relay. Their appearance is acceptable. I did not verify native Android behavior or approve the logo.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              },
+              "relay_requests": {
+                "unknown": "neither the operator relay (src/deploy/service-host.ts) nor the preview server (src/design/preview/server.mts) records the requests it serves; the relay's openings and closings are the events below"
+              },
+              "relay": [
+                {
+                  "seq": 7434,
+                  "at": "2026-10-21T20:32:14.482Z",
+                  "type": "environment.relay_opened",
+                  "subject": {
+                    "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                    "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                  },
+                  "payload": {
+                    "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+                    "generation": 1,
+                    "host": "127.0.0.1",
+                    "port": 37737
+                  }
+                },
+                {
+                  "seq": 7513,
+                  "at": "2026-10-21T20:37:59.149Z",
+                  "type": "environment.relay_closed",
+                  "subject": {
+                    "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                    "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                  },
+                  "payload": {
+                    "reason": "command",
+                    "attempt": "att_01M5G2KJDSBHTPVXB2GGJE4TKD",
+                    "generation": 1,
+                    "port": 37737
+                  }
+                },
+                {
+                  "seq": 8605,
+                  "at": "2026-10-21T21:10:16.644Z",
+                  "type": "environment.relay_opened",
+                  "subject": {
+                    "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                    "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                  },
+                  "payload": {
+                    "attempt": "att_01M5G4SR8R0WZC96V50PD26QW6",
+                    "generation": 3,
+                    "host": "127.0.0.1",
+                    "port": 38193
+                  }
+                },
+                {
+                  "seq": 8608,
+                  "at": "2026-10-21T21:10:16.841Z",
+                  "type": "environment.relay_closed",
+                  "subject": {
+                    "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+                    "environment": "env_01M5G2KHE939BTYW9WCAV1290T"
+                  },
+                  "payload": {
+                    "reason": "command",
+                    "attempt": "att_01M5G4SR8R0WZC96V50PD26QW6",
+                    "generation": 3,
+                    "port": 38193
+                  }
+                }
+              ]
+            },
+            "step": "m6x_design",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 3951,
+                  "to_seq": 6364,
+                  "at": "2026-10-21T01:32:57.290Z",
+                  "ended_at": "2026-10-21T04:27:09.550Z"
+                },
+                {
+                  "from_seq": 6371,
+                  "to_seq": null,
+                  "at": "2026-10-21T19:46:19.727Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T01:32:57.290Z"
+            }
+          }
+        ],
+        "drained": {
+          "paused": [
+            "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+          ],
+          "waited_only": [],
+          "waited_for": [
+            {
+              "id": "run_01M5G4SAQ3WD7TH2XAR1R43DFM",
+              "kind": "one_shot",
+              "role": "builder"
+            },
+            {
+              "id": "cx_01M5G4S9PP3KSSMZ8XAZHYY3C1",
+              "kind": "check_execution",
+              "role": "smoke-server"
+            }
+          ],
+          "waited_ms": 130247,
+          "still_live": []
+        }
+      }
+    },
+    "m6x_build": {
+      "status": "done",
+      "at": "2026-10-21T21:15:55.922Z",
+      "value": {
+        "stages": [
+          {
+            "id": "stage_01M5DZNBPDSHY9F9RNMJ46AKZQ",
+            "number": 1,
+            "status": "verified"
+          },
+          {
+            "id": "stage_01M5DZNBPDSHY9F9RNMJ46AKZR",
+            "number": 2,
+            "status": "verified"
+          },
+          {
+            "id": "stage_01M5DZNBPDSHY9F9RNMJ46AKZS",
+            "number": 3,
+            "status": "integrated"
+          }
+        ],
+        "holds": [
+          {
+            "id": "wi_01M5DZNBPF4Q4832805QPW7TR5",
+            "held_intervals": [
+              {
+                "from": "2026-10-21T01:01:59.194Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T01:17:19.570Z"
+              },
+              {
+                "from": "2026-10-21T01:33:00.625Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:08:19.467Z"
+              },
+              {
+                "from": "2026-10-21T20:17:10.440Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:18:41.802Z"
+              },
+              {
+                "from": "2026-10-21T20:22:16.865Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:25:22.871Z"
+              },
+              {
+                "from": "2026-10-21T20:27:07.925Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:48:23.238Z"
+              }
+            ]
+          },
+          {
+            "id": "wi_01M5DZNBPG7H0X8VHVT2KCJNFD",
+            "held_intervals": [
+              {
+                "from": "2026-10-21T01:01:59.194Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T01:17:19.570Z"
+              },
+              {
+                "from": "2026-10-21T01:33:00.625Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:08:19.467Z"
+              },
+              {
+                "from": "2026-10-21T20:17:10.440Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:18:41.802Z"
+              },
+              {
+                "from": "2026-10-21T20:22:16.865Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:25:22.871Z"
+              },
+              {
+                "from": "2026-10-21T20:27:07.925Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:48:23.934Z"
+              },
+              {
+                "from": "2026-10-21T20:48:23.934Z",
+                "reason": "depends_on",
+                "to": "2026-10-21T20:49:21.575Z"
+              },
+              {
+                "from": "2026-10-21T20:49:21.575Z",
+                "reason": "design_pending",
+                "to": "2026-10-21T21:09:59.647Z"
+              }
+            ]
+          },
+          {
+            "id": "wi_01M5DZNBPHZM6NKYW5HVWKTPKT",
+            "held_intervals": [
+              {
+                "from": "2026-10-21T01:01:59.194Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T01:17:19.570Z"
+              },
+              {
+                "from": "2026-10-21T01:33:00.625Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:08:19.467Z"
+              },
+              {
+                "from": "2026-10-21T20:17:10.440Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:18:41.802Z"
+              },
+              {
+                "from": "2026-10-21T20:22:16.865Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:25:22.871Z"
+              },
+              {
+                "from": "2026-10-21T20:27:07.925Z",
+                "reason": "authoring_readiness",
+                "to": "2026-10-21T20:48:23.934Z"
+              },
+              {
+                "from": "2026-10-21T20:48:23.934Z",
+                "reason": "depends_on",
+                "to": "2026-10-21T21:10:51.295Z"
+              },
+              {
+                "from": "2026-10-21T21:13:25.515Z",
+                "reason": "resource_envelope",
+                "to": "2026-10-21T21:14:00.150Z"
+              }
+            ]
+          }
+        ],
+        "carried": [
+          {
+            "run": "run_01M5G4SAQ3WD7TH2XAR1R43DFM",
+            "effective": [
+              {
+                "slot": "favicon",
+                "variant": "default",
+                "slot_version": 1,
+                "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+              },
+              {
+                "slot": "logo",
+                "variant": "compact",
+                "slot_version": 1,
+                "digest": "4d857a8786482cb5cb199d84ab3f32bb5410f99ce1eaa162ed1e51a18f568c50"
+              },
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1,
+                "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+              },
+              {
+                "slot": "logo",
+                "variant": "monochrome",
+                "slot_version": 1,
+                "digest": "831d57066398c34d6ead00deb7254b5824eec126b1d838f2d3d7ab89c3098bfb"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_dark",
+                "slot_version": 1,
+                "digest": "6a8c47e84cf667ac5b02418d93450cb622d2488c70162157643c90d08b31fddf"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_light",
+                "slot_version": 1,
+                "digest": "9998796ed56146f3da8a22eaa16cc1915ad8d4f0663410e088c039dcc00fd708"
+              }
+            ]
+          },
+          {
+            "run": "run_01M5G4Z3Z28KV5Q3GP8E65R0PD",
+            "effective": [
+              {
+                "slot": "favicon",
+                "variant": "default",
+                "slot_version": 1,
+                "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+              },
+              {
+                "slot": "logo",
+                "variant": "compact",
+                "slot_version": 1,
+                "digest": "4d857a8786482cb5cb199d84ab3f32bb5410f99ce1eaa162ed1e51a18f568c50"
+              },
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1,
+                "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+              },
+              {
+                "slot": "logo",
+                "variant": "monochrome",
+                "slot_version": 1,
+                "digest": "831d57066398c34d6ead00deb7254b5824eec126b1d838f2d3d7ab89c3098bfb"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_dark",
+                "slot_version": 1,
+                "digest": "6a8c47e84cf667ac5b02418d93450cb622d2488c70162157643c90d08b31fddf"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_light",
+                "slot_version": 1,
+                "digest": "9998796ed56146f3da8a22eaa16cc1915ad8d4f0663410e088c039dcc00fd708"
+              }
+            ]
+          },
+          {
+            "run": "run_01M5G50NJS7DDT0Q0X1QG3K9ST",
+            "effective": [
+              {
+                "slot": "app_icon",
+                "variant": "adaptive_background",
+                "slot_version": 1,
+                "digest": "b9dac1e300fbf997aa2549590246ff9966336303bae6c8d617ef2a6b3a2849b9"
+              },
+              {
+                "slot": "app_icon",
+                "variant": "adaptive_foreground",
+                "slot_version": 1,
+                "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+              },
+              {
+                "slot": "app_icon",
+                "variant": "default",
+                "slot_version": 1,
+                "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+              },
+              {
+                "slot": "favicon",
+                "variant": "default",
+                "slot_version": 1,
+                "digest": "af0ed1ad84d2ac02d1f50510932e4b0f8e6922c955b36a7a1f878ec2404c3477"
+              },
+              {
+                "slot": "logo",
+                "variant": "compact",
+                "slot_version": 1,
+                "digest": "4d857a8786482cb5cb199d84ab3f32bb5410f99ce1eaa162ed1e51a18f568c50"
+              },
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1,
+                "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+              },
+              {
+                "slot": "logo",
+                "variant": "monochrome",
+                "slot_version": 1,
+                "digest": "831d57066398c34d6ead00deb7254b5824eec126b1d838f2d3d7ab89c3098bfb"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_dark",
+                "slot_version": 1,
+                "digest": "6a8c47e84cf667ac5b02418d93450cb622d2488c70162157643c90d08b31fddf"
+              },
+              {
+                "slot": "logo",
+                "variant": "on_light",
+                "slot_version": 1,
+                "digest": "9998796ed56146f3da8a22eaa16cc1915ad8d4f0663410e088c039dcc00fd708"
+              }
+            ]
+          }
+        ],
+        "bindings": [
+          {
+            "stage": "stage_01M5DZNBPDSHY9F9RNMJ46AKZR",
+            "target": "web",
+            "slot": "logo",
+            "variant": "full",
+            "path": "public/assets/logo-full.svg",
+            "form": "copy",
+            "source_slot_version": 1
+          },
+          {
+            "stage": "stage_01M5DZNBPDSHY9F9RNMJ46AKZR",
+            "target": "web",
+            "slot": "logo",
+            "variant": "full",
+            "path": "public/assets/logo-full.svg",
+            "form": "copy",
+            "source_slot_version": 1
+          },
+          {
+            "stage": "stage_01M5DZNBPDSHY9F9RNMJ46AKZS",
+            "target": "android",
+            "slot": "logo",
+            "variant": "full",
+            "path": "android-app/src/assets/logo-full.png",
+            "form": "derived",
+            "source_slot_version": 1
+          }
+        ],
+        "executions": [
+          {
+            "id": "cx_01M5G53X1VSN8MFCRB4SDEG6MS",
+            "key": "logo-parity",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1
+              }
+            ],
+            "status": "queued"
+          },
+          {
+            "id": "cx_01M5G53X1VSN8MFCRB4SDEG6MV",
+            "key": "logo-slot-approved",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1
+              }
+            ],
+            "status": "queued"
+          },
+          {
+            "id": "cx_01M5G53X1VSN8MFCRB4SDEG6MX",
+            "key": "logo-slot-held",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 1
+              }
+            ],
+            "status": "queued"
+          }
+        ],
+        "shown": [
+          "dec_01M5G12QH7GW0BNJCQPB4N2T8M",
+          "dec_01M5G12QH8BKC8NCZ0M6MRMJC1",
+          "dec_01M5G1R5MT93JTCC54ZGRWZVEA",
+          "dec_01M5G1R5MVP7DRKJBPKRG233GK"
+        ],
+        "acts": []
+      }
+    },
+    "m6x_asset": {
+      "status": "done",
+      "at": "2026-10-22T12:37:55.347Z",
+      "value": {
+        "cli": null,
+        "before": {
+          "slot_version": 1,
+          "source": "placeholder",
+          "digest": "837b61b224d75c5e219d52a3a4611b5158fc459a0cfbe2bdd2a51bb8a55e1901"
+        },
+        "after": {
+          "slot_version": 3,
+          "source": "approved",
+          "digest": "84d3031e3ada9ea267b796f683b40d78144f71ca848cbf4c3e23d9e0aff92fa4"
+        },
+        "fixes": [
+          {
+            "id": "wi_01M5HS1A9JFJGDPMXSZVZNNBRW",
+            "status": "complete",
+            "subject": {
+              "cause": "asset_updated",
+              "slot": "logo",
+              "from_version": "logo@1",
+              "to_version": "logo@3",
+              "bindings": [
+                {
+                  "stage": "stage_01M5DZNBPDSHY9F9RNMJ46AKZS",
+                  "target": "web",
+                  "path": "public/assets/logo-full.svg",
+                  "form": "copy"
+                },
+                {
+                  "stage": "stage_01M5DZNBPDSHY9F9RNMJ46AKZS",
+                  "target": "android",
+                  "path": "android-app/src/assets/logo-full.png",
+                  "form": "derived"
+                }
+              ],
+              "candidate": "cand_01M5GPNABB8YX6DVFCS55EKCKC"
+            }
+          }
+        ],
+        "obligations": [
+          {
+            "id": "obl_01M5HS1A9PXC8JCPJEB2R2XHZ0",
+            "key": "logo-parity",
+            "resolved_at": "2026-10-22T12:25:57.310Z"
+          },
+          {
+            "id": "obl_01M5HS1A9PXC8JCPJEB2R2XHZ2",
+            "key": "logo-slot-approved",
+            "resolved_at": "2026-10-22T12:26:04.152Z"
+          },
+          {
+            "id": "obl_01M5HS1A9QC03MC5851R00RS31",
+            "key": "logo-slot-held",
+            "resolved_at": "2026-10-22T12:26:11.053Z"
+          }
+        ],
+        "parity": [
+          {
+            "id": "cr_01M5HS6G9YTRD92P48V0N6SW06",
+            "key": "logo-parity",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 3
+              }
+            ],
+            "exit_status": 0,
+            "execution": 352
+          },
+          {
+            "id": "cr_01M5HS6PZRJY6ZWBSZ8YZR3KGF",
+            "key": "logo-slot-approved",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 3
+              }
+            ],
+            "exit_status": 0,
+            "execution": 353
+          },
+          {
+            "id": "cr_01M5HS6XQD8VGBMZT07CAGGHWE",
+            "key": "logo-slot-held",
+            "asset_inputs": [
+              {
+                "slot": "logo",
+                "variant": "full",
+                "slot_version": 3
+              }
+            ],
+            "exit_status": 0,
+            "execution": 354
+          }
+        ],
+        "revisions": [
+          {
+            "id": "dsg_01M5G38C2E86R3YKEXQZ7CRWRC",
+            "scope": "full",
+            "status": "superseded"
+          },
+          {
+            "id": "dsg_01M5GG3VHV9EZ6S6H18GGBDF59",
+            "scope": "full",
+            "status": "superseded"
+          },
+          {
+            "id": "dsg_01M5GN43VCYZHGW11T553RM9MS",
+            "scope": "full",
+            "status": "superseded"
+          },
+          {
+            "id": "dsg_01M5GPXY6VNMB61YQK425WTQ18",
+            "scope": "asset_only",
+            "status": "approved"
+          }
+        ],
+        "acts": [
+          {
+            "act": "blocker",
+            "items": [
+              {
+                "decision": "dec_01M5G55ZEB6HQ9JQ8KY24T59PH",
+                "kind": "blocker",
+                "option": "correct_check",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T21:22:46.921Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G55ZEB6HQ9JQ8KY24T59PH/answer"
+              },
+              {
+                "decision": "dec_01M5G5GR3HK30MYQDNVVA31JN1",
+                "kind": "blocker",
+                "option": "retry",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T21:41:45.708Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G5GR3HK30MYQDNVVA31JN1/answer"
+              },
+              {
+                "decision": "dec_01M5G6ZNAFQBAJVJ2RFFZWZZ73",
+                "kind": "blocker",
+                "option": "retry",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T01:09:59.160Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G6ZNAFQBAJVJ2RFFZWZZ73/answer"
+              },
+              {
+                "decision": "dec_01M5GJNKPDZW7BFRQC3F2E65B9",
+                "kind": "blocker",
+                "option": "retry",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:21:47.752Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GJNKPDZW7BFRQC3F2E65B9/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "I authorize one narrow Designer revision to carry the implementation instruction. [...] Before using the already-authorized retry, confirm the revised note will be included in that Builder's package. Do not retry if it is absent. [Earlier:] you are authorized to submit one retry, including the previously described automatic stage-4 work and normal verification/review. Record it as your act.",
+              "driver_entry": {
+                "act": "blocker",
+                "step": "m6x_asset",
+                "route": "POST (port 37235) .../decisions/dec_01M5GJNKPDZW7BFRQC3F2E65B9/answer {option: retry}: the one retry Sean authorized for the F23 workaround, after design v3 (the web-plants screen note, revision efb0f5f11c1fb714db7b247e454d1105b684b14e) was approved and ready and confirmed in the approved revision's screens.json; scope: this retry, the automatic stage-4 work, their verification and review; result: {\"decision\":{\"id\":\"dec_01M5GJNKPDZW7BFRQC3F2E65B9\",\"status\":\"consumed\"}} HTTP200",
+                "at": "2026-10-22T02:21:47.787Z",
+                "acted_by": "driver",
+                "on_instruction": "I authorize one narrow Designer revision to carry the implementation instruction. [...] Before using the already-authorized retry, confirm the revised note will be included in that Builder's package. Do not retry if it is absent. [Earlier:] you are authorized to submit one retry, including the previously described automatic stage-4 work and normal verification/review. Record it as your act.",
+                "decision": "dec_01M5GJNKPDZW7BFRQC3F2E65B9",
+                "option": "retry",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "correction_approval",
+            "items": [
+              {
+                "decision": "dec_01M5G5HC8VVQS6GP1DYJ7CZVGP",
+                "kind": "check_correction_unclassifiable",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T21:41:05.117Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G5HC8VVQS6GP1DYJ7CZVGP/answer"
+              },
+              {
+                "decision": "dec_01M5G804R3HVWEMWDEZXXZYZ6D",
+                "kind": "check_correction_unclassifiable",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T22:18:14.384Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G804R3HVWEMWDEZXXZYZ6D/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "correction_approval",
+                "at": "2026-10-21T22:18:32.130Z",
+                "words": "approved the correction",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "spec_change",
+            "items": [
+              {
+                "decision": "dec_01M5G7E2XVGKYYN7GN3C642BF6",
+                "kind": "spec_change",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T22:04:03.125Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G7E2XVGKYYN7GN3C642BF6/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "Proceed through the governed specification-change route for a genuine clarification of R13 [...]. I authorize the Spec Writer proposal and the resulting Verifier correction work within existing caps. Bring me the required approvals.",
+              "driver_entry": {
+                "act": "spec_change",
+                "step": "m6x_asset",
+                "route": "the same act as the driver's spec_change_request record of 21:5x UTC 2026-10-21 (the harness names it spec_change): surety spec change-request --project proj_01M5DPCQXYP28KMKPQ5PET0PZ7 --file ~/s7-1020/spec-change-R13-clarification.md (request scr_01M5G7CNYF0E6AFTYSGFG6S5G2); Sean approved the resulting spec_change decision himself (his spec_approval record 22:04:10Z)",
+                "at": "2026-10-22T12:37:49.842Z",
+                "acted_by": "driver",
+                "on_instruction": "Proceed through the governed specification-change route for a genuine clarification of R13 [...]. I authorize the Spec Writer proposal and the resulting Verifier correction work within existing caps. Bring me the required approvals.",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "finding_disposition",
+            "items": [
+              {
+                "decision": "dec_01M5G804KZSHP9W41E7P4F1TSA",
+                "kind": "finding_disposition",
+                "option": "fix",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T22:51:12.743Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G804KZSHP9W41E7P4F1TSA/answer"
+              },
+              {
+                "decision": "dec_01M5GPWYYNSP24DJR717YS63TF",
+                "kind": "finding_disposition",
+                "option": "lower_and_accept",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:32:55.510Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GPWYYNSP24DJR717YS63TF/answer"
+              },
+              {
+                "decision": "dec_01M5GPWYZ3CAT4NA8QCJFHFWE6",
+                "kind": "finding_disposition",
+                "option": "accept",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:32:58.632Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GPWYZ3CAT4NA8QCJFHFWE6/answer"
+              },
+              {
+                "decision": "dec_01M5GPWYZGBS1570R68CA5G6Y1",
+                "kind": "finding_disposition",
+                "option": "accept",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:33:01.736Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GPWYZGBS1570R68CA5G6Y1/answer"
+              },
+              {
+                "decision": "dec_01M5G12QH7GW0BNJCQPB4N2T8M",
+                "kind": "finding_disposition",
+                "option": "accept",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:33:04.831Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G12QH7GW0BNJCQPB4N2T8M/answer"
+              },
+              {
+                "decision": "dec_01M5G12QH8BKC8NCZ0M6MRMJC1",
+                "kind": "finding_disposition",
+                "option": "accept",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:33:07.905Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G12QH8BKC8NCZ0M6MRMJC1/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "Authorize the listed dispositions for Groups 1 and 2: approve the exclusion; lower_and_accept its associated finding if that decision remains applicable; accept the corrected simulation conflict, the R13.4 workaround finding, and the two authoring findings. Re-read each decision before answering, and process them sequentially. [...] Record each successful answer as your act. Preserve F23 as an uncorrected check defect with an accepted workaround.",
+              "driver_entry": {
+                "act": "finding_disposition",
+                "step": "m6x_asset",
+                "route": "POST (port 37235) .../decisions/dec_01M5G12QH8BKC8NCZ0M6MRMJC1/answer {option: accept}: authoring contract_conflict (invalid percent-encoding -> 404), accepted; the spec's silence stays recorded; result: {\"decision\":{\"id\":\"dec_01M5G12QH8BKC8NCZ0M6MRMJC1\",\"status\":\"consumed\"}} HTTP200",
+                "at": "2026-10-22T02:33:07.930Z",
+                "acted_by": "driver",
+                "on_instruction": "Authorize the listed dispositions for Groups 1 and 2: approve the exclusion; lower_and_accept its associated finding if that decision remains applicable; accept the corrected simulation conflict, the R13.4 workaround finding, and the two authoring findings. Re-read each decision before answering, and process them sequentially. [...] Record each successful answer as your act. Preserve F23 as an uncorrected check defect with an accepted workaround.",
+                "decision": "dec_01M5G12QH8BKC8NCZ0M6MRMJC1",
+                "option": "accept",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "design_due",
+            "items": [
+              {
+                "decision": "dec_01M5G91SWRWQ8SXE2K56EKP7GJ",
+                "kind": "design_due",
+                "option": "open",
+                "store_actor": "human",
+                "answered_at": "2026-10-21T23:18:02.155Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5G91SWRWQ8SXE2K56EKP7GJ/answer"
+              },
+              {
+                "decision": "dec_01M5GD8TQNTYFVNPZDWJBNY5ZM",
+                "kind": "design_due",
+                "option": "open",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T00:13:06.264Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GD8TQNTYFVNPZDWJBNY5ZM/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "resume the project and open the revised Designer session under my existing delegation. Send its new run ID and exact command.",
+              "driver_entry": {
+                "act": "design_due",
+                "step": "m6x_asset",
+                "route": "POST (port 37235) .../decisions/dec_01M5GD8TQNTYFVNPZDWJBNY5ZM/answer {option: open}: the revise session reopened after the idle timeout (F20); result: {\"decision\":{\"id\":\"dec_01M5GD8TQNTYFVNPZDWJBNY5ZM\",\"status\":\"consumed\"}} HTTP200",
+                "at": "2026-10-22T00:13:06.290Z",
+                "acted_by": "driver",
+                "on_instruction": "resume the project and open the revised Designer session under my existing delegation. Send its new run ID and exact command.",
+                "decision": "dec_01M5GD8TQNTYFVNPZDWJBNY5ZM",
+                "option": "open",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "combined_approval",
+            "items": [
+              {
+                "decision": "dec_01M5GG4YPKHPAVYJSK4AG2VYYR",
+                "kind": "design_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T00:53:05.346Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GG4YPKHPAVYJSK4AG2VYYR/answer"
+              },
+              {
+                "decision": "dec_01M5GG4YQD20MJA2RDA3NDYXTB",
+                "kind": "spec_change",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T00:53:18.259Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GG4YQD20MJA2RDA3NDYXTB/answer"
+              },
+              {
+                "decision": "dec_01M5GN5QAC524XXSCZ4W3BZT2M",
+                "kind": "design_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:20:31.197Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GN5QAC524XXSCZ4W3BZT2M/answer"
+              },
+              {
+                "decision": "dec_01M5GN5QAQ79PW3YBT80FFQKMT",
+                "kind": "spec_change",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:20:53.270Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GN5QAQ79PW3YBT80FFQKMT/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "combined_approval",
+                "at": "2026-10-22T02:21:01.027Z",
+                "words": "I approved design version 3’s implementation note and provenance-only specification change, keeping the logo held.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "finding_applicability_exclusion",
+            "items": [
+              {
+                "decision": "dec_01M5GPWYY75NX9D0VD79XS2NYK",
+                "kind": "finding_applicability_exclusion",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T02:32:53.471Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GPWYY75NX9D0VD79XS2NYK/answer"
+              }
+            ],
+            "performer": "driver",
+            "evidence": {
+              "instruction": "Authorize the listed dispositions for Groups 1 and 2: approve the exclusion; [...] Record each successful answer as your act.",
+              "driver_entry": {
+                "act": "finding_applicability_exclusion",
+                "step": "m6x_asset",
+                "route": "the same act as the driver's finding_applicability record of 02:32 UTC 2026-10-22 (the harness names it finding_applicability_exclusion): POST .../decisions/dec_01M5GPWYY75NX9D0VD79XS2NYK/answer {option: approve}",
+                "at": "2026-10-22T12:37:49.861Z",
+                "acted_by": "driver",
+                "on_instruction": "Authorize the listed dispositions for Groups 1 and 2: approve the exclusion; [...] Record each successful answer as your act.",
+                "decision": "dec_01M5GPWYY75NX9D0VD79XS2NYK",
+                "option": "approve",
+                "entered_via": "driver-act.mjs"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "asset_approval",
+            "items": [
+              {
+                "decision": "dec_01M5GPXY6X6J5Y6DEVJRY3JJVD",
+                "kind": "design_approval",
+                "option": "approve",
+                "store_actor": "human",
+                "answered_at": "2026-10-22T12:23:07.303Z",
+                "route": "/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/decisions/dec_01M5GPXY6X6J5Y6DEVJRY3JJVD/answer"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "asset_approval",
+                "at": "2026-10-22T12:23:25.391Z",
+                "words": "I reviewed the asset-only approval and approved the previously held Designer logo at slot version 3, authorizing its propagation to the recorded web and Android bindings.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "designer_feedback",
+            "items": [
+              {
+                "run": "run_01M5GF8KZ7J01W5AJVDP5ZXKRW",
+                "owner_turns": 1,
+                "store_actor": "owner (transcript speaker)",
+                "answered_at": "2026-10-22T00:17:03.698Z",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/sessions/run_01M5GF8KZ7J01W5AJVDP5ZXKRW/turns"
+              },
+              {
+                "run": "run_01M5GKQDBSVC6HK9RK64Z1SK81",
+                "owner_turns": 1,
+                "store_actor": "owner (transcript speaker)",
+                "answered_at": "2026-10-22T01:34:31.383Z",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/sessions/run_01M5GKQDBSVC6HK9RK64Z1SK81/turns"
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "designer_feedback",
+                "at": "2026-10-22T00:28:18.644Z",
+                "words": "feed back added",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          },
+          {
+            "act": "asset_submit",
+            "items": [
+              {
+                "act": "asset_submit",
+                "route": "POST /v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/design/assets/submit (surety design assets submit)",
+                "store_actor": "the owner's CLI",
+                "answered_at": "2026-10-22T02:27:05.049Z",
+                "revisions": [
+                  "dsg_01M5GPXY6VNMB61YQK425WTQ18"
+                ]
+              }
+            ],
+            "performer": "sean",
+            "evidence": {
+              "owner_entry": {
+                "act": "asset_submit",
+                "at": "2026-10-22T02:27:24.580Z",
+                "words": "I submitted the previously reviewed Designer logo for separate asset-only approval.",
+                "entered_via": "owner-act.mjs",
+                "tty": true,
+                "uid": 1000,
+                "user": "smahoney"
+              }
+            },
+            "step": "m6x_asset",
+            "window": {
+              "attempts": [
+                {
+                  "from_seq": 9588,
+                  "to_seq": 20007,
+                  "at": "2026-10-21T21:15:55.925Z",
+                  "ended_at": "2026-10-22T03:11:55.921Z"
+                },
+                {
+                  "from_seq": 20039,
+                  "to_seq": null,
+                  "at": "2026-10-22T12:18:40.385Z",
+                  "ended_at": null
+                }
+              ],
+              "performers_since": "2026-10-21T21:15:55.925Z"
+            }
+          }
+        ]
+      }
+    },
+    "m6x_alpha": {
+      "status": "done",
+      "at": "2026-10-22T23:32:13.147Z",
+      "value": {
+        "candidate": {
+          "id": "cand_01M5HS2MW5VA1JJ0367JDG5TRQ",
+          "progress": "alpha_deployed"
+        },
+        "requests": [
+          {
+            "id": "dreq_01M5GQFCVCT33NW79MG3SRKB6A",
+            "requested_by": "policy"
+          },
+          {
+            "id": "dreq_01M5HSS77929K61H3EF6Z39JBT",
+            "requested_by": "human"
+          }
+        ],
+        "alpha_authorize": {
+          "id": "gate_01M5HSS778S2FEX5YXJMSZ42PB",
+          "created_at": "2026-10-22T12:36:10.565Z",
+          "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+          "scope": "scope_01M5HSS778S2FEX5YXJMSZ42P9",
+          "candidate": "cand_01M5HS2MW5VA1JJ0367JDG5TRQ",
+          "gate_kind": "alpha_authorize",
+          "computed_at": "2026-10-22T12:36:10.565Z",
+          "inputs_hash": "e230c7325cd90c12428f496d25f2a5391946a3a9b7dd8c83c11fd44b537d5327",
+          "inputs_snapshot": "{\"results\":{\"chk_01M5G8P9JX7VECNMPSDR1VFNWQ\":\"cr_01M5HS2YEQEB3E61KA6NWN182E\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWR\":\"cr_01M5HS36NBHSQMCWWJGQZKFCHN\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWS\":\"cr_01M5HS3DGKZ60B0183CTGKM8NQ\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWT\":\"cr_01M5HS3M2HTSNRNNY0NQVCP2ZC\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWV\":\"cr_01M5HS3TQGRT5R9593YZENQ6V9\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWW\":\"cr_01M5HS41D96BK8FZMPPZGPJTXB\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWX\":\"cr_01M5HS49N0G827D9TTEC7AJ0W7\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWY\":\"cr_01M5HS4GP6TX6YTSYXKC9R89N9\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWZ\":\"cr_01M5HS4QBZR8M9KJ3H7J6MRPXE\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX0\":\"cr_01M5HS4Y1TS08ANM2J3AN591AF\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX1\":\"cr_01M5HS56E2NKW9MMVY68J26JTH\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX2\":\"cr_01M5HS5D1ZM5KEZYAGPNQJYGSK\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX3\":\"cr_01M5HS5KWCE185NVB55N2WWYPF\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX4\":\"cr_01M5HS5TPY95W5QAAZEGFARS13\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XB\":\"cr_01M5HS61DXV31P3XK4XT5YVJQ1\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XC\":\"cr_01M5HS69PKRYT141F2YQPZ9KXA\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XD\":\"cr_01M5HS6G9YTRD92P48V0N6SW06\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XE\":\"cr_01M5HS6PZRJY6ZWBSZ8YZR3KGF\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XF\":\"cr_01M5HS6XQD8VGBMZT07CAGGHWE\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XG\":\"cr_01M5HS74PXK9A77VFNT925D424\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XH\":\"cr_01M5HS7CR3CY1M3RQ5A0NZX8S5\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XJ\":\"cr_01M5HS7KM8JC6N6S0PK3HAJBGG\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XK\":\"cr_01M5HS7SZVZMBXDM3QMP488BHN\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XM\":\"cr_01M5HS80AN68T8404J90NMDZQF\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XN\":\"cr_01M5HS86PCAQRNXA1F1AD6YMPP\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XP\":\"cr_01M5HS8FGQ6XPMCEE7BWT2Q98Q\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XQ\":\"cr_01M5HS8QA7GTR73GYTB2EQHQBV\"},\"findings\":[\"fnd_01M5G577FH2KBMZTR09J93BS9Z\",\"fnd_01M5G577FJ0D7TQ136G9DT14BZ\",\"fnd_01M5G6Y4PEA16738PB0JE4JW6Z\"],\"signoffs\":[\"so_01M5HS9D5QZ3PS8SG6DRCK1QVD\"],\"head_fingerprint\":\"689f1fcff26898fac8218c974ca148c2b3cb71f02e3239810a46ec03c5e0436b\"}",
+          "check_states": "{\"chk_01M5G8P9JX7VECNMPSDR1VFNWQ\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWR\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWS\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWT\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWV\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWW\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWX\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWY\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNWZ\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX0\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX1\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX2\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX3\":\"passed\",\"chk_01M5G8P9JX7VECNMPSDR1VFNX4\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XB\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XC\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XD\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XE\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XF\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XG\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XH\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XJ\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XK\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XM\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XN\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XP\":\"passed\",\"chk_01M5G8P9JYCVVXPFQA5V8NX6XQ\":\"passed\"}",
+          "outcome": "satisfied",
+          "reasons": [],
+          "satisfiers": "[]",
+          "stale": 1,
+          "stage": null,
+          "authorization": "dauth_01M5HSS768K2QM5NG4DN64TSP0",
+          "checks": "{\"chk_01M5G8P9JX7VECNMPSDR1VFNWQ\":{\"key\":\"android-permissions\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWWR7VXEJH0WQD7A1J7\",\"result\":\"cr_01M5HS2YEQEB3E61KA6NWN182E\",\"execution_seq\":336},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWR\":{\"key\":\"android-simulation\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWYP95HF5F05YRTJP0S\",\"result\":\"cr_01M5HS36NBHSQMCWWJGQZKFCHN\",\"execution_seq\":337},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWS\":{\"key\":\"android-source\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWZ0T26RJR4Q0PER5CG\",\"result\":\"cr_01M5HS3DGKZ60B0183CTGKM8NQ\",\"execution_seq\":338},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWT\":{\"key\":\"android-state-markers\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWZ0T26RJR4Q0PER5CJ\",\"result\":\"cr_01M5HS3M2HTSNRNNY0NQVCP2ZC\",\"execution_seq\":339},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWV\":{\"key\":\"android-theme\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWZ0T26RJR4Q0PER5CM\",\"result\":\"cr_01M5HS3TQGRT5R9593YZENQ6V9\",\"execution_seq\":340},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWW\":{\"key\":\"api-add-plant\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWZ0T26RJR4Q0PER5CP\",\"result\":\"cr_01M5HS41D96BK8FZMPPZGPJTXB\",\"execution_seq\":341},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWX\":{\"key\":\"api-due-rule\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MWZ0T26RJR4Q0PER5CR\",\"result\":\"cr_01M5HS49N0G827D9TTEC7AJ0W7\",\"execution_seq\":342},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWY\":{\"key\":\"api-errors\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX0ZRJ7JRPYJM7M9QK2\",\"result\":\"cr_01M5HS4GP6TX6YTSYXKC9R89N9\",\"execution_seq\":343},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNWZ\":{\"key\":\"api-list-plants\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX0ZRJ7JRPYJM7M9QK4\",\"result\":\"cr_01M5HS4QBZR8M9KJ3H7J6MRPXE\",\"execution_seq\":344},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNX0\":{\"key\":\"api-record-watering\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX0ZRJ7JRPYJM7M9QK6\",\"result\":\"cr_01M5HS4Y1TS08ANM2J3AN591AF\",\"execution_seq\":345},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNX1\":{\"key\":\"api-runtime\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX0ZRJ7JRPYJM7M9QK8\",\"result\":\"cr_01M5HS56E2NKW9MMVY68J26JTH\",\"execution_seq\":346},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNX2\":{\"key\":\"design-tokens-parity\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX0ZRJ7JRPYJM7M9QKA\",\"result\":\"cr_01M5HS5D1ZM5KEZYAGPNQJYGSK\",\"execution_seq\":347},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNX3\":{\"key\":\"excluded-features\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWJZZ\",\"result\":\"cr_01M5HS5KWCE185NVB55N2WWYPF\",\"execution_seq\":348},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JX7VECNMPSDR1VFNX4\":{\"key\":\"integration-api\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK01\",\"result\":\"cr_01M5HS5TPY95W5QAAZEGFARS13\",\"execution_seq\":349},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XB\":{\"key\":\"integration-web\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK03\",\"result\":\"cr_01M5HS61DXV31P3XK4XT5YVJQ1\",\"execution_seq\":350},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XC\":{\"key\":\"lint-api\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK05\",\"result\":\"cr_01M5HS69PKRYT141F2YQPZ9KXA\",\"execution_seq\":351},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XD\":{\"key\":\"logo-parity\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK07\",\"result\":\"cr_01M5HS6G9YTRD92P48V0N6SW06\",\"execution_seq\":352},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XE\":{\"key\":\"logo-slot-approved\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK09\",\"result\":\"cr_01M5HS6PZRJY6ZWBSZ8YZR3KGF\",\"execution_seq\":353},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XF\":{\"key\":\"logo-slot-held\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK0B\",\"result\":\"cr_01M5HS6XQD8VGBMZT07CAGGHWE\",\"execution_seq\":354},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XG\":{\"key\":\"smoke-server\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK0D\",\"result\":\"cr_01M5HS74PXK9A77VFNT925D424\",\"execution_seq\":355},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XH\":{\"key\":\"ui-due-from-api\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX1FXZABP1EE45YWK0F\",\"result\":\"cr_01M5HS7CR3CY1M3RQ5A0NZX8S5\",\"execution_seq\":356},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XJ\":{\"key\":\"web-focus-motion\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJ9Q\",\"result\":\"cr_01M5HS7KM8JC6N6S0PK3HAJBGG\",\"execution_seq\":357},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XK\":{\"key\":\"web-layout\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJ9S\",\"result\":\"cr_01M5HS7SZVZMBXDM3QMP488BHN\",\"execution_seq\":358},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XM\":{\"key\":\"web-list-due\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJ9V\",\"result\":\"cr_01M5HS80AN68T8404J90NMDZQF\",\"execution_seq\":359},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XN\":{\"key\":\"web-state-markers\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJ9X\",\"result\":\"cr_01M5HS86PCAQRNXA1F1AD6YMPP\",\"execution_seq\":360},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XP\":{\"key\":\"web-tokens\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJ9Z\",\"result\":\"cr_01M5HS8FGQ6XPMCEE7BWT2Q98Q\",\"execution_seq\":361},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}},\"chk_01M5G8P9JYCVVXPFQA5V8NX6XQ\":{\"key\":\"web-watered\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HS2MX2HW6HR2WV33STGJA1\",\"result\":\"cr_01M5HS8QA7GTR73GYTB2EQHQBV\",\"execution_seq\":362},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":{\"count\":0,\"executions\":[],\"link\":\"/v1/projects/proj_01M5DPCQXYP28KMKPQ5PET0PZ7/candidates/cand_01M5HS2MW5VA1JJ0367JDG5TRQ/checks\"}}}",
+          "missing_verifications": "[]",
+          "phase_plan": null,
+          "plan_generation": null
+        },
+        "alpha_complete": {
+          "id": "gate_01M5HSSF07T0NSS46DJZD4SZBM",
+          "created_at": "2026-10-22T12:36:18.547Z",
+          "project": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7",
+          "scope": "scope_01M5HSSF07T0NSS46DJZD4SZBJ",
+          "candidate": "cand_01M5HS2MW5VA1JJ0367JDG5TRQ",
+          "gate_kind": "alpha_complete",
+          "computed_at": "2026-10-22T12:36:18.547Z",
+          "inputs_hash": "7bb84d9389222330c01ea697968008cb0fd8a17387438a1badf1f1124fd29585",
+          "inputs_snapshot": "{\"results\":{\"chk_01M5G8P9JX7VECNMPSDR1VFNWP\":\"cr_01M5HSSEJ15HRE4JC8TRV9ZJAZ\"},\"findings\":[\"fnd_01M5G577FH2KBMZTR09J93BS9Z\",\"fnd_01M5G577FJ0D7TQ136G9DT14BZ\",\"fnd_01M5G6Y4PEA16738PB0JE4JW6Z\"],\"signoffs\":[\"so_01M5HS9D5QZ3PS8SG6DRCK1QVD\"],\"head_fingerprint\":\"689f1fcff26898fac8218c974ca148c2b3cb71f02e3239810a46ec03c5e0436b\"}",
+          "check_states": "{\"chk_01M5G8P9JX7VECNMPSDR1VFNWP\":\"passed\"}",
+          "outcome": "satisfied",
+          "reasons": [],
+          "satisfiers": "[]",
+          "stale": 0,
+          "stage": null,
+          "authorization": null,
+          "checks": "{\"chk_01M5G8P9JX7VECNMPSDR1VFNWP\":{\"key\":\"alpha-post-deploy\",\"state\":\"passed\",\"deciding\":{\"execution\":\"cx_01M5HSS886WA5C9SHAZ4ED7T70\",\"result\":\"cr_01M5HSSEJ15HRE4JC8TRV9ZJAZ\",\"execution_seq\":363},\"not_run_reason\":null,\"pending\":null,\"due\":null,\"history\":null}}",
+          "missing_verifications": "[]",
+          "phase_plan": null,
+          "plan_generation": null
+        },
+        "host": [],
+        "rule_25": {
+          "handed_over": [
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G1R5MT93JTCC54ZGRWZVEA",
+              "status": "open",
+              "answered": false,
+              "scope": "design_conflict",
+              "raised_at": "2026-10-21T20:16:55.960Z",
+              "options": [
+                "change_spec"
+              ],
+              "subject": {
+                "type": "design_finding",
+                "id": "dfnd_01M5G1R5MSJ5XKSPNRDT2W5VDT",
+                "category": "requirement_conflict",
+                "severity": "medium",
+                "message": "The inventory owes an Android state 'permission_denied:android.permission.INTERNET', but INTERNET is a normal, install-time permission with no runtime prompt, and R10.1 and Q6 forbid any runtime permission request. The design draws the obligation honestly as the ordinary network load error ('Couldn't load your plants', Try again), with no prompt or settings link (mockups/android/no-connection.html). It does not invent a permission flow.",
+                "interface": null,
+                "requirement": "R10",
+                "status": "open"
+              },
+              "handed_to": "m6x_review",
+              "note": "open at m6x_alpha's end and not answered: handed to m6x_review (BS6 §4.1 rule 25 as amended); the harness answers nothing, and nothing it names is resolved, dispositioned or verified by the handover"
+            },
+            {
+              "kind": "finding_disposition",
+              "id": "dec_01M5G1R5MVP7DRKJBPKRG233GK",
+              "status": "open",
+              "answered": false,
+              "scope": "design_conflict",
+              "raised_at": "2026-10-21T20:16:55.960Z",
+              "options": [
+                "change_spec"
+              ],
+              "subject": {
+                "type": "design_finding",
+                "id": "dfnd_01M5G1R5MT93JTCC54ZGRWZVEC",
+                "category": "requirement_conflict",
+                "severity": "low",
+                "message": "The approved requirements need an empty list state ('No plants yet', R7.3 and R9.4) and network-error states (R7.4, R8.5, R9.4, R11.2) that the inventory does not owe: list-plants' plants array is not marked as a collection, and a network failure is not an interface error. The design draws them (empty as a list-plants ok state with its own fixture; network errors as listed mockups web/android load-error-network.html and water-error-network.html with no obligation), so the engine's coverage check will not track them.",
+                "interface": null,
+                "requirement": "R7",
+                "status": "open"
+              },
+              "handed_to": "m6x_review",
+              "note": "open at m6x_alpha's end and not answered: handed to m6x_review (BS6 §4.1 rule 25 as amended); the harness answers nothing, and nothing it names is resolved, dispositioned or verified by the handover"
+            },
+            {
+              "kind": "design_due",
+              "id": "dec_01M5HSTCQB74F4WB1F10T8H56S",
+              "status": "open",
+              "answered": false,
+              "scope": "subject",
+              "raised_at": "2026-10-22T12:36:49.002Z",
+              "options": [
+                "open",
+                "waive",
+                "policy_off",
+                "later"
+              ],
+              "subject": {
+                "type": "project",
+                "id": "proj_01M5DPCQXYP28KMKPQ5PET0PZ7"
+              },
+              "handed_to": "m6x_review",
+              "note": "open at m6x_alpha's end and not answered: handed to m6x_review (BS6 §4.1 rule 25 as amended); the harness answers nothing, and nothing it names is resolved, dispositioned or verified by the handover"
+            }
+          ],
+          "design_holds": []
+        },
+        "acts": []
+      }
+    },
+    "m6x_review": {
+      "status": "failed",
+      "at": "2026-10-23T04:01:16.024Z",
+      "reason": "the review of the web Alpha (android not observed: no native runtime): not reached within 60 minutes (open decisions: [[\"finding_disposition\",\"dec_01M5G1R5MT93JTCC54ZGRWZVEA\"],[\"finding_disposition\",\"dec_01M5G1R5MVP7DRKJBPKRG233GK\"]]); nothing further was started"
+    }
+  },
+  "halted": {
+    "step": "m6x_review",
+    "reason": "the review of the web Alpha (android not observed: no native runtime): not reached within 60 minutes (open decisions: [[\"finding_disposition\",\"dec_01M5G1R5MT93JTCC54ZGRWZVEA\"],[\"finding_disposition\",\"dec_01M5G1R5MVP7DRKJBPKRG233GK\"]]); nothing further was started",
+    "at": "2026-10-23T04:01:16.024Z"
+  },
+  "rehearsal": false,
+  "reruns_applied": [
+    "288712:m6x_design",
+    "537551:m6x_asset",
+    "956899:m6x_alpha",
+    "1026859:m6x_review"
+  ]
+}

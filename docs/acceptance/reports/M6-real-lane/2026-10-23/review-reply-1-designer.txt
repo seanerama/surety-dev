@@ -1,0 +1,30 @@
+Turn 1 admitted; waiting for the role's reply.
+I've written the review to .surety/design/reviews/review-1.json. It covers approved design version 3 and candidate cand_01M5HS2MW5VA1JJ0367JDG5TRQ. Neither screen is marked as matching: both verdicts are proposals for the owner to confirm, and neither confirms anything visual or native.
+
+**Web, web-plants: not_observed (owner_skipped).** Nobody looked at the page in a browser. The verdict does rest partly on the engine's own fetch of / (evidence dev_01M5KBG0F7VH3H020MVQP0CWHH, record rec_01M5KBG0EYRWN5GBS2PAHVRKSN). That fetch returned 200 and 544 bytes of body, identical byte for byte to the candidate's public/index.html. The markup has what the design asks for:
+- the title "Waterlog";
+- a header with the full logo, alt text "Waterlog";
+- `<main data-state="loading">`;
+- the h1 "Your plants";
+- tokens.css and app.css loaded before app.js.
+
+The served logo's sha256 (84d3031e…) matches the full logo file of logo slot version 3 in the manifest. In the manifest that slot's status is still `proposed`, not `approved`.
+
+The candidate's latest check results all exited 0: web-layout, web-tokens, web-focus-motion, web-state-markers, logo-parity, android-theme and android-state-markers. Those checks read source files; they don't show how anything looks.
+
+Still unverified: appearance, layout at 360/720/1280, colour in light and dark, typography, spacing, focus visibility in use, browser Back, the keyboard path, and every state after loading (list, empty, load error, watering, watered, watering error). The R4 "Due at a glance" criterion and the R16 web human test are for a person, and both are still pending.
+
+**Android, android-plants: not_observed (no_native_runtime).** Nothing here runs a native build. The android checks passing says nothing about native behaviour. System Back, touch, the permission prompt, connectivity (R12) and the R17 human test are all pending.
+
+**Not recorded as deltas.** A delta needs the owner's own words, and nothing you reported was a difference you saw, so the review has none.
+- The web screen's implementation note asks for the class `.watered-button` on the Watered control in markup, CSS and JS. The candidate uses the generic `.button` class (app.js line 145, app.css lines 27–32), and `.watered-button` appears nowhere. I've raised this as a finding. It doesn't break any criterion, and web-focus-motion passed.
+- Your note mentions "the add form's behaviour". The design has no add form: the spec, R15.4 (Q8), rules out adding plants from the UI. The page has none to check.
+- index.html links no favicon. The favicon slot is still the engine's placeholder, and the design gives it no placement, so I haven't called this a delta.
+
+I didn't change the design. I'd propose closing the session once the owner has confirmed or corrected these verdicts.
+
+Questions for you:
+- Do you confirm both verdicts as not_observed (web: owner_skipped, with the engine's fetch of the markup as supporting evidence; android: no_native_runtime), pending a person viewing the web page in a browser and a native Android run?
+- Should the .watered-button naming in the web screen's implementation note go to the builder as an implementation fix, or be dropped from the design?
+
+The role proposes closing the session (surety session close).
