@@ -94,21 +94,20 @@ interface CheckConflict {
 
 // ---- the current candidate and its repair checks -----------------------------------
 
-// The item's current candidate (D3 §2.10). For a fix, E43's fix candidate:
-// the latest candidate whose own held work lists it. For a stage_build
-// (Sean's ruling on S1, 2026-10-08): the latest candidate not superseded
-// that holds it, itself or by ancestry (E43), so a stage check failing on a
-// fix's candidate sends the stage's own Builder back; null when every
-// candidate holding it is superseded.
+// The item's current candidate (D3 §2.10): the latest candidate not
+// superseded that holds it, itself or by ancestry (E43); null when every
+// candidate holding it is superseded, or none does. For a stage_build
+// (Sean's ruling on S1, 2026-10-08), so a stage check failing on a fix's
+// candidate sends the stage's own Builder back. For a fix (D-4, Sean's
+// ruling of 2026-10-23 amending E100 item 1 narrowly; errata E180; SEAM.md
+// §562), so a fix whose own candidate a later one superseded is still
+// repaired on the candidate that now carries it: a superseded candidate's
+// results are never current evidence (repairView), and supersession alone
+// takes no repair (one is taken only for a failed check at this candidate,
+// once per candidate and generation, under the item's limits).
 export function currentCandidate(db: Db, item: Pick<WorkRow, 'id' | 'project' | 'kind'>): (CandidateRow & { checks_due: string | null }) | null {
-  if (item.kind === 'stage_build') {
-    const rows = db.prepare(`SELECT * FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC`).all(item.project) as (CandidateRow & { checks_due: string | null })[];
-    return rows.find((c) => heldByAncestry(db, c).includes(item.id)) ?? null;
-  }
-  const row = db
-    .prepare(`SELECT c.* FROM "candidates" c, json_each(c."held_work") h WHERE c."project" = ? AND h."value" = ? ORDER BY c."seq" DESC LIMIT 1`)
-    .get(item.project, item.id) as (CandidateRow & { checks_due: string | null }) | undefined;
-  return row ?? null;
+  const rows = db.prepare(`SELECT * FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC`).all(item.project) as (CandidateRow & { checks_due: string | null })[];
+  return rows.find((c) => heldByAncestry(db, c).includes(item.id)) ?? null;
 }
 
 // The item's repair checks at the candidate under the version: for a fix,
