@@ -1,0 +1,1886 @@
+{
+ "root": "/tmp/vgw/noask-instr",
+ "mode": "inflight2",
+ "delay_ms": 3000,
+ "observed": [
+  "ambiguous",
+  "intended",
+  [
+   "reconciled_absent"
+  ]
+ ],
+ "marks": [
+  {
+   "at": "2026-10-23T20:09:46.045Z",
+   "what": "commit_reconciled_reached"
+  },
+  {
+   "at": "2026-10-23T20:09:46.050Z",
+   "what": "commit_reconciled_released"
+  },
+  {
+   "at": "2026-10-23T20:09:46.106Z",
+   "what": "commit_finalized_read"
+  },
+  {
+   "at": "2026-10-23T20:09:46.123Z",
+   "what": "commit_git_reads_done"
+  },
+  {
+   "at": "2026-10-23T20:09:46.310Z",
+   "what": "ref_update_attempt_in_flight"
+  },
+  {
+   "at": "2026-10-23T20:09:48.357Z",
+   "what": "tick_ended_after_attempt_start"
+  },
+  {
+   "at": "2026-10-23T20:09:48.360Z",
+   "what": "tick_running_armed"
+  },
+  {
+   "at": "2026-10-23T20:09:48.366Z",
+   "what": "tick_requested"
+  },
+  {
+   "at": "2026-10-23T20:09:53.853Z",
+   "what": "tick_running_reached"
+  },
+  {
+   "at": "2026-10-23T20:09:53.856Z",
+   "what": "ref_update_ambiguity_read"
+  }
+ ],
+ "barriers": [
+  {
+   "name": "journal.commit_tree.reconciled",
+   "action": "pause",
+   "state": "released"
+  },
+  {
+   "name": "journal.ref_update.reconciled",
+   "action": "pause",
+   "state": "waiting"
+  },
+  {
+   "name": "scheduler.tick_running",
+   "action": "pause",
+   "state": "waiting"
+  }
+ ],
+ "trace": {
+  "ops": [
+   {
+    "id": "op_01M5N64D0FRBDQRQAQX7N1WHEV",
+    "kind": "git_worktree",
+    "status": "succeeded",
+    "created_at": "2026-10-23T20:09:43.183Z"
+   },
+   {
+    "id": "op_01M5N64D7MS700K84Q80H8JXJX",
+    "kind": "git_commit",
+    "status": "succeeded",
+    "created_at": "2026-10-23T20:09:43.411Z"
+   },
+   {
+    "id": "op_01M5N64FX9VJR4QHGV3E3CSPJ7",
+    "kind": "git_worktree",
+    "status": "succeeded",
+    "created_at": "2026-10-23T20:09:46.153Z"
+   },
+   {
+    "id": "op_01M5N64G1CR6A9QZD5HQW1S6FK",
+    "kind": "git_ref_update",
+    "status": "intended",
+    "created_at": "2026-10-23T20:09:46.282Z"
+   }
+  ],
+  "journal": [
+   {
+    "created_at": "2026-10-23T20:09:43.183Z",
+    "seq": 1,
+    "journal_kind": "worktree_add",
+    "event_kind": "intended",
+    "operation": "op_01M5N64D0FRBDQRQAQX7N1WHEV"
+   },
+   {
+    "created_at": "2026-10-23T20:09:43.227Z",
+    "seq": 2,
+    "journal_kind": "worktree_add",
+    "event_kind": "applied",
+    "operation": "op_01M5N64D0FRBDQRQAQX7N1WHEV"
+   },
+   {
+    "created_at": "2026-10-23T20:09:43.243Z",
+    "seq": 3,
+    "journal_kind": "worktree_add",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N64D0FRBDQRQAQX7N1WHEV"
+   },
+   {
+    "created_at": "2026-10-23T20:09:43.249Z",
+    "seq": 4,
+    "journal_kind": "worktree_add",
+    "event_kind": "finalized",
+    "operation": "op_01M5N64D0FRBDQRQAQX7N1WHEV"
+   },
+   {
+    "created_at": "2026-10-23T20:09:43.411Z",
+    "seq": 1,
+    "journal_kind": "commit_tree",
+    "event_kind": "intended",
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX"
+   },
+   {
+    "created_at": "2026-10-23T20:09:45.435Z",
+    "seq": 2,
+    "journal_kind": "commit_tree",
+    "event_kind": "ambiguous",
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.077Z",
+    "seq": 3,
+    "journal_kind": "commit_tree",
+    "event_kind": "applied",
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.088Z",
+    "seq": 4,
+    "journal_kind": "commit_tree",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.095Z",
+    "seq": 5,
+    "journal_kind": "commit_tree",
+    "event_kind": "finalized",
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.153Z",
+    "seq": 1,
+    "journal_kind": "worktree_add",
+    "event_kind": "intended",
+    "operation": "op_01M5N64FX9VJR4QHGV3E3CSPJ7"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.201Z",
+    "seq": 2,
+    "journal_kind": "worktree_add",
+    "event_kind": "applied",
+    "operation": "op_01M5N64FX9VJR4QHGV3E3CSPJ7"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.214Z",
+    "seq": 3,
+    "journal_kind": "worktree_add",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N64FX9VJR4QHGV3E3CSPJ7"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.219Z",
+    "seq": 4,
+    "journal_kind": "worktree_add",
+    "event_kind": "finalized",
+    "operation": "op_01M5N64FX9VJR4QHGV3E3CSPJ7"
+   },
+   {
+    "created_at": "2026-10-23T20:09:46.282Z",
+    "seq": 1,
+    "journal_kind": "ref_update",
+    "event_kind": "intended",
+    "operation": "op_01M5N64G1CR6A9QZD5HQW1S6FK"
+   },
+   {
+    "created_at": "2026-10-23T20:09:48.304Z",
+    "seq": 2,
+    "journal_kind": "ref_update",
+    "event_kind": "ambiguous",
+    "operation": "op_01M5N64G1CR6A9QZD5HQW1S6FK"
+   }
+  ],
+  "attempts": [
+   {
+    "operation": "op_01M5N64D0FRBDQRQAQX7N1WHEV",
+    "attempt_number": 1,
+    "status": "succeeded",
+    "started_at": "2026-10-23T20:09:43.189Z",
+    "finished_at": "2026-10-23T20:09:43.243Z",
+    "timeline": "[{\"at\":\"2026-10-23T20:09:43.189Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX",
+    "attempt_number": 1,
+    "status": "reconciled_absent",
+    "started_at": "2026-10-23T20:09:43.421Z",
+    "finished_at": "2026-10-23T20:09:45.435Z",
+    "timeline": "[{\"at\":\"2026-10-23T20:09:43.421Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[{\"at\":\"2026-10-23T20:09:45.552Z\",\"read\":\"read the commit b0d4f1f60277f95e2ba9da19dd27f4ba651a794c and refs/surety/keep/1\",\"result\":\"absent\"}]"
+   },
+   {
+    "operation": "op_01M5N64D7MS700K84Q80H8JXJX",
+    "attempt_number": 2,
+    "status": "succeeded",
+    "started_at": "2026-10-23T20:09:46.051Z",
+    "finished_at": "2026-10-23T20:09:46.088Z",
+    "timeline": "[{\"at\":\"2026-10-23T20:09:46.051Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N64FX9VJR4QHGV3E3CSPJ7",
+    "attempt_number": 1,
+    "status": "succeeded",
+    "started_at": "2026-10-23T20:09:46.158Z",
+    "finished_at": "2026-10-23T20:09:46.214Z",
+    "timeline": "[{\"at\":\"2026-10-23T20:09:46.158Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N64G1CR6A9QZD5HQW1S6FK",
+    "attempt_number": 1,
+    "status": "reconciled_absent",
+    "started_at": "2026-10-23T20:09:46.297Z",
+    "finished_at": "2026-10-23T20:09:48.304Z",
+    "timeline": "[{\"at\":\"2026-10-23T20:09:46.297Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[{\"at\":\"2026-10-23T20:09:48.355Z\",\"read\":\"read refs/heads/main\",\"result\":\"absent\"}]"
+   }
+  ],
+  "events": [
+   {
+    "seq": 1,
+    "type": "engine.mode_changed",
+    "at": "2026-10-23T20:09:43.022Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"from\":\"restricted\",\"to\":\"full\"}"
+   },
+   {
+    "seq": 2,
+    "type": "engine.started",
+    "at": "2026-10-23T20:09:43.027Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"stale_gate_evaluations\":0}"
+   },
+   {
+    "seq": 3,
+    "type": "project.created",
+    "at": "2026-10-23T20:09:43.093Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"test_fixture\":true,\"name\":\"git-project-1\",\"tier\":\"T2\",\"dev_repo_path\":\"/tmp/vgw/t/surety-acc-s2-0LjzkR/repo-1\",\"integration_branch\":\"main\"}"
+   },
+   {
+    "seq": 4,
+    "type": "work.created",
+    "at": "2026-10-23T20:09:43.109Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"test_fixture\":true,\"to\":\"eligible\",\"kind\":\"fix\",\"seq\":1}"
+   },
+   {
+    "seq": 5,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:43.109Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"cause\":\"work_eligible\",\"event\":4}"
+   },
+   {
+    "seq": 6,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:43.119Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 7,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:43.119Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 8,
+    "type": "host.observed",
+    "at": "2026-10-23T20:09:43.134Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"host_observation\":\"hobs_01M5N64CZ1A60CVWTEQ8Q57JKR\"}",
+    "payload": "{\"trigger\":\"project_start\"}"
+   },
+   {
+    "seq": 9,
+    "type": "run.created",
+    "at": "2026-10-23T20:09:43.164Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"seq\":1,\"role\":\"builder\",\"backend\":\"scripted\",\"base_revision\":\"c1a1f8bf9b1105303834cbca3a87af202edd7171\",\"parent_run\":null}"
+   },
+   {
+    "seq": 10,
+    "type": "run.claimed",
+    "at": "2026-10-23T20:09:43.164Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{}"
+   },
+   {
+    "seq": 11,
+    "type": "work.claimed",
+    "at": "2026-10-23T20:09:43.164Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"from\":\"eligible\",\"to\":\"claimed\"}"
+   },
+   {
+    "seq": 12,
+    "type": "invocation.receipt",
+    "at": "2026-10-23T20:09:43.164Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"invocation\":\"inv_01M5N64CZZHGQD3TBEQ4DZB73W\"}",
+    "payload": "{\"provider\":\"scripted\"}"
+   },
+   {
+    "seq": 13,
+    "type": "operation.intended",
+    "at": "2026-10-23T20:09:43.183Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"action\":\"worktree_add\"}",
+    "payload": "{\"kind\":\"git_worktree\",\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 14,
+    "type": "git.journal_intended",
+    "at": "2026-10-23T20:09:43.183Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":1}"
+   },
+   {
+    "seq": 15,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T20:09:43.189Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 16,
+    "type": "git.journal_applied",
+    "at": "2026-10-23T20:09:43.227Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":2}"
+   },
+   {
+    "seq": 17,
+    "type": "git.journal_confirmed",
+    "at": "2026-10-23T20:09:43.243Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":3}"
+   },
+   {
+    "seq": 18,
+    "type": "operation.succeeded",
+    "at": "2026-10-23T20:09:43.243Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 19,
+    "type": "git.journal_finalized",
+    "at": "2026-10-23T20:09:43.249Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":4}"
+   },
+   {
+    "seq": 20,
+    "type": "operation.finalized",
+    "at": "2026-10-23T20:09:43.249Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 21,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:43.249Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D0FRBDQRQAQX7N1WHEV\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":20}"
+   },
+   {
+    "seq": 22,
+    "type": "invocation.status",
+    "at": "2026-10-23T20:09:43.265Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"invocation\":\"inv_01M5N64CZZHGQD3TBEQ4DZB73W\"}",
+    "payload": "{\"status\":\"dispatch_started\",\"seq\":1}"
+   },
+   {
+    "seq": 23,
+    "type": "engine.tick",
+    "at": "2026-10-23T20:09:43.275Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"dispatched\":1,\"requests\":1,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 24,
+    "type": "invocation.status",
+    "at": "2026-10-23T20:09:43.280Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"invocation\":\"inv_01M5N64CZZHGQD3TBEQ4DZB73W\"}",
+    "payload": "{\"status\":\"launched\",\"seq\":2}"
+   },
+   {
+    "seq": 25,
+    "type": "run.started",
+    "at": "2026-10-23T20:09:43.280Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{}"
+   },
+   {
+    "seq": 26,
+    "type": "work.advanced",
+    "at": "2026-10-23T20:09:43.280Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"from\":\"claimed\",\"to\":\"executing\"}"
+   },
+   {
+    "seq": 27,
+    "type": "record.written",
+    "at": "2026-10-23T20:09:43.310Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"record\":\"rec_01M5N64D47Q4SWT973BRB7XTX1\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"kind\":\"result\",\"bytes\":57,\"sha256\":\"600bc37c0d0f413f4c1773c287855048af4bc2428d3e2b5fe51a3cad58621be1\"}"
+   },
+   {
+    "seq": 28,
+    "type": "run.validating",
+    "at": "2026-10-23T20:09:43.313Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"valid\":true}"
+   },
+   {
+    "seq": 29,
+    "type": "engine.tick",
+    "at": "2026-10-23T20:09:43.320Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"dispatched\":0,\"requests\":2,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 30,
+    "type": "record.written",
+    "at": "2026-10-23T20:09:43.328Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"record\":\"rec_01M5N64D37RT7YDBGYBTYA7K1R\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"kind\":\"transcript\",\"bytes\":85,\"sha256\":\"7c24ff5e3da599e9701ee32ef4eced93eab4a8f629f1223e12d7554a56b20a19\"}"
+   },
+   {
+    "seq": 31,
+    "type": "domain.launch_closed",
+    "at": "2026-10-23T20:09:43.340Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64CZZHGQD3TBEQ4DZB73Y\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"from\":\"authorizable\",\"reason\":\"termination\"}"
+   },
+   {
+    "seq": 32,
+    "type": "domain.peak_recorded",
+    "at": "2026-10-23T20:09:43.340Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64CZZHGQD3TBEQ4DZB73Y\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"memory_peak\":{\"unknown\":\"memory.peak was not read before the domain was removed (no cgroup of the real boundary, or its record lost)\"},\"observed_at\":\"2026-10-23T20:09:43.340Z\"}"
+   },
+   {
+    "seq": 33,
+    "type": "domain.terminated",
+    "at": "2026-10-23T20:09:43.340Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64CZZHGQD3TBEQ4DZB73Y\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"from\":\"launched\",\"observed\":true}"
+   },
+   {
+    "seq": 34,
+    "type": "operation.intended",
+    "at": "2026-10-23T20:09:43.411Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"kind\":\"git_commit\",\"journal_kind\":\"commit_tree\"}"
+   },
+   {
+    "seq": 35,
+    "type": "git.journal_intended",
+    "at": "2026-10-23T20:09:43.411Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"seq\":1}"
+   },
+   {
+    "seq": 36,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T20:09:43.421Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 37,
+    "type": "git.journal_ambiguous",
+    "at": "2026-10-23T20:09:45.435Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"seq\":2}"
+   },
+   {
+    "seq": 38,
+    "type": "operation.ambiguous",
+    "at": "2026-10-23T20:09:45.435Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 39,
+    "type": "work.created",
+    "at": "2026-10-23T20:09:45.515Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"test_fixture\":true,\"to\":\"eligible\",\"kind\":\"verification\",\"seq\":2}"
+   },
+   {
+    "seq": 40,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:45.515Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"cause\":\"work_eligible\",\"event\":39}"
+   },
+   {
+    "seq": 41,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:45.534Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 42,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:45.534Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 43,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T20:09:46.051Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"attempt\":2}"
+   },
+   {
+    "seq": 44,
+    "type": "git.journal_applied",
+    "at": "2026-10-23T20:09:46.077Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"seq\":3}"
+   },
+   {
+    "seq": 45,
+    "type": "git.journal_confirmed",
+    "at": "2026-10-23T20:09:46.088Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"seq\":4}"
+   },
+   {
+    "seq": 46,
+    "type": "operation.succeeded",
+    "at": "2026-10-23T20:09:46.088Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 47,
+    "type": "revision.recorded",
+    "at": "2026-10-23T20:09:46.095Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"revision\":\"rev_01M5N64FVFBV9P1EG2AM5PPRZF\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"sha\":\"b0d4f1f60277f95e2ba9da19dd27f4ba651a794c\",\"parent_sha\":\"c1a1f8bf9b1105303834cbca3a87af202edd7171\",\"kind\":\"engine_commit\"}"
+   },
+   {
+    "seq": 48,
+    "type": "git.journal_finalized",
+    "at": "2026-10-23T20:09:46.095Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"seq\":5}"
+   },
+   {
+    "seq": 49,
+    "type": "operation.finalized",
+    "at": "2026-10-23T20:09:46.095Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\"}"
+   },
+   {
+    "seq": 50,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.095Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64D7MS700K84Q80H8JXJX\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":49}"
+   },
+   {
+    "seq": 51,
+    "type": "run.created",
+    "at": "2026-10-23T20:09:46.139Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"seq\":2,\"role\":\"verifier\",\"backend\":\"scripted\",\"base_revision\":\"c1a1f8bf9b1105303834cbca3a87af202edd7171\",\"parent_run\":null}"
+   },
+   {
+    "seq": 52,
+    "type": "run.claimed",
+    "at": "2026-10-23T20:09:46.139Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{}"
+   },
+   {
+    "seq": 53,
+    "type": "work.claimed",
+    "at": "2026-10-23T20:09:46.139Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"from\":\"eligible\",\"to\":\"claimed\"}"
+   },
+   {
+    "seq": 54,
+    "type": "invocation.receipt",
+    "at": "2026-10-23T20:09:46.139Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"invocation\":\"inv_01M5N64FWXGQX9ZN6DVP4K2XTC\"}",
+    "payload": "{\"provider\":\"scripted\"}"
+   },
+   {
+    "seq": 55,
+    "type": "operation.intended",
+    "at": "2026-10-23T20:09:46.153Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"action\":\"worktree_add\"}",
+    "payload": "{\"kind\":\"git_worktree\",\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 56,
+    "type": "git.journal_intended",
+    "at": "2026-10-23T20:09:46.153Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":1}"
+   },
+   {
+    "seq": 57,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T20:09:46.158Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 58,
+    "type": "git.journal_applied",
+    "at": "2026-10-23T20:09:46.201Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":2}"
+   },
+   {
+    "seq": 59,
+    "type": "git.journal_confirmed",
+    "at": "2026-10-23T20:09:46.214Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":3}"
+   },
+   {
+    "seq": 60,
+    "type": "operation.succeeded",
+    "at": "2026-10-23T20:09:46.214Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 61,
+    "type": "git.journal_finalized",
+    "at": "2026-10-23T20:09:46.219Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\",\"seq\":4}"
+   },
+   {
+    "seq": 62,
+    "type": "operation.finalized",
+    "at": "2026-10-23T20:09:46.219Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 63,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.219Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64FX9VJR4QHGV3E3CSPJ7\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":62}"
+   },
+   {
+    "seq": 64,
+    "type": "invocation.status",
+    "at": "2026-10-23T20:09:46.235Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"invocation\":\"inv_01M5N64FWXGQX9ZN6DVP4K2XTC\"}",
+    "payload": "{\"status\":\"dispatch_started\",\"seq\":1}"
+   },
+   {
+    "seq": 65,
+    "type": "work.advanced",
+    "at": "2026-10-23T20:09:46.244Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64CY63AAH4EFMKJQHF55M\"}",
+    "payload": "{\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\",\"from\":\"executing\",\"to\":\"integrating\"}"
+   },
+   {
+    "seq": 66,
+    "type": "engine.tick",
+    "at": "2026-10-23T20:09:46.248Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"dispatched\":1,\"requests\":1,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 67,
+    "type": "invocation.status",
+    "at": "2026-10-23T20:09:46.251Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"invocation\":\"inv_01M5N64FWXGQX9ZN6DVP4K2XTC\"}",
+    "payload": "{\"status\":\"launched\",\"seq\":2}"
+   },
+   {
+    "seq": 68,
+    "type": "run.started",
+    "at": "2026-10-23T20:09:46.251Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{}"
+   },
+   {
+    "seq": 69,
+    "type": "work.advanced",
+    "at": "2026-10-23T20:09:46.251Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"from\":\"claimed\",\"to\":\"executing\"}"
+   },
+   {
+    "seq": 70,
+    "type": "operation.intended",
+    "at": "2026-10-23T20:09:46.282Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64G1CR6A9QZD5HQW1S6FK\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"kind\":\"git_ref_update\",\"journal_kind\":\"ref_update\"}"
+   },
+   {
+    "seq": 71,
+    "type": "git.journal_intended",
+    "at": "2026-10-23T20:09:46.282Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64G1CR6A9QZD5HQW1S6FK\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"ref_update\",\"seq\":1}"
+   },
+   {
+    "seq": 72,
+    "type": "record.written",
+    "at": "2026-10-23T20:09:46.286Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"record\":\"rec_01M5N64G16TR2B9S32M3F1PWDG\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"kind\":\"result\",\"bytes\":57,\"sha256\":\"600bc37c0d0f413f4c1773c287855048af4bc2428d3e2b5fe51a3cad58621be1\"}"
+   },
+   {
+    "seq": 73,
+    "type": "run.validating",
+    "at": "2026-10-23T20:09:46.290Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"valid\":true}"
+   },
+   {
+    "seq": 74,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T20:09:46.297Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64G1CR6A9QZD5HQW1S6FK\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 75,
+    "type": "record.written",
+    "at": "2026-10-23T20:09:46.306Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"record\":\"rec_01M5N64FZZ2JHEWN4MGZ2FB8SR\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"kind\":\"transcript\",\"bytes\":85,\"sha256\":\"7c24ff5e3da599e9701ee32ef4eced93eab4a8f629f1223e12d7554a56b20a19\"}"
+   },
+   {
+    "seq": 76,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.316Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 77,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.316Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 78,
+    "type": "domain.launch_closed",
+    "at": "2026-10-23T20:09:46.319Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64FWXGQX9ZN6DVP4K2XTE\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"from\":\"authorizable\",\"reason\":\"termination\"}"
+   },
+   {
+    "seq": 79,
+    "type": "domain.peak_recorded",
+    "at": "2026-10-23T20:09:46.319Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64FWXGQX9ZN6DVP4K2XTE\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"memory_peak\":{\"unknown\":\"memory.peak was not read before the domain was removed (no cgroup of the real boundary, or its record lost)\"},\"observed_at\":\"2026-10-23T20:09:46.319Z\"}"
+   },
+   {
+    "seq": 80,
+    "type": "domain.terminated",
+    "at": "2026-10-23T20:09:46.319Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"domain\":\"dom_01M5N64FWXGQX9ZN6DVP4K2XTE\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"from\":\"launched\",\"observed\":true}"
+   },
+   {
+    "seq": 81,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.346Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 82,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.346Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 83,
+    "type": "run.finalizing",
+    "at": "2026-10-23T20:09:46.372Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"outcome\":\"completed\",\"reason_class\":\"none\",\"from\":\"validating\"}"
+   },
+   {
+    "seq": 84,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.376Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 85,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.376Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 86,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.405Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 87,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.405Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 88,
+    "type": "invocation.status",
+    "at": "2026-10-23T20:09:46.415Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"invocation\":\"inv_01M5N64FWXGQX9ZN6DVP4K2XTC\"}",
+    "payload": "{\"status\":\"ended\",\"seq\":3}"
+   },
+   {
+    "seq": 89,
+    "type": "ledger.row",
+    "at": "2026-10-23T20:09:46.415Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"invocation\":\"inv_01M5N64FWXGQX9ZN6DVP4K2XTC\"}",
+    "payload": "{\"ledger_row\":\"led_01M5N64G5GY6RMY7SQQHN9X4HM\",\"observations\":0,\"cost_status\":\"unknown\",\"usage_complete\":false,\"unknown_allowance_tokens\":null}"
+   },
+   {
+    "seq": 90,
+    "type": "run.ended",
+    "at": "2026-10-23T20:09:46.415Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"outcome\":\"completed\",\"reason_class\":\"none\"}"
+   },
+   {
+    "seq": 91,
+    "type": "work.complete",
+    "at": "2026-10-23T20:09:46.415Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"work_item\":\"wi_01M5N64F9BPXP8WTEA0R669H28\"}",
+    "payload": "{\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\",\"outcome\":\"completed\",\"from\":\"executing\",\"to\":\"complete\"}"
+   },
+   {
+    "seq": 92,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.415Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"run\":\"run_01M5N64FWWBTMGMB28JCE9EVJ3\"}",
+    "payload": "{\"cause\":\"run_ended\",\"event\":90}"
+   },
+   {
+    "seq": 93,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.436Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 94,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.436Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 95,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.467Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 96,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.467Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 97,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.500Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 98,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.500Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 99,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.534Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 100,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.534Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 101,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.566Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 102,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.566Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 103,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.596Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 104,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.596Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 105,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.628Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 106,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.628Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 107,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.675Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 108,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.675Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 109,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.708Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 110,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.708Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 111,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.739Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 112,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.739Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 113,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.772Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 114,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.772Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 115,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.803Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 116,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.803Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 117,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.835Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 118,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.835Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 119,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.867Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 120,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.867Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 121,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.915Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 122,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.915Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 123,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.947Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 124,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.947Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 125,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:46.982Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 126,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:46.982Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 127,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.014Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 128,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.014Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 129,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.045Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 130,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.045Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 131,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.091Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 132,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.091Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 133,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.122Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 134,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.122Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 135,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.154Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 136,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.154Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 137,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.187Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 138,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.187Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 139,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.236Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 140,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.236Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 141,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.267Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 142,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.267Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 143,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.298Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 144,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.298Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 145,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.330Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 146,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.330Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 147,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.362Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 148,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.362Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 149,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.395Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 150,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.395Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 151,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.427Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 152,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.427Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 153,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.459Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 154,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.459Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 155,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.491Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 156,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.491Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 157,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.524Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 158,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.524Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 159,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.558Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 160,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.558Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 161,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.588Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 162,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.588Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 163,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.618Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 164,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.618Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 165,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.649Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 166,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.649Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 167,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.681Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 168,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.681Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 169,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.712Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 170,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.712Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 171,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.744Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 172,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.744Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 173,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.777Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 174,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.777Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 175,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.808Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 176,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.808Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 177,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.840Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 178,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.840Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 179,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.874Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 180,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.874Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 181,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.905Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 182,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.905Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 183,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.943Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 184,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.943Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 185,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:47.976Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 186,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:47.976Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 187,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.010Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 188,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.010Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 189,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.042Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 190,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.042Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 191,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.072Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 192,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.072Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 193,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.105Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 194,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.105Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 195,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.136Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 196,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.136Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 197,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.170Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 198,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.170Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 199,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.202Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 200,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.202Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 201,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.235Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 202,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.235Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 203,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.267Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 204,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.267Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 205,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.299Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 206,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.299Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 207,
+    "type": "git.journal_ambiguous",
+    "at": "2026-10-23T20:09:48.304Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64G1CR6A9QZD5HQW1S6FK\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"ref_update\",\"seq\":2}"
+   },
+   {
+    "seq": 208,
+    "type": "operation.ambiguous",
+    "at": "2026-10-23T20:09:48.304Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\",\"operation\":\"op_01M5N64G1CR6A9QZD5HQW1S6FK\",\"run\":\"run_01M5N64CZYSDVXZ263FFMD3NDP\"}",
+    "payload": "{\"journal_kind\":\"ref_update\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 209,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.330Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 210,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.330Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 211,
+    "type": "engine.tick",
+    "at": "2026-10-23T20:09:48.342Z",
+    "subject": "{\"incarnation\":\"inc_01M5N64CCA8RK9AXH7J75BK365\"}",
+    "payload": "{\"dispatched\":0,\"requests\":3,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 212,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.362Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 213,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.362Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 214,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.369Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 215,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.369Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 216,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:48.928Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 217,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:48.928Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 218,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:49.449Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 219,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:49.449Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 220,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:49.967Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 221,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:49.967Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 222,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:50.520Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 223,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:50.520Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 224,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:51.082Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 225,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:51.082Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 226,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:51.643Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 227,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:51.643Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 228,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:52.166Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 229,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:52.166Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 230,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:52.724Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 231,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:52.724Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   },
+   {
+    "seq": 232,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T20:09:53.289Z",
+    "subject": "{\"project\":\"proj_01M5N64CXNJPTJXPH71HJYBN91\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 233,
+    "type": "api.act",
+    "at": "2026-10-23T20:09:53.289Z",
+    "subject": "{}",
+    "payload": "{\"method\":\"POST\",\"path\":\"/v1/projects/proj_01M5N64CXNJPTJXPH71HJYBN91/tick\",\"status\":202}"
+   }
+  ]
+ }
+}

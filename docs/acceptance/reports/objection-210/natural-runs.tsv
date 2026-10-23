@@ -1,0 +1,33 @@
+# Natural runs of the case's synchronization (mode as-is), one per line
+run	result	T_c end-armed(ms)	T_c dispatched	refIntended-armed	refAttempt-armed	kill-armed	probe-kill	reached-armed
+cand-as-is-1	FAIL	121	1	109	133	2147	29	5284
+cand-as-is-2	pass		-	151	163	2174	-	522
+cand-as-is-3	FAIL	133	1	101	114	2126	65	5180
+cand-as-is-4	FAIL	125	1	47	73	-517	67	2692
+cand-as-is-5	FAIL	126	1	58	86	2103	43	5636
+cand-as-is-6	pass		-	193	205	2218	-	533
+base-as-is-2	pass		-	132	143	2155	-	522
+base-as-is-3	pass	95	1	134	152	2179	-	2780
+base-as-is-4	pass		-	28	40	2050	-	534
+base-as-is-5	pass		-	209	224	2252	-	525
+base-as-is-6	FAIL	104	1	77	95	2109	29	5319
+noask-as-is-1	FAIL	130	1	77	97	2106	24	5261
+noask-as-is-2	pass		-	141	154	2183	-	525
+noask-as-is-3	pass		-	184	196	-471	-	11
+noask-as-is-4	pass		-	143	155	2166	-	8
+noask-as-is-5	pass	78	1	173	186	2201	-	545
+noask-as-is-6	pass		-	199	211	2224	-	8
+cand-instr-1	pass		-	154	165	2175	-	9
+cand-instr-2	pass	86	1	125	154	2166	-	2634
+cand-instr-3	pass		-	155	166	2177	-	538
+cand-instr-4	pass		-	130	142	2159	-	521
+cand-instr-as-is-5	pass		-	124	136	2150	-	9
+cand-instr-as-is-6	pass		-	157	167	2180	-	10
+cand-instr-as-is-7	pass		-	128	140	2153	-	531
+noask-instr-1	pass		-	184	198	2219	-	524
+noask-instr-2	pass		-	144	157	2173	-	525
+noask-instr-3	FAIL	135	1	126	143	2156	18	5300
+noask-instr-4	pass		-	167	180	-517	-	10
+noask-instr-as-is-5	pass		-	93	105	2116	-	10
+noask-instr-as-is-6	pass		-	169	181	2209	-	523
+noask-instr-as-is-7	pass		-	191	203	2217	-	524

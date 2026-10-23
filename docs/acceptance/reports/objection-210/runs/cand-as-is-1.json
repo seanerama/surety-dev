@@ -1,0 +1,478 @@
+{
+ "root": "/home/smahoney/wt-f33",
+ "mode": "as-is",
+ "delay_ms": 3000,
+ "observed": [
+  "ambiguous",
+  "intended",
+  [
+   "reconciled_absent"
+  ]
+ ],
+ "marks": [
+  {
+   "at": "2026-10-23T19:58:24.905Z",
+   "what": "commit_reconciled_reached"
+  },
+  {
+   "at": "2026-10-23T19:58:24.910Z",
+   "what": "commit_reconciled_released"
+  },
+  {
+   "at": "2026-10-23T19:58:25.021Z",
+   "what": "commit_finalized_read"
+  },
+  {
+   "at": "2026-10-23T19:58:25.038Z",
+   "what": "commit_git_reads_done"
+  },
+  {
+   "at": "2026-10-23T19:58:25.043Z",
+   "what": "tick_running_armed"
+  },
+  {
+   "at": "2026-10-23T19:58:25.051Z",
+   "what": "tick_requested"
+  },
+  {
+   "at": "2026-10-23T19:58:30.327Z",
+   "what": "tick_running_reached"
+  },
+  {
+   "at": "2026-10-23T19:58:30.331Z",
+   "what": "ref_update_ambiguity_read"
+  }
+ ],
+ "barriers": [
+  {
+   "name": "journal.commit_tree.reconciled",
+   "action": "pause",
+   "state": "released"
+  },
+  {
+   "name": "journal.ref_update.reconciled",
+   "action": "pause",
+   "state": "waiting"
+  },
+  {
+   "name": "scheduler.tick_running",
+   "action": "pause",
+   "state": "waiting"
+  }
+ ],
+ "trace": {
+  "ops": [
+   {
+    "id": "op_01M5N5FKT979554W52GHQ131MT",
+    "kind": "git_worktree",
+    "status": "succeeded",
+    "created_at": "2026-10-23T19:58:22.024Z"
+   },
+   {
+    "id": "op_01M5N5FM36HBWTVMN0QFQT106G",
+    "kind": "git_commit",
+    "status": "succeeded",
+    "created_at": "2026-10-23T19:58:22.310Z"
+   },
+   {
+    "id": "op_01M5N5FPR2MATJNHKWE8EC63ER",
+    "kind": "git_worktree",
+    "status": "succeeded",
+    "created_at": "2026-10-23T19:58:25.026Z"
+   },
+   {
+    "id": "op_01M5N5FPW0NG6BXY75XSJAQS1Z",
+    "kind": "git_ref_update",
+    "status": "intended",
+    "created_at": "2026-10-23T19:58:25.152Z"
+   }
+  ],
+  "journal": [
+   {
+    "created_at": "2026-10-23T19:58:22.024Z",
+    "seq": 1,
+    "journal_kind": "worktree_add",
+    "event_kind": "intended",
+    "operation": "op_01M5N5FKT979554W52GHQ131MT"
+   },
+   {
+    "created_at": "2026-10-23T19:58:22.086Z",
+    "seq": 2,
+    "journal_kind": "worktree_add",
+    "event_kind": "applied",
+    "operation": "op_01M5N5FKT979554W52GHQ131MT"
+   },
+   {
+    "created_at": "2026-10-23T19:58:22.103Z",
+    "seq": 3,
+    "journal_kind": "worktree_add",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N5FKT979554W52GHQ131MT"
+   },
+   {
+    "created_at": "2026-10-23T19:58:22.110Z",
+    "seq": 4,
+    "journal_kind": "worktree_add",
+    "event_kind": "finalized",
+    "operation": "op_01M5N5FKT979554W52GHQ131MT"
+   },
+   {
+    "created_at": "2026-10-23T19:58:22.310Z",
+    "seq": 1,
+    "journal_kind": "commit_tree",
+    "event_kind": "intended",
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G"
+   },
+   {
+    "created_at": "2026-10-23T19:58:24.332Z",
+    "seq": 2,
+    "journal_kind": "commit_tree",
+    "event_kind": "ambiguous",
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G"
+   },
+   {
+    "created_at": "2026-10-23T19:58:24.941Z",
+    "seq": 3,
+    "journal_kind": "commit_tree",
+    "event_kind": "applied",
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G"
+   },
+   {
+    "created_at": "2026-10-23T19:58:24.953Z",
+    "seq": 4,
+    "journal_kind": "commit_tree",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G"
+   },
+   {
+    "created_at": "2026-10-23T19:58:24.962Z",
+    "seq": 5,
+    "journal_kind": "commit_tree",
+    "event_kind": "finalized",
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G"
+   },
+   {
+    "created_at": "2026-10-23T19:58:25.026Z",
+    "seq": 1,
+    "journal_kind": "worktree_add",
+    "event_kind": "intended",
+    "operation": "op_01M5N5FPR2MATJNHKWE8EC63ER"
+   },
+   {
+    "created_at": "2026-10-23T19:58:25.084Z",
+    "seq": 2,
+    "journal_kind": "worktree_add",
+    "event_kind": "applied",
+    "operation": "op_01M5N5FPR2MATJNHKWE8EC63ER"
+   },
+   {
+    "created_at": "2026-10-23T19:58:25.100Z",
+    "seq": 3,
+    "journal_kind": "worktree_add",
+    "event_kind": "confirmed",
+    "operation": "op_01M5N5FPR2MATJNHKWE8EC63ER"
+   },
+   {
+    "created_at": "2026-10-23T19:58:25.106Z",
+    "seq": 4,
+    "journal_kind": "worktree_add",
+    "event_kind": "finalized",
+    "operation": "op_01M5N5FPR2MATJNHKWE8EC63ER"
+   },
+   {
+    "created_at": "2026-10-23T19:58:25.152Z",
+    "seq": 1,
+    "journal_kind": "ref_update",
+    "event_kind": "intended",
+    "operation": "op_01M5N5FPW0NG6BXY75XSJAQS1Z"
+   },
+   {
+    "created_at": "2026-10-23T19:58:27.190Z",
+    "seq": 2,
+    "journal_kind": "ref_update",
+    "event_kind": "ambiguous",
+    "operation": "op_01M5N5FPW0NG6BXY75XSJAQS1Z"
+   }
+  ],
+  "attempts": [
+   {
+    "operation": "op_01M5N5FKT979554W52GHQ131MT",
+    "attempt_number": 1,
+    "status": "succeeded",
+    "started_at": "2026-10-23T19:58:22.033Z",
+    "finished_at": "2026-10-23T19:58:22.103Z",
+    "timeline": "[{\"at\":\"2026-10-23T19:58:22.033Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G",
+    "attempt_number": 1,
+    "status": "reconciled_absent",
+    "started_at": "2026-10-23T19:58:22.323Z",
+    "finished_at": "2026-10-23T19:58:24.332Z",
+    "timeline": "[{\"at\":\"2026-10-23T19:58:22.323Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[{\"at\":\"2026-10-23T19:58:24.404Z\",\"read\":\"read the commit 7fe8d235cb86f3a1b15b6176cf2e805621d8aad3 and refs/surety/keep/1\",\"result\":\"absent\"}]"
+   },
+   {
+    "operation": "op_01M5N5FM36HBWTVMN0QFQT106G",
+    "attempt_number": 2,
+    "status": "succeeded",
+    "started_at": "2026-10-23T19:58:24.910Z",
+    "finished_at": "2026-10-23T19:58:24.953Z",
+    "timeline": "[{\"at\":\"2026-10-23T19:58:24.910Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N5FPR2MATJNHKWE8EC63ER",
+    "attempt_number": 1,
+    "status": "succeeded",
+    "started_at": "2026-10-23T19:58:25.033Z",
+    "finished_at": "2026-10-23T19:58:25.100Z",
+    "timeline": "[{\"at\":\"2026-10-23T19:58:25.033Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[]"
+   },
+   {
+    "operation": "op_01M5N5FPW0NG6BXY75XSJAQS1Z",
+    "attempt_number": 1,
+    "status": "reconciled_absent",
+    "started_at": "2026-10-23T19:58:25.176Z",
+    "finished_at": "2026-10-23T19:58:27.190Z",
+    "timeline": "[{\"at\":\"2026-10-23T19:58:25.176Z\",\"event\":\"started\",\"detail\":null}]",
+    "reconciliation_reads": "[{\"at\":\"2026-10-23T19:58:27.219Z\",\"read\":\"read refs/heads/main\",\"result\":\"absent\"}]"
+   }
+  ],
+  "events": [
+   {
+    "seq": 5,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:21.944Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"work_item\":\"wi_01M5N5FKQR7375HGD5H489HNNW\"}",
+    "payload": "{\"cause\":\"work_eligible\",\"event\":4}"
+   },
+   {
+    "seq": 6,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:21.953Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 15,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T19:58:22.033Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FKT979554W52GHQ131MT\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 20,
+    "type": "operation.finalized",
+    "at": "2026-10-23T19:58:22.110Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FKT979554W52GHQ131MT\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 21,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:22.110Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FKT979554W52GHQ131MT\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":20}"
+   },
+   {
+    "seq": 23,
+    "type": "engine.tick",
+    "at": "2026-10-23T19:58:22.148Z",
+    "subject": "{\"incarnation\":\"inc_01M5N5FK02995A8SWXVJN7VFT5\"}",
+    "payload": "{\"dispatched\":1,\"requests\":1,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 27,
+    "type": "engine.tick",
+    "at": "2026-10-23T19:58:22.190Z",
+    "subject": "{\"incarnation\":\"inc_01M5N5FK02995A8SWXVJN7VFT5\"}",
+    "payload": "{\"dispatched\":0,\"requests\":2,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 36,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T19:58:22.323Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FM36HBWTVMN0QFQT106G\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 38,
+    "type": "operation.ambiguous",
+    "at": "2026-10-23T19:58:24.332Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FM36HBWTVMN0QFQT106G\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 40,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:24.371Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"work_item\":\"wi_01M5N5FP3KY8GV695NQEQ9RX3R\"}",
+    "payload": "{\"cause\":\"work_eligible\",\"event\":39}"
+   },
+   {
+    "seq": 41,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:24.385Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 43,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T19:58:24.910Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FM36HBWTVMN0QFQT106G\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"attempt\":2}"
+   },
+   {
+    "seq": 49,
+    "type": "operation.finalized",
+    "at": "2026-10-23T19:58:24.962Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FM36HBWTVMN0QFQT106G\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"journal_kind\":\"commit_tree\"}"
+   },
+   {
+    "seq": 50,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:24.962Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FM36HBWTVMN0QFQT106G\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":49}"
+   },
+   {
+    "seq": 57,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T19:58:25.033Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FPR2MATJNHKWE8EC63ER\",\"run\":\"run_01M5N5FPQHZN7SJJ2E2AXPD67S\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 58,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:25.045Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 60,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:25.056Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 66,
+    "type": "operation.finalized",
+    "at": "2026-10-23T19:58:25.106Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FPR2MATJNHKWE8EC63ER\",\"run\":\"run_01M5N5FPQHZN7SJJ2E2AXPD67S\"}",
+    "payload": "{\"journal_kind\":\"worktree_add\"}"
+   },
+   {
+    "seq": 67,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:25.106Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FPR2MATJNHKWE8EC63ER\"}",
+    "payload": "{\"cause\":\"operation_finalized\",\"event\":66}"
+   },
+   {
+    "seq": 72,
+    "type": "engine.tick",
+    "at": "2026-10-23T19:58:25.164Z",
+    "subject": "{\"incarnation\":\"inc_01M5N5FK02995A8SWXVJN7VFT5\"}",
+    "payload": "{\"dispatched\":1,\"requests\":1,\"steps\":[\"recover\",\"journal\",\"integrity\",\"budgets\",\"select\",\"dispatch\"]}"
+   },
+   {
+    "seq": 76,
+    "type": "operation.attempt_started",
+    "at": "2026-10-23T19:58:25.176Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FPW0NG6BXY75XSJAQS1Z\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"attempt\":1}"
+   },
+   {
+    "seq": 86,
+    "type": "run.ended",
+    "at": "2026-10-23T19:58:25.345Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"run\":\"run_01M5N5FPQHZN7SJJ2E2AXPD67S\",\"work_item\":\"wi_01M5N5FP3KY8GV695NQEQ9RX3R\"}",
+    "payload": "{\"outcome\":\"completed\",\"reason_class\":\"none\"}"
+   },
+   {
+    "seq": 88,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:25.345Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"run\":\"run_01M5N5FPQHZN7SJJ2E2AXPD67S\"}",
+    "payload": "{\"cause\":\"run_ended\",\"event\":86}"
+   },
+   {
+    "seq": 89,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:25.572Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 91,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:26.092Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 93,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:26.610Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 95,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:27.127Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 98,
+    "type": "operation.ambiguous",
+    "at": "2026-10-23T19:58:27.190Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\",\"operation\":\"op_01M5N5FPW0NG6BXY75XSJAQS1Z\",\"run\":\"run_01M5N5FKSPHSN3TPTNBV6RM6GE\"}",
+    "payload": "{\"journal_kind\":\"ref_update\",\"from\":\"in_progress\"}"
+   },
+   {
+    "seq": 99,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:27.648Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 101,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:28.172Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 103,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:28.712Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 105,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:29.234Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   },
+   {
+    "seq": 107,
+    "type": "scheduler.tick_requested",
+    "at": "2026-10-23T19:58:29.765Z",
+    "subject": "{\"project\":\"proj_01M5N5FKQ9SVT88P20A3VQXRQN\"}",
+    "payload": "{\"cause\":\"api\"}"
+   }
+  ]
+ }
+}
