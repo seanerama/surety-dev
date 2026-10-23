@@ -531,6 +531,9 @@
       "M539-the-pace-reads-design-figures.test.mjs",
       "M540-the-m6-report.test.mjs",
       "M541-hands-on-script.test.mjs"
+    ],
+    "47": [
+      "M547-the-production-shell-parameter.test.mjs"
     ]
   },
   "sandbox": [

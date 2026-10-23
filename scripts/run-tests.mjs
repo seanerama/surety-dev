@@ -48,7 +48,9 @@ import { fileURLToPath } from 'node:url';
 // docs/acceptance/sdlc-M3-acceptance-plan.md §3 (M201 to M241) and
 // docs/acceptance/sdlc-M4-acceptance-plan.md §3 (M301 to M344),
 // docs/acceptance/sdlc-M5-acceptance-plan.md §3 (M401 to M453) and
-// docs/acceptance/sdlc-M6-acceptance-plan.md §3 (M501 to M546).
+// docs/acceptance/sdlc-M6-acceptance-plan.md §3 (M501 to M546), and
+// docs/acceptance/sdlc-UI1-acceptance-plan.md §3 (M547: the console's engine
+// prerequisite P1, Sean 2026-10-23).
 // Adding or removing a row is the owner's decision (build spec §9).
 const ROWS = [
   ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
@@ -57,6 +59,7 @@ const ROWS = [
   ...Array.from({ length: 44 }, (_, i) => `M${301 + i}`),
   ...Array.from({ length: 53 }, (_, i) => `M${401 + i}`),
   ...Array.from({ length: 46 }, (_, i) => `M${501 + i}`),
+  'M547',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
