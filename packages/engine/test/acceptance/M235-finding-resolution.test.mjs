@@ -38,6 +38,23 @@
 // corrected (`correct_check`) without a conflict finding. Case (g). Case
 // (c)'s finding with no criterion names `login`, which covers R1.1, so it
 // stays as it was.
+//
+// Objection 209 (findings F19, F26, F33 of the M535 Waterlog recovery
+// attempt; Sean's ruling of 2026-10-23, errata E179 item 8; the Verifier's
+// answer `docs/acceptance/objections/
+// 209-M535-fix-left-verifying-on-a-superseded-candidate.answer.md`): case (a)'s required
+// result ("resolved ...; the fix completes") for two fixes the run left
+// `verifying` for ever, each judged by the minimum both of the answers left to
+// Sean satisfy: the finding resolved by an evaluation and the fix complete, or
+// an open owner question naming the fix or its finding; a fix complete with
+// its finding unresolved is a drop (harness/checks/stuck-fix.mjs
+// `judgedOrAsked`). (a) F26: a finding a Verifier's check_correction run
+// raises (its work names no candidate), dispositioned `fix` by the owner, its
+// fix's candidate verified with `login` passing after the disposition and the
+// stage gate the engine evaluates by itself satisfied. (a) F33: a plain fix
+// whose candidate a later fix's candidate supersedes, the stage verified
+// before either, `login` passing on both fix candidates after the
+// dispositions, every verification complete, the engine ticked.
 
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
@@ -56,6 +73,7 @@ import { withStore } from './harness/store.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { buildAndNominate, checkIds, def, findingRow, missingFor, missingVerifications, registrationsBy, repairProject, workFor } from './harness/checks/repair.mjs';
+import { fixState, judgedOrAsked, supersededFix, uncandidatedFix } from './harness/checks/stuck-fix.mjs';
 
 const DEFS = Object.freeze({
   login: def('acceptance', { criteria: ['R1.1'] }),
@@ -396,6 +414,38 @@ describe('M235 finding resolution', () => {
     assert.deepEqual([run.outcome, run.reason_class], ['failed', 'invalid_result'], `the run is failed / invalid_result (${run.reason_text})`);
     assert.ok(String(run.reason_text ?? '').includes('R9.9'), `its reason names the criterion (${run.reason_text})`);
     assert.deepEqual(findingsOfProject(fx, p.id), [], 'no finding is stored');
+  });
+
+  test("(a) F26 (objection 209): a finding a Verifier's check_correction run raises (its work names no candidate), dispositioned fix by the owner, its fix built and its candidate verified with login passing after the disposition, the stage gate the engine evaluates by itself satisfied: the finding is resolved and the fix complete, or an open owner question names them; never the fix left verifying with nothing asked", async (t) => {
+    const fx = await scriptedEngine(t);
+    const s = await uncandidatedFix(fx);
+    const verdict = judgedOrAsked(fx.home, s.p.id, s.fix.id, s.finding.id);
+    assert.ok(
+      verdict.ok,
+      `F26: the fix ${s.fix.id} is left ${verdict.state.fix} and its finding ${s.finding.id} ${verdict.state.finding?.status} with nothing asked about either, ` +
+        `although login passed on the fix's candidate ${s.c2.id} after the disposition and the engine's own stage gate there was satisfied: ` +
+        `the finding is recorded scope ${verdict.state.finding?.scope} with candidate ${verdict.state.finding?.candidate}, so it applies to no candidate (D1 §9.3 (5); gates.ts findingApplies) ` +
+        `and no evaluation read it (read by ${JSON.stringify(verdict.state.read_by)} of ${JSON.stringify(verdict.state.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}); ` +
+        `D3 §2.11 resolves a fix only in an evaluation of a candidate it applies to, and E36 item 4 completes the fix only with that resolution, so it can never complete; ` +
+        `the owner was told ${JSON.stringify((s.owed.options ?? []).find((o) => o.key === 'fix')?.consequence_text)}${verdict.dropped ? '; and the fix is complete with its finding unresolved, a drop' : ''}`,
+    );
+  });
+
+  test("(a) F33 (objection 209): a plain fix whose candidate a later fix's candidate supersedes (holding it by ancestry), the stage verified before either, login passing on both fix candidates after the dispositions, every verification complete and the engine ticked: the finding is resolved and the fix complete, or an open owner question names them; never the fix left verifying with nothing due and nothing asked", async (t) => {
+    const fx = await scriptedEngine(t);
+    const s = await supersededFix(fx);
+    const [fix1] = s.fixes;
+    const [f1] = s.findings;
+    const verdict = judgedOrAsked(fx.home, s.p.id, fix1.id, f1.id);
+    const second = fixState(fx.home, s.p.id, s.fixes[1].id, s.findings[1].id);
+    assert.ok(
+      verdict.ok,
+      `F33: the fix ${fix1.id} is left ${verdict.state.fix}, held by its own candidate ${s.c2.id} (superseded by ${s.c2.superseded_by}) and by ${s.c3.id} by ancestry, and its finding ${f1.id} ${verdict.state.finding?.status}, with nothing asked about either, ` +
+        `although login passed on both candidates after the disposition: no evaluation read it (evaluations: ${JSON.stringify(verdict.state.evaluations.map((e) => [e.candidate, e.gate_kind, e.outcome]))}), ` +
+        `because the engine's due gates (gates.ts dueStageGates) are only those of a verifying stage_build or an asset_updated fix held by a candidate, and its stage was verified before the finding; ` +
+        `the superseded candidate is skipped (Q9) and the fix's current candidate for a repair is that superseded one (E100 item 1), so nothing will ever judge it (fix 2: ${second.fix}, its finding ${second.finding?.status})` +
+        `${verdict.dropped ? '; and the fix is complete with its finding unresolved, a drop' : ''}`,
+    );
   });
 });
 

@@ -77,7 +77,20 @@
 //     acknowledgement refused (dated before, another decision or
 //     requirement, the driver's or a non-terminal record, no follow-up, a
 //     gate held, an interface disputed, another kind, outside E179's two
-//     questions) or beside a genuine question, the step fails naming it.
+//     questions) or beside a genuine question, the step fails naming it;
+//     and a fix the engine can no longer move (finding F33 of the M535
+//     Waterlog recovery attempt, with F19; objection 209; Sean's ruling of
+//     2026-10-23, errata E179 item 8; SEAM.md §561): a `fix` left `verifying`
+//     with no run, no pending check execution, no pending verification, no
+//     due gate and no repair due on any unsuperseded candidate holding it is
+//     neither runnable nor in flight: activity() names it `stuck`, never
+//     `runnable`; with nothing else running, queued or asked the runner's
+//     stall judgement is `silent` and its engine-driven wait fails at once
+//     naming it, never at its deadline; the review's end fails at once naming
+//     it (an E179-acknowledged question beside it changes nothing), never
+//     judged ended, and ends only with nothing stuck; a pending check
+//     execution on its candidate, an eligible item not held, and a fix the
+//     engine's predicates cannot judge (unknown) are still counted.
 // The engine never answers it.
 
 import assert from 'node:assert/strict';
@@ -106,6 +119,8 @@ import { approveBatch } from './harness/design/check41.mjs';
 import { leftovers, refuseLeftovers } from './harness/real/checks-journey.mjs';
 import { authoringItems, authoringRuns, authoringWith, builderRuns, go, openOf, pausedDeveloping, planRow, until } from './harness/exec37/authoring.mjs';
 import { copyStore, openStore, storePath, withStore } from './harness/store.mjs';
+import { supersededFix } from './harness/checks/stuck-fix.mjs';
+import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 
 const OWNER_NO_TIGHTENING = Object.freeze(['check_correction_unclassifiable', 'check_correction_loosening', 'plan_approval']);
 const TO_ALPHA = Object.freeze({ autonomy: 'phase', alpha_deploy: 'on_phase_complete', phase_size: { min: 1, max: 5 } });
@@ -1124,6 +1139,120 @@ describe('M512 design_due and no silent stalls', () => {
     const dueB = await pump(fx, d.ctx, () => (openDesignDue(fx.home, d.p.id)?.evidence?.stage === 'alpha_review' ? openDesignDue(fx.home, d.p.id) : undefined), { what: 'both: design_due alpha_review', max: 20 });
     assert.ok(dueB, 'raised on alpha_complete under both');
     await assertHoldsAccounted(fx, d.p.id, '(a) both');
+  });
+
+  test("(k) F33 (objection 209), a fix the engine can no longer move: two plain fixes left verifying (one held by a superseded candidate), nothing running, queued, asked or due: activity() names both stuck, never runnable; the stall judgement is silent and the engine-driven wait fails at once naming them, never at its deadline; the review's end fails at once naming them, an acknowledged question beside them or not, and ends only with nothing stuck; a pending check execution, an eligible item not held and a fix that cannot be judged are still counted", async (t) => {
+    const fx = await scriptedEngine(t);
+    // The run's state at its review step (F33), made through the engine's API (harness/checks/stuck-fix.mjs): the stage
+    // verified, two owner `fix` dispositions on its candidate's findings, fix 1's candidate verified and superseded by fix
+    // 2's (which holds fix 1 by ancestry), verified; every question answered; the engine ticked.
+    const s = await supersededFix(fx);
+    const project = s.p.id;
+    const ids = sortedIds(s.fixes.map((w) => w.id));
+    await waitForIdle(fx.home, project);
+    const nowMs = engineTimeMs(fx.engine);
+    const a = activity(fx.home, project, { nowMs });
+    assert.deepEqual(
+      { live: a.live, executions: a.executions, operations: a.operations, asked: a.asked },
+      { live: [], executions: [], operations: [], asked: [] },
+      "the fixture is live: nothing runs, is queued or is asked, as at the run's review step",
+    );
+    assert.deepEqual(s.fixes.map((w) => w.status), ['verifying', 'verifying'], 'the fixture is live: both fixes verifying');
+
+    // Rule 25's "runnable" is what the engine can dispatch or is carrying; a verifying fix the engine can do nothing for
+    // is neither runnable nor in flight (BS6 §4.1 rule 25; E162 item 1: pending engine work accounts, none is pending).
+    const counted = a.runnable.filter((w) => ids.includes(w.id));
+    assert.deepEqual(
+      counted.map((w) => [w.id, w.kind, w.status]),
+      [],
+      `F33: activity() counts the verifying fixes ${counted.map((w) => w.id).join(', ')} as runnable although the engine can do nothing for them: no run, no pending check execution, no pending verification, no due gate and no repair due on any unsuperseded candidate holding them (the engine dispatches nothing for them at any tick), so the runner's stall judgement never fires and the review's end never comes: a stall masked as work (F19)`,
+    );
+    const stuck = a.stuck ?? [];
+    assert.deepEqual(sortedIds(stuck.map((x) => x.id)), ids, `each is named stuck (${JSON.stringify(stuck)})`);
+    const first = stuck.find((x) => x.id === s.fixes[0].id);
+    assert.deepEqual([first.kind, first.status, first.finding], ['fix', 'verifying', s.findings[0].id], `fix 1 named with its kind, status and finding (${JSON.stringify(first)})`);
+    assert.deepEqual(first.held_by, [s.c3.id], `held, by ancestry, by the one unsuperseded candidate (${JSON.stringify(first.held_by)})`);
+    assert.deepEqual(first.own_candidates, [{ id: s.c2.id, superseded_by: s.c3.id }], `its own candidate, superseded (${JSON.stringify(first.own_candidates)})`);
+    assert.ok(typeof first.why === 'string' && first.why.length > 0, `and why it is stuck (${first.why})`);
+    const quiet = quietState(a);
+    assert.equal(quiet.state, 'silent', `the stall judgement: silent, nothing runnable, in flight or asked (${JSON.stringify(quiet)})`);
+
+    // The engine-driven wait (driveM6 with the stall check) fails at once naming them: three quiet rounds, each after a
+    // tick, never its deadline.
+    const calls = [];
+    const watchedEngine = new Proxy(fx.engine, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop);
+        return typeof v === 'function' ? (...args) => (calls.push(`${String(prop)} ${args[0] ?? ''}`), v.apply(target, args)) : v;
+      },
+    });
+    let stalled = null;
+    try {
+      await m6lane.driveM6({ rehearsal: false }, { ...fx, engine: watchedEngine }, project, async () => undefined, { what: 'k_f33', stall: true, everyMs: 50, timeoutMs: 30_000 });
+    } catch (err) {
+      stalled = err;
+    }
+    assert.ok(stalled, 'the wait does not end');
+    assert.match(stalled.message, /a silent stall \(BS6 §4\.1 rule 25\)/, `it fails as a silent stall (${stalled.message})`);
+    assert.doesNotMatch(stalled.message, /not reached within/, 'not at its deadline');
+    for (const id of ids) assert.ok(stalled.message.includes(id), `naming ${id} (${stalled.message})`);
+    assert.ok(calls.filter((c) => c.startsWith('post') && c.endsWith('/tick')).length <= 3, `within three rounds (${JSON.stringify(calls)})`);
+
+    // The review's end (its `done`): with the review confirmed and nothing running, queued or asked, the stuck fixes fail
+    // it at once naming them (three quiet polls), never ended and never its deadline; an E179-acknowledged question beside
+    // them changes nothing; with nothing stuck it ends, and its acts are judged after it as before (M535 (l), recordActs).
+    assert.equal(typeof m6lane.reviewEndJudge, 'function', "the review's end judgement is the harness's own (exported for this case)");
+    for (const [label, seen, excepted] of [
+      ['nothing asked', a, new Set()],
+      ['an E179-acknowledged question open', { ...a, asked: [{ id: 'dec_f33_acknowledged', kind: 'finding_disposition' }] }, new Set(['dec_f33_acknowledged'])],
+    ]) {
+      const judge = m6lane.reviewEndJudge('m6x_review');
+      assert.equal(judge(seen, { confirmed: true, excepted }), false, `${label}: poll 1, the review not ended`);
+      assert.equal(judge(seen, { confirmed: true, excepted }), false, `${label}: poll 2, the review not ended`);
+      assert.throws(() => judge(seen, { confirmed: true, excepted }), (err) => /a silent stall/.test(err.message) && ids.every((id) => err.message.includes(id)), `${label}: poll 3, a silent stall naming both`);
+    }
+    const settled = m6lane.reviewEndJudge('m6x_review');
+    assert.equal(settled({ ...a, stuck: [] }, { confirmed: true, excepted: new Set() }), true, 'nothing stuck, the review confirmed: it ends');
+    const unconfirmed = m6lane.reviewEndJudge('m6x_review');
+    assert.equal(unconfirmed({ ...a, stuck: [] }, { confirmed: false, excepted: new Set() }), false, 'not confirmed: not ended');
+    const asking = m6lane.reviewEndJudge('m6x_review');
+    for (let i = 0; i < 4; i++) assert.equal(asking({ ...a, asked: [{ id: 'dec_f33_open', kind: 'blocker' }] }, { confirmed: true, excepted: new Set() }), false, 'a question open beside them: the owner is asked, not a stall');
+
+    // Genuinely live work is still counted. A check execution pending on the candidate holding them: the fixes are in
+    // flight again (the execution may judge them), the judgement busy.
+    const { login: pending } = await operatorRequest(fx.engine, project, s.c3.id, ['login']);
+    const withPending = activity(fx.home, project, { nowMs: engineTimeMs(fx.engine) });
+    assert.deepEqual(withPending.executions.map((x) => x.id), [pending], 'the execution queued');
+    assert.deepEqual(sortedIds(withPending.runnable.filter((w) => ids.includes(w.id)).map((w) => w.id)), ids, 'the fixes counted in flight while it is pending');
+    assert.deepEqual(withPending.stuck ?? [], [], 'none stuck while it is pending');
+    assert.equal(quietState(withPending).state, 'busy', 'busy');
+    await recordExit(fx.engine, pending, 0, { output: 'login passed again\n' });
+    await tick(fx.engine, project, { rounds: 2 });
+    await waitForIdle(fx.home, project);
+    assert.deepEqual(sortedIds((activity(fx.home, project, { nowMs: engineTimeMs(fx.engine) }).stuck ?? []).map((x) => x.id)), ids, 'recorded, and nothing due after it: stuck again');
+    // An eligible item not held (the project paused, so the engine dispatches nothing; the pause is not read): runnable.
+    await pauseProject(fx.engine, project);
+    const loose = await addWork(fx.engine, project, 'fix');
+    const withLoose = activity(fx.home, project, { nowMs: engineTimeMs(fx.engine) });
+    assert.ok(withLoose.runnable.some((w) => w.id === loose && w.status === 'eligible'), `an eligible item is runnable (${JSON.stringify(withLoose.runnable)})`);
+    assert.ok(!(withLoose.stuck ?? []).some((x) => x.id === loose), 'never stuck');
+    assert.equal(quietState(withLoose).state, 'busy', 'busy');
+    // Unknown is never stuck: on a copy of the store (never the engine's home) where the engine's predicate cannot read the
+    // holding candidate, the fixes are counted, marked unknown.
+    const snap = join(fx.root, 'k-f33-unknown');
+    mkdirSync(snap, { recursive: true, mode: 0o700 });
+    const src = openStore(storePath(fx.home), { readonly: true });
+    try {
+      await src.backup(join(snap, 'store.db'));
+    } finally {
+      src.close();
+    }
+    withStore(snap, (db) => db.prepare(`UPDATE "candidates" SET "held_work" = '{not json' WHERE "id" = ?`).run(s.c3.id), { readonly: false });
+    const unknown = activity(snap, project, { nowMs: engineTimeMs(fx.engine) });
+    const marked = unknown.runnable.filter((w) => ids.includes(w.id));
+    assert.deepEqual(sortedIds(marked.map((w) => w.id)), ids, `the fixes counted when they cannot be judged (${JSON.stringify(unknown.runnable)})`);
+    assert.ok(marked.every((w) => w.judged === 'unknown'), `marked unknown (${JSON.stringify(marked)})`);
+    assert.deepEqual(unknown.stuck ?? [], [], 'never stuck');
   });
 });
 
