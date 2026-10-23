@@ -470,3 +470,51 @@ The harness change is `c6e82d68`. Run whole there, each file with `node --test -
 | M537-the-rehearsal-plays-from-the-designers-package | 13 | 13 | 0 | 0 | 0 |
 
 These are every file touched here and every kernel-lane file importing `harness/real/`. M519 (a `real` file) is syntax-checked only. No `real` or `exhaust` file was run, and no process, unit or test home was left.
+
+## 12. The unjudgeable fix's candidate at Alpha, T2 and T3 (Sean's question of 2026-10-23 on section 11.1)
+
+Sean asked which of three cases holds:
+1. deployment refuses the candidate with a clear reason (record the limitation);
+2. deployment proceeds without the required sign-off (a correctness defect, blocking the merge);
+3. recovery needs a new review-scheduling rule (a separate proposal outside E180).
+
+**Observed: case 1.** The authorization is refused with a clear reason and is never issued without the sign-off. Recovery to an issued authorization goes through a rule the engine already has. No new rule, no proposal outside E180, and no engine change are needed.
+
+**How it was observed.** These are two cases in M43, against the Builder's engine (`3c682070`), both passing:
+- "T2: an Alpha authorization of an unjudgeable fix's candidate, … retry and cancel queue no review; with the finding settled by the owner, …"
+- "T3: …, the request's own alpha_authorize evaluation resolving the finding, …"
+
+Each sets up the same state:
+- a stage verified and its review signed;
+- a Verifier's finding naming `login`, a check required at `alpha_authorize` only;
+- the owner's `fix`;
+- the fix's candidate verified, its `fix_unjudged` blocker open, and no review of it queued.
+
+The deployment is then requested through the owner's production route, `POST /v1/projects/:p/deployments` (D4 §4.1). Its environment is configured through the owner's route and its adapter qualified by the labelled fixture (SEAM.md §248).
+
+**Before the request.** `retry`, and at T2 `cancel`, change nothing about the candidate's review: none is queued. `cancel` leaves the fix `cancelled` and the finding open, with its owed `finding_disposition` asked.
+
+**The refusal.** The response is `409 authorization_not_issued`: "The alpha deployment of candidate `<c>` is not authorized: alpha_authorize is not satisfied." Its `subject.reasons` include `SIGNOFF_MISSING`, naming the candidate. No authorization is issued and no deploy work is created.
+
+- **T2, after `cancel`.** The reasons are `FINDING_UNSATISFIED` (the finding) and `SIGNOFF_MISSING`. The answer's `what_to_do` is "Read the reasons, satisfy them, and request the deployment again." While another reason stands, no review is queued.
+- **T3, after `retry`.** The request's own `alpha_authorize` evaluation reads the finding. Its check `login` is required in that scope and passed after the disposition, so the evaluation resolves the finding and the fix completes (D3 §2.11; E36 item 4). Its `fix_unjudged` question is closed at the engine's next tick. That evaluation was the prerequisite the blocker's `missing` text named: "a proposed deployment authorization".
+
+**Recovery, by an existing rule.** Once the sign-off is the only reason left, the engine queues the candidate's review itself, once.
+- At T3 this happens at the first request.
+- At T2 it happens at the request after the owner answers his owed question `accept`.
+
+The refusal then reads `SIGNOFF_MISSING` alone, with `what_to_do` "The candidate's review, which the missing sign-off needs, is queued: request the deployment again once its Reviewer has signed off." Still nothing is issued. With the review signed, the same request is answered `issued`, on the Reviewer's candidate sign-off of the fix's candidate. One review is queued in all.
+
+The rule is `store/transitions/alpha-review.ts` ("the review an Alpha deployment's sign-off waits on", commit `636d341e`, found by real loop run 5), applied in `deploy.ts`'s deployment request: when `alpha_authorize` is refused on the tier's Reviewer sign-off alone, the engine queues the candidate's review, once per candidate and acceptance content. The code cites D3 §4.1, D4 §4.1, D6 §6.8, E36 item 3 and E150 item 3.
+
+**The deciding design text.**
+- **D1 §9.3 input (6):** sign-offs the tier requires, bound to `acceptance_content_hash` (T2: a Reviewer at candidate scope; T3: also per module and a security review), else `SIGNOFF_MISSING`. `alpha_authorize` is such a gate.
+- **D4 §4.1:** a deployment request evaluates `alpha_authorize` for the candidate, and nothing is authorized unless it is satisfied.
+- **E36 item 3:** the engine queues a candidate's review once its verification passes.
+- **E41 item 4:** a sign-off binds the content reviewed. So the fix's candidate needs its own sign-off: candidate 1's covers other content.
+
+**The limitation to record.** This is not a defect. Until a deployment is requested, an unjudgeable fix's candidate has no review, because none of its stage gates is evaluated. The Reviewer is asked only when the owner (or the policy) requests the deployment and the sign-off is the only thing missing; if another reason stands (a finding), the owner settles it first. Both are visible in the refusal's reasons and `what_to_do`, and in the open question.
+
+**Not observed here.** The policy's own request (`alpha_deploy: on_phase_complete`) goes through the same `deploy.ts` request path but needs a phased plan, which these projects do not have.
+
+**Results.** M43 run whole after `npm run build`, `TMPDIR=/tmp/vrf-f33`: **11 tests, 11 passed**, 0 failed, 0 skipped, 0 cancelled. No harness file was touched for this, and no `real` or `exhaust` file was run.

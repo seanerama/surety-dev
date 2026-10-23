@@ -79,6 +79,7 @@ import { buildAndNominate, findingRow, repairProject } from './harness/checks/re
 import { def, inventoryDefs } from './harness/checks/scope.mjs';
 import { operatorRequest, recordExit } from './harness/checks/selection.mjs';
 import { fixUnjudged, ownerFix, verified } from './harness/checks/stuck-fix.mjs';
+import { RUNTIME, configContent, configure, qualifyByFixture, requestDeployment } from './harness/deploy/kernel.mjs';
 
 // One check of each kind F §5.7 names, with the tier from which it is required.
 const CHECKS = [
@@ -423,6 +424,100 @@ describe('M43 the review a tier requires when a fix makes a verified stage gate 
       await tick(fx.engine, p.id, { rounds: 4 });
       assert.deepEqual([count(c5.id), runsOf(fx.home, fix3.id).length], [0, runs], `${tier}: after retry, still no review and no Builder run (${blocker.id})`);
       assert.deepEqual([count(c1.id), count(c2.id), count(c3.id), count(c4.id)], [1, 1, 1, 1], 'and none more anywhere');
+    });
+  }
+  // Sean's question of 2026-10-23 on section 11.1 of objection 209's answer: an unjudgeable fix's candidate has no review
+  // queued, so does an Alpha authorization of it proceed without the sign-off D1 §9.3 (6) requires? Observed through the
+  // owner's deployment request (POST …/deployments, D4 §4.1): it is refused, SIGNOFF_MISSING naming the candidate, never
+  // issued; when the sign-off is the only reason left, the engine queues the candidate's review itself (store/transitions/
+  // alpha-review.ts, "the review an Alpha deployment's sign-off waits on"); once signed, the same request is issued.
+  for (const [tier, cancel] of [['T2', true], ['T3', false]]) {
+    test(`${tier}: an Alpha authorization of an unjudgeable fix's candidate, which no stage evaluation has given a review, is refused SIGNOFF_MISSING and never issued without the sign-off; retry${cancel ? ' and cancel' : ''} queue no review; ${cancel ? 'with the finding settled by the owner' : "the request's own alpha_authorize evaluation resolving the finding"}, the sign-off is the only reason left and the engine queues the candidate's review; signed, the request is issued`, async (t) => {
+      const fx = await scriptedEngine(t);
+      const defs = {
+        ...inventoryDefs(tier, ['R1.1']),
+        login: def('acceptance', { criteria: ['R1.1'], gates: ['alpha_authorize'] }),
+        behaves: def('post_deploy_behavior', { gates: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
+      };
+      const keys = Object.keys(defs);
+      const registered = keys.filter((k) => k !== 'behaves');
+      const p = await repairProject(fx, { tier, defs, governed: { required_checks: keys }, index: [{ key: 'R1', criteria: ['R1.1'] }], policy: { autonomy: 'step' } });
+      const { candidate: c1 } = await buildAndNominate(fx, p, { keys: registered });
+      const ctx = { project: p, stage: p.stages[0].id, candidate: c1 };
+      await verified(fx, p, c1, { required: registered });
+      const [r1] = await tickUntil(fx.engine, p.id, () => (engineReviews(fx, p.id, c1.id).length > 0 ? engineReviews(fx, p.id, c1.id) : undefined), { max: 8, what: "candidate 1's review" });
+      await signedOff(fx, p.id, r1, tier);
+      await tickUntil(fx.engine, p.id, () => workItem(fx.home, p.stages[0].work_item).status === 'complete', { max: 12, what: 'the stage verified on candidate 1' });
+      const [f] = await raiseFindings(fx, p.id, c1.id, [defect209(`${tier}: login refuses a valid session (alpha only)`, 'login')], { kind: 'verification' });
+      const { fix } = await ownerFix(fx, p, f);
+      const c2 = await successor(fx, ctx, { work: fix.id });
+      await verified(fx, p, c2, { required: registered });
+      await tickUntil(fx.engine, p.id, () => fixUnjudged(fx.home, fix.id, { open: true })[0], { max: 8, what: 'the fix_unjudged blocker' });
+      const issued = () => withStoreRead(fx, (db) => db.prepare(`SELECT "id", "status" FROM "deployment_authorizations" WHERE "candidate" = ? AND "status" IN ('issued', 'consumed')`).all(c2.id));
+      const deployItems = () => workItemsOf(fx.home, p.id).filter((w) => w.kind === 'deploy');
+      assert.equal(engineReviews(fx, p.id, c2.id).length, 0, 'the fixture is live: no review of the unjudgeable fix\'s candidate');
+      // The owner's paths on the blocker change nothing about the review.
+      await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'retry');
+      await tick(fx.engine, p.id, { rounds: 3 });
+      assert.equal(engineReviews(fx, p.id, c2.id).length, 0, 'after retry: no review');
+      if (cancel) {
+        await consume(fx, p.id, await openDecision(fx, p.id, 'blocker', fix.id), 'cancel');
+        await tick(fx.engine, p.id, { rounds: 3 });
+        assert.deepEqual([workItem(fx.home, fix.id).status, engineReviews(fx, p.id, c2.id).length], ['cancelled', 0], 'after cancel: the fix cancelled, no review');
+      }
+      // The owner's deployment request for the candidate (D4 §4.1), its environment configured and its adapter qualified.
+      await configure(fx.engine, p.id, 'alpha', configContent({ start: [RUNTIME.path, 'src/app.js'] }));
+      await qualifyByFixture(fx.engine);
+      // A review the engine queues for the deployment is unchained: its Reviewer is scripted as soon as it exists.
+      const scriptedReviews = new Set();
+      const scriptReviews = () => {
+        for (const w of engineReviews(fx, p.id, c2.id)) {
+          if (scriptedReviews.has(w.id)) continue;
+          scriptedReviews.add(w.id);
+          fx.scripted.script(w.id, [roleThat([], { signoffs: SIGNOFFS[tier] })]);
+        }
+      };
+      const first = await requestDeployment(fx.engine, p.id, c2.id, 'alpha');
+      scriptReviews();
+      const codes = (res) => (res.body?.subject?.reasons ?? []).map((r) => r.code);
+      const subjects = (res, code) => (res.body?.subject?.reasons ?? []).filter((r) => r.code === code).flatMap((r) => r.subjects ?? []);
+      assert.deepEqual(
+        [first.status, first.body?.code],
+        [409, 'authorization_not_issued'],
+        `${tier}: an Alpha authorization of a candidate with no Reviewer sign-off must be refused, never issued (D1 §9.3 (6)); answered ${first.status} ${JSON.stringify(first.body).slice(0, 600)}`,
+      );
+      assert.ok(codes(first).includes('SIGNOFF_MISSING') && subjects(first, 'SIGNOFF_MISSING').includes(c2.id), `refused SIGNOFF_MISSING, naming the candidate (${JSON.stringify(first.body?.subject?.reasons)})`);
+      assert.match(first.body?.reason ?? '', /alpha_authorize is not satisfied/, `with a clear reason (${first.body?.reason})`);
+      assert.deepEqual([issued(), deployItems()], [[], []], 'no authorization issued, no deploy work');
+      let signoffAlone = first;
+      if (cancel) {
+        // The finding stands (its fix cancelled), so the sign-off is not the only reason: no review is asked for yet.
+        assert.ok(codes(first).includes('FINDING_UNSATISFIED'), `the cancelled fix's finding stands at the gate (${codes(first).join(', ')})`);
+        assert.equal(engineReviews(fx, p.id, c2.id).length, 0, 'with another reason standing, no review is queued for the deployment');
+        // The owner settles the finding (accept, his owed question), and requests again.
+        const owed = await openDecision(fx, p.id, 'finding_disposition', f.id);
+        await consume(fx, p.id, owed, 'accept');
+        signoffAlone = await requestDeployment(fx.engine, p.id, c2.id, 'alpha');
+        scriptReviews();
+      } else {
+        // The request's own alpha_authorize evaluation reads the finding, whose check login is required there and passed
+        // after the disposition: it resolves it, and the fix completes (D3 §2.11; E36 item 4).
+        assert.deepEqual([findingRow(fx.home, f.id).status, workItem(fx.home, fix.id).status], ['resolved', 'complete'], 'the alpha_authorize evaluation resolved the finding and completed the fix');
+        // Its fix_unjudged question, about a fix now complete, is closed by the engine at its next tick.
+        await tick(fx.engine, p.id, { rounds: 2 });
+        assert.deepEqual(fixUnjudged(fx.home, fix.id, { open: true }), [], 'its fix_unjudged question closed at the next tick');
+      }
+      assert.deepEqual([signoffAlone.status, codes(signoffAlone)], [409, ['SIGNOFF_MISSING']], `the sign-off the only reason left (${JSON.stringify(signoffAlone.body).slice(0, 500)})`);
+      assert.match(signoffAlone.body?.what_to_do ?? '', /review/, `the answer tells the owner the review is queued (${signoffAlone.body?.what_to_do})`);
+      const queued = engineReviews(fx, p.id, c2.id);
+      assert.equal(queued.length, 1, `the engine queued the candidate's review for the deployment's sign-off, once (${JSON.stringify(queued.map((w) => [w.id, w.trigger_generation, w.status]))})`);
+      assert.deepEqual([issued(), deployItems()], [[], []], 'still nothing issued');
+      // Signed, the request is issued; never before.
+      await tickUntil(fx.engine, p.id, () => workItem(fx.home, queued[0].id).status === 'complete', { max: 12, what: "the deployment's review to complete" });
+      const last = await requestDeployment(fx.engine, p.id, c2.id, 'alpha');
+      assert.ok([200, 201].includes(last.status) && last.body?.authorization?.status === 'issued', `signed, the deployment is authorized (${last.status} ${JSON.stringify(last.body).slice(0, 500)})`);
+      assert.ok(signoffsOf(fx.home, c2.id).some((x) => x.role === 'reviewer' && x.scope === 'candidate'), "on the Reviewer's candidate sign-off of the fix's candidate");
+      assert.equal(engineReviews(fx, p.id, c2.id).length, 1, 'one review in all');
     });
   }
 });
