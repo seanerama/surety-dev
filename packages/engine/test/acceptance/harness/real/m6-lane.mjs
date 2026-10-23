@@ -44,7 +44,11 @@
 //     deferral; harness/design/holds.mjs), and a step that ends in an
 //     intentional wait (a deferral, a Designer session open on a held
 //     stage) is recorded `waiting` (lane.mjs StepWaiting), never `done`,
-//     never passed: a deferral is never success;
+//     never passed: a deferral is never success; a `fix` the engine can no
+//     longer move (no run, check, verification, due gate or repair for it
+//     on any unsuperseded candidate holding it) is `stuck`, neither runnable
+//     nor in flight, and fails the stall check and the review's end at once,
+//     named (objection 209, F33; SEAM.md §561);
 //   - WHO PERFORMED EACH OWNER ACT (rule 26; E156 Q6; SEAM.md §542): every
 //     act the store records as the owner's (a decision answered by the
 //     `human` actor, an owner turn in a session, an owner command) is
@@ -71,9 +75,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 
 import { CLI, REPO_ROOT } from '../engine.mjs';
 import { withStore } from '../store.mjs';
@@ -415,22 +420,133 @@ const windowNote = (w) => ({
 
 const openDecisions = (home, project) => rows(home, `SELECT * FROM "decisions" WHERE "project" = ? AND "status" = 'open' ORDER BY rowid`, project).map((d) => ({ ...d, options: json(d.options), evidence: json(d.evidence ?? null) }));
 
+// A `fix` the engine can no longer move (objection 209; findings F19, F26
+// and F33 of the M535 Waterlog recovery attempt; Sean's ruling of
+// 2026-10-23, errata E179 item 8; SEAM.md §561). Rule 25's "runnable" is
+// what the engine can dispatch or is carrying, and "in flight" what it is
+// doing; a `verifying` fix is moved only by a run of it, a check execution,
+// a verification or review of a candidate holding it, a gate evaluation
+// reading its finding, or a repair of a failed named check (D3 §2.10,
+// §2.11). With none of these on any unsuperseded candidate holding it (by
+// ancestry, E43) it is neither runnable nor in flight: it is listed
+// `stuck`, never `runnable`, and a project with nothing else running,
+// queued or asked is a silent stall naming it (BS6 §4.1 rule 25; E162 item
+// 1: pending engine work accounts, and none is pending). Which gates are
+// due and which repair is due are decided by the engine's own predicates,
+// as E178 asks the engine's `milestoneUnmet`: `dueStageGates` and
+// `heldByAncestry` of the compiled `store/transitions/gates.js` and
+// `checkOutputsFor` and `currentCandidate` of `store/transitions/repair.js`
+// beside the CLI (pure reads), over a read-only handle. Unknown is never
+// stuck: predicates that cannot be loaded or throw leave the fix counted
+// runnable, marked `judged: "unknown"`. Only `fix` items are judged so; a
+// verifying `stage_build` is also completed by its phase's completion (plan/
+// phase.ts), which no pure engine predicate answers, and is counted as before.
+const loadEngine = (rel, names) =>
+  import(pathToFileURL(join(dirname(CLI), ...rel)).href).then(
+    (m) => (names.every((n) => typeof m[n] === 'function') ? m : null),
+    () => null,
+  );
+const ENGINE_GATES = await loadEngine(['store', 'transitions', 'gates.js'], ['dueStageGates', 'heldByAncestry']);
+const ENGINE_REPAIR = await loadEngine(['store', 'transitions', 'repair.js'], ['checkOutputsFor', 'currentCandidate']);
+const PENDING_EXECUTION = Object.freeze(['queued', 'materializing', 'running', 'collecting']);
+const STUCK_WHY = 'no run, no pending check execution, no pending verification or review, no due gate and no repair due on any unsuperseded candidate holding it: nothing the engine does will move it';
+
+// One verifying fix: { state: 'in_flight', by } | { state: 'stuck', entry } | { state: 'unknown' }.
+function fixJudgement(db, w, dueOf) {
+  if (ENGINE_GATES === null || ENGINE_REPAIR === null) return { state: 'unknown' };
+  try {
+    if (db.prepare(`SELECT 1 FROM "runs" WHERE "work_item" = ? AND "state" <> 'ended' LIMIT 1`).get(w.id)) return { state: 'in_flight', by: 'run' };
+    const unsuperseded = db.prepare(`SELECT * FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq"`).all(w.project);
+    const holders = unsuperseded.filter((c) => ENGINE_GATES.heldByAncestry(db, c).includes(w.id)).map((c) => c.id);
+    for (const c of holders) {
+      if (db.prepare(`SELECT 1 FROM "check_executions" WHERE "candidate" = ? AND "status" IN (${PENDING_EXECUTION.map(() => '?').join(', ')}) LIMIT 1`).get(c, ...PENDING_EXECUTION)) return { state: 'in_flight', by: 'check_execution' };
+      const open = db
+        .prepare(`SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" IN ('verification', 'review', 'phase_verification') AND json_extract("subject", '$.candidate') = ? AND "status" NOT IN ('complete', 'cancelled') LIMIT 1`)
+        .get(w.project, c);
+      if (open) return { state: 'in_flight', by: 'verification' };
+    }
+    if (dueOf().some((g) => holders.includes(g.candidate))) return { state: 'in_flight', by: 'gate_due' };
+    const failed = ENGINE_REPAIR.checkOutputsFor(db, w) ?? [];
+    if (failed.length > 0) {
+      const current = ENGINE_REPAIR.currentCandidate(db, w);
+      const taken = json(w.check_repair ?? null);
+      if (!(taken && current && taken.candidate === current.id && taken.generation === w.trigger_generation)) return { state: 'in_flight', by: 'repair_due' };
+    }
+    const own = db.prepare(`SELECT c."id", c."superseded_by" FROM "candidates" c, json_each(c."held_work") h WHERE c."project" = ? AND h."value" = ? ORDER BY c."seq"`).all(w.project, w.id);
+    return { state: 'stuck', entry: { id: w.id, kind: w.kind, status: w.status, finding: json(w.subject)?.finding ?? null, held_by: holders, own_candidates: own.map((c) => ({ id: c.id, superseded_by: c.superseded_by })), why: STUCK_WHY } };
+  } catch {
+    return { state: 'unknown' };
+  }
+}
+
+// The listed items with every stuck fix taken out (and listed apart), and
+// every fix that cannot be judged marked.
+function judgeVerifyingFixes(home, project, list) {
+  const fixes = list.filter((w) => w.kind === 'fix' && w.status === 'verifying');
+  if (fixes.length === 0) return { runnable: list, stuck: [] };
+  return withStore(home, (db) => {
+    let due = null;
+    const dueOf = () => (due ??= ENGINE_GATES.dueStageGates(db, { project }));
+    const stuck = [];
+    const unknown = new Set();
+    for (const f of fixes) {
+      const w = db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(f.id);
+      const j = w ? fixJudgement(db, w, dueOf) : { state: 'unknown' };
+      if (j.state === 'stuck') stuck.push(j.entry);
+      else if (j.state === 'unknown') unknown.add(f.id);
+    }
+    const out = new Set(stuck.map((x) => x.id));
+    return { runnable: list.filter((w) => !out.has(w.id)).map((w) => (unknown.has(w.id) ? { ...w, judged: 'unknown' } : w)), stuck };
+  });
+}
+const describeStuck = (stuck) =>
+  (stuck ?? [])
+    .map((x) => `${x.kind} ${x.id} ${x.status}${x.finding ? ` (finding ${x.finding})` : ''}, held by ${x.held_by.length > 0 ? x.held_by.join(', ') : 'no unsuperseded candidate'}${x.own_candidates.some((c) => c.superseded_by) ? `, its candidate ${x.own_candidates.filter((c) => c.superseded_by).map((c) => `${c.id} superseded by ${c.superseded_by}`).join(', ')}` : ''}: ${x.why}`)
+    .join('; ');
+
 // What the project has in flight or runnable (rule 25's three questions),
 // and what accounts for each design-held stage with the intentional waits
 // running (E162 item 1; harness/design/holds.mjs). `nowMs` the engine's time.
+// `stuck`: the verifying fixes the engine can no longer move (SEAM.md §561),
+// never in `runnable`.
 export function activity(home, project, { nowMs = Date.now() } = {}) {
   const live = rows(home, `SELECT "id", "kind", "role", "state", "session_state" FROM "runs" WHERE "project" = ? AND "state" <> 'ended'`, project).filter((r) => !(r.kind === 'session' && r.session_state === 'open_idle'));
   const executions = rows(home, `SELECT "id", "key", "status" FROM "check_executions" WHERE "project" = ? AND "status" IN ('queued', 'materializing', 'running', 'collecting')`, project);
   // A work item held for its design is not runnable: it waits on the design,
   // and what accounts for its hold is judged below (E162 item 1).
-  const runnable = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "status" IN ('eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying') AND ("held" IS NULL OR "held" NOT IN ('design_pending', 'design_stale'))`, project);
+  const listed = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "status" IN ('eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying') AND ("held" IS NULL OR "held" NOT IN ('design_pending', 'design_stale'))`, project);
+  const { runnable, stuck } = judgeVerifyingFixes(home, project, listed);
   const operations = rows(home, `SELECT "id", "kind" FROM "operations" WHERE "project" = ? AND "finalized_at" IS NULL`, project);
   const held = rows(home, `SELECT "id", "kind", "status", "held" FROM "work_items" WHERE "project" = ? AND "status" IN ('held', 'parked', 'awaiting_decision')`, project);
   const asked = openDecisions(home, project).map((d) => ({ id: d.id, kind: d.kind }));
   const design = designHoldAccounts(home, project, { nowMs });
-  return { live, executions, runnable, operations, held, asked, design };
+  return { live, executions, runnable, operations, held, asked, design, stuck };
 }
 const silent = (a) => a.live.length === 0 && a.executions.length === 0 && a.runnable.length === 0 && a.operations.length === 0 && a.asked.length === 0;
+
+// The review step's end condition (its `done`; SEAM.md §561), one judge per
+// step, kept across its polls. The review ends when it is confirmed and
+// nothing runs, is queued or is asked (an E179-acknowledged question
+// excepted, SEAM.md §560), as before; but a fix the engine can no longer
+// move (`stuck`) is never an end: with nothing else running, queued or asked
+// it is a silent stall, failed at the third such poll in a row (each after a
+// tick, driveM6's rounds) naming it, never waited out to the deadline and
+// never judged ended. What the step judges after its end (rule 25's
+// questions, the acts and their performers, M535 (l)) is unchanged.
+export function reviewEndJudge(name) {
+  let quiet = 0;
+  return (a, { confirmed, excepted = new Set() }) => {
+    const asked = a.asked.filter((x) => !excepted.has(x.id));
+    const idle = asked.length === 0 && a.live.length === 0 && a.runnable.length === 0 && a.executions.length === 0;
+    if (idle && (a.stuck ?? []).length > 0) {
+      quiet += 1;
+      if (quiet >= 3) throw new Error(`${name}: a silent stall (BS6 §4.1 rule 25): nothing runnable, nothing in flight, nothing asked, and work the engine can no longer move: ${describeStuck(a.stuck)}`);
+      return false;
+    }
+    quiet = 0;
+    return Boolean(confirmed) && idle;
+  };
+}
 
 // A project with nothing running, runnable or asked (rule 25; E162 item 1):
 // `waiting` when an intentional wait on the owner runs (a deferral he chose,
@@ -715,8 +831,9 @@ export async function driveM6(ctx, fx, project, done, { expect = [], answer = ()
       const a = activity(fx.home, project);
       const q = quietState(a);
       quiet = q.state === 'busy' ? 0 : quiet + 1;
-      if (quiet >= 3 && q.state === 'waiting') throw new StepWaiting(`${what}: not reached: the project waits on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(q.waits)}; holds: ${describeHolds(a.design)}`, q.waits);
-      if (quiet >= 3) throw new Error(`${what}: a silent stall (BS6 §4.1 rule 25): nothing runnable, nothing in flight, nothing asked; held: ${JSON.stringify(a.held)}; design holds: ${describeHolds(a.design) || 'none'}`);
+      const stuck = a.stuck.length > 0 ? `; stuck (SEAM.md §561): ${describeStuck(a.stuck)}` : '';
+      if (quiet >= 3 && q.state === 'waiting') throw new StepWaiting(`${what}: not reached: the project waits on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(q.waits)}; holds: ${describeHolds(a.design)}${stuck}`, q.waits);
+      if (quiet >= 3) throw new Error(`${what}: a silent stall (BS6 §4.1 rule 25): nothing runnable, nothing in flight, nothing asked${stuck}; held: ${JSON.stringify(a.held)}; design holds: ${describeHolds(a.design) || 'none'}`);
     }
     if (performance.now() - started > timeoutMs) {
       const waits = designHoldAccounts(fx.home, project).waits;
@@ -1510,6 +1627,7 @@ export async function reviewStep(ctx, row, fx, project) {
     // Under the rehearsal the harness opens and closes the owner's relay to Alpha itself (rule 24), reading nothing through it.
     const relay = ctx.rehearsal ? { open: seanTypes(ctx, fx.home, ['env', 'open', 'alpha', '--project', project], 'the relay to Alpha, on 127.0.0.1'), close: seanTypes(ctx, fx.home, ['env', 'close', 'alpha', '--project', project], 'the relay to Alpha closed') } : null;
     const reviewsBefore = new Set(rows(fx.home, 'SELECT "id" FROM "design_reviews" WHERE "project" = ?', project).map((r) => r.id));
+    const ended = reviewEndJudge(name);
     const s = await ownerSession(ctx, fx, project, 'designer', {
       mode: 'review',
       words: [...REVIEW_WORDS],
@@ -1518,12 +1636,11 @@ export async function reviewStep(ctx, row, fx, project) {
       answer: (d) => (d.kind === 'design_due' ? (ctx.rehearsal ? null : 'open') : d.kind === 'design_verdicts' ? 'confirm' : d.kind === 'finding_disposition' ? 'accept' : 'approve'),
       done: () => {
         const review = rows(fx.home, 'SELECT * FROM "design_reviews" WHERE "project" = ? ORDER BY rowid', project).filter((r) => !reviewsBefore.has(r.id)).at(-1);
-        if (!review?.confirmation_decision) return undefined;
         const a = activity(fx.home, project);
         // A question the owner acknowledged under E179 stays open; every other one is asked (E179; SEAM.md §560).
         const excepted = new Set(e179Exception(ctx, fx.home, openDecisions(fx.home, project)).acknowledged.map((x) => x.id));
-        const asked = a.asked.filter((x) => !excepted.has(x.id));
-        return asked.length === 0 && a.live.length === 0 && a.runnable.length === 0 && a.executions.length === 0 ? review : undefined;
+        // A fix the engine can no longer move fails the review at once, naming it (SEAM.md §561).
+        return ended(a, { confirmed: Boolean(review?.confirmation_decision), excepted }) ? review : undefined;
       },
       stall: false,
     });
