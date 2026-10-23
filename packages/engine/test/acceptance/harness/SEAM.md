@@ -8284,3 +8284,21 @@ M519 (h) now calls it. The kernel case drives it on run directories of the runne
 - the judgement fails naming them.
 
 With nothing stuck it passes. With a question reopened it fails "at the end, no question open". What the kernel case does not reach is M519's own file: its preflight, `upTo` and the steps' engines. Only a dress rehearsal of M519 (`SURETY_REAL_REHEARSAL=1`, the fake backend) runs that call site. Rehearsing M519 needs no `SURETY_M519_RUN_DIR`, which is read only by M535's paid start condition.
+
+## 565. M15's git-write-deadline case: holding the scheduler from before the commit's retry, with the branch update's intent held (objection 210; Sean's instruction of 2026-10-23 holding the merge of `a158fe1e`; the Verifier, on `verify/f33-git-write-deadline` from `a158fe1e`)
+
+**What §447 asked and the case did not do.** §447 has the case hold the scheduler at `scheduler.tick_running` (§441) "from the commit's finalization until the branch update's ambiguity has been read". The case armed the barrier only after reading the commit `finalized` and four git reads, then requested a tick. The commit's own tick usually passes select within 10 to 20 ms of the finalization. When it had already passed when the barrier was armed, the barrier caught a later tick.
+
+That later tick's journal step met the branch update in flight. It waited for the project's journal lock, held by the integration's drive. When the kill made the update ambiguous, it took the operation and probed it (D1 §8.1 step 2), recording the attempt `reconciled_absent`, and paused at `journal.ref_update.reconciled`, before any retry. The tick reached `tick_running` only when its 5 s step budget ran out. The case then read `['ambiguous', 'intended', ['reconciled_absent']]`, where `intended` is the status derived from a `reconciled_absent` latest attempt (journal.ts `deriveStatus`), not a retry.
+
+**The rule now.**
+1. Right after the commit's `journal.commit_tree.reconciled` barrier is reached, and before the commit's retry is let go, the case arms both `scheduler.tick_running` and `journal.ref_update.intent_committed`.
+2. It reaches both: the update intended and not begun (`isFresh`: every journal step leaves it to its caller), and a tick held before select (no other tick runs).
+3. It counts the `engine.tick` rows. Counted, not dated: the clock of the host the cases ran on is not monotonic (E36).
+4. It lets the update go, reads its ambiguity, and asserts that the count is unchanged, so no journal step began between the update going in flight and the read.
+
+The asserted values are unchanged: state `ambiguous`, status `ambiguous`, attempts exactly `['ambiguous']`, and the intent, the branch and the held writes as before. Nothing else in the file changes.
+
+**Evidence** (objection 210's answer, `docs/acceptance/reports/objection-210/`):
+- The failing interleaving was reproduced with the case's old synchronization on `bf1ca304`, on `a158fe1e`, and on `a158fe1e` without `fixes.ask_unjudged`. A forced ordering (`inflight2`) fails on all four builds.
+- The corrected synchronization passed alone on both revisions. It passed with the test thread delayed 3 s and 6 s after the commit's finalization, on both. It passed once under bounded load beside M440, M15-run-end-fault-matrix, M433 and M29, on both.

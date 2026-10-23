@@ -118,6 +118,19 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     // absent, the attempt is reconciled absent, and the engine pauses before
     // the retry (the `reconciled` barrier, SEAM.md §45).
     await reachBarrier(fx, project.id, commitReconciled);
+    // Objection 210 (SEAM.md §§447, 565): from here until the branch update's
+    // ambiguity has been read, the branch update's intent is held at
+    // `journal.ref_update.intent_committed` (intended, not begun: every
+    // journal step leaves it to its caller) until the scheduler is held at
+    // `scheduler.tick_running` (§441: before select, no other tick runs). So
+    // no journal step begins while the update is in flight or after its kill,
+    // and none can probe it before the case reads it ambiguous. Both armed
+    // now, before the commit's retry is let go: never after the commit's
+    // finalization, when its tick may already be past select and the next one
+    // meeting the update in flight.
+    const intentHeld = 'journal.ref_update.intent_committed';
+    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
+    await armBarrier(fx.engine, intentHeld, 'pause');
     const reconciledCommit = opOf('commit_tree');
     assert.deepEqual([reconciledCommit.state, reconciledCommit.attempts.map((a) => a.status), reconciledCommit.attempts.at(-1)?.reads.at(-1)?.result], ['ambiguous', ['reconciled_absent'], 'absent'], 'the probe found the commit absent and reconciled the killed attempt as absent; the journal is still ambiguous');
     assert.deepEqual(commitsNaming(repo, `Surety-Run: ${run.id}`), [], 'still no commit names the run: the probe made nothing');
@@ -139,14 +152,27 @@ describe('M15 a git write past its deadline while the engine runs', () => {
     // The integration follows: its compare-and-swap is held, killed at the
     // deadline, and recorded ambiguous; the branch has not moved. M5 slice 37
     // (D6 K1; objection 100; SEAM.md §447): the commit's finalization
-    // requests a tick, and a tick after the kill would probe the branch update
-    // before the case reads it ambiguous; so the scheduler is held at
-    // `scheduler.tick_running` (§441), in a tick that ran its journal step
-    // while the update was still in flight, until the ambiguity has been read.
-    await armBarrier(fx.engine, 'scheduler.tick_running', 'pause');
-    await requestTick(fx.engine, project.id);
+    // requests a tick, and a journal step that begins while the update is in
+    // flight, or after its kill, takes it once it is ambiguous and probes it
+    // (D1 §8.1 step 2) before the case can read it ambiguous. So the scheduler
+    // is held from the commit's probe (above) until the ambiguity has been
+    // read. Objection 210: arming the hold after the commit's finalization,
+    // as this case did, raced the commit's own tick to select by milliseconds;
+    // the hold is now taken before, with the update's intent held until a
+    // tick is held before select, and checked: no tick ends between the update
+    // being let go and its ambiguity being read.
+    await reachBarrier(fx, project.id, intentHeld);
     await reachBarrier(fx, project.id, 'scheduler.tick_running');
+    // Both held: the update intended and not begun (every journal step leaves
+    // it to its caller), and a tick held before select (no other tick runs,
+    // §441). From here to the read no tick may end, so none may begin: no
+    // journal step meets the update in flight or after its kill. Counted, not
+    // dated: this host's clock is not monotonic (E36).
+    const ticksEnded = () => withStore(fx.home, (db) => db.prepare(`SELECT COUNT(*) AS n FROM "events" WHERE "type" = 'engine.tick'`).get().n);
+    const heldAt = ticksEnded();
+    await releaseBarrier(fx.engine, intentHeld);
     const ambiguousMove = await withEvent('ref_update', 'ambiguous');
+    assert.equal(ticksEnded(), heldAt, 'the fixture is live: no tick ended between the update being let go and its ambiguity being read, so no journal step began meanwhile (objection 210)');
     laterRuns = runsOf(fx.home, later).length;
     assert.deepEqual([ambiguousMove.state, ambiguousMove.status, ambiguousMove.attempts.map((a) => a.status)], ['ambiguous', 'ambiguous', ['ambiguous']], 'the branch update is ambiguous: its one attempt was killed at the deadline');
     assert.deepEqual([ambiguousMove.payload.ref, ambiguousMove.payload.old_oid, ambiguousMove.payload.new_oid], [project.repo.ref, project.base, named[0]], 'its intent: the integration branch, from the base to the commit');
