@@ -48,7 +48,10 @@
 //     longer move (no run, check, verification, due gate or repair for it
 //     on any unsuperseded candidate holding it) is `stuck`, neither runnable
 //     nor in flight, and fails the stall check and the review's end at once,
-//     named (objection 209, F33; SEAM.md §561);
+//     named (objection 209, F33; SEAM.md §561); every step's rule-25 value
+//     records such stuck work, an intermediate step's acceptance unchanged,
+//     and the run's end (M535 (j), M519 (h)) never passes with it (D-5,
+//     Sean's ruling of 2026-10-23, errata E180; SEAM.md §563);
 //   - WHO PERFORMED EACH OWNER ACT (rule 26; E156 Q6; SEAM.md §542): every
 //     act the store records as the owner's (a decision answered by the
 //     `human` actor, an owner turn in a session, an owner command) is
@@ -504,6 +507,21 @@ const describeStuck = (stuck) =>
     .map((x) => `${x.kind} ${x.id} ${x.status}${x.finding ? ` (finding ${x.finding})` : ''}, held by ${x.held_by.length > 0 ? x.held_by.join(', ') : 'no unsuperseded candidate'}${x.own_candidates.some((c) => c.superseded_by) ? `, its candidate ${x.own_candidates.filter((c) => c.superseded_by).map((c) => `${c.id} superseded by ${c.superseded_by}`).join(', ')}` : ''}: ${x.why}`)
     .join('; ');
 
+// The work the engine can no longer move (SEAM.md §561), as activity()
+// names it: recorded at every step boundary and judged at the run's end
+// (D-5, Sean's ruling of 2026-10-23, errata E180; SEAM.md §563).
+export function stuckOf(home, project) {
+  const listed = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'fix' AND "status" = 'verifying' AND ("held" IS NULL OR "held" NOT IN ('design_pending', 'design_stale'))`, project);
+  return judgeVerifyingFixes(home, project, listed).stuck;
+}
+
+// The run's end (M519 (h); D-5, SEAM.md §563): never passed with work the
+// engine can no longer move. Returns nothing; throws naming it.
+export function runEndStuck(row, home, project) {
+  const stuck = stuckOf(home, project);
+  if (stuck.length > 0) throw new Error(`${row}: not passed: at the run's end, work the engine can no longer move (BS6 §4.1 rule 25; SEAM.md §563): ${describeStuck(stuck)}`);
+}
+
 // What the project has in flight or runnable (rule 25's three questions),
 // and what accounts for each design-held stage with the intentional waits
 // running (E162 item 1; harness/design/holds.mjs). `nowMs` the engine's time.
@@ -709,21 +727,26 @@ export function e179Record(ctx, home, project) {
   const ex = e179Exception(ctx, home, open);
   const ids = new Set(ex.acknowledged.map((a) => a.id));
   const unacknowledged = open.filter((d) => !ids.has(d.id)).map((d) => ({ kind: d.kind, id: d.id, refused: ex.refused.filter((r) => r.id === d.id).map((r) => r.reason) }));
-  const satisfied = open.length === 0;
+  // Work the engine can no longer move at the run's end (D-5; SEAM.md §563): never satisfied, never completed under E179.
+  const stuck = stuckOf(home, project);
+  const satisfied = open.length === 0 && stuck.length === 0;
   return {
     ref: E179.ref,
     open: open.map((d) => ({ kind: d.kind, id: d.id })),
     open_acknowledged: ex.acknowledged,
     unacknowledged,
     refused: ex.refused,
+    stuck,
     satisfied_as_written: satisfied,
-    completed_under: !satisfied && unacknowledged.length === 0 ? E179.ref : null,
+    completed_under: !satisfied && unacknowledged.length === 0 && stuck.length === 0 ? E179.ref : null,
     clean: satisfied,
     statement: satisfied
       ? 'no question open at the run\'s end: M519 (h) / M535 (j) satisfied as written'
-      : unacknowledged.length === 0
-        ? `completed under ${E179.ref}, not as written: M519 (h) / M535 (j) ("at the end, no question open") are not satisfied; ${ex.acknowledged.map((a) => `${a.kind} ${a.id} (${a.requirement})`).join(', ')} open and acknowledged by the owner, not resolved or verified; the run is not clean`
-        : `not passed: open at the run's end and not acknowledged under ${E179.ref}: ${unacknowledged.map((u) => `${u.kind} ${u.id}${u.refused.length > 0 ? ` (acknowledgement refused: ${u.refused.join('; ')})` : ''}`).join(', ')}`,
+      : unacknowledged.length > 0
+        ? `not passed: open at the run's end and not acknowledged under ${E179.ref}: ${unacknowledged.map((u) => `${u.kind} ${u.id}${u.refused.length > 0 ? ` (acknowledgement refused: ${u.refused.join('; ')})` : ''}`).join(', ')}${stuck.length > 0 ? `; and work the engine can no longer move: ${describeStuck(stuck)}` : ''}`
+        : stuck.length > 0
+          ? `not passed: at the run's end, work the engine can no longer move (SEAM.md §563): ${describeStuck(stuck)}`
+          : `completed under ${E179.ref}, not as written: M519 (h) / M535 (j) ("at the end, no question open") are not satisfied; ${ex.acknowledged.map((a) => `${a.kind} ${a.id} (${a.requirement})`).join(', ')} open and acknowledged by the owner, not resolved or verified; the run is not clean`,
   };
 }
 
@@ -732,6 +755,7 @@ export function e179Record(ctx, home, project) {
 export function e179RunEnd(ctx, row, home, project) {
   const rec = e179Record(ctx, home, project);
   if (rec.unacknowledged.length > 0) throw new Error(`${row}: ${rec.statement} (BS6 §4.1 rule 25; ${E179.ref})`);
+  if (rec.stuck.length > 0) throw new Error(`${row}: ${rec.statement} (BS6 §4.1 rule 25; D-5, SEAM.md §563)`);
   const review = stepValue(ctx, stepName(row, 'review'));
   const atReview = new Set((review.rule_25?.acknowledged_open ?? []).map((a) => a.id));
   const missing = rec.open_acknowledged.filter((a) => !atReview.has(a.id));
@@ -761,7 +785,8 @@ export function ruleTwentyFive(home, project, name, { handover = [], to = null, 
   const design = designHoldAccounts(home, project, { nowMs });
   if (design.unaccounted.length > 0) throw new Error(`${name} not passed: design-held stages accounted for by nothing (no open question, no Designer session, no engine work, no unexpired deferral; BS6 §4.1 rule 25, E162 item 1): ${describeHolds(design)}`);
   if (design.waits.length > 0) throw new StepWaiting(`${name} not passed: it ends waiting on the owner, an intentional wait reported as waiting, never as a pass (BS6 §4.1 rule 25, E162 item 1): ${describeWaits(design.waits)}; holds: ${describeHolds(design)}`, design.waits);
-  return { handed_over: open.map(handedEntry(home, name, to)), ...(exception ? { acknowledged_open: ex.acknowledged, completed_under: ex.acknowledged.length > 0 ? E179.ref : null } : {}), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
+  // Stuck work recorded at every step boundary (D-5; SEAM.md §563); an intermediate step's acceptance is unchanged by it.
+  return { handed_over: open.map(handedEntry(home, name, to)), ...(exception ? { acknowledged_open: ex.acknowledged, completed_under: ex.acknowledged.length > 0 ? E179.ref : null } : {}), stuck: stuckOf(home, project), design_holds: design.holds.map((h) => ({ stage: h.stage, held: h.held, accounted_by: h.accounts.map((x) => ({ cause: x.cause, ...(x.work ? { work: x.work } : {}), ...(x.decision ? { decision: x.decision } : {}), next_action: x.next_action })) })) };
 }
 
 // ---- driving the project: Sean's answers, the rehearsal's, the stall check -------------------

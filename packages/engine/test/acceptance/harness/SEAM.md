@@ -8184,3 +8184,57 @@ An acknowledgement that fails any condition is refused, and the question fails t
 **Unchanged.** Every other item's counting, `held`, `asked`, `live`, `executions` and `operations`; `quietState`'s states; the design-hold accounts (§547); every step's handover (§§541, 559) and E179's exception (§560); `ruleTwentyFive`; `recordActs`; the rehearsal; the engine.
 
 **The case** (kernel lane, no new row): **M512, "(k) F33 (objection 209), a fix the engine can no longer move …"**. The run's review-step state made through the engine's API (`harness/checks/stuck-fix.mjs` `supersededFix`): a T1 project, its stage verified on candidate 1; two `defect` findings a Verifier raises on candidate 1 (naming `login` and R1.1), each dispositioned `fix` by the owner; fix 1's candidate verified (`login` passing after the dispositions) and superseded by fix 2's, which holds fix 1 by ancestry and is verified; every question answered; the engine ticked. Then nothing runs, is queued or asked; both fixes are `stuck` (fix 1's `held_by` candidate 3, its own candidate 2 superseded by 3), neither `runnable`; `quietState` is `silent`; `driveM6` with the stall check fails within three ticks as a silent stall naming both, never "not reached"; `reviewEndJudge` returns false twice and throws a silent stall naming both on the third poll, alone and beside an E179-acknowledged question; with nothing stuck and the review confirmed it ends, unconfirmed it does not, and beside an open question it never stalls. Genuinely live work is still counted: an operator check request on candidate 3 puts both fixes back in flight (`busy`), stuck again once recorded; an eligible item added through the trigger fixture on the paused project is runnable (`busy`); on a store backup whose candidate 3 `held_work` cannot be read, both fixes are counted, marked `unknown`, none stuck. Failing at `252bdede` (the first assertion, the fixes counted runnable); passing with this entry's change. The engine-side cases of objection 209 are M235's "(a) F26" and "(a) F33", which this change does not touch and which still fail until the Builder's correction.
+
+## 562. Objection 209 under Sean's rulings D-1 to D-4: what the engine's cases pin (errata E180, Sean's rulings of 2026-10-23 on the Verifier's answer; the Verifier, on `verify/f33-fix-verifying`; for the Builder's `build/f33-fix-verifying`)
+
+**The rulings** are quoted whole in `docs/acceptance/objections/209-M535-fix-left-verifying-on-a-superseded-candidate.answer.md` §8. The cases are in M235 and M234. They fail against `main` at `3b643c87` and pass once the engine does the following.
+
+- **D-1, a role finding with no source candidate.**
+  - **Stored at project scope.** A role's finding whose run's work names no candidate is stored with `scope` `project`, `candidate` null and `subject_id` the project. A Builder's objection is the exception (D3 §5 X2's route, unchanged).
+  - **The audit record.** Its one `finding.raised` event's payload carries `scope: "project"`, `reported_scope` (the scope the role reported, `"candidate"` in the cases) and `scope_reason: "no_source_candidate"`.
+  - **Legacy rows.** A row already stored with a non-project scope and `candidate` null is read by every later evaluation as a `project` finding. It is in the evaluation's findings read: an open one is a subject of `FINDING_UNSATISFIED`, and a `fix` one is resolved by its named check passing after the disposition, which completes its fix.
+  - **No rewrite.** The row's stored `scope` and `candidate` are not rewritten, and an evaluation recorded before is not changed (its `outcome`, `reasons`, `check_states`, `inputs_snapshot`, `inputs_hash` and `missing_verifications` compared whole).
+  - Cases: M235 "(a) F26, D-1 and D-2" and "(a) D-1 legacy rows". The cases make the legacy shape in their own store, with the engine stopped (`harness/checks/stuck-fix.mjs` `legacyShape`).
+- **D-2, the gate a plain fix is judged at.** A verifying `fix` (not `asset_updated`) held, directly or by ancestry, by the latest non-superseded candidate is handled as follows once that candidate's verification is complete:
+  - **The gate scheduled.** That candidate's `stage` gate is made due by the engine itself, for each stage it holds whose required set includes the finding's named check. The evaluation resolves the finding from that candidate's own result registered after the disposition, and the fix completes.
+  - **Pinned negatives:**
+    - a superseded candidate's result is never the `resolution_verification`'s `check_result`, even a pass recorded after the disposition;
+    - no evaluation is made on a superseded candidate or on one that does not hold the fix;
+    - a verified stage's work stays `complete` with no transition and its stage `verified`;
+    - the evaluated stage scope's checks are the stage's own, the same keys as its earlier evaluation, with nothing added to make an evaluation;
+    - no blocker is raised about a judgeable fix.
+  - **Fresh evidence:** case (b)'s "a pass registered before the disposition" stands.
+  - Cases: M235 "(a) F26, D-1 and D-2", "(a) F33, D-2".
+- **D-3, `fix_unjudged`.** The condition: a verifying fix that no supported evaluation can judge, with no run of it and no verification of its candidate in flight. The case's example is its named check required at `alpha_authorize` only, so in no `stage` scope; the engine makes no `alpha_authorize` evaluation by itself.
+  - **One blocker.** Exactly one `blocker` decision is raised, subject the work item. Its `dependency_manifest` has `cause: "fix_unjudged"`, `finding` (the finding's id), `check` (the named check's key) and `missing` (a non-empty statement of the missing prerequisite). Its question names the fix, the finding and the check, and its options are exactly `retry` and `cancel`. The fix stays `verifying`.
+  - **No duplicate.** Repeated ticks raise no second blocker while one is open.
+  - **`retry`** judges eligibility again. While evaluation stays impossible, no Builder run is dispatched, the fix stays `verifying`, and one `fix_unjudged` is open again (never none). At most one more is raised in all, and further ticks raise nothing.
+  - **`cancel`** cancels the fix and nothing else. The finding is not `resolved`, one `finding_disposition` about it is open (its owed disposition presented again), and no Builder run is dispatched.
+  - **Not this condition:** neither the fix's run in flight nor its candidate's verification pending raises it.
+  - Case: M235 "(c) D-3".
+- **D-4, a fix's current candidate.** For D3 §2.10 this is the latest non-superseded candidate holding the fix, directly or by ancestry, amending E100 item 1 narrowly.
+  - **A failure there** sends the fix back once (`verifying → eligible`, `repair_attempts` 1, `check_repair.candidate` that candidate).
+  - **Nothing else does.** Supersession alone sends nothing back and dispatches no Builder, and a failure recorded on the superseded candidate triggers nothing.
+  - **Deduplicated.** Ticks, a restart and a second failure on the same candidate take no second repair.
+  - Case: M234 "(a) D-4".
+
+**Unchanged:** every other case of M234 and M235; the H1 refusal (§552); the owner's standing disposition (§555); D3 §2.11's conditions and its `check_correction` route for a missing verification; Q9.
+
+## 563. Stuck work at every step boundary and at the run's end (D-5; errata E180, Sean's ruling of 2026-10-23: "Record stuck work at every step boundary. Keep intermediate steps' existing acceptance conditions unless a separate amendment is necessary. Final completion must not silently pass with stuck work. Keep the new prompt stall failure when only unmovable work prevents progress"; the Verifier, on `verify/f33-fix-verifying`)
+
+**The rule, as `harness/real/m6-lane.mjs` now applies it:**
+- **`stuckOf(home, project)`** gives the verifying fixes the engine can no longer move, judged as `activity()` judges them (§561), with the same entries.
+- **Every step boundary.** `ruleTwentyFive` (every step's end judgement) records them in its value as `stuck`, which is always present. It does not fail the step for them: an intermediate step's acceptance is unchanged.
+- **The run's end.**
+  - **M535 (j):** `e179Record` gains `stuck`. With any stuck work it is not `satisfied_as_written`, not `clean` and not `completed_under` E179, and its statement names the work. `e179RunEnd` fails naming it.
+  - **M519 (h):** a new `runEndStuck(row, home, project)` fails naming it, called after its "no question open" check.
+  - With nothing stuck, each is as before (the statements unchanged).
+- **The prompt stall failure stays** (§561): `driveM6`'s stall check and the review's end (`reviewEndJudge`).
+
+**The case** (kernel lane, no new row): **M512, "(k) D-5 (objection 209; E180) …"**. The state is §561's case's, made with `login` required at `alpha_authorize` only, so that the engine of D-3 asks `fix_unjudged` rather than resolves. It is judged on a backup with the questions about the fixes consumed (the run's state).
+- `ruleTwentyFive(…, 'm6x_build')` does not throw, and its `stuck` names both fixes (fix 1 held by candidate 3).
+- `e179Record` names them: not satisfied, not clean, not completed under E179.
+- `e179RunEnd(…, 'M535', …)` and `runEndStuck('M519', …)` fail naming both.
+- On a backup with both fixes `complete`, `stuck` is empty, `e179Record` is satisfied as written and clean, and `runEndStuck` passes.
+
+It failed at `1825c141` on its first assertion (the value has no `stuck`). §561's case is now judged the same way, on a backup with the questions about the fixes consumed, so that it stays a case of the harness once the engine raises `fix_unjudged`.

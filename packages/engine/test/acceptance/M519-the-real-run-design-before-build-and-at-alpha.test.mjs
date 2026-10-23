@@ -75,6 +75,7 @@ import {
   previewsOf,
   readActs,
   relayEvents,
+  runEndStuck,
   stepVerdicts,
   upTo,
 } from './harness/real/m6-lane.mjs';
@@ -262,6 +263,8 @@ describe('M519 the real run: design before build and at Alpha, one target (real 
       await store(ctx, (home) => {
         const open = rows(home, `SELECT "id", "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`, projectOf(ctx));
         assert.deepEqual(open, [], 'at the end, no question open');
+        // And no work the engine can no longer move (D-5, Sean's ruling of 2026-10-23, errata E180; SEAM.md §563).
+        runEndStuck('M519 (h)', home, projectOf(ctx));
       });
     });
   }));
