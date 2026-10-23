@@ -124,6 +124,22 @@ for (let i = 0; i < args.length; i++) {
     // SEAM.md §474 (M544): this start records its revision as unreadable.
     harnessOnly.push(flag);
     engineRevisionUnread = true;
+  } else if (flag === '--shell') {
+    // The console's directory (UI1 build spec §4.1, P1): the static shell the
+    // engine serves at `/` and `/assets/<name>` under its CSP (api/shell.ts),
+    // accepted with or without --harness. The harness flag of the same name
+    // stays for the acceptance lane. The directory must exist; what it holds
+    // is read once at start, as the harness flag does it.
+    const value = args[++i];
+    if (value === undefined) usage('--shell needs a directory');
+    const dir = isAbsolute(value) ? value : resolve(value);
+    try {
+      if (!statSync(dir).isDirectory()) usage(`--shell ${value} is not a directory`);
+    } catch {
+      usage(`--shell ${value} does not exist`);
+    }
+    if (shellDir !== null) usage('--shell is given twice');
+    shellDir = dir;
   } else if (flag === '--secret-file' || flag === '--provider-cap-usd') {
     const value = args[++i];
     if (value === undefined) usage(`${flag} needs a value`);
@@ -181,7 +197,9 @@ for (let i = 0; i < args.length; i++) {
       probeValues.push(value);
     } else if (flag === '--harness-shell') {
       // The shell reaches the engine as an ordinary parameter: a directory of
-      // static files to serve (SEAM.md §90).
+      // static files to serve (SEAM.md §90). `--shell` is the same parameter
+      // outside the harness; one of the two names it.
+      if (shellDir !== null) usage('--harness-shell and --shell name the shell directory twice');
       shellDir = isAbsolute(value) ? value : resolve(value);
     } else if (flag === '--harness-host-checks') {
       // Whether the host checks run at start (SEAM.md §114).
