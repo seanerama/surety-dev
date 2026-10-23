@@ -63,7 +63,23 @@ const findingOf = (tx: Tx, id: string) => findingRowOf(tx.db, id);
 // A finding is raised (D1 §3.4). `run` null: an engine-origin finding.
 export function raiseFinding(
   tx: Tx,
-  args: { project: string; scope: 'project' | 'lineage' | 'candidate'; candidate: string | null; run: string | null; role: string | null; category: string; severity: string; message: string; sensitiveArea?: string | null; check?: string | null; criterion?: string | null },
+  args: {
+    project: string;
+    scope: 'project' | 'lineage' | 'candidate';
+    candidate: string | null;
+    run: string | null;
+    role: string | null;
+    category: string;
+    severity: string;
+    message: string;
+    sensitiveArea?: string | null;
+    check?: string | null;
+    criterion?: string | null;
+    // D-1 (objection 209; errata E180): the scope the role reported, when
+    // the engine stored it at another (a role's finding whose run's work
+    // names no source candidate is a project finding), with the reason.
+    normalized?: { reported_scope: string; scope_reason: 'no_source_candidate' };
+  },
 ): string {
   const id = tx.newId('fnd_');
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "findings" WHERE "project" = ?').get(args.project) as { n: number };
@@ -91,7 +107,11 @@ export function raiseFinding(
       args.sensitiveArea ?? null,
       args.criterion ?? null,
     );
-  tx.emit('finding.raised', { project: args.project, finding: id, run: args.run }, { scope: args.scope, category: args.category, severity: args.severity, candidate: args.candidate });
+  tx.emit(
+    'finding.raised',
+    { project: args.project, finding: id, run: args.run },
+    { scope: args.scope, ...(args.normalized ?? {}), category: args.category, severity: args.severity, candidate: args.candidate },
+  );
   markStale(tx, { project: args.project });
   return id;
 }
@@ -148,10 +168,19 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   const project = run.project;
 
   for (const f of report.findings ?? []) {
-    const scope = (f.scope ?? 'candidate') as 'project' | 'lineage' | 'candidate';
+    const reported = (f.scope ?? 'candidate') as 'project' | 'lineage' | 'candidate';
+    // D-1 (objection 209; Sean's ruling of 2026-10-23, errata E180; SEAM.md
+    // §562): a role's finding raised by a run whose work names no source
+    // candidate (a check_correction run, say) applies at project scope, so
+    // that every evaluation reads it (D1 §9.3 (5)); a lineage or candidate
+    // finding with no candidate would apply to none. The scope the role
+    // reported and the reason are kept in its finding.raised. A Builder's
+    // objection keeps its own route (D3 §5 X2; repair.ts recordObjections).
+    const normalize = candidate === undefined && reported !== 'project' && !isObjection({ source_role: role, category: f.category });
     raiseFinding(tx, {
       project,
-      scope,
+      scope: normalize ? 'project' : reported,
+      ...(normalize ? { normalized: { reported_scope: reported, scope_reason: 'no_source_candidate' as const } } : {}),
       candidate: candidate?.id ?? null,
       run: run.id,
       role,

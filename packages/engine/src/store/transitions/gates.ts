@@ -26,7 +26,7 @@ import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
 import { getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
-import { findingVerifiable, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
+import { findingVerifiable, isObjection, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 import { assetFixStages } from '../../design/asset-bindings.js';
@@ -306,10 +306,18 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
 // Does a finding apply to a candidate? A project finding always; another on
 // the candidate it was raised on and every successor along the lineage
 // chain, unless an approved assessment excludes this candidate.
-export function findingApplies(db: Db, f: FindingRow, candidate: CandidateRow): boolean {
+//
+// D-1 (objection 209; Sean's ruling of 2026-10-23, errata E180; SEAM.md
+// §562): a row stored with a lineage or candidate scope and no candidate
+// (the shape a role's finding from a run naming no candidate was stored in
+// before D-1) applies as a project finding. This is where it is read so:
+// the row itself and every evaluation made before are left as they are. A
+// Builder's objection keeps its own route (D3 §5 X2) and applies to none.
+export function findingApplies(db: Db, f: FindingRow & { source_role?: string | null }, candidate: CandidateRow): boolean {
   if (f.scope !== 'project') {
-    if (f.candidate === null) return false;
-    if (f.candidate !== candidate.id && !predecessors(db, candidate).includes(f.candidate)) return false;
+    if (f.candidate === null) {
+      if (f.source_role === undefined || isObjection({ source_role: f.source_role, category: f.category })) return false;
+    } else if (f.candidate !== candidate.id && !predecessors(db, candidate).includes(f.candidate)) return false;
   }
   const excluded = db
     .prepare(`SELECT 1 FROM "applicability_assessments" WHERE "finding" = ? AND "candidate" = ? AND "status" = 'approved' LIMIT 1`)
