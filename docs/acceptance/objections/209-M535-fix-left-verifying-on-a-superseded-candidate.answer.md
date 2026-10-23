@@ -4,6 +4,8 @@ Answer to `209-M535-fix-left-verifying-on-a-superseded-candidate.md`, by the Ver
 
 Nothing here changes `packages/engine/src/`, the run store, any acceptance row or any rule. The engine corrections are for the Builder once Sean has decided the questions marked **Design decision for Sean**. The harness correction (question 3) is the Verifier's and is made on this branch, after its failing case.
 
+**Decided.** Sean decided D-1 to D-5 on 2026-10-23 (errata E180, on `main` at `bf1ca304`). His rulings are quoted in section 8 and govern wherever sections 1 to 7 recommend otherwise. The cases narrowed and added under them are in section 9, and the Builder's brief is section 10.
+
 ## 0. What the store shows
 
 Read from a copy of `/tmp/f33-evidence/store-s7-1020.db`. The sha256 `5a727329…6507` was the same before and after every read here.
@@ -203,3 +205,167 @@ The corrected `activity()` applied read-only to a copy of the run's store is in 
 - **D-4** (question 2): revisit E100 item 1 so that a fix's current candidate for D3 §2.10 is the latest unsuperseded candidate holding it by ancestry.
 - **D-5** (question 3, optional): whether a step that reaches its end with stuck work records it in its `rule_25` value (recommended) or fails.
 - Once these are decided, the Verifier narrows M235's two cases to the chosen options.
+
+## 8. Sean's rulings (2026-10-23)
+
+Recorded on `main` as errata E180 (commit `bf1ca304`; this branch does not carry that commit). Quoted verbatim:
+
+> 1. D-1 — Project scope. A role finding with no source candidate must apply at project scope, except for separately governed Builder objections. Preserve its reported scope and the reason for normalization in the audit record. Explicitly document and test how existing malformed findings are handled in future evaluations; do not rewrite historical evaluations or the closed Waterlog store.
+> 2. D-2 — Extend the asset-fix evaluation rule to ordinary fixes. Schedule the appropriate existing gates on the current, non-superseded candidate that holds the fix directly or through ancestry. Require the applicable check set and fresh evidence. Do not reopen completed stages or expand check coverage merely to manufacture an evaluation.
+> 3. D-3 — Approve `fix_unjudged`. When no supported evaluation can judge the fix, raise one actionable blocker identifying the fix, finding, check and missing prerequisite. Ordinary work still in flight is not this condition. Retry re-evaluates eligibility; it must not launch another paid Builder merely because evaluation remains impossible. Cancel cancels the fix only, preserves the unresolved finding and presents whatever disposition remains owed. Prevent duplicate blockers and automatic retry loops.
+> 4. D-4 — Amend E100 item 1 narrowly. A fix's current candidate may be the latest non-superseded candidate holding it through ancestry. This preserves the repair's opportunity to finish; it does not reuse superseded results as current evidence. Preserve freshness requirements, repair limits and deduplication. Supersession alone must not trigger another Builder.
+> 5. D-5 — Record stuck work at every step boundary. Keep intermediate steps' existing acceptance conditions unless a separate amendment is necessary. Final completion must not silently pass with stuck work. Keep the new prompt stall failure when only unmovable work prevents progress.
+> Before implementation, tighten the regression expectations around these rulings. A normally judgeable fix must actually resolve its finding and complete; merely raising a blocker is insufficient. Test the genuinely unjudgeable fallback separately, along with superseded evidence, unrelated candidates, legacy malformed findings and duplicate repair prevention. Keep the Verifier's commits and failing-first evidence intact. Fix the E38 citation on the branch.
+
+**The E38 citation.** It is fixed in the objection's own file: its question 1 now says "Errata E38 item 6".
+
+**How legacy malformed findings are handled (D-1).** "Legacy" means a row already stored with `scope` `lineage` or `candidate` and `candidate` null. The Waterlog store has four, three of them role findings and one a Builder objection.
+
+- **Read as project findings by later evaluations.** Every evaluation made after the Builder's correction reads such a row as a `project` finding. It is in the evaluation's findings read. An open row is a subject of `FINDING_UNSATISFIED` (or `FINDING_BLOCKING` at a blocking severity), as for any project finding. A `fix` row is resolved by its named check passing after its disposition, and its verifying fix then completes.
+- **Nothing is rewritten.** The row's stored `scope`, `candidate` and `subject_id` stay as written. No migration runs. No earlier evaluation is changed or re-stamped: an evaluation keeps the findings it read and its outcome.
+- **The closed Waterlog store is not opened by any engine.** If it were, its role findings would be read as above at its next evaluation.
+- **Builder objections are excluded.** A Builder's objection (D3 §5 X2) with a null candidate keeps its separately governed route and is not normalized.
+- **The case** is M235's "(a) D-1 legacy rows" (section 9). The rows are made in the test's own store with the engine stopped (`harness/checks/stuck-fix.mjs` `legacyShape`), because once D-1 is built the API no longer writes them.
+
+## 9. The cases under the rulings, and their results
+
+The cases were narrowed and added in `1825c141`, before any implementation. The D-5 harness correction is `3a10c0d5`. The engine is unchanged on this branch.
+
+| Ruling | File (row) | Case | Against the current engine |
+|---|---|---|---|
+| D-1, D-2 | M235 (row M235 (a)) | "(a) F26, D-1 and D-2 …": finding resolved and fix complete (never a blocker); stored at project scope; `finding.raised` payload `scope` `project`, `reported_scope` `candidate`, `scope_reason` `no_source_candidate`; no open question about the fix | **Fails**: "F26 (D-1, D-2): a judgeable fix must resolve its finding and complete: the fix … is verifying and its finding … dispositioned … the finding is stored scope candidate, candidate null, which applies to no candidate … no evaluation read it …" |
+| D-2 | M235 (row M235 (a)) | "(a) F33, D-2 …", two plain fixes, fix 1's candidate superseded before verification:<br>• both findings resolved by the current holder's stage gate, from its own results;<br>• a superseded candidate's pass (recorded after the dispositions) never evidence;<br>• no evaluation of candidate 1 (not a holder) or the superseded candidate after the dispositions;<br>• the verified stage not reopened (work `complete`, no transition, stage `verified`);<br>• the stage scope's keys unchanged (no check added);<br>• fresh evidence (execution after the disposition);<br>• no `fix_unjudged`. | **Fails**: "F33 (D-2): a judgeable fix must resolve its finding and complete: fix 1 … is verifying … no gate was scheduled for it … gates.ts dueStageGates makes due only a verifying stage_build's gates or an asset_updated fix's" |
+| D-3 | M235 (row M235 (c), the fallback beside the missing-verification route) | "(c) D-3 …", `login` required at `alpha_authorize` only:<br>• no `fix_unjudged` while the fix's run is held or its candidate's verification is pending;<br>• then exactly one, with `cause` `fix_unjudged`, `finding`, `check` `login`, a non-empty `missing`, a question naming all three, options `cancel` and `retry`; the fix `verifying`;<br>• no stage scope gains `login`;<br>• no duplicate on ticks;<br>• `retry`: no Builder run, still `verifying`, one open again, at most two raised in all;<br>• `cancel`: the fix `cancelled` and nothing else, the finding unresolved, one open `finding_disposition` about it, no Builder run, the stage untouched. | **Fails**: "D-3: a fix no supported evaluation can judge gets one fix_unjudged blocker: 0 raised; the fix … is verifying, its finding dispositioned, nothing asked about either ([]) …" |
+| D-1 legacy | M235 (row M235 (a)) | "(a) D-1 legacy rows …":<br>• two rows put in the malformed shape with the engine stopped;<br>• the `fix` one resolved by the fix candidate's fresh `login` result, its fix complete;<br>• the open one a `FINDING_UNSATISFIED` subject of the next stage evaluation;<br>• neither row's `scope`/`candidate` rewritten;<br>• an evaluation recorded before unchanged. | **Fails**: "D-1 legacy: a stored finding with scope candidate and no candidate must be read as a project finding by future evaluations: the dispositioned one … is dispositioned, its fix verifying, read by [] …" |
+| D-4 | M234 (row M234 (a), with (e) and (f)) | "(a) D-4 …":<br>• supersession alone: nothing sent back, no Builder run;<br>• a superseded candidate's failure: nothing;<br>• the named check failing on the current holder: fix 1 sent back once, `check_repair.candidate` that holder;<br>• ticks, a restart and a second failure there: no second repair; no Builder run while paused. | **Fails** at the send-back: "D-4: fix 1's named check failed on cand_…, the latest non-superseded candidate holding it by ancestry: it must be sent back once … (observed: verifying, repair_attempts 0, 0 repairs, check_repair null; its current candidate is still its own cand_…, superseded by …)". Its first two assertions (supersession alone, a superseded failure) **pass** on the current engine. |
+| D-5 | M512 (row M512 (k)) | "(k) D-5 …":<br>• `ruleTwentyFive` records `stuck` without failing an intermediate step;<br>• `e179Record` not satisfied, not clean, not completed under E179;<br>• `e179RunEnd` (M535 (j)) and `runEndStuck` (M519 (h)) fail naming both fixes;<br>• with nothing stuck, as before. | **Failed** at `1825c141` ("the step's rule-25 value records the stuck work … (value: ["handed_over","design_holds"], stuck undefined)"); **passes** at `3a10c0d5` (the Verifier's harness correction). |
+| §561 | M512 (row M512 (k)) | "(k) F33 …", now judged on a store backup with every question about the fixes consumed, and with `login` at `alpha_authorize` only: the D-3 engine asks `fix_unjudged` there, so the run's unasked state is reproduced only on a backup. | Passes (harness correction of `822ee4a0`). |
+
+**Results at `3a10c0d5`**, each file run whole with `node --test --test-reporter=spec` after `npm run build`, `TMPDIR=/tmp/vrf-f33`. Every file had 0 skipped and 0 cancelled.
+
+| File | Tests | Passed | Failed |
+|---|---|---|---|
+| `M512-design-due-and-no-silent-stalls.test.mjs` | 19 | 19 | 0 |
+| `M235-finding-resolution.test.mjs` | 13 | 9 | 4: (a) F26, (a) F33, (c) D-3, (a) D-1 legacy rows; the engine's, for the Builder |
+| `M234-the-repair-loop.test.mjs` | 12 | 11 | 1: (a) D-4; the engine's, for the Builder |
+| `M239-the-verifiers-check-writing-package.test.mjs` | 2 | 2 | 0 |
+| `M342-the-verifiers-deployment-check-package.test.mjs` | 1 | 1 | 0 |
+| `M442-the-rehearsal-plays-from-the-package.test.mjs` | 42 | 42 | 0 |
+| `M442-the-rehearsal-with-the-packages-whole.test.mjs` | 3 | 3 | 0 |
+| `M442-the-role-packages-state-what-the-engine-reads.test.mjs` | 11 | 11 | 0 |
+| `M537-the-designers-and-verifiers-packages-state-what-the-engine-reads.test.mjs` | 6 | 6 | 0 |
+| `M537-the-rehearsal-plays-from-the-designers-package.test.mjs` | 13 | 13 | 0 |
+
+These are every kernel-lane file that imports `harness/real/`, plus M234 and M235. `M519-the-real-run-design-before-build-and-at-alpha.test.mjs` (manifest `real`) gained one call in (h). It was syntax-checked (`node --check`), not run. No `real` or `exhaust` file was run, and no process, unit or test home was left.
+
+**About "an unrelated candidate".** Inside one project, every candidate's lineage starts from the one before it, so there is no unsuperseded candidate that does not hold a later fix by ancestry. The case therefore pins what does arise: after the dispositions, nothing is evaluated on candidate 1 (which precedes the fix and does not hold it) or on the superseded holder. Only the current holder is evaluated.
+
+## 10. The Builder's brief (`build/f33-fix-verifying`, cut from this branch's tip)
+
+**Run.** `npm run build`, then the M235 and M234 cases above and `npm run test:unit`. Every other case of M234, M235 and M512 must stay as it is. Do not edit any acceptance test (file an objection instead).
+
+**Paths.** Builder paths only: `packages/engine/src/`, `migrations/` (none expected), `api/`, `test/unit/`.
+
+The pins are SEAM.md §562.
+
+### D-1: project scope for a role finding with no source candidate
+
+**Engine change**
+- **`store/transitions/findings.ts` `recordReport`:** when the run's work subject names no candidate, record each finding of `report.findings` with `scope` `project` and `subject_id` the project, whatever scope the role reported. The exception is a Builder's objection, which keeps its X2 route as built (`repair.ts` `recordObjections`, `isObjection`).
+- **`raiseFinding`** emits the one `finding.raised` with payload `{ scope: "project", reported_scope: <the role's scope, "candidate" when it gave none>, scope_reason: "no_source_candidate", category, severity, candidate: null }`. With a source candidate the payload is as before; omit the two new fields, or set them only when normalized.
+- **`store/transitions/gates.ts` `findingApplies`:** a non-objection finding whose `scope` is not `project` and whose `candidate` is null applies as a `project` finding (always, unless an approved assessment excludes the candidate). This is how legacy rows are read.
+
+**Cases:** M235 "(a) F26 …" and "(a) D-1 legacy rows …".
+
+**Must not:**
+- migrate or rewrite any stored finding or evaluation;
+- touch any run store outside a test's own home;
+- normalize an objection;
+- change applicability for a row with a candidate.
+
+### D-2: the asset-fix rule extended to ordinary fixes
+
+**Engine change** (`gates.ts` `dueStageGates`, beside the `asset_updated` loop):
+- **Which fixes.** Every verifying `fix` whose subject names a finding and is not `asset_updated`.
+- **Which candidate.** The fix's current candidate, as D-4 defines it (the latest non-superseded candidate holding it, itself or by ancestry), and only once that candidate's `verification` work is `complete`.
+- **Which finding.** Only one `open`, or `dispositioned` `fix`, that applies to that candidate (`findingApplies`).
+- **What becomes due.** The `stage` gate on that candidate of each stage it holds (`stagesHeld`) whose required set at the effective version (`requiredSet`, kind `stage`) contains the finding's named check, with that check verifying the finding's criterion (`verifiesCriterion`, or `verifiesByCheck` for a finding naming no criterion). It is due when that (candidate, stage) has no evaluation or its latest is stale.
+- **Nothing else changes.** The evaluation and its existing resolution rule do the rest.
+
+**Cases:** M235 "(a) F26 …" and "(a) F33 …".
+
+**Must not:**
+- evaluate a superseded candidate, or any candidate other than the current holder;
+- register executions or add a check to a scope;
+- reopen a stage: `completeStageWork` acts only on a verifying `stage_build`, and the stage's `status` stays;
+- complete a fix in any other way than its finding's resolution;
+- raise a blocker for a fix this makes judgeable.
+
+**Not pinned** (the cases are T1): at T2 and T3, `evaluate` queues a review after a `stage` evaluation (`queueReview`). Re-evaluating a verified stage's gate on a fix's candidate must not queue a second paid review that the `asset_updated` path would not. Follow that path's behaviour. If the two differ, file an objection rather than choosing.
+
+### D-3: `fix_unjudged`
+
+**The condition** (at the tick's Gates step, after D-2's due gates are known). A verifying fix:
+- has no run that has not ended;
+- has no `verification`, `review` or `phase_verification` work not complete or cancelled for its current candidate;
+- has its current candidate's verification complete (or no non-superseded candidate holds it);
+- and D-2 makes no gate due for it on its current candidate and has none to make. That is: no stage it holds requires the named check, or no current candidate exists.
+
+**The blocker.** Raise exactly one `blocker` decision (`raiseQuestion`, subject `work_item` the fix). The fix's status stays `verifying`: no park, no `awaiting_decision`, never `eligible`.
+- **`dependency_manifest`:** `{ work_item, subject_status: "verifying", cause: "fix_unjudged", finding: <id>, check: <key>, candidate: <current candidate id or null>, missing: <non-empty text naming the missing prerequisite> }`. In M235 (c) the missing prerequisite is that `login` is required at `alpha_authorize` only, which the engine evaluates only for a proposed deployment authorization.
+- **The question** names the fix, the finding and the check, for example: "Fix `<wi>` for finding `<fnd>` (check `<key>`) is verifying, and no gate the engine evaluates on `<candidate>` can judge it: `<missing>`. Retry to judge it again, or cancel the fix (the finding stays unresolved and its disposition is asked again)."
+- **Options:** exactly `retry` and `cancel`.
+- **The reason** `fix_unjudged` is a new blocker cause (Sean approved it, E180 item 3). Add it wherever blocker causes are enumerated (the decision contract, `api/`, the reads).
+
+**`retry`:** no transition. The fix is judged again at the next tick:
+- now judgeable, D-2 makes its gate due;
+- still unjudgeable, one new `fix_unjudged` is raised (a new semantic generation), at most once per `retry` answer.
+- No Builder is ever dispatched by it.
+
+**`cancel`:**
+- The fix goes `verifying → cancelled` (the existing "Cancel" edge of the work-item contract), and nothing else is cancelled.
+- The finding is not resolved. It goes back to owing its disposition: its `fix` disposition cleared, or the owed question raised by the existing route.
+- So exactly one `finding_disposition` about it is open (`askUndispositioned`'s `disposition_owed`, or a scope the Builder names in SEAM).
+- No Builder run.
+
+**Deduplication:**
+- never two open `fix_unjudged` about one fix;
+- no re-raise on ticks while one is open;
+- none raised automatically after an answer except that one per `retry`.
+
+**Case:** M235 "(c) D-3 …".
+
+**Must not:**
+- raise it while a run, a verification or a due gate is in flight;
+- raise it for a judgeable fix;
+- send the fix to `eligible`;
+- launch any Builder;
+- resolve or delete the finding;
+- loop.
+
+### D-4: a fix's current candidate
+
+**Engine change** (`store/transitions/repair.ts` `currentCandidate`): for a `fix`, return the latest non-superseded candidate holding it, itself or by ancestry (`heldByAncestry`), as for a `stage_build`. Return null when none does. Everything else in D3 §2.10 stands:
+- `repairView`'s refusal of a superseded candidate;
+- one repair per item, candidate and generation (`check_repair`);
+- `repair_attempts_max` and `no_progress_max`;
+- the progress key;
+- the failed outputs in the next context;
+- "only the latest registration counts".
+
+**Case:** M234 "(a) D-4 …". Every other M234 case must still pass, notably (a) "a fix …" (its own candidate is then also the latest holder), (e) and (f).
+
+**Must not:**
+- send a fix back on a superseded candidate's result;
+- send it back, or dispatch it, on supersession alone;
+- take a second repair for the same candidate and generation.
+
+### D-5: the harness
+
+**Done by the Verifier** (`3a10c0d5`, SEAM.md §563). Nothing for the Builder.
+
+### Throughout
+
+- **Out of scope:** the run store `~/s7-1020`, any acceptance row, rule 25, `ruleTwentyFive`, `recordActs` and E179's exception.
+- **M535 (l) still fails** on a driver-performed central act. Nothing here may change that.
+- **One unit case per change** in `test/unit/` where the Builder's conventions ask for one.
