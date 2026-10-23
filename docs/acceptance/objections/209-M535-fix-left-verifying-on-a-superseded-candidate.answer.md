@@ -369,3 +369,104 @@ The pins are SEAM.md §562.
 - **Out of scope:** the run store `~/s7-1020`, any acceptance row, rule 25, `ruleTwentyFive`, `recordActs` and E179's exception.
 - **M535 (l) still fails** on a driver-performed central act. Nothing here may change that.
 - **One unit case per change** in `test/unit/` where the Builder's conventions ask for one.
+
+## 11. Before the merge checkpoint: T2 and T3, the blocked fix, and M519 (h) (2026-10-23)
+
+This work was done on `verify/f33-t23`, cut from the Builder's `build/f33-fix-verifying` at `3c682070`, so the cases ran against the corrected engine. Sean asked for three things:
+
+- coverage at T2 and T3 of a fix that makes a verified stage's gate evaluate again, "not [using] the absence of a Builder objection as evidence";
+- an unpaid exercise of M519 (h)'s changed D-5 path;
+- the three properties of a blocked fix pinned.
+
+### 11.1 T2 and T3: when another Reviewer is legitimately required
+
+**The mechanism (`gates.ts`).** Every `stage` evaluation of a non-superseded candidate ends in `queueReview`. At a tier of T2 or above, with every required check of the scope passed and the candidate's verification complete, it observes the review trigger `("verification", <candidate>, generation)`. `reviewGeneration` keeps the generation of the latest review while that review is not complete, and gives a new one only once a sign-off exists on other acceptance content. D-2 adds no review logic of its own: its re-evaluation goes through the same `evaluate`.
+
+**When a review is legitimately required (the deciding sources).**
+
+- **E36 item 3:** the engine queues a candidate's review once its verification has completed with its required checks passed, at the tiers that require a Reviewer's sign-off.
+- **D1 §9.3 input (6):** every gate at T2 needs a Reviewer sign-off at candidate scope, and T3 additionally per module plus a security review, all bound to the candidate's `acceptance_content_hash`.
+- **E41 item 4:** a sign-off binds the content its run was given.
+- **E43:** on the fix's candidate, "the engine queues its review and the Reviewer signs it off; the stage gate and the Alpha authorization are satisfied on the fix's candidate".
+
+So a review is required for each candidate whose acceptance content no sign-off binds. The fix's candidate carries new code (the fix), so it needs exactly one. The verified stage's own candidate keeps the review it had. Nothing calls for a second review of a candidate whose content is unchanged since it was signed.
+
+**Observed, against the Builder's engine** (M43, "T2: a plain fix on a verified stage queues exactly one review …" and the same case at T3; both pass 9/9 with the file). At each tier:
+
+- the stage verified on candidate 1, with its one review signed;
+- a plain fix on that stage: D-2 evaluated the stage gate again on the fix's candidate, the finding resolved and the fix completed;
+- **exactly one** engine review for the fix's candidate (generation 1, not a fixture), waiting at the chain boundary with no Reviewer launched;
+- **none** more for candidate 1;
+- three ticks, a restart, a stale re-evaluation (a new `acc` result) and two evaluations asked for: still one;
+- signed, then an evaluation after the sign-off: still one;
+- a second fix on the same stage: one review for its own candidate, and none more for candidates 1 and 2.
+
+**The `asset_updated` path, observed in the same project.** An `asset_updated` fix (trigger fixture, bound to the stage) was built. Its candidate was nominated (D7 §6.5's cadence point) and verified, and the engine evaluated the stage's gate on it by itself. That candidate got **one** review, and none more went to candidates 1 to 3. **The two paths agree:** one review per new candidate, none for the earlier ones. This is observed in M43, not inferred from the code or from the absence of an objection.
+
+**D-3 at T2 and T3.** A fix no evaluation can judge (its check `login` at `alpha_authorize` only) gets its `fix_unjudged` blocker, no stage evaluation, and therefore no review of its candidate. After `retry` there is still no review and no Builder run.
+
+**Conclusion.** The corrected engine queues the legitimately required review, once per new candidate, and no duplicate on ticks, restarts, re-evaluations or a second fix. It does so at T2 and at T3, and the same as the `asset_updated` path. No case fails, so there is nothing for the Builder here.
+
+**One point for Sean, not decided here.** An unjudgeable fix's candidate never gets a review, because no stage evaluation of it is made. At T2 and T3 an Alpha authorization proposed for that candidate would therefore lack the sign-off, and nothing would queue one. The fix's open `fix_unjudged` question accounts for the project meanwhile, so this is not a silent stall. Whether Alpha on such a candidate should queue its review is outside D-1 to D-5.
+
+### 11.2 M519 (h)'s D-5 path
+
+**Factoring.** M519 (h)'s judgement after `upTo` was factored, unchanged in substance, into `m519EndJudgement(ctx)` in `harness/real/m6-lane.mjs`. It checks:
+
+- each step's `rule_25` value present;
+- the review handing over nothing, and the design step no design question;
+- `at the end, no question open`;
+- `runEndStuck('M519 (h)', …)`.
+
+M519 (h) now calls it, and nothing else in the real file changed. The file is syntax-checked here and was not run, in any mode.
+
+**The kernel case** (M512, "(k) D-5, M519 (h)'s end judgement as the real file runs it …") drives that function on run directories of the runner's form (`state.json` through `realStep`, `home` a store backup). The five steps of M519's journey are each recorded with the value `ruleTwentyFive` gives them.
+
+- **Stuck backup:** every step's recorded `rule_25.stuck` names both stuck fixes, and the judgement fails naming them under "M519 (h)".
+- **Nothing stuck:** it passes.
+- **A question reopened:** it fails "at the end, no question open".
+
+It failed before the factoring ("not a function") and passes after it.
+
+**Its limits.** The kernel case does not reach M519's own file: its preflight, `upTo` and the steps run by engines with the fake or real backend. Only a dress rehearsal of M519 exercises that call site (`SURETY_REAL_REHEARSAL=1`, `SURETY_REAL_RUN_DIR` a fresh directory, the fake claude, as for M535's rehearsals). M519 has its own rehearsal mode: the file's header describes it, and on success it writes `rehearsal-passed.json` for M519. Its start condition needs no `SURETY_M519_RUN_DIR`; that variable is read only by M535's paid start condition (`startCondition`, `row === 'M535'`, not under the rehearsal). The driver runs the rehearsal; nothing real-lane was run here.
+
+### 11.3 The blocked fix: Sean's three properties, and where they are pinned
+
+1. **Visible** (M235, "(c) D-3, the blocked fix …"). The `fix_unjudged` blocker is in `GET /v1/projects/:p/decisions`, and `GET /v1/projects/:p/decisions/:d` shows `fix_unjudged`, the fix, its finding and the check. M235 "(c) D-3 …" also pins its manifest fields, its question and its options.
+2. **Prevents inappropriate dispatch.**
+   - M235 "(c) D-3, the blocked fix …": six ticks of the unpaused project, no Builder run and no run of the fix, the same blocker open alone.
+   - M235 "(c) D-3 …": `retry` dispatches no Builder.
+   - M43 at T2 and T3: no Builder run and no review after `retry`.
+3. **Distinguished from runnable work by the harness** (M512, "(k) D-3, a blocked fix as the harness reads it …"; the harness change is this branch's, SEAM.md §564).
+   - `activity()` lists it `blocked` (with its decision and cause), never `runnable` or `stuck`.
+   - Its question is in `asked`, so the project is `busy`, never silent.
+   - It is not stuck work at a step boundary or at the run's end (its open question fails a step's end by rule 25, as any does).
+   - The review's end neither ends nor stalls on it.
+
+   This case failed before the change (the fix listed `stuck`) and passes after it.
+
+### 11.4 Results
+
+The cases were committed first, at `7703797d`. Run whole there, against the Builder's engine and the harness as it was:
+
+- M43: 9/9.
+- M235: 14/14 (every objection-209 case, including the new blocked-fix case, passes against the Builder's engine).
+- M512: 21 tests, 19 passed, 2 failed: "(k) D-3, a blocked fix …" (the fix listed `stuck`) and "(k) D-5, M519 (h)'s end judgement …" (`m519EndJudgement` not yet the harness's).
+
+The harness change is `c6e82d68`. Run whole there, each file with `node --test --test-reporter=spec` after `npm run build`, `TMPDIR=/tmp/vrf-f33`:
+
+| File | Tests | Passed | Failed | Skipped | Cancelled |
+|---|---|---|---|---|---|
+| M512-design-due-and-no-silent-stalls | 21 | 21 | 0 | 0 | 0 |
+| M235-finding-resolution | 14 | 14 | 0 | 0 | 0 |
+| M43-severity-tier-and-independence-floors | 9 | 9 | 0 | 0 | 0 |
+| M234-the-repair-loop | 12 | 12 | 0 | 0 | 0 |
+| M239-the-verifiers-check-writing-package | 2 | 2 | 0 | 0 | 0 |
+| M342-the-verifiers-deployment-check-package | 1 | 1 | 0 | 0 | 0 |
+| M442-the-rehearsal-plays-from-the-package | 42 | 42 | 0 | 0 | 0 |
+| M442-the-rehearsal-with-the-packages-whole | 3 | 3 | 0 | 0 | 0 |
+| M442-the-role-packages-state-what-the-engine-reads | 11 | 11 | 0 | 0 | 0 |
+| M537-the-designers-and-verifiers-packages-state-what-the-engine-reads | 6 | 6 | 0 | 0 | 0 |
+| M537-the-rehearsal-plays-from-the-designers-package | 13 | 13 | 0 | 0 | 0 |
+
+These are every file touched here and every kernel-lane file importing `harness/real/`. M519 (a `real` file) is syntax-checked only. No `real` or `exhaust` file was run, and no process, unit or test home was left.
