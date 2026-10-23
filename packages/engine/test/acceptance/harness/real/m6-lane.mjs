@@ -484,22 +484,38 @@ function fixJudgement(db, w, dueOf) {
 
 // The listed items with every stuck fix taken out (and listed apart), and
 // every fix that cannot be judged marked.
+// A verifying fix an open question names (its `fix_unjudged` blocker, D-3;
+// Sean's acceptance of 2026-10-23, errata E180; SEAM.md §564) is accounted
+// for by that question: listed `blocked`, neither runnable nor stuck; the
+// question itself is asked.
 function judgeVerifyingFixes(home, project, list) {
   const fixes = list.filter((w) => w.kind === 'fix' && w.status === 'verifying');
-  if (fixes.length === 0) return { runnable: list, stuck: [] };
+  if (fixes.length === 0) return { runnable: list, stuck: [], blocked: [] };
   return withStore(home, (db) => {
     let due = null;
     const dueOf = () => (due ??= ENGINE_GATES.dueStageGates(db, { project }));
     const stuck = [];
+    const blocked = [];
     const unknown = new Set();
     for (const f of fixes) {
+      const asking = db.prepare(`SELECT "id", "kind", "dependency_manifest" FROM "decisions" WHERE "subject_id" = ? AND "status" = 'open' ORDER BY rowid LIMIT 1`).get(f.id);
+      if (asking) {
+        let cause = null;
+        try {
+          cause = json(asking.dependency_manifest)?.cause ?? null;
+        } catch {
+          cause = null;
+        }
+        blocked.push({ id: f.id, kind: f.kind, status: f.status, decision: asking.id, decision_kind: asking.kind, cause });
+        continue;
+      }
       const w = db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(f.id);
       const j = w ? fixJudgement(db, w, dueOf) : { state: 'unknown' };
       if (j.state === 'stuck') stuck.push(j.entry);
       else if (j.state === 'unknown') unknown.add(f.id);
     }
-    const out = new Set(stuck.map((x) => x.id));
-    return { runnable: list.filter((w) => !out.has(w.id)).map((w) => (unknown.has(w.id) ? { ...w, judged: 'unknown' } : w)), stuck };
+    const out = new Set([...stuck.map((x) => x.id), ...blocked.map((x) => x.id)]);
+    return { runnable: list.filter((w) => !out.has(w.id)).map((w) => (unknown.has(w.id) ? { ...w, judged: 'unknown' } : w)), stuck, blocked };
   });
 }
 const describeStuck = (stuck) =>
@@ -522,6 +538,29 @@ export function runEndStuck(row, home, project) {
   if (stuck.length > 0) throw new Error(`${row}: not passed: at the run's end, work the engine can no longer move (BS6 §4.1 rule 25; SEAM.md §563): ${describeStuck(stuck)}`);
 }
 
+// M519 (h)'s judgement of its steps' ends and of the run's end, as the real
+// file runs it (factored from it so that the kernel lane drives the same
+// code on run directories of the runner's form; SEAM.md §564): each step's
+// rule-25 value present, the review and design handing over what they may,
+// no question open at the end, and no stuck work (D-5).
+const M519_ENDS = Object.freeze(['m6w_spec', 'm6w_architecture', 'm6w_design', 'm6w_alpha', 'm6w_review']);
+export function m519EndJudgement(ctx) {
+  const show = (v) => JSON.stringify(v)?.slice(0, 2000);
+  for (const s of M519_ENDS) {
+    const v = stepValue(ctx, s);
+    assert.ok(v.rule_25, `${s}: its end judged by rule 25 (${show(v)})`);
+    const handed = v.rule_25.handed_over.map((d) => d.kind);
+    if (s === 'm6w_review') assert.deepEqual(handed, [], 'the review leaves no question open');
+    if (s === 'm6w_design') assert.ok(!handed.some((k) => ['design_due', 'design_approval', 'spec_change', 'design_verdicts'].includes(k)), `the design step leaves no design question open (${show(handed)})`);
+  }
+  const home = homeOfRun(ctx);
+  const project = stepValue(ctx, 'm6w_create').project;
+  const open = rows(home, `SELECT "id", "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`, project);
+  assert.deepEqual(open, [], 'at the end, no question open');
+  // And no work the engine can no longer move (D-5, Sean's ruling of 2026-10-23, errata E180; SEAM.md §563).
+  runEndStuck('M519 (h)', home, project);
+}
+
 // What the project has in flight or runnable (rule 25's three questions),
 // and what accounts for each design-held stage with the intentional waits
 // running (E162 item 1; harness/design/holds.mjs). `nowMs` the engine's time.
@@ -533,12 +572,12 @@ export function activity(home, project, { nowMs = Date.now() } = {}) {
   // A work item held for its design is not runnable: it waits on the design,
   // and what accounts for its hold is judged below (E162 item 1).
   const listed = rows(home, `SELECT "id", "kind", "status" FROM "work_items" WHERE "project" = ? AND "status" IN ('eligible', 'claimed', 'executing', 'integrating', 'integrated', 'verifying') AND ("held" IS NULL OR "held" NOT IN ('design_pending', 'design_stale'))`, project);
-  const { runnable, stuck } = judgeVerifyingFixes(home, project, listed);
+  const { runnable, stuck, blocked } = judgeVerifyingFixes(home, project, listed);
   const operations = rows(home, `SELECT "id", "kind" FROM "operations" WHERE "project" = ? AND "finalized_at" IS NULL`, project);
   const held = rows(home, `SELECT "id", "kind", "status", "held" FROM "work_items" WHERE "project" = ? AND "status" IN ('held', 'parked', 'awaiting_decision')`, project);
   const asked = openDecisions(home, project).map((d) => ({ id: d.id, kind: d.kind }));
   const design = designHoldAccounts(home, project, { nowMs });
-  return { live, executions, runnable, operations, held, asked, design, stuck };
+  return { live, executions, runnable, operations, held, asked, design, stuck, blocked };
 }
 const silent = (a) => a.live.length === 0 && a.executions.length === 0 && a.runnable.length === 0 && a.operations.length === 0 && a.asked.length === 0;
 

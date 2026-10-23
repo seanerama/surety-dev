@@ -75,7 +75,7 @@ import {
   previewsOf,
   readActs,
   relayEvents,
-  runEndStuck,
+  m519EndJudgement,
   stepVerdicts,
   upTo,
 } from './harness/real/m6-lane.mjs';
@@ -253,19 +253,9 @@ describe('M519 the real run: design before build and at Alpha, one target (real 
     const ctx = preflight();
     await judged(ctx, 'M519 (h)', async () => {
       await upTo(ctx, ROW, 'm6w_review');
-      for (const s of ['m6w_spec', 'm6w_architecture', 'm6w_design', 'm6w_alpha', 'm6w_review']) {
-        const v = stepValue(ctx, s);
-        assert.ok(v.rule_25, `${s}: its end judged by rule 25 (${show(v)})`);
-        const handed = v.rule_25.handed_over.map((d) => d.kind);
-        if (s === 'm6w_review') assert.deepEqual(handed, [], 'the review leaves no question open');
-        if (s === 'm6w_design') assert.ok(!handed.some((k) => ['design_due', 'design_approval', 'spec_change', 'design_verdicts'].includes(k)), `the design step leaves no design question open (${show(handed)})`);
-      }
-      await store(ctx, (home) => {
-        const open = rows(home, `SELECT "id", "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open'`, projectOf(ctx));
-        assert.deepEqual(open, [], 'at the end, no question open');
-        // And no work the engine can no longer move (D-5, Sean's ruling of 2026-10-23, errata E180; SEAM.md §563).
-        runEndStuck('M519 (h)', home, projectOf(ctx));
-      });
+      // Every step's end, the run's end with no question open and no stuck work (D-5): the harness's judgement, which the
+      // kernel lane drives too (M512 (k) D-5; SEAM.md §§563, 564).
+      m519EndJudgement(ctx);
     });
   }));
 

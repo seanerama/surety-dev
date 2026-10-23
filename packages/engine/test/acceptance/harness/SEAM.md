@@ -8238,3 +8238,49 @@ An acknowledgement that fails any condition is refused, and the question fails t
 - On a backup with both fixes `complete`, `stuck` is empty, `e179Record` is satisfied as written and clean, and `runEndStuck` passes.
 
 It failed at `1825c141` on its first assertion (the value has no `stuck`). §561's case is now judged the same way, on a backup with the questions about the fixes consumed, so that it stays a case of the harness once the engine raises `fix_unjudged`.
+
+## 564. Objection 209 at T2 and T3, the blocked fix as the harness reads it, and M519 (h)'s end judgement (Sean's requests of 2026-10-23 before the merge checkpoint, after E180; the Verifier, on `verify/f33-t23` from the Builder's `build/f33-fix-verifying` `3c682070`)
+
+**T2 and T3: the review when a fix makes a verified stage's gate evaluate again** (M43, "T2: …" and "T3: a plain fix on a verified stage queues exactly one review …").
+
+D-2 evaluates the stage gate of a stage already verified, on the fix's candidate. As every `stage` evaluation of a non-superseded candidate does, it calls `queueReview`: at T2 and T3, with the scope's required checks passed and the candidate's verification complete, it observes the review trigger `("verification", <candidate>, reviewGeneration)`.
+
+**Legitimately required.** That review is required, because the fix's candidate carries new acceptance content no Reviewer has signed:
+- E36 item 3: the engine queues a candidate's review once its verification passes, at the tiers that require a sign-off.
+- D1 §9.3 (6): every gate of the candidate at T2 and T3 needs a Reviewer's sign-off bound to its `acceptance_content_hash`.
+- E41 item 4: a sign-off binds the content reviewed.
+- E43: on the fix's candidate "the engine queues its review and the Reviewer signs it off".
+
+**No duplicate.** One review per candidate and signed content: the trigger identity dedups (§15), and `reviewGeneration` gives a new generation only after a sign-off on other content.
+
+**Pinned, at each tier:**
+- exactly one engine review for the fix's candidate (generation 1, no fixture), waiting at the chain boundary with no Reviewer launched;
+- none for the verified stage's candidate;
+- none more after ticks, a restart, a stale re-evaluation (a new result), two evaluations asked for, or an evaluation after its sign-off;
+- a second fix on the same stage: one for its own candidate, none more for the earlier ones;
+- an `asset_updated` fix (made with the trigger fixture, bound to the stage) on the same stage: its candidate's stage gate evaluated by the engine (D7 §6.5), one review, the same as the plain fix's path;
+- a fix no evaluation can judge (D-3, its check at `alpha_authorize` only): no review of its candidate and no Builder run, before or after `retry`.
+
+**Not pinned:** the Alpha authorization of an unjudgeable fix's candidate. No stage evaluation queues that candidate's review, so `alpha_authorize` on it would lack the sign-off. Its `fix_unjudged` question is open meanwhile.
+
+**The blocked fix** (Sean's acceptance of 2026-10-23: a fix blocked by `fix_unjudged` may stay `verifying` "provided the blocker is visible, prevents inappropriate dispatch and is distinguished from runnable work by the harness").
+- **Visible** (M235 "(c) D-3, the blocked fix …"): the blocker is in `GET /v1/projects/:p/decisions`, and `GET /v1/projects/:p/decisions/:d` shows `fix_unjudged`, the fix, its finding and `login`.
+- **Prevents dispatch** (same case; also M235 "(c) D-3 …" and M43): over six ticks of the unpaused project, no Builder run and no run of the fix are dispatched, and the same blocker stays open alone. After `retry` none is dispatched either.
+- **Distinguished by the harness** (M512 "(k) D-3 …"):
+  - `activity()` lists a verifying fix that an open question names in a new `blocked` field (`{id, kind, status, decision, decision_kind, cause}`), never in `runnable` or `stuck`;
+  - the question is in `asked`, so `quietState` is `busy`;
+  - `stuckOf` and `runEndStuck` do not count it (the open question fails a step's or the run's end by rule 25, as any open question does);
+  - `reviewEndJudge` neither ends nor stalls on it.
+  - A backup with the question consumed is the stuck state of §561 (M512 "(k) F33 …").
+
+**M519 (h)'s end judgement** (D-5; M512 "(k) D-5, M519 (h)'s end judgement as the real file runs it …"). M519 (h)'s body after `upTo` is factored into `m519EndJudgement(ctx)` in `harness/real/m6-lane.mjs`, unchanged in substance:
+- each step's `rule_25` present;
+- the review handing over nothing and the design no design question;
+- no question open at the end;
+- `runEndStuck`.
+
+M519 (h) now calls it. The kernel case drives it on run directories of the runner's form, each step of M519's journey recorded through `realStep` with its `ruleTwentyFive` value. On a stuck backup:
+- every step's recorded `rule_25.stuck` (in `state.json`) names both fixes;
+- the judgement fails naming them.
+
+With nothing stuck it passes. With a question reopened it fails "at the end, no question open". What the kernel case does not reach is M519's own file: its preflight, `upTo` and the steps' engines. Only a dress rehearsal of M519 (`SURETY_REAL_REHEARSAL=1`, the fake backend) runs that call site. Rehearsing M519 needs no `SURETY_M519_RUN_DIR`, which is read only by M535's paid start condition.
