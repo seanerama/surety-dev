@@ -955,6 +955,8 @@ const entryView = (e: EntryRow) => ({
   version: e.version,
   mode: e.mode,
   model: e.model,
+  auth_mode: e.auth_mode,
+  session_qualified: e.session_qualified === 1,
   status: e.status,
   binary_path: e.binary_path,
   binary_sha256: e.binary_sha256,

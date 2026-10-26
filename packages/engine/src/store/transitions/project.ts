@@ -79,7 +79,7 @@ export interface PreparedCommit {
 // in turn registers the project.
 export function bootstrapProject(
   tx: Tx,
-  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet; idea?: { blob: string } },
+  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet; idea?: { blob: string }; initiallyPaused?: boolean },
 ): { project: { id: string; registration_state: string } } {
   const ref = integrationRef(args.branch);
   createProject(
@@ -116,6 +116,7 @@ export function bootstrapProject(
     tx.db.prepare('UPDATE "projects" SET "idea_version" = 1, "idea_blob" = ?, "idea_history" = ? WHERE "id" = ?').run(args.idea.blob, JSON.stringify(history), args.id);
     tx.emit('baseline.idea_recorded', { project: args.id }, { version: 1, blob: args.idea.blob, actor: tx.actor.actor_kind, commit: args.commit.sha });
   }
+  if (args.initiallyPaused) setPaused(tx, { project: args.id, paused: true });
   return { project: { id: args.id, registration_state: 'pending_bootstrap' } };
 }
 // Pause sets the flag the scheduler's select step skips on; resume clears it.

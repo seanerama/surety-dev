@@ -24,6 +24,10 @@ export function holdSecret(ref: string, value: string, providerCapUsd?: number):
 // the provider enforces on the key, which the engine records and never
 // enforces.
 const caps = new Map<string, number>();
+export function setProviderCap(ref: string, usd: number | null): void {
+  if (usd === null) caps.delete(ref);
+  else caps.set(ref, usd);
+}
 export const heldProviderCaps = (): Record<string, number> => Object.fromEntries(caps);
 
 // The value held for a secret reference, resolved for a grant that names it

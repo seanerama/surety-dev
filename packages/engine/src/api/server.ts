@@ -21,6 +21,13 @@ import { answerFacts } from '../decisions/facts.js';
 import { type AnswerWaits, afterAnswer, beforeAnswer } from '../decisions/answer.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
+import { prepareNewProject } from '../setup/projects.js';
+import { credentialStatus, registerCredential } from '../setup/credentials.js';
+import { projectEffectiveDefaults } from '../config/project-policy.js';
+import { PROJECT_OPTIONS, PROJECT_POLICY } from '../config/schema.js';
+import { resolveInstallation } from '../trust/fixture.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
@@ -72,6 +79,7 @@ interface Request {
 // a refusal there is audited like any other.
 type Route =
   | { kind: 'direct'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
+  | { kind: 'local'; handler: (body: unknown) => Promise<Reply> }
   // A server-sent event stream: the handler answers the head and writes the body.
   | { kind: 'stream'; open: (r: Request) => Promise<(res: ServerResponse) => Promise<void>> }
   | { kind: 'refuse'; refusal: Refusal }
@@ -208,6 +216,20 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     }
     if (s.length === 2 && s[1] === 'engine' && get) {
       return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: await engineInfo(state) }) };
+    }
+    if (s.length === 2 && s[1] === 'setup' && get) {
+      return { kind: 'direct', handler: async () => ({ status: 200, body: {
+        version: 1, home: state.home, default_projects_directory: join(homedir(), 'projects'),
+        credentials: credentialStatus(state.home),
+        providers: ['claude', 'codex'].map(backend => ({ backend, installed: resolveInstallation(backend) !== null })),
+        policy_defaults: projectEffectiveDefaults(), policy_fields: { ...PROJECT_POLICY, ...PROJECT_OPTIONS },
+      } }) };
+    }
+    if (s.length === 3 && s[1] === 'setup' && s[2] === 'credentials' && post) {
+      return { kind: 'local', handler: async b => ({ status: 200, body: registerCredential(state.home, b) }) };
+    }
+    if (s.length === 3 && s[1] === 'projects' && s[2] === 'new' && post) {
+      return { kind: 'prepared', name: 'project.create', prepare: b => prepareNewProject(runtime(), b) };
     }
 
     // The engine-scoped decisions (SEAM.md §117): trust_activation and
@@ -1003,6 +1025,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (!route) return refuseAudited(notFound(target.path));
 
     switch (route.kind) {
+      case 'local': {
+        // Filesystem setup acts carry the same authenticated actor and audit as
+        // other mutations. Only method/path/status enter the audit, never keys.
+        try {
+          const reply = await route.handler(await body(r));
+          const failed = await audit(actor, method, target.path, reply.status);
+          if (failed) return void refuse(failed);
+          send(reply);
+        } catch (err) { await refuseAudited(err); }
+        return;
+      }
       case 'refuse':
         return refuseAudited(route.refusal);
       case 'command':
