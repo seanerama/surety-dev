@@ -5,6 +5,7 @@
 // mutating request past the Host check is audited, refusals included, once
 // the store is open. Every response carries the defensive headers.
 
+import { AssistantService } from '../assistant/service.js';
 import { prepareAdopt, settleAdopt } from '../adopt/adopt.js';
 import { prepareQualify } from '../trust/qualify.js';
 import { credentialRef } from '../invoke/adapters/templates.js';
@@ -79,7 +80,7 @@ interface Request {
 // a refusal there is audited like any other.
 type Route =
   | { kind: 'direct'; restricted?: boolean; handler: (r: Request) => Promise<Reply> }
-  | { kind: 'local'; handler: (body: unknown) => Promise<Reply> }
+  | { kind: 'local'; handler: (body: unknown, actor: Actor) => Promise<Reply> }
   // A server-sent event stream: the handler answers the head and writes the body.
   | { kind: 'stream'; open: (r: Request) => Promise<(res: ServerResponse) => Promise<void>> }
   | { kind: 'refuse'; refusal: Refusal }
@@ -206,11 +207,32 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   // test mode (trust/fixture.ts).
   const engineFixtureProject = (): Promise<string> => ensureFixtureProject(runtime(), store());
 
+  const assistant = new AssistantService(opts.home, seamDescribe({}).harness, (name, args) => store().call('read', { name, args }), state.token);
+
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';
     const post = method === 'POST';
     if (s[0] !== 'v1') return null;
 
+    if (s[1] === 'assistant') {
+      if (s.length === 2 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.capability() }) };
+      if (s.length === 3 && s[2] === 'actions' && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.allActions() }) };
+      if (s[2] === 'conversations') {
+        if (s.length === 3 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.list() }) };
+        if (s.length === 3 && post) return { kind: 'local', handler: async b => ({ status: 201, body: assistant.create(b) }) };
+        const id = decodeSegment(s[3] ?? '');
+        if (id && s.length === 4 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.get(id) }) };
+        if (id && s.length === 4 && method === 'DELETE') return { kind: 'local', handler: async b => { noFields(b); return { status: 200, body: assistant.delete(id) }; } };
+        if (id && s.length === 5 && s[4] === 'actions' && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.listActions(id) }) };
+        if (id && s.length === 5 && s[4] === 'actions' && post) return { kind: 'local', handler: async (b, actor) => ({ status: 200, body: assistant.claimAction(id,b,actor) }) };
+        if (id && s.length === 7 && s[4] === 'actions' && post) {
+          const action=decodeSegment(s[5]!);
+          if(action && s[6]==='steps') return { kind:'local', handler:async b=>({status:200,body:assistant.actionStep(id,action,b)}) };
+          if(action && s[6]==='results') return { kind:'local', handler:async b=>({status:200,body:assistant.actionResult(id,action,b)}) };
+        }
+        if (id && s.length === 5 && s[4] === 'messages' && post) return { kind: 'local', handler: async (b, actor) => ({ status: 200, body: await assistant.message(id, b, actor) }) };
+      }
+    }
     if (s.length === 2 && s[1] === 'health' && get) {
       return { kind: 'direct', restricted: true, handler: async () => ({ status: 200, body: { mode: state.mode } }) };
     }
@@ -1029,7 +1051,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         // Filesystem setup acts carry the same authenticated actor and audit as
         // other mutations. Only method/path/status enter the audit, never keys.
         try {
-          const reply = await route.handler(await body(r));
+          const reply = await route.handler(await body(r), actor);
           const failed = await audit(actor, method, target.path, reply.status);
           if (failed) return void refuse(failed);
           send(reply);
