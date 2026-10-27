@@ -42,6 +42,19 @@
       "builder",
       "architect"
     ],
+    "AssistantTurnsStatus": [
+      "admitted",
+      "running",
+      "ended"
+    ],
+    "AssistantTurnsOutcome": [
+      "completed",
+      "failed",
+      "refused",
+      "stopped",
+      "timed_out",
+      "recovered"
+    ],
     "BaselineTextsKind": [
       "adr",
       "constraint"
@@ -881,6 +894,10 @@
       "invocation.status",
       "invocation.usage",
       "ledger.row",
+      "assistant.turn_admitted",
+      "assistant.turn_started",
+      "assistant.turn_ended",
+      "assistant.cancel_requested",
       "ledger.correction",
       "record.written",
       "record.expired",
@@ -1573,6 +1590,46 @@
         "superseded_by": {
           "required": false,
           "references": "asset_bindings"
+        }
+      }
+    },
+    "assistant_turns": {
+      "fields": {
+        "invocation": {
+          "required": true,
+          "references": "invocation_receipts"
+        },
+        "created_at": {
+          "required": true
+        },
+        "conversation": {
+          "required": true
+        },
+        "intent_id": {
+          "required": true
+        },
+        "status": {
+          "required": true,
+          "enum": "AssistantTurnsStatus"
+        },
+        "outcome": {
+          "required": false,
+          "enum": "AssistantTurnsOutcome"
+        },
+        "reason": {
+          "required": false
+        },
+        "reason_text": {
+          "required": false
+        },
+        "cancel_requested_at": {
+          "required": false
+        },
+        "reply": {
+          "required": false
+        },
+        "ended_at": {
+          "required": false
         }
       }
     },
@@ -7425,6 +7482,18 @@
     },
     "ledger.row": {
       "owner": "store/transitions/ledger.ts"
+    },
+    "assistant.turn_admitted": {
+      "owner": "store/transitions/assistant.ts"
+    },
+    "assistant.turn_started": {
+      "owner": "store/transitions/assistant.ts"
+    },
+    "assistant.turn_ended": {
+      "owner": "store/transitions/assistant.ts"
+    },
+    "assistant.cancel_requested": {
+      "owner": "store/transitions/assistant.ts"
     },
     "ledger.correction": {
       "owner": "store/transitions/ledger.ts"

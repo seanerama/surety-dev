@@ -156,13 +156,52 @@ export async function fakeReply(req: AssistantRequest, gateway: ToolGateway): Pr
 }
 
 interface StoredConversation extends Conversation { requests: Record<string, string> }
+
+// The real path's port (assistant/real.ts): the state from real
+// configuration and, from a configured block on, the turn itself.
+export interface RealAssistantPort {
+  state(): Promise<Record<string, unknown>>;
+}
+
+const RETENTION = 'engine-owned; explicit deletion';
+const ACTIONS = ['create_app', 'start_planning'];
+
 export class AssistantService {
   private readonly dir: string;
   private readonly busy = new Set<string>();
   private readonly actions: ActionStore;
-  constructor(home: string, private readonly scriptedProvider: boolean, private readonly read: AssistantRead, private readonly token: string) { this.dir = join(home, 'assistant'); this.actions = new ActionStore(home, v => safeValue(v, token)); }
-  capability() { return { version: 1, provider: this.scriptedProvider ? 'fake' : 'unconfigured', configured: this.scriptedProvider, limits: LIMITS, retention: 'engine-owned; explicit deletion', actions: this.scriptedProvider ? ['create_app', 'start_planning'] : [] }; }
-  private configured() { if (!this.scriptedProvider) throw new Refusal(503, 'assistant_not_configured', 'Assistant not configured. Real assistant execution and accounting are not enabled.', 'Continue using the ordinary workspace controls.'); }
+  // `scriptedProvider`: the in-process deterministic fake, which only the
+  // engine's test mode selects and only when config.json has no
+  // workspace_assistant block. `real`: the real path, present exactly when
+  // the block is (the assistant design §2).
+  constructor(home: string, private readonly scriptedProvider: boolean, private readonly read: AssistantRead, private readonly token: string, private readonly real: RealAssistantPort | null = null) { this.dir = join(home, 'assistant'); this.actions = new ActionStore(home, v => safeValue(v, token)); }
+
+  // GET /v1/assistant (the assistant design §2): version 1, `state` and
+  // `configured` derived from real configuration on each read.
+  async capability(): Promise<Record<string, unknown>> {
+    if (this.real) {
+      const body = await this.real.state();
+      const configured = body.configured === true;
+      return { version: 1, ...body, limits: LIMITS, retention: RETENTION, actions: configured ? ACTIONS : [] };
+    }
+    if (this.scriptedProvider) {
+      return {
+        version: 1, state: 'ready', configured: true,
+        reason: 'The engine is in its test mode with no workspace_assistant block: the deterministic in-process fake answers, with no model, no provider process and no account.',
+        what_to_do: 'Ask "What is waiting on me?" or "Explain this gate".',
+        provider: 'fake', model: null, qualification: null, account: null, trust_entry: null,
+        limits: LIMITS, retention: RETENTION, actions: ACTIONS,
+      };
+    }
+    return {
+      version: 1, state: 'unconfigured', configured: false,
+      reason: 'Assistant not configured: config.json has no workspace_assistant block, so no real assistant path is reachable and nothing is charged.',
+      what_to_do: 'Continue using the ordinary workspace controls. To enable the assistant, write the whole workspace_assistant block into config.json and restart the engine.',
+      provider: 'unconfigured', model: null, qualification: null, account: null, trust_entry: null,
+      limits: LIMITS, retention: RETENTION, actions: [],
+    };
+  }
+  private configured() { if (!this.scriptedProvider && !this.real) throw new Refusal(503, 'assistant_not_configured', 'Assistant not configured. Real assistant execution and accounting are not enabled.', 'Continue using the ordinary workspace controls.'); }
   private path(id: string) { if (!/^ac_[A-Z0-9]{26}$/.test(id)) throw invalid('Invalid conversation identifier.'); return join(this.dir, `${id}.json`); }
   private load(id: string): StoredConversation {
     const path = this.path(id);
@@ -209,6 +248,7 @@ export class AssistantService {
   actionResult(id:string, action:string, value:unknown) { this.configured(); this.load(id); return this.actions.result(id,action,value); }
   async message(id: string, value: unknown, actor: Actor) {
     this.configured();
+    if (this.real) return this.realMessage(id, value, actor);
     const raw = parseRequest(value);
     const fingerprint = createHash('sha256').update(JSON.stringify(raw)).digest('hex');
     const req = safeValue(raw, this.token);
@@ -247,5 +287,17 @@ export class AssistantService {
       c = this.load(id); const ownerMessage = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'user'); if (ownerMessage) ownerMessage.status = status; c.messages.push(message); c.updated_at = message.created_at; this.save(c);
       return { conversation: this.public(c), message, status };
     } finally { this.busy.delete(id); }
+  }
+
+  // A message on the real path (the assistant design §§1.3, 4): admitted in
+  // the store's transaction, refused with the state's code unless ready.
+  private async realMessage(_id: string, value: unknown, _actor: Actor): Promise<never> {
+    parseRequest(value);
+    const state = await this.real!.state();
+    if (state.state !== 'ready') {
+      const code = ({ unconfigured: 'assistant_not_configured', credential_missing: 'assistant_credential_missing', qualification_pending: 'assistant_qualification_pending', limit_reached: 'assistant_limit_reached' } as Record<string, string>)[String(state.state)] ?? 'assistant_not_configured';
+      throw new Refusal(code === 'assistant_limit_reached' ? 429 : code === 'assistant_not_configured' ? 503 : 409, code, String(state.reason), String(state.what_to_do), { state: state.state });
+    }
+    throw new Refusal(503, 'assistant_turn_unavailable', 'The real assistant turn is not built in this engine revision.', 'Continue using the ordinary workspace controls.', {});
   }
 }

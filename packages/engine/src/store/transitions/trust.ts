@@ -16,7 +16,7 @@ import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } fr
 import { canonical, notFound, sha256 } from './common.js';
 import { assertEdge } from './lifecycle.js';
 import { type RoleProfile, defaultProfileMax, effectiveProfileMax, engineSettings, projectOptions, roleModel, roleProfileOf } from './settings.js';
-import { templateOf } from '../../invoke/adapters/templates.js';
+import { purposeOfTemplateVersion, templateOf } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
 import { attemptAdmission, outstandingReservation } from './qualification-budget.js';
 
@@ -479,7 +479,7 @@ export function invalidateAttempt(tx: Tx, a: AttemptRow, reason: string, label: 
 export function attemptDrift(db: Db, a: AttemptRow): string | null {
   const now = currentBinarySha(a.binary_path);
   if (now !== a.binary_sha256) return 'binary_changed';
-  const t = templateOf(a.backend, { scripted: true, versions: seamTemplateVersions(), authMode: a.auth_mode });
+  const t = templateOf(a.backend, { scripted: true, versions: seamTemplateVersions(), authMode: a.auth_mode, purpose: purposeOfTemplateVersion(a.template_version) });
   if (!t || t.version !== a.template_version) return 'template_changed';
   const hq = currentHostQualification(db);
   if (!hq || hq.id !== a.host_qualification || hostIdentity() === null) return 'host_changed';
@@ -734,7 +734,7 @@ export function sameProfile(a: RoleProfile | null, b: RoleProfile): boolean {
 // undefined means not read here, null that the file cannot be read).
 export function entryDrift(e: EntryRow, now: { host: string | null; profile: string | null; binary?: string | null | undefined; help?: string | null | undefined }): string | null {
   if (now.host === null || e.host_id !== now.host) return 'host_changed';
-  const template = templateOf(e.backend, { scripted: true, versions: seamTemplateVersions(), authMode: e.auth_mode });
+  const template = templateOf(e.backend, { scripted: true, versions: seamTemplateVersions(), authMode: e.auth_mode, purpose: purposeOfTemplateVersion(e.template_version) });
   if (!template || template.version !== e.template_version) return 'template_changed';
   // The profile is judged against an entry qualified under a host
   // qualification of record; one with none (written in the kernel lane) has
@@ -878,11 +878,18 @@ export function resolveBackend(db: Db, args: { project: string; role: string; sc
     return { kind: 'scripted', backend, version: args.scripted, model: 'scripted' };
   }
   const running = hostIdentity();
-  const active = db
-    .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY rowid DESC, "id" DESC`)
-    .all(backend, mode, running ?? '') as EntryRow[];
+  // A project role resolves a role template's entry only: the workspace
+  // assistant's entries (its own template, the assistant design §3) are
+  // never a role's.
+  const active = (
+    db
+      .prepare(`SELECT * FROM "trust_entries" WHERE "backend" = ? AND "mode" = ? AND "status" = 'active' AND "host_id" = ? ORDER BY rowid DESC, "id" DESC`)
+      .all(backend, mode, running ?? '') as EntryRow[]
+  ).filter((e) => purposeOfTemplateVersion(e.template_version) === 'role');
   if (active.length === 0) {
-    const known = db.prepare(`SELECT "status" FROM "trust_entries" WHERE "backend" = ? ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(backend) as { status: string } | undefined;
+    const known = (db.prepare(`SELECT "status", "template_version" FROM "trust_entries" WHERE "backend" = ? ORDER BY rowid DESC, "id" DESC`).all(backend) as { status: string; template_version: string }[]).find(
+      (e) => purposeOfTemplateVersion(e.template_version) === 'role',
+    );
     return backendRefused(known ? `${backend} has no active trust entry on this host (its latest is ${known.status}).` : `${backend} has no trust entry.`, { trust_entry_status: known?.status ?? null });
   }
   const model = args.model ?? roleModel(db, args.project, args.role);
@@ -972,6 +979,9 @@ const entryView = (e: EntryRow) => ({
   binary_path: e.binary_path,
   binary_sha256: e.binary_sha256,
   template_version: e.template_version,
+  // What the entry's template is for: a project role's, or the workspace
+  // assistant's (the assistant design §3).
+  purpose: purposeOfTemplateVersion(e.template_version),
   usage_granularity: e.usage_granularity,
   cost_reporting: e.cost_reporting,
   // D2 §4.2: what the engine can stop at, each with mechanism, evidence and
@@ -994,7 +1004,7 @@ export function trustView(db: Db, args: { scripted: boolean }) {
   const running = hostIdentity();
   const entries = db.prepare('SELECT * FROM "trust_entries" ORDER BY rowid, "id"').all() as EntryRow[];
   const attempts = db.prepare('SELECT * FROM "qualification_attempts" ORDER BY rowid, "id"').all() as AttemptRow[];
-  const active = host.eligible ? [...new Set(entries.filter((e) => e.status === 'active' && e.host_id === running).map((e) => e.backend))].sort() : [];
+  const active = host.eligible ? [...new Set(entries.filter((e) => e.status === 'active' && e.host_id === running && purposeOfTemplateVersion(e.template_version) === 'role').map((e) => e.backend))].sort() : [];
   return {
     backends: [...(args.scripted ? ['scripted'] : []), ...active],
     host_qualification: host,
@@ -1004,6 +1014,7 @@ export function trustView(db: Db, args: { scripted: boolean }) {
       backend: a.backend,
       version: a.version,
       model: a.model,
+      purpose: purposeOfTemplateVersion(a.template_version),
       status: a.status,
       fixture_project: a.fixture_project,
       host_qualification: a.host_qualification,

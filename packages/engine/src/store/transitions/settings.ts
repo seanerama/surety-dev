@@ -31,6 +31,9 @@ export interface EngineSettings {
   domain_writable_inodes?: number;
   domain_tasks_max?: number;
   profile_maxima?: { role?: number; check?: number } | null;
+  // The workspace assistant's block (config.json `workspace_assistant`; the
+  // assistant design §1.2), null when absent.
+  workspace_assistant?: import('../../config/engine-config.js').AssistantConfig | null;
 }
 
 let settings: EngineSettings | null = null;

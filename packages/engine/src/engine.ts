@@ -312,6 +312,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
         domain_writable_inodes: config.values.domain_writable_inodes,
         domain_tasks_max: config.values.domain_tasks_max,
         profile_maxima: seamProfileMaxima(),
+        // The workspace assistant's account and provider (the assistant
+        // design §1.2), null when unconfigured.
+        workspace_assistant: config.values.workspace_assistant,
       },
       // The resource envelope's admission (D2 §3.7): its memory and disk
       // arithmetic on the real boundary; its domain slots on every lane (the

@@ -82,6 +82,7 @@ import {
   registerStream,
   storedRecords,
 } from './transitions/records.js';
+import { type CredentialFacts, admitTurn as admitAssistantTurn, admittedTurns, assistantStateBody, authorizeTurnLaunch, claimOf, endTurn, recordTurnUsage, requestTurnCancel, turnDispatched, turnLaunched, turnLimitCheck, turnOf, unendedTurns } from './transitions/assistant.js';
 import { type EngineSettings, engineSettings, setEngineSettings } from './transitions/settings.js';
 import { setCheckLimits } from '../checks/limits.js';
 import { ENGINE_ACTOR, type Actor, type Tx, transact } from './transitions/tx.js';
@@ -364,6 +365,11 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // (dispatched by the scheduler's tick, never here), and the answer of a
   // save or a close the main thread made (sessions/driver.ts), audited here.
   'session.reply': (_tx, a: { status: number; body: unknown; tick?: boolean }) => ({ status: a.status, body: a.body, ...(a.tick ? { effects: [{ kind: 'tick' }] } : {}) }),
+  // The workspace assistant (the assistant design §§1.3, 4): a turn admitted
+  // in the transaction of its receipt (dispatched by the scheduler's tick,
+  // never here), and the owner's cancel of a turn under way.
+  'assistant.admit': (tx, a) => ({ status: 200, body: admitAssistantTurn(tx, a), effects: [{ kind: 'tick' }] }),
+  'assistant.cancel': (tx, a: { conversation: string; intent_id: string }) => ok(requestTurnCancel(tx, a)),
   // D7 (M6): the design's API commands (design/ops.ts).
   ...DESIGN_COMMANDS,
 };
@@ -587,6 +593,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.provider_files': (d, a: { run: string }) =>
     d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid DESC LIMIT 1`).get(a.run) ?? null,
   'trust.binaries': (d) => (d.prepare(`SELECT DISTINCT "binary_path" AS p FROM "trust_entries" WHERE "status" <> 'revoked'`).all() as { p: string }[]).map((r) => r.p),
+  // The workspace assistant (the assistant design §§1 to 4).
+  'assistant.state': (d, a: { credential: CredentialFacts }) => assistantStateBody(d, a),
+  'assistant.claim': (d, a: { invocation: string }) => claimOf(d, a.invocation),
+  'assistant.admitted': (d) => admittedTurns(d),
+  'assistant.turn': (d, a: { conversation: string; intent_id: string } | { invocation: string }) => turnOf(d, a),
+  'assistant.limit_check': (d, a: { invocation: string; terminal?: boolean }) => turnLimitCheck(d, a),
+  'assistant.unended': (d) => unendedTurns(d),
   // D7 (M6): the design's reads (design/ops.ts).
   ...DESIGN_READS,
 };
@@ -598,6 +611,12 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
   'engine.backup': (tx, a) => recordBackup(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
+  // The workspace assistant's turn under way (the assistant design §§1.3, 4).
+  'assistant.dispatched': (tx, a: { invocation: string }) => turnDispatched(tx, a),
+  'assistant.launched': (tx, a) => turnLaunched(tx, a),
+  'assistant.authorize': (tx, a) => authorizeTurnLaunch(tx, a),
+  'assistant.usage': (tx, a) => recordTurnUsage(tx, a),
+  'assistant.end': (tx, a) => endTurn(tx, a),
   'receipt.allocate': (tx, a: { run: string }) => allocateReceipt(tx, a.run),
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),
   'invoke.launched': (tx, a) => recordLaunch(tx, a),

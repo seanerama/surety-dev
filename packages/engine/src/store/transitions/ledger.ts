@@ -178,7 +178,7 @@ function observationsOf(db: Db, invocation: string): { semantics: string; raw: R
 }
 
 // What the engine knows of an invocation under way, from its observations.
-function observedSoFar(db: Db, invocation: string): Normalized {
+export function observedSoFar(db: Db, invocation: string): Normalized {
   const obs = observationsOf(db, invocation);
   return obs.length === 0 ? NOTHING_OBSERVED : normalizeFor(providerOf(db, invocation), foldObservations(obs));
 }
@@ -254,11 +254,22 @@ export function egressZeroBasis(
   return { basis: { kind: EGRESS_ZERO_BASIS, observations: observations.length, domains: used } };
 }
 
+// The account a ledger row is charged to (migration 0039): a project's, or
+// the workspace assistant's, which has no project, run or turn.
+export type LedgerAccount = 'project' | 'workspace_assistant';
+
+// The basis on which a real assistant turn's provider-reported zero is not
+// taken as a known zero (the assistant design §1.3): only the fake provider,
+// and the engine's own egress-evidence zero (O6), are a measured zero; a
+// provider's own 0 is recorded unknown, its report kept.
+export const ASSISTANT_REPORTED_ZERO = 'assistant-reported-zero-is-unknown-1';
+
 export function chargeInvocation(
   tx: Tx,
-  run: { id: string; project: string; role: string; backend: string; model_requested: string; outcome: string | null },
+  run: { id: string | null; project: string | null; role: string; backend: string; model_requested: string; outcome: string | null },
   receipt: { id: string; turn: string | null },
   egress: readonly EgressAccount[] = [],
+  account: LedgerAccount = 'project',
 ): void {
   const exists = tx.db.prepare('SELECT 1 FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(receipt.id);
   if (exists) return;
@@ -271,23 +282,27 @@ export function chargeInvocation(
     raw = { ...raw, zero_basis: zero.basis };
     n = { billable_in: 0, cached_in: 0, out: 0, model_observed: n.model_observed, cost_status: 'measured_zero', cost_usd: 0, normalization_version: EGRESS_ZERO_BASIS };
     complete = 1;
+  } else if (account === 'workspace_assistant' && n.cost_status === 'measured_zero') {
+    // A real assistant turn's provider said 0: unknown, with what it said kept.
+    n = { ...n, cost_status: 'unknown', cost_usd: null, normalization_version: `${n.normalization_version}+${ASSISTANT_REPORTED_ZERO}` };
   }
   const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
+  const assistant = account === 'workspace_assistant';
   const id = tx.newId('led_');
   tx.db
     .prepare(
       `INSERT INTO "ledger_rows" ("id", "created_at", "project", "invocation", "run", "turn", "role", "provider", "model_requested", "model_observed", "raw_usage",
-         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc", "unknown_allowance_tokens")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc", "unknown_allowance_tokens", "account")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       tx.at,
-      run.project,
+      assistant ? null : run.project,
       receipt.id,
-      run.id,
-      receipt.turn,
-      run.role,
+      assistant ? null : run.id,
+      assistant ? null : receipt.turn,
+      assistant ? 'workspace_assistant' : run.role,
       run.backend,
       run.model_requested,
       n.model_observed,
@@ -301,13 +316,14 @@ export function chargeInvocation(
       n.cost_usd,
       tx.at.slice(0, 10),
       allowance,
+      account,
     );
   tx.emit(
     'ledger.row',
-    { project: run.project, run: run.id, invocation: receipt.id },
+    assistant ? { account, invocation: receipt.id } : { project: run.project, run: run.id, invocation: receipt.id },
     { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1, unknown_allowance_tokens: allowance },
   );
-  noteRunModel(tx, run.id, n.model_observed);
+  if (!assistant && run.id !== null) noteRunModel(tx, run.id, n.model_observed);
 }
 
 // The run's observed model (D6 §7.6; M542; E154 item 6 (1)), set from its
@@ -332,17 +348,26 @@ export function noteRunModel(tx: Tx, run: string, observed: string | null): void
 // and that is its limit (D7 §3.2; SEAM.md §491). The raw limit: what the
 // session has left of it is `sessionRemainder`'s, the one place prior
 // spend is subtracted (the slice-41 review's B1).
-function runLimit(db: Db, invocation: string, project: string): number {
+// A workspace assistant turn's receipt fixes its turn limit (the assistant
+// design §1.3): that is its limit, and it has no project to fall back on.
+function runLimit(db: Db, invocation: string, project: string | null): number {
   const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
-  const snapshot = row ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown; designer_session_budget_billable_tokens?: unknown }) : {};
+  const snapshot = row
+    ? (JSON.parse(row.budget_snapshot) as { budget_run_billable_tokens?: unknown; designer_session_budget_billable_tokens?: unknown; turn_limit_billable_tokens?: unknown })
+    : {};
+  if (typeof snapshot.turn_limit_billable_tokens === 'number') return snapshot.turn_limit_billable_tokens;
   if (typeof snapshot.designer_session_budget_billable_tokens === 'number') return snapshot.designer_session_budget_billable_tokens;
-  return typeof snapshot.budget_run_billable_tokens === 'number' ? snapshot.budget_run_billable_tokens : projectPolicy(db, project).budget_run_billable_tokens!;
+  if (typeof snapshot.budget_run_billable_tokens === 'number') return snapshot.budget_run_billable_tokens;
+  if (project === null) throw new Error(`invocation ${invocation} has no limit of its own and no project`);
+  return projectPolicy(db, project).budget_run_billable_tokens!;
 }
 
 // What an invocation may still spend: its limit less what its session's
 // earlier turns were charged (0 for an invocation that is not a session
 // turn), not below zero.
-function sessionRemainder(db: Db, invocation: string, project: string): number {
+export const invocationLimit = (db: Db, invocation: string, project: string | null): number => runLimit(db, invocation, project);
+
+function sessionRemainder(db: Db, invocation: string, project: string | null): number {
   return Math.max(0, runLimit(db, invocation, project) - sessionPriorSpend(db, invocation));
 }
 
@@ -375,7 +400,7 @@ export function runBudgetOf(db: Db, run: { project: string; kind?: string | null
 // cancellation). One of the scripted provider is charged when the engine
 // ended it after at least one observation: an M1 scripted role that reports
 // none is a provider that said nothing, as M1 accepted.
-export function unknownAllowance(db: Db, invocation: string, project: string, n: Amounts, observations: number, engineEnded: boolean): number | null {
+export function unknownAllowance(db: Db, invocation: string, project: string | null, n: Amounts, observations: number, engineEnded: boolean): number | null {
   const receipt = db.prepare('SELECT "trust_entry", "qualification_attempt", "provider" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as
     | { trust_entry: string | null; qualification_attempt: string | null; provider: string }
     | undefined;
@@ -396,7 +421,9 @@ export interface LedgerRow extends Amounts {
   unknown_allowance_tokens?: number | null;
   id: string;
   created_at: string;
+  // Null only on a workspace assistant row (migration 0039).
   project: string;
+  account?: LedgerAccount;
   invocation: string;
   run: string;
   turn: string | null;
@@ -439,8 +466,8 @@ export function appendCorrection(tx: Tx, args: { invocation: unknown; correction
   tx.db
     .prepare(
       `INSERT INTO "ledger_rows" ("id", "created_at", "project", "invocation", "run", "turn", "role", "provider", "model_requested", "model_observed", "raw_usage",
-         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc", "corrects", "correction_seq")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "normalization_version", "billable_in", "cached_in", "out", "usage_complete", "cost_status", "cost_usd", "day_utc", "corrects", "correction_seq", "account")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -464,8 +491,14 @@ export function appendCorrection(tx: Tx, args: { invocation: unknown; correction
       original.day_utc,
       original.id,
       args.correction_seq,
+      // A correction is of its original's account (migration 0039).
+      original.account ?? 'project',
     );
-  tx.emit('ledger.correction', { project: original.project, run: original.run, invocation: original.invocation }, { ledger_row: id, corrects: original.id, correction_seq: args.correction_seq });
+  tx.emit(
+    'ledger.correction',
+    original.account === 'workspace_assistant' ? { account: original.account, invocation: original.invocation } : { project: original.project, run: original.run, invocation: original.invocation },
+    { ledger_row: id, corrects: original.id, correction_seq: args.correction_seq },
+  );
   return { id, created: true };
 }
 
@@ -519,7 +552,7 @@ export function fold(rows: LedgerRow[]): Account {
   };
 }
 
-function accountsOf(rows: LedgerRow[]): Account[] {
+export function accountsOf(rows: LedgerRow[]): Account[] {
   const by = new Map<string, LedgerRow[]>();
   for (const r of rows) {
     const list = by.get(r.invocation) ?? [];
@@ -530,7 +563,7 @@ function accountsOf(rows: LedgerRow[]): Account[] {
 }
 
 // The billable tokens of an account, as far as they are known.
-const billable = (a: Amounts): number | null => addKnown(a.billable_in, a.out);
+export const billable = (a: Amounts): number | null => addKnown(a.billable_in, a.out);
 
 export function totalsOf(accounts: Account[]): Record<string, number | null> {
   const sum = (pick: (a: Account) => number | null, of: Account[] = accounts): number | null => of.reduce<number | null>((s, a) => addKnown(s, pick(a)), null);
@@ -735,7 +768,7 @@ export function dayUnknownAccount(db: Db, project: string): { day: string; charg
 // what it already counts, so that the two together are never more than the
 // one charge its ledger row will make (C4: observed plus the allowance, the
 // run limit at most).
-export function invocationStanding(db: Db, invocation: string, project: string): { charged: boolean; counted: number; limit: number } {
+export function invocationStanding(db: Db, invocation: string, project: string | null): { charged: boolean; counted: number; limit: number } {
   const row = db.prepare('SELECT 1 FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(invocation);
   const refused = db.prepare(`SELECT 1 FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" = 'refused'`).get(invocation);
   const limit = runLimit(db, invocation, project);

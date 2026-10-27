@@ -191,13 +191,88 @@ export const SCRIPTED_TEMPLATE: Template = {
   render: () => [],
 };
 
+// ---- the workspace assistant's template (the assistant design §3) ----------------------
+//
+// A trust entry binds one template. The project roles' gives Read, Edit,
+// Write, Bash, Glob and Grep, which the workspace assistant must not have, so
+// the assistant runs on a template of its own, qualified by an attempt of its
+// own: the backend's one-shot form with `--tools Read,Write`, the same denied
+// delegation and scheduling tools, the same fixed prompt, and a mount plan
+// with no repository (/surety/context read-only and /surety/out; prepare.ts).
+// Its versions are distinct from every role template's, which is how an
+// entry or an attempt is known to be the assistant's: project roles never
+// resolve an assistant entry, and the assistant never resolves a role's.
+export type TemplatePurpose = 'role' | 'assistant';
+export const ASSISTANT_TOOLS = ['Read', 'Write'] as const;
+
+const claudeAssistantTail = (model: string, invocation: string) => [
+  '--output-format',
+  'stream-json',
+  '--verbose',
+  '--model',
+  model,
+  '--tools',
+  ASSISTANT_TOOLS.join(','),
+  '--disallowed-tools',
+  'Agent',
+  'Task',
+  'ScheduleWakeup',
+  'Workflow',
+  '--permission-mode',
+  'bypassPermissions',
+  '--no-session-persistence',
+  '--session-id',
+  sessionId(invocation),
+  PROMPT,
+];
+const CLAUDE_ASSISTANT_TAIL_TEXT = CLAUDE_TAIL_TEXT.replace('<role tools>', 'Read,Write');
+
+const CLAUDE_ASSISTANT_API_KEY: Template = {
+  ...CLAUDE_API_KEY,
+  version: 'claude-assistant-1',
+  text: `claude --bare -p ${CLAUDE_ASSISTANT_TAIL_TEXT} ${envText('ANTHROPIC_API_KEY', CLAUDE_QUIET_ENV)} (the workspace assistant: no repository)`,
+  tools: ASSISTANT_TOOLS,
+  render: ({ model, invocation }) => ['--bare', '-p', ...claudeAssistantTail(model, invocation)],
+};
+const CLAUDE_ASSISTANT_SUBSCRIPTION: Template = {
+  ...CLAUDE_SUBSCRIPTION,
+  version: 'claude-assistant-subscription-1',
+  text: `claude -p --safe-mode --setting-sources user --strict-mcp-config ${CLAUDE_ASSISTANT_TAIL_TEXT} ${envText('CLAUDE_CODE_OAUTH_TOKEN', CLAUDE_QUIET_ENV)} (the workspace assistant: no repository)`,
+  tools: ASSISTANT_TOOLS,
+  render: ({ model, invocation }) => ['-p', '--safe-mode', '--setting-sources', 'user', '--strict-mcp-config', ...claudeAssistantTail(model, invocation)],
+};
+
+const ASSISTANT_BY_MODE: Readonly<Record<string, Partial<Record<AuthMode, Template>>>> = {
+  claude: { api_key: CLAUDE_ASSISTANT_API_KEY, subscription_token: CLAUDE_ASSISTANT_SUBSCRIPTION },
+};
+
+// The scripted backend's assistant form, in the test mode only: the scripted
+// protocol on standard input, its own version.
+export const SCRIPTED_ASSISTANT_TEMPLATE: Template = {
+  ...SCRIPTED_TEMPLATE,
+  version: 'scripted-assistant-1',
+  text: '<binary> (the scripted protocol on standard input; the workspace assistant: no repository)',
+};
+
+const ASSISTANT_VERSIONS: ReadonlySet<string> = new Set([CLAUDE_ASSISTANT_API_KEY.version, CLAUDE_ASSISTANT_SUBSCRIPTION.version, SCRIPTED_ASSISTANT_TEMPLATE.version]);
+
+// What a template version (an entry's or an attempt's) is for.
+export const purposeOfTemplateVersion = (version: string): TemplatePurpose => (ASSISTANT_VERSIONS.has(version) ? 'assistant' : 'role');
+
 // The template of a backend this engine has an adapter for, in an
 // authentication mode (default `api_key`), with its version as this start
 // has it (the test mode may set another; SEAM.md §150). `scripted` only
 // where the caller allows it. undefined where the backend has no template
-// for the mode.
-export function templateOf(backend: string, opts: { scripted?: boolean; versions?: Record<string, string> | null; authMode?: string | null } = {}): Template | undefined {
+// for the mode. `purpose` `assistant`: the workspace assistant's template
+// (the test mode's version override is a role template's only).
+export function templateOf(
+  backend: string,
+  opts: { scripted?: boolean; versions?: Record<string, string> | null; authMode?: string | null; purpose?: TemplatePurpose } = {},
+): Template | undefined {
   const mode = (opts.authMode ?? 'api_key') as AuthMode;
+  if (opts.purpose === 'assistant') {
+    return ASSISTANT_BY_MODE[backend]?.[mode] ?? (opts.scripted && backend === 'scripted' && mode === 'api_key' ? SCRIPTED_ASSISTANT_TEMPLATE : undefined);
+  }
   const t = BY_MODE[backend]?.[mode] ?? (opts.scripted && backend === 'scripted' && mode === 'api_key' ? SCRIPTED_TEMPLATE : undefined);
   if (!t) return undefined;
   const v = opts.versions?.[backend];

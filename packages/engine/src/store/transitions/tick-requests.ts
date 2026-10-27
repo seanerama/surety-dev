@@ -9,7 +9,7 @@
 
 import type { Tx } from './tx.js';
 
-type Cause = 'run_ended' | 'operation_finalized' | 'result_recorded' | 'decision_answered' | 'work_eligible';
+type Cause = 'run_ended' | 'operation_finalized' | 'result_recorded' | 'decision_answered' | 'work_eligible' | 'assistant_turn_admitted';
 
 // What a requesting event names: its cause and the subject the request
 // carries; null for an event that requests nothing.
@@ -24,6 +24,10 @@ function requestOf(type: string, subject: Record<string, unknown>, payload: Reco
       return { cause: 'result_recorded', subject: { project, check_result: subject.check_result ?? null } };
     case 'decision.answered':
       return { cause: 'decision_answered', subject: { project, decision: subject.decision ?? null } };
+    // A workspace assistant turn is dispatched from the tick (the assistant
+    // design §4): its admission asks for one.
+    case 'assistant.turn_admitted':
+      return { cause: 'assistant_turn_admitted', subject: { account: subject.account ?? null, invocation: subject.invocation ?? null } };
     case 'work.created':
     case 'work.resumed':
     case 'work.advanced':

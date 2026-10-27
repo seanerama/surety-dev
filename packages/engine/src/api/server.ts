@@ -6,6 +6,7 @@
 // the store is open. Every response carries the defensive headers.
 
 import { AssistantService } from '../assistant/service.js';
+import { RealAssistant } from '../assistant/real.js';
 import { prepareAdopt, settleAdopt } from '../adopt/adopt.js';
 import { prepareQualify } from '../trust/qualify.js';
 import { credentialRef } from '../invoke/adapters/templates.js';
@@ -206,7 +207,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   // test mode (trust/fixture.ts).
   const engineFixtureProject = (): Promise<string> => ensureFixtureProject(runtime(), store());
 
-  const assistant = new AssistantService(opts.home, seamScriptedProvider(), (name, args) => store().call('read', { name, args }), state.token);
+  // The workspace assistant (the assistant design §2): the real path exactly
+  // when config.json has a workspace_assistant block; with none, the
+  // in-process fake only in the engine's test mode; otherwise unconfigured.
+  const assistantBlock = state.config.values.workspace_assistant;
+  const realAssistant = assistantBlock === null ? null : new RealAssistant(opts.home, assistantBlock, (name, args) => store().call('read', { name, args }));
+  const assistant = new AssistantService(opts.home, assistantBlock === null && seamScriptedProvider(), (name, args) => store().call('read', { name, args }), state.token, realAssistant);
 
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';
@@ -214,7 +220,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (s[0] !== 'v1') return null;
 
     if (s[1] === 'assistant') {
-      if (s.length === 2 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.capability() }) };
+      if (s.length === 2 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: await assistant.capability() }) };
       if (s.length === 3 && s[2] === 'actions' && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.allActions() }) };
       if (s[2] === 'conversations') {
         if (s.length === 3 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.list() }) };

@@ -69,6 +69,11 @@ export const EVENT_OWNERS = {
   'invocation.status': 'store/transitions/runs.ts',
   'invocation.usage': 'store/transitions/runs.ts',
   'ledger.row': 'store/transitions/ledger.ts',
+  // The workspace assistant's turns (the assistant design §§1.3, 4).
+  'assistant.turn_admitted': 'store/transitions/assistant.ts',
+  'assistant.turn_started': 'store/transitions/assistant.ts',
+  'assistant.turn_ended': 'store/transitions/assistant.ts',
+  'assistant.cancel_requested': 'store/transitions/assistant.ts',
   'ledger.correction': 'store/transitions/ledger.ts',
   'record.written': 'store/transitions/records.ts',
   'record.expired': 'store/transitions/records.ts',
