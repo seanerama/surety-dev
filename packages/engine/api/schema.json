@@ -8474,60 +8474,54 @@
         "widening": "added"
       },
       "backend_builder": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
         "widening": "never"
       },
       "backend_verifier": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
         "widening": "never"
       },
       "backend_reviewer": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
         "widening": "never"
       },
       "backend_architect": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
         "widening": "never"
       },
       "backend_vision": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
         "widening": "never"
       },
       "backend_spec_writer": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],
@@ -8668,10 +8662,9 @@
         "widening": "never"
       },
       "backend_designer": {
-        "default": "scripted",
+        "default": null,
         "type": "enum",
         "values": [
-          "scripted",
           "claude",
           "codex"
         ],

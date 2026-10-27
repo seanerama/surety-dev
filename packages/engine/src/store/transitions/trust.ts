@@ -9,7 +9,7 @@ import { sameModel } from '../../invoke/adapters/model.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { BUDGET_BOUNDARIES } from '../../config/schema.js';
+import { BACKEND_ROLE_KEYS, BUDGET_BOUNDARIES, REAL_BACKEND_NAMES } from '../../config/schema.js';
 import { Refusal } from '../../refusal.js';
 import { seamHostChecks, seamTemplateVersions } from '../../testing/seam.js';
 import { BOUNDARY_MECHANISM, HOST_CHECKS, ISOLATION_MECHANISM, hostIdentity } from '../../trust/host.js';
@@ -820,21 +820,14 @@ export type Resolution =
   | { kind: 'refused'; backend: string; version: string; model: string; code: string; reason: string; what_to_do: string; subject: Record<string, unknown> };
 
 // Each role's backend key; the conversational roles' are D6 A.7's (slice 33).
-const ROLE_KEY: Record<string, string> = {
-  builder: 'backend_builder',
-  verifier: 'backend_verifier',
-  reviewer: 'backend_reviewer',
-  architect: 'backend_architect',
-  // D6 A.7 (M5 slice 33; SEAM.md §391).
-  vision: 'backend_vision',
-  spec_writer: 'backend_spec_writer',
-  // D7 A.7 (M6): the Designer's backend (the slice-46 rehearsal's finding).
-  designer: 'backend_designer',
-};
+// D6 A.7 (M5 slice 33; SEAM.md §391); D7 A.7 (M6): the Designer's backend
+// (the slice-46 rehearsal's finding).
+const ROLE_KEY: Readonly<Record<string, string>> = BACKEND_ROLE_KEYS;
 
 // The backend a role of a project is dispatched to, or why it is refused,
 // before any domain or process (D2 §4.1; SEAM.md §116). The role's backend
-// key names it, `scripted` by default, which only harness mode provides. A
+// key names it: `scripted` by default only in harness mode, which alone
+// provides it; elsewhere a key with no value is unconfigured and refused. A
 // real backend needs an active entry for its name and the policy's mode on
 // this host; session mode is refused with no fallback (§1.8); an authorized
 // qualification attempt is never considered (K10). Then the policy's budget
@@ -845,8 +838,25 @@ const ROLE_KEY: Record<string, string> = {
 // whose model it is, or whose family its alias names (D6 A.7; the review's
 // M1). `sessions`: only an entry qualified for sessions (D6 §2.6).
 export function resolveBackend(db: Db, args: { project: string; role: string; scripted: string | null; model?: string | null; sessions?: boolean }): Resolution {
-  const options = projectOptions(db, args.project) as unknown as Record<string, string>;
-  const backend = options[ROLE_KEY[args.role] ?? ''] ?? 'scripted';
+  const options = projectOptions(db, args.project) as unknown as Record<string, string | undefined>;
+  const key = ROLE_KEY[args.role];
+  // A role's key with no value is unconfigured: outside the test mode no
+  // backend is a default (the owner's ruling of 2026-10-27), and none is
+  // substituted. The dispatch is refused before any domain or process, and
+  // the run records the backend as `unconfigured`.
+  if (key !== undefined && typeof options[key] !== 'string') {
+    return {
+      kind: 'refused',
+      backend: 'unconfigured',
+      version: 'unqualified',
+      model: 'unconfigured',
+      code: 'backend_refused',
+      reason: `No backend is configured for the ${args.role} role: ${key} names none, and the engine has no default provider and substitutes none. A real provider (${REAL_BACKEND_NAMES.join(' or ')}) needs configuring.`,
+      what_to_do: `Qualify a real provider (${REAL_BACKEND_NAMES.join(' or ')}) on this host, have its trust entry activated, and set ${key} to it in the project's policy.`,
+      subject: { backend: null, configured: false, role: args.role, key, providers: [...REAL_BACKEND_NAMES] },
+    };
+  }
+  const backend = (key === undefined ? undefined : options[key]) ?? 'scripted';
   const mode = options.backend_mode ?? 'one_shot_headless';
   const required = options.budget_run_boundary ?? 'invocation';
   const refuse = (code: string, reason: string, whatToDo: string, subject: Record<string, unknown>, version = 'unqualified', model = backend): Resolution => ({

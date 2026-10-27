@@ -1500,6 +1500,13 @@ export const seamPackageOmitted = (id: string): boolean => init.harness && packa
 // ever called (rule 2).
 export const seamScriptedProvider = (): boolean => init.harness;
 
+// The scripted backend is a `backend_<role>` choice, and every role's
+// default, only in test mode (the owner's production-defaults ruling of
+// 2026-10-27): outside it the keys offer the real providers alone and have
+// no default. Reported under its own name (SEAM.md §7, rule 3) and only ever
+// called (rule 2).
+export const seamScriptedBackendOffered = (): boolean => init.harness;
+
 // GET /v1/engine reports whether the engine is in harness mode.
 export function seamDescribe<T extends object>(info: T): T & { harness: boolean } {
   return { ...info, harness: init.harness };

@@ -13,6 +13,14 @@ const { shapeProblem, fixtureProblem } = await import(join(dist, 'design', 'shap
 const { technologyAdmits } = await import(join(dist, 'plan', 'check.js'));
 const { sessionReplyProblem } = await import(join(dist, 'sessions', 'session.js'));
 const { runBudgetKey } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+const { configureHarness } = await import(join(dist, 'testing', 'seam.js'));
+// The scripted backend is a role's default only in the test mode (the
+// owner's production-defaults ruling of 2026-10-27): a case that releases a
+// held turn onto it runs in that mode.
+const testMode = (t) => {
+  assert.equal(configureHarness(true, []), null);
+  t.after(() => configureHarness(false, []));
+};
 
 const ITEM = { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 40 }, quantity: { type: 'integer', minimum: 0, maximum: 99 } }, required: ['name', 'quantity'] };
 const LIST = { type: 'object', properties: { items: { type: 'array', collection: true, items: ITEM } }, required: ['items'] };
@@ -175,6 +183,7 @@ const allocated = (db) => ({
 });
 
 test('a held turn allocates nothing; it is shown held naming the limit and the runs that reserve the day; it is released, and allocated, once they end', (t) => {
+  testMode(t);
   const { db, end } = heldFixture(t);
   assert.deepEqual(allocated(db), { turns: 0, receipts: 0, domains: 0, ownership: 0 }, 'no turn row, receipt, domain or process ownership while held');
   assert.deepEqual(heldTurnsNow(db, null).map((h) => [h.run, h.turn]), [['run_d', 1]], 'listed, so recovery keeps the session and the tick tries it');
@@ -196,6 +205,7 @@ test('a held turn allocates nothing; it is shown held naming the limit and the r
 });
 
 test('fairness: a one-shot waits behind a held Designer turn, its reason naming the limit and the runs in flight; after the release the day check alone decides', (t) => {
+  testMode(t);
   const { db, end } = heldFixture(t);
   const item = db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get('wi_later');
   const reason = dispatchBlocker(db, item, { check: false }) ?? '';

@@ -686,12 +686,12 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `budget_hard_maximum`: default false
 - `egress_allow_extra`: default []
 - `sandbox_read_paths`: default []
-- `backend_builder`: default scripted
-- `backend_verifier`: default scripted
-- `backend_reviewer`: default scripted
-- `backend_architect`: default scripted
-- `backend_vision`: default scripted
-- `backend_spec_writer`: default scripted
+- `backend_builder`: no default, unconfigured until set (one of claude, codex)
+- `backend_verifier`: no default, unconfigured until set (one of claude, codex)
+- `backend_reviewer`: no default, unconfigured until set (one of claude, codex)
+- `backend_architect`: no default, unconfigured until set (one of claude, codex)
+- `backend_vision`: no default, unconfigured until set (one of claude, codex)
+- `backend_spec_writer`: no default, unconfigured until set (one of claude, codex)
 - `model_vision`: default opus
 - `model_spec_writer`: default opus
 - `model_architect`: default opus
@@ -708,5 +708,5 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `design_orientations`: default ["portrait","landscape"]
 - `design_external_urls`: default ["cdn.jsdelivr.net","unpkg.com","cdnjs.cloudflare.com"]
 - `assets_required_for`: default live
-- `backend_designer`: default scripted
+- `backend_designer`: no default, unconfigured until set (one of claude, codex)
 - `model_designer`: default opus
