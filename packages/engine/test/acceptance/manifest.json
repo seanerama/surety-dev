@@ -534,6 +534,22 @@
     ],
     "47": [
       "M547-the-production-shell-parameter.test.mjs"
+    ],
+    "48": [
+      "M548-the-assistant-block.test.mjs",
+      "M549-the-assistant-states.test.mjs",
+      "M550-the-assistant-reservation.test.mjs",
+      "M551-the-assistant-reconciliation.test.mjs",
+      "M552-the-assistant-account-is-separate.test.mjs",
+      "M553-the-assistant-failure-classes.test.mjs",
+      "M554-the-assistant-recovery.test.mjs",
+      "M555-the-assistant-boundary.test.mjs",
+      "M556-the-assistant-entry.test.mjs",
+      "M557-the-assistant-qualification.test.mjs",
+      "M558-the-assistant-context.test.mjs",
+      "M559-the-assistant-turn-answer.test.mjs",
+      "M560-qualification-admission-and-not-dispatched.test.mjs",
+      "M561-policy-submission-outcomes.test.mjs"
     ]
   },
   "sandbox": [
@@ -642,7 +658,19 @@
     "M536-the-design-journey-on-the-scripted-backend.test.mjs",
     "M510-the-preview-on-a-real-unit.test.mjs",
     "M520-simulation-labelling-through-the-preview-unit.test.mjs",
-    "M516-the-review-at-alpha.test.mjs"
+    "M516-the-review-at-alpha.test.mjs",
+    "M548-the-assistant-block.test.mjs",
+    "M549-the-assistant-states.test.mjs",
+    "M550-the-assistant-reservation.test.mjs",
+    "M551-the-assistant-reconciliation.test.mjs",
+    "M552-the-assistant-account-is-separate.test.mjs",
+    "M553-the-assistant-failure-classes.test.mjs",
+    "M554-the-assistant-recovery.test.mjs",
+    "M555-the-assistant-boundary.test.mjs",
+    "M557-the-assistant-qualification.test.mjs",
+    "M558-the-assistant-context.test.mjs",
+    "M559-the-assistant-turn-answer.test.mjs",
+    "M560-qualification-admission-and-not-dispatched.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
