@@ -96,7 +96,13 @@ async function assertFailure(fx, conv, intent, ended, { outcome, reason, row }) 
   assert.deepEqual([err?.code, err?.outcome], [reason, outcome], `${reason}: the error names the class and the outcome (${JSON.stringify(err)})`);
   assert.ok(typeof err?.what_to_do === 'string' && err.what_to_do.length > 0, `${reason}: and says what to do`);
   assert.ok(!JSON.stringify(m.all).includes(PARTIAL), `${reason}: nothing of the backend's text is kept`);
-  if (m.reply) assert.deepEqual([m.reply.status, m.reply.links], ['failed', []], `${reason}: a failed reply carries no links`);
+  // A reply, where the conversation writes one for a failed turn, is not
+  // completed (600b6e88: `failed`; the usability batch: its turn's end,
+  // the owner's status) and carries no links.
+  if (m.reply) {
+    assert.ok(m.reply.status !== 'completed' && ['failed', m.owner.status].includes(m.reply.status), `${reason}: the reply is not completed (${m.reply.status})`);
+    assert.deepEqual(m.reply.links, [], `${reason}: a failed reply carries no links`);
+  }
   return { rows, messages: m };
 }
 

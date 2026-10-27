@@ -156,6 +156,10 @@ describe("M559 the message route's answer and the turn's states (new behaviour: 
     assert.deepEqual([again.status, again.body?.turn?.id, again.body?.turn?.status], [202, t1.id, 'running'], `the repeat returns the running turn (body: ${again.text.slice(0, 300)})`);
     const conflict = await fx.engine.post(messagesPath(conv), messageBody('m559-b1', 'A different question about what is waiting?'));
     assert.deepEqual([conflict.status, conflict.body?.code], [409, 'assistant_intent_conflict'], `a different body under the same intent (body: ${conflict.text})`);
+    // Launched before it is cancelled, so that the kind script's launches
+    // line up with the cases below (a turn cancelled before its launch
+    // takes no script).
+    await waitFor(() => fx.scripted.launches({ invocation: t1.id })[0], { timeoutMs: 60_000, what: 'the first turn to launch' });
     await fx.engine.post(t1.cancel, {});
     await waitTurn(fx, 'm559-b1');
     const ended = await fx.engine.post(messagesPath(conv), messageBody('m559-b1'));

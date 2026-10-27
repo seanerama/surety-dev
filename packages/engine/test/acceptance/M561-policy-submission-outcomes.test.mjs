@@ -15,8 +15,9 @@
 //       read then shows that revision's commit state, `committed` once the
 //       journal has committed it, so a client whose answer was lost settles
 //       it by reading, without sending it again.
-//   (b) A submission with nothing to commit is answered {outcome:
-//       "unchanged", revision: null, committed: false, commit: null}.
+//   (b) A submission with nothing to commit (no ordinary key: `{}`) is
+//       answered {outcome: "unchanged", revision: null, committed: false,
+//       commit: null}.
 //   (c) Refusals stay 4xx with their codes and the refusal shape, and carry
 //       no outcome.
 //   (d) With an `intent_id`, a repeat with the same body is answered with
@@ -72,8 +73,12 @@ describe('M561 the policy route\'s outcomes and a lost answer settled by reading
     const done = await settled(fx, project, before + 1);
     assert.equal(done.policy.effective?.budget_run_billable_tokens, 1_000_000, 'and the value is in effect');
 
+    // Nothing to commit: a submission with no ordinary key. (A key sent at
+    // its current value is still a change the engine commits as a new
+    // revision, as before the batch; preparePolicy prepares a commit for
+    // every non-empty ordinary change.)
     const revisions = revisionsOf(fx.home, project);
-    const same = await post(fx, project, { budget_run_billable_tokens: 1_000_000 });
+    const same = await post(fx, project, {});
     assert.equal(same.status, 200, `nothing to commit is not a refusal (body: ${same.text})`);
     assert.deepEqual(same.body, { outcome: 'unchanged', revision: null, committed: false, commit: null }, 'unchanged');
     await new Promise((r) => setTimeout(r, 1_000));
