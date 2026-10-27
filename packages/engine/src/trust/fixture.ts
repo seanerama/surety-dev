@@ -20,7 +20,7 @@ import { accessSync, constants, existsSync, mkdirSync, realpathSync, statSync, w
 import { delimiter, isAbsolute, join } from 'node:path';
 
 import { git, repoContext } from '../git/exec.js';
-import { prepareBootstrap } from '../projects/commands.js';
+import { prepareBootstrap, preparePolicy } from '../projects/commands.js';
 import { type Runtime, log } from '../runtime.js';
 import type { StoreClient } from '../store/client.js';
 import { ENGINE_ACTOR } from '../store/transitions/tx.js';
@@ -96,6 +96,27 @@ export async function findFixtureProject(store: StoreClient, home: string): Prom
   return null;
 }
 
+// The qualification profile (B2, SETUP-01; Sean's approval of 2026-10-27):
+// a canary's limit is 300,000 billable tokens, E59's value, under which every
+// real-lane qualification ran. It is the fixture project's own
+// budget_run_billable_tokens, the key D2 C4 charges an incomplete canary
+// against (its allowance is that limit less what was observed), so no new
+// key is made. Set once, when the engine creates the project, as an
+// ordinary policy change through the policy route's own path (a lowering,
+// which needs no approval): a fixture project that already exists keeps
+// whatever its owner set, and no history is rewritten. Its day limits stay
+// the project defaults.
+export const QUALIFICATION_RUN_BILLABLE_TOKENS = 300_000;
+
+async function applyQualificationProfile(rt: Runtime, store: StoreClient, project: string): Promise<void> {
+  const body = { budget_run_billable_tokens: QUALIFICATION_RUN_BILLABLE_TOKENS };
+  const args = await preparePolicy(rt, project, body);
+  await store.call('mutate', { name: 'project.policy_submit', args, actor: ENGINE_ACTOR, method: 'POST', path: `/v1/projects/${project}/policy` });
+  // Committed now, before the caller goes on, as the bootstrap was.
+  if (rt.services) await rt.services.journal(project);
+  else rt.afterCommit([{ kind: 'journal', project }]);
+}
+
 // Found, or made and registered by the engine through the bootstrap of
 // POST /v1/projects (SEAM.md §164: at the engine's first start outside the
 // test mode). Two callers at once make one.
@@ -134,6 +155,7 @@ export function ensureFixtureProject(rt: Runtime, store: StoreClient): Promise<s
     const id = String(args.id);
     if (rt.services) await rt.services.journal(id).catch((err) => log('qualification fixture', err, { project: id }));
     else if (result.effects && result.effects.length > 0) rt.afterCommit(result.effects);
+    await applyQualificationProfile(rt, store, id).catch((err) => log('qualification fixture', err, { project: id, what: 'profile' }));
     return id;
   })().finally(() => {
     making = null;
