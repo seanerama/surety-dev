@@ -1,0 +1,41 @@
+{
+  "$comment": "The workspace assistant's real path, as the rows of UI1 slice 48 (M548 to M559) compare the engine against it. Sources: the assistant design of 2026-10-27 (usage-account-design-e0303e4.md) §§1.2, 2, 4; E183 D1 (Sean's settlement, O1 to O8), E184; the usability batch of 2026-10-27 (the driver's fixed shape) for `message_statuses` and `allowance_field`. Names the design leaves open are the Verifier's, recorded in ../harness/SEAM.md §§567 to 570. Read through the row files, never from the engine's own tables.",
+  "block": {
+    "fields": ["backend", "model", "credential_ref", "day_limit_billable_tokens", "turn_limit_billable_tokens", "turn_deadline_seconds"],
+    "numbers": {
+      "day_limit_billable_tokens": { "min": 1000, "max": 100000000 },
+      "turn_limit_billable_tokens": { "min": 1000, "max": 10000000 },
+      "turn_deadline_seconds": { "min": 10, "max": 3600 }
+    },
+    "$numbers": "Sanity bounds, never defaults (design §1.2); the turn limit may not be above the day's."
+  },
+  "states": [
+    { "state": "unconfigured", "configured": false, "refusal": { "status": 503, "code": "assistant_not_configured" } },
+    { "state": "credential_missing", "configured": false, "refusal": { "status": 409, "code": "assistant_credential_missing" } },
+    { "state": "qualification_pending", "configured": false, "refusal": { "status": 409, "code": "assistant_qualification_pending" } },
+    { "state": "limit_reached", "configured": true, "refusal": { "status": 429, "code": "assistant_limit_reached" } },
+    { "state": "ready", "configured": true, "refusal": null }
+  ],
+  "state_unavailable": { "status": 503, "code": "assistant_state_unavailable" },
+  "failure_classes": {
+    "$comment": "reason → the turn's outcome (design §4's table; assistant/what-to-do.ts names the classes the engine serves).",
+    "assistant_turn_limit": "stopped",
+    "assistant_usage_unknown": "stopped",
+    "assistant_timed_out": "timed_out",
+    "assistant_cancelled": "stopped",
+    "invalid_result": "failed",
+    "assistant_provider_error": "failed",
+    "assistant_auth_failed": "failed",
+    "backend_refused": "refused",
+    "recovered": "recovered"
+  },
+  "egress_zero_basis": "egress-evidence-zero-1",
+  "message_statuses": ["running", "completed", "failed", "stopped", "timed_out", "refused", "interrupted", "unknown"],
+  "interrupted": { "status": "interrupted", "code": "assistant_interrupted", "outcome": "recovered" },
+  "allowance_field": "unknown_allowance_tokens",
+  "conflicts": {
+    "assistant_intent_conflict": 409,
+    "policy_intent_conflict": 409,
+    "budget_exhausted": 409
+  }
+}

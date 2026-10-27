@@ -37,12 +37,20 @@
 //                one of its ancestors (its siblings, the probe's action
 //                children among them); never kill(-1), never a host pid, and
 //                only inside the sandbox (the two-part guard, E64; SEAM §141)
+//   api_key_source: (UI1 slice 48) the init event's apiKeySource in place of
+//                "ANTHROPIC_API_KEY" ("none": no key reached the backend, an
+//                authentication failure under the API-key mode)
+//   reply:       (UI1 slice 48) the workspace assistant's reply that
+//                role "assistant_reply" writes
 //   role:        "over_on_terminal" (E87 S3): one per-call usage under any
 //                run limit, then the result file and a terminal result whose
 //                modelUsage passes a low run limit (50 000 input tokens),
 //                and exit 0 at once;
 //                "complete" (a role's run, not a canary): write
 //                src/fake-claude.txt and end with a valid result, exit 0;
+//                "assistant_reply" (UI1 slice 48; a workspace assistant's
+//                turn, not a canary): one per-call usage, `reply` written to
+//                /surety/out/result.json, a valid result, exit 0;
 //                "proxy_refused" (a role's run, not a canary; E84): one
 //                CONNECT to `connect` through HTTPS_PROXY (inside the sandbox
 //                only, by the same guard), then Claude Code's ending when
@@ -92,7 +100,7 @@ const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const val = (flag) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : null);
 const model = val('--model') ?? 'claude-sonnet-5-5';
 const templateTools = (val('--tools') ?? 'Read,Edit,Write,Bash,Glob,Grep').split(',');
-out({ type: 'system', subtype: 'init', tools: [...templateTools, ...(mode.extra_tools ?? [])], apiKeySource: 'ANTHROPIC_API_KEY', model, session_id: val('--session-id'), permissionMode: 'bypassPermissions', mcp_servers: [] });
+out({ type: 'system', subtype: 'init', tools: [...templateTools, ...(mode.extra_tools ?? [])], apiKeySource: mode.api_key_source ?? 'ANTHROPIC_API_KEY', model, session_id: val('--session-id'), permissionMode: 'bypassPermissions', mcp_servers: [] });
 
 const assistant = (id, usage) => out({ type: 'assistant', parent_tool_use_id: null, message: { id, model, usage, content: [] } });
 const FALLBACK_MODEL = 'claude-sonnet-5';
@@ -124,6 +132,16 @@ if (mode.role === 'over_on_terminal' && !existsSync('/surety/context/canary.json
   assistant('msg_o_1', { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 10 });
   writeFileSync('/surety/out/result.json', JSON.stringify({ status: 'completed', summary: 'fake: done, the terminal usage over the limit' }));
   success({ inputTokens: 50000, outputTokens: 200, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }, 0.12);
+  process.exit(0);
+}
+
+if (mode.role === 'assistant_reply' && !existsSync('/surety/context/canary.json')) {
+  // UI1 slice 48 (SEAM.md §569): a workspace assistant's turn, its reply
+  // written to /surety/out/result.json as the assistant template asks, then
+  // a valid ending (with `fallback`, the session falls back first).
+  assistant('msg_a_1', { input_tokens: 700, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 60 });
+  writeFileSync('/surety/out/result.json', JSON.stringify(mode.reply ?? { text: 'fake: nothing is waiting', cited_evidence: [], links: [] }));
+  success({ inputTokens: 700, outputTokens: 60, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }, 0.004);
   process.exit(0);
 }
 
