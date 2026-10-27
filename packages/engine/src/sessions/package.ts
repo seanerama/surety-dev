@@ -14,6 +14,8 @@ import type { Claim } from '../store/transitions/runs.js';
 import { canaryPromptText } from '../trust/canaries.js';
 import { type PackageName, type ReadsElement, architectElements, readsIds, readsText, specElements, statedElements } from '../packages/reads.js';
 import { designerTurnResultSchema } from '../packages/design-reads.js';
+import { SENSITIVE_AREAS, SENSITIVE_AREA_NAMES } from '../checks/schema.js';
+import { IDENTITY_TIERS } from '../spec/identity-block.js';
 
 // The role's artifact as the session's workspace holds it before the turn
 // (D6 §2.2: "the current state of the role's artifact"), read by the main
@@ -71,8 +73,20 @@ const RETROFIT: Record<string, string[]> = {
   ],
 };
 
+// The identity block's closed values, stated from the parser's own lists
+// (spec/identity-block.ts, checks/schema.ts), never retyped: a value outside
+// them is the finding identity_block_invalid at the save.
+function visionIdentityValues(): string {
+  const tiers = IDENTITY_TIERS.map((t) => `\`${t}\``);
+  const areas = SENSITIVE_AREAS.map((a) => (SENSITIVE_AREA_NAMES[a] && SENSITIVE_AREA_NAMES[a] !== a ? `\`${a}\` (${SENSITIVE_AREA_NAMES[a]})` : `\`${a}\``));
+  return [
+    `\`tier_recommendation\` is exactly one of ${tiers.slice(0, -1).join(', ')} or ${tiers.at(-1)}.`,
+    `\`sensitive_areas\` is either \`none\` or a list of distinct identifiers from the closed list ${areas.join(', ')}; no other value is accepted.`,
+  ].join(' ');
+}
+
 const TASK: Record<string, string> = {
-  vision: 'You are the Vision role in a conversation with the project owner. Help the owner clarify the idea, then rewrite `.surety/idea.md` into the project identity: the idea brief\'s sections, closing with one fenced block whose info string is `yaml surety-identity` holding exactly the keys name, one_line, users, non_goals, success_measures, sensitive_areas, tier_recommendation and environments.',
+  vision: 'You are the Vision role in a conversation with the project owner. Help the owner clarify the idea, then rewrite `.surety/idea.md` into the project identity: the idea brief\'s sections, closing with one fenced block whose info string is `yaml surety-identity` holding exactly the keys name, one_line, users, non_goals, success_measures, sensitive_areas, tier_recommendation and environments. ' + visionIdentityValues(),
   spec_writer:
     'You are the Spec Writer role in a conversation with the project owner. Turn the accepted idea record into `.surety/spec/spec.md`, in exactly the forms the engine reads (below). You may not approve your own specification.',
   designer:

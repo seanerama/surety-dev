@@ -94,6 +94,24 @@ function specFromBlocks(b, { claims = false } = {}) {
   return lines.join('\n');
 }
 
+// B3 (first-app backlog 2026-10-26): Vision is told the identity block's
+// closed values, from the parser's own lists, so a block it writes from the
+// task text alone is one the engine registers.
+test("Vision's task names every allowed tier_recommendation and every sensitive area of the closed list, as the identity parser accepts them", async (t) => {
+  const { IDENTITY_TIERS, parseIdentityBlock } = await import(join(dist, 'spec', 'identity-block.js'));
+  const { prompt } = session(t, 'vision');
+  const task = prompt.split('\n## ')[0];
+  assert.deepEqual(IDENTITY_TIERS, ['T1', 'T2', 'T3', 'unsure']);
+  for (const tier of IDENTITY_TIERS) assert.ok(task.includes(`\`${tier}\``), `the task names tier ${tier}`);
+  assert.ok(SENSITIVE_AREAS.length > 0);
+  for (const area of SENSITIVE_AREAS) assert.ok(task.includes(`\`${area}\``), `the task names sensitive area ${area}`);
+  assert.match(task, /`sensitive_areas` is either `none` or a list/);
+  const block = (tier, areas) => `# Idea\n\n\`\`\`yaml surety-identity\nname: Tally\none_line: Counts.\nusers:\n  - me\nnon_goals:\n  - none\nsuccess_measures:\n  - counts\nsensitive_areas: ${areas}\ntier_recommendation: ${tier}\nenvironments:\n  - alpha\n\`\`\`\n`;
+  for (const tier of IDENTITY_TIERS) assert.equal(parseIdentityBlock(block(tier, 'none')).ok, true, `tier ${tier} parses`);
+  assert.equal(parseIdentityBlock(block('T2', `\n${SENSITIVE_AREAS.map((a) => `  - ${a}`).join('\n')}`)).ok, true, 'every named area parses');
+  assert.equal(parseIdentityBlock(block('T4', 'none')).ok, false);
+});
+
 test("the Spec Writer's package states its forms as blocks, listed in the manifest, from which the engine's parser accepts a specification", (t) => {
   const s = session(t, 'spec_writer');
   assert.equal(s.manifest.package, 'spec_writer');
