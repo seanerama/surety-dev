@@ -104,12 +104,18 @@ test('202 at the admission with the turn and its cancel route; the read is the o
   await assert.rejects(svc.message(id, ask('i2'), actor), (e) => e.code === 'assistant_busy' && e.status === 409);
   assert.equal(owners((await svc.get(id)).conversation).length, 1);
   assert.equal(s.admits.length, 1);
+  // The read serves the same turn on the owner message: a client never
+  // builds a route.
+  assert.deepEqual(owners((await svc.get(id)).conversation)[0].turn, r.body.turn);
+  assert.deepEqual(r.body.message.turn, r.body.turn);
   // It ends; the hook writes it.
   await p.end('inv_1', { outcome: 'completed', reason: 'none', reply: { text: 'Nothing waits.', cited_evidence: [], links: [{ label: 'Home', href: '#/w' }] }, usage: usage() });
   const c = (await svc.get(id)).conversation;
   const [owner, reply] = c.messages;
   assert.deepEqual([owner.status, owner.error, owner.usage.charged, owner.usage.input_tokens, owner.usage.unknown_allowance_tokens], ['completed', undefined, true, 900, null]);
   assert.deepEqual([reply.role, reply.status, reply.text, reply.invocation, reply.evidence.length > 0], ['assistant', 'completed', 'Nothing waits.', 'inv_1', true]);
+  assert.deepEqual(owner.turn, { id: 'inv_1', status: 'completed', deadline_at: DEADLINE, cancel: null }, 'kept after the end, its final status, no cancel');
+  assert.equal(reply.turn, undefined, 'the reply carries no turn object');
   const done = await svc.message(id, ask('i1'), actor);
   assert.deepEqual([done.status, done.body.turn.status, done.body.turn.cancel, done.body.reply.text], [200, 'completed', null, 'Nothing waits.']);
   assert.equal(s.admits.length, 1, 'never a second turn');
@@ -219,7 +225,7 @@ test('a refused admission (the day limit): a 4xx, no turn, nothing charged; its 
   await assert.rejects(svc.message(id, ask('i1'), actor), (e) => e.status === 429 && e.code === 'assistant_limit_reached');
   assert.equal(s.turns.size, 0, 'no turn, no receipt');
   const owner = owners((await svc.get(id)).conversation)[0];
-  assert.deepEqual([owner.status, owner.error.code, owner.error.outcome, owner.usage.charged, owner.invocation], ['refused', 'assistant_limit_reached', 'refused', false, undefined]);
+  assert.deepEqual([owner.status, owner.error.code, owner.error.outcome, owner.usage.charged, owner.invocation, owner.turn], ['refused', 'assistant_limit_reached', 'refused', false, undefined, null]);
   const again = await svc.message(id, ask('i1'), actor);
   assert.deepEqual([again.status, again.body.message.status, again.body.turn], [200, 'refused', null]);
   assert.equal(s.admits.length, 1, 'the refused intent is not admitted again');
@@ -247,4 +253,26 @@ test('the fake answers 200 at once with the same keys, its reply present', async
   assert.deepEqual([r.body.message.role, r.body.message.status, r.body.reply.role, r.body.reply.status], ['user', 'completed', 'assistant', 'completed']);
   assert.deepEqual(r.body.turn, { id: null, status: 'completed', deadline_at: null, cancel: null });
   assert.equal(r.body.message.usage.provider, 'fake');
+  assert.deepEqual(r.body.message.turn, r.body.turn);
+});
+
+test('the fake: a repeat that arrives while its turn still runs is 202, the same message, never a second answer; the turn is never stored', async (t) => {
+  let release;
+  const held = new Promise((r) => (release = r));
+  let calls = 0;
+  const dir = home(t);
+  const svc = new AssistantService(dir, true, async (name) => { calls++; await held; return reads(name); }, TOKEN);
+  const id = svc.create({}).conversation.id;
+  const first = svc.message(id, ask('i1'), actor);
+  await new Promise((r) => setTimeout(r, 20));
+  const again = await svc.message(id, ask('i1'), actor);
+  assert.deepEqual([again.status, again.body.message.status, again.body.turn, again.body.reply], [202, 'running', { id: null, status: 'running', deadline_at: null, cancel: null }, null]);
+  release();
+  const done = await first;
+  assert.deepEqual([done.status, done.body.message.id], [200, again.body.message.id]);
+  const n = calls;
+  assert.equal((await svc.message(id, ask('i1'), actor)).body.reply.id, done.body.reply.id);
+  assert.equal(calls, n, 'never answered twice');
+  const disk = JSON.parse(readFileSync(join(dir, 'assistant', `${id}.json`), 'utf8'));
+  assert.ok(disk.messages.every((m) => !('turn' in m)), 'served, never stored');
 });

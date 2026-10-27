@@ -60,7 +60,10 @@ outcome}`. Its `usage` is the turn's charge once its ledger row is written
 restart interrupted is `interrupted` (`error.code` `assistant_interrupted`,
 `outcome` `recovered`) with what recovery charged, and has no reply; the
 conversation then accepts a new message. Reads of a conversation write each
-ended turn's end first, so `GET /v1/assistant/conversations/:c` is the outcome. A maximum of 20
+ended turn's end first, so `GET /v1/assistant/conversations/:c` is the outcome.
+Every owner message is served with its `turn` (the same object as the 202's;
+`cancel` while it runs, null after; null when no turn was admitted), so a
+client never builds a route; it is served, never stored. A maximum of 20
 conversations and 100 messages per conversation refuses further writes rather
 than silently discarding history. Explicit DELETE removes conversation text when no unresolved action receipt needs it.
 

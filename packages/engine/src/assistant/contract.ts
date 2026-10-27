@@ -49,7 +49,15 @@ export interface AssistantMessage {
   // A real turn: its invocation, its reply's citations and whether it is
   // commentary (no evidence cited), and its error when it did not complete.
   invocation?: string; cited_evidence?: string[]; commentary?: boolean; error?: TurnError;
+  // Served on every owner message (never stored): its turn as the 202 body
+  // carries it, `cancel` the route while it is `running` and null after;
+  // null when no turn was admitted (a refusal).
+  turn?: TurnRef | null;
 }
+// A message's turn (the usability batch's decision 1): its invocation (null
+// for the fake), its status (the owner message's), its deadline, and its
+// cancel route while it runs.
+export interface TurnRef { id: string | null; status: MessageStatus; deadline_at: string | null; cancel: string | null }
 export interface Conversation { id: string; created_at: string; updated_at: string; messages: AssistantMessage[] }
 export interface AssistantRequest { intent_id: string; text: string; context: AssistantContext }
 export const LIMITS = { max_message_chars: 4000, max_messages: 100, max_tool_calls: 16, max_evidence_chars: 48000, max_conversations: 20 } as const;

@@ -6,7 +6,7 @@ import { newId } from '../ids.js';
 import { redactText, redactValue, scanBytes } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type MessageStatus, type PendingUsage, type ReadTool, type TurnUsage } from './contract.js';
+import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type MessageStatus, type PendingUsage, type TurnRef, type ReadTool, type TurnUsage } from './contract.js';
 import { type TurnPackage, boundedConversation } from './turn-package.js';
 import { ASSISTANT_WHAT_TO_DO } from './what-to-do.js';
 
@@ -188,7 +188,6 @@ export interface RealAssistantPort {
 
 // The answer to a message request, and to each repeat of it: the intent's
 // current state (the usability batch's decision 1).
-export interface TurnRef { id: string | null; status: MessageStatus; deadline_at: string | null; cancel: string | null }
 export interface MessageAnswer { conversation: Conversation; message: AssistantMessage | null; turn: TurnRef | null; reply: AssistantMessage | null }
 
 const RETENTION = 'engine-owned; explicit deletion';
@@ -252,7 +251,19 @@ export class AssistantService {
     renameSync(temp, path);
     const dir = openSync(this.dir, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
   }
-  private public(c: StoredConversation): Conversation { const { requests: _, turns: __, ...out } = c; return out; }
+  // The conversation as served: each owner message with its turn (the
+  // coordinator's addition of 2026-10-27: a client never builds a route).
+  private public(c: StoredConversation): Conversation {
+    const { requests: _, turns: __, ...out } = c;
+    return { ...out, messages: out.messages.map(m => (m.role === 'user' ? { ...m, turn: this.turnRef(c, m) } : m)) };
+  }
+  private turnRef(c: StoredConversation, owner: AssistantMessage): TurnRef | null {
+    if (!this.real) return { id: null, status: owner.status, deadline_at: null, cancel: null };
+    const meta = c.turns?.[owner.intent_id];
+    const invocation = owner.invocation ?? meta?.invocation ?? null;
+    if (invocation === null) return null;
+    return { id: invocation, status: owner.status, deadline_at: meta?.deadline_at ?? null, cancel: owner.status === 'running' ? this.cancelPath(c.id, owner.id) : null };
+  }
   list() {
     this.configured();
     const conversations = existsSync(this.dir) ? readdirSync(this.dir).filter(n => /^ac_[A-Z0-9]{26}\.json$/.test(n)).map(n => this.load(n.slice(0, -5))).map(c => ({ id: c.id, created_at: c.created_at, updated_at: c.updated_at, message_count: c.messages.length })).sort((a, b) => b.updated_at.localeCompare(a.updated_at)) : [];
@@ -297,16 +308,10 @@ export class AssistantService {
   // The intent's current state: 202 while its turn is under way, 200 once
   // its end (or its refusal) is written, or while it is unknown.
   private answer(c: StoredConversation, intent: string): { status: number; body: MessageAnswer } {
-    const owner = c.messages.find(m => m.intent_id === intent && m.role === 'user') ?? null;
-    const reply = c.messages.find(m => m.intent_id === intent && m.role === 'assistant') ?? null;
-    const meta = c.turns?.[intent];
-    let turn: TurnRef | null = null;
-    if (owner !== null && !this.real) turn = { id: null, status: owner.status, deadline_at: null, cancel: null };
-    else if (owner !== null) {
-      const invocation = owner.invocation ?? meta?.invocation ?? null;
-      if (invocation !== null) turn = { id: invocation, status: owner.status, deadline_at: meta?.deadline_at ?? null, cancel: owner.status === 'running' ? this.cancelPath(c.id, owner.id) : null };
-    }
-    return { status: owner?.status === 'running' ? 202 : 200, body: { conversation: this.public(c), message: owner, turn, reply } };
+    const conversation = this.public(c);
+    const owner = conversation.messages.find(m => m.intent_id === intent && m.role === 'user') ?? null;
+    const reply = conversation.messages.find(m => m.intent_id === intent && m.role === 'assistant') ?? null;
+    return { status: owner?.status === 'running' ? 202 : 200, body: { conversation, message: owner, turn: owner?.turn ?? null, reply } };
   }
 
   // POST /v1/assistant/conversations/:id/messages. The fake answers at once
