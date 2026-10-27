@@ -17,6 +17,10 @@ import {
   ENGINE_BOOLEANS,
   ENGINE_FIXED,
   ENGINE_KEYS,
+  ASSISTANT_FIELDS,
+  ASSISTANT_NUMBERS,
+  ASSISTANT_RECOMMENDED,
+  BACKEND_NAMES,
   ENGINE_AT_LEAST,
   ENGINE_NUMBERS,
   PROJECT_POLICY,
@@ -32,6 +36,7 @@ import { KINDS, MANIFEST_KEYS } from '../store/transitions/queue.js';
 import { ROLE_OF } from '../store/transitions/runs.js';
 import { CONTINUATIONS, DISPATCHABLE, KIND_PATHS, RUN_OWNING, TEMPLATES, TERMINAL, WORK_KINDS, WORK_STATUSES } from '../store/transitions/work-table.js';
 import { CANARY_FAILURE_CLASSES } from '../trust/canaries.js';
+import { KEY_REFERENCES } from '../invoke/keys.js';
 
 export interface FieldSpec {
   required: boolean;
@@ -293,7 +298,26 @@ function configSection(): ContractDocument['config'] {
     else if (ENGINE_FIXED[key] !== undefined) engine[key] = { default: ENGINE_FIXED[key], fixed: true };
     else if (ENGINE_BOOLEANS[key] !== undefined) engine[key] = { default: ENGINE_BOOLEANS[key], type: 'boolean' };
     else if (key === 'classifier_authority') engine[key] = { default: { mode: 'recommend' }, modes: ['recommend', 'authoritative'], version: 'integer, required by authoritative' };
-    else if (key === 'api_authority') engine[key] = { default: '127.0.0.1:<api_port>', allowed: ['127.0.0.1:<api_port>', 'localhost:<api_port>'] };
+    else if (key === 'workspace_assistant') {
+      engine[key] = {
+        default: null,
+        type: 'object',
+        absent: 'the assistant is unconfigured; no real assistant path is reachable',
+        required_when_present: [...ASSISTANT_FIELDS],
+        defaults: 'none: every field is stated by the owner',
+        fields: {
+          backend: { values: [...BACKEND_NAMES], scripted: 'the test mode only' },
+          model: { type: 'model name' },
+          credential_ref: { values: [...KEY_REFERENCES], rule: "a reference of the block's backend" },
+          day_limit_billable_tokens: { ...ASSISTANT_NUMBERS.day_limit_billable_tokens, integer: true, unit: 'billable tokens per UTC day' },
+          turn_limit_billable_tokens: { ...ASSISTANT_NUMBERS.turn_limit_billable_tokens, integer: true, unit: 'billable tokens per turn', at_most: 'day_limit_billable_tokens' },
+          turn_deadline_seconds: { ...ASSISTANT_NUMBERS.turn_deadline_seconds, integer: true, unit: 'seconds' },
+        },
+        recommended: { ...ASSISTANT_RECOMMENDED },
+        recommended_is: 'the owner\'s explicit initial configuration (2026-10-27), written into config.json by the owner; allowances, not expected consumption; never applied by the engine',
+        limit_is: 'an admission limit and an in-flight stop, not a hard maximum: within one turn the overshoot is bounded by the turn deadline (D2 §4.2)',
+      };
+    } else if (key === 'api_authority') engine[key] = { default: '127.0.0.1:<api_port>', allowed: ['127.0.0.1:<api_port>', 'localhost:<api_port>'] };
     else if (key === 'decision_targets') {
       engine[key] = {
         default: {},

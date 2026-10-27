@@ -35,7 +35,7 @@ import { StoreClient } from './store/client.js';
 import { createToken, readToken } from './token.js';
 import { createIncarnationScope } from './boundary/scope.js';
 import { newId } from './ids.js';
-import { seamChecktreesMaxBytes, seamHostChecks, seamProfileMaxima, seamQualifyMode, seamScopeBarrier, seamSelfTestAtStart } from './testing/seam.js';
+import { seamChecktreesMaxBytes, seamHostChecks, seamProfileMaxima, seamQualifyMode, seamScopeBarrier, seamScriptedProvider, seamSelfTestAtStart } from './testing/seam.js';
 import { ensureFixtureProject } from './trust/fixture.js';
 import { runHostChecks, type ScopeOutcome } from './trust/checks.js';
 import { QualificationDriver } from './trust/attempts.js';
@@ -131,6 +131,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
   } catch (err) {
     if (err instanceof Refusal) exitRefused(EXIT.config, err);
     throw err;
+  }
+  // The workspace assistant's block may name the scripted backend only in
+  // the engine's test mode, which alone provides it (the assistant design
+  // §1.2): refused here, before anything is written or locked.
+  if (config.values.workspace_assistant?.backend === 'scripted' && !seamScriptedProvider()) {
+    exitRefused(
+      EXIT.config,
+      new Refusal(400, 'invalid_value', '"workspace_assistant.backend" may be scripted only in the engine\'s test mode.', 'Name a real backend (claude or codex) in config.json and start the engine again.', { field: 'workspace_assistant.backend' }),
+    );
   }
 
   // A home on a kind of filesystem that does not keep what is written is

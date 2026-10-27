@@ -640,6 +640,7 @@ Statuses that own a run: claimed, executing, integrating, integrated, verifying,
 - `service_link_buffer_max_bytes`: default 1048576, 65536 to 16777216
 - `adoption_full_max_files`: default 2000, 100 to 100000
 - `turn_max_bytes`: default 65536, 4096 to 1048576
+- `workspace_assistant`: no default, unconfigured until set
 
 ### project
 

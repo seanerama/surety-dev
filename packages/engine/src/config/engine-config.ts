@@ -5,8 +5,13 @@
 import { readFileSync } from 'node:fs';
 
 import { type AuthoritySetting, DEFAULT_AUTHORITY } from '../checks/classify.js';
+import { isModelName } from '../invoke/adapters/model.js';
+import { KEY_REFERENCES } from '../invoke/keys.js';
 import { Refusal } from '../refusal.js';
 import {
+  ASSISTANT_FIELDS,
+  ASSISTANT_NUMBERS,
+  BACKEND_NAMES,
   DECISION_KINDS,
   DECISION_KINDS_WITHOUT_TARGET,
   DECISION_TARGET_DEFAULTS,
@@ -23,6 +28,19 @@ import {
 
 export type ConfigSource = 'file' | 'default';
 
+// The workspace assistant's block (the assistant design §1.2): the account's
+// limits in billable tokens, the turn's deadline, and the provider the
+// assistant runs on. null when config.json has no such key: the assistant is
+// then unconfigured.
+export interface AssistantConfig {
+  backend: string;
+  model: string;
+  credential_ref: string;
+  day_limit_billable_tokens: number;
+  turn_limit_billable_tokens: number;
+  turn_deadline_seconds: number;
+}
+
 export interface EngineConfig {
   values: {
     [K in EngineKey]: K extends 'api_authority'
@@ -33,7 +51,9 @@ export interface EngineConfig {
           ? boolean
           : K extends 'classifier_authority'
             ? AuthoritySetting
-            : number;
+            : K extends 'workspace_assistant'
+              ? AssistantConfig | null
+              : number;
   };
   sources: Record<EngineKey, ConfigSource>;
 }
@@ -78,6 +98,8 @@ export function validateEngineConfig(raw: unknown): EngineConfig {
       values[key] = decisionTargets(given ? value : {});
     } else if (key === 'classifier_authority') {
       values[key] = given ? classifierAuthority(value) : { ...DEFAULT_AUTHORITY };
+    } else if (key === 'workspace_assistant') {
+      values[key] = given ? workspaceAssistant(value) : null;
     } else if (key in ENGINE_BOOLEANS) {
       if (!given) values[key] = ENGINE_BOOLEANS[key];
       else if (typeof value === 'boolean') values[key] = value;
@@ -109,6 +131,38 @@ function classifierAuthority(raw: unknown): AuthoritySetting {
   if (raw.version !== undefined && (typeof raw.version !== 'number' || !Number.isInteger(raw.version) || raw.version < 1)) throw invalidValue('classifier_authority', why);
   if (raw.mode === 'authoritative' && raw.version === undefined) throw invalidValue('classifier_authority', why);
   return raw.version === undefined ? { mode: raw.mode } : { mode: raw.mode, version: raw.version };
+}
+
+// The assistant design §1.2 (Sean's approval of 2026-10-27): absent by
+// default; present, an object of exactly the six fields, each required, none
+// defaulted, each number a whole number within its sanity bounds, the turn's
+// limit not above the day's. Anything else refuses the start, which writes
+// nothing. The scripted backend is refused outside the test mode at start
+// (engine.ts), where the mode is known.
+function workspaceAssistant(raw: unknown): AssistantConfig {
+  const key = 'workspace_assistant';
+  if (!isPlainObject(raw)) throw invalidValue(key, `must be an object with exactly ${ASSISTANT_FIELDS.join(', ')}`);
+  for (const k of Object.keys(raw)) if (!(ASSISTANT_FIELDS as readonly string[]).includes(k)) throw unknownField(`${key}.${k}`);
+  for (const k of ASSISTANT_FIELDS) if (!Object.hasOwn(raw, k)) throw invalidValue(`${key}.${k}`, 'is required: the block has no defaults');
+  if (typeof raw.backend !== 'string' || !(BACKEND_NAMES as readonly string[]).includes(raw.backend)) throw invalidValue(`${key}.backend`, `must be one of ${BACKEND_NAMES.join(', ')}`);
+  if (!isModelName(raw.model)) throw invalidValue(`${key}.model`, 'must be a model name');
+  if (typeof raw.credential_ref !== 'string' || !(KEY_REFERENCES as readonly string[]).includes(raw.credential_ref)) throw invalidValue(`${key}.credential_ref`, `must be one of ${KEY_REFERENCES.join(', ')}`);
+  if (raw.backend !== 'scripted' && !raw.credential_ref.startsWith(`backend/${raw.backend}/`)) throw invalidValue(`${key}.credential_ref`, `must be a credential reference of ${raw.backend} (backend/${raw.backend}/...)`);
+  for (const [k, range] of Object.entries(ASSISTANT_NUMBERS)) {
+    const v = raw[k];
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < range.min || v > range.max) throw invalidValue(`${key}.${k}`, `must be an integer from ${range.min} to ${range.max}`);
+  }
+  if ((raw.turn_limit_billable_tokens as number) > (raw.day_limit_billable_tokens as number)) {
+    throw invalidValue(`${key}.turn_limit_billable_tokens`, `may not be above day_limit_billable_tokens (${raw.day_limit_billable_tokens as number})`);
+  }
+  return {
+    backend: raw.backend,
+    model: raw.model,
+    credential_ref: raw.credential_ref,
+    day_limit_billable_tokens: raw.day_limit_billable_tokens as number,
+    turn_limit_billable_tokens: raw.turn_limit_billable_tokens as number,
+    turn_deadline_seconds: raw.turn_deadline_seconds as number,
+  };
 }
 
 function decisionTargets(raw: unknown): Record<string, number | null> {

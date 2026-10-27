@@ -161,7 +161,37 @@ export const ENGINE_KEYS = [
   'adoption_full_max_files',
   // D6 A.7 (M5 slice 33).
   'turn_max_bytes',
+  // The workspace assistant's usage account and provider (the assistant
+  // design of 2026-10-27, Sean's approval of O2(a)): an object, absent by
+  // default, every field required when present and none defaulted
+  // (engine-config.ts).
+  'workspace_assistant',
 ] as const;
+
+// The `workspace_assistant` block's fields (the assistant design §1.2). Every
+// one is required when the block is present; none has a default. The ranges
+// are sanity bounds on a value the owner states, never a value the engine
+// supplies.
+export const ASSISTANT_FIELDS = ['backend', 'model', 'credential_ref', 'day_limit_billable_tokens', 'turn_limit_billable_tokens', 'turn_deadline_seconds'] as const;
+export const ASSISTANT_NUMBERS: Readonly<Record<'day_limit_billable_tokens' | 'turn_limit_billable_tokens' | 'turn_deadline_seconds', { min: number; max: number }>> = {
+  day_limit_billable_tokens: { min: 1_000, max: 100_000_000 },
+  turn_limit_billable_tokens: { min: 1_000, max: 10_000_000 },
+  turn_deadline_seconds: { min: 10, max: 3600 },
+};
+// The owner's recommended explicit configuration (his approval of
+// 2026-10-27: "Use Sonnet, 40k tokens per turn and 400k per day as explicit
+// initial configuration, not hidden defaults"; the design's 120-second turn
+// deadline; O3: the project roles' subscription-token reference). Documented
+// in the contract only: the engine never applies it. They are allowances,
+// not expected consumption.
+export const ASSISTANT_RECOMMENDED = {
+  backend: 'claude',
+  model: 'sonnet',
+  credential_ref: 'backend/claude/subscription_token',
+  day_limit_billable_tokens: 400_000,
+  turn_limit_billable_tokens: 40_000,
+  turn_deadline_seconds: 120,
+} as const;
 
 export type EngineKey = (typeof ENGINE_KEYS)[number];
 

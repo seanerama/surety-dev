@@ -8239,6 +8239,70 @@
         "min": 4096,
         "max": 1048576,
         "integer": true
+      },
+      "workspace_assistant": {
+        "default": null,
+        "type": "object",
+        "absent": "the assistant is unconfigured; no real assistant path is reachable",
+        "required_when_present": [
+          "backend",
+          "model",
+          "credential_ref",
+          "day_limit_billable_tokens",
+          "turn_limit_billable_tokens",
+          "turn_deadline_seconds"
+        ],
+        "defaults": "none: every field is stated by the owner",
+        "fields": {
+          "backend": {
+            "values": [
+              "scripted",
+              "claude",
+              "codex"
+            ],
+            "scripted": "the test mode only"
+          },
+          "model": {
+            "type": "model name"
+          },
+          "credential_ref": {
+            "values": [
+              "backend/claude/api_key",
+              "backend/claude/subscription_token",
+              "backend/codex/api_key"
+            ],
+            "rule": "a reference of the block's backend"
+          },
+          "day_limit_billable_tokens": {
+            "min": 1000,
+            "max": 100000000,
+            "integer": true,
+            "unit": "billable tokens per UTC day"
+          },
+          "turn_limit_billable_tokens": {
+            "min": 1000,
+            "max": 10000000,
+            "integer": true,
+            "unit": "billable tokens per turn",
+            "at_most": "day_limit_billable_tokens"
+          },
+          "turn_deadline_seconds": {
+            "min": 10,
+            "max": 3600,
+            "integer": true,
+            "unit": "seconds"
+          }
+        },
+        "recommended": {
+          "backend": "claude",
+          "model": "sonnet",
+          "credential_ref": "backend/claude/subscription_token",
+          "day_limit_billable_tokens": 400000,
+          "turn_limit_billable_tokens": 40000,
+          "turn_deadline_seconds": 120
+        },
+        "recommended_is": "the owner's explicit initial configuration (2026-10-27), written into config.json by the owner; allowances, not expected consumption; never applied by the engine",
+        "limit_is": "an admission limit and an in-flight stop, not a hard maximum: within one turn the overshoot is bounded by the turn deadline (D2 §4.2)"
       }
     },
     "project": {
