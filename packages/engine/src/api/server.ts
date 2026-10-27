@@ -369,7 +369,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       const rest = s.slice(3);
       if (rest.length === 1 && rest[0] === 'policy') {
         if (get) {
-          return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy', args: { project } }) }) };
+          return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.policy_view', args: { project } }) }) };
         }
         if (post) return { kind: 'prepared', name: 'project.policy_submit', prepare: (b) => preparePolicy(runtime(), project, b), lock: project };
       }

@@ -542,6 +542,11 @@
       "within_baseline",
       "uncertain"
     ],
+    "PolicySubmissionsOutcome": [
+      "accepted",
+      "unchanged",
+      "refused"
+    ],
     "BaselineState": [
       "idea",
       "spec_ready",
@@ -4751,6 +4756,43 @@
           "references": "decisions"
         },
         "effective": {
+          "required": true
+        }
+      }
+    },
+    "policy_submissions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "intent_id": {
+          "required": false
+        },
+        "fingerprint": {
+          "required": true
+        },
+        "outcome": {
+          "required": true,
+          "enum": "PolicySubmissionsOutcome"
+        },
+        "revision": {
+          "required": false
+        },
+        "operation": {
+          "required": false,
+          "references": "operations"
+        },
+        "status": {
+          "required": true
+        },
+        "answer": {
           "required": true
         }
       }

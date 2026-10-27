@@ -7,7 +7,7 @@ import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
 
 import { policyRevision, projectEffective as effectivePolicy, projectOptions } from './transitions/settings.js';
-import { projectNotFound } from './transitions/project.js';
+import { policyCommitView, projectNotFound } from './transitions/project.js';
 import { CHAIN_BOUNDARY, ROLE_OF, dispatchBlocker } from './transitions/runs.js';
 import { type CandidateRow, type CheckRow, applies, candidateContent, checksOfVersion, gateKindsOf, requirementsOf } from './transitions/evidence.js';
 import { cadenceTier } from '../checks/scope.js';
@@ -28,6 +28,12 @@ export function projectPolicy(db: Database, project: string) {
   const row = db.prepare('SELECT "id" FROM "projects" WHERE "id" = ?').get(project);
   if (!row) throw projectNotFound(project);
   return { effective: effectivePolicy(db, project), revision: policyRevision(db, project) };
+}
+
+// GET /v1/projects/:p/policy: the effective policy and its revision, and
+// the commit state of what was submitted (the usability batch's decision 6).
+export function projectPolicyView(db: Database, project: string) {
+  return { ...projectPolicy(db, project), ...policyCommitView(db, project) };
 }
 
 // D1 §8.1 step 8 order: verification due, then builds, then replans, then

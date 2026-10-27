@@ -13,11 +13,11 @@ import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js'
 import { migrate } from './migrate.js';
 import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
-import { dispatchCandidates, projectIds, projectPolicy, quarantinedRuns } from './reads.js';
+import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
 import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
 import { liftToFull, recordBackup, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
-import { bootstrapProject, policyFacts, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
+import { bootstrapProject, policyFacts, policySubmissionOf, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
   acceptFacts,
   beginIntegration,
@@ -454,6 +454,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   },
   'environments.list': (d, a) => readEnvironments(d, a),
   'project.policy': (d, a: { project: string }) => projectPolicy(d, a.project),
+  'project.policy_view': (d, a: { project: string }) => projectPolicyView(d, a.project),
+  // A policy submission by its intent (the usability batch's decision 6): its
+  // fingerprint only, for the route's preparation to see a repeat.
+  'project.policy_submission': (d, a: { project: string; intent_id: string }) => {
+    const row = policySubmissionOf(d, a.project, a.intent_id);
+    return row === null ? null : { fingerprint: row.fingerprint };
+  },
   'run.representation': (d, a: { project: string; run: string }) => runRepresentation(d, a),
   'run.tail': (d, a: { project: string; run: string }) => runTail(d, a),
   'scheduler.candidates': (d) => dispatchCandidates(d),
