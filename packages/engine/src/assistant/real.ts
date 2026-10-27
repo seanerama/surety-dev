@@ -65,8 +65,13 @@ export class RealAssistant implements RealAssistantPort {
     }
   }
 
-  settled(invocation: string, ms: number): Promise<boolean> {
-    return this.turns().turns.settled(invocation, ms);
+  // The waiter is registered before the turn is read, so that a turn that
+  // ended meanwhile is never waited for to the bound.
+  async settled(invocation: string, ms: number): Promise<boolean> {
+    const waiting = this.turns().turns.settled(invocation, ms);
+    const now = await this.turn(invocation).catch(() => null);
+    if (now !== null && now.status === 'ended') return true;
+    return waiting;
   }
 
   turn(invocation: string): Promise<TurnRead | null> {
