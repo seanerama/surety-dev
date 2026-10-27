@@ -46,6 +46,7 @@ import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepo
 import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
+import { admissionRefusal, attemptAdmission } from './qualification-budget.js';
 import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
 import { answerConflict, conflictPreview, correctionFor, findingVerification, routeMissingVerification, settleConflicts } from './repair.js';
@@ -2128,6 +2129,14 @@ const QUALIFICATION_APPROVAL: KindSpec = {
   reraise: true,
   answer(tx, d, option, note) {
     const a = getAttempt(tx.db, d.subject_id)!;
+    // The upfront admission (B2; Sean's approval of 2026-10-27): `approve`
+    // is accepted only if the fixture project's day holds what the attempt
+    // reserves beside what is charged and reserved already. Refused before
+    // anything is consumed: the decision stays open.
+    if (option === 'approve') {
+      const fit = attemptAdmission(tx.db, a);
+      if (fit !== null && !fit.fits) throw admissionRefusal(a, fit);
+    }
     consumeDecision(tx, d, option, note);
     if (option !== 'approve') return consumed(d);
     recordApproval(tx, d, { consequence: `qualification attempt ${a.id} authorized`, subjectType: 'qualification_attempt', subjectId: a.id });

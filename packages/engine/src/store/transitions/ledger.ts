@@ -704,6 +704,46 @@ export function exhaustedLimits(db: Db, project: string, opts: { check: boolean;
   return over.sort((a, b) => DAY_LIMITS.indexOf(a as (typeof DAY_LIMITS)[number]) - DAY_LIMITS.indexOf(b as (typeof DAY_LIMITS)[number]));
 }
 
+// ---- the qualification budget's admission (B2, SETUP-01; Sean's approval of 2026-10-27) ----
+
+// When the current UTC day of the engine's clock ends: what the day limits
+// count clears then.
+export const dayClearsAt = (day: string): string => new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString();
+
+// A project's account of its current day against budget_day_unknown_tokens,
+// as the day check counts it (daySpend): `charged_tokens` is the unknown-cost
+// billable tokens and the unknown allowances charged today, an invocation
+// under way counted by what it has observed so far; `running_allowance_tokens`
+// is what a dispatch would add on top, the remaining run limit of every
+// invocation under way. Not a budget check (no seam read).
+export function dayUnknownAccount(db: Db, project: string): { day: string; charged_tokens: number; running_allowance_tokens: number; limit_tokens: number; clears_at: string } {
+  const spend = daySpend(db, project, { check: false, dispatch: true });
+  return {
+    day: spend.day,
+    charged_tokens: spend.unknownCostTokens + spend.allowanceTokens,
+    running_allowance_tokens: spend.runningAllowanceTokens,
+    limit_tokens: projectPolicy(db, project).budget_day_unknown_tokens!,
+    clears_at: dayClearsAt(spend.day),
+  };
+}
+
+// One invocation as a qualification reservation sees it: `charged` once its
+// original ledger row is written (or once it was refused, which charges
+// nothing); otherwise what it already counts in `dayUnknownAccount`'s
+// charged tokens (its unknown-cost tokens observed so far) and its run
+// limit as its receipt fixed it. A reservation held for it is its limit less
+// what it already counts, so that the two together are never more than the
+// one charge its ledger row will make (C4: observed plus the allowance, the
+// run limit at most).
+export function invocationStanding(db: Db, invocation: string, project: string): { charged: boolean; counted: number; limit: number } {
+  const row = db.prepare('SELECT 1 FROM "ledger_rows" WHERE "invocation" = ? AND "corrects" IS NULL').get(invocation);
+  const refused = db.prepare(`SELECT 1 FROM "invocation_status_observations" WHERE "invocation" = ? AND "status" = 'refused'`).get(invocation);
+  const limit = runLimit(db, invocation, project);
+  if (row || refused) return { charged: true, counted: 0, limit };
+  const so = observedSoFar(db, invocation);
+  return { charged: false, counted: so.cost_status === 'unknown' ? (billable(so) ?? 0) : 0, limit };
+}
+
 // The check on a usage observation (D1 §13.3): the limit the run's
 // invocation, or the project's day, has passed with what was observed so
 // far; null if none.

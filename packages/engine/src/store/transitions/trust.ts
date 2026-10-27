@@ -18,6 +18,7 @@ import { assertEdge } from './lifecycle.js';
 import { type RoleProfile, defaultProfileMax, effectiveProfileMax, engineSettings, projectOptions, roleModel, roleProfileOf } from './settings.js';
 import { templateOf } from '../../invoke/adapters/templates.js';
 import type { Tx } from './tx.js';
+import { attemptAdmission, outstandingReservation } from './qualification-budget.js';
 
 type Db = Tx['db'];
 
@@ -999,6 +1000,13 @@ export function trustView(db: Db, args: { scripted: boolean }) {
       decision: a.decision,
       trust_entry: a.trust_entry,
       invalidated_reason: a.invalidated_reason,
+      // The qualification budget (B2): for an attempt awaiting its approval,
+      // the fit its answer is checked against (charged today, the
+      // reservations of attempts already admitted, its own, the limit, when
+      // the day clears); for every attempt, what it holds back of its fixture
+      // project's day now (0 once converted or released).
+      admission: a.status === 'proposed' ? attemptAdmission(db, a) : null,
+      reserved_tokens: outstandingReservation(db, a),
     })),
   };
 }
