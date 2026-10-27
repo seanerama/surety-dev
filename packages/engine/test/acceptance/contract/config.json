@@ -360,6 +360,10 @@
       "min": 4096,
       "max": 1048576,
       "unit": "bytes"
+    },
+    "workspace_assistant": {
+      "default": null,
+      "unit": "object {backend, model, credential_ref, day_limit_billable_tokens, turn_limit_billable_tokens, turn_deadline_seconds}; absent by default, every field required when present, none defaulted (E183 D1 settlement, 2026-10-27)"
     }
   },
   "decision_target_defaults": {
