@@ -209,7 +209,7 @@ test('the state, first failing condition first, from real configuration', (t) =>
   assert.deepEqual([s.state, s.configured, s.trust_entry, s.provider, s.model], ['ready', true, p.entry.id, 'claude', 'sonnet']);
   assert.deepEqual(
     Object.keys(s.account).sort(),
-    ['day', 'day_limit', 'estimated_usd', 'fits_one_more_turn', 'id', 'limit_is', 'remaining', 'reported_usd', 'reserved', 'resets_at', 'turn_limit', 'turns_charged', 'turns_under_way', 'unit', 'unknown_allowance', 'unknown_cost_turns', 'used_known'].sort(),
+    ['day', 'day_limit', 'estimated_usd', 'fits_one_more_turn', 'id', 'limit_is', 'remaining', 'reported_usd', 'reserved', 'resets_at', 'turn_limit', 'turns_charged', 'turns_under_way', 'unit', 'unknown_allowance_tokens', 'unknown_cost_turns', 'used_known'].sort(),
   );
   assert.equal(s.account.unit, 'billable_tokens');
   // Project roles never resolve the assistant's entry: only the role
@@ -248,7 +248,7 @@ test('admission reserves the turn limit in the receipt transaction; a second adm
   assert.equal(db.prepare('SELECT account FROM execution_domains WHERE id = ?').get(claim.domain).account, 'workspace_assistant');
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'scheduler.tick_requested' AND json_extract(payload, '$.cause') = 'assistant_turn_admitted'`).get().n, 1, 'the admission asks for a tick');
   let a = account(db);
-  assert.deepEqual([a.reserved, a.used_known, a.unknown_allowance, a.remaining, a.fits_one_more_turn], [40_000, 0, 0, 20_000, false]);
+  assert.deepEqual([a.reserved, a.used_known, a.unknown_allowance_tokens, a.remaining, a.fits_one_more_turn], [40_000, 0, 0, 20_000, false]);
   assert.equal(state(db).state, 'limit_reached');
   const counts = () => ['invocation_receipts', 'assistant_turns', 'execution_domains', 'process_ownership'].map((x) => db.prepare(`SELECT COUNT(*) AS n FROM ${x}`).get().n);
   const before = counts();
@@ -270,7 +270,7 @@ test('admission reserves the turn limit in the receipt transaction; a second adm
   usage(db, claim.invocation, claude(1_000, 200, { usage_final: true, total_cost_usd_estimate: 0.004 }));
   end(db, claim.invocation, 'completed', 'none', { reply: { text: 'ok', cited_evidence: [], links: [] } });
   a = account(db);
-  assert.deepEqual([a.reserved, a.used_known, a.unknown_allowance, a.turns_charged, a.remaining, a.fits_one_more_turn], [0, 1_200, 0, 1, 58_800, true]);
+  assert.deepEqual([a.reserved, a.used_known, a.unknown_allowance_tokens, a.turns_charged, a.remaining, a.fits_one_more_turn], [0, 1_200, 0, 1, 58_800, true]);
   assert.equal(state(db).state, 'ready');
 });
 
@@ -327,7 +327,7 @@ test('reported, estimated and unknown kept apart; incomplete usage charged the t
   assert.equal(a.estimated_usd, 0);
   assert.equal(a.unknown_cost_turns, 2);
   assert.equal(a.used_known, 110 + 1_000 + 0);
-  assert.equal(a.unknown_allowance, 39_000);
+  assert.equal(a.unknown_allowance_tokens, 39_000);
   assert.equal(a.reserved, 0);
   assert.equal(a.turns_charged, 3);
   // The turn as the service reads it.
@@ -371,7 +371,7 @@ test('day rollover at 00:00Z: charged turns stay on their day; a turn under way 
   launched(db, u);
   end(db, u.invocation, 'recovered', 'recovered');
   const after = account(db);
-  assert.deepEqual([after.reserved, after.unknown_allowance, after.turns_charged], [0, 40_000, 1], 'charged on the day its row is written');
+  assert.deepEqual([after.reserved, after.unknown_allowance_tokens, after.turns_charged], [0, 40_000, 1], 'charged on the day its row is written');
 });
 
 test("assistant rows never change any project's ledger read, day budget or exhausted limits, and project rows never change the assistant's day", (t) => {
@@ -448,7 +448,7 @@ setInterval(() => {}, 1000);
   const db = openStore(path, { fresh: false });
   t.after(() => db.open && db.close());
   let a = account(db);
-  assert.deepEqual([a.turns_under_way, a.reserved, a.used_known, a.unknown_allowance], [1, 33_000, 7_000, 0], 'held once: its limit less what it observed, beside what it observed');
+  assert.deepEqual([a.turns_under_way, a.reserved, a.used_known, a.unknown_allowance_tokens], [1, 33_000, 7_000, 0], 'held once: its limit less what it observed, beside what it observed');
   assert.deepEqual(A.unendedTurns(db).map((x) => x.invocation), [claim.invocation]);
   // Recovery ends it `recovered` (its domain's termination established
   // first, by the engine): exactly one row, charged the turn limit.
@@ -458,7 +458,7 @@ setInterval(() => {}, 1000);
   assert.equal(rows.length, 1);
   assert.deepEqual([rows[0].billable_in, rows[0].unknown_allowance_tokens, rows[0].usage_complete], [7_000, 33_000, 0]);
   a = account(db);
-  assert.deepEqual([a.turns_under_way, a.reserved, a.used_known, a.unknown_allowance], [0, 0, 7_000, 33_000], 'converted once: the same 40,000, now charged');
+  assert.deepEqual([a.turns_under_way, a.reserved, a.used_known, a.unknown_allowance_tokens], [0, 0, 7_000, 33_000], 'converted once: the same 40,000, now charged');
   assert.ok(db.prepare(`SELECT 1 FROM invocation_status_observations WHERE invocation = ? AND status = 'unknown'`).get(claim.invocation), 'its end is an explicit unknown');
   assert.equal(A.turnOf(db, { invocation: claim.invocation }).outcome, 'recovered');
 });

@@ -53,7 +53,7 @@ test('a block: the real state as the store computes it; a store failure is a 503
   await assert.rejects(new AssistantService(h, false, noRead, 'tok', failing).capability(), (e) => e.status === 503 && e.code === 'assistant_state_unavailable' && /not ready/.test(e.reason));
 });
 
-test('a message refused at its admission: the refusal answers, no turn is waited for, the owner message is failed with the refusal and nothing else is written', async (t) => {
+test('a message refused at its admission: the refusal answers, no turn is waited for, the owner message is refused with the refusal, nothing charged, and nothing else is written', async (t) => {
   const h = home(t);
   const { Refusal } = await import(join(dist, 'refusal.js'));
   for (const [code, status] of [
@@ -69,12 +69,11 @@ test('a message refused at its admission: the refusal answers, no turn is waited
         calls.push(a);
         throw new Refusal(status, code, `refused: ${code}`, 'do', { state: code });
       },
-      settled: async () => {
-        throw new Error('nothing is waited for');
-      },
       turn: async () => null,
       cancel: async () => null,
-      onSettled: () => {},
+      onSettled: () => false,
+      provider: () => ({ provider: 'claude', model: 'claude-sonnet-5-5' }),
+      incarnation: () => 'inc_test',
     };
     const reads = [];
     const svc = new AssistantService(h, false, async (name) => {
@@ -86,11 +85,13 @@ test('a message refused at its admission: the refusal answers, no turn is waited
     assert.equal(calls.length, 1, 'one admission');
     assert.deepEqual(calls[0].pkg.request, { intent_id: 'i1', text: 'What is waiting on me?', context: { project: null, screen: 'home' } });
     assert.ok(reads.includes('decisions.engine'), 'the engine chose its reads before the admission');
-    const c = svc.get(id).conversation;
-    assert.deepEqual(c.messages.map((m) => [m.role, m.status, m.error?.code, m.error?.outcome]), [['user', 'failed', code, 'refused']]);
+    const c = (await svc.get(id)).conversation;
+    assert.deepEqual(c.messages.map((m) => [m.role, m.status, m.error?.code, m.error?.outcome]), [['user', 'refused', code, 'refused']]);
+    // Nothing was charged; the pending usage names the configured backend.
+    assert.deepEqual([c.messages[0].usage.provider, c.messages[0].usage.model, c.messages[0].usage.charged], ['claude', 'claude-sonnet-5-5', false]);
     // The same intent again is the stored answer, never a second admission.
     const again = await svc.message(id, { intent_id: 'i1', text: 'What is waiting on me?', context: { project: null, screen: 'home' } }, actor);
-    assert.equal(again.status, 'failed');
+    assert.deepEqual([again.status, again.body.message.status, again.body.turn, again.body.reply], [200, 'refused', null, null]);
     assert.equal(calls.length, 1);
   }
 });

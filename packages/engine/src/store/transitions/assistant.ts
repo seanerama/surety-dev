@@ -12,10 +12,10 @@
 // transaction that writes its receipt, only if the assistant's state is
 // `ready` (§2) and
 //
-//   used_known + unknown_allowance + reserved + turn_limit <= day_limit,
+//   used_known + unknown_allowance_tokens + reserved + turn_limit <= day_limit,
 //
 // where `used_known` is the billable tokens today's assistant rows know (and
-// the turns under way have observed), `unknown_allowance` what their unknown
+// the turns under way have observed), `unknown_allowance_tokens` what their unknown
 // part is charged (a row's allowance in force; a row that knows a count
 // partly and carries none, its turn limit less what it knows: unknown is
 // never zero), and `reserved` the remaining turn limit of every turn under
@@ -74,7 +74,9 @@ export interface AssistantAccountView {
   day_limit: number;
   turn_limit: number;
   used_known: number;
-  unknown_allowance: number;
+  // The one name of the allowance everywhere the API speaks (the usability
+  // batch of 2026-10-27, decision 4): what the unknown part is charged.
+  unknown_allowance_tokens: number;
   reserved: number;
   remaining: number;
   reported_usd: number;
@@ -146,7 +148,7 @@ export function assistantAccount(db: Db, cfg: AssistantConfig, opts: { check?: b
     day_limit: cfg.day_limit_billable_tokens,
     turn_limit: cfg.turn_limit_billable_tokens,
     used_known: usedKnown,
-    unknown_allowance: unknown,
+    unknown_allowance_tokens: unknown,
     reserved,
     remaining: Math.max(0, cfg.day_limit_billable_tokens - used),
     reported_usd: money(reported),
@@ -336,7 +338,7 @@ export function assistantStanding(db: Db, args: { credential: CredentialFacts })
     return {
       state: 'limit_reached',
       configured: true,
-      reason: `Today's assistant limit is reached: ${account.used_known} billable tokens used, ${account.unknown_allowance} charged as unknown, ${account.reserved} reserved by turns under way, of ${account.day_limit}; one more turn reserves ${account.turn_limit}.`,
+      reason: `Today's assistant limit is reached: ${account.used_known} billable tokens used, ${account.unknown_allowance_tokens} charged as unknown, ${account.reserved} reserved by turns under way, of ${account.day_limit}; one more turn reserves ${account.turn_limit}.`,
       what_to_do: `The day resets at ${account.resets_at} (00:00 UTC). History and receipts stay readable; the limit is the owner's, in config.json.`,
       ...base,
       qualification,
@@ -392,7 +394,7 @@ const refusedState = (s: AssistantStanding): Refusal => {
   if (s.state === 'limit_reached' && s.account) {
     Object.assign(subject, {
       used_known: s.account.used_known,
-      unknown_allowance: s.account.unknown_allowance,
+      unknown_allowance_tokens: s.account.unknown_allowance_tokens,
       reserved: s.account.reserved,
       turn_limit: s.account.turn_limit,
       day_limit: s.account.day_limit,
@@ -444,7 +446,7 @@ export function admitTurn(
     turn_deadline_seconds: cfg.turn_deadline_seconds,
     day,
     // What the day held at admission (the inequality's terms).
-    admitted_against: { used_known: standing.account!.used_known, unknown_allowance: standing.account!.unknown_allowance, reserved: standing.account!.reserved },
+    admitted_against: { used_known: standing.account!.used_known, unknown_allowance_tokens: standing.account!.unknown_allowance_tokens, reserved: standing.account!.reserved },
   };
   const session = template.sessionIdOf?.(invocation) ?? null;
   db.prepare(
@@ -529,8 +531,15 @@ export function turnOf(db: Db, args: { conversation: string; intent_id: string }
   if (!row) return null;
   const led = db.prepare(`SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid`).all(row.invocation) as LedgerRow[];
   const usage = led.length === 0 ? null : accountsOf(led)[0] ?? null;
+  // The incarnation that owns the turn's domain (a turn left by an earlier
+  // one is unknown until startup recovery ends it) and its deadline.
+  const owner = db
+    .prepare(`SELECT o."incarnation", r."deadline_at" FROM "invocation_receipts" r LEFT JOIN "execution_domains" d ON d."invocation" = r."id" LEFT JOIN "process_ownership" o ON o."domain" = d."id" WHERE r."id" = ?`)
+    .get(row.invocation) as { incarnation: string | null; deadline_at: string | null } | undefined;
   return {
     ...row,
+    incarnation: owner?.incarnation ?? null,
+    deadline_at: owner?.deadline_at ?? null,
     reply: row.reply === null ? null : (JSON.parse(row.reply) as unknown),
     usage:
       usage === null

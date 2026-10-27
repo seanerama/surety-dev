@@ -20,7 +20,7 @@ import { newId } from '../ids.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
-import { policyRefusal } from '../store/transitions/project.js';
+import { policyIntentConflict, policyRefusal } from '../store/transitions/project.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the request and send it again; nothing was created.', { field });
 
@@ -132,7 +132,26 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
 export async function preparePolicy(rt: Runtime, project: string, body: unknown): Promise<Record<string, unknown>> {
   await rt.read('project.policy', { project });
   if (typeof body !== 'object' || body === null || Array.isArray(body)) validatePolicySubmission(body);
-  const all = body as Record<string, unknown>;
+  // The submission's optional intent_id (the usability batch of 2026-10-27,
+  // decision 6): not a policy key. A repeat of a recorded intent with the
+  // same body prepares nothing and is answered what it was answered; a
+  // different body is refused here, before anything is prepared.
+  const { intent_id: intentValue, ...all } = body as Record<string, unknown>;
+  let intent: string | null = null;
+  if (Object.prototype.hasOwnProperty.call(body, 'intent_id')) {
+    if (typeof intentValue !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(intentValue)) {
+      throw new Refusal(400, 'invalid_value', '"intent_id" must be 1 to 100 of A-Z, a-z, 0-9, _ and -.', 'Send a new intent_id for each policy submission, and the same one only to repeat it.', { field: 'intent_id' });
+    }
+    intent = intentValue;
+  }
+  const fingerprint = createHash('sha256').update(canonical(all)).digest('hex');
+  if (intent !== null) {
+    const prior = await rt.read<{ fingerprint: string } | null>('project.policy_submission', { project, intent_id: intent });
+    if (prior !== null) {
+      if (prior.fingerprint !== fingerprint) throw policyIntentConflict(project, intent);
+      return { project, body, ordinary: {}, widens: [], governed: null, prepared: null, intent_id: intent, fingerprint, repeat: true };
+    }
+  }
   const governedKeys = Object.keys(all).filter((k) => (GOVERNED_KEYS as readonly string[]).includes(k));
   const ordinaryBody = Object.fromEntries(Object.entries(all).filter(([k]) => !governedKeys.includes(k)));
   const change = validatePolicySubmission(ordinaryBody, rt.setting('domain_memory_max'));
@@ -187,7 +206,7 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
     if (facts.blocking) throw policyRefusal(facts.blocking);
     prepared = await preparePolicyCommit(rt, project, facts, change);
   }
-  return { project, body, ordinary: change, widens: widens.sort(), governed, prepared };
+  return { project, body, ordinary: change, widens: widens.sort(), governed, prepared, intent_id: intent, fingerprint };
 }
 
 // The commit of `.surety/policy.json` holding the effective policy with

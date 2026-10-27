@@ -624,8 +624,9 @@ export class AssistantTurns {
   // Every turn an earlier incarnation left unended: its domain's termination
   // established (the real boundary's protocol; on the scripted boundary its
   // processes killed and the boundary's report), then ended `recovered` with
-  // what it observed and the allowance, its owner message left unknown and
-  // never replayed. A turn that never launched is ended `refused` (nothing
+  // what it observed and the allowance, never replayed; its owner message,
+  // `unknown` until then, is written `interrupted` with that charge by the
+  // conversation's next read (assistant/service.ts). A turn that never launched is ended `refused` (nothing
   // was spent). A domain whose termination cannot be established stays, its
   // turn unended and its reservation held, and is tried again at the next
   // start.

@@ -6,7 +6,7 @@ import { newId } from '../ids.js';
 import { redactText, redactValue, scanBytes } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type ReadTool, type TurnUsage } from './contract.js';
+import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type MessageStatus, type PendingUsage, type TurnRef, type ReadTool, type TurnUsage } from './contract.js';
 import { type TurnPackage, boundedConversation } from './turn-package.js';
 import { ASSISTANT_WHAT_TO_DO } from './what-to-do.js';
 
@@ -157,32 +157,53 @@ export async function fakeReply(req: AssistantRequest, gateway: ToolGateway): Pr
   return { text: lines.join('\n\n'), links };
 }
 
-interface StoredConversation extends Conversation { requests: Record<string, string> }
+
+// What the conversation keeps of each real turn beside its messages (never
+// served): its invocation and deadline once admitted, and the evidence the
+// engine's reads returned before the admission, which its reply is shown
+// with. Kept on disk, so a turn that ends after a restart is written as one
+// that ends in the incarnation that admitted it.
+interface TurnMeta { invocation: string | null; deadline_at: string | null; evidence: Evidence[]; request_id: string | null }
+interface StoredConversation extends Conversation { requests: Record<string, string>; turns?: Record<string, TurnMeta> }
 
 // The real path's port (assistant/real.ts): the state from real
 // configuration and the turn itself, admitted in the store and run through
 // the choke point.
 export interface TurnRead {
-  invocation: string; status: string; outcome: string | null; reason: string | null; reason_text: string | null;
+  invocation: string; conversation: string; intent_id: string; status: string; outcome: string | null; reason: string | null; reason_text: string | null;
+  // The incarnation that owns the turn's domain, and the turn's deadline.
+  incarnation: string | null; deadline_at: string | null;
   reply: { text: string; cited_evidence: string[]; links: AssistantLink[]; commentary?: boolean } | null;
   usage: Omit<TurnUsage, 'account'> & { account: 'workspace_assistant' } | null;
 }
 export interface RealAssistantPort {
   state(): Promise<Record<string, unknown>>;
   admit(args: { conversation: string; intent_id: string; pkg: TurnPackage; actor: Actor }): Promise<{ invocation: string; deadline_at: string; backend: string }>;
-  settled(invocation: string, ms: number): Promise<boolean>;
-  turn(invocation: string): Promise<TurnRead | null>;
+  turn(args: { invocation: string } | { conversation: string; intent_id: string }): Promise<TurnRead | null>;
   cancel(args: { conversation: string; intent_id: string; actor: Actor }): Promise<{ invocation: string; status: string } | null>;
-  onSettled(fn: (invocation: string) => Promise<void>): void;
+  onSettled(fn: (invocation: string) => Promise<void>): boolean;
+  provider(): { provider: string; model: string };
+  incarnation(): string | null;
 }
+
+// The answer to a message request, and to each repeat of it: the intent's
+// current state (the usability batch's decision 1).
+export interface MessageAnswer { conversation: Conversation; message: AssistantMessage | null; turn: TurnRef | null; reply: AssistantMessage | null }
 
 const RETENTION = 'engine-owned; explicit deletion';
 const ACTIONS = ['create_app', 'start_planning'];
+// A turn whose end is not yet written into its conversation.
+const OPEN: readonly MessageStatus[] = ['running', 'unknown'];
+
+const busyRefusal = () => new Refusal(409, 'assistant_busy', 'A response is already running in this conversation.', 'Wait for it to settle; do not replay the request. Its state is on the conversation.');
 
 export class AssistantService {
   private readonly dir: string;
+  // The conversations whose message is being admitted now (the owner
+  // message written, the reads and the admission under way).
   private readonly busy = new Set<string>();
   private readonly actions: ActionStore;
+  private hooked = false;
   // `scriptedProvider`: the in-process deterministic fake, which only the
   // engine's test mode selects and only when config.json has no
   // workspace_assistant block. `real`: the real path, present exactly when
@@ -193,6 +214,7 @@ export class AssistantService {
   // `configured` derived from real configuration on each read.
   async capability(): Promise<Record<string, unknown>> {
     if (this.real) {
+      this.hook();
       const body = await this.real.state();
       const configured = body.configured === true;
       return { version: 1, ...body, limits: LIMITS, retention: RETENTION, actions: configured ? ACTIONS : [] };
@@ -229,7 +251,19 @@ export class AssistantService {
     renameSync(temp, path);
     const dir = openSync(this.dir, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
   }
-  private public(c: StoredConversation): Conversation { const { requests: _, ...out } = c; return out; }
+  // The conversation as served: each owner message with its turn (the
+  // coordinator's addition of 2026-10-27: a client never builds a route).
+  private public(c: StoredConversation): Conversation {
+    const { requests: _, turns: __, ...out } = c;
+    return { ...out, messages: out.messages.map(m => (m.role === 'user' ? { ...m, turn: this.turnRef(c, m) } : m)) };
+  }
+  private turnRef(c: StoredConversation, owner: AssistantMessage): TurnRef | null {
+    if (!this.real) return { id: null, status: owner.status, deadline_at: null, cancel: null };
+    const meta = c.turns?.[owner.intent_id];
+    const invocation = owner.invocation ?? meta?.invocation ?? null;
+    if (invocation === null) return null;
+    return { id: invocation, status: owner.status, deadline_at: meta?.deadline_at ?? null, cancel: owner.status === 'running' ? this.cancelPath(c.id, owner.id) : null };
+  }
   list() {
     this.configured();
     const conversations = existsSync(this.dir) ? readdirSync(this.dir).filter(n => /^ac_[A-Z0-9]{26}\.json$/.test(n)).map(n => this.load(n.slice(0, -5))).map(c => ({ id: c.id, created_at: c.created_at, updated_at: c.updated_at, message_count: c.messages.length })).sort((a, b) => b.updated_at.localeCompare(a.updated_at)) : [];
@@ -239,13 +273,16 @@ export class AssistantService {
     this.configured(); fields(body, []);
     if (this.list().conversations.length >= LIMITS.max_conversations) throw new Refusal(429, 'assistant_limit', 'The conversation limit was reached.', 'Delete an old assistant conversation before creating another.');
     const now = new Date().toISOString();
-    const c: StoredConversation = { id: newId('ac_'), created_at: now, updated_at: now, messages: [], requests: {} };
+    const c: StoredConversation = { id: newId('ac_'), created_at: now, updated_at: now, messages: [], requests: {}, turns: {} };
     this.save(c); return { conversation: this.public(c) };
   }
-  get(id: string) { this.configured(); return { conversation: this.public(this.load(id)) }; }
-  delete(id: string) {
-    this.configured(); this.load(id);
-    if (this.busy.has(id)) throw new Refusal(409, 'assistant_busy', 'A response is still running.', 'Wait for it to settle before deleting.');
+  // GET /v1/assistant/conversations/:id: each turn's end written first, so
+  // the read is the outcome (the usability batch's decision 1).
+  async get(id: string) { this.configured(); await this.reconcile(id); return { conversation: this.public(this.load(id)) }; }
+  async delete(id: string) {
+    this.configured(); await this.reconcile(id);
+    const c = this.load(id);
+    if (this.busy.has(id) || c.messages.some(m => m.role === 'user' && OPEN.includes(m.status))) throw new Refusal(409, 'assistant_busy', 'A response is still running.', 'Wait for it to settle before deleting.');
     if (this.actions.list(id).receipts.some(a => ['claimed','partial','unknown'].includes(a.status))) throw new Refusal(409, 'assistant_action_unsettled', 'This conversation has an unresolved action receipt and cannot yet be deleted.', 'Inspect the receipt and current app in the workspace. No action will be replayed.');
     unlinkSync(this.path(id)); return { deleted: id };
   }
@@ -259,28 +296,48 @@ export class AssistantService {
   }
   actionStep(id:string, action:string, value:unknown) { this.configured(); this.load(id); return this.actions.step(id,action,value); }
   actionResult(id:string, action:string, value:unknown) { this.configured(); this.load(id); return this.actions.result(id,action,value); }
-  async message(id: string, value: unknown, actor: Actor) {
+
+  // An owner message's usage before its turn is charged: the configured
+  // backend and model, never "unconfigured" while a block exists.
+  private pendingUsage(): PendingUsage {
+    const p = this.real ? this.real.provider() : null;
+    return { account: 'workspace_assistant', provider: p?.provider ?? 'unconfigured', model: p?.model ?? null, cost_status: 'unknown', cost_usd: null, input_tokens: null, output_tokens: null, charged: false };
+  }
+  private cancelPath(conversation: string, message: string) { return `/v1/assistant/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/cancel`; }
+
+  // The intent's current state: 202 while its turn is under way, 200 once
+  // its end (or its refusal) is written, or while it is unknown.
+  private answer(c: StoredConversation, intent: string): { status: number; body: MessageAnswer } {
+    const conversation = this.public(c);
+    const owner = conversation.messages.find(m => m.intent_id === intent && m.role === 'user') ?? null;
+    const reply = conversation.messages.find(m => m.intent_id === intent && m.role === 'assistant') ?? null;
+    return { status: owner?.status === 'running' ? 202 : 200, body: { conversation, message: owner, turn: owner?.turn ?? null, reply } };
+  }
+
+  // POST /v1/assistant/conversations/:id/messages. The fake answers at once
+  // (200, its reply present); the real path answers 202 at the admission.
+  async message(id: string, value: unknown, actor: Actor): Promise<{ status: number; body: MessageAnswer }> {
     this.configured();
     if (this.real) return this.realMessage(id, value, actor);
     const raw = parseRequest(value);
     const fingerprint = createHash('sha256').update(JSON.stringify(raw)).digest('hex');
     const req = safeValue(raw, this.token);
+    await this.reconcile(id);
     let c = this.load(id);
     if (c.requests[req.intent_id]) {
       if (c.requests[req.intent_id] !== fingerprint) throw new Refusal(409, 'assistant_intent_conflict', 'This intent identifier already names a different message or context.', 'Use a new intent identifier for a new owner request.');
-      const message = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'assistant');
-      return { conversation: this.public(c), message: message ?? null, status: message?.status ?? 'unknown' };
+      return this.answer(c, req.intent_id);
     }
-    if (this.busy.has(id)) throw new Refusal(409, 'assistant_busy', 'A response is already running in this conversation.', 'Wait for it to settle; do not replay the request.');
+    if (this.busy.has(id)) throw busyRefusal();
     if (c.messages.length + 2 > LIMITS.max_messages) throw new Refusal(429, 'assistant_limit', 'The conversation message limit was reached.', 'Start a new assistant conversation.');
     if (this.busy.size >= 2) throw new Refusal(429, 'assistant_limit', 'The assistant concurrency limit was reached.', 'Wait for a current response to settle.');
     this.busy.add(id);
     try {
       const at = new Date().toISOString();
-      const human: AssistantMessage = { id: newId('am_'), intent_id: req.intent_id, role: 'user', text: req.text, context: req.context, created_at: at, status: 'unknown', evidence: [], links: [], usage: FAKE_USAGE, actor: { kind: 'human', request_id: actor.request_id } };
+      const human: AssistantMessage = { id: newId('am_'), intent_id: req.intent_id, role: 'user', text: req.text, context: req.context, created_at: at, status: 'running', evidence: [], links: [], usage: FAKE_USAGE, actor: { kind: 'human', request_id: actor.request_id } };
       c.requests[req.intent_id] = fingerprint; c.messages.push(human); c.updated_at = at; this.save(c);
       const gateway = new ToolGateway(this.read, req.context, this.token);
-      let result: { text: string; links: AssistantLink[] }; let status: AssistantMessage['status'] = 'completed';
+      let result: { text: string; links: AssistantLink[] }; let status: MessageStatus = 'completed';
       try { result = await fakeReply(req, gateway); }
       catch { result = { text: 'The assistant could not complete this read. Its outcome is unknown; use the workspace to inspect current state.', links: [] }; status = 'failed'; }
       let actions: AssistantMessage['actions'] = [];
@@ -298,120 +355,189 @@ export class AssistantService {
       }
       const message: AssistantMessage = safeValue({ id: newId('am_'), intent_id: req.intent_id, role: 'assistant', text: result.text, context: req.context, created_at: new Date().toISOString(), status, evidence: gateway.evidence, links: result.links, actions, usage: FAKE_USAGE, actor: { kind: 'assistant', request_id: actor.request_id } }, this.token);
       c = this.load(id); const ownerMessage = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'user'); if (ownerMessage) ownerMessage.status = status; c.messages.push(message); c.updated_at = message.created_at; this.save(c);
-      return { conversation: this.public(c), message, status };
+      return this.answer(c, req.intent_id);
     } finally { this.busy.delete(id); }
   }
 
-  // The turns this service waits on: their conversation, intent, evidence
-  // and owner context, until their message is written.
-  private readonly pending = new Map<string, { conversation: string; intent_id: string; evidence: Evidence[]; context: AssistantContext; text: string; request_id: string | null }>();
-  private hooked = false;
+  private hook() {
+    if (this.real && !this.hooked) this.hooked = this.real.onSettled(async (invocation) => { await this.recordTurn(invocation); });
+  }
 
-  // A message on the real path (the assistant design §§1.3, 4): the reads
-  // chosen by the engine, the turn admitted in the store's transaction (with
-  // the state's code refused unless ready), dispatched by the tick through
-  // the choke point, and its reply written once it has ended. A message is
-  // never replayed: an intent names one turn.
-  private async realMessage(id: string, value: unknown, actor: Actor) {
-    const real = this.real!;
-    if (!this.hooked) {
-      this.hooked = true;
-      real.onSettled(async (invocation) => { await this.recordTurn(invocation); });
+  // Every owner message whose turn's end is not yet written, settled from
+  // the store (the usability batch's decisions 2 and 3): an ended turn's end
+  // written; a turn under way in this incarnation `running`; a turn another
+  // incarnation owns, not yet ended by recovery, `unknown`; a message whose
+  // admission was never made (the engine stopped between writing it and
+  // admitting it: no receipt, nothing charged) `interrupted`. The fake's
+  // message whose reply was never written (the engine stopped while it
+  // answered) is `interrupted` too. Each write is a load, change and save
+  // with no wait between.
+  private async reconcile(id: string): Promise<void> {
+    const open = this.load(id).messages.filter(m => m.role === 'user' && OPEN.includes(m.status));
+    for (const m of open) {
+      if (!this.real) {
+        if (m.status !== 'running' || this.busy.has(id)) continue;
+        this.settleOwner(id, m.intent_id, (owner) => this.interrupt(owner, 'not_completed', 'The engine stopped while the deterministic fake answered; nothing is replayed.', FAKE_USAGE));
+        continue;
+      }
+      // A message whose admission is being made now has no turn yet.
+      const admitting = this.busy.has(id);
+      let found: TurnRead | null;
+      try { found = await this.real.turn({ conversation: id, intent_id: m.intent_id }); }
+      catch { continue; }
+      const turn = found;
+      if (turn === null) {
+        if (admitting) continue;
+        // Written and never admitted (its refusal is written as such): the
+        // engine stopped between writing it and admitting it.
+        const c = this.load(id);
+        const owner = c.messages.find(x => x.intent_id === m.intent_id && x.role === 'user');
+        if (!owner || !OPEN.includes(owner.status) || owner.invocation !== undefined || (c.turns?.[m.intent_id]?.invocation ?? null) !== null) continue;
+        this.interrupt(owner, 'not_admitted', 'The engine stopped before this message was admitted: no turn ran and nothing was charged.', this.pendingUsage());
+        c.updated_at = new Date().toISOString(); this.save(c);
+        continue;
+      }
+      if (turn.status === 'ended') { this.applyEnd(turn); continue; }
+      const current = this.real.incarnation();
+      const status: MessageStatus = current !== null && turn.incarnation === current ? 'running' : 'unknown';
+      this.settleOwner(id, m.intent_id, (owner) => { if (OPEN.includes(owner.status)) { owner.status = status; owner.invocation = turn.invocation; } });
     }
+  }
+
+  // One load, change and save of an owner message.
+  private settleOwner(id: string, intent: string, change: (owner: AssistantMessage) => void) {
+    let c: StoredConversation;
+    try { c = this.load(id); } catch { return; }
+    const owner = c.messages.find(m => m.intent_id === intent && m.role === 'user');
+    if (!owner) return;
+    const before = JSON.stringify(owner);
+    change(owner);
+    if (JSON.stringify(owner) !== before) { c.updated_at = new Date().toISOString(); this.save(c); }
+  }
+
+  private interrupt(owner: AssistantMessage, outcome: string, reason: string, usage: AssistantMessage['usage']) {
+    owner.status = 'interrupted';
+    owner.error = { code: 'assistant_interrupted', reason, what_to_do: ASSISTANT_WHAT_TO_DO.assistant_interrupted!, outcome };
+    owner.usage = usage;
+  }
+
+  // A message on the real path (the assistant design §§1.3, 4; the usability
+  // batch's decision 1): the reads chosen by the engine, the turn admitted
+  // in the store's transaction (with the state's code refused unless ready),
+  // and the answer given at the admission, 202, with the turn's identifier
+  // and its cancel route. The turn is dispatched by the tick through the
+  // choke point, and its end written into the conversation when it comes. A
+  // message is never replayed: an intent names one turn.
+  private async realMessage(id: string, value: unknown, actor: Actor): Promise<{ status: number; body: MessageAnswer }> {
+    const real = this.real!;
+    this.hook();
     const raw = parseRequest(value);
     const fingerprint = createHash('sha256').update(JSON.stringify(raw)).digest('hex');
     const req = safeValue(raw, this.token);
+    await this.reconcile(id);
     let c = this.load(id);
     if (c.requests[req.intent_id]) {
       if (c.requests[req.intent_id] !== fingerprint) throw new Refusal(409, 'assistant_intent_conflict', 'This intent identifier already names a different message or context.', 'Use a new intent identifier for a new owner request.');
-      const message = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'assistant');
-      return { conversation: this.public(c), message: message ?? null, status: message?.status ?? c.messages.find(m => m.intent_id === req.intent_id)?.status ?? 'unknown' };
+      return this.answer(c, req.intent_id);
     }
-    if (this.busy.has(id)) throw new Refusal(409, 'assistant_busy', 'A response is already running in this conversation.', 'Wait for it to settle; do not replay the request.');
+    if (this.busy.has(id) || c.messages.some(m => m.role === 'user' && OPEN.includes(m.status))) throw busyRefusal();
     if (c.messages.length + 2 > LIMITS.max_messages) throw new Refusal(429, 'assistant_limit', 'The conversation message limit was reached.', 'Start a new assistant conversation.');
     if (this.busy.size >= 2) throw new Refusal(429, 'assistant_limit', 'The assistant concurrency limit was reached.', 'Wait for a current response to settle.');
     this.busy.add(id);
     try {
       const at = new Date().toISOString();
       const prior = c.messages.map(m => ({ role: m.role, text: m.text, created_at: m.created_at }));
-      const human: AssistantMessage = { id: newId('am_'), intent_id: req.intent_id, role: 'user', text: req.text, context: req.context, created_at: at, status: 'unknown', evidence: [], links: [], usage: { account: 'workspace_assistant', provider: 'unconfigured', cost_status: 'unknown', cost_usd: null, input_tokens: null, output_tokens: null, charged: false }, actor: { kind: 'human', request_id: actor.request_id } };
-      c.requests[req.intent_id] = fingerprint; c.messages.push(human); c.updated_at = at; this.save(c);
+      const human: AssistantMessage = { id: newId('am_'), intent_id: req.intent_id, role: 'user', text: req.text, context: req.context, created_at: at, status: 'running', evidence: [], links: [], usage: this.pendingUsage(), actor: { kind: 'human', request_id: actor.request_id } };
+      c.requests[req.intent_id] = fingerprint; c.messages.push(human); c.turns = { ...(c.turns ?? {}), [req.intent_id]: { invocation: null, deadline_at: null, evidence: [], request_id: actor.request_id } }; c.updated_at = at; this.save(c);
       // The engine chooses the reads (O5): the gateway's deterministic
       // routing from the message's screen, candidate and gate context and the
       // two supported question kinds, made now; the model reads only what
       // they returned. Their summary text is never used.
       const gateway = new ToolGateway(this.read, req.context, this.token);
       try { await fakeReply(req, gateway); } catch { /* each failed read is its own error evidence */ }
+      c = this.load(id); c.turns![req.intent_id]!.evidence = gateway.evidence; this.save(c);
       const pkg: TurnPackage = { request: { intent_id: req.intent_id, text: req.text, context: req.context }, evidence: gateway.evidence, conversation: boundedConversation(prior) };
       let admitted: { invocation: string; deadline_at: string; backend: string };
       try {
         admitted = await real.admit({ conversation: id, intent_id: req.intent_id, pkg, actor });
       } catch (err) {
         // A refused admission writes no receipt and charges nothing; the
-        // owner's message is failed with the refusal, and the draft is the
+        // owner's message is `refused` with the refusal, and the draft is the
         // console's to keep.
         const r = err instanceof Refusal ? err : new Refusal(503, 'assistant_state_unavailable', 'The admission could not be made; the assistant is not ready.', 'Retry shortly.', {});
-        c = this.load(id);
-        const owner = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'user');
-        if (owner) { owner.status = 'failed'; owner.error = safeValue({ code: r.code, reason: r.reason, what_to_do: r.whatToDo, outcome: 'refused' }, this.token); }
-        c.updated_at = new Date().toISOString(); this.save(c);
+        this.settleOwner(id, req.intent_id, (owner) => { owner.status = 'refused'; owner.error = safeValue({ code: r.code, reason: r.reason, what_to_do: r.whatToDo, outcome: 'refused' }, this.token); });
         throw r;
       }
-      this.pending.set(admitted.invocation, { conversation: id, intent_id: req.intent_id, evidence: gateway.evidence, context: req.context, text: req.text, request_id: actor.request_id });
-      // Wait for the turn's end, bounded by its deadline and the grace the
-      // boundary takes to end it; past that the owner's message stays unknown
-      // and the turn's own end writes the reply when it comes.
-      const ms = Math.max(0, Date.parse(admitted.deadline_at) - Date.now()) + 60_000;
-      await real.settled(admitted.invocation, ms);
-      const message = await this.recordTurn(admitted.invocation);
       c = this.load(id);
-      return { conversation: this.public(c), message, status: message?.status ?? 'unknown' };
+      const owner = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'user');
+      if (owner && owner.invocation === undefined) owner.invocation = admitted.invocation;
+      c.turns![req.intent_id] = { ...c.turns![req.intent_id]!, invocation: admitted.invocation, deadline_at: admitted.deadline_at };
+      this.save(c);
+      return this.answer(c, req.intent_id);
     } finally { this.busy.delete(id); }
   }
 
-  // An ended turn's message, written into its conversation once (the turn's
-  // own end and the waiting request both call this). null while the turn has
-  // not ended.
-  private async recordTurn(invocation: string): Promise<AssistantMessage | null> {
-    const p = this.pending.get(invocation);
-    if (!p) return null;
-    const turn = await this.real!.turn(invocation);
-    if (turn === null || turn.status !== 'ended') return null;
-    const c = this.load(p.conversation);
-    const existing = c.messages.find(m => m.intent_id === p.intent_id && m.role === 'assistant');
-    if (existing) { this.pending.delete(invocation); return existing; }
+  // An ended turn's end, written into its conversation once (the turn's own
+  // end and each read call this): the owner message's status, error and
+  // charged usage; the reply (or the account of why there is none), except
+  // for a turn recovery ended, which is `interrupted` and has none.
+  private async recordTurn(invocation: string): Promise<void> {
+    const turn = await this.real!.turn({ invocation });
+    if (turn === null || turn.status !== 'ended') return;
+    this.applyEnd(turn);
+  }
+
+  private applyEnd(turn: TurnRead): void {
+    let c: StoredConversation;
+    try { c = this.load(turn.conversation); } catch { return; }
+    const owner = c.messages.find(m => m.intent_id === turn.intent_id && m.role === 'user');
+    if (!owner || !OPEN.includes(owner.status)) return;
+    if (c.messages.some(m => m.intent_id === turn.intent_id && m.role === 'assistant')) return;
+    const meta = c.turns?.[turn.intent_id];
+    const usage: AssistantMessage['usage'] = turn.usage === null ? this.pendingUsage() : { ...turn.usage, account: 'workspace_assistant', charged: true };
+    owner.invocation = turn.invocation;
+    owner.usage = usage;
+    const at = new Date().toISOString();
+    if (turn.reason === 'recovered' || turn.outcome === 'recovered') {
+      this.interrupt(owner, 'recovered', turn.reason_text ?? 'the engine restarted while the turn ran; it is never replayed', usage);
+      c.updated_at = at; this.save(c);
+      return;
+    }
     const completed = turn.outcome === 'completed' && turn.reply !== null;
     const reason = turn.reason ?? 'infra_error';
-    const usage: AssistantMessage['usage'] = turn.usage === null
-      ? { account: 'workspace_assistant', provider: 'unconfigured', cost_status: 'unknown', cost_usd: null, input_tokens: null, output_tokens: null, charged: false }
-      : { ...turn.usage, account: 'workspace_assistant' };
+    const status: MessageStatus = completed ? 'completed'
+      : reason === 'assistant_cancelled' || turn.outcome === 'stopped' ? 'stopped'
+      : turn.outcome === 'timed_out' ? 'timed_out'
+      : turn.outcome === 'refused' ? 'refused'
+      : 'failed';
+    const error = completed ? undefined : { code: reason, reason: turn.reason_text ?? reason, what_to_do: ASSISTANT_WHAT_TO_DO[reason] ?? ASSISTANT_WHAT_TO_DO.infra_error!, outcome: turn.outcome ?? 'unknown' };
     let actions: AssistantMessage['actions'] = [];
     // Action cards come only from the owner's own message (contract.md,
     // "Action bridge"); the model's text never yields one.
-    const kind = actionKind(p.text);
+    const kind = actionKind(owner.text);
     if (kind === 'create_app') {
-      const match = p.text.match(/(?:app|project)\s+(?:called\s+|named\s+)?([^:]+):\s*([\s\S]+)/i);
-      const brief = p.text.match(/(?:app|project)\s*:\s*([\s\S]+)/i);
+      const match = owner.text.match(/(?:app|project)\s+(?:called\s+|named\s+)?([^:]+):\s*([\s\S]+)/i);
+      const brief = owner.text.match(/(?:app|project)\s*:\s*([\s\S]+)/i);
       actions = [{ kind, draft: match ? { name: match[1]!.trim(), idea: match[2]!.trim() } : brief ? { idea: brief[1]!.trim() } : {} }];
-    } else if (kind === 'start_planning' && p.context.project) actions = [{ kind, project: p.context.project }];
+    } else if (kind === 'start_planning' && owner.context.project) actions = [{ kind, project: owner.context.project }];
     const message: AssistantMessage = safeValue({
-      id: newId('am_'), intent_id: p.intent_id, role: 'assistant',
+      id: newId('am_'), intent_id: turn.intent_id, role: 'assistant',
       text: completed ? turn.reply!.text : `The assistant did not complete this turn: ${turn.reason_text ?? reason}.`,
-      context: p.context, created_at: new Date().toISOString(), status: completed ? 'completed' : 'failed',
-      evidence: p.evidence, links: completed ? turn.reply!.links : [], actions, usage,
-      actor: { kind: 'assistant', request_id: p.request_id }, invocation,
-      ...(completed ? { cited_evidence: turn.reply!.cited_evidence, commentary: turn.reply!.cited_evidence.length === 0 } : { error: { code: reason, reason: turn.reason_text ?? reason, what_to_do: ASSISTANT_WHAT_TO_DO[reason] ?? ASSISTANT_WHAT_TO_DO.infra_error!, outcome: turn.outcome ?? 'unknown' } }),
+      context: owner.context, created_at: at, status,
+      evidence: meta?.evidence ?? [], links: completed ? turn.reply!.links : [], actions, usage,
+      actor: { kind: 'assistant', request_id: meta?.request_id ?? null }, invocation: turn.invocation,
+      ...(completed ? { cited_evidence: turn.reply!.cited_evidence, commentary: turn.reply!.cited_evidence.length === 0 } : { error }),
     } as AssistantMessage, this.token);
-    const owner = c.messages.find(m => m.intent_id === p.intent_id && m.role === 'user');
-    if (owner) owner.status = message.status;
-    c.messages.push(message); c.updated_at = message.created_at; this.save(c);
-    this.pending.delete(invocation);
-    return message;
+    owner.status = status;
+    if (error) owner.error = safeValue(error, this.token);
+    c.messages.push(message); c.updated_at = at; this.save(c);
   }
 
   // POST /v1/assistant/conversations/:id/messages/:message/cancel (the
-  // assistant design §4): the owner's cancel of a turn under way; `stopped`,
-  // its usage charged as observed with the allowance. Nothing else.
+  // assistant design §4; the usability batch's decision 1): the owner's
+  // cancel of a turn from its admission until it ends; `stopped`, its usage
+  // charged as observed with the allowance (or nothing, if nothing was
+  // launched). It never resends the message.
   async cancel(id: string, messageId: string, actor: Actor) {
     this.configured();
     if (!this.real) throw new Refusal(409, 'assistant_cancel_refused', 'Only a real assistant turn can be cancelled; the deterministic fake answers at once.', 'Nothing to cancel.');
@@ -423,3 +549,4 @@ export class AssistantService {
     return { invocation: r.invocation, status: r.status === 'ended' ? 'ended' : 'cancel_requested' };
   }
 }
+

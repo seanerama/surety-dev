@@ -11,7 +11,7 @@ test('create claim and each step are durably one-use, exact payload bound, repor
  const restarted=new AssistantService(home,true,async()=>({}), 'token-test');assert.equal(restarted.claimAction(id,claim,actor).execute,false);assert.equal(restarted.actionStep(id,a,body).execute,false);assert.equal(restarted.listActions(id).receipts[0].steps[0].client_report.request_id,'mutation-req');
 });
 test('different message, conversation and deletion cannot escape an unknown target claim',async t=>{
- const {service}=setup(t);const one=await ask(service);const a=service.claimAction(one,{intent_id:'owner_1',kind:'create_app',payload},actor);service.actionStep(one,a.receipt.id,{step:'create',request:{body:payload}});assert.throws(()=>service.delete(one),e=>e.code==='assistant_action_unsettled');assert.equal(service.allActions().receipts[0].id,a.receipt.id);
+ const {service}=setup(t);const one=await ask(service);const a=service.claimAction(one,{intent_id:'owner_1',kind:'create_app',payload},actor);service.actionStep(one,a.receipt.id,{step:'create',request:{body:payload}});await assert.rejects(service.delete(one),e=>e.code==='assistant_action_unsettled');assert.equal(service.allActions().receipts[0].id,a.receipt.id);
  const two=await ask(service,'Create an app',null,'owner_2');assert.throws(()=>service.claimAction(two,{intent_id:'owner_2',kind:'create_app',payload},actor),e=>e.code==='assistant_target_claimed');
 });
 test('only explicit owner requests can claim actions, planning stays on bound project',async t=>{

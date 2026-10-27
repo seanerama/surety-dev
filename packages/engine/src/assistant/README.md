@@ -33,9 +33,37 @@ answers are commentary, not engine-authored consequences or approval answers.
 
 Conversations are private mode-600 JSON files in the engine home's `assistant/`
 directory (mode 700), atomically replaced and fsynced. Message intent fingerprints
-bind text and context and survive process restart. A persisted owner request with
-no completed response remains unknown and is never replayed. A new read can use a
-new intent; it cannot retroactively complete an old one. A maximum of 20
+bind text and context and survive process restart. A message is never replayed.
+
+## Messages, turns and their states
+
+`POST /v1/assistant/conversations/:c/messages` answers with the intent's state,
+`{conversation, message, turn, reply}`: `message` is the owner message, `turn`
+its turn (`{id, status, deadline_at, cancel}`), `reply` the assistant message or
+null. On the real path it answers **202 at the admission** (the reservation and
+the owner message written, before the turn runs): `message.status` and
+`turn.status` are `running`, `turn.id` is the invocation and `turn.cancel` the
+cancel route, usable from then until the turn ends. The fake answers 200 with its
+reply present (`turn.id` null). A refusal is a 4xx with its code, and the owner
+message is kept `refused` with nothing charged. A repeat with the same
+`intent_id` and fingerprint returns that intent's current state (202 while its
+turn runs, otherwise 200), never a second turn; a different fingerprint is 409
+`assistant_intent_conflict`.
+
+The owner message's `status` is its turn's: `running`, then `completed`,
+`failed`, `stopped` (cancelled, or a turn limit), `timed_out`, `refused` or
+`interrupted`; `unknown` only between a restart and the end of the turn's
+recovery. Every end but `completed` carries `error.{code, reason, what_to_do,
+outcome}`. Its `usage` is the turn's charge once its ledger row is written
+(`charged: true`, `unknown_allowance_tokens` the allowance), and before that
+`charged: false` naming the configured backend and model. A turn the engine's
+restart interrupted is `interrupted` (`error.code` `assistant_interrupted`,
+`outcome` `recovered`) with what recovery charged, and has no reply; the
+conversation then accepts a new message. Reads of a conversation write each
+ended turn's end first, so `GET /v1/assistant/conversations/:c` is the outcome.
+Every owner message is served with its `turn` (the same object as the 202's;
+`cancel` while it runs, null after; null when no turn was admitted), so a
+client never builds a route; it is served, never stored. A maximum of 20
 conversations and 100 messages per conversation refuses further writes rather
 than silently discarding history. Explicit DELETE removes conversation text when no unresolved action receipt needs it.
 

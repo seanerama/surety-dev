@@ -106,6 +106,9 @@ const MAIN_BARRIERS: readonly string[] = [
   'dispatch.receipt_committed',
   'launch.before_spawn',
   'launch.before_ownership',
+  // Objection 215: a workspace assistant turn on the kernel lane, dispatched
+  // and its context package written, before its backend is spawned.
+  'assistant.before_spawn',
   'run.result_received',
   'run_end.before_ended',
   // M5 slice 37 (SEAM.md §§428, 430): the running tick, after its
