@@ -6,11 +6,28 @@ import { isModelName } from '../invoke/adapters/model.js';
 import { isAbsolute, normalize } from 'node:path';
 
 import { Refusal } from '../refusal.js';
-import { BUDGET_BOUNDARIES, type OptionSpec, PROJECT_OPTIONS, PROJECT_POLICY, numberInSpec } from './schema.js';
+import { seamScriptedBackendOffered } from '../testing/seam.js';
+import { BACKEND_NAMES, BACKEND_ROLE_KEYS, BUDGET_BOUNDARIES, type OptionSpec, PROJECT_OPTIONS, PROJECT_POLICY, numberInSpec } from './schema.js';
 
 // A value of an ungoverned key: a number, or one of the typed options.
 export type PolicyValue = number | string | boolean | string[] | number[] | Record<string, unknown>;
 export type Policy = Record<string, PolicyValue>;
+
+// The typed options as this engine offers them. Outside the test mode they
+// are PROJECT_OPTIONS: each `backend_<role>` key offers the real providers
+// and has no default. In the test mode the scripted backend is offered
+// besides them and is every role's default, as before.
+export function projectOptionSpecs(): Record<string, OptionSpec> {
+  if (!seamScriptedBackendOffered()) return PROJECT_OPTIONS;
+  const keys = new Set(Object.values(BACKEND_ROLE_KEYS));
+  return Object.fromEntries(Object.entries(PROJECT_OPTIONS).map(([key, spec]) => [key, keys.has(key) ? { ...spec, values: BACKEND_NAMES, default: 'scripted' } : spec]));
+}
+
+// The `backend_<role>` keys of the effective policy that name no backend:
+// unconfigured, never given a default (the owner's ruling of 2026-10-27).
+export function unconfiguredBackendKeys(effective: Policy): string[] {
+  return Object.values(BACKEND_ROLE_KEYS).filter((key) => typeof effective[key] !== 'string');
+}
 
 export function projectPolicyDefaults(): Record<string, number> {
   const out: Record<string, number> = {};
@@ -18,10 +35,12 @@ export function projectPolicyDefaults(): Record<string, number> {
   return out;
 }
 
-// The defaults of every ungoverned key, numbers and options.
+// The defaults of every ungoverned key, numbers and options. A key with no
+// default (a `backend_<role>` key outside the test mode) is absent: it is
+// unconfigured, and nothing stands in for it.
 export function projectEffectiveDefaults(): Policy {
   const out: Policy = { ...projectPolicyDefaults() };
-  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) out[key] = structuredClone(spec.default) as PolicyValue;
+  for (const [key, spec] of Object.entries(projectOptionSpecs())) if (spec.default !== null) out[key] = structuredClone(spec.default) as PolicyValue;
   return out;
 }
 
@@ -113,8 +132,9 @@ export function validatePolicySubmission(body: unknown, ceiling?: number): Polic
     });
   }
   const entries = Object.entries(body as Record<string, unknown>);
+  const options = projectOptionSpecs();
   for (const [key] of entries) {
-    if (!Object.hasOwn(PROJECT_POLICY, key) && !Object.hasOwn(PROJECT_OPTIONS, key)) {
+    if (!Object.hasOwn(PROJECT_POLICY, key) && !Object.hasOwn(options, key)) {
       throw new Refusal(
         400,
         'unknown_field',
@@ -126,7 +146,7 @@ export function validatePolicySubmission(body: unknown, ceiling?: number): Polic
   }
   const out: Policy = {};
   for (const [key, value] of entries) {
-    const option = PROJECT_OPTIONS[key];
+    const option = options[key];
     if (option) {
       out[key] = validateOption(key, option, value);
       continue;
@@ -161,7 +181,7 @@ export function effectiveOf(recorded: Record<string, unknown> | null): Policy {
   const out = projectEffectiveDefaults();
   if (recorded === null) return out;
   for (const [key, spec] of Object.entries(PROJECT_POLICY)) if (numberInSpec(recorded[key], spec)) out[key] = recorded[key] as number;
-  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) {
+  for (const [key, spec] of Object.entries(projectOptionSpecs())) {
     if (!Object.hasOwn(recorded, key)) continue;
     try {
       out[key] = validateOption(key, spec, recorded[key]);
@@ -198,9 +218,10 @@ const WIDENING_KEYS = new Set([
 // An option widens as its spec says (D2 §§2.3, 2.4: adding a host to the
 // egress list or a path to the read paths; removing one does not).
 export function wideningKeys(effective: Policy, change: Policy): string[] {
+  const options = projectOptionSpecs();
   return Object.entries(change)
     .filter(([key, value]) => {
-      const option = PROJECT_OPTIONS[key];
+      const option = options[key];
       if (option) {
         if (option.widening === 'added') {
           const before = new Set((effective[key] as string[] | undefined) ?? []);

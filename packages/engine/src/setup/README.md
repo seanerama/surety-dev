@@ -7,7 +7,15 @@ origin checks and full engine mode.
 
 - `GET /v1/setup`: version 1, workspace home, default project parent, provider
   installation availability, credential-reference status, and policy defaults
-  and fields. No credential values are returned.
+  and fields. No credential values are returned. Outside the test mode no
+  `backend_<role>` key has a default (the owner's ruling of 2026-10-27): the
+  keys are absent from `policy_defaults`, offer only `claude` and `codex` in
+  `policy_fields` (`default: null`), `policy_defaults_state` is
+  `provider_unconfigured`, and `backend_defaults` names each role
+  `unconfigured` with a message that a real provider needs configuring. A
+  dispatch or session of an unconfigured role is refused `backend_refused`
+  naming the role; nothing is substituted. Under `--harness` the scripted
+  backend is every role's default and a choice, as before.
 - `POST /v1/setup/credentials`: `{ref, path, provider_cap_usd?}` registers an
   existing private file for one of the three supported coding-provider refs.
   Existing key-file validation applies. The engine saves references only in
@@ -19,7 +27,9 @@ origin checks and full engine mode.
 - `POST /v1/projects/new`: `{name, tier, dev_repo_path, idea}` creates a new
   directory and detached Git repository, then uses the normal journaled project
   bootstrap. The parent must exist, the target must not exist, and the target
-  must be outside the engine home. Creation returns the ordinary 201 pending
+  must be outside the engine home. Those checks run before the default parent
+  (`~/projects`) is created, which happens only for an otherwise valid target;
+  an existing folder or file is never changed. Creation returns the ordinary 201 pending
   bootstrap view. The project starts paused in the creation transaction. No
   provider run is dispatched. If repository setup fails, the new directory is
   preserved and the refusal identifies it; retrying does not overwrite it.

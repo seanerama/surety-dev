@@ -314,6 +314,22 @@ export const TRUST_MODES = ['one_shot_headless', 'session_headless'] as const;
 // The backends a role may be dispatched to: the scripted one (harness mode
 // only) and those the engine has an adapter for (D2 §4.5, §4.6).
 export const BACKEND_NAMES = ['scripted', 'claude', 'codex'] as const;
+// The real providers: outside the test mode the only choices a
+// `backend_<role>` key offers, and none of them is a default (the owner's
+// production-defaults ruling of 2026-10-27): a role's backend is
+// unconfigured until a provider is named for it, and the engine never
+// substitutes one.
+export const REAL_BACKEND_NAMES = ['claude', 'codex'] as const;
+// The role each `backend_<role>` key selects the backend of.
+export const BACKEND_ROLE_KEYS: Readonly<Record<string, string>> = {
+  builder: 'backend_builder',
+  verifier: 'backend_verifier',
+  reviewer: 'backend_reviewer',
+  architect: 'backend_architect',
+  vision: 'backend_vision',
+  spec_writer: 'backend_spec_writer',
+  designer: 'backend_designer',
+};
 
 // D6 A.2: the autonomy profile (K3) and the Alpha deploy policy (K9).
 export const AUTONOMY_PROFILES = ['step', 'stage', 'phase'] as const;
@@ -338,6 +354,8 @@ export interface OptionSpec {
   // `size_range` (D6 §5.2, A.7 `phase_size`): `{min, max}`, each an integer
   // within [range.min, range.max], min not above max.
   range?: { min: number; max: number };
+  // null: the key has no default and is unconfigured until set (the
+  // `backend_<role>` keys outside the test mode).
   default: unknown;
   values?: readonly string[];
   widening: 'added' | 'coarser' | 'later' | 'never';
@@ -354,14 +372,17 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   sandbox_read_paths: { type: 'absolute_paths', default: [], widening: 'added' },
   // The backend each role is dispatched to, among the active trust entries,
   // and the mode (D2 §4.1; SEAM.md §115). `scripted` exists only in harness
-  // mode.
-  backend_builder: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  backend_verifier: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  backend_reviewer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  backend_architect: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  // mode: these are the production specs, a real provider each and no
+  // default (`default: null`: unconfigured, absent from the effective
+  // policy); project-policy.ts's projectOptionSpecs() offers `scripted`, as
+  // the default, only in the test mode.
+  backend_builder: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
+  backend_verifier: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
+  backend_reviewer: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
+  backend_architect: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
   // D6 A.7 (M5 slice 33; SEAM.md §391): the two conversational roles' backends.
-  backend_vision: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
-  backend_spec_writer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_vision: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
+  backend_spec_writer: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
   // D6 A.7, E139 Q6: the model each role requests, Claude Code's aliases;
   // Opus for the planners, Sonnet for the roles. Any non-empty model name is
   // accepted until slice 38 (the driver's ruling (c), 2026-10-13).
@@ -393,7 +414,7 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   design_external_urls: { type: 'host_names', default: ['cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com'], widening: 'added' },
   // D7 §6.7; Q8: never `alpha`.
   assets_required_for: { type: 'enum', values: ['none', 'beta', 'live'], default: 'live', widening: 'never' },
-  backend_designer: { type: 'enum', values: BACKEND_NAMES, default: 'scripted', widening: 'never' },
+  backend_designer: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
   model_designer: { type: 'model', default: 'opus', widening: 'never' },
 };
 

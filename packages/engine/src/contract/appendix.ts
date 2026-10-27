@@ -89,7 +89,7 @@ export function generateAppendix(doc: unknown): string {
     for (const [key, spec] of Object.entries(isObj(config[scope]) ? (config[scope] as Obj) : {})) {
       const s = isObj(spec) ? spec : {};
       const range = typeof s.min === 'number' && typeof s.max === 'number' ? `, ${s.min} to ${s.max}` : s.fixed === true ? ', fixed' : '';
-      out.push(`- \`${key}\`: default ${text(s.default)}${range}`);
+      out.push(s.default === null ? `- \`${key}\`: no default, unconfigured until set${Array.isArray(s.values) ? ` (one of ${s.values.map(text).join(', ')})` : ''}` : `- \`${key}\`: default ${text(s.default)}${range}`);
     }
     out.push('');
   }

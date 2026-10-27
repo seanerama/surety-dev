@@ -19,9 +19,9 @@ import {
   ENGINE_KEYS,
   ENGINE_AT_LEAST,
   ENGINE_NUMBERS,
-  PROJECT_OPTIONS,
   PROJECT_POLICY,
 } from '../config/schema.js';
+import { projectOptionSpecs } from '../config/project-policy.js';
 import { DEFAULT_MIGRATIONS_DIR } from '../paths.js';
 import { migrate } from '../store/migrate.js';
 import { FRESHNESS, NOW_STATES, PROVENANCE } from '../store/projections.js';
@@ -294,7 +294,9 @@ function configSection(): ContractDocument['config'] {
   }
   const project: Record<string, Record<string, unknown>> = {};
   for (const [key, spec] of Object.entries(PROJECT_POLICY)) project[key] = { default: spec.default, min: spec.min, max: spec.max, integer: spec.integer };
-  for (const [key, spec] of Object.entries(PROJECT_OPTIONS)) project[key] = { default: spec.default, type: spec.type, ...(spec.values ? { values: [...spec.values] } : {}), ...(spec.range ? { range: { ...spec.range } } : {}), widening: spec.widening };
+  // A key with no default states `default: null` (a `backend_<role>` key
+  // outside the test mode: unconfigured until a provider is named).
+  for (const [key, spec] of Object.entries(projectOptionSpecs())) project[key] = { default: spec.default, type: spec.type, ...(spec.values ? { values: [...spec.values] } : {}), ...(spec.range ? { range: { ...spec.range } } : {}), widening: spec.widening };
   return { engine, project };
 }
 

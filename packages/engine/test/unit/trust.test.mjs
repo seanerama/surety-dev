@@ -21,6 +21,15 @@ const { answerQueued, reviewDecisions } = await import(join(dist, 'store', 'tran
 const trust = await import(join(dist, 'store', 'transitions', 'trust.js'));
 const { proposeEntry, proposeAttempt } = await import(join(dist, 'store', 'transitions', 'qualification.js'));
 const { hostIdentity, ISOLATION_MECHANISM, BOUNDARY_MECHANISM } = await import(join(dist, 'trust', 'host.js'));
+const { configureHarness } = await import(join(dist, 'testing', 'seam.js'));
+
+// The scripted backend is every role's default only in the test mode (the
+// owner's production-defaults ruling of 2026-10-27): a case of that default
+// runs in that mode, and the production cases outside it.
+const testMode = (t) => {
+  assert.equal(configureHarness(true, []), null);
+  t.after(() => configureHarness(false, []));
+};
 
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: null };
 const AT = '2026-10-03T00:00:00.000Z';
@@ -219,6 +228,7 @@ test('host qualifications: one active; a later start lapses it; a lapsed row is 
 
 test('the dispatch rule: scripted only in harness; a named backend needs an active one-shot entry, an enforceable boundary and a current compatible host', (t) => {
   const db = store(t);
+  testMode(t);
   const setPolicy = (effective) => {
     db.prepare(
       `INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective)
@@ -229,6 +239,8 @@ test('the dispatch rule: scripted only in harness; a named backend needs an acti
   const resolve = (scripted = 'scripted-1') => trust.resolveBackend(db, { project: 'prj_1', role: 'builder', scripted });
   assert.equal(resolve().kind, 'scripted');
   assert.equal(resolve(null).code, 'backend_refused');
+  // The rest is outside the test mode, where the host checks run.
+  assert.equal(configureHarness(false, []), null);
 
   setPolicy({ n: 1, p: { backend_builder: 'claude' } });
   assert.equal(resolve().code, 'backend_refused', 'no entry');
@@ -267,6 +279,7 @@ test('the dispatch rule: scripted only in harness; a named backend needs an acti
 
 test("each role's backend key is read, the Designer's backend_designer among them (the slice-46 rehearsal's finding)", (t) => {
   const db = store(t);
+  testMode(t);
   const roles = ['builder', 'verifier', 'reviewer', 'architect', 'vision', 'spec_writer', 'designer'];
   // Unset, every role is the scripted backend (harness mode offers it).
   for (const role of roles) assert.equal(trust.resolveBackend(db, { project: 'prj_1', role, scripted: 'scripted-1' }).kind, 'scripted', `${role}: scripted by default`);
@@ -281,6 +294,34 @@ test("each role's backend key is read, the Designer's backend_designer among the
     assert.equal(r.backend, 'claude', `${role}: backend_${role} selects its backend`);
     for (const other of roles.filter((x) => x !== role)) assert.equal(trust.resolveBackend(db, { project: 'prj_1', role: other, scripted: 'scripted-1' }).kind, 'scripted', `${other} is not moved by backend_${role}`);
   }
+});
+
+test('outside the test mode no role has a backend by default: an unset key is refused as unconfigured, naming the role, with no fallback', (t) => {
+  const db = store(t);
+  const roles = ['builder', 'verifier', 'reviewer', 'architect', 'vision', 'spec_writer', 'designer'];
+  for (const role of roles) {
+    // Even with a scripted backend handed in, nothing stands in for the unset key.
+    for (const scripted of ['scripted-1', null]) {
+      const r = trust.resolveBackend(db, { project: 'prj_1', role, scripted });
+      assert.equal(r.kind, 'refused', `${role}: refused`);
+      assert.equal(r.code, 'backend_refused');
+      assert.equal(r.backend, 'unconfigured', 'recorded as unconfigured, not as a backend');
+      assert.match(r.reason, new RegExp(`No backend is configured for the ${role} role: backend_${role} names none`));
+      assert.match(r.reason, /real provider \(claude or codex\) needs configuring/);
+      assert.deepEqual(r.subject, { backend: null, configured: false, role, key: `backend_${role}`, providers: ['claude', 'codex'] });
+    }
+  }
+  // A recorded `scripted` is no backend outside the test mode: unconfigured, not substituted.
+  db.prepare(
+    `INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective)
+     VALUES ('pr_s', ?, 'prj_1', 1, '.surety/policy.json', 'b', 'test', ?, '', 0, 1, ?)`,
+  ).run(AT, AT, JSON.stringify({ backend_builder: 'scripted', backend_verifier: 'claude' }));
+  db.prepare('UPDATE projects SET policy_revision = ? WHERE id = ?').run('pr_s', 'prj_1');
+  assert.equal(trust.resolveBackend(db, { project: 'prj_1', role: 'builder', scripted: 'scripted-1' }).backend, 'unconfigured');
+  // A configured real provider is resolved as before (here refused: no entry).
+  const v = trust.resolveBackend(db, { project: 'prj_1', role: 'verifier', scripted: 'scripted-1' });
+  assert.equal(v.backend, 'claude');
+  assert.match(v.reason, /claude has no trust entry/);
 });
 
 test('the engine read lists only backends with active entries, and scripted only in harness mode', (t) => {

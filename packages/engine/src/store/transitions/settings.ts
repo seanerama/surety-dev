@@ -135,10 +135,11 @@ export interface ProjectOptions {
   budget_hard_maximum: boolean;
   egress_allow_extra: string[];
   sandbox_read_paths: string[];
-  backend_builder: string;
-  backend_verifier: string;
-  backend_reviewer: string;
-  backend_architect: string;
+  // Absent where unconfigured: outside the test mode no backend is a default.
+  backend_builder?: string;
+  backend_verifier?: string;
+  backend_reviewer?: string;
+  backend_architect?: string;
   autonomy: 'step' | 'stage' | 'phase';
   alpha_deploy: 'manual' | 'on_phase_complete';
   // D6 §5.2, A.7: the stage count a phase plan is expected to have.
