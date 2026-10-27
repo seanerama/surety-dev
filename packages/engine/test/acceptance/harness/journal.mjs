@@ -159,10 +159,28 @@ export const getPolicy = async (engine, project) => {
 // project default is now `phase`.
 export const stepAutonomy = (engine, project) => changePolicy(engine, project, { autonomy: 'step' });
 
+//
+// The owner's ruling of 2026-10-27 (objection 216; SEAM.md §571): values
+// identical to the current effective ones are answered `unchanged` and make
+// no revision. A case that sets a value already in effect (a default, or one
+// set earlier) is then settled at once: the answer must be exactly the
+// `unchanged` shape, the revision must not have moved, and every submitted
+// key must read back at the submitted value. Otherwise the change waits for
+// its revision, as before. Returns the policy read either way.
 export async function changePolicy(engine, project, change) {
   const before = (await getPolicy(engine, project)).revision ?? 0;
   const res = await engine.post(`/v1/projects/${project}/policy`, change);
   assert.equal(res.status, 200, `a valid policy change (body: ${res.text})`);
+  if (res.body?.outcome === 'unchanged') {
+    assert.deepEqual(res.body, { outcome: 'unchanged', revision: null, committed: false, commit: null }, `an unchanged answer has the ruling's shape (body: ${res.text})`);
+    const policy = await getPolicy(engine, project);
+    assert.equal(policy.revision ?? 0, before, `unchanged: no revision of ${project} was made`);
+    for (const [key, value] of Object.entries(change)) {
+      if (key === 'intent_id') continue;
+      assert.deepEqual(policy.effective?.[key], value, `unchanged: ${key} is already in effect at the submitted value (effective: ${JSON.stringify(policy.effective?.[key])})`);
+    }
+    return policy;
+  }
   return waitFor(
     async () => {
       const policy = await getPolicy(engine, project);

@@ -20,7 +20,7 @@ import { newId } from '../ids.js';
 import { branchCheckedOutAt, commitId } from '../journal/effects.js';
 import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
-import { policyIntentConflict, policyRefusal } from '../store/transitions/project.js';
+import { changedPolicyKeys, policyIntentConflict, policyRefusal } from '../store/transitions/project.js';
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `"${field}" ${why}.`, 'Correct the request and send it again; nothing was created.', { field });
 
@@ -165,6 +165,7 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
     effective: Policy;
     revision: number | null;
     blocking: string | null;
+    policyInFlight: boolean;
   }>('project.policy_facts', { project });
   const ctx = repoContext(facts.repo);
   const widens = wideningKeys(facts.effective, change);
@@ -201,8 +202,13 @@ export async function preparePolicy(rt: Runtime, project: string, body: unknown)
     };
   }
 
+  // Every ordinary key at its current effective value (the owner's ruling of
+  // 2026-10-27): nothing to commit, so nothing is prepared and the answer is
+  // `unchanged`; validated and checked for widening first, as any change.
+  // Not while a policy commit is in flight: then it is prepared as before.
+  const identical = Object.keys(change).length > 0 && !facts.policyInFlight && changedPolicyKeys(facts.effective, change).length === 0;
   let prepared: Record<string, unknown> | null = null;
-  if (widens.length === 0 && Object.keys(change).length > 0) {
+  if (widens.length === 0 && Object.keys(change).length > 0 && !identical) {
     if (facts.blocking) throw policyRefusal(facts.blocking);
     prepared = await preparePolicyCommit(rt, project, facts, change);
   }
