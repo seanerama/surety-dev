@@ -22,6 +22,7 @@ import { answerFacts } from '../decisions/facts.js';
 import { type AnswerWaits, afterAnswer, beforeAnswer } from '../decisions/answer.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
+import { withIdeaText } from '../projects/idea-text.js';
 import { defaultProjectsDirectory, defaultProjectsDirectoryExists, prepareNewProject } from '../setup/projects.js';
 import { credentialStatus, registerCredential } from '../setup/credentials.js';
 import { projectEffectiveDefaults } from '../config/project-policy.js';
@@ -330,7 +331,15 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (s.length === 3 && s[1] === 'projects' && get) {
       const project = decodeSegment(s[2]!);
       if (project === null) return null;
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'project.read', args: { project } }) }) };
+      // The idea record's text beside its blob (first-app gap N4), read from
+      // the project's repository on this thread (projects/idea-text.ts).
+      return {
+        kind: 'direct',
+        handler: async () => ({
+          status: 200,
+          body: await withIdeaText(await store().call('read', { name: 'project.read', args: { project } }), () => store().call<{ repo: string } | null>('read', { name: 'project.repo', args: { project } })),
+        }),
+      };
     }
 
     if (s[1] === 'projects' && s.length >= 4) {
