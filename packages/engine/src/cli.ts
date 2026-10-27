@@ -13,7 +13,6 @@ import { closeInheritedDescriptors } from './invoke/descriptors.js';
 import { SecretFileRefused, holdSecretFiles, parseRefValue } from './invoke/keys.js';
 import { Refusal } from './refusal.js';
 import { loadSavedCredentials } from './setup/credentials.js';
-import { launchConsole } from './setup/ui-command.js';
 import { parseQualify, sendQualify } from './trust/qualify-command.js';
 import { parseEnv, sendEnv } from './deploy/env-command.js';
 import { designExport, designVerdicts, parseDesignCommand, parseDesignExport, parseDesignVerdicts } from './design/design-command.js';
@@ -31,11 +30,6 @@ function usage(message: string): never {
 closeInheritedDescriptors();
 
 const [command, ...args] = process.argv.slice(2);
-
-if (command === 'ui') {
-  try { process.stdout.write(JSON.stringify(await launchConsole(args, process.argv[1]!)) + '\n'); process.exit(0); }
-  catch (err) { process.stderr.write(JSON.stringify({ code: 'console_start_failed', reason: (err as Error).message }) + '\n'); process.exit(1); }
-}
 
 if (command === '--version' || command === '-v') {
   process.stdout.write(`${ENGINE_VERSION}\n`);

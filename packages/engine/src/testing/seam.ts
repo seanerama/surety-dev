@@ -1494,6 +1494,12 @@ export function setPackageOmit(values: string[]): string | null {
 
 export const seamPackageOmitted = (id: string): boolean => init.harness && packageOmit.has(id);
 
+// The assistant's deterministic provider exists only in test mode (a
+// development fixture, never a product feature): reported under its own name
+// so production source need not name the mode (SEAM.md §7, rule 3), and only
+// ever called (rule 2).
+export const seamScriptedProvider = (): boolean => init.harness;
+
 // GET /v1/engine reports whether the engine is in harness mode.
 export function seamDescribe<T extends object>(info: T): T & { harness: boolean } {
   return { ...info, harness: init.harness };

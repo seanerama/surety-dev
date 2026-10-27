@@ -43,7 +43,7 @@ import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { pausePoint, seamBackends, seamDescribe, seamRoute, seamTokenRead } from '../testing/seam.js';
+import { pausePoint, seamBackends, seamDescribe, seamRoute, seamScriptedProvider, seamTokenRead } from '../testing/seam.js';
 import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
 import { SHELL_CSP, loadShell } from './shell.js';
 import { type TailSource, serveEvents, serveTail } from './streams.js';
@@ -207,7 +207,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   // test mode (trust/fixture.ts).
   const engineFixtureProject = (): Promise<string> => ensureFixtureProject(runtime(), store());
 
-  const assistant = new AssistantService(opts.home, seamDescribe({}).harness, (name, args) => store().call('read', { name, args }), state.token);
+  const assistant = new AssistantService(opts.home, seamScriptedProvider(), (name, args) => store().call('read', { name, args }), state.token);
 
   function match(method: string, s: string[]): Route | null {
     const get = method === 'GET' || method === 'HEAD';

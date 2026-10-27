@@ -160,9 +160,9 @@ export class AssistantService {
   private readonly dir: string;
   private readonly busy = new Set<string>();
   private readonly actions: ActionStore;
-  constructor(home: string, private readonly harness: boolean, private readonly read: AssistantRead, private readonly token: string) { this.dir = join(home, 'assistant'); this.actions = new ActionStore(home, v => safeValue(v, token)); }
-  capability() { return { version: 1, provider: this.harness ? 'fake' : 'unconfigured', configured: this.harness, limits: LIMITS, retention: 'engine-owned; explicit deletion', actions: this.harness ? ['create_app', 'start_planning'] : [] }; }
-  private configured() { if (!this.harness) throw new Refusal(503, 'assistant_not_configured', 'Assistant not configured. Real assistant execution and accounting are not enabled.', 'Continue using the ordinary workspace controls.'); }
+  constructor(home: string, private readonly scriptedProvider: boolean, private readonly read: AssistantRead, private readonly token: string) { this.dir = join(home, 'assistant'); this.actions = new ActionStore(home, v => safeValue(v, token)); }
+  capability() { return { version: 1, provider: this.scriptedProvider ? 'fake' : 'unconfigured', configured: this.scriptedProvider, limits: LIMITS, retention: 'engine-owned; explicit deletion', actions: this.scriptedProvider ? ['create_app', 'start_planning'] : [] }; }
+  private configured() { if (!this.scriptedProvider) throw new Refusal(503, 'assistant_not_configured', 'Assistant not configured. Real assistant execution and accounting are not enabled.', 'Continue using the ordinary workspace controls.'); }
   private path(id: string) { if (!/^ac_[A-Z0-9]{26}$/.test(id)) throw invalid('Invalid conversation identifier.'); return join(this.dir, `${id}.json`); }
   private load(id: string): StoredConversation {
     const path = this.path(id);

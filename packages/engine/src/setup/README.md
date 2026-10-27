@@ -28,12 +28,7 @@ origin checks and full engine mode.
 `session_qualified`; the engine still decides whether a particular session can
 open. The console displays refusals instead of manufacturing readiness.
 
-`surety ui --home <absolute home> --shell <absolute public directory>` is a
-local process launcher, not a browser endpoint. It chooses a loopback port for
-a new home, retains existing configuration, reuses a live engine, starts
-`serve --shell` when needed and opens the URL using Windows Explorer on WSL or
-xdg-open on Linux. No token enters the URL. Startup output goes to the home's
-`console-engine.log`. The console connects using a user-selected api.token file.
+The console launcher is external to the engine (release of 2026-10-26): a shell launcher starts `surety serve --shell <public directory>` with `SURETY_HOME` set, reuses a running engine by its `engine.lock` and `GET /v1/engine`, and opens the browser itself. The former `surety ui` subcommand was removed because it started processes outside the choke point (D1 §15.4, row M74); whether the engine may host such a launcher is a design decision for the owner.
 
 Provider installation and creation of a provider's initial credential file are
 external prerequisites in this version. No package installer or credential
