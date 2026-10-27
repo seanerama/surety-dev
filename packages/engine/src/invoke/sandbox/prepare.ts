@@ -28,7 +28,8 @@ import { designPackageFor } from '../../design/package.js';
 import { isAncestor } from '../../git/repo.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
 import { writeTurnPackage } from '../../sessions/turn-package.js';
-import { CANARY_BARRIER, CONTAINMENT_ACTIONS, CONTAINMENT_CHECK_MS, CONTAINMENT_PROBE, canaryInstructions, containmentTargets } from '../../trust/canaries.js';
+import { CANARY_BARRIER, CONTAINMENT_CHECK_MS, CONTAINMENT_PROBE, assistantCanaryEvidence, assistantCanaryInstructions, assistantCanaryPromptText, canaryInstructions, containmentActionsFor, containmentTargets } from '../../trust/canaries.js';
+import { writeTurnPackage as writeAssistantPackage } from '../../assistant/turn-package.js';
 import { seedGitView } from './gitview.js';
 import { EGRESS_SOCKET, type Plan, buildPlan, entriesFingerprint, planEntries } from './mounts.js';
 import { type ResolvedTools, engineNode, initNodeCopy, initNodeIn, resolveSandboxTools } from './tools.js';
@@ -115,6 +116,9 @@ export interface PreparedSandbox {
 
 export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: BackendSpec, stdin: string, repo: string): Promise<PreparedSandbox | null> {
   const { claim } = handle;
+  // A workspace assistant qualification canary (the assistant design §3):
+  // the assistant's package and a plan with no repository.
+  const assistant = claim.attempt !== null && claim.entry?.purpose === 'assistant';
   tools ??= await resolveSandboxTools();
   const t = tools.paths;
   if (!t.unshare || !t.setpriv || !t.ip || !t.mount || !t.umount || !t.pivot_root || !t.mknod) throw new Error(`the sandbox's tools are missing: ${tools.missing.join(', ')}`);
@@ -143,7 +147,10 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       outputBytes.set(id, row === null ? null : await readRecordBytes(rt.home, row));
     }
   }
-  const canary = claim.attempt
+  const canaryArgs = claim.attempt ? { attempt: claim.attempt.id, kind: claim.attempt.kind, deadlineSeconds: Math.max(1, Math.round((Date.parse(claim.deadline_at) - Date.now()) / 1000)) } : null;
+  const canary = assistant && canaryArgs !== null
+    ? assistantCanaryInstructions(canaryArgs)
+    : claim.attempt
     ? canaryInstructions({
         attempt: claim.attempt.id,
         kind: claim.attempt.kind,
@@ -163,6 +170,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
             }
           })(),
           apiPort: rt.config.values.api_port,
+          noRepository: assistant,
         })
       : null;
   let diff: (CandidateDiff & { engine_commits: EngineCommitsInRange }) | null = null;
@@ -188,7 +196,18 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   // A session turn's package (D6 §2.2): the transcript, the notes, the
   // approved inputs and the artifact's current state; a continuation
   // canary's instructions beside them (D6 §2.6).
-  if (claim.session) {
+  if (assistant && canary !== null) {
+    // The assistant's package (assistant/turn-package.ts): the engine's
+    // seeded evidence, the request, the reply schema and the canary's
+    // instructions; nothing of the fixture project.
+    writeAssistantPackage(join(area, 'context'), {
+      request: { intent_id: `canary-${claim.attempt!.kind}`, text: 'This is a qualification canary of the engine.', context: { project: null, screen: 'qualification' } },
+      evidence: claim.attempt!.kind === 'positive' ? [assistantCanaryEvidence(claim.attempt!.id)] : [],
+      conversation: [],
+      canary,
+      canaryPrompt: assistantCanaryPromptText(canary),
+    });
+  } else if (claim.session) {
     if (!(await writeTurnPackage(rt, claim, join(area, 'context'), handle.workspacePath, canary))) throw new Error(`the context package of session ${claim.run}'s turn could not be built`);
   } else writeContextPackage(join(area, 'context'), claim, facts, {
     canary,
@@ -229,11 +248,15 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     binds.push({ source: may.cgroup_path, target: '/surety/cgroup/domain', writable: true, noexec: true }, { source: sibling, target: '/surety/cgroup/sibling', writable: true, noexec: true });
   }
 
-  // The git metadata view (D2 §2.7), from the workspace the journal made.
-  const workspace = realpathSync(handle.workspacePath!);
-  const link = workspaceLink(repo, workspace);
-  if (link === null) throw new Error(`the workspace ${workspace} has no worktree metadata the engine can read`);
-  const git = seedGitView({ repo, adminDir: link.adminDir, seed: join(area, 'git'), head: claim.base_revision });
+  // The git metadata view (D2 §2.7), from the workspace the journal made;
+  // none for the assistant's plan, which mounts no repository.
+  const workspace = assistant ? null : realpathSync(handle.workspacePath!);
+  let git: ReturnType<typeof seedGitView> | null = null;
+  if (workspace !== null) {
+    const link = workspaceLink(repo, workspace);
+    if (link === null) throw new Error(`the workspace ${workspace} has no worktree metadata the engine can read`);
+    git = seedGitView({ repo, adminDir: link.adminDir, seed: join(area, 'git'), head: claim.base_revision });
+  }
 
   // The egress proxy (D2 §2.4): the entry's (or the attempt's) list and the
   // project's approved widening. Its log's bound cancels the run (§3.7).
@@ -274,7 +297,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       probeProgram: targets !== null ? PROBE_PROGRAM : null,
       git,
       // The Verifier writes the protected set, as proposals (D1 §7.3).
-      workspaceBinds: claim.role === 'verifier' ? [] : protectedBinds(workspace, handle.protectedRoots, join(area, 'git', 'empty')),
+      workspaceBinds: workspace === null || claim.role === 'verifier' ? [] : protectedBinds(workspace, handle.protectedRoots, join(area, 'git', 'empty')),
       egressSocket: egress.socketPath,
       holdVolatile: true,
     });
@@ -316,7 +339,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     backend: {
       argv: [backend.command, ...backend.args],
       env,
-      cwd: '/surety/workspace',
+      cwd: assistant ? '/surety/out' : '/surety/workspace',
       stdin,
       forwarder: { port: FORWARDER_PORT, socket: EGRESS_SOCKET },
       ...(canary
@@ -325,7 +348,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
               barrier: canary.kind === 'cancellation' ? CANARY_BARRIER : null,
               containment:
                 canary.kind === 'containment' && targets !== null
-                  ? { program: CONTAINMENT_PROBE, actions: CONTAINMENT_ACTIONS.map((a) => a.name), targets, action_timeout_ms: 20_000, check_ms: CONTAINMENT_CHECK_MS }
+                  ? { program: CONTAINMENT_PROBE, actions: containmentActionsFor(assistant ? 'assistant' : 'role').map((a) => a.name), targets, action_timeout_ms: 20_000, check_ms: CONTAINMENT_CHECK_MS }
                   : null,
             },
           }

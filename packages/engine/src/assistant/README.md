@@ -1,10 +1,25 @@
-# Experimental workspace assistant
+# Workspace assistant
 
 This module is separate from project-role sessions and Vision. `api/server.ts`
 instantiates it behind the existing Host, origin, token, startup-mode and body
-limits. The production capability is **unconfigured**. Only an explicitly started
-harness engine enables the deterministic fake provider. No credential selection,
-qualification, provider process, scheduler or paid call is added.
+limits. Which provider answers is decided by real configuration (the assistant
+design of 2026-10-27, §2):
+
+- with no `workspace_assistant` block in config.json the assistant is
+  **unconfigured** outside the engine's test mode, and only the test mode
+  selects the deterministic in-process fake (`seamScriptedProvider()`);
+- with a block, the **real path** runs (even in the test mode, where the
+  scripted backend stands in for a real one): `GET /v1/assistant` derives
+  `state` (unconfigured, credential_missing, qualification_pending,
+  limit_reached, ready) from the block, the held credential, the active
+  assistant-template trust entry and the usage account; a message is admitted
+  in the store's transaction of its receipt, reserving the turn limit against
+  the account's day (store/transitions/assistant.ts), dispatched by the
+  scheduler's tick through the choke point (invoke/assistant-turn.ts) in a
+  domain with no repository, and charged one ledger row of the
+  `workspace_assistant` account. The engine chooses the reads; the model's
+  reply is held to its schema and its evidence (turn-package.ts) and never
+  becomes an action.
 
 `contract.ts` describes messages, context, evidence and fake usage. The gateway
 reads the same store projections used by ordinary GET routes, with an allowlist,
@@ -77,5 +92,7 @@ Provider input and persisted/output text pass through the engine redactor, secre
 detectors and explicit API-token masking. Raw records, logs, transcripts, secrets
 and repositories are not read into model context. Requests are capped at 4,000
 characters, 16 tool reads, 48,000 evidence characters and two concurrent responses.
-There is no retry loop. This does not yet implement asynchronous real-provider
-cancellation, monetary admission, or provider configuration/qualification.
+There is no retry loop. A real turn is admitted against the account's day in
+billable tokens (dollars shown, never limited), stopped at its turn limit, its
+deadline or the owner's cancel, and recovered, never replayed, after a
+restart.

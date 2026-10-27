@@ -25,6 +25,7 @@ import { nominate } from './journal/nominate.js';
 import { type LockRecord, acquireLock, releaseLock } from './lock.js';
 import { DEFAULT_MIGRATIONS_DIR, homePaths } from './paths.js';
 import { recoverAtStartup } from './recovery/startup.js';
+import { AssistantTurns } from './invoke/assistant-turn.js';
 import { Refusal, homeUnusable } from './refusal.js';
 import { Acceptor } from './runs/accept.js';
 import { checkHomeSocketPaths } from './socket-path.js';
@@ -355,6 +356,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const effects = new Effects(runtime, journal);
   const sessions = new SessionDriver(runtime, journal, launcher, ender);
   runtime.sessions = sessions;
+  // The workspace assistant's turns (the assistant design §4): dispatched by
+  // the tick, recovered at start; none is admitted without a
+  // workspace_assistant block.
+  runtime.assistant = new AssistantTurns(runtime);
   runtime.design = new DesignDriver(runtime, journal);
   scheduler = new Scheduler(runtime, launcher, ender, journal, effects);
   const tick = scheduler;

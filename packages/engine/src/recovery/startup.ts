@@ -52,6 +52,12 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   removeStagingLeftovers(rt.home);
   await recoverChecks(rt, ender.priorUnknown).catch((err) => log('recovery', err, { what: 'check executions' }));
 
+  // Workspace assistant turns a prior incarnation left (the assistant design
+  // §4): each domain's termination established first, then the turn ended
+  // `recovered` with its row and allowance (or `refused` if it never
+  // launched), its owner message left unknown; never replayed.
+  await rt.assistant?.recover(ender.priorUnknown).catch((err) => log('recovery', err, { what: 'assistant turns' }));
+
   // A qualification attempt left `running` by a prior incarnation cannot be
   // judged by this one (D2 §7.2): it is invalidated now, at start, not at a
   // later tick that nothing may request (D6 §2.7; the review's M6). Its

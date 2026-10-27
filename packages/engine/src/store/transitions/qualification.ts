@@ -112,6 +112,7 @@ export function qualify(
     mode_requested?: 'one_shot_headless' | 'session_headless';
     session_entry?: string | null;
     role_memory_max?: number | null;
+    canary_limit_tokens?: number | null;
   },
 ): CommandResult {
   // The role profile the attempt qualifies (D6-X09; B09): an entry's own for
@@ -159,7 +160,11 @@ export function qualify(
   // cap; the figure is an estimate, labelled, under the fixture project's
   // run limit, and null where no price is known (never 0).
   const canaries = a.session_entry ? 2 : a.mode_requested === 'session_headless' ? 5 : 3;
-  const estimate = attemptSpendEstimate(a.backend, a.model, projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!, canaries);
+  // The workspace assistant's attempt (the assistant design §3, O7): each
+  // canary limited to the assistant's turn limit, charged to the fixture
+  // project's ledger and shown with the attempt, never the assistant's account.
+  const canaryLimit = a.canary_limit_tokens ?? null;
+  const estimate = attemptSpendEstimate(a.backend, a.model, canaryLimit ?? projectPolicy(tx.db, a.fixture_project).budget_run_billable_tokens!, canaries);
   const spend = {
     cap: null,
     estimate: estimate?.usd ?? null,
@@ -167,7 +172,9 @@ export function qualify(
     overshoot: 'deadline',
     ...(estimate
       ? {
-          basis: a.session_entry
+          basis: canaryLimit !== null
+            ? `three canaries at the workspace assistant's turn_limit_billable_tokens (${canaryLimit}), at the model's output rate`
+            : a.session_entry
             ? "the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
             : a.mode_requested === 'session_headless'
               ? "three canaries and the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
@@ -176,6 +183,7 @@ export function qualify(
         }
       : {}),
     auth_mode: a.auth_mode ?? 'api_key',
+    ...(canaryLimit !== null ? { purpose: 'assistant', canary_limit_tokens: canaryLimit, charged_to: { account: 'project', project: a.fixture_project, as: 'qualification' } } : {}),
     // A provider-side cap is an API key's only (SEAM.md §160): a subscription
     // has none on its token, its hard limit being its usage limits.
     ...(a.provider_cap_usd && (a.auth_mode ?? 'api_key') === 'api_key' ? { provider_cap: { status: 'configured', usd: a.provider_cap_usd } } : {}),

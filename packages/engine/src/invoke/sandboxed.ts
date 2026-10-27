@@ -37,7 +37,7 @@ export interface BackendLaunch {
   // runs at the engine's request (D2 §7.2; E86).
   canary?: {
     barrier?: string | null;
-    containment?: { program: string; actions: string[]; targets: { host_pid_ns: string; token: string; port: number; unlisted: string }; action_timeout_ms: number; check_ms: number } | null;
+    containment?: { program: string; actions: string[]; targets: { host_pid_ns: string; token: string; port: number; unlisted: string; no_repository?: boolean }; action_timeout_ms: number; check_ms: number } | null;
   } | null;
   // A check execution's own process (D3 §2.6; domain-init.ts).
   check?: boolean;

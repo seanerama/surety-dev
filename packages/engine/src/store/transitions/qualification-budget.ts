@@ -7,7 +7,7 @@ import { Refusal } from '../../refusal.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
 import { envelopeHold } from './envelope.js';
 import { dayUnknownAccount, exhaustedLimits, invocationStanding } from './ledger.js';
-import { dispatchBlocker } from './runs.js';
+import { attemptCanaryLimit, dispatchBlocker } from './runs.js';
 import { projectPolicy } from './settings.js';
 import type { AttemptRow } from './trust.js';
 import type { Tx } from './tx.js';
@@ -39,9 +39,11 @@ import type { WorkRow } from './work.js';
 const ADMITTED = ['authorized', 'running'];
 
 // What the attempt asks to hold back of the fixture project's day.
+// An attempt that names its own per-canary limit (the workspace assistant's:
+// its turn limit, the assistant design §3) reserves that limit.
 export function requestedReservation(db: Tx['db'], a: AttemptRow): number {
   if (a.fixture_project === null || !canaryKindsOf(a).includes('cancellation')) return 0;
-  return projectPolicy(db, a.fixture_project).budget_run_billable_tokens!;
+  return attemptCanaryLimit(a) ?? projectPolicy(db, a.fixture_project).budget_run_billable_tokens!;
 }
 
 // What an admitted attempt still holds back: 0 once it ended or its

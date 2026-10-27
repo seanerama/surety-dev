@@ -26,7 +26,9 @@ import { pinBinary } from './pin.js';
 
 // `role_memory_max` (D6-X09; B09; SEAM.md §432): the role profile the attempt
 // qualifies; the engine's default under its ceiling when absent.
-const FIELDS = ['backend', 'mode', 'model', 'auth_mode', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines', 'role_memory_max'];
+// `purpose` (the assistant design §3): `assistant` qualifies the workspace
+// assistant's own template; a project role's when absent.
+const FIELDS = ['backend', 'mode', 'model', 'auth_mode', 'binary', 'version', 'candidate_egress', 'fixture_project', 'canary_deadlines', 'role_memory_max', 'purpose'];
 // D6 §2.6 (SEAM.md §393): an active entry's session qualification, the
 // continuation canary alone; the rest is the entry's.
 const ENTRY_FIELDS = ['entry', 'mode', 'model', 'fixture_project', 'canary_deadlines'];
@@ -56,6 +58,9 @@ export interface QualifyRequest {
   session_entry: string | null;
   // D6-X09 (M5 slice 37): the role profile's memory maximum, or null for the default.
   role_memory_max?: number | null;
+  // The workspace assistant's qualification (the assistant design §3): its
+  // per-canary limit, the assistant's turn limit; null for a role's.
+  canary_limit_tokens?: number | null;
 }
 
 // Outside the test mode: the engine's own fixture project, made and
@@ -66,6 +71,8 @@ export interface QualifyContext {
   entryOf?: (id: string) => Promise<{ id: string; status: string; backend: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; auth_mode: string; egress_hosts: string; session_qualified: number } | null>;
   // The engine home, where a production attempt's binary is pinned.
   home: string;
+  // The workspace assistant's turn limit (config.json), or null with none.
+  assistantTurnLimit?: number | null;
 }
 
 export async function prepareQualify(b: unknown, ctx: QualifyContext | null = null): Promise<QualifyRequest> {
@@ -83,13 +90,23 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   const authMode = body.auth_mode ?? 'api_key';
   if (typeof authMode !== 'string' || !(AUTH_MODES as readonly string[]).includes(authMode)) throw invalid('auth_mode', `must be one of ${AUTH_MODES.join(', ')}`);
   if (typeof backend !== 'string' || !(backend in TEMPLATES || (testMode && backend === 'scripted'))) throw invalid('backend', `must be one of ${Object.keys(TEMPLATES).join(', ')}`);
-  const template = templateOf(backend, { scripted: testMode, authMode });
-  if (!template) throw invalid('auth_mode', `is not a mode ${backend} can be qualified in`);
+  const purpose = body.purpose ?? 'role';
+  if (purpose !== 'role' && purpose !== 'assistant') throw invalid('purpose', 'must be role or assistant');
+  const template = templateOf(backend, { scripted: testMode, authMode, purpose });
+  if (!template) throw invalid('auth_mode', `is not a mode ${backend} can be qualified in${purpose === 'assistant' ? ' for the workspace assistant' : ''}`);
+  // The assistant's canaries are limited to its turn limit (B2's profile for
+  // the assistant): with no workspace_assistant block there is none.
+  const assistantLimit = purpose === 'assistant' ? (ctx?.assistantTurnLimit ?? null) : null;
+  if (purpose === 'assistant' && assistantLimit === null) {
+    throw new Refusal(409, 'assistant_not_configured', 'The workspace assistant is not configured: its qualification is limited per canary by turn_limit_billable_tokens, and config.json has no workspace_assistant block.', 'Write the whole workspace_assistant block into config.json, restart the engine, and ask again.', { field: 'purpose' });
+  }
   // `session_headless` (D6 §2.6): D2's three canaries and the continuation
   // canary; the entry is written for one-shot headless runs, qualified for
   // sessions by the fourth. No provider continuation is qualified.
   const mode = body.mode ?? 'one_shot_headless';
   if (mode !== 'one_shot_headless' && mode !== 'session_headless') throw invalid('mode', 'must be one_shot_headless or session_headless');
+  // Each assistant turn is one-shot; no session is qualified for it.
+  if (purpose === 'assistant' && mode !== 'one_shot_headless') throw invalid('mode', 'must be one_shot_headless for the workspace assistant');
   if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
   const list = body.candidate_egress ?? [];
   if (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0)) throw invalid('candidate_egress', 'must be a list of host names');
@@ -152,6 +169,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     fixture_project: fixtureProject,
     canary_deadlines: deadlines,
     role_memory_max: (roleMax as number | undefined) ?? null,
+    canary_limit_tokens: assistantLimit,
   };
 }
 

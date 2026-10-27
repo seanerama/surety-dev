@@ -47,7 +47,8 @@ import { type ForbiddenContext, type PlanReason, validateReadPaths } from './san
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
 import { GOVERNED_FILE } from '../protected/set.js';
 import { materialize, screenWorkspace } from './sandbox/materialize.js';
-import { canaryEdit } from '../trust/canaries.js';
+import { assistantCanaryEvidenceId, canaryEdit } from '../trust/canaries.js';
+import { validateReply } from '../assistant/turn-package.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
 import { exitCause } from './exit-cause.js';
@@ -267,7 +268,7 @@ function realBackend(claim: Claim): BackendSpec | null {
   const e = claim.entry!;
   // A canary of a harness-mode attempt for `scripted` runs the attempt's
   // binary under the scripted protocol (SEAM.md §148).
-  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions(), authMode: e.auth_mode });
+  const template = templateOf(e.backend, { scripted: claim.attempt !== null, versions: seamTemplateVersions(), authMode: e.auth_mode, purpose: e.purpose ?? 'role' });
   if (!template) return null;
   const key = template.keyVariable === '' ? null : heldSecret(e.key_ref);
   return {
@@ -519,7 +520,7 @@ export class Launcher {
     // D2 §§1.2, 2.5: a real backend runs only with the provider key its
     // grant names; a reference that cannot be resolved refuses the launch,
     // never a launch without the key (E62).
-    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode })?.keyVariable ?? '') !== '';
+    const keyed = claim.entry !== null && (templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode, purpose: claim.entry.purpose ?? 'role' })?.keyVariable ?? '') !== '';
     if (claim.entry !== null && keyed && heldSecret(claim.entry.key_ref) === null) {
       const refusal = refusalForm(
         'backend_refused',
@@ -1269,7 +1270,8 @@ export class Launcher {
     c.unacceptedDone = true;
     let editContent: string | null = null;
     let editObserved: CanaryObservation['editObserved'] = null;
-    if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath) {
+    // The assistant's plan mounts no workspace: nothing to materialize.
+    if (kind === 'positive' && cls === 'clean' && accepted && handle.sandbox?.volatile && handle.workspacePath && claim.entry?.purpose !== 'assistant') {
       const m = materialize({ hold: handle.sandbox.volatile, home: this.rt.home, workspace: handle.workspacePath, caps: await this.snapshotCaps(claim.project) });
       if (m.state === 'refused' && m.reason === 'secret') {
         await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'materialization', path: m.path === null ? null : redactText(m.path), by: null }).catch(() => {});
@@ -1365,6 +1367,21 @@ export class Launcher {
         if (reply === null && problem !== null) handle.invalidDetail = redactText(problem);
       }
       verdict = reply === null ? { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length } : { outcome: 'accepted', reason: null, bytes_read: result.bytes.length };
+    } else if (claim.attempt !== null && claim.entry?.purpose === 'assistant') {
+      // A workspace assistant canary's file is an assistant reply (the
+      // assistant design §3), held to the reply schema and the evidence its
+      // package carried; never a run's result.
+      let ok = false;
+      try {
+        const sent = redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)));
+        const judged = validateReply(sent, claim.attempt.kind === 'positive' ? [assistantCanaryEvidenceId(claim.attempt.id)] : []);
+        ok = 'reply' in judged;
+        if ('invalid' in judged) handle.invalidDetail = redactText(judged.invalid);
+      } catch {
+        ok = false;
+      }
+      if (ok) value = { summary: 'workspace assistant reply', checkpoint: false, nominate: false };
+      verdict = ok ? { outcome: 'accepted', reason: null, bytes_read: result.bytes.length } : { outcome: 'invalid', reason: 'malformed', bytes_read: result.bytes.length };
     } else {
       try {
         const sent = redactValue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)));
@@ -1391,7 +1408,7 @@ export class Launcher {
       await this.rt.engine('evidence.secret_refused', { run: claim.run, domain: claim.domain, what: 'result', path: '/surety/out/result.json', by: result.by }).catch((err) => log('secret screen', err, { run: claim.run }));
     }
     // The provider files (D2 §4.3; SEAM.md §152), after the result.
-    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode }) : undefined;
+    const template = claim.entry ? templateOf(claim.entry.backend, { scripted: claim.attempt !== null, authMode: claim.entry.auth_mode, purpose: claim.entry.purpose ?? 'role' }) : undefined;
     const inv = await inventory(hold, bounds, template?.persistenceFlags ?? [], seamCollectDelay());
     let providerFiles: string = hold === null || !hold.held ? 'not_collected' : 'published';
     let providerRecord: string | null = null;

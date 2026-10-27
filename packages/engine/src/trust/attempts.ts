@@ -29,13 +29,28 @@ import {
   claudeModelFallback,
   claudeProviderError,
 } from '../invoke/adapters/claude.js';
-import { CANARY_BARRIER, CANARY_UNLISTED, CONTAINMENT_ACTIONS, CONTAINMENT_RUN_BY, canaryEdit, canaryKindsOf, canaryResult, continuationMessage, continuationToken } from './canaries.js';
+import {
+  CANARY_BARRIER,
+  CANARY_UNLISTED,
+  CONTAINMENT_ACTIONS,
+  CONTAINMENT_RUN_BY,
+  assistantCanaryEvidenceId,
+  assistantCanaryNonce,
+  assistantCanaryReply,
+  canaryEdit,
+  canaryKindsOf,
+  canaryResult,
+  containmentActionsFor,
+  continuationMessage,
+  continuationToken,
+} from './canaries.js';
+import { validateReply } from '../assistant/turn-package.js';
 import { sameModel } from '../invoke/adapters/claude.js';
 import { ACTION_HARDENING, actionHardened } from '../invoke/probes/program.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
-import { templateOf } from '../invoke/adapters/templates.js';
+import { purposeOfTemplateVersion, templateOf } from '../invoke/adapters/templates.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AttemptRow, EntryInput } from '../store/transitions/trust.js';
@@ -390,7 +405,32 @@ export class QualificationDriver {
     let passed = false;
     let detail: Record<string, unknown> = { kind, run, exit_class: facts.exit_class ?? obs?.exitClass ?? null, outcome: facts.outcome };
     let termToExit: number | null = null;
-    if (kind === 'positive') {
+    // The workspace assistant's attempt (the assistant design §3): its
+    // canaries in the assistant's shape, its plan with no repository.
+    const purpose = purposeOfTemplateVersion(a.template_version);
+    if (kind === 'positive' && purpose === 'assistant') {
+      // A schema-valid reply that cites the seeded evidence and carries the
+      // engine's nonce, from a clean exit; a real backend's credential
+      // delivered and no authentication failure.
+      const want = assistantCanaryReply(a.id);
+      const judged = validateReply(obs?.resultValue ?? null, [assistantCanaryEvidenceId(a.id)]);
+      const reply = 'reply' in judged ? judged.reply : null;
+      const resultOk = obs?.verdict === 'accepted' && reply !== null && reply.cited_evidence.includes(assistantCanaryEvidenceId(a.id)) && reply.text.includes(assistantCanaryNonce(a.id));
+      const delivery = real && stream !== null ? claudeKeyDelivery(stream, authMode) : null;
+      passed = obs?.exitClass === 'clean' && resultOk && (!real || (stream !== null && authFailure === null && delivery?.established === true));
+      detail = {
+        ...detail,
+        purpose,
+        result_collection: obs?.verdict ?? null,
+        result_matches: resultOk,
+        reply_problem: 'invalid' in judged ? judged.invalid : null,
+        expected: { result: want, cites: assistantCanaryEvidenceId(a.id), nonce: assistantCanaryNonce(a.id) },
+        observed: { result: obs?.resultValue ?? null },
+        credential_delivery: real
+          ? { auth_mode: authMode, variable: delivery?.variable ?? null, established: delivery?.established === true, how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the credential reached the backend only in ${delivery.variable}` }
+          : { auth_mode: authMode, variable: null, established: false, how: 'the scripted backend takes no credential' },
+      };
+    } else if (kind === 'positive') {
       const want = canaryResult(a.id, kind);
       const got = obs?.value as { summary?: unknown } | null | undefined;
       const resultOk = obs?.verdict === 'accepted' && got?.summary === want.summary;
@@ -446,11 +486,14 @@ export class QualificationDriver {
         unlisted_connect: { checked: true, agrees: refusedUnlisted, what: "the proxy's log shows the unlisted CONNECT refused by its list (not_listed)" },
         engine_port: { checked: false, agrees: null, what: 'not corroborated host-side: the engine keeps no record of a connection that never reached it' },
         workspace_write: { checked: false, agrees: null, what: 'the control: the init observed the write' },
+        out_write: { checked: false, agrees: null, what: 'the control: the init observed the write to /surety/out' },
+        workspace_absent: { checked: false, agrees: null, what: 'the init observed nothing at /surety/workspace and could not make it' },
       };
       // The provider's tunnel, for a real backend (SEAM.md §165): an
       // accepted CONNECT to a candidate destination with bytes both ways.
       const tunnel = real ? (obs?.egress ?? []).find((e) => e.decision === 'accepted' && candidates.includes(e.authority.replace(/:443$/, '').toLowerCase()) && (e.bytes_up ?? 0) > 0 && (e.bytes_down ?? 0) > 0) : undefined;
       const judged = judgeContainment({
+        actions: containmentActionsFor(purpose),
         witnesses: obs?.witnesses ?? [],
         watch: obs?.containment ?? null,
         done: obs?.containmentDone ?? null,
@@ -480,7 +523,7 @@ export class QualificationDriver {
         capabilities = claudeCapabilities(
           history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
           merged,
-          templateOf(a.backend, { authMode })?.tools ?? [],
+          templateOf(a.backend, { authMode, purpose })?.tools ?? [],
         );
         detail = { ...detail, capabilities };
         if (!capabilities.delegation_verified || authFailure !== null) passed = false;
@@ -673,13 +716,17 @@ export class QualificationDriver {
 // check ran with the backend running; every control run. Otherwise not
 // passed, with the reason stated.
 export function judgeContainment(args: {
+  // The actions and their expected outcomes: D2's, or the workspace
+  // assistant's (its plan has no repository; the assistant design §3).
+  actions?: readonly { name: string; expected: string }[];
   witnesses: { action: string; outcome: string; detail: string; completed: boolean; backend_running: boolean; hardening?: string[] }[];
   watch: { ns_pid?: number; seen: { host_pid: number; at: string } | null; requested_at: string | null; present_at_end: boolean | null; ended_at?: string | null; reason: string | null } | null;
   done: { ran: boolean; backend_running: boolean; reason: string | null } | null;
   corroboration: Record<string, { checked: boolean; agrees: boolean | null; what: string }>;
   providerTunnel: { ran: boolean; detail: string } | null;
 }) {
-  const actions = CONTAINMENT_ACTIONS.map((x) => {
+  const list = args.actions ?? CONTAINMENT_ACTIONS;
+  const actions = list.map((x) => {
     const ws = args.witnesses.filter((y) => y.action === x.name);
     const c = args.corroboration[x.name] ?? { checked: false, agrees: null, what: 'not corroborated host-side' };
     const last = ws.at(-1);
@@ -690,9 +737,12 @@ export function judgeContainment(args: {
     const ok = completed && live && ws.every((w) => w.outcome === x.expected) && (!c.checked || c.agrees === true);
     return { name: x.name, witnessed: ws.length > 0, completed, hardened, hardening: last?.hardening ?? [], backend_running: live, outcome: last?.outcome ?? null, detail: last?.detail ?? null, expected: x.expected, host: c, passed: ok };
   });
-  const write = actions.find((x) => x.name === 'workspace_write');
+  // The control: a write the sandbox allows (the workspace's, or with no
+  // repository /surety/out's).
+  const controlName = list.some((x) => x.name === 'out_write') ? 'out_write' : 'workspace_write';
+  const write = actions.find((x) => x.name === controlName);
   const controls: { name: string; ran: boolean; detail: string }[] = [
-    { name: 'workspace_write', ran: write?.completed === true && write.outcome === 'allowed', detail: 'the init performed the workspace write in the domain' },
+    { name: controlName, ran: write?.completed === true && write.outcome === 'allowed', detail: controlName === 'out_write' ? 'the init performed the write to /surety/out in the domain' : 'the init performed the workspace write in the domain' },
   ];
   if (args.providerTunnel) controls.push({ name: 'provider_tunnel', ...args.providerTunnel });
   const w = args.watch;

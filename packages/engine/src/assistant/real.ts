@@ -11,17 +11,85 @@
 import type { AssistantConfig } from '../config/engine-config.js';
 import { heldSecret } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
+import type { Runtime } from '../runtime.js';
 import { credentialStatus } from '../setup/credentials.js';
-import type { CredentialFacts } from '../store/transitions/assistant.js';
+import type { CredentialFacts, TurnClaim } from '../store/transitions/assistant.js';
+import type { Actor } from '../store/transitions/tx.js';
+import type { RealAssistantPort, TurnRead } from './service.js';
+import type { TurnPackage } from './turn-package.js';
 
 export type StoreRead = <T>(name: string, args: Record<string, unknown>) => Promise<T>;
+export type StoreMutate = (name: string, args: unknown, actor: Actor, method: string, path: string) => Promise<{ status: number; body: unknown; effects?: { kind: string }[] }>;
 
-export class RealAssistant {
+export class RealAssistant implements RealAssistantPort {
   constructor(
     private readonly home: string,
     readonly config: AssistantConfig,
     private readonly read: StoreRead,
+    private readonly mutate: StoreMutate | null = null,
+    private readonly runtime: (() => Runtime) | null = null,
   ) {}
+
+  private turns() {
+    let rt: Runtime | null = null;
+    try {
+      rt = this.runtime?.() ?? null;
+    } catch {
+      rt = null;
+    }
+    if (rt === null || rt.assistant === null) throw new Refusal(503, 'assistant_state_unavailable', 'The engine is not running its assistant turns yet.', 'Retry once the engine is in full mode.', {});
+    return { rt, turns: rt.assistant };
+  }
+
+  // The admission (§1.3): the package registered for the tick's dispatch,
+  // then the store's transaction (the state recomputed, the reservation, the
+  // receipt), which asks for a tick. A refusal withdraws the package.
+  async admit(args: { conversation: string; intent_id: string; pkg: TurnPackage; actor: Actor }): Promise<{ invocation: string; deadline_at: string; backend: string }> {
+    const { rt, turns } = this.turns();
+    if (this.mutate === null) throw new Refusal(503, 'assistant_state_unavailable', 'The store cannot admit a turn here.', 'Retry shortly.', {});
+    turns.provide(args.conversation, args.intent_id, args.pkg);
+    try {
+      const r = await this.mutate(
+        'assistant.admit',
+        { conversation: args.conversation, intent_id: args.intent_id, credential: this.credential(), incarnation: rt.incarnation, scope: rt.boundary() === 'real' ? (rt.scope?.path ?? null) : null },
+        args.actor,
+        'POST',
+        `/v1/assistant/conversations/${args.conversation}/messages`,
+      );
+      rt.afterCommit((r.effects ?? []) as Parameters<Runtime['afterCommit']>[0]);
+      const claim = r.body as TurnClaim;
+      return { invocation: claim.invocation, deadline_at: claim.deadline_at, backend: claim.backend };
+    } catch (err) {
+      turns.withdraw(args.conversation, args.intent_id);
+      throw err;
+    }
+  }
+
+  settled(invocation: string, ms: number): Promise<boolean> {
+    return this.turns().turns.settled(invocation, ms);
+  }
+
+  turn(invocation: string): Promise<TurnRead | null> {
+    return this.read<TurnRead | null>('assistant.turn', { invocation });
+  }
+
+  async cancel(args: { conversation: string; intent_id: string; actor: Actor }): Promise<{ invocation: string; status: string } | null> {
+    const { turns } = this.turns();
+    if (this.mutate === null) return null;
+    const r = await this.mutate('assistant.cancel', { conversation: args.conversation, intent_id: args.intent_id }, args.actor, 'POST', `/v1/assistant/conversations/${args.conversation}/cancel`);
+    const body = r.body as { invocation: string; status: string } | null;
+    if (body !== null && body.status !== 'ended') turns.cancel(body.invocation);
+    return body;
+  }
+
+  onSettled(fn: (invocation: string) => Promise<void>): void {
+    try {
+      const rt = this.runtime?.() ?? null;
+      if (rt?.assistant) rt.assistant.onSettled = fn;
+    } catch {
+      // not running yet: the waiting request writes the message itself
+    }
+  }
 
   // Whether the saved credential manifest reads, and whether the block's
   // reference is loaded. Never a value or a path's content.

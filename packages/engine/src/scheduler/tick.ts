@@ -364,6 +364,12 @@ export class Scheduler {
       log('turn dispatch', err);
       return 0;
     });
+    // The workspace assistant's admitted turns (the assistant design §4):
+    // dispatched here, the tick being the choke point's one caller.
+    if (remaining() > 0 && this.rt.assistant) dispatched += await this.rt.assistant.dispatchDue().catch((err) => {
+      log('assistant dispatch', err);
+      return 0;
+    });
     await pausePoint('scheduler.tick_running');
     steps.push('select');
     if (remaining() > 0 && this.rt.selectHeld === 0) {

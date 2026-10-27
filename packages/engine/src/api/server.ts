@@ -211,7 +211,16 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
   // when config.json has a workspace_assistant block; with none, the
   // in-process fake only in the engine's test mode; otherwise unconfigured.
   const assistantBlock = state.config.values.workspace_assistant;
-  const realAssistant = assistantBlock === null ? null : new RealAssistant(opts.home, assistantBlock, (name, args) => store().call('read', { name, args }));
+  const realAssistant =
+    assistantBlock === null
+      ? null
+      : new RealAssistant(
+          opts.home,
+          assistantBlock,
+          (name, args) => store().call('read', { name, args }),
+          (name, args, actor, method, path) => store().call('mutate', { name, args, actor, method, path }),
+          runtime,
+        );
   const assistant = new AssistantService(opts.home, assistantBlock === null && seamScriptedProvider(), (name, args) => store().call('read', { name, args }), state.token, realAssistant);
 
   function match(method: string, s: string[]): Route | null {
@@ -236,6 +245,9 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           if(action && s[6]==='results') return { kind:'local', handler:async b=>({status:200,body:assistant.actionResult(id,action,b)}) };
         }
         if (id && s.length === 5 && s[4] === 'messages' && post) return { kind: 'local', handler: async (b, actor) => ({ status: 200, body: await assistant.message(id, b, actor) }) };
+        // The owner's cancel of a turn under way (the assistant design §4).
+        const mid = decodeSegment(s[5] ?? '');
+        if (id && mid && s.length === 7 && s[4] === 'messages' && s[6] === 'cancel' && post) return { kind: 'local', handler: async (b, actor) => { noFields(b); return { status: 200, body: await assistant.cancel(id, mid, actor) }; } };
       }
     }
     if (s.length === 2 && s[1] === 'health' && get) {
@@ -289,6 +301,10 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             fixtureProject: engineFixtureProject,
             home: runtime().home,
             entryOf: (id) => store().call('read', { name: 'trust.entry_row', args: { entry: id } }),
+            // The workspace assistant's turn limit, the per-canary limit of
+            // its qualification (the assistant design §3, under B2); null
+            // with no workspace_assistant block.
+            assistantTurnLimit: state.config.values.workspace_assistant?.turn_limit_billable_tokens ?? null,
           });
           // The provider-side cap held with the key's reference, shown on
           // the attempt as configured, never as engine enforcement (Q2).

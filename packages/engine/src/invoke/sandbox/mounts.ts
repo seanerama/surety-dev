@@ -106,7 +106,10 @@ export interface PlanInput {
   // namespace; the host sees two empty directories).
   area: string;
   context: string;
-  workspace: string;
+  // The run's checkout, the workspace overlay's lower layer; null for a
+  // domain with no repository (the workspace assistant's, the assistant
+  // design §3): no /surety/workspace and no git view.
+  workspace: string | null;
   // Read-only and read-write binds beyond the profile's, each at its real
   // path: a project's approved `sandbox_read_paths`; the backend's
   // installation; in harness mode the scripted backend's directory.
@@ -325,19 +328,23 @@ export function buildPlan(input: PlanInput): Plan {
   const vol = join(input.area, 'vol');
   const b = new Builder(stage, hostMountPoints());
   systemRoot(b, input);
-  // /surety: exactly context, workspace, git, home, out.
+  // /surety: exactly context, workspace, git, home, out; with no repository,
+  // exactly context, home, out.
   b.dir('/surety');
   b.bind(input.context, { target: '/surety/context' });
-  b.dir(WORKSPACE);
-  b.line(
-    'surety-workspace',
-    WORKSPACE,
-    'overlay',
-    `lowerdir=${esc(overlayPath(input.workspace))},upperdir=${esc(overlayPath(join(vol, 'upper')))},workdir=${esc(overlayPath(join(vol, 'work')))},userxattr,nosuid,nodev`,
-  );
+  const repository = input.workspace !== null;
+  if (input.workspace !== null) {
+    b.dir(WORKSPACE);
+    b.line(
+      'surety-workspace',
+      WORKSPACE,
+      'overlay',
+      `lowerdir=${esc(overlayPath(input.workspace))},upperdir=${esc(overlayPath(join(vol, 'upper')))},workdir=${esc(overlayPath(join(vol, 'work')))},userxattr,nosuid,nodev`,
+    );
+    b.dir(GIT_VIEW);
+  }
   const volEntries: Entry[] = [];
-  b.dir(GIT_VIEW);
-  if (input.git) {
+  if (repository && input.git) {
     // The git metadata view (D2 §2.7): its directory on the volatile
     // filesystem (the role's own index and lock files), with the engine's
     // configuration, the run's HEAD, an empty hooks directory and the
@@ -385,7 +392,7 @@ export function buildPlan(input: PlanInput): Plan {
   b.second();
   b.entry({ path: 'dev/ptmx', kind: 'symlink', target: 'pts/ptmx' });
   // The protected roots, read-only over the workspace (D1 §7.3; D2 §2.3).
-  for (const w of input.workspaceBinds ?? []) {
+  for (const w of repository ? (input.workspaceBinds ?? []) : []) {
     const target = join(WORKSPACE, w.target);
     if (w.make === 'dir') b.dir(target);
     b.bind(w.source, { target, noTarget: w.make !== 'dir' });
@@ -420,7 +427,7 @@ export function buildPlan(input: PlanInput): Plan {
     initNode: '/.init/node',
     initScript: '/.init/init.js',
     ...(input.holdVolatile ? { holdVolatile: true } : {}),
-    workspaceMount: rel(WORKSPACE),
+    ...(repository ? { workspaceMount: rel(WORKSPACE) } : {}),
   };
 }
 
@@ -494,9 +501,12 @@ export function planEntries(plan: Plan): PlanEntry[] {
 // The plan's fingerprint over its entries with the domain's own paths taken
 // out (the domain's area, its volatile filesystem, the run's checkout): two
 // runs of one project under one profile and one policy have one fingerprint.
-export function entriesFingerprint(entries: PlanEntry[], own: { area: string; workspace: string }): string {
-  const strip = (p: string | null) =>
-    p === null ? null : p.split(`${own.area}/`).join('<area>/').split(own.workspace).join('<checkout>');
+export function entriesFingerprint(entries: PlanEntry[], own: { area: string; workspace: string | null }): string {
+  const strip = (p: string | null) => {
+    if (p === null) return null;
+    const area = p.split(`${own.area}/`).join('<area>/');
+    return own.workspace === null ? area : area.split(own.workspace).join('<checkout>');
+  };
   const shape = entries.map((e) => ({ ...e, source: strip(e.source) }));
   return createHash('sha256').update(JSON.stringify(shape)).digest('hex');
 }

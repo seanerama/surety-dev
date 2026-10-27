@@ -546,6 +546,9 @@ export function turnOf(db: Db, args: { conversation: string; intent_id: string }
             cached_input_tokens: usage.cached_in,
             usage_complete: usage.usage_complete,
             unknown_allowance_tokens: usage.unknown_allowance_tokens,
+            // The basis of the figures: the provider's normalization, or the
+            // engine's own egress-evidence zero (O6), labelled.
+            basis: led.find((x) => x.corrects === null)?.normalization_version ?? null,
           },
   };
 }
@@ -661,6 +664,9 @@ export function endTurn(
     exit?: { exit_class: string | null; exit_evidence: string | null } | null;
     reply?: unknown;
     egress?: readonly EgressAccount[];
+    // The engine knows the backend never started (its launch was
+    // authorized, its sandbox was not built): nothing was spent.
+    never_ran?: boolean;
   },
 ): { ended: boolean } {
   const t = tx.db.prepare('SELECT * FROM "assistant_turns" WHERE "invocation" = ?').get(args.invocation) as { status: string; conversation: string; intent_id: string } | undefined;
@@ -669,7 +675,7 @@ export function endTurn(
   const r = tx.db.prepare('SELECT "provider", "model_requested" FROM "invocation_receipts" WHERE "id" = ?').get(args.invocation) as { provider: string; model_requested: string };
   const seen = statusesOf(tx.db, args.invocation);
   const launched = seen.includes('launched');
-  const refusedBeforeLaunch = args.outcome === 'refused' && !launched;
+  const refusedBeforeLaunch = args.outcome === 'refused' && (!launched || args.never_ran === true);
   if (!seen.some((s) => TERMINAL.includes(s))) {
     const status = refusedBeforeLaunch ? 'refused' : args.outcome === 'recovered' ? 'unknown' : 'ended';
     observeInvocation(tx, args.invocation, status, args.exit ?? null);

@@ -674,6 +674,26 @@ interface Targets {
   token?: unknown;
   port?: unknown;
   unlisted?: unknown;
+  // The workspace assistant's plan (the assistant design §3): no repository
+  // is mounted, so no git view and no workspace.
+  no_repository?: unknown;
+}
+
+// With no repository mounted (the assistant's plan): a repository
+// configuration can neither be written nor made. Denied only when git fails,
+// no configuration file is there after it, and making the git view's
+// directory is refused by the filesystem; `allowed` when either happened.
+export function classifyNoRepositoryConfig(o: { status: number | null; present: boolean; made: string }): 'allowed' | 'denied' | 'not_run' {
+  if (o.present || o.made === 'made' || o.status === 0) return 'allowed';
+  return REFUSED_FS.includes(o.made) ? 'denied' : 'not_run';
+}
+
+// The workspace's absence (the assistant's plan): `absent` only when nothing
+// is at /surety/workspace and making it is refused by the filesystem;
+// `present` when it is there or could be made.
+export function classifyWorkspaceAbsent(o: { stat: string; made: string }): 'absent' | 'present' | 'not_run' {
+  if (o.stat === 'exists' || o.made === 'made') return 'present';
+  return o.stat === 'ENOENT' && REFUSED_FS.includes(o.made) ? 'absent' : 'not_run';
 }
 
 // How each action's observation is classified (the review of c4a7f7f, S1
@@ -746,6 +766,19 @@ async function canaryAction(name: string, t: Targets): Promise<{ outcome: string
       return { outcome: classifyTokenRead(r), detail: r };
     }
     case 'git_config': {
+      if (t.no_repository === true) {
+        const r = run(['/usr/bin/git', 'config', '--file', GIT_VIEW_CONFIG, 'surety.canary', 'written'], { cwd: '/', env: { ...GIT_ACTION_ENV } });
+        const present = fileText(GIT_VIEW_CONFIG) !== null;
+        let made: string;
+        try {
+          mkdirSync(dirname(GIT_VIEW_CONFIG));
+          made = 'made';
+        } catch (err) {
+          made = errorOf(err);
+        }
+        const outcome = classifyNoRepositoryConfig({ status: typeof r.status === 'number' ? r.status : null, present, made });
+        return { outcome, detail: `no repository: git status ${String(r.status)}; ${present ? 'a configuration file is there' : 'no configuration file'}; making ${dirname(GIT_VIEW_CONFIG)}: ${made}` };
+      }
       const before = fileText(GIT_VIEW_CONFIG);
       const r = run(['/usr/bin/git', 'config', '--file', GIT_VIEW_CONFIG, 'surety.canary', 'written'], { cwd: '/', env: { ...GIT_ACTION_ENV } });
       const after = fileText(GIT_VIEW_CONFIG);
@@ -764,6 +797,31 @@ async function canaryAction(name: string, t: Targets): Promise<{ outcome: string
       if (typeof t.unlisted !== 'string' || t.unlisted === '') return { outcome: 'not_run', detail: 'no authority was given' };
       const r = await tunnel(Number(proxy[1]), t.unlisted, null);
       return { outcome: classifyTunnelStatus(r.status), detail: `status ${String(r.status)}` };
+    }
+    case 'out_write': {
+      try {
+        writeFileSync('/surety/out/.surety-canary-control', 'control\n');
+        return { outcome: 'allowed', detail: 'written' };
+      } catch (err) {
+        return { outcome: 'denied', detail: errorOf(err) };
+      }
+    }
+    case 'workspace_absent': {
+      let stat: string;
+      try {
+        lstatSync('/surety/workspace');
+        stat = 'exists';
+      } catch (err) {
+        stat = errorOf(err);
+      }
+      let made: string;
+      try {
+        mkdirSync('/surety/workspace');
+        made = 'made';
+      } catch (err) {
+        made = errorOf(err);
+      }
+      return { outcome: classifyWorkspaceAbsent({ stat, made }), detail: `lstat ${stat}; mkdir ${made}` };
     }
     case 'workspace_write': {
       try {

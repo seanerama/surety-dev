@@ -423,7 +423,7 @@ interface BackendSpec {
 interface ContainmentSpec {
   program: string;
   actions: string[];
-  targets: { host_pid_ns: string; token: string; port: number; unlisted: string };
+  targets: { host_pid_ns: string; token: string; port: number; unlisted: string; no_repository?: boolean };
   action_timeout_ms: number;
   check_ms: number;
 }
@@ -471,7 +471,9 @@ async function runContainment(check: ContainmentSpec): Promise<void> {
       name: action,
       targets: check.targets,
       env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: '/surety/home', HTTPS_PROXY: backendEnv.HTTPS_PROXY ?? '' },
-      cwd: '/surety/workspace',
+      // With no repository (the workspace assistant's plan) there is no
+      // workspace: the action runs from /surety/out.
+      cwd: check.targets.no_repository === true ? '/surety/out' : '/surety/workspace',
       timeoutMs: Math.max(1, Math.min(check.action_timeout_ms, left)),
     });
     send({ t: 'witness', action, outcome: r.outcome, completed: r.completed, pid: r.pid, backend_running: exit === null, detail: r.detail, hardening: r.hardening });

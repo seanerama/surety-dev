@@ -67,7 +67,7 @@ import {
   recordUsage,
   renewLease,
   unendedRuns,
- dispatchEntryProbe, envelopeHoldsDispatch } from './transitions/runs.js';
+ dispatchEntryProbe, envelopeHoldsDispatch, quarantineDomain } from './transitions/runs.js';
 import { budgetCheck, exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import {
   chunkReceipt,
@@ -617,6 +617,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'assistant.authorize': (tx, a) => authorizeTurnLaunch(tx, a),
   'assistant.usage': (tx, a) => recordTurnUsage(tx, a),
   'assistant.end': (tx, a) => endTurn(tx, a),
+  'assistant.quarantine': (tx, a: { domain: string; subject: Record<string, unknown> }) => quarantineDomain(tx, a),
   'receipt.allocate': (tx, a: { run: string }) => allocateReceipt(tx, a.run),
   'invoke.dispatch_started': (tx, a) => dispatchStarted(tx, a),
   'invoke.launched': (tx, a) => recordLaunch(tx, a),

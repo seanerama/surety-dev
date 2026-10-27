@@ -6,7 +6,9 @@ import { newId } from '../ids.js';
 import { redactText, redactValue, scanBytes } from '../records/redact.js';
 import { Refusal } from '../refusal.js';
 import type { Actor } from '../store/transitions/tx.js';
-import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type ReadTool } from './contract.js';
+import { FAKE_USAGE, LIMITS, type AssistantContext, type AssistantRequest, type Conversation, type AssistantMessage, type Evidence, type AssistantLink, type ReadTool, type TurnUsage } from './contract.js';
+import { type TurnPackage, boundedConversation } from './turn-package.js';
+import { ASSISTANT_WHAT_TO_DO } from './what-to-do.js';
 
 type Obj = Record<string, any>;
 export type AssistantRead = (name: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -158,9 +160,20 @@ export async function fakeReply(req: AssistantRequest, gateway: ToolGateway): Pr
 interface StoredConversation extends Conversation { requests: Record<string, string> }
 
 // The real path's port (assistant/real.ts): the state from real
-// configuration and, from a configured block on, the turn itself.
+// configuration and the turn itself, admitted in the store and run through
+// the choke point.
+export interface TurnRead {
+  invocation: string; status: string; outcome: string | null; reason: string | null; reason_text: string | null;
+  reply: { text: string; cited_evidence: string[]; links: AssistantLink[]; commentary?: boolean } | null;
+  usage: Omit<TurnUsage, 'account'> & { account: 'workspace_assistant' } | null;
+}
 export interface RealAssistantPort {
   state(): Promise<Record<string, unknown>>;
+  admit(args: { conversation: string; intent_id: string; pkg: TurnPackage; actor: Actor }): Promise<{ invocation: string; deadline_at: string; backend: string }>;
+  settled(invocation: string, ms: number): Promise<boolean>;
+  turn(invocation: string): Promise<TurnRead | null>;
+  cancel(args: { conversation: string; intent_id: string; actor: Actor }): Promise<{ invocation: string; status: string } | null>;
+  onSettled(fn: (invocation: string) => Promise<void>): void;
 }
 
 const RETENTION = 'engine-owned; explicit deletion';
@@ -289,15 +302,124 @@ export class AssistantService {
     } finally { this.busy.delete(id); }
   }
 
-  // A message on the real path (the assistant design §§1.3, 4): admitted in
-  // the store's transaction, refused with the state's code unless ready.
-  private async realMessage(_id: string, value: unknown, _actor: Actor): Promise<never> {
-    parseRequest(value);
-    const state = await this.real!.state();
-    if (state.state !== 'ready') {
-      const code = ({ unconfigured: 'assistant_not_configured', credential_missing: 'assistant_credential_missing', qualification_pending: 'assistant_qualification_pending', limit_reached: 'assistant_limit_reached' } as Record<string, string>)[String(state.state)] ?? 'assistant_not_configured';
-      throw new Refusal(code === 'assistant_limit_reached' ? 429 : code === 'assistant_not_configured' ? 503 : 409, code, String(state.reason), String(state.what_to_do), { state: state.state });
+  // The turns this service waits on: their conversation, intent, evidence
+  // and owner context, until their message is written.
+  private readonly pending = new Map<string, { conversation: string; intent_id: string; evidence: Evidence[]; context: AssistantContext; text: string; request_id: string | null }>();
+  private hooked = false;
+
+  // A message on the real path (the assistant design §§1.3, 4): the reads
+  // chosen by the engine, the turn admitted in the store's transaction (with
+  // the state's code refused unless ready), dispatched by the tick through
+  // the choke point, and its reply written once it has ended. A message is
+  // never replayed: an intent names one turn.
+  private async realMessage(id: string, value: unknown, actor: Actor) {
+    const real = this.real!;
+    if (!this.hooked) {
+      this.hooked = true;
+      real.onSettled(async (invocation) => { await this.recordTurn(invocation); });
     }
-    throw new Refusal(503, 'assistant_turn_unavailable', 'The real assistant turn is not built in this engine revision.', 'Continue using the ordinary workspace controls.', {});
+    const raw = parseRequest(value);
+    const fingerprint = createHash('sha256').update(JSON.stringify(raw)).digest('hex');
+    const req = safeValue(raw, this.token);
+    let c = this.load(id);
+    if (c.requests[req.intent_id]) {
+      if (c.requests[req.intent_id] !== fingerprint) throw new Refusal(409, 'assistant_intent_conflict', 'This intent identifier already names a different message or context.', 'Use a new intent identifier for a new owner request.');
+      const message = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'assistant');
+      return { conversation: this.public(c), message: message ?? null, status: message?.status ?? c.messages.find(m => m.intent_id === req.intent_id)?.status ?? 'unknown' };
+    }
+    if (this.busy.has(id)) throw new Refusal(409, 'assistant_busy', 'A response is already running in this conversation.', 'Wait for it to settle; do not replay the request.');
+    if (c.messages.length + 2 > LIMITS.max_messages) throw new Refusal(429, 'assistant_limit', 'The conversation message limit was reached.', 'Start a new assistant conversation.');
+    if (this.busy.size >= 2) throw new Refusal(429, 'assistant_limit', 'The assistant concurrency limit was reached.', 'Wait for a current response to settle.');
+    this.busy.add(id);
+    try {
+      const at = new Date().toISOString();
+      const prior = c.messages.map(m => ({ role: m.role, text: m.text, created_at: m.created_at }));
+      const human: AssistantMessage = { id: newId('am_'), intent_id: req.intent_id, role: 'user', text: req.text, context: req.context, created_at: at, status: 'unknown', evidence: [], links: [], usage: { account: 'workspace_assistant', provider: 'unconfigured', cost_status: 'unknown', cost_usd: null, input_tokens: null, output_tokens: null, charged: false }, actor: { kind: 'human', request_id: actor.request_id } };
+      c.requests[req.intent_id] = fingerprint; c.messages.push(human); c.updated_at = at; this.save(c);
+      // The engine chooses the reads (O5): the gateway's deterministic
+      // routing from the message's screen, candidate and gate context and the
+      // two supported question kinds, made now; the model reads only what
+      // they returned. Their summary text is never used.
+      const gateway = new ToolGateway(this.read, req.context, this.token);
+      try { await fakeReply(req, gateway); } catch { /* each failed read is its own error evidence */ }
+      const pkg: TurnPackage = { request: { intent_id: req.intent_id, text: req.text, context: req.context }, evidence: gateway.evidence, conversation: boundedConversation(prior) };
+      let admitted: { invocation: string; deadline_at: string; backend: string };
+      try {
+        admitted = await real.admit({ conversation: id, intent_id: req.intent_id, pkg, actor });
+      } catch (err) {
+        // A refused admission writes no receipt and charges nothing; the
+        // owner's message is failed with the refusal, and the draft is the
+        // console's to keep.
+        const r = err instanceof Refusal ? err : new Refusal(503, 'assistant_state_unavailable', 'The admission could not be made; the assistant is not ready.', 'Retry shortly.', {});
+        c = this.load(id);
+        const owner = c.messages.find(m => m.intent_id === req.intent_id && m.role === 'user');
+        if (owner) { owner.status = 'failed'; owner.error = safeValue({ code: r.code, reason: r.reason, what_to_do: r.whatToDo, outcome: 'refused' }, this.token); }
+        c.updated_at = new Date().toISOString(); this.save(c);
+        throw r;
+      }
+      this.pending.set(admitted.invocation, { conversation: id, intent_id: req.intent_id, evidence: gateway.evidence, context: req.context, text: req.text, request_id: actor.request_id });
+      // Wait for the turn's end, bounded by its deadline and the grace the
+      // boundary takes to end it; past that the owner's message stays unknown
+      // and the turn's own end writes the reply when it comes.
+      const ms = Math.max(0, Date.parse(admitted.deadline_at) - Date.now()) + 60_000;
+      await real.settled(admitted.invocation, ms);
+      const message = await this.recordTurn(admitted.invocation);
+      c = this.load(id);
+      return { conversation: this.public(c), message, status: message?.status ?? 'unknown' };
+    } finally { this.busy.delete(id); }
+  }
+
+  // An ended turn's message, written into its conversation once (the turn's
+  // own end and the waiting request both call this). null while the turn has
+  // not ended.
+  private async recordTurn(invocation: string): Promise<AssistantMessage | null> {
+    const p = this.pending.get(invocation);
+    if (!p) return null;
+    const turn = await this.real!.turn(invocation);
+    if (turn === null || turn.status !== 'ended') return null;
+    const c = this.load(p.conversation);
+    const existing = c.messages.find(m => m.intent_id === p.intent_id && m.role === 'assistant');
+    if (existing) { this.pending.delete(invocation); return existing; }
+    const completed = turn.outcome === 'completed' && turn.reply !== null;
+    const reason = turn.reason ?? 'infra_error';
+    const usage: AssistantMessage['usage'] = turn.usage === null
+      ? { account: 'workspace_assistant', provider: 'unconfigured', cost_status: 'unknown', cost_usd: null, input_tokens: null, output_tokens: null, charged: false }
+      : { ...turn.usage, account: 'workspace_assistant' };
+    let actions: AssistantMessage['actions'] = [];
+    // Action cards come only from the owner's own message (contract.md,
+    // "Action bridge"); the model's text never yields one.
+    const kind = actionKind(p.text);
+    if (kind === 'create_app') {
+      const match = p.text.match(/(?:app|project)\s+(?:called\s+|named\s+)?([^:]+):\s*([\s\S]+)/i);
+      const brief = p.text.match(/(?:app|project)\s*:\s*([\s\S]+)/i);
+      actions = [{ kind, draft: match ? { name: match[1]!.trim(), idea: match[2]!.trim() } : brief ? { idea: brief[1]!.trim() } : {} }];
+    } else if (kind === 'start_planning' && p.context.project) actions = [{ kind, project: p.context.project }];
+    const message: AssistantMessage = safeValue({
+      id: newId('am_'), intent_id: p.intent_id, role: 'assistant',
+      text: completed ? turn.reply!.text : `The assistant did not complete this turn: ${turn.reason_text ?? reason}.`,
+      context: p.context, created_at: new Date().toISOString(), status: completed ? 'completed' : 'failed',
+      evidence: p.evidence, links: completed ? turn.reply!.links : [], actions, usage,
+      actor: { kind: 'assistant', request_id: p.request_id }, invocation,
+      ...(completed ? { cited_evidence: turn.reply!.cited_evidence, commentary: turn.reply!.cited_evidence.length === 0 } : { error: { code: reason, reason: turn.reason_text ?? reason, what_to_do: ASSISTANT_WHAT_TO_DO[reason] ?? ASSISTANT_WHAT_TO_DO.infra_error!, outcome: turn.outcome ?? 'unknown' } }),
+    } as AssistantMessage, this.token);
+    const owner = c.messages.find(m => m.intent_id === p.intent_id && m.role === 'user');
+    if (owner) owner.status = message.status;
+    c.messages.push(message); c.updated_at = message.created_at; this.save(c);
+    this.pending.delete(invocation);
+    return message;
+  }
+
+  // POST /v1/assistant/conversations/:id/messages/:message/cancel (the
+  // assistant design §4): the owner's cancel of a turn under way; `stopped`,
+  // its usage charged as observed with the allowance. Nothing else.
+  async cancel(id: string, messageId: string, actor: Actor) {
+    this.configured();
+    if (!this.real) throw new Refusal(409, 'assistant_cancel_refused', 'Only a real assistant turn can be cancelled; the deterministic fake answers at once.', 'Nothing to cancel.');
+    const c = this.load(id);
+    const m = c.messages.find(x => x.id === messageId);
+    if (!m) throw new Refusal(404, 'not_found', 'The assistant message does not exist.', 'Name an owner message of this conversation.');
+    const r = await this.real.cancel({ conversation: id, intent_id: m.intent_id, actor });
+    if (r === null) throw new Refusal(404, 'not_found', 'No assistant turn was admitted for this message.', 'Nothing to cancel.');
+    return { invocation: r.invocation, status: r.status === 'ended' ? 'ended' : 'cancel_requested' };
   }
 }

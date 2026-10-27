@@ -25,7 +25,7 @@ import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDri
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
 import { boundaryFalls } from '../../scheduler/autonomy.js';
-import { TEMPLATES, credentialRef, keyVariable, templateOf } from '../../invoke/adapters/templates.js';
+import { TEMPLATES, type TemplatePurpose, credentialRef, keyVariable, purposeOfTemplateVersion, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
@@ -240,7 +240,10 @@ export interface Claim {
   backend: string;
   trust_entry: string | null;
   // What the choke point launches for a real backend: the entry's binary.
-  entry: { backend: string; auth_mode: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[] } | null;
+  // `purpose`: the template's (a project role's, or the workspace
+  // assistant's: an assistant qualification attempt's canaries, the
+  // assistant design §3); a role's when absent.
+  entry: { backend: string; auth_mode: string; binary_path: string; binary_sha256: string; help_sha256: string; model: string; key_ref: string; egress_hosts: string[]; purpose?: TemplatePurpose } | null;
   // A canary run: the attempt whose authority dispatched it and its kind.
   attempt: { id: string; kind: string } | null;
   // A refusal in its form (code, reason, what_to_do, subject), recorded
@@ -818,7 +821,13 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   tx.db.prepare('UPDATE "runs" SET "grant" = ? WHERE "id" = ?').run(grant, run);
 
   const trustEntry = backend.kind === 'entry' ? backend.entry.id : null;
-  const invocation = allocateReceipt(tx, run, { trustEntry, qualificationAttempt: backend.kind === 'attempt' ? backend.attempt.id : null });
+  const invocation = allocateReceipt(tx, run, {
+    trustEntry,
+    qualificationAttempt: backend.kind === 'attempt' ? backend.attempt.id : null,
+    // An attempt that names its per-canary limit (the assistant's: its
+    // turn limit, the assistant design §3 under B2) fixes it on the receipt.
+    runLimit: backend.kind === 'attempt' ? attemptCanaryLimit(backend.attempt) : null,
+  });
   const domain = tx.newId('dom_');
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
   // with its cgroup path when the real boundary will hold it.
@@ -872,6 +881,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
             // The attempt's candidate list (D2 §2.4): the canaries' only
             // destinations; an off-list one is refused and reported.
             egress_hosts: JSON.parse(backend.attempt.candidate_egress) as string[],
+            purpose: purposeOfTemplateVersion(backend.attempt.template_version),
           }
         : backend.kind === 'entry'
         ? {
@@ -906,9 +916,21 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   };
 }
 
+// The per-canary limit an attempt names in its spend (the assistant's
+// attempt: its turn limit, the assistant design §3 under B2), or null for
+// the fixture project's own budget_run_billable_tokens.
+export function attemptCanaryLimit(a: { spend: string }): number | null {
+  try {
+    const v = (JSON.parse(a.spend) as { canary_limit_tokens?: unknown }).canary_limit_tokens;
+    return typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null } = {}): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null; runLimit?: number | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -917,7 +939,7 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
   const id = tx.newId('inv_');
   const policy = projectPolicy(tx.db, run.project);
   const budget = {
-    budget_run_billable_tokens: policy.budget_run_billable_tokens,
+    budget_run_billable_tokens: opts.runLimit ?? policy.budget_run_billable_tokens,
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
   };

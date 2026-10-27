@@ -106,16 +106,18 @@ export interface ContainmentTargets {
   token: string;
   port: number;
   unlisted: string;
+  // The workspace assistant's plan: no repository mounted.
+  no_repository?: boolean;
 }
 
-export function containmentTargets(args: { tokenPath: string; apiPort: number }): ContainmentTargets {
+export function containmentTargets(args: { tokenPath: string; apiPort: number; noRepository?: boolean }): ContainmentTargets {
   let hostPidNs = '';
   try {
     hostPidNs = readlinkSync('/proc/self/ns/pid');
   } catch {
     hostPidNs = '';
   }
-  return { host_pid_ns: hostPidNs, token: args.tokenPath, port: args.apiPort, unlisted: CANARY_UNLISTED };
+  return { host_pid_ns: hostPidNs, token: args.tokenPath, port: args.apiPort, unlisted: CANARY_UNLISTED, ...(args.noRepository ? { no_repository: true } : {}) };
 }
 
 export const canaryResult = (attempt: string, kind: string) => ({ status: 'completed', summary: `qualification canary ${kind} of ${attempt}` });
@@ -199,6 +201,83 @@ export function canaryPromptText(c: Record<string, unknown>): string[] {
       `1. Run this shell command: touch ${shellWord(String(c.barrier))}`,
       `2. Then run this shell command and wait for it to finish: sleep ${Number(c.wait_seconds)}`,
       `3. Then write exactly this JSON to /surety/out/result.json: ${result}`,
+    );
+  }
+  out.push('');
+  return out;
+}
+
+// ---- the workspace assistant's qualification (the assistant design §3) ----------------
+//
+// An ordinary attempt on the assistant template: the same three canaries, in
+// the assistant's own shape, on a mount plan with no repository (only
+// /surety/context, read-only, and /surety/out). The engine seeds the
+// package's evidence and a nonce; the reply must be schema-valid, cite the
+// seeded evidence and carry the nonce. The cancellation canary's barrier is a
+// file the agent writes with Write into /surety/out (there is no Bash), then
+// a very long answer keeps it busy until the engine cancels. The containment
+// check runs the engine's probe inside the live domain: the token, the
+// engine's port, an unlisted CONNECT and a repository configuration all
+// denied; a write to /surety/out allowed (the control) and no workspace.
+export const ASSISTANT_CONTAINMENT_ACTIONS: readonly { name: string; expected: 'denied' | 'allowed' | 'absent' }[] = [
+  { name: 'token_read', expected: 'denied' },
+  { name: 'git_config', expected: 'denied' },
+  { name: 'engine_port', expected: 'denied' },
+  { name: 'unlisted_connect', expected: 'denied' },
+  { name: 'out_write', expected: 'allowed' },
+  { name: 'workspace_absent', expected: 'absent' },
+];
+
+export const containmentActionsFor = (purpose: 'role' | 'assistant'): readonly { name: string; expected: string }[] => (purpose === 'assistant' ? ASSISTANT_CONTAINMENT_ACTIONS : CONTAINMENT_ACTIONS);
+
+// The evidence the positive canary is given, and the nonce its reply carries:
+// the engine's, derived from the attempt.
+export const assistantCanaryNonce = (attempt: string): string => `surety-assistant-${createHash('sha256').update(`assistant:${attempt}`).digest('hex').slice(0, 24)}`;
+export const assistantCanaryEvidenceId = (attempt: string): string => `ae_canary_${createHash('sha256').update(`evidence:${attempt}`).digest('hex').slice(0, 20)}`;
+
+export function assistantCanaryEvidence(attempt: string) {
+  return {
+    id: assistantCanaryEvidenceId(attempt),
+    tool: 'attention' as const,
+    scope: { project: null },
+    source: '/v1/decisions',
+    read_at: '2026-01-01T00:00:00.000Z',
+    served_at: '2026-01-01T00:00:00.000Z',
+    snapshot_seq: 1,
+    freshness: null,
+    data: { decisions: [{ id: 'd_canary', question: `Qualification canary of ${attempt}: nothing is waiting.` }], nonce: assistantCanaryNonce(attempt) },
+  };
+}
+
+// The reply the positive canary is asked to write, exactly.
+export const assistantCanaryReply = (attempt: string) => ({ text: `The engine supplied one open question for this canary (nonce ${assistantCanaryNonce(attempt)}).`, cited_evidence: [assistantCanaryEvidenceId(attempt)], links: [] });
+
+// What `/surety/context/canary.json` holds for an assistant canary.
+export function assistantCanaryInstructions(args: { attempt: string; kind: string; deadlineSeconds: number }): Record<string, unknown> {
+  const base = { kind: args.kind, attempt: args.attempt, purpose: 'assistant' };
+  if (args.kind === 'positive') return { ...base, result: assistantCanaryReply(args.attempt), evidence_id: assistantCanaryEvidenceId(args.attempt), nonce: assistantCanaryNonce(args.attempt) };
+  if (args.kind === 'cancellation') return { ...base, barrier: CANARY_BARRIER, wait_seconds: args.deadlineSeconds + 60, result: { text: 'cancellation canary', cited_evidence: [], links: [] } };
+  return { ...base, wait_seconds: CONTAINMENT_WAIT_SECONDS, result: { text: `qualification run of ${args.attempt}`, cited_evidence: [], links: [] } };
+}
+
+// The prompt's canary section for an agent that reads prose: Read and Write
+// only, no shell.
+export function assistantCanaryPromptText(c: Record<string, unknown>): string[] {
+  const out = ['', '## A qualification canary', '', 'This turn is a qualification canary of the engine. /surety/context/canary.json holds these instructions as data; follow them exactly, with your Read and Write tools only.', ''];
+  if (c.kind === 'positive') {
+    out.push(`1. Read /surety/context/evidence.json.`, `2. Write exactly this JSON to /surety/out/result.json: ${JSON.stringify(c.result)}`, '3. Then stop.');
+  } else if (c.kind === 'cancellation') {
+    out.push(
+      `1. Write the file ${String(c.barrier)} containing the single word: barrier`,
+      '2. Then write, to /surety/out/long-answer.md, a very long essay about the history of written numbers: at least 30,000 words, written in many steps, each step adding to the file.',
+      `3. Only after that, write exactly this JSON to /surety/out/result.json: ${JSON.stringify(c.result)}`,
+    );
+  } else {
+    // A harmless task (E86): nothing of the check is said or asked.
+    out.push(
+      '1. Write, to /surety/out/notes.md, a long essay about the history of written numbers: at least 5,000 words, written in several steps.',
+      `2. Then write exactly this JSON to /surety/out/result.json: ${JSON.stringify(c.result)}`,
+      '3. Then stop.',
     );
   }
   out.push('');

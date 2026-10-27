@@ -53,16 +53,44 @@ test('a block: the real state as the store computes it; a store failure is a 503
   await assert.rejects(new AssistantService(h, false, noRead, 'tok', failing).capability(), (e) => e.status === 503 && e.code === 'assistant_state_unavailable' && /not ready/.test(e.reason));
 });
 
-test('a message is refused with the state code unless ready', async (t) => {
+test('a message refused at its admission: the refusal answers, no turn is waited for, the owner message is failed with the refusal and nothing else is written', async (t) => {
   const h = home(t);
-  for (const [s, code, status] of [
-    ['credential_missing', 'assistant_credential_missing', 409],
-    ['qualification_pending', 'assistant_qualification_pending', 409],
-    ['limit_reached', 'assistant_limit_reached', 429],
+  const { Refusal } = await import(join(dist, 'refusal.js'));
+  for (const [code, status] of [
+    ['assistant_credential_missing', 409],
+    ['assistant_qualification_pending', 409],
+    ['assistant_limit_reached', 429],
+    ['assistant_not_configured', 503],
   ]) {
-    const real = new RealAssistant(h, BLOCK, async () => ({ state: s, configured: s === 'limit_reached', reason: 'why', what_to_do: 'do' }));
-    const svc = new AssistantService(h, false, noRead, 'tok', real);
+    const calls = [];
+    const port = {
+      state: async () => ({ state: 'ready', configured: true }),
+      admit: async (a) => {
+        calls.push(a);
+        throw new Refusal(status, code, `refused: ${code}`, 'do', { state: code });
+      },
+      settled: async () => {
+        throw new Error('nothing is waited for');
+      },
+      turn: async () => null,
+      cancel: async () => null,
+      onSettled: () => {},
+    };
+    const reads = [];
+    const svc = new AssistantService(h, false, async (name) => {
+      reads.push(name);
+      return { decisions: [], projects: [] };
+    }, 'tok', port);
     const id = svc.create({}).conversation.id;
     await assert.rejects(svc.message(id, { intent_id: 'i1', text: 'What is waiting on me?', context: { project: null, screen: 'home' } }, actor), (e) => e.code === code && e.status === status);
+    assert.equal(calls.length, 1, 'one admission');
+    assert.deepEqual(calls[0].pkg.request, { intent_id: 'i1', text: 'What is waiting on me?', context: { project: null, screen: 'home' } });
+    assert.ok(reads.includes('decisions.engine'), 'the engine chose its reads before the admission');
+    const c = svc.get(id).conversation;
+    assert.deepEqual(c.messages.map((m) => [m.role, m.status, m.error?.code, m.error?.outcome]), [['user', 'failed', code, 'refused']]);
+    // The same intent again is the stored answer, never a second admission.
+    const again = await svc.message(id, { intent_id: 'i1', text: 'What is waiting on me?', context: { project: null, screen: 'home' } }, actor);
+    assert.equal(again.status, 'failed');
+    assert.equal(calls.length, 1);
   }
 });
