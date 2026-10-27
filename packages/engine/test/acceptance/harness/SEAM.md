@@ -8404,6 +8404,44 @@ These cases are written to fail on `main` `600b6e88` and to pass on the Builder'
 - **M559 (c).** Every message status is in the contract's set `running | completed | failed | stopped | timed_out | refused | interrupted | unknown`. *Reading:* the driver's shape gives the set, not the mapping. The Verifier reads each name as its turn's outcome: completed `completed`, a cancel or a turn limit `stopped`, an invalid reply `failed`, a deadline `timed_out`, a refused admission `refused`, a recovery `interrupted`. The Builder's README states the same. The account, the limit's refusal subject and every message's usage name the allowance `unknown_allowance_tokens`, never `unknown_allowance`.
 - **M554 (b).** After recovery the owner message is `interrupted`, with `error: {code: "assistant_interrupted", outcome: "recovered"}`. Its usage is the row's: `charged: true`, the counts, `unknown_allowance_tokens`, `usage_complete: false`. It has no reply. A new intent is then accepted and completes.
 - **M561.**
-  - A change answers `{outcome: "accepted", revision, committed: false, commit: {state: "pending"}}`. A submission with nothing to commit answers `{outcome: "unchanged", revision: null, committed: false, commit: null}`. *Reading:* "nothing to commit" is a submission with no ordinary key (`{}`). A key sent at its current value is still a change: `preparePolicy` prepares a commit for every non-empty ordinary change, and the engine commits a new revision for it, before the batch as after it (observed on `269da14c`: revision 2, `accepted`). Refusals keep their 4xx, code and shape and carry no `outcome`.
+  - A change answers `{outcome: "accepted", revision, committed: false, commit: {state: "pending"}}`. A submission with nothing to commit answers `{outcome: "unchanged", revision: null, committed: false, commit: null}`. *Reading:* "nothing to commit" is a submission with no ordinary key (`{}`). A key sent at its current value is still a change: `preparePolicy` prepares a commit for every non-empty ordinary change, and the engine commits a new revision for it, before the batch as after it (observed on `269da14c`: revision 2, `accepted`). *Superseded by the owner's ruling of 2026-10-27: see §571.* Refusals keep their 4xx, code and shape and carry no `outcome`.
   - The policy read shows the revision's commit state until it reads `committed`. With an `intent_id`, a repeat with the same body is the same revision, with its commit state current and nothing more committed. A different body is 409 `policy_intent_conflict` and changes nothing.
   - *Reading:* the shape names the requirement ("a lost response settles by re-reading") but not the read's field names. The case reads the Builder's `submissions[]` (`intent_id`, `outcome`, `revision`, `commit.state`), the only place the branch shows it. A rename there is a test change, not an engine defect.
+
+## 571. Identical values are unchanged (row M561 (b); the harness's `changePolicy`; M105 (c), M426 (f) in both files, M451 (a)/(b), M528 (h); objection 216; the Builder's `build/policy-unchanged` 4d78f618; the Verifier, on `verify/policy-unchanged`)
+
+The owner's ruling of 2026-10-27, verbatim: "For policy updates, submitting values identical to the current effective values should return unchanged, without creating another revision. Preserve validation and intent-id behavior." It replaces §570's reading that a key sent at its current value is a change.
+
+- **M561 (b)** pins the ruling. After (a) has committed revision N, each of these answers exactly `{outcome: "unchanged", revision: null, committed: false, commit: null}`:
+  - the key (a) committed, sent again at the same value;
+  - `repair_attempts_max: 3, autonomy: "phase"`, never set and read at their defaults first;
+  - `{}`.
+
+  The case then checks:
+  - Validation runs first. An identical key beside an unknown one is 400 `unknown_field`, with no `outcome`.
+  - The intent_id behaviour is kept. An identical body with an `intent_id` is `unchanged`; its repeat gets the same answer; a different body under that intent is 409 `policy_intent_conflict`.
+  - After a 1 s wait: still revision N, the same count of `policy_revisions` and of `policy.changed` for the project, and the value as (a) left it.
+  - A body mixing the identical key with a changed one (`budget_day_verified_usd`) is `accepted` at revision N+1. It settles `committed` with both keys in effect, exactly one revision and one `policy.changed` more.
+
+  (b) fails on `main` 7ef35529, which answers the identical key `accepted`, revision 2, and passes on 4d78f618.
+- **`changePolicy`** (`harness/journal.mjs`), and so every helper built on it (`stepAutonomy`, `ownerPolicy`, `nominated`, `specReady`, `journey35`, `createWithIdea`, `createPantry`, the trust and gate helpers), still asserts 200. On `outcome: "unchanged"` it does not wait for a revision. Instead it asserts three things and returns the policy read:
+  - the answer is exactly the unchanged shape;
+  - the read's revision has not moved;
+  - every submitted key (`intent_id` aside) reads back in `effective` at the submitted value (deep equality).
+
+  Any other 200 waits for revision `before + 1`, as before. It therefore works unchanged on 7ef35529, where an identical value is still a revision.
+- **The five cases** submit a value that is already in effect as setup. None of them is about the policy revision:
+  - M105 (c): `repair_attempts_max: 0`, set by `nominated`.
+  - M426-plan-dependencies (f): the default `phase_size` {3, 5}.
+  - M426-replans (b)/(f): the default `phase_size`, `repair_attempts_max` 3, `autonomy` phase and `alpha_deploy` manual.
+  - M451 (a)/(b): `role_memory_max` 4 GiB, the default.
+  - M528 (h): `autonomy: "phase"`, the default.
+
+  Each case's text is unchanged. Each still asserts what it was written for, now with the setup value verified in effect rather than recommitted:
+  - M105 (c): a Builder's and a Verifier's result carrying `alpha_exception_proposals` is `invalid_result`.
+  - M426 (f): a two-stage plan under the default bound is `uncertain` naming `phase_size`, never refused.
+  - M426-replans: the roadmap refusals and routing.
+  - M451: the 4 GiB profile is unqualified and refused `backend_refused` naming it, the 8 GiB entry is not revoked, and an 8 GiB project is dispatched.
+  - M528 (h): under design off the review is refused `design_review_unavailable` and no session is opened.
+
+  No case needed a new revision, so none was changed to submit a different value.
