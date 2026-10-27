@@ -1,6 +1,7 @@
 // New-app onboarding: create only a new directory, then use the existing
 // journaled project bootstrap. Existing repositories use /projects or /adopt.
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { git, repoContext } from '../git/exec.js';
 import { prepareBootstrap } from '../projects/commands.js';
@@ -8,6 +9,21 @@ import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
 
 const invalid = (field: string, reason: string) => new Refusal(400, 'invalid_value', reason, 'Correct the new-app form.', { field });
+
+// The one parent the engine offers by default (GET /v1/setup). It is the only
+// folder the engine creates for a person: a new app under it creates it first
+// (one level, mode 700, never recursively, never an existing folder's
+// contents). Any other missing parent is still a refusal.
+export const defaultProjectsDirectory = (): string => join(homedir(), 'projects');
+export const defaultProjectsDirectoryExists = (): boolean => existsSync(defaultProjectsDirectory());
+function ensureDefaultParent(wanted: string): void {
+  const dflt = defaultProjectsDirectory();
+  if (resolve(wanted) !== dflt || existsSync(dflt)) return;
+  try { mkdirSync(dflt, { mode: 0o700 }); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return;
+    throw invalid('dev_repo_path', `The default app folder ${dflt} does not exist and could not be created.`);
+  }
+}
 export async function prepareNewProject(rt: Runtime, body: unknown): Promise<Record<string, unknown>> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid('body', 'A new app needs an object.');
   const b = body as Record<string, unknown>;
@@ -17,6 +33,7 @@ export async function prepareNewProject(rt: Runtime, body: unknown): Promise<Rec
   if (typeof b.idea !== 'string' || !b.idea.trim()) throw invalid('idea', 'Describe the app you want to build.');
   if (typeof b.dev_repo_path !== 'string' || !isAbsolute(b.dev_repo_path) || /[\x00-\x1f]/.test(b.dev_repo_path)) throw invalid('dev_repo_path', 'Choose an absolute folder path.');
   const path = resolve(b.dev_repo_path);
+  ensureDefaultParent(dirname(path));
   let parent: string;
   try { parent = realpathSync(dirname(path)); } catch { throw invalid('dev_repo_path', 'The parent folder must already exist.'); }
   const repo = join(parent, basename(path));

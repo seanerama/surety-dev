@@ -22,12 +22,11 @@ import { answerFacts } from '../decisions/facts.js';
 import { type AnswerWaits, afterAnswer, beforeAnswer } from '../decisions/answer.js';
 import { ensurePresence, gateFacts } from '../gates/prepare.js';
 import { prepareBootstrap, preparePolicy, prepareRebind } from '../projects/commands.js';
-import { prepareNewProject } from '../setup/projects.js';
+import { defaultProjectsDirectory, defaultProjectsDirectoryExists, prepareNewProject } from '../setup/projects.js';
 import { credentialStatus, registerCredential } from '../setup/credentials.js';
 import { projectEffectiveDefaults } from '../config/project-policy.js';
 import { PROJECT_OPTIONS, PROJECT_POLICY } from '../config/schema.js';
 import { resolveInstallation } from '../trust/fixture.js';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
@@ -241,7 +240,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     }
     if (s.length === 2 && s[1] === 'setup' && get) {
       return { kind: 'direct', handler: async () => ({ status: 200, body: {
-        version: 1, home: state.home, default_projects_directory: join(homedir(), 'projects'),
+        version: 1, home: state.home, default_projects_directory: defaultProjectsDirectory(), default_projects_directory_exists: defaultProjectsDirectoryExists(),
         credentials: credentialStatus(state.home),
         providers: ['claude', 'codex'].map(backend => ({ backend, installed: resolveInstallation(backend) !== null })),
         policy_defaults: projectEffectiveDefaults(), policy_fields: { ...PROJECT_POLICY, ...PROJECT_OPTIONS },
