@@ -420,3 +420,65 @@ test('restart: killed before the cancellation canary was dispatched, the reserva
   transact(db, ENGINE_ACTOR, (tx) => invalidateAttemptBy(tx, { attempt, reason: 'engine_restarted' }));
   assert.deepEqual(standing(db, attempt), { charged: 0, reserved: 0, total: 0 }, 'released by the restart; nothing charged');
 });
+
+// ---- the profile at the fixture's creation, and never after -------------------------------
+
+const { ensureFixtureProject, ensureFixtureRepo } = await import(join(dist, 'trust', 'fixture.js'));
+const { configureGit } = await import(join(dist, 'git', 'exec.js'));
+const { projectEffectiveDefaults } = await import(join(dist, 'config', 'project-policy.js'));
+
+// A runtime and a store client that answer what the fixture's creation asks
+// and record its mutations; nothing else is reached.
+function fakeEngine(home, { found = null } = {}) {
+  const calls = [];
+  const store = {
+    calls,
+    call: async (kind, req) => {
+      calls.push({ kind, ...req });
+      if (kind === 'read' && req.name === 'qualification.engine_fixture') return found;
+      if (kind === 'read' && req.name === 'qualification.moved_fixtures') return [];
+      if (kind === 'mutate' && req.name === 'project.create') return { status: 201, body: {}, effects: [] };
+      if (kind === 'mutate' && req.name === 'project.policy_submit') return { status: 200, body: { revision: 1, committed: false } };
+      throw new Error(`unexpected ${kind} ${req.name}`);
+    },
+  };
+  const rt = {
+    home,
+    scratch: home,
+    incarnation: 'inc_unit',
+    services: null,
+    afterCommit: () => {},
+    setting: (k) => ({ git_deadline: 60, domain_memory_max: 8 * 1024 ** 3 })[k],
+    read: async (name) => (name === 'design.inventory_for_policy' ? null : {}),
+    engine: async (name) => {
+      if (name !== 'project.policy_facts') throw new Error(`unexpected engine ${name}`);
+      const repo = await ensureFixtureRepo(home);
+      const head = spawnSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).stdout.trim();
+      return { repo, branch: 'main', head, effective: projectEffectiveDefaults(), revision: null, blocking: null };
+    },
+  };
+  return { rt, store };
+}
+
+test("the fixture project is created with the qualification profile through the policy route's own path (a lowering, no approval); an existing fixture is left as its owner set it", async (t) => {
+  const home = scratch(t);
+  configureGit({ deadlineSeconds: 10, outputCap: 1 << 20, home, incarnation: 'inc_unit' });
+  const { rt, store } = fakeEngine(home);
+  const id = await ensureFixtureProject(rt, store);
+  const mutations = store.calls.filter((c) => c.kind === 'mutate');
+  assert.deepEqual(mutations.map((m) => m.name), ['project.create', 'project.policy_submit'], 'created, then its policy set');
+  const submit = mutations[1];
+  assert.equal(submit.args.project, id);
+  assert.deepEqual(submit.args.ordinary, { budget_run_billable_tokens: 300_000 }, 'the one key: budget_run_billable_tokens');
+  assert.deepEqual(submit.args.widens, [], 'a lowering: no approval asked');
+  assert.equal(submit.args.governed, null);
+  assert.equal(submit.args.prepared.effective.budget_run_billable_tokens, 300_000);
+  assert.equal(submit.args.prepared.effective.budget_day_unknown_tokens, projectEffectiveDefaults().budget_day_unknown_tokens, 'the day limits stay the defaults');
+  assert.equal(submit.args.prepared.revision, 1);
+
+  // A home whose fixture project exists (made before B2, at 1,500,000, or
+  // changed by its owner): found, and nothing is changed.
+  const again = fakeEngine(home, { found: 'proj_existing' });
+  assert.equal(await ensureFixtureProject(again.rt, again.store), 'proj_existing');
+  assert.deepEqual(again.store.calls.filter((c) => c.kind === 'mutate'), [], 'no policy change, no project made');
+});
