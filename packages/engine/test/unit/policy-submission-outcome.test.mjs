@@ -21,7 +21,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
 const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact } = await import(join(dist, 'store', 'transitions', 'tx.js'));
-const { submitPolicy, policyCommitState } = await import(join(dist, 'store', 'transitions', 'project.js'));
+const { submitPolicy, policyCommitState, changedPolicyKeys, policyFacts } = await import(join(dist, 'store', 'transitions', 'project.js'));
 const { projectPolicyView } = await import(join(dist, 'store', 'reads.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_unit' });
@@ -131,4 +131,91 @@ test('the commit state follows the journal: committed once the ref update is fin
   assert.deepEqual(projectPolicyView(db, 'prj_1').pending, []);
   db.prepare("UPDATE operations SET status = 'failed' WHERE id = 'op_ref'").run();
   assert.equal(policyCommitState(db, 'prj_1', row.operation).state, 'failed');
+});
+
+// The owner's ruling (2026-10-27): "For policy updates, submitting values
+// identical to the current effective values should return unchanged,
+// without creating another revision. Preserve validation and intent-id
+// behavior." The route prepares nothing for such a submission (every
+// ordinary key at its effective value); the transition checks it still holds.
+
+// A recorded revision 1 whose effective policy has repair_attempts_max 2 and
+// no_progress_max 1 (the rest are defaults: effectiveOf fills them in).
+function withRevision(db) {
+  db.prepare(
+    `INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective)
+     VALUES ('pol_1', ?, 'prj_1', 1, '.surety/policy.json', ?, 'human', ?, '{}', 0, 1, ?)`,
+  ).run(AT, 'e'.repeat(40), AT, JSON.stringify({ repair_attempts_max: 2, no_progress_max: 1 }));
+  db.prepare("UPDATE projects SET policy_revision = 'pol_1' WHERE id = 'prj_1'").run();
+}
+const effectiveNow = (db) => transact(db, OWNER, (tx) => policyFacts(tx, { project: 'prj_1' }).effective);
+const revisions = (db) => count(db, 'SELECT COUNT(*) AS n FROM policy_revisions');
+const policyEvents = (db) => count(db, "SELECT COUNT(*) AS n FROM events WHERE type = 'policy.changed'");
+
+test('identity is decided key by key against the effective policy after defaults, by the typed value', (t) => {
+  const db = store(t);
+  withRevision(db);
+  const eff = effectiveNow(db);
+  assert.equal(eff.repair_attempts_max, 2);
+  assert.equal(eff.budget_run_billable_tokens, 1500000, 'a default is effective');
+  assert.deepEqual(changedPolicyKeys(eff, { repair_attempts_max: 2, budget_run_billable_tokens: 1500000, egress_allow_extra: [] }), []);
+  assert.deepEqual(changedPolicyKeys(eff, { repair_attempts_max: 2, no_progress_max: 2 }), ['no_progress_max']);
+  assert.deepEqual(changedPolicyKeys(eff, { phase_size: { max: 5, min: 3 } }), [], 'an object compares by its canonical form');
+  assert.deepEqual(changedPolicyKeys(eff, { egress_allow_extra: ['example.com'] }), ['egress_allow_extra']);
+  assert.deepEqual(changedPolicyKeys(eff, { backend_builder: 'scripted' }), ['backend_builder'], 'a key with no effective value is a change');
+});
+
+test('values identical to the effective ones: unchanged, no revision, no commit, no policy.changed', (t) => {
+  const db = store(t);
+  withRevision(db);
+  const [revs, ops, events] = [revisions(db), count(db, 'SELECT COUNT(*) AS n FROM operations'), policyEvents(db)];
+  // As the route hands it over: the ordinary keys, nothing prepared.
+  const r = submit(db, { ordinary: { repair_attempts_max: 2, budget_run_billable_tokens: 1500000 } });
+  assert.deepEqual([r.status, r.body], [200, { outcome: 'unchanged', revision: null, committed: false, commit: null }]);
+  assert.deepEqual([revisions(db), count(db, 'SELECT COUNT(*) AS n FROM operations'), policyEvents(db)], [revs, ops, events]);
+  assert.equal(count(db, 'SELECT COUNT(*) AS n FROM policy_submissions'), 0, 'without an intent nothing is recorded');
+});
+
+test('mixed: an unchanged key beside a changed one is accepted as before', (t) => {
+  const db = store(t);
+  withRevision(db);
+  const ordinary = { repair_attempts_max: 2, no_progress_max: 1, budget_day_verified_usd: 10 };
+  assert.deepEqual(changedPolicyKeys(effectiveNow(db), ordinary), ['budget_day_verified_usd']);
+  const r = submit(db, { ordinary, prepared: prepared(2, 2), fingerprint: 'fm' });
+  assert.deepEqual([r.status, r.body], [200, { outcome: 'accepted', revision: 2, committed: false, commit: { state: 'pending' } }]);
+  assert.ok(count(db, 'SELECT COUNT(*) AS n FROM operations') > 0, 'its commit intended');
+});
+
+test('identical with an intent_id: recorded, the repeat is the same unchanged answer; another body is policy_intent_conflict', (t) => {
+  const db = store(t);
+  withRevision(db);
+  const first = submit(db, { ordinary: { repair_attempts_max: 2 }, intent_id: 'pi_u', fingerprint: 'fu' });
+  assert.deepEqual(first.body, { outcome: 'unchanged', revision: null, committed: false, commit: null });
+  const again = submit(db, { intent_id: 'pi_u', fingerprint: 'fu', repeat: true });
+  assert.deepEqual([again.status, again.body], [first.status, first.body]);
+  assert.throws(() => submit(db, { ordinary: { repair_attempts_max: 1 }, prepared: prepared(2, 1), intent_id: 'pi_u', fingerprint: 'fx' }), (e) => e.status === 409 && e.code === 'policy_intent_conflict');
+  assert.equal(count(db, 'SELECT COUNT(*) AS n FROM operations'), 0, 'nothing intended');
+  assert.deepEqual(projectPolicyView(db, 'prj_1').submissions.map((s) => [s.intent_id, s.outcome, s.revision]), [['pi_u', 'unchanged', null]]);
+});
+
+test('the widening refusal is as before, an unchanged key beside the widening one notwithstanding', (t) => {
+  const db = store(t);
+  withRevision(db);
+  const r = submit(db, { ordinary: { no_progress_max: 1, repair_attempts_max: 9 }, widens: ['repair_attempts_max'], intent_id: 'pi_w', fingerprint: 'fw' });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'confirm_required');
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM decisions WHERE kind = 'policy_widening'"), 1);
+  assert.equal(revisions(db), 1);
+});
+
+test('the identity is checked again in the transaction: a policy moved since, or a commit in flight, is send-again', (t) => {
+  const db = store(t);
+  withRevision(db);
+  // The route saw repair_attempts_max at 3; the recorded revision says 2.
+  assert.throws(() => submit(db, { ordinary: { repair_attempts_max: 3 } }), (e) => e.status === 409 && e.code === 'illegal_transition');
+  // A policy commit the journal has not settled: the effective policy is not
+  // yet the one the project will have.
+  submit(db, { prepared: prepared(2, 4), fingerprint: 'f4' });
+  assert.throws(() => submit(db, { ordinary: { repair_attempts_max: 2 } }), (e) => e.status === 409 && e.code === 'illegal_transition');
+  assert.equal(revisions(db), 1);
 });

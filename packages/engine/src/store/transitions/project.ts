@@ -3,6 +3,7 @@
 // git path that slice 3 builds.
 
 import { newId } from '../../ids.js';
+import { canonical } from './common.js';
 import { Refusal } from '../../refusal.js';
 import { intendCommit } from './accept.js';
 import type { IntentSpec } from './journal.js';
@@ -148,7 +149,33 @@ export function policyFacts(tx: Tx, args: { project: string }) {
     revision: policyRevision(tx.db, args.project),
     blocking: blocking?.subject_kind ?? null,
     journalBlocked: journalBlocks(tx.db, args.project),
+    policyInFlight: policyCommitInFlight(tx.db, args.project),
   };
+}
+
+// The submitted ordinary keys whose value is not the current effective one
+// (the owner's ruling of 2026-10-27: values identical to the current
+// effective values are `unchanged`). The effective policy is the recorded
+// revision's with the defaults filled in (effectiveOf); each submitted key,
+// as validated and typed, is compared with it by its canonical JSON. A key
+// with no effective value (an unset backend) is a change.
+export function changedPolicyKeys(effective: Policy, change: Policy): string[] {
+  return Object.keys(change).filter((k) => !Object.hasOwn(effective, k) || canonical(change[k]) !== canonical(effective[k]));
+}
+
+// Whether a policy commit is in the journal's hands and not yet settled
+// (intended, in progress, ambiguous or partial, or applied but not yet
+// finalized): the effective policy is then not the one the project will
+// have, so no submission is answered `unchanged` against it.
+export function policyCommitInFlight(db: Tx['db'], project: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM "operations" WHERE "project" = ? AND json_extract("finalizer_inputs", '$.purpose') = 'policy'
+         AND ("status" IN ('intended', 'in_progress', 'ambiguous', 'partial') OR ("status" = 'succeeded' AND "finalized_at" IS NULL)) LIMIT 1`,
+      )
+      .get(project) !== undefined
+  );
 }
 
 export function policyRefusal(blocking: string): Refusal {
@@ -272,7 +299,8 @@ export const policyIntentConflict = (project: string, intent: string): Refusal =
 // The answer states its outcome (decision 6): `accepted` with the revision
 // intended and its commit `pending` (the journal commits it and its
 // finalizer records it; GET .../policy then reads it `committed`), or
-// `unchanged` with nothing to commit; a refusal is a 4xx with its code. A
+// `unchanged` with nothing to commit (no ordinary key, or every one at its
+// current effective value: changedPolicyKeys); a refusal is a 4xx with its code. A
 // submission with an `intent_id` is answered once: a repeat with the same
 // body is that answer (its commit state current), never a second revision; a
 // different body is 409 policy_intent_conflict.
@@ -329,6 +357,13 @@ export function submitPolicy(
     );
     recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome: 'refused', revision: null, operation: null, status: 409, answer: refusal.body() });
     return { status: 409, body: refusal.body() };
+  }
+  // Ordinary keys sent with none prepared: the route found every one at its
+  // current effective value. That holds still, or the policy moved since.
+  if (!args.prepared && Object.keys(args.ordinary).length > 0) {
+    if (facts.policyInFlight || changedPolicyKeys(facts.effective, args.ordinary).length > 0) {
+      throw new Refusal(409, 'illegal_transition', 'The project policy changed while the change was prepared.', 'Send the change again.', { project: args.project });
+    }
   }
   let revision: number | null = null;
   let operation: string | null = null;
