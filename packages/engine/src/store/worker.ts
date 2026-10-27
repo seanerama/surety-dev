@@ -222,6 +222,7 @@ import {
   recordCanary,
   startAttemptRun,
 } from './transitions/qualification.js';
+import { canaryWaitReason } from './transitions/qualification-budget.js';
 import { type HostObserved, attemptDrift, getAttempt, recordHostQualification, revokeDrifted, setHostObserved, sweepAttempts, trustView } from './transitions/trust.js';
 import {
   authorizeCheckLaunch,
@@ -581,6 +582,7 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'qualification.target': (d, a: { project: string | null }) => attemptTarget(d, a),
   'qualification.canary_run': (d, a: { item: string }) => (d.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(a.item) as { id: string } | undefined)?.id ?? null,
   'qualification.run_facts': (d, a: { run: string }) => canaryRunFacts(d, a),
+  'qualification.wait_reason': (d, a: { item: string }) => canaryWaitReason(d, a),
   'qualification.usage': (d, a: { attempt: string }) => attemptUsage(d, a),
   'qualification.provider_files': (d, a: { run: string }) =>
     d.prepare(`SELECT "path", "sha256", "bytes" FROM "records" WHERE "run" = ? AND "kind" = 'provider_files' AND "published" = 1 ORDER BY rowid DESC LIMIT 1`).get(a.run) ?? null,

@@ -13,6 +13,28 @@ import { readlinkSync } from 'node:fs';
 export type CanaryKind = 'positive' | 'cancellation' | 'containment' | 'continuation';
 export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 'containment'];
 
+// A canary's failure class (D2 A.2 CanaryFailureClass; E86 item 3's
+// model_fallback; D6 §2.6's continuation_failed). `not_dispatched` (B2,
+// Sean's approval of 2026-10-27): the canary never ran, held at its
+// dispatch until its deadline or refused at its first turn's admission. It
+// cost nothing and is not a failure of the canary's kind: a test that never
+// ran is never reported as a failed test.
+export const CANARY_FAILURE_CLASSES = [
+  'auth_failed',
+  'proxy_refused',
+  'unsupported_flag',
+  'tool_action_missing',
+  'delegation_unverified',
+  'invalid_result',
+  'barrier_not_reached',
+  'cancellation_failed',
+  'containment_failed',
+  'model_fallback',
+  'continuation_failed',
+  'not_dispatched',
+] as const;
+export type CanaryFailureClass = (typeof CANARY_FAILURE_CLASSES)[number];
+
 // The canaries an attempt runs (D2 §7.2; D6 §2.6): D2's three; with
 // `session_headless` the continuation canary after them; for an active
 // entry's session qualification the continuation canary alone.

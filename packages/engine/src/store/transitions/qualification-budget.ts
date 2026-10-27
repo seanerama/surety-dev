@@ -5,10 +5,13 @@
 
 import { Refusal } from '../../refusal.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
-import { dayUnknownAccount, invocationStanding } from './ledger.js';
+import { envelopeHold } from './envelope.js';
+import { dayUnknownAccount, exhaustedLimits, invocationStanding } from './ledger.js';
+import { dispatchBlocker } from './runs.js';
 import { projectPolicy } from './settings.js';
 import type { AttemptRow } from './trust.js';
 import type { Tx } from './tx.js';
+import type { WorkRow } from './work.js';
 
 // An attempt's qualification_approval is consumed as `approve` only if the
 // fixture project's day can hold what the attempt's passing path charges by
@@ -125,3 +128,20 @@ export function admissionRefusal(a: AttemptRow, f: Admission): Refusal {
   );
 }
 
+// Why a canary's item is not dispatched now (B2: a canary never dispatched
+// is recorded `not_dispatched` with the blocker's own words and its limits,
+// D-3/D-4 of the analysis): the store's dispatch blocker, or the resource
+// envelope's hold; `reason` null when neither holds at this read (what held
+// it is then not known, and is never reported as nothing). For a day limit,
+// the day's account beside the limits passed.
+export function canaryWaitReason(db: Tx['db'], args: { item: string }): { reason: string | null; limits: string[]; day: ReturnType<typeof dayUnknownAccount> | null } {
+  const item = db.prepare('SELECT * FROM "work_items" WHERE "id" = ?').get(args.item) as WorkRow | undefined;
+  if (!item) return { reason: 'work item missing', limits: [], day: null };
+  const blocker = dispatchBlocker(db, item, { canary: true, check: false });
+  if (blocker !== null) {
+    const limits = blocker === 'budget exhausted' ? exhaustedLimits(db, item.project, { check: false, dispatch: true }) : [];
+    return { reason: blocker, limits, day: limits.length > 0 ? dayUnknownAccount(db, item.project) : null };
+  }
+  if (envelopeHold(db, { kind: 'role', project: item.project }) !== null) return { reason: 'resource envelope', limits: [], day: null };
+  return { reason: null, limits: [], day: null };
+}

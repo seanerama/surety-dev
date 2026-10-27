@@ -31,6 +31,7 @@ import { LIFECYCLES } from '../store/transitions/lifecycle.js';
 import { KINDS, MANIFEST_KEYS } from '../store/transitions/queue.js';
 import { ROLE_OF } from '../store/transitions/runs.js';
 import { CONTINUATIONS, DISPATCHABLE, KIND_PATHS, RUN_OWNING, TEMPLATES, TERMINAL, WORK_KINDS, WORK_STATUSES } from '../store/transitions/work-table.js';
+import { CANARY_FAILURE_CLASSES } from '../trust/canaries.js';
 
 export interface FieldSpec {
   required: boolean;
@@ -269,6 +270,7 @@ const CODE_ENUMS: Record<string, readonly string[]> = {
   ObservedCondition: OBSERVED_CONDITIONS,
   Freshness: FRESHNESS,
   Provenance: PROVENANCE,
+  CanaryFailureClass: CANARY_FAILURE_CLASSES,
 };
 
 // ---- the document ---------------------------------------------------------------------------

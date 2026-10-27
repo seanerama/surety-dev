@@ -1036,6 +1036,20 @@
       "observed",
       "claimed",
       "configured"
+    ],
+    "CanaryFailureClass": [
+      "auth_failed",
+      "proxy_refused",
+      "unsupported_flag",
+      "tool_action_missing",
+      "delegation_unverified",
+      "invalid_result",
+      "barrier_not_reached",
+      "cancellation_failed",
+      "containment_failed",
+      "model_fallback",
+      "continuation_failed",
+      "not_dispatched"
     ]
   },
   "tables": {

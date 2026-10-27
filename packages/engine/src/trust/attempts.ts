@@ -49,6 +49,9 @@ interface CanaryEntry {
   provider_error: string | null;
   evidence: string | null;
   term_to_exit_ms: number | null;
+  // A canary never dispatched (`not_dispatched`, B2): what held it, in the
+  // blocker's own words; null where nothing held it at the deadline's read.
+  wait_reason?: string | null;
 }
 
 const POLL_MS = 250;
@@ -145,7 +148,7 @@ export class QualificationDriver {
       // containment canary and compared after it.
       const before = kind === 'containment' ? hostWitnesses(this.rt.home, target.repo) : null;
       const run = await this.dispatch(target, item, attempt, a, kind);
-      const judged = run === null ? { entry: await this.failedToStart(a, kind), capabilities: null } : await this.judge(a, kind, run, unexpected, before === null ? null : { before, after: hostWitnesses(this.rt.home, target.repo) }, used, history);
+      const judged = run === null ? { entry: await this.notDispatched(a, kind, item), capabilities: null } : await this.judge(a, kind, run, unexpected, before === null ? null : { before, after: hostWitnesses(this.rt.home, target.repo) }, used, history);
       const entry = judged.entry;
       if (judged.capabilities !== null) capabilities = judged.capabilities;
       canaries.push(entry);
@@ -186,10 +189,12 @@ export class QualificationDriver {
     }
     const until = performance.now() + deadlineS * 1000;
     let run: string | null = null;
+    let held: string | null = null;
     while (run === null && performance.now() < until) {
       try {
         run = (await this.rt.engine<{ run: { id: string } }>('qualification.canary_session', { attempt: a.id })).run.id;
       } catch (err) {
+        held = (err as { message?: string }).message ?? String(err);
         if ((err as { code?: string }).code !== 'session_busy') {
           log('qualification', err, { attempt: a.id, canary: kind });
           break;
@@ -198,10 +203,12 @@ export class QualificationDriver {
         await sleep(500);
       }
     }
-    if (run === null) return this.failedToStart(a, kind);
+    if (run === null) return this.notDispatched(a, kind, null, held);
     const project = a.fixture_project!;
     const scope = this.rt.boundary() === 'real' ? (this.rt.scope?.path ?? null) : null;
     let stopped: string | null = null;
+    // Turn 1 refused at its admission: nothing of the canary ran (B2).
+    let notAdmitted: string | null = null;
     for (const turn of [1, 2] as const) {
       const read = await this.rt.read<{ idle: boolean; idle_generation: number } | null>('session.admission_read', { project, run });
       if (read === null || !read.idle) {
@@ -209,12 +216,15 @@ export class QualificationDriver {
         break;
       }
       const text = continuationMessage(turn);
+      let refusal: string | null = null;
       const admitted = await this.rt.engine<{ turn: number; invocation: string }>('session.admit_turn', { project, run, text, textRecord: null, admittedAt: read.idle_generation, scripted: null, scope }).catch((err) => {
         log('qualification', err, { attempt: a.id, canary: kind, turn });
+        refusal = (err as { message?: string }).message ?? String(err);
         return null;
       });
       if (admitted === null) {
-        stopped = `turn ${turn} was not admitted`;
+        stopped = `turn ${turn} was not admitted${refusal === null ? '' : `: ${refusal}`}`;
+        if (turn === 1) notAdmitted = refusal ?? stopped;
         break;
       }
       const record = await writeWholeRecord(this.rt, { project, run, kind: 'session_transcript', content: Buffer.from(text) }).catch(() => null);
@@ -279,6 +289,12 @@ export class QualificationDriver {
       ...(others.length > 0 ? { model_fallback: others } : {}),
       ...(stopped ? { stopped } : {}),
     };
+    // Turn 1 never admitted: the canary never ran, and is recorded so with
+    // the refusal's words (B2), its session's record beside it.
+    if (notAdmitted !== null) {
+      const record = await this.record(a, run, redactValue({ ...detail, outcome: 'not_dispatched', wait_reason: notAdmitted }));
+      return { kind, run, passed: false, failure_class: 'not_dispatched', provider_error: record, evidence: record, term_to_exit_ms: null, wait_reason: notAdmitted };
+    }
     const evidence = await this.record(a, run, redactValue(detail));
     return {
       kind,
@@ -317,9 +333,20 @@ export class QualificationDriver {
     }
   }
 
-  private async failedToStart(a: AttemptRow, kind: string): Promise<CanaryEntry> {
-    const record = await this.record(a, null, { kind, outcome: 'not_dispatched' });
-    return { kind, run: null, passed: false, failure_class: FAILURE[kind]!, provider_error: record, evidence: record, term_to_exit_ms: null };
+  // A canary never dispatched (B2; Sean's approval of 2026-10-27): it ran
+  // nothing and cost nothing, so it is recorded `not_dispatched` with what
+  // held it (the blocker's own words, and for a day limit the limits passed
+  // and the day's account), never as a failure of its kind. `item`: the
+  // canary's work item, whose blocker is read now; `reason`: what held it
+  // where no item was dispatched (a session that could not be opened, a turn
+  // not admitted).
+  private async notDispatched(a: AttemptRow, kind: string, item: string | null, reason: string | null = null): Promise<CanaryEntry> {
+    const held =
+      item === null
+        ? { reason, limits: [] as string[], day: null }
+        : await this.rt.read<{ reason: string | null; limits: string[]; day: unknown }>('qualification.wait_reason', { item }).catch(() => ({ reason: null, limits: [] as string[], day: null }));
+    const record = await this.record(a, null, { kind, outcome: 'not_dispatched', wait_reason: held.reason, limits: held.limits, day: held.day });
+    return { kind, run: null, passed: false, failure_class: 'not_dispatched', provider_error: record, evidence: record, term_to_exit_ms: null, wait_reason: held.reason };
   }
 
   private record(a: AttemptRow, run: string | null, value: unknown): Promise<string> {
