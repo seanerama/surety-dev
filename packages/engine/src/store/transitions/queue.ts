@@ -46,6 +46,7 @@ import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepo
 import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
+import { canaryKindsOf } from '../../trust/canaries.js';
 import { admissionRefusal, attemptAdmission } from './qualification-budget.js';
 import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, originOfRun, transitionWork } from './work.js';
@@ -2101,6 +2102,15 @@ const TRUST_ACTIVATION: KindSpec = {
   },
 };
 
+// The canaries an attempt dispatches, counted and named (D2 §7.2; D6 §2.6):
+// three, four with session_headless's continuation canary, or the
+// continuation canary alone for an entry's session qualification.
+function canaryCount(a: Parameters<typeof canaryKindsOf>[0]): string {
+  const kinds = canaryKindsOf(a);
+  const words = ['no', 'one', 'two', 'three', 'four'];
+  return `${words[kinds.length] ?? String(kinds.length)} canar${kinds.length === 1 ? 'y' : 'ies'} (${kinds.join(', ')})`;
+}
+
 const QUALIFICATION_APPROVAL: KindSpec = {
   preview(tx, d) {
     const a = getAttempt(tx.db, d.subject_id);
@@ -2113,7 +2123,7 @@ const QUALIFICATION_APPROVAL: KindSpec = {
           key: 'approve',
           label: 'Authorize',
           consequence:
-            `The attempt is authorized: only its three canaries may then be dispatched, on the fixture project, charged to the ledger ` +
+            `The attempt is authorized: only its ${canaryCount(a)} may then be dispatched, on the fixture project, charged to the ledger ` +
             `(${spend.cap !== undefined && spend.cap !== null ? `cap ${String(spend.cap)} USD` : `${String(spend.label ?? 'estimate')} ${spend.estimate === null || spend.estimate === undefined ? 'unknown' : `${String(spend.estimate)} USD`}, overshoot ${String(spend.overshoot ?? 'bounded by the deadline')}`}). Nothing is launched by this answer.`,
           effect: { qualification_attempt: a.id, to: 'authorized' },
         },
