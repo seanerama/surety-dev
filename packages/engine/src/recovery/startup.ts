@@ -55,7 +55,8 @@ export async function recoverAtStartup(rt: Runtime, ender: RunEnder, journal: Jo
   // Workspace assistant turns a prior incarnation left (the assistant design
   // §4): each domain's termination established first, then the turn ended
   // `recovered` with its row and allowance (or `refused` if it never
-  // launched), its owner message left unknown; never replayed.
+  // launched); never replayed. Its owner message, `unknown` until then, is
+  // `interrupted` from here (assistant/service.ts).
   await rt.assistant?.recover(ender.priorUnknown).catch((err) => log('recovery', err, { what: 'assistant turns' }));
 
   // A qualification attempt left `running` by a prior incarnation cannot be

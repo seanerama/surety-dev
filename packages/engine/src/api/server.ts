@@ -235,8 +235,8 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (s.length === 3 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.list() }) };
         if (s.length === 3 && post) return { kind: 'local', handler: async b => ({ status: 201, body: assistant.create(b) }) };
         const id = decodeSegment(s[3] ?? '');
-        if (id && s.length === 4 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.get(id) }) };
-        if (id && s.length === 4 && method === 'DELETE') return { kind: 'local', handler: async b => { noFields(b); return { status: 200, body: assistant.delete(id) }; } };
+        if (id && s.length === 4 && get) return { kind: 'direct', handler: async () => ({ status: 200, body: await assistant.get(id) }) };
+        if (id && s.length === 4 && method === 'DELETE') return { kind: 'local', handler: async b => { noFields(b); return { status: 200, body: await assistant.delete(id) }; } };
         if (id && s.length === 5 && s[4] === 'actions' && get) return { kind: 'direct', handler: async () => ({ status: 200, body: assistant.listActions(id) }) };
         if (id && s.length === 5 && s[4] === 'actions' && post) return { kind: 'local', handler: async (b, actor) => ({ status: 200, body: assistant.claimAction(id,b,actor) }) };
         if (id && s.length === 7 && s[4] === 'actions' && post) {
@@ -244,7 +244,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           if(action && s[6]==='steps') return { kind:'local', handler:async b=>({status:200,body:assistant.actionStep(id,action,b)}) };
           if(action && s[6]==='results') return { kind:'local', handler:async b=>({status:200,body:assistant.actionResult(id,action,b)}) };
         }
-        if (id && s.length === 5 && s[4] === 'messages' && post) return { kind: 'local', handler: async (b, actor) => ({ status: 200, body: await assistant.message(id, b, actor) }) };
+        if (id && s.length === 5 && s[4] === 'messages' && post) return { kind: 'local', handler: async (b, actor) => assistant.message(id, b, actor) };
         // The owner's cancel of a turn under way (the assistant design §4).
         const mid = decodeSegment(s[5] ?? '');
         if (id && mid && s.length === 7 && s[4] === 'messages' && s[6] === 'cancel' && post) return { kind: 'local', handler: async (b, actor) => { noFields(b); return { status: 200, body: await assistant.cancel(id, mid, actor) }; } };

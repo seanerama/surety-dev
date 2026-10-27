@@ -12,5 +12,6 @@ export const ASSISTANT_WHAT_TO_DO: Readonly<Record<string, string>> = {
   isolation_unqualified: 'This host cannot hold the assistant in its sandbox now; real backends are refused until the host checks pass.',
   assistant_termination_unknown: "The engine could not establish that the turn's domain ended; it is quarantined and nothing it left was read.",
   recovered: 'The engine restarted while the turn ran; it is never replayed. Inspect the workspace and ask again in a new message.',
+  assistant_interrupted: 'The engine restarted while this turn was under way, and its recovery has ended it: it is never replayed, and its usage is charged as shown. The conversation accepts a new message; ask again with a new message if you still need the answer.',
   infra_error: 'The engine could not complete the turn; nothing of its answer was kept.',
 };

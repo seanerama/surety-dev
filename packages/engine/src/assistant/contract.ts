@@ -20,16 +20,30 @@ export interface TurnUsage {
   account: 'workspace_assistant'; provider: string; cost_status: 'reported' | 'estimated' | 'unknown' | 'measured_zero'; cost_usd: number | null;
   input_tokens: number | null; output_tokens: number | null; cached_input_tokens: number | null;
   usage_complete: boolean; unknown_allowance_tokens: number | null; model_observed: string | null; basis?: string | null;
+  // Charged: the turn's one ledger row is written.
+  charged?: true;
 }
-// Not yet charged (a turn whose end is unknown): nothing is claimed.
-export interface PendingUsage { account: 'workspace_assistant'; provider: string; cost_status: 'unknown'; cost_usd: null; input_tokens: null; output_tokens: null; charged: false }
+// Not yet charged (a turn under way, refused, or whose end is unknown):
+// nothing is claimed. `provider` and `model` are the configured backend and
+// model (the usability batch's decision 5); "unconfigured" only when the
+// assistant is.
+export interface PendingUsage { account: 'workspace_assistant'; provider: string; model: string | null; cost_status: 'unknown'; cost_usd: null; input_tokens: null; output_tokens: null; charged: false }
 export type AssistantUsage = FakeUsage | TurnUsage | PendingUsage;
 // Why a turn did not complete (the assistant design §4): the engine's code,
 // its words, what to do, and the turn's outcome.
 export interface TurnError { code: string; reason: string; what_to_do: string; outcome: string }
+// A message's status (the usability batch's decision 2). The owner message's
+// is its turn's: `running` while it is under way; `completed`, `failed`,
+// `stopped` (cancelled, or a turn limit), `timed_out`, `refused` (the
+// admission refused it, or nothing was launched), `interrupted` (the engine
+// restarted and recovery ended the turn; never replayed) once it ended; and
+// `unknown` only while the engine genuinely does not know (between a restart
+// and the end of the turn's recovery). A reply carries its turn's end.
+export const MESSAGE_STATUSES = ['running', 'completed', 'failed', 'stopped', 'timed_out', 'refused', 'interrupted', 'unknown'] as const;
+export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 export interface AssistantMessage {
   id: string; intent_id: string; role: 'user' | 'assistant'; text: string; context: AssistantContext;
-  created_at: string; status: 'completed' | 'failed' | 'unknown'; evidence: Evidence[];
+  created_at: string; status: MessageStatus; evidence: Evidence[];
   actions?: ({ kind: 'create_app'; draft: { name?: string; idea?: string } } | { kind: 'start_planning'; project: string })[];
   links: AssistantLink[]; usage: AssistantUsage; actor: { kind: 'human' | 'assistant'; request_id: string | null };
   // A real turn: its invocation, its reply's citations and whether it is

@@ -69,13 +69,30 @@ export class RealAssistant implements RealAssistantPort {
   // ended meanwhile is never waited for to the bound.
   async settled(invocation: string, ms: number): Promise<boolean> {
     const waiting = this.turns().turns.settled(invocation, ms);
-    const now = await this.turn(invocation).catch(() => null);
+    const now = await this.turn({ invocation }).catch(() => null);
     if (now !== null && now.status === 'ended') return true;
     return waiting;
   }
 
-  turn(invocation: string): Promise<TurnRead | null> {
-    return this.read<TurnRead | null>('assistant.turn', { invocation });
+  turn(args: { invocation: string } | { conversation: string; intent_id: string }): Promise<TurnRead | null> {
+    return this.read<TurnRead | null>('assistant.turn', args);
+  }
+
+  // The configured backend and model (an owner message's pending usage
+  // names them; the usability batch's decision 5).
+  provider(): { provider: string; model: string } {
+    return { provider: this.config.backend, model: this.config.model };
+  }
+
+  // This engine's incarnation, or null while it is not yet running its turns
+  // (a turn another incarnation owns is then unknown until recovery ends it).
+  incarnation(): string | null {
+    try {
+      const rt = this.runtime?.() ?? null;
+      return rt === null || rt.assistant === null ? null : rt.incarnation;
+    } catch {
+      return null;
+    }
   }
 
   async cancel(args: { conversation: string; intent_id: string; actor: Actor }): Promise<{ invocation: string; status: string } | null> {
@@ -87,13 +104,19 @@ export class RealAssistant implements RealAssistantPort {
     return body;
   }
 
-  onSettled(fn: (invocation: string) => Promise<void>): void {
+  // true once the hook is set; false while the engine is not running its
+  // turns yet (a conversation's next read then writes what ended).
+  onSettled(fn: (invocation: string) => Promise<void>): boolean {
     try {
       const rt = this.runtime?.() ?? null;
-      if (rt?.assistant) rt.assistant.onSettled = fn;
+      if (rt?.assistant) {
+        rt.assistant.onSettled = fn;
+        return true;
+      }
     } catch {
-      // not running yet: the waiting request writes the message itself
+      // not running yet
     }
+    return false;
   }
 
   // Whether the saved credential manifest reads, and whether the block's
