@@ -119,7 +119,17 @@ const COLUMN_ENUMS: Record<string, string> = {
   'work_items.prior_status': 'WorkItemStatus',
   'work_items.continuation': 'WorkContinuation',
   'runs.role': 'Role',
-  'ledger_rows.role': 'Role',
+  // A ledger row's role: a run's role, or the workspace assistant's own
+  // (migration 0039), which no run has.
+  'ledger_rows.role': 'LedgerRole',
+  // The account a row of the shared accounting tables is charged to (the
+  // workspace assistant's usage account, migration 0039).
+  'invocation_receipts.account': 'Account',
+  'invocation_status_observations.account': 'Account',
+  'usage_observations.account': 'Account',
+  'execution_domains.account': 'Account',
+  'ledger_rows.account': 'Account',
+  'process_ownership.account': 'Account',
   'runs.kind': 'RunKind',
   'runs.state': 'RunState',
   'runs.session_state': 'SessionState',

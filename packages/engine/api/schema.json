@@ -357,6 +357,10 @@
       "clean",
       "error_exit"
     ],
+    "Account": [
+      "project",
+      "workspace_assistant"
+    ],
     "FindingScope": [
       "project",
       "lineage",
@@ -413,7 +417,7 @@
       "check",
       "environment"
     ],
-    "Role": [
+    "LedgerRole": [
       "vision",
       "spec_writer",
       "architect",
@@ -422,7 +426,8 @@
       "reviewer",
       "release_operator",
       "mechanic",
-      "designer"
+      "designer",
+      "workspace_assistant"
     ],
     "CostStatus": [
       "reported",
@@ -627,6 +632,17 @@
       "out_of_band",
       "protected",
       "intent"
+    ],
+    "Role": [
+      "vision",
+      "spec_writer",
+      "architect",
+      "builder",
+      "verifier",
+      "reviewer",
+      "release_operator",
+      "mechanic",
+      "designer"
     ],
     "RunKind": [
       "one_shot",
@@ -3317,7 +3333,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "run": {
@@ -3429,6 +3445,10 @@
         },
         "peak_recorded_at": {
           "required": false
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },
@@ -3785,11 +3805,11 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "run": {
-          "required": true,
+          "required": false,
           "references": "runs"
         },
         "turn": {
@@ -3803,7 +3823,7 @@
           "required": true
         },
         "grant": {
-          "required": true,
+          "required": false,
           "references": "capability_grants"
         },
         "budget_snapshot": {
@@ -3822,6 +3842,10 @@
         },
         "deadline_at": {
           "required": false
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },
@@ -3834,7 +3858,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "invocation": {
@@ -3860,6 +3884,10 @@
         },
         "incarnation": {
           "required": false
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },
@@ -3914,7 +3942,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "invocation": {
@@ -3922,7 +3950,7 @@
           "references": "invocation_receipts"
         },
         "run": {
-          "required": true,
+          "required": false,
           "references": "runs"
         },
         "turn": {
@@ -3931,7 +3959,7 @@
         },
         "role": {
           "required": true,
-          "enum": "Role"
+          "enum": "LedgerRole"
         },
         "provider": {
           "required": true
@@ -3979,6 +4007,10 @@
         },
         "unknown_allowance_tokens": {
           "required": false
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },
@@ -4675,7 +4707,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "domain": {
@@ -4711,6 +4743,10 @@
         "check_execution": {
           "required": false,
           "references": "check_executions"
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },
@@ -6099,7 +6135,7 @@
           "required": true
         },
         "project": {
-          "required": true,
+          "required": false,
           "references": "projects"
         },
         "invocation": {
@@ -6118,6 +6154,10 @@
         },
         "at": {
           "required": true
+        },
+        "account": {
+          "required": true,
+          "enum": "Account"
         }
       }
     },

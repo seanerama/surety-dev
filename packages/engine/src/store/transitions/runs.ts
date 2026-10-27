@@ -136,13 +136,34 @@ function statuses(tx: Tx, invocation: string): InvocationStatus[] {
 }
 
 function observe(tx: Tx, run: RunRow, invocation: string, status: InvocationStatus, exit: { exit_class: string | null; exit_evidence: string | null } | null = null): void {
+  observeInvocation(tx, invocation, status, exit, run);
+}
+
+// One status observation of an invocation, of its receipt's account (migration
+// 0039): a project invocation's carries its project and names its run; the
+// workspace assistant's carries neither.
+export function observeInvocation(
+  tx: Tx,
+  invocation: string,
+  status: InvocationStatus,
+  exit: { exit_class: string | null; exit_evidence: string | null } | null = null,
+  run: Pick<RunRow, 'project' | 'id'> | null = null,
+): void {
+  const receipt = tx.db.prepare('SELECT "account", "project", "run" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { account: string; project: string | null; run: string | null } | undefined;
+  const assistant = receipt?.account === 'workspace_assistant';
+  const project = assistant ? null : (run?.project ?? receipt?.project ?? null);
+  const runId = assistant ? null : (run?.id ?? receipt?.run ?? null);
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "invocation_status_observations" WHERE "invocation" = ?').get(invocation) as { n: number };
   tx.db
     .prepare(
-      'INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence", "incarnation") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO "invocation_status_observations" ("id", "created_at", "project", "invocation", "seq", "status", "at", "exit_class", "exit_evidence", "incarnation", "account") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run(tx.newId('iso_'), tx.at, run.project, invocation, n, status, tx.at, exit?.exit_class ?? null, exit?.exit_evidence ?? null, engineSettings().incarnation ?? null);
-  tx.emit('invocation.status', { project: run.project, run: run.id, invocation }, { status, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) });
+    .run(tx.newId('iso_'), tx.at, project, invocation, n, status, tx.at, exit?.exit_class ?? null, exit?.exit_evidence ?? null, engineSettings().incarnation ?? null, assistant ? 'workspace_assistant' : 'project');
+  tx.emit(
+    'invocation.status',
+    assistant ? { account: 'workspace_assistant', invocation } : { project, run: runId, invocation },
+    { status, seq: n, ...(exit?.exit_class ? { exit_class: exit.exit_class } : {}) },
+  );
 }
 
 const TERMINAL_OBSERVATIONS: InvocationStatus[] = ['ended', 'unknown', 'refused'];
@@ -1114,7 +1135,7 @@ export function expiredRunLeases(db: Tx['db'], at: string): { run: string; proje
 // (SEAM.md §24).
 export function domainTerminated(tx: Tx, args: { domain: string; observed: boolean; evidence?: Record<string, unknown> | null; observedAt?: string }): void {
   const d = tx.db.prepare('SELECT * FROM "execution_domains" WHERE "id" = ?').get(args.domain) as
-    | { id: string; run: string; project: string; status: DomainStatus; invocation: string; launch_state: string; exit_class: string | null; exit_evidence: string | null }
+    | { id: string; run: string | null; project: string | null; status: DomainStatus; invocation: string; launch_state: string; exit_class: string | null; exit_evidence: string | null }
     | undefined;
   if (!d) throw notFound('domain', args.domain);
   if (d.status === 'terminated') return;
@@ -1140,7 +1161,12 @@ export function domainTerminated(tx: Tx, args: { domain: string; observed: boole
   tx.emit('domain.terminated', { project: d.project, domain: d.id, run: d.run }, payload);
   if (!args.observed) {
     const seen = statuses(tx, d.invocation);
-    if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
+    // A workspace assistant's domain has no run (migration 0039): its
+    // invocation's observation is of the assistant account.
+    if (!seen.includes('launched') && !seen.some((s) => TERMINAL_OBSERVATIONS.includes(s))) {
+      if (d.run === null) observeInvocation(tx, d.invocation, 'refused');
+      else observe(tx, mustRun(tx, d.run), d.invocation, 'refused');
+    }
   }
 }
 
