@@ -25,7 +25,7 @@ import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDri
 import { closeLaunch } from './boundary.js';
 import { envelopeHold } from './envelope.js';
 import { boundaryFalls } from '../../scheduler/autonomy.js';
-import { TEMPLATES, type TemplatePurpose, credentialRef, keyVariable, purposeOfTemplateVersion, templateOf } from '../../invoke/adapters/templates.js';
+import { TEMPLATES, type TemplatePurpose, credentialRef, keyVariables, purposeOfTemplateVersion, templateOf } from '../../invoke/adapters/templates.js';
 import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
@@ -812,7 +812,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       item.project,
       run,
       JSON.stringify(['workspace_write']),
-      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [keyVariable(backend.backend, authMode), ...Object.keys(templateOf(backend.backend, { authMode })?.env ?? {})] : [])]),
+      JSON.stringify(['PATH', 'LANG', 'SURETY_DOMAIN', 'SURETY_INVOCATION', ...(real ? [...keyVariables(backend.backend, authMode), ...Object.keys(templateOf(backend.backend, { authMode })?.env ?? {})] : [])]),
       JSON.stringify(real ? [keyRef] : []),
       tx.at,
       deadlineAt,

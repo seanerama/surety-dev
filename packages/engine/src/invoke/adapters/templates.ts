@@ -26,6 +26,10 @@ export interface Template {
   keyRef: string;
   // The environment variable the credential is delivered in.
   keyVariable: string;
+  // Further variables the same credential is delivered in, where which one
+  // the backend reads is not yet established (Codex: CODEX_API_KEY and
+  // OPENAI_API_KEY); the canary records which was used.
+  keyAliases?: readonly string[];
   // The fixed variables the template sets beside the credential.
   env: Readonly<Record<string, string>>;
   // The flags by which the backend is asked to keep nothing between runs
@@ -37,6 +41,10 @@ export interface Template {
   // The provider session id the engine assigns before launch (D2 §1.7),
   // when the template passes one; recorded on the receipt.
   sessionIdOf?: (invocation: string) => string;
+  // What the engine writes on the backend's standard input, when the
+  // template fixes it (Codex: the fixed prompt); otherwise the scripted
+  // protocol's request line, which a real backend's template does not read.
+  stdin?: string;
   render(args: { model: string; invocation: string }): string[];
 }
 
@@ -129,36 +137,91 @@ const CLAUDE_SUBSCRIPTION: Template = {
   render: ({ model, invocation }) => ['-p', '--safe-mode', '--setting-sources', 'user', '--strict-mcp-config', ...claudeTail(model, invocation)],
 };
 
-// D2 §4.6, Codex CLI 0.159.2: the prompt on standard input.
+// D2 §4.6, Codex CLI 0.160.0 (as installed and pinned by copy; the flags
+// below are each in that version's `codex exec --help`, saved by the
+// 2026-10-27 assessment, and the `-c` keys in the Codex configuration
+// reference read the same day). Version 2 (C1 of Codex support; the
+// assessment's G3, G4, G5, G11):
+//   - the prompt: `-` makes standard input the whole prompt (`codex exec
+//     --help`: "if `-` is used, instructions are read from stdin"), and the
+//     engine writes exactly the fixed prompt there (`stdin` below), which
+//     names /surety/context/prompt.md and /surety/out/result.json. Never the
+//     scripted protocol's request line, and never task text in an argument
+//     (D1 §17 item 3). (A prompt argument with stdin piped would append stdin
+//     as a `<stdin>` block, so the argument form is not used.)
+//   - the credential: Codex's non-interactive page documents `CODEX_API_KEY`
+//     for `codex exec`; its auth page names `OPENAI_API_KEY`. Which one
+//     0.160.0's `exec` reads is not established (the binary carries both
+//     names), so the one held key is delivered in both; the positive canary
+//     establishes which was used.
+//   - what it writes: `--ephemeral` (no session files), CODEX_HOME in the
+//     volatile home, credentials in memory only
+//     (`cli_auth_credentials_store="ephemeral"`), no history; the last
+//     message to /surety/out/last-message.txt (transcript evidence only,
+//     D2 §4.6); the result is /surety/out/result.json, written by the agent
+//     as the prompt asks (D2 §1.4).
+//   - off: the provider-side web search (it would fetch outside Surety's
+//     egress proxy), update checks, analytics, feedback, the OpenTelemetry
+//     exporters (metrics default `statsig`), sub-agents (`agents.enabled`,
+//     feature `multi_agent`), goals (automatic continuation), hooks, apps and
+//     memories; approvals never prompt (Surety's sandbox is the sandbox).
+//     `forced_login_method="api"`: an API key only, never a ChatGPT login.
+//     `features.unified_exec` cannot be switched off (the reference: user
+//     opt-outs are ignored); what it runs stays in the domain (D2 §4.4).
+export const CODEX_DISABLED_FEATURES = ['multi_agent', 'goals', 'hooks', 'apps', 'memories'] as const;
+export const CODEX_CONFIG_OVERRIDES = [
+  'web_search="disabled"',
+  'tools.web_search=false',
+  'check_for_update_on_startup=false',
+  'analytics.enabled=false',
+  'feedback.enabled=false',
+  'otel.metrics_exporter="none"',
+  'otel.exporter="none"',
+  'otel.trace_exporter="none"',
+  'agents.enabled=false',
+  'history.persistence="none"',
+  'cli_auth_credentials_store="ephemeral"',
+  'forced_login_method="api"',
+] as const;
+// Codex's own home in the volatile home (D2 §4.6), set explicitly.
+export const CODEX_ENV: Readonly<Record<string, string>> = Object.freeze({ CODEX_HOME: '/surety/home/.codex' });
+// The Codex CLI version this template was written and checked against.
+export const CODEX_TEMPLATE_CLI_VERSION = '0.160.0';
+
+const codexArgs = (model: string): string[] => [
+  'exec',
+  '--json',
+  '--ephemeral',
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--strict-config',
+  '--skip-git-repo-check',
+  ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
+  ...CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]),
+  '--dangerously-bypass-approvals-and-sandbox',
+  '-C',
+  '/surety/workspace',
+  '-m',
+  model,
+  '-o',
+  '/surety/out/last-message.txt',
+  '-',
+];
+
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-1',
+  version: 'codex-exec-2',
   text:
-    'codex exec --json --ephemeral --ignore-user-config --ignore-rules --strict-config --disable multi_agent --dangerously-bypass-approvals-and-sandbox ' +
-    '-C /surety/workspace -m <m> -o /surety/out/last-message.txt -',
+    `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
+    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> OPENAI_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
   authMode: 'api_key',
   keyRef: 'backend/codex/api_key',
-  keyVariable: 'OPENAI_API_KEY',
-  env: {},
+  keyVariable: 'CODEX_API_KEY',
+  keyAliases: ['OPENAI_API_KEY'],
+  env: CODEX_ENV,
   persistenceFlags: ['--ephemeral'],
   tools: [],
-  render: ({ model }) => [
-    'exec',
-    '--json',
-    '--ephemeral',
-    '--ignore-user-config',
-    '--ignore-rules',
-    '--strict-config',
-    '--disable',
-    'multi_agent',
-    '--dangerously-bypass-approvals-and-sandbox',
-    '-C',
-    '/surety/workspace',
-    '-m',
-    model,
-    '-o',
-    '/surety/out/last-message.txt',
-    '-',
-  ],
+  stdin: `${PROMPT}\n`,
+  render: ({ model }) => codexArgs(model),
 };
 
 // Each backend's templates by mode; the `api_key` one is the default.
@@ -172,6 +235,21 @@ export const TEMPLATES: Readonly<Record<string, Template>> = { claude: CLAUDE_AP
 
 export const keyVariable = (backend: string, authMode: string = 'api_key'): string =>
   BY_MODE[backend]?.[authMode as AuthMode]?.keyVariable ?? `${backend.toUpperCase()}_API_KEY`;
+
+// Every variable a backend's credential is delivered in, in a mode: the
+// template's own and its aliases.
+export const keyVariables = (backend: string, authMode: string = 'api_key'): string[] => {
+  const t = BY_MODE[backend]?.[authMode as AuthMode];
+  return t === undefined ? [keyVariable(backend, authMode)] : [t.keyVariable, ...(t.keyAliases ?? [])].filter((v) => v !== '');
+};
+
+// The environment a template gives its backend beside the constructed one:
+// its fixed variables and the credential in each of its variables.
+export function templateEnv(t: Template, key: string | null): Record<string, string> {
+  const env: Record<string, string> = { ...t.env };
+  if (key !== null && t.keyVariable !== '') for (const v of [t.keyVariable, ...(t.keyAliases ?? [])]) env[v] = key;
+  return env;
+}
 
 // The secret reference of a backend's credential in a mode.
 export const credentialRef = (backend: string, authMode: string = 'api_key'): string => BY_MODE[backend]?.[authMode as AuthMode]?.keyRef ?? `backend/${backend}/api_key`;
