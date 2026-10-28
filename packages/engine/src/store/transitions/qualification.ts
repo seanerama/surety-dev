@@ -181,8 +181,11 @@ export function qualify(
               ? "three canaries and the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
               : "three canaries at the fixture project's budget_run_billable_tokens, at the model's output rate",
           price_version: estimate.price_version,
-          // Codex's prices are unconfirmed (C2): the figure says so.
-          ...(estimate.prices === 'unconfirmed' ? { prices: 'unconfirmed' } : {}),
+          // Codex's (C2b): read from OpenAI's pricing page, a lower bound
+          // with its reasons, and a legacy model's status.
+          ...(estimate.prices !== undefined ? { prices: estimate.prices } : {}),
+          ...(estimate.bound !== undefined ? { bound: estimate.bound, lower_bound_reasons: estimate.lower_bound_reasons ?? [] } : {}),
+          ...(estimate.model_status !== undefined ? { model_status: estimate.model_status } : {}),
         }
       : // Codex (C2): why there is no figure, never a 0.
         a.backend === 'codex'

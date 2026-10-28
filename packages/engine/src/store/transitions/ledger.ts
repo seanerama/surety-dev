@@ -126,40 +126,97 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
 //
 // The adapter's one observation per invocation is the totals of `codex exec`'s
 // one turn (`turn.completed`'s `usage`, cumulative): `input_tokens`,
-// `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, and
-// `usage_final`, with the provider's `thread_id`. As the Responses API
-// counts them (an assumption the positive canary establishes, C3), input
-// includes the cached input and output includes the reasoning tokens. So
-// billable input is input less cached input, never with it (D1 §13.2): the
-// cached input is counted once, as cached; the reasoning tokens are kept in
-// the raw usage and never added to output. A count not reported is
-// unknown, and so is a difference that needs it, or one that would be
-// negative. Codex reports no cost (D2 §4.6: tokens only), so a cost is never
-// `reported`: it is `estimated` from CODEX_PRICE_TABLE where the stream named
-// the one model the invocation used, the table prices it and the usage is
-// final; otherwise unknown, never zero.
-export const CODEX_NORMALIZATION = 'codex-exec-json-1';
+// `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, where
+// the CLI gives it `cache_write_input_tokens`, and `usage_final`, with the
+// provider's `thread_id`. As the Responses API counts them (OpenAI's API
+// reference and caching guide, read 2026-10-27; the positive canary
+// establishes it for the CLI, C3), input includes the cached input and the
+// cache writes, and output includes the reasoning tokens. So billable input
+// is input less cached input, never with it (D1 §13.2): the cached input is
+// counted once, as cached; the reasoning tokens are kept in the raw usage
+// and never added to output. A count not reported is unknown, and so is a
+// difference that needs it, or one that would be negative. Codex reports no
+// cost (D2 §4.6: tokens only), so a cost is never `reported`: it is
+// `estimated` from CODEX_PRICE_TABLE where the stream named the one model
+// the invocation used, the table prices it and the usage is final;
+// otherwise unknown, never zero. Version 2 (2026-10-28) prices cache
+// writes when the CLI reports them.
+export const CODEX_NORMALIZATION = 'codex-exec-json-2';
 
-// The Codex price table (C2 of Codex support; the assessment's owner
-// decision 5): USD per million tokens, by model. UNCONFIRMED: the figures
-// are OpenAI's list rates for these models as this engine's author recalled
-// them on 2026-10-27, not read from OpenAI's pricing page that day and not
-// confirmed on Sean's account; no entry is known. Every figure made from it
-// says so in its price version. A model it does not list has no estimate
-// (null, with the reason), never 0.
-export const CODEX_PRICE_TABLE = {
-  version: 'openai-list-as-recalled-2026-10-27-unconfirmed',
-  confirmed: false,
-  models: {
-    'gpt-5': { input: 1.25, cached_in: 0.125, out: 10 },
-    'gpt-5-codex': { input: 1.25, cached_in: 0.125, out: 10 },
-    'gpt-5-mini': { input: 0.25, cached_in: 0.025, out: 2 },
-  } as Record<string, { input: number; cached_in: number; out: number }>,
+// The Codex price table (the owner's decision 5 of the Codex assessment;
+// replaced 2026-10-28 from the verified report
+// batch-2026-10-27d/codex-pricing/PRICING.md, "The table, in the engine's
+// shape" and §1b): USD per million tokens, Standard tier, short context
+// (at most 272K input tokens per request), by model, each row with the
+// OpenAI page it was read from and the date. `cache_write`: the write
+// multiplier of the plain input rate for the default 30-minute cache
+// lifetime (1.25x; the 12-hour lifetime's 2.5x is the dearer one and is
+// not used), on the rows whose pages give one; absent where none is listed.
+// `status`: the model page's, with its date (a legacy model keeps its row,
+// so a name the API still serves is still estimated). Every estimate from
+// it is a LOWER BOUND, for the reasons in `lower_bound_reasons`. A model it
+// does not list has no estimate (null, with the reason), never 0.
+const PRICING_PAGE = 'https://developers.openai.com/api/docs/pricing';
+const MODEL_PAGE = (m: string) => `https://developers.openai.com/api/docs/models/${m}`;
+const READ = '2026-10-27';
+export interface CodexPrice {
+  input: number;
+  cached_in: number;
+  out: number;
+  cache_write?: number;
+  status: 'current' | 'deprecated' | 'shut_down';
+  status_note?: string;
+  note?: string;
+  sources: string[];
+  read: string;
+}
+const row = (input: number, cached_in: number, out: number, extra: Partial<CodexPrice> & { model: string; pricingPage?: boolean }): CodexPrice => {
+  const { model, pricingPage = true, ...rest } = extra;
+  return { input, cached_in, out, status: 'current', sources: [...(pricingPage ? [PRICING_PAGE] : []), MODEL_PAGE(model)], read: READ, ...rest };
 };
+export const CODEX_PRICE_TABLE = {
+  version: 'openai-pricing-page-2026-10-27',
+  prices: 'from_pricing_page' as const,
+  confirmed: true,
+  unit: 'USD per 1M tokens, Standard tier, short context (at most 272K input tokens per request)',
+  source: 'batch-2026-10-27d/codex-pricing/PRICING.md, verified against OpenAI\'s pages read 2026-10-27',
+  lower_bound_reasons: [
+    'cache writes are priced at the plain input rate when the usage does not report cache_write_input_tokens (gpt-5.6 and later charge 1.25x input for a 30-minute write)',
+    'a reported cache write is priced at the 30-minute rate (1.25x input), the cheaper of the two lifetimes; a 12-hour write costs 2.5x',
+    'the long-context tier (2x input and cache, 1.5x output for a request over 272K input tokens) is decided per request, and a turn total cannot show which requests crossed it',
+    'fast mode (2x) and regional processing (+10%) cannot be told from the usage',
+  ],
+  models: {
+    'gpt-6.1-sol': row(2, 0.1, 10, { model: 'gpt-6.1-sol', cache_write: 1.25, note: "Codex CLI 0.160.0's default under an API key, inferred from its source at the installed build's commit, not run" }),
+    'gpt-6.1-terra': row(1, 0.05, 5, { model: 'gpt-6.1-terra', cache_write: 1.25, note: 'not in the 0.160.0 bundled catalog; `codex -m gpt-6.1-terra` per the Codex models page' }),
+    'gpt-6-astra': row(10, 1, 50, { model: 'gpt-6-astra', cache_write: 1.25 }),
+    'gpt-6-sol': row(2, 0.2, 10, { model: 'gpt-6-sol', cache_write: 1.25 }),
+    'gpt-6-luna': row(0.1, 0.01, 0.5, { model: 'gpt-6-luna', cache_write: 1.25 }),
+    'gpt-5.6-sol': row(4, 0.4, 20, { model: 'gpt-5.6-sol', cache_write: 1.25, note: 'promotional pricing, "available at least through November 21, 2026"' }),
+    'gpt-5.6-terra': row(2, 0.2, 12, { model: 'gpt-5.6-terra', cache_write: 1.25 }),
+    'gpt-5.6-luna': row(0.2, 0.02, 1.2, { model: 'gpt-5.6-luna', cache_write: 1.25 }),
+    'gpt-5.5': row(5, 0.5, 30, { model: 'gpt-5.5', note: 'no cache-write rate listed' }),
+    'gpt-5.3-codex': row(1.75, 0.175, 14, { model: 'gpt-5.3-codex', status: 'deprecated', status_note: 'deprecated; API shutdown April 1, 2027' }),
+    'gpt-5': row(1.25, 0.125, 10, { model: 'gpt-5', status: 'deprecated', status_note: 'deprecated; removed from the API December 11, 2026 (replacement gpt-5.6-sol)' }),
+    'gpt-5-mini': row(0.25, 0.025, 2, { model: 'gpt-5-mini', status: 'deprecated', status_note: 'deprecated; removed from the API December 11, 2026 (replacement gpt-5.6-terra)' }),
+    'gpt-5-codex': row(1.25, 0.125, 10, { model: 'gpt-5-codex', pricingPage: false, status: 'shut_down', status_note: 'shut down; API shutdown July 23, 2026 (substitute gpt-5.6-sol); priced from its model page only' }),
+  } as Record<string, CodexPrice>,
+};
+
+// How a Codex estimate priced the cache writes, named in the row's basis
+// (its normalization version).
+const CODEX_CACHE_WRITE_BASIS = {
+  rate: 'cache-write-reported-1.25x-input-30m',
+  none_listed: 'cache-write-reported-at-input-no-write-rate-listed',
+  absent: 'cache-write-not-reported-priced-as-input',
+} as const;
 
 function normalizeCodex(raw: Record<string, unknown>): Normalized {
   const input = amount(raw.input_tokens);
   const cached = amount(raw.cached_input_tokens);
+  // Cache writes, inside input (the caching guide): reported or not.
+  const writes = raw.cache_write_input_tokens === undefined ? null : amount(raw.cache_write_input_tokens);
+  const writesBad = raw.cache_write_input_tokens !== undefined && writes === null;
   const base = {
     billable_in: input === null || cached === null || cached > input ? null : input - cached,
     cached_in: cached,
@@ -168,9 +225,12 @@ function normalizeCodex(raw: Record<string, unknown>): Normalized {
     normalization_version: CODEX_NORMALIZATION,
   };
   const prices = base.model_observed === null ? undefined : CODEX_PRICE_TABLE.models[base.model_observed];
-  if (prices && raw.usage_final === true && base.billable_in !== null && base.cached_in !== null && base.out !== null) {
-    const usd = (base.billable_in * prices.input + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
-    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CODEX_NORMALIZATION}+${CODEX_PRICE_TABLE.version}` };
+  if (prices && raw.usage_final === true && base.billable_in !== null && base.cached_in !== null && base.out !== null && !writesBad && (writes === null || writes <= base.billable_in)) {
+    const plain = base.billable_in - (writes ?? 0);
+    const writeRate = writes === null ? prices.input : prices.input * (prices.cache_write ?? 1);
+    const usd = (plain * prices.input + (writes ?? 0) * writeRate + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
+    const cacheBasis = writes === null ? CODEX_CACHE_WRITE_BASIS.absent : prices.cache_write === undefined ? CODEX_CACHE_WRITE_BASIS.none_listed : CODEX_CACHE_WRITE_BASIS.rate;
+    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CODEX_NORMALIZATION}+${CODEX_PRICE_TABLE.version}+${cacheBasis}+lower-bound` };
   }
   return { ...base, cost_status: 'unknown', cost_usd: null };
 }
@@ -181,13 +241,30 @@ function normalizeCodex(raw: Record<string, unknown>): Normalized {
 // highest); null where the model has no price (never 0). An estimate, never
 // a maximum: cache reads and the overshoot to each canary's deadline are
 // outside it (D2 §4.2).
-// Codex's (C2) from CODEX_PRICE_TABLE, whose prices are unconfirmed: the
-// estimate says so (`prices: 'unconfirmed'`), never a confident figure.
-export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number, invocations = 3): { usd: number; price_version: string; prices?: 'unconfirmed' } | null {
+// Codex's from CODEX_PRICE_TABLE, read from OpenAI's pricing page: labelled
+// so (`prices: 'from_pricing_page'`) and a lower bound, with the reasons
+// (the long-context and fast tiers raise the output rate); a deprecated or
+// shut-down model's status is shown with it.
+export interface SpendEstimate {
+  usd: number;
+  price_version: string;
+  prices?: 'from_pricing_page';
+  bound?: 'lower';
+  lower_bound_reasons?: string[];
+  model_status?: string;
+}
+export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number, invocations = 3): SpendEstimate | null {
   if (provider === 'codex') {
     const p = CODEX_PRICE_TABLE.models[model];
     if (!p) return null;
-    return { usd: money((invocations * runLimitTokens * p.out) / 1_000_000), price_version: CODEX_PRICE_TABLE.version, prices: 'unconfirmed' };
+    return {
+      usd: money((invocations * runLimitTokens * p.out) / 1_000_000),
+      price_version: CODEX_PRICE_TABLE.version,
+      prices: CODEX_PRICE_TABLE.prices,
+      bound: 'lower',
+      lower_bound_reasons: ['the long-context tier (1.5x output for a request over 272K input tokens) and fast mode (2x) cannot be told from the usage, and either raises the output rate this figure uses'],
+      ...(p.status_note ? { model_status: p.status_note } : {}),
+    };
   }
   const prices = provider === 'claude' ? CLAUDE_PRICE_TABLE.models[model] : undefined;
   if (!prices) return null;

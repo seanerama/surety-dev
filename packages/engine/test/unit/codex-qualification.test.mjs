@@ -339,10 +339,10 @@ test('the model: one the stream names that is not the entry\'s fails model_fallb
   assert.equal(codex.codexModelFallback(sum, 'gpt-5-mini'), null);
   assert.equal(codex.codexModelReport(null, MODEL).status, 'not_reported');
   // The model the stream named is on the usage, so the ledger can price it
-  // (estimated, labelled unconfirmed), never reported.
+  // (estimated, a lower bound from the pricing page), never reported.
   const n = normalizeFor('codex', { input_tokens: 10, cached_input_tokens: 0, output_tokens: 1, usage_final: true, model: 'gpt-5-mini' });
   assert.equal(n.cost_status, 'estimated');
-  assert.match(n.normalization_version, /^codex-exec-json-1\+openai-list-.*-unconfirmed$/);
+  assert.equal(n.normalization_version, 'codex-exec-json-2+openai-pricing-page-2026-10-27+cache-write-not-reported-priced-as-input+lower-bound');
   // In an attempt: an attempt whose requested model the fake's stream does
   // not name passes with "model not reported" (above); one naming another
   // model is not built into the fake, so the class is checked on the rule.
@@ -372,11 +372,17 @@ test('the default egress: api.openai.com for codex when none is named; a named h
   assert.ok(!JSON.stringify(DEFAULT_EGRESS).includes('openex'));
 });
 
-test('the spend estimate: from the unconfirmed Codex price table, labelled so; a model it does not list has none, with the reason, never 0', () => {
-  assert.equal(CODEX_PRICE_TABLE.confirmed, false);
-  assert.match(CODEX_PRICE_TABLE.version, /unconfirmed/);
+test('the spend estimate: from the pricing-page Codex price table, a lower bound with its reasons, a legacy model\'s status shown; a model it does not list has none, with the reason, never 0', () => {
+  assert.equal(CODEX_PRICE_TABLE.version, 'openai-pricing-page-2026-10-27');
+  assert.equal(CODEX_PRICE_TABLE.prices, 'from_pricing_page');
   const e = attemptSpendEstimate('codex', MODEL, 200_000);
-  assert.deepEqual(e, { usd: 6, price_version: CODEX_PRICE_TABLE.version, prices: 'unconfirmed' });
+  assert.deepEqual(Object.keys(e).sort(), ['bound', 'lower_bound_reasons', 'model_status', 'price_version', 'prices', 'usd']);
+  assert.deepEqual([e.usd, e.price_version, e.prices, e.bound], [6, CODEX_PRICE_TABLE.version, 'from_pricing_page', 'lower']);
+  assert.match(e.model_status, /shut down; API shutdown July 23, 2026/);
+  assert.match(e.lower_bound_reasons[0], /long-context tier.*fast mode/);
+  const sol = attemptSpendEstimate('codex', 'gpt-6.1-sol', 200_000);
+  assert.equal(sol.usd, 6, 'three canaries at 200,000 tokens at $10 per 1M output');
+  assert.equal(sol.model_status, undefined, 'a current model shows no status');
   assert.equal(attemptSpendUnavailable('codex', MODEL), null);
   assert.equal(attemptSpendEstimate('codex', 'gpt-5.5-codex', 200_000), null);
   assert.match(attemptSpendUnavailable('codex', 'gpt-5.5-codex'), /no Codex price for gpt-5\.5-codex.*unknown, never 0/);
@@ -501,4 +507,64 @@ test('the driver: all family features disabled or off, the three canaries run; o
     assert.equal(ev.feature_inventory.sha256, a.inventory.sha256, 'the judgement names the inventory it judged');
     assert.match(ev.feature_inventory.reasons.join('\n'), new RegExp(name));
   }
+});
+
+// ---- the Codex price table (2026-10-28; PRICING.md of batch-2026-10-27d) ----
+
+test('the price table: every row of the report, each with its pricing source and read date; the legacy rows marked; cache writes on the gpt-6 and gpt-5.6 rows only', () => {
+  const rows = CODEX_PRICE_TABLE.models;
+  assert.deepEqual(Object.keys(rows).sort(), ['gpt-5', 'gpt-5-codex', 'gpt-5-mini', 'gpt-5.3-codex', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6.1-terra']);
+  assert.deepEqual([rows['gpt-6.1-sol'].input, rows['gpt-6.1-sol'].cached_in, rows['gpt-6.1-sol'].out, rows['gpt-6.1-sol'].cache_write], [2, 0.1, 10, 1.25]);
+  for (const [m, r] of Object.entries(rows)) {
+    assert.equal(r.read, '2026-10-27', m);
+    assert.ok(r.sources.includes(`https://developers.openai.com/api/docs/models/${m}`), m);
+    assert.equal(r.sources.includes('https://developers.openai.com/api/docs/pricing'), m !== 'gpt-5-codex', `${m}: gpt-5-codex is on its model page only`);
+    assert.equal(r.cache_write !== undefined, /^gpt-6|^gpt-5\.6/.test(m), `${m}'s cache-write rate`);
+  }
+  assert.deepEqual(['gpt-5', 'gpt-5-mini', 'gpt-5-codex', 'gpt-5.3-codex'].map((m) => rows[m].status), ['deprecated', 'deprecated', 'shut_down', 'deprecated']);
+  assert.match(rows['gpt-5'].status_note, /December 11, 2026/);
+  assert.match(rows['gpt-5.6-sol'].note, /promotional.*November 21, 2026/);
+  assert.equal(CODEX_PRICE_TABLE.lower_bound_reasons.length, 4);
+});
+
+test('the ledger estimate for gpt-6.1-sol: the documented example usage priced as a lower bound, estimated never reported; a reported cache write at 1.25x input, kept in the raw usage; an unlisted model unknown with the reason', () => {
+  // The documented `turn.completed` usage (input 24763, cached 24448, output
+  // 122, reasoning 0): 315 plain input at $2, 24448 cached at $0.10, 122
+  // output at $10 = $0.0042948.
+  const doc = { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0, usage_final: true, model: 'gpt-6.1-sol' };
+  const n = normalizeFor('codex', doc);
+  assert.deepEqual([n.billable_in, n.cached_in, n.out, n.cost_status, n.cost_usd], [315, 24448, 122, 'estimated', 0.0042948]);
+  assert.equal(n.normalization_version, 'codex-exec-json-2+openai-pricing-page-2026-10-27+cache-write-not-reported-priced-as-input+lower-bound');
+  // Reasoning tokens are inside output: never added.
+  assert.equal(normalizeFor('codex', { ...doc, reasoning_output_tokens: 80 }).cost_usd, 0.0042948);
+  // A cache write reported: out of plain input, at 1.25x input ($2.50).
+  // 763 plain at $2 + 4000 written at $2.50 + 20000 cached at $0.10 + 122
+  // output at $10 = $0.014746.
+  const w = normalizeFor('codex', { ...doc, cached_input_tokens: 20000, cache_write_input_tokens: 4000 });
+  assert.deepEqual([w.billable_in, w.cost_status, w.cost_usd], [4763, 'estimated', 0.014746]);
+  assert.equal(w.normalization_version, 'codex-exec-json-2+openai-pricing-page-2026-10-27+cache-write-reported-1.25x-input-30m+lower-bound');
+  // A model with no write rate listed: the write at the input rate, said so.
+  const g55 = normalizeFor('codex', { ...doc, model: 'gpt-5.5', cached_input_tokens: 20000, cache_write_input_tokens: 4000 });
+  assert.match(g55.normalization_version, /\+cache-write-reported-at-input-no-write-rate-listed\+lower-bound$/);
+  assert.equal(g55.cost_usd, (4763 * 5 + 20000 * 0.5 + 122 * 30) / 1e6);
+  // More writes than uncached input contradicts the relation: unknown.
+  assert.equal(normalizeFor('codex', { ...doc, cache_write_input_tokens: 400 }).cost_status, 'unknown');
+  // The adapter keeps the field in the raw usage where the CLI gives it,
+  // and never writes it as 0 where it does not.
+  const fed = (line) => {
+    const st = new codex.CodexStream();
+    const out = st.feed(JSON.stringify(line));
+    return out?.usage?.[0]?.raw ?? null;
+  };
+  const kept = fed({ type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 20000, cache_write_input_tokens: 4000, output_tokens: 122, reasoning_output_tokens: 0 } });
+  assert.equal(kept.cache_write_input_tokens, 4000);
+  const absent = fed({ type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } });
+  assert.equal('cache_write_input_tokens' in absent, false);
+  // Never reported, whatever the usage.
+  for (const x of [n, w, g55]) assert.notEqual(x.cost_status, 'reported');
+  // An unlisted model: no estimate, the reason shown, never 0.
+  const un = normalizeFor('codex', { ...doc, model: 'gpt-7-nova' });
+  assert.deepEqual([un.cost_status, un.cost_usd], ['unknown', null]);
+  assert.equal(attemptSpendEstimate('codex', 'gpt-7-nova', 200_000), null);
+  assert.match(attemptSpendUnavailable('codex', 'gpt-7-nova'), /no Codex price for gpt-7-nova: the Codex price table \(openai-pricing-page-2026-10-27\) lists .*gpt-6\.1-sol.* only, so the spend is not estimated \(unknown, never 0\)/);
 });

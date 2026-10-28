@@ -129,8 +129,8 @@ test('a good stream: the thread id, the items, one cumulative usage with the thr
 test('the usage normalisation: billable input is input less cached, cached counted once, reasoning not added, cost unknown for a model the price table does not list (C2)', () => {
   const raw = foldObservations(feed(GOOD).usage);
   const n = normalizeFor('codex', raw);
-  assert.equal(CODEX_NORMALIZATION, 'codex-exec-json-1');
-  assert.deepEqual(n, { billable_in: 315, cached_in: 24448, out: 122, model_observed: null, normalization_version: 'codex-exec-json-1', cost_status: 'unknown', cost_usd: null });
+  assert.equal(CODEX_NORMALIZATION, 'codex-exec-json-2');
+  assert.deepEqual(n, { billable_in: 315, cached_in: 24448, out: 122, model_observed: null, normalization_version: 'codex-exec-json-2', cost_status: 'unknown', cost_usd: null });
   assert.equal(terminalUsageObserved('codex', raw), true);
   // reasoning tokens are kept in the raw usage and never added to output
   assert.equal(normalizeFor('codex', { ...raw, reasoning_output_tokens: 90 }).out, 122);

@@ -238,7 +238,12 @@ export class CodexStream {
       reasoning_output_tokens: count(u.reasoning_output_tokens),
     };
     this.s.usage = usage;
-    const known = Object.fromEntries(Object.entries(usage).filter(([, v]) => v !== null));
+    // Cache writes (the 0.160.0 source's `cache_write_input_tokens`, absent
+    // from the documented example): kept where given, never required, and
+    // never written as 0 where absent (the ledger then prices writes as
+    // plain input and says so).
+    const writes = u.cache_write_input_tokens === undefined ? null : count(u.cache_write_input_tokens);
+    const known = { ...Object.fromEntries(Object.entries(usage).filter(([, v]) => v !== null)), ...(writes === null ? {} : { cache_write_input_tokens: writes }) };
     const complete = usage.input_tokens !== null && usage.cached_input_tokens !== null && usage.output_tokens !== null;
     out.usage.push({ semantics: 'cumulative', raw: { ...known, usage_final: complete, usage_scope: 'turn', ...thread } });
   }
