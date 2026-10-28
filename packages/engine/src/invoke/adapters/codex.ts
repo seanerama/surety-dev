@@ -39,6 +39,7 @@
 // redacted by the caller before it reaches a record (D2 §2.5; E37 item 2).
 
 import type { BackendSampling, ClaudeStream } from './claude.js';
+import type { CodexFeatureJudgement } from './codex-features.js';
 import { sameModel } from './model.js';
 
 // The item types that act beyond the domain or delegate (D2 §§4.1, 4.6):
@@ -361,6 +362,9 @@ export interface CodexCapabilities {
   template_disabled: string[];
   beyond_domain: { canary: number; id: string | null; type: string; kind: string }[];
   sampling: BackendSampling | null;
+  // The attempt's `codex features list` judged against the template (D2
+  // §4.6, D2-T13; C2b), or null where none was given to judge.
+  feature_inventory: CodexFeatureJudgement | null;
   reasons: string[];
 }
 
@@ -373,9 +377,19 @@ export interface CodexCapabilities {
 // web search, sub-agents and the other features (`template_disabled`);
 // that is configuration, recorded, and claims nothing. No tool inventory
 // exists to list, so `tools`, `denied` and `features_disabled` claim
-// nothing either.
-export function codexCapabilities(streams: (CodexStreamSummary | null)[], sampling: BackendSampling | null, templateDisabled: readonly string[]): CodexCapabilities {
+// nothing either. The attempt's `codex features list` judgement (C2b),
+// where given, is kept here and its reasons are this judgement's: the
+// driver fails the attempt on it before any canary, so at the containment
+// canary it has passed.
+export function codexCapabilities(
+  streams: (CodexStreamSummary | null)[],
+  sampling: BackendSampling | null,
+  templateDisabled: readonly string[],
+  features: CodexFeatureJudgement | null = null,
+): CodexCapabilities {
   const reasons: string[] = [];
+  // The feature inventory (C2b): its judgement's reasons are this one's.
+  if (features !== null) for (const r of features.reasons) reasons.push(`feature inventory: ${r}`);
   const beyond: CodexCapabilities['beyond_domain'] = [];
   streams.forEach((s, i) => {
     if (s === null) {
@@ -401,6 +415,7 @@ export function codexCapabilities(streams: (CodexStreamSummary | null)[], sampli
     template_disabled: [...templateDisabled],
     beyond_domain: beyond.slice(0, MAX_LIST),
     sampling,
+    feature_inventory: features,
     reasons,
   };
 }

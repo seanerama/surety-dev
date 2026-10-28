@@ -20,7 +20,8 @@ import { ECHO_HOST } from '../invoke/proxy/echo.js';
 import { Refusal } from '../refusal.js';
 import { PROJECT_POLICY } from '../config/schema.js';
 import { seamQualifyMode, seamRefuseBinary } from '../testing/seam.js';
-import { helpHash, versionOf } from '../invoke/static.js';
+import { featureInventory, helpHash, versionOf } from '../invoke/static.js';
+import { CODEX_FEATURES_ARGS } from '../invoke/adapters/codex-features.js';
 import { resolveInstallation } from './fixture.js';
 import { pinBinary } from './pin.js';
 
@@ -53,6 +54,9 @@ export interface QualifyRequest {
   binary_sha256: string;
   help_sha256: string;
   version: string;
+  // Codex's `codex features list` (D2 §4.6, D2-T13): its text and SHA-256,
+  // judged by the attempt's driver; null for a backend that has none.
+  feature_inventory: { text: string; sha256: string } | null;
   template: string;
   template_version: string;
   candidate_egress: string[];
@@ -171,6 +175,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     binary_sha256: statics.sha256,
     help_sha256: statics.help,
     version: statics.version,
+    feature_inventory: statics.features,
     template: template.text,
     template_version: template.version,
     candidate_egress: [...new Set(list.map((h) => canonicalHost(String(h))))],
@@ -254,6 +259,7 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
     binary_sha256: statics.sha256,
     help_sha256: statics.help,
     version: statics.version,
+    feature_inventory: statics.features,
     template: template.text,
     template_version: template.version,
     candidate_egress: egress,
@@ -265,7 +271,13 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
 // The static checks (D2 §7.2; SEAM.md §148): the binary's real path and its
 // file's SHA-256, and `--version` and `--help`, each run once, exactly so,
 // outside any domain. A real backend's binary is refused in the test mode.
-async function staticChecks(backend: string, given: string, pinHome: string | null): Promise<{ path: string; sha256: string; help: string; version: string }> {
+// Codex's also `codex features list` (D2 §4.6, D2-T13), recorded on the
+// attempt and judged by its driver (adapters/codex-features.ts).
+async function staticChecks(
+  backend: string,
+  given: string,
+  pinHome: string | null,
+): Promise<{ path: string; sha256: string; help: string; version: string; features: { text: string; sha256: string } | null }> {
   if (!given.startsWith('/')) throw invalid('binary', 'must be an absolute path');
   let path: string;
   try {
@@ -290,5 +302,10 @@ async function staticChecks(backend: string, given: string, pinHome: string | nu
   const version = await versionOf(path, backend).catch(() => null);
   const help = await helpHash(path, backend).catch(() => null);
   if (version === null || help === null) throw new Refusal(409, 'backend_refused', `${path} did not answer --version and --help.`, 'Name a binary that answers both.', { field: 'binary' });
-  return { path, sha256, help, version };
+  let features: { text: string; sha256: string } | null = null;
+  if (backend === 'codex') {
+    features = await featureInventory(path, backend, CODEX_FEATURES_ARGS).catch(() => null);
+    if (features === null) throw new Refusal(409, 'backend_refused', `${path} did not answer \`${CODEX_FEATURES_ARGS.join(' ')}\`, the feature inventory a Codex attempt is judged on (D2 §4.6).`, 'Name a Codex binary that answers it.', { field: 'binary' });
+  }
+  return { path, sha256, help, version, features };
 }

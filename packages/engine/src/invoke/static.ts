@@ -1,5 +1,6 @@
 // The static checks of a backend binary (D2 §7.2; SEAM.md §§148, 150): its
-// `--version` and its `--help`, each run once, exactly so, outside any
+// `--version` and its `--help`, and for Codex its `features list` (D2 §4.6,
+// D2-T13; adapters/codex-features.ts), each run once, exactly so, outside any
 // domain, with a constructed environment, no standard input, a short time
 // limit and bounded output. Nothing else of the binary runs here: no prompt,
 // no model, no key. A binary the engine's test mode must never run (a real
@@ -47,7 +48,8 @@ function staticEnv(home: string): NodeJS.ProcessEnv {
 }
 
 // Run `path arg`; null when it could not be started or did not end in time.
-export function runStatic(path: string, backend: string, arg: '--version' | '--help'): Promise<StaticRun | null> {
+export function runStatic(path: string, backend: string, arg: '--version' | '--help' | readonly string[]): Promise<StaticRun | null> {
+  const args = typeof arg === 'string' ? [arg] : [...arg];
   const refused = seamRefuseStatic(path, backend);
   if (refused !== null) return Promise.reject(new StaticRefused(refused));
   let home: string;
@@ -65,7 +67,7 @@ export function runStatic(path: string, backend: string, arg: '--version' | '--h
     try {
       // In a process group of its own, so that on the time limit the whole
       // group (whatever it started) is killed, not the binary alone.
-      child = spawn(path, [arg], { cwd: home, env: staticEnv(home), stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      child = spawn(path, args, { cwd: home, env: staticEnv(home), stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     } catch {
       resolve(null);
       return;
@@ -116,4 +118,12 @@ export async function versionOf(path: string, backend: string): Promise<string |
   if (r === null || r.status !== 0) return null;
   const line = r.stdout.toString('utf8').split('\n')[0]?.trim() ?? '';
   return line === '' ? null : line;
+}
+
+// Codex's feature inventory (D2 §4.6): `codex features list`'s standard
+// output and its SHA-256; null when it could not be run or did not exit 0.
+export async function featureInventory(path: string, backend: string, args: readonly string[]): Promise<{ text: string; sha256: string } | null> {
+  const r = await runStatic(path, backend, args);
+  if (r === null || r.status !== 0) return null;
+  return { text: r.stdout.toString('utf8'), sha256: createHash('sha256').update(r.stdout).digest('hex') };
 }

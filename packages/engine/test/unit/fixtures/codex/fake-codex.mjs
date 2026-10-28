@@ -4,7 +4,7 @@
 // --json` JSONL in the shapes OpenAI's non-interactive page documents
 // (`thread.started`, `turn.started`, `item.*`, `turn.completed` with
 // `usage`, `turn.failed`, `error`), reads its prompt from standard input as
-// the `codex-exec-2` template's `-` asks, and acts out a role's run or a
+// the `codex-exec-3` template's `-` asks, and acts out a role's run or a
 // qualification canary from <root>/surety/context/canary.json, as the fake
 // claude does (test/acceptance/harness/standin/fake-claude.mjs). Its error
 // texts are modelled on the Codex CLI's "unexpected status 401
@@ -30,6 +30,18 @@
 //   dump:      a path: what this launch was given (argv, the stdin text,
 //              which key variables were set, never their values) is
 //              written there as JSON
+//   features_set: `codex features list` (C2b): {name: true|false} sets a
+//              listed feature's state, or adds the feature (stage
+//              "under development") if the list does not name it
+//   features:  the whole list's text instead (a string), e.g. "" for an
+//              empty one
+//   features_exit: the exit status of `features list` (default 0)
+//
+// `codex features list` prints, by default, the list the real Codex CLI
+// 0.160.0 printed in an empty CODEX_HOME on 2026-10-28 (saved verbatim as
+// features-0.160.0.txt beside this file; the evidence folder
+// batch-2026-10-27d/codex-c2b holds the original). That is the one recorded
+// output this fake replays; everything else it prints is synthetic.
 //
 // Built-ins only.
 
@@ -53,6 +65,21 @@ try {
   if (file) mode = JSON.parse(readFileSync(file, 'utf8'));
 } catch {
   mode = {};
+}
+// `codex features list` (C2b): the inventory the static checks record.
+if (argv.length === 2 && argv[0] === 'features' && argv[1] === 'list') {
+  let text = typeof mode.features === 'string' ? mode.features : readFileSync(new URL('./features-0.160.0.txt', import.meta.url), 'utf8');
+  if (mode.features_set && typeof mode.features_set === 'object') {
+    const lines = text.split('\n').filter((l) => l.trim() !== '');
+    for (const [name, on] of Object.entries(mode.features_set)) {
+      const i = lines.findIndex((l) => l.split(/\s+/)[0] === name);
+      if (i >= 0) lines[i] = lines[i].replace(/(true|false)\s*$/, on ? 'true' : 'false');
+      else lines.push(`${name.padEnd(41)}${'under development'.padEnd(19)}${on ? 'true' : 'false'}`);
+    }
+    text = `${lines.join('\n')}\n`;
+  }
+  process.stdout.write(text);
+  process.exit(Number(mode.features_exit ?? 0));
 }
 const root = mode.root ?? '/';
 const at = (p) => join(root, p);

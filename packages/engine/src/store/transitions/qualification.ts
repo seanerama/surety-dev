@@ -103,6 +103,7 @@ export function qualify(
     binary_sha256: string;
     help_sha256: string;
     version: string;
+    feature_inventory?: { text: string; sha256: string } | null;
     template: string;
     template_version: string;
     candidate_egress: string[];
@@ -199,6 +200,7 @@ export function qualify(
     binary_path: a.binary_path,
     binary_sha256: a.binary_sha256,
     help_sha256: a.help_sha256,
+    feature_inventory: a.feature_inventory ?? null,
     template: a.template,
     template_version: a.template_version,
     model: a.model,

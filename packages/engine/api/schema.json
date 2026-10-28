@@ -5179,6 +5179,12 @@
         },
         "profile": {
           "required": false
+        },
+        "feature_inventory": {
+          "required": false
+        },
+        "feature_inventory_sha256": {
+          "required": false
         }
       }
     },

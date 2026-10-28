@@ -62,6 +62,7 @@ import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
 import { CODEX_DISABLED_FEATURES, keyVariables, purposeOfTemplateVersion, templateOf } from '../invoke/adapters/templates.js';
+import { type CodexFeatureJudgement, judgeCodexFeatures } from '../invoke/adapters/codex-features.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AttemptRow, EntryInput } from '../store/transitions/trust.js';
@@ -116,6 +117,14 @@ export function codexBeyondDomain(s: CodexStreamSummary | null, sampling: Backen
   for (const b of s?.beyond_domain ?? []) out.push(`the stream shows a ${b.type} item (${b.kind})${b.id ? `, ${b.id}` : ''}`);
   if (sampling !== null && sampling.max_backend > 1) out.push(`a second backend process appeared in the domain (at most ${sampling.max_backend} at once${sampling.backend_cmdlines.length > 0 ? `: ${sampling.backend_cmdlines.join(' | ').slice(0, 300)}` : ''})`);
   return out;
+}
+
+// The attempt's recorded `codex features list` judged against the template
+// (adapters/codex-features.ts); no inventory recorded judges unverified.
+export function codexFeatureJudgement(a: Pick<AttemptRow, 'feature_inventory' | 'feature_inventory_sha256'>): CodexFeatureJudgement {
+  const text = a.feature_inventory ?? null;
+  const sha256 = a.feature_inventory_sha256 ?? null;
+  return judgeCodexFeatures(text === null || sha256 === null ? null : { text, sha256 });
 }
 
 const POLL_MS = 250;
@@ -181,6 +190,21 @@ export class QualificationDriver {
       return;
     }
     const canaries: CanaryEntry[] = [];
+    // Codex's feature inventory (D2 §4.6, D2-T13; C2b), judged before any
+    // canary is launched: a delegation, scheduling or background feature
+    // the template leaves on, or a feature this engine does not know, fails
+    // the attempt as delegation_unverified, named, and nothing runs or is
+    // spent. Its positive canary is recorded not launched, with the
+    // judgement as its evidence.
+    const features = a.backend === 'codex' ? codexFeatureJudgement(a) : null;
+    if (features !== null && !features.verified) {
+      const record = await this.record(a, null, { kind: 'positive', outcome: 'not_launched', failure_class: 'delegation_unverified', reason: 'the attempt\'s `codex features list` inventory does not show every delegation, scheduling and background feature disabled or unavailable', feature_inventory: features });
+      const entry: CanaryEntry = { kind: 'positive', run: null, passed: false, failure_class: 'delegation_unverified', provider_error: record, evidence: record, term_to_exit_ms: null };
+      canaries.push(entry);
+      await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected: [] });
+      await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: [] });
+      return;
+    }
     // A real backend's streams and the host's samples, canary by canary:
     // the tool surface and delegation are judged over all of them (D2 §4.5).
     const history: CanaryHistory[] = [];
@@ -595,7 +619,7 @@ export class QualificationDriver {
         // with nothing beyond the domain, and one backend on the samples.
         const judgedCaps: BackendCapabilities =
           backendKind === 'codex'
-            ? codexCapabilities(history.map((h) => h.codex), merged, CODEX_TEMPLATE_DISABLED)
+            ? codexCapabilities(history.map((h) => h.codex), merged, CODEX_TEMPLATE_DISABLED, codexFeatureJudgement(a))
             : claudeCapabilities(
                 history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
                 merged,

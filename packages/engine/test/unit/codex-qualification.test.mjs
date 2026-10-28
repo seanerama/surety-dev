@@ -28,7 +28,8 @@ const { QualificationDriver, realFailureClass, realBackendOf, codexBeyondDomain 
 const { canaryObservations } = await import(join(dist, 'invoke', 'choke.js'));
 const C = await import(join(dist, 'trust', 'canaries.js'));
 const { ACTION_HARDENING } = await import(join(dist, 'invoke', 'probes', 'program.js'));
-const { helpHash } = await import(join(dist, 'invoke', 'static.js'));
+const { helpHash, featureInventory } = await import(join(dist, 'invoke', 'static.js'));
+const CF = await import(join(dist, 'invoke', 'adapters', 'codex-features.js'));
 const { recordsDir } = await import(join(dist, 'records', 'files.js'));
 const { startBackendSampler, isCompanion } = await import(join(dist, 'invoke', 'sampler.js'));
 const { prepareQualify, CODEX_SESSIONS_NOT_BUILT } = await import(join(dist, 'trust', 'qualify.js'));
@@ -118,7 +119,7 @@ function observation(kind, r, sampling) {
 
 // ---- the driver against a stub of the store and the launcher ----
 
-async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds } = {}) {
+async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, features = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cq-attempt-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const home = join(dir, 'home');
@@ -129,10 +130,16 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds } = 
   writeFileSync(join(repo, '.git', 'config'), '[core]\n');
   // The binary as the help check runs it: a wrapper around the fake.
   const binary = join(dir, 'codex');
-  writeFileSync(binary, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`);
+  // Its `features list` as `features` sets it (the static checks' run
+  // passes no FAKE_CODEX_MODE, so the wrapper names the file).
+  const featuresMode = join(dir, 'features-mode.json');
+  writeFileSync(featuresMode, JSON.stringify(features));
+  writeFileSync(binary, `#!/bin/sh\nFAKE_CODEX_MODE="${featuresMode}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
   chmodSync(binary, 0o755);
   const help = await helpHash(binary, 'codex');
   assert.notEqual(help, null, 'the fake answers --help');
+  const inventory = await featureInventory(binary, 'codex', CF.CODEX_FEATURES_ARGS);
+  assert.notEqual(inventory, null, 'the fake answers features list');
   const id = `att_codex_${Math.random().toString(36).slice(2, 10)}`;
   const row = {
     id,
@@ -148,6 +155,8 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds } = 
     binary_sha256: 'synthetic',
     help_sha256: help,
     version: 'codex-cli 0.160.0',
+    feature_inventory: inventory.text,
+    feature_inventory_sha256: inventory.sha256,
     candidate_egress: JSON.stringify(['api.openai.com']),
     canary_deadlines: JSON.stringify({ positive: 30, cancellation: 30, containment: 30 }),
     fixture_project: 'prj_fixture',
@@ -202,7 +211,7 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds } = 
   await driver.drive(id);
   const evidence = (c) => JSON.parse(readFileSync(join(recordsDir(home), records.get(c.evidence)), 'utf8'));
   const providerError = (c) => (c.provider_error === null ? null : JSON.parse(readFileSync(join(recordsDir(home), records.get(c.provider_error)), 'utf8')));
-  return { concluded, canaries, ran, evidence, providerError, id };
+  return { concluded, canaries, ran, evidence, providerError, id, inventory };
 }
 
 test('a passing attempt: three canaries on the fake codex, the key delivered, nothing beyond the domain; the entry claims only what was seen', async (t) => {
@@ -230,6 +239,8 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
   assert.equal(cont.capabilities.basis, 'stream_and_host');
   assert.deepEqual(cont.capabilities.tools, [], 'no inventory: nothing claimed');
   assert.deepEqual(cont.capabilities.template_disabled, [...templates.CODEX_DISABLED_FEATURES, 'web_search', 'agents']);
+  assert.equal(cont.capabilities.feature_inventory.verified, true, 'the 0.160.0 inventory, every family feature disabled or off');
+  assert.deepEqual(cont.capabilities.feature_inventory.left_enabled, []);
   assert.ok(cont.controls.some((c) => c.name === 'provider_tunnel' && c.ran));
   const e = a.concluded.entry;
   assert.ok(e, 'the entry is written proposed');
@@ -411,4 +422,83 @@ test('the failure classes: Codex auth_failed is auth_failed; usage_limit and pro
   const a = await attempt(t, { modes: { positive: { outcome: 'usage_limit' } } });
   assert.deepEqual(a.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'invalid_result']]);
   assert.equal(a.providerError(a.canaries[0]).provider_error.failure.class, 'usage_limit');
+});
+
+// ---- the feature inventory (C2b; D2 §4.6, D2-T13) ----
+
+const REAL_0160 = readFileSync(join(here, 'fixtures', 'codex', 'features-0.160.0.txt'), 'utf8');
+
+test('the feature inventory: 0.160.0\'s list as recorded, every name classified, every --disable a feature it names; all family features disabled or off passes', () => {
+  const { features, unparsed } = CF.parseCodexFeatures(REAL_0160);
+  assert.equal(features.length, 154);
+  assert.deepEqual(unparsed, []);
+  for (const f of features) assert.ok(CF.CODEX_FEATURE_CLASSES.has(f.name), `${f.name} is classified`);
+  const names = new Set(features.map((f) => f.name));
+  for (const d of templates.CODEX_DISABLED_FEATURES) assert.ok(names.has(d), `--disable ${d} names a feature 0.160.0 lists`);
+  const j = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' });
+  assert.equal(j.verified, true, JSON.stringify(j.reasons));
+  assert.deepEqual([j.left_enabled, j.unknown, j.unparsed], [[], [], []]);
+  assert.ok(j.disabled_by_template.includes('multi_agent') && j.disabled_by_template.includes('daemon_auto_start'));
+  assert.ok(j.unavailable.includes('multi_agent') === false && j.unavailable.includes('agent_message_board'), 'a family feature the list reports off is unavailable');
+  assert.ok(j.outside_family_enabled.includes('unified_exec'), 'outside the family: recorded only');
+  // Each family feature on in 0.160.0 is one the template disables.
+  for (const f of features.filter((x) => x.enabled && CF.CODEX_FEATURE_CLASSES.get(x.name).family)) assert.ok(j.disabled_by_template.includes(f.name), f.name);
+});
+
+test('the feature inventory judged: a family feature the template leaves on, an unknown feature, an empty list, an unparsed line, none recorded: each unverified, named', () => {
+  const on = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(agent_message_board\s+under development\s+)false$/m, '$1true'), sha256: 'x' });
+  assert.equal(on.verified, false);
+  assert.deepEqual(on.left_enabled, ['agent_message_board']);
+  assert.match(on.reasons.join('\n'), /agent_message_board is on in the inventory/);
+  const unknown = CF.judgeCodexFeatures({ text: `${REAL_0160}background_scheduler                     stable             false\n`, sha256: 'x' });
+  assert.equal(unknown.verified, false, 'an unknown feature fails even when off');
+  assert.deepEqual(unknown.unknown, [{ name: 'background_scheduler', stage: 'stable', enabled: false }]);
+  assert.match(unknown.reasons.join('\n'), /background_scheduler \(stable, off\) is a feature this engine does not know/);
+  assert.equal(CF.judgeCodexFeatures({ text: '', sha256: 'x' }).verified, false);
+  assert.match(CF.judgeCodexFeatures({ text: '', sha256: 'x' }).reasons[0], /names no feature/);
+  assert.match(CF.judgeCodexFeatures({ text: 'goals stable true\n', sha256: 'x' }).reasons.join('\n'), /does not name multi_agent/);
+  assert.match(CF.judgeCodexFeatures({ text: `${REAL_0160}what is this\n`, sha256: 'x' }).reasons.join('\n'), /not a feature, its stage and its state: "what is this"/);
+  assert.match(CF.judgeCodexFeatures(null).reasons[0], /recorded no `codex features list` inventory/);
+  // Outside the family: recorded only, never a failure.
+  const outside = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(js_repl\s+removed\s+)false$/m, '$1true'), sha256: 'x' });
+  assert.equal(outside.verified, true);
+  assert.ok(outside.outside_family_enabled.includes('js_repl'));
+});
+
+test('the inventory recorded: features list run by the static checks with the constructed environment, its text and SHA-256; a binary that does not answer has none', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cq-inv-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = (name, mode) => {
+    const m = join(dir, `${name}.json`);
+    writeFileSync(m, JSON.stringify(mode));
+    const p = join(dir, name);
+    writeFileSync(p, `#!/bin/sh\nFAKE_CODEX_MODE="${m}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
+    chmodSync(p, 0o755);
+    return p;
+  };
+  const inv = await featureInventory(bin('codex-a', {}), 'codex', CF.CODEX_FEATURES_ARGS);
+  assert.equal(inv.text, REAL_0160);
+  const { createHash } = await import('node:crypto');
+  assert.equal(inv.sha256, createHash('sha256').update(REAL_0160).digest('hex'));
+  assert.equal(await featureInventory(bin('codex-b', { features_exit: 2 }), 'codex', CF.CODEX_FEATURES_ARGS), null, 'a nonzero exit records none');
+});
+
+test('the driver: all family features disabled or off, the three canaries run; one left on, or an unknown one, fails delegation_unverified, named, before any canary is launched', async (t) => {
+  const ok = await attempt(t);
+  assert.deepEqual(ok.canaries.map((c) => c.passed), [true, true, true]);
+  assert.equal(ok.inventory.text, REAL_0160);
+  for (const [features, name] of [
+    [{ features_set: { agent_message_board: true } }, 'agent_message_board'],
+    [{ features_set: { overnight_runner: false } }, 'overnight_runner'],
+  ]) {
+    const a = await attempt(t, { features });
+    assert.deepEqual(a.canaries.map((c) => [c.kind, c.run, c.passed, c.failure_class]), [['positive', null, false, 'delegation_unverified']]);
+    assert.equal(a.ran.length, 0, 'no canary was launched');
+    assert.equal(a.concluded.entry, undefined, 'no entry');
+    const ev = a.evidence(a.canaries[0]);
+    assert.equal(ev.outcome, 'not_launched');
+    assert.equal(ev.feature_inventory.verified, false);
+    assert.equal(ev.feature_inventory.sha256, a.inventory.sha256, 'the judgement names the inventory it judged');
+    assert.match(ev.feature_inventory.reasons.join('\n'), new RegExp(name));
+  }
 });
