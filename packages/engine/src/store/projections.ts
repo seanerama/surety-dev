@@ -20,6 +20,7 @@ import { envelopeHold } from './transitions/envelope.js';
 import { deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { readLogs } from './transitions/observe.js';
 import { projectPolicy } from './transitions/settings.js';
+import { currentIteration } from './transitions/prototype.js';
 import type { WorkRow } from './transitions/work.js';
 
 type Db = Database;
@@ -264,8 +265,11 @@ function projectSummary(db: Db, project: string) {
   } catch (err) {
     now = unknownNow(err);
   }
+  const mode = (db.prepare('SELECT "mode" FROM "projects" WHERE "id" = ?').get(project) as { mode: string }).mode;
   return {
     id: project,
+    // The execution mode (slice E1): planned or rapid_prototype.
+    mode,
     now,
     execution: { runs },
     open_decisions: { count: decisions },
@@ -293,6 +297,12 @@ export function readProject(db: Db, args: { project: string }) {
       tier: row.tier,
       paused: row.paused === 1,
       registration_state: row.registration_state,
+      // A rapid prototype's current iteration (slice E1; R7), its highest
+      // seq whatever its status; null for a planned project.
+      prototype: (() => {
+        const it = currentIteration(db, args.project);
+        return it === null ? null : { iteration: it.id, status: it.status };
+      })(),
       environments: environmentsOf(db, args.project),
       idea: ideaOf(db, args.project),
       // D6 §8.1 step 1 (SEAM.md §379): A, the signals and the mode; the

@@ -59,7 +59,7 @@ export const EVENT_OWNERS = {
   'candidate.superseded': 'store/transitions/finalize.ts',
   'repo.out_of_band': 'store/transitions/repo.ts',
   'repo.reconciled': 'store/transitions/finalize.ts, store/transitions/intents.ts, store/transitions/queue.ts, store/transitions/repo.ts',
-  'policy.changed': 'store/transitions/finalize.ts',
+  'policy.changed': 'store/transitions/finalize.ts, store/transitions/project.ts',
   'git.journal_intended': 'store/transitions/journal.ts',
   'git.journal_applied': 'store/transitions/journal.ts',
   'git.journal_confirmed': 'store/transitions/journal.ts',
@@ -244,6 +244,11 @@ export const EVENT_OWNERS = {
   'design.asset_bound': 'design/approval.ts',
   // H5 (E171 item 5; SEAM.md §553): an unrecorded review's file moved to reviews/refused/.
   'design.review_refused': 'design/review-refused.ts',
+  // Rapid prototype, slice E1 (migration 0044; R7): an iteration created,
+  // its Alpha reached, and a torn-down Alpha's candidate set back.
+  'prototype.iteration_created': 'store/transitions/prototype.ts',
+  'prototype.iteration_alpha_ready': 'store/transitions/prototype.ts',
+  'candidate.alpha_withdrawn': 'store/transitions/prototype.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

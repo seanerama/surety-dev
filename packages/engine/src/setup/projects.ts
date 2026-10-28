@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { git, repoContext } from '../git/exec.js';
+import { EXECUTION_MODES, type ExecutionMode } from '../config/schema.js';
 import { prepareBootstrap } from '../projects/commands.js';
 import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
@@ -53,9 +54,16 @@ function ensureDefaultParent(parent: string): void {
 export async function prepareNewProject(rt: Runtime, body: unknown): Promise<Record<string, unknown>> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid('body', 'A new app needs an object.');
   const b = body as Record<string, unknown>;
-  for (const key of Object.keys(b)) if (!['name', 'tier', 'dev_repo_path', 'idea'].includes(key)) throw invalid(key, 'The new-app request contains an unsupported field.');
+  for (const key of Object.keys(b)) if (!['name', 'tier', 'dev_repo_path', 'idea', 'mode'].includes(key)) throw invalid(key, 'The new-app request contains an unsupported field.');
   if (typeof b.name !== 'string' || !b.name.trim() || b.name.length > 120 || /[\x00-\x1f]/.test(b.name)) throw invalid('name', 'Name must be 1–120 characters on one line.');
-  if (!['T1', 'T2', 'T3'].includes(String(b.tier))) throw invalid('tier', 'Choose T1, T2 or T3.');
+  // The execution mode (Rapid prototype, slice E1): `planned` unless the
+  // owner chooses `rapid_prototype`. A prototype is built at T1 (the preset):
+  // its tier may be left out, and any other tier is refused, never changed.
+  const mode = b.mode === undefined ? 'planned' : b.mode;
+  if (typeof mode !== 'string' || !(EXECUTION_MODES as readonly string[]).includes(mode)) throw invalid('mode', `Choose ${EXECUTION_MODES.join(' or ')}.`);
+  const tier = mode === 'rapid_prototype' && b.tier === undefined ? 'T1' : b.tier;
+  if (!['T1', 'T2', 'T3'].includes(String(tier))) throw invalid('tier', 'Choose T1, T2 or T3.');
+  if (mode === 'rapid_prototype' && tier !== 'T1') throw invalid('tier', 'A rapid prototype is built at T1; choose T1, or a planned build for T2 or T3.');
   if (typeof b.idea !== 'string' || !b.idea.trim()) throw invalid('idea', 'Describe the app you want to build.');
   if (typeof b.dev_repo_path !== 'string' || !isAbsolute(b.dev_repo_path) || /[\x00-\x1f]/.test(b.dev_repo_path)) throw invalid('dev_repo_path', 'Choose an absolute folder path.');
   const path = resolve(b.dev_repo_path);
@@ -90,6 +98,6 @@ export async function prepareNewProject(rt: Runtime, body: unknown): Promise<Rec
   await run(['add', '--', 'README.md']);
   await run(['commit', '-q', '-m', 'Initial app brief']);
   await run(['checkout', '-q', '--detach']);
-  const prepared = await prepareBootstrap(rt, { name: b.name.trim(), tier: b.tier, dev_repo_path: repo, integration_branch: 'main', idea: b.idea });
+  const prepared = await prepareBootstrap(rt, { name: b.name.trim(), tier, dev_repo_path: repo, integration_branch: 'main', idea: b.idea }, { mode: mode as ExecutionMode });
   return { ...prepared, initiallyPaused: true };
 }

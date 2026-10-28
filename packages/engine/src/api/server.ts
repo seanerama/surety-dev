@@ -33,6 +33,7 @@ import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, 
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
+import { receiptResponse } from '../prototype/iterations.js';
 import { ownerReview } from '../design/owner-review.js';
 import { REVIEW_BODY_CAP, reviewTooLarge } from '../design/evidence.js';
 import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
@@ -869,6 +870,24 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       // D7 A.8 (SEAM.md §508): every asset binding, superseded ones included.
       if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'bindings' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'design.bindings', args: { project } }) }) };
+      }
+      // Rapid prototype, slice E1 (R7, R9): the iterations, one iteration's
+      // usage, limits and Alpha, and its receipt as a download. Reads.
+      if (rest.length === 1 && rest[0] === 'iterations' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'iterations.list', args: { project } }) }) };
+      }
+      if (rest.length === 2 && rest[0] === 'iterations' && get) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'iteration.read', args: { project, iteration } }) }) };
+      }
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'receipt.json' && get) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'direct',
+          handler: async () => receiptResponse(await store().call('read', { name: 'iteration.receipt', args: { project, iteration } }), iteration),
+        };
       }
       if (rest.length === 1 && rest[0] === 'pace' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };

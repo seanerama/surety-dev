@@ -41,6 +41,7 @@ import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
 import { type OwnerEvidence, openOwnerReview } from '../design/owner-review.js';
 import { alphaSubject } from '../design/review.js';
+import { iterationForDispatch } from '../store/transitions/prototype.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -292,6 +293,9 @@ export function openSession(
        VALUES (?, ?, ?, ?, NULL, ?, 'session', 'claimed', 'allocated', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
     )
     .run(run, tx.at, p.id, seq, role, resolved.backend, resolved.version, model, head.expected_oid, idle, args.parent ?? null, head.expected_oid, attempt?.id ?? null);
+  // The prototype iteration it is attributed to, fixed now (R7; slice E1).
+  const iteration = iterationForDispatch(tx.db, p.id);
+  if (iteration !== null) tx.db.prepare('UPDATE "runs" SET "iteration" = ? WHERE "id" = ?').run(iteration, run);
   const subject = { project: p.id, run };
   tx.emit('run.created', subject, { seq, role, kind: 'session', backend: resolved.backend, base_revision: head.expected_oid, parent_run: args.parent ?? null });
   tx.emit('run.claimed', subject, {});

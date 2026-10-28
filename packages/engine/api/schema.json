@@ -556,6 +556,10 @@
       "pending_bootstrap",
       "registered"
     ],
+    "ExecutionMode": [
+      "planned",
+      "rapid_prototype"
+    ],
     "ProposedBy": [
       "verifier_run",
       "human"
@@ -578,6 +582,17 @@
       "pairs",
       "manifest",
       "unreadable"
+    ],
+    "IterationStatus": [
+      "preparing",
+      "awaiting_brief_approval",
+      "building",
+      "awaiting_owner",
+      "alpha_ready",
+      "failed",
+      "stopped",
+      "limit_reached",
+      "discarded"
     ],
     "AuthMode": [
       "api_key",
@@ -1045,7 +1060,10 @@
       "design.review_requested",
       "design.verdicts_confirmed",
       "design.asset_bound",
-      "design.review_refused"
+      "design.review_refused",
+      "prototype.iteration_created",
+      "prototype.iteration_alpha_ready",
+      "candidate.alpha_withdrawn"
     ],
     "EngineMode": [
       "restricted",
@@ -4925,6 +4943,10 @@
         },
         "design_due": {
           "required": false
+        },
+        "mode": {
+          "required": true,
+          "enum": "ExecutionMode"
         }
       }
     },
@@ -5089,6 +5111,77 @@
           "enum": "ProtectedVersionsFingerprintScheme"
         },
         "authorized_revision": {
+          "required": false
+        }
+      }
+    },
+    "prototype_iterations": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "seq": {
+          "required": true
+        },
+        "predecessor": {
+          "required": false,
+          "references": "prototype_iterations"
+        },
+        "mode": {
+          "required": true,
+          "enum": "ExecutionMode"
+        },
+        "status": {
+          "required": true,
+          "enum": "IterationStatus"
+        },
+        "brief_spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "brief_decision": {
+          "required": false,
+          "references": "decisions"
+        },
+        "plan_bundle": {
+          "required": false,
+          "references": "plan_bundles"
+        },
+        "phase_plan": {
+          "required": false,
+          "references": "phase_plans"
+        },
+        "candidate": {
+          "required": false,
+          "references": "candidates"
+        },
+        "deployment_request": {
+          "required": false,
+          "references": "deployment_requests"
+        },
+        "limits_json": {
+          "required": true
+        },
+        "outcome_reason": {
+          "required": false
+        },
+        "next_step": {
+          "required": false
+        },
+        "approved_at": {
+          "required": false
+        },
+        "alpha_at": {
+          "required": false
+        },
+        "ended_at": {
           "required": false
         }
       }
@@ -5602,6 +5695,10 @@
         "qualification_attempt": {
           "required": false,
           "references": "qualification_attempts"
+        },
+        "iteration": {
+          "required": false,
+          "references": "prototype_iterations"
         }
       }
     },
@@ -7506,7 +7603,7 @@
       "owner": "store/transitions/finalize.ts, store/transitions/intents.ts, store/transitions/queue.ts, store/transitions/repo.ts"
     },
     "policy.changed": {
-      "owner": "store/transitions/finalize.ts"
+      "owner": "store/transitions/finalize.ts, store/transitions/project.ts"
     },
     "git.journal_intended": {
       "owner": "store/transitions/journal.ts"
@@ -7975,6 +8072,15 @@
     },
     "design.review_refused": {
       "owner": "design/review-refused.ts"
+    },
+    "prototype.iteration_created": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_alpha_ready": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "candidate.alpha_withdrawn": {
+      "owner": "store/transitions/prototype.ts"
     }
   },
   "config": {
@@ -8671,6 +8777,36 @@
         "default": 536870912,
         "min": 1048576,
         "max": 17179869184,
+        "integer": true
+      },
+      "prototype_budget_tokens": {
+        "default": 1500000,
+        "min": 10000,
+        "max": 50000000,
+        "integer": true
+      },
+      "prototype_budget_usd_estimated": {
+        "default": 15,
+        "min": 0,
+        "max": 10000,
+        "integer": false
+      },
+      "prototype_runtime_seconds": {
+        "default": 2700,
+        "min": 300,
+        "max": 86400,
+        "integer": true
+      },
+      "prototype_repairs_per_stage": {
+        "default": 2,
+        "min": 0,
+        "max": 10,
+        "integer": true
+      },
+      "prototype_repairs_per_iteration": {
+        "default": 4,
+        "min": 0,
+        "max": 40,
         "integer": true
       },
       "budget_run_boundary": {

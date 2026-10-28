@@ -1,0 +1,424 @@
+// The prototype iteration reads (Rapid prototype, slice E1; the owner's
+// rulings R7 and R9 of 2026-10-28). A projection of rows that exist, in one
+// snapshot: it writes nothing, appends no event and calls no adapter.
+//
+//   GET /v1/projects/:p/iterations                 every iteration, oldest first
+//   GET /v1/projects/:p/iterations/:i              one, with its usage, limits and Alpha
+//   GET /v1/projects/:p/iterations/:i/receipt.json the same, as a downloadable receipt
+//
+// What belongs to an iteration is what was attributed to it when it
+// happened (runs.iteration, fixed at dispatch; the iteration's own candidate
+// and deployment request, fixed at Alpha), never a time window. Unknown is
+// never zero: a figure the ledger does not know is null, with what says why
+// beside it, and usage still arriving is `pending`. The usage is the
+// ledger's own (store/transitions/ledger.ts: fold, observedSoFar,
+// outstandingReservation); intervals are pace's (plan/pace.ts: between).
+
+import type { Database } from 'better-sqlite3';
+
+import { nowIso, nowMs } from '../clock.js';
+import { PROTOTYPE_LIMIT_KEYS } from '../config/schema.js';
+import { between } from '../plan/pace.js';
+import { notFound, parseJson } from '../store/transitions/common.js';
+import { type Account, type Amounts, type LedgerRow, billable, fold, observedSoFar, outstandingReservation } from '../store/transitions/ledger.js';
+import { projectNotFound } from '../store/transitions/project.js';
+import { projectPolicy } from '../store/transitions/settings.js';
+import { redactValue } from '../records/redact.js';
+
+type Db = Database;
+
+const envelope = (db: Db) => ({
+  served_at: nowIso(),
+  snapshot_seq: (db.prepare('SELECT COALESCE(MAX("seq"), 0) AS n FROM "events"').get() as { n: number }).n,
+});
+
+interface IterationRow {
+  id: string;
+  created_at: string;
+  project: string;
+  seq: number;
+  predecessor: string | null;
+  mode: string;
+  status: string;
+  brief_spec_revision: string | null;
+  brief_decision: string | null;
+  plan_bundle: string | null;
+  phase_plan: string | null;
+  candidate: string | null;
+  deployment_request: string | null;
+  limits_json: string;
+  outcome_reason: string | null;
+  next_step: string | null;
+  approved_at: string | null;
+  alpha_at: string | null;
+  ended_at: string | null;
+}
+
+// The providers whose normalized categories are mutually exclusive, so that
+// billable_in + cached_in + out counts no token twice (R9; ledger.ts):
+//   scripted  input_tokens, cache_read_tokens and output_tokens as reported;
+//   claude    billable_in = input + cache creation, cached_in = cache reads,
+//             out = output (cache writes inside billable_in);
+//   codex     billable_in = input - cached input, cached_in = cached input,
+//             out = output, reasoning included in output by the provider and
+//             kept only in the raw usage, never added again.
+// Any other provider's total is not stated.
+const EXCLUSIVE_CATEGORIES: Record<string, string> = {
+  scripted: 'scripted-1: input, cache reads and output as reported, each counted once',
+  claude: 'claude-stream-json-1: billable_in = input + cache creation (cache writes inside it), cached_in = cache reads, out = output',
+  codex: 'codex-exec-json-2: billable_in = input - cached input, cached_in = cached input, out = output (reasoning tokens included in output by the provider, kept in raw_categories, never added again)',
+};
+
+// Work kinds that prepare a brief (slice E3 adds the run; until then no row
+// has one, and the preparation subtotal counts no row).
+const PREPARATION_WORK_KINDS = ['brief_preparation'];
+
+const mustProject = (db: Db, project: string): void => {
+  if (!db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(project)) throw projectNotFound(project);
+};
+
+function iterationRow(db: Db, project: string, iteration: string): IterationRow {
+  mustProject(db, project);
+  const row = db.prepare('SELECT * FROM "prototype_iterations" WHERE "id" = ? AND "project" = ?').get(iteration, project) as IterationRow | undefined;
+  if (!row) throw notFound('iteration', iteration);
+  return row;
+}
+
+function summaryOf(r: IterationRow) {
+  return {
+    id: r.id,
+    seq: r.seq,
+    mode: r.mode,
+    status: r.status,
+    predecessor: r.predecessor,
+    brief: { spec_revision: r.brief_spec_revision, decision: r.brief_decision },
+    created_at: r.created_at,
+    approved_at: r.approved_at,
+    alpha_at: r.alpha_at,
+    ended_at: r.ended_at,
+  };
+}
+
+// GET /v1/projects/:p/iterations
+export function listIterations(db: Db, args: { project: string }) {
+  mustProject(db, args.project);
+  const head = envelope(db);
+  const rows = db.prepare('SELECT * FROM "prototype_iterations" WHERE "project" = ? ORDER BY "seq"').all(args.project) as IterationRow[];
+  return { ...head, iterations: rows.map(summaryOf) };
+}
+
+const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
+const money = (v: number): number => Math.round(v * 1e9) / 1e9;
+
+type UsageState = 'complete' | 'pending' | 'incomplete' | 'not_launched';
+
+interface InvocationView {
+  id: string;
+  turn: string | null;
+  status: string | null;
+  usage: { state: UsageState; billable_in: number | null; cached_in: number | null; out: number | null; normalization_version: string | null; raw_categories: Record<string, unknown> | null; corrections: number };
+  cost: { status: string; usd: number | null; pricing_basis: string | null };
+  unknown_allowance_tokens: number | null;
+  // What a pending invocation still reserves beyond what it observed (the
+  // ledger's outstanding reservation); null once it is charged.
+  reserved_tokens: number | null;
+  model_requested: string;
+  model_observed: string | null;
+  provider: string;
+}
+
+// One invocation as the ledger knows it: its rows folded (ledger.ts fold)
+// once charged; what it observed so far while under way (`pending`); and
+// `not_launched` when it was refused before launch, which the ledger charges
+// nothing and records no row for (runs.ts finishRun).
+function invocationOf(db: Db, project: string, receipt: { id: string; turn: string | null; provider: string; model_requested: string }): InvocationView {
+  const statusRow = db.prepare('SELECT "status" FROM "invocation_status_observations" WHERE "invocation" = ? ORDER BY rowid DESC LIMIT 1').get(receipt.id) as { status: string } | undefined;
+  const status = statusRow?.status ?? null;
+  const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(receipt.id) as LedgerRow[];
+  const original = rows.find((r) => r.corrects === null);
+  const base = { id: receipt.id, turn: receipt.turn, status, model_requested: receipt.model_requested, provider: receipt.provider };
+  if (original) {
+    const a: Account = fold(rows);
+    const estimated = a.cost_status === 'estimated';
+    const plus = original.normalization_version.indexOf('+');
+    return {
+      ...base,
+      usage: {
+        state: a.usage_complete ? 'complete' : 'incomplete',
+        billable_in: a.billable_in,
+        cached_in: a.cached_in,
+        out: a.out,
+        normalization_version: original.normalization_version,
+        raw_categories: parseJson<Record<string, unknown>>(original.raw_usage),
+        corrections: rows.length - 1,
+      },
+      cost: { status: a.cost_status, usd: a.cost_usd, pricing_basis: estimated ? (plus >= 0 ? original.normalization_version.slice(plus + 1) : original.normalization_version) : null },
+      unknown_allowance_tokens: a.unknown_allowance_tokens,
+      reserved_tokens: null,
+      model_observed: rows.at(-1)!.model_observed ?? original.model_observed,
+    };
+  }
+  if (status === 'refused') {
+    return {
+      ...base,
+      usage: { state: 'not_launched', billable_in: null, cached_in: null, out: null, normalization_version: null, raw_categories: null, corrections: 0 },
+      cost: { status: 'not_launched', usd: null, pricing_basis: null },
+      unknown_allowance_tokens: null,
+      reserved_tokens: null,
+      model_observed: null,
+    };
+  }
+  // Under way: what it observed so far, a lower bound; its cost unknown
+  // until charged (only a reported figure is shown as it arrives, as the
+  // day check counts it).
+  const so = observedSoFar(db, receipt.id);
+  const raw = (db.prepare('SELECT "semantics", "raw" FROM "usage_observations" WHERE "invocation" = ? ORDER BY "seq"').all(receipt.id) as { semantics: string; raw: string }[]).length;
+  return {
+    ...base,
+    usage: { state: 'pending', billable_in: so.billable_in, cached_in: so.cached_in, out: so.out, normalization_version: raw === 0 ? null : so.normalization_version, raw_categories: null, corrections: 0 },
+    cost: so.cost_status === 'reported' ? { status: 'reported', usd: so.cost_usd, pricing_basis: null } : { status: 'unknown', usd: null, pricing_basis: null },
+    unknown_allowance_tokens: null,
+    reserved_tokens: outstandingReservation(db, receipt.id, project, so),
+    model_observed: so.model_observed,
+  };
+}
+
+interface RunRow {
+  id: string;
+  role: string;
+  kind: string;
+  work_item: string | null;
+  work_kind: string | null;
+  outcome: string | null;
+  reason_class: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+const durationMs = (from: string | null, to: string | null): number | null => {
+  const s = between(from, to, ['the run started', 'the run finished']);
+  return typeof s === 'number' ? Math.round(s * 1000) : null;
+};
+
+function tokenTotals(invs: InvocationView[]) {
+  let billableIn: number | null = null;
+  let cachedIn: number | null = null;
+  let out: number | null = null;
+  for (const i of invs) {
+    billableIn = addKnown(billableIn, i.usage.billable_in);
+    cachedIn = addKnown(cachedIn, i.usage.cached_in);
+    out = addKnown(out, i.usage.out);
+  }
+  const counted = invs.filter((i) => i.usage.state !== 'not_launched');
+  const providers = [...new Set(counted.map((i) => i.provider))].sort();
+  const notExclusive = providers.filter((p) => !EXCLUSIVE_CATEGORIES[p]);
+  const partial = counted.filter((i) => i.usage.state !== 'complete').length;
+  let total: number | null = null;
+  let totalReason: string | null = null;
+  if (notExclusive.length > 0) totalReason = `the categories of ${notExclusive.join(', ')} are not known to be mutually exclusive, so no total is stated`;
+  else if (billableIn === null && cachedIn === null && out === null) totalReason = counted.length === 0 ? 'no invocation has run' : 'no token count of any invocation is known';
+  else if (billableIn === null || cachedIn === null || out === null) totalReason = 'a category is known for no invocation, so its part of the total is not known';
+  else total = billableIn + cachedIn + out;
+  return {
+    billable_in: billableIn,
+    cached_in: cachedIn,
+    out,
+    // billable_in + cached_in + out, only where every provider's categories
+    // are mutually exclusive (R9); a lower bound while any invocation is
+    // pending or incomplete (its unknown allowance is apart, below).
+    total,
+    total_reason: totalReason,
+    total_is: total === null ? null : partial > 0 ? 'lower_bound' : 'complete',
+    normalization: Object.fromEntries(providers.filter((p) => EXCLUSIVE_CATEGORIES[p]).map((p) => [p, EXCLUSIVE_CATEGORIES[p]])),
+  };
+}
+
+function costTotals(invs: InvocationView[]) {
+  let reported: number | null = null;
+  let estimated: number | null = null;
+  for (const i of invs) {
+    if ((i.cost.status === 'reported' || i.cost.status === 'measured_zero') && i.usage.state !== 'pending') reported = addKnown(reported, i.cost.usd);
+    if (i.cost.status === 'estimated') estimated = addKnown(estimated, i.cost.usd);
+  }
+  return {
+    reported_usd: reported === null ? null : money(reported),
+    estimated_usd: estimated === null ? null : money(estimated),
+    unknown_invocations: invs.filter((i) => i.usage.state !== 'pending' && i.cost.status === 'unknown').length,
+    pending_invocations: invs.filter((i) => i.usage.state === 'pending').length,
+    pricing_bases: [...new Set(invs.map((i) => i.cost.pricing_basis).filter((b): b is string => b !== null))].sort(),
+  };
+}
+
+// Whether an Alpha deployment is available now (R7): the iteration's
+// candidate still `alpha_deployed`, and the newest installed observation of
+// its environment taken of the environment's current generation within the
+// project's freshness bound. Otherwise null: never inferred from the
+// historical outcome.
+function alphaNow(db: Db, project: string, it: IterationRow, environment: string | null) {
+  if (it.candidate === null || environment === null) return null;
+  const c = db.prepare('SELECT "progress" FROM "candidates" WHERE "id" = ?').get(it.candidate) as { progress: string } | undefined;
+  if (c?.progress !== 'alpha_deployed') return null;
+  const env = db.prepare('SELECT "current_generation" FROM "environments" WHERE "id" = ?').get(environment) as { current_generation: number | null } | undefined;
+  const obs = db
+    .prepare('SELECT "observed_at", "condition", "deployment_generation" FROM "observation_history" WHERE "environment" = ? AND "installed" = 1 ORDER BY "observed_at" DESC, rowid DESC LIMIT 1')
+    .get(environment) as { observed_at: string; condition: string; deployment_generation: number | null } | undefined;
+  if (!obs || !env || obs.deployment_generation === null || obs.deployment_generation !== env.current_generation) return null;
+  const age = nowMs() - Date.parse(obs.observed_at);
+  const bound = projectPolicy(db, project).observation_freshness_bound! * 1000;
+  if (!Number.isFinite(age) || age < 0 || age > bound) return null;
+  return { observed_at: obs.observed_at, healthy: obs.condition === 'healthy', condition: obs.condition };
+}
+
+// GET /v1/projects/:p/iterations/:i
+export function readIteration(db: Db, args: { project: string; iteration: string }) {
+  const it = iterationRow(db, args.project, args.iteration);
+  const head = envelope(db);
+  const limits = parseJson<Record<string, number>>(it.limits_json) ?? {};
+
+  const runRows = db
+    .prepare(
+      `SELECT r."id", r."role", r."kind", r."work_item", w."kind" AS "work_kind", r."outcome", r."reason_class", r."started_at", r."finished_at"
+       FROM "runs" r LEFT JOIN "work_items" w ON w."id" = r."work_item" WHERE r."iteration" = ? ORDER BY r."seq"`,
+    )
+    .all(it.id) as RunRow[];
+  const all: InvocationView[] = [];
+  const prep: InvocationView[] = [];
+  const runs = runRows.map((r) => {
+    const receipts = db.prepare('SELECT "id", "turn", "provider", "model_requested" FROM "invocation_receipts" WHERE "run" = ? ORDER BY rowid').all(r.id) as { id: string; turn: string | null; provider: string; model_requested: string }[];
+    const invocations = receipts.map((x) => invocationOf(db, args.project, x));
+    all.push(...invocations);
+    if (r.work_kind !== null && PREPARATION_WORK_KINDS.includes(r.work_kind)) prep.push(...invocations);
+    return {
+      id: r.id,
+      role: r.role,
+      kind: r.kind,
+      work_item: r.work_item,
+      work_kind: r.work_kind,
+      outcome: r.outcome,
+      reason_class: r.reason_class,
+      started_at: r.started_at,
+      finished_at: r.finished_at,
+      duration_ms: durationMs(r.started_at, r.finished_at),
+      invocations,
+    };
+  });
+
+  const roles: string[] = [];
+  for (const r of runRows) if (!roles.includes(r.role)) roles.push(r.role);
+  const completeness = { complete: 0, pending: 0, incomplete: 0, not_launched: 0 };
+  for (const i of all) completeness[i.usage.state] += 1;
+  const allowance = all.reduce<number | null>((s, i) => addKnown(s, i.unknown_allowance_tokens), null);
+  const tokens = tokenTotals(all);
+  const cost = costTotals(all);
+  const prepRuns = runRows.filter((r) => r.work_kind !== null && PREPARATION_WORK_KINDS.includes(r.work_kind)).length;
+  const prepTokens = tokenTotals(prep);
+  const prepCost = costTotals(prep);
+
+  // Remaining (R4): the limit less settled usage and outstanding
+  // reservations, as the ledger counts a day against its limit: each
+  // charged invocation its billable tokens and its unknown allowance in
+  // force; each invocation under way what it observed plus what it still
+  // reserves (ledger.ts outstandingReservation). A charged invocation whose
+  // billable tokens are unknown and carries no allowance leaves the
+  // remainder unknown, never full.
+  const unknownTokens = all.filter((i) => i.usage.state !== 'pending' && i.usage.state !== 'not_launched' && billable(i.usage as Amounts) === null && i.unknown_allowance_tokens === null).length;
+  let consumed = 0;
+  for (const i of all) {
+    if (i.usage.state === 'not_launched') continue;
+    consumed += (billable(i.usage as Amounts) ?? 0) + (i.unknown_allowance_tokens ?? 0) + (i.reserved_tokens ?? 0);
+  }
+  const spentUsd = money((cost.reported_usd ?? 0) + (cost.estimated_usd ?? 0));
+  const repairsUsed = (
+    db
+      .prepare(`SELECT COALESCE(SUM(w."repair_attempts"), 0) AS n FROM "work_items" w WHERE w."id" IN (SELECT DISTINCT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL)`)
+      .get(it.id) as { n: number }
+  ).n;
+  const now = nowIso();
+  const runtimeEnd = it.alpha_at ?? it.ended_at ?? now;
+  const runtimeUsed = it.approved_at === null ? null : between(it.approved_at, runtimeEnd, ['the brief approved', 'now']);
+  const limit = (k: (typeof PROTOTYPE_LIMIT_KEYS)[number]) => (typeof limits[k] === 'number' ? limits[k]! : null);
+  const tokensLimit = limit('prototype_budget_tokens');
+  const usdLimit = limit('prototype_budget_usd_estimated');
+  const runtimeLimit = limit('prototype_runtime_seconds');
+  const repairsLimit = limit('prototype_repairs_per_iteration');
+  const remaining = {
+    tokens: tokensLimit === null ? null : unknownTokens > 0 ? null : tokensLimit - consumed,
+    tokens_reason: unknownTokens > 0 ? `${unknownTokens} charged invocation(s) have unknown billable tokens and no unknown allowance` : null,
+    // Settled reported and estimated cost only: an invocation under way adds
+    // what it costs once charged; one whose cost is unknown leaves the
+    // remainder unknown. A threshold, never a billing cap.
+    usd_estimated: usdLimit === null ? null : cost.unknown_invocations > 0 ? null : money(usdLimit - spentUsd),
+    usd_reason: cost.unknown_invocations > 0 ? `${cost.unknown_invocations} invocation(s) have unknown cost` : cost.pending_invocations > 0 ? `${cost.pending_invocations} invocation(s) under way are not yet costed` : null,
+    // Approval to Alpha, wall clock; the whole limit before the brief is
+    // approved (the runtime has not started).
+    runtime_seconds: runtimeLimit === null ? null : runtimeUsed === null ? runtimeLimit : typeof runtimeUsed === 'number' ? runtimeLimit - runtimeUsed : null,
+    // The engine's own repair counter of the iteration's work items (D1 §4.3).
+    repairs_iteration: repairsLimit === null ? null : repairsLimit - repairsUsed,
+    enforced: false,
+    enforced_from: 'slice E2: admission at dispatch against these limits',
+  };
+
+  const request = it.deployment_request === null
+    ? null
+    : (db.prepare('SELECT d."id", d."environment", e."name" FROM "deployment_requests" d JOIN "environments" e ON e."id" = d."environment" WHERE d."id" = ?').get(it.deployment_request) as
+        | { id: string; environment: string; name: string }
+        | undefined);
+  const interval = (a: string | null, b: string | null, what: [string, string]) => {
+    const s = between(a, b, what);
+    return typeof s === 'number' ? s : null;
+  };
+
+  return {
+    ...head,
+    iteration: { ...summaryOf(it), limits: Object.fromEntries(PROTOTYPE_LIMIT_KEYS.map((k) => [k, limit(k)])) },
+    usage: {
+      runs,
+      totals: {
+        agent_runs: runRows.length,
+        roles_used: roles,
+        invocations: all.length,
+        tokens,
+        completeness,
+        cost: { reported_usd: cost.reported_usd, estimated_usd: cost.estimated_usd, unknown_invocations: cost.unknown_invocations, pending_invocations: cost.pending_invocations, pricing_bases: cost.pricing_bases },
+        unknown_allowance_tokens: allowance,
+        // Counts of rows: with no preparation run (none exists before slice
+        // E3) nothing was spent preparing, which is 0 by count, not an
+        // unknown usage shown as zero.
+        preparation: prepRuns === 0 ? { runs: 0, tokens: 0, usd: 0 } : { runs: prepRuns, tokens: prepTokens.total, usd: prepCost.unknown_invocations > 0 || prepCost.pending_invocations > 0 ? null : money((prepCost.reported_usd ?? 0) + (prepCost.estimated_usd ?? 0)) },
+        setup_qualification: { note: 'charged to the qualification fixture, not to this iteration' },
+      },
+    },
+    remaining,
+    time: {
+      preparation_seconds: null,
+      approval_to_alpha_seconds: interval(it.approved_at, it.alpha_at, ['the brief approved', 'Alpha reached']),
+      elapsed_seconds: interval(it.created_at, it.ended_at ?? now, ['the iteration created', 'now']),
+      runtime_limit_seconds: runtimeLimit,
+    },
+    outcome: { status: it.status, reason: it.outcome_reason, next_step: it.next_step },
+    alpha: {
+      candidate: it.candidate,
+      deployment_request: it.deployment_request,
+      environment: request ? { id: request.environment, name: request.name } : null,
+      deployed_at: it.alpha_at,
+      current: alphaNow(db, args.project, it, request?.environment ?? null),
+    },
+  };
+}
+
+// GET /v1/projects/:p/iterations/:i/receipt.json: the iteration read with
+// the receipt's own identity. It holds no credential: no key, reference,
+// grant or budget snapshot is read into it (and the route redacts every
+// secret the engine holds before it is sent).
+export function iterationReceipt(db: Db, args: { project: string; iteration: string }) {
+  const read = readIteration(db, args);
+  return { receipt_version: 1, generated_at: read.served_at, project: args.project, iteration_id: args.iteration, ...read };
+}
+
+// The receipt route's answer (on the main thread, where the engine holds its
+// secrets): every secret the engine holds redacted, whatever the receipt
+// read (which reads none) would carry, and sent as a download.
+export function receiptResponse(receipt: unknown, iteration: string): { status: number; body: unknown; headers: Record<string, string> } {
+  const safe = iteration.replace(/[^A-Za-z0-9_-]/g, '_');
+  return { status: 200, body: redactValue(receipt), headers: { 'content-disposition': `attachment; filename="surety-receipt-${safe}.json"` } };
+}

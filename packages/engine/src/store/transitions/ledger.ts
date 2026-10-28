@@ -843,7 +843,7 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     // A Designer turn reserves what its session has left (the driver's
     // decision on objection 156, item 5); every other invocation its run's
     // limit, as built.
-    if (opts.dispatch) runningAllowanceTokens += Math.max(0, (designerTurn(db, u.id) ? sessionRemainder(db, u.id, project) : runLimit(db, u.id, project)) - (billable(so) ?? 0));
+    if (opts.dispatch) runningAllowanceTokens += outstandingReservation(db, u.id, project, so);
   }
   let unknownCostTokens = 0;
   let allowanceTokens = 0;
@@ -856,6 +856,15 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     allowanceTokens += a.unknown_allowance_tokens ?? 0;
   }
   return { day, reportedUsd: money(reportedUsd), estimatedUsd: money(estimatedUsd), unknownCostTokens, allowanceTokens, runningAllowanceTokens };
+}
+
+// What an invocation under way still reserves, beyond what it has observed
+// (the day check's running allowance above, the one rule for it): a
+// Designer turn what its session has left, every other invocation its run's
+// limit, less the billable tokens observed so far, not below zero. Also the
+// prototype iteration read's outstanding reservation (prototype/iterations.ts).
+export function outstandingReservation(db: Db, invocation: string, project: string | null, so: Amounts = observedSoFar(db, invocation)): number {
+  return Math.max(0, (designerTurn(db, invocation) ? sessionRemainder(db, invocation, project) : runLimit(db, invocation, project)) - (billable(so) ?? 0));
 }
 
 // The ledger read's account of the current day against the day limits.

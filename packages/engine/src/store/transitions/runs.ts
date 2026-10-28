@@ -30,6 +30,7 @@ import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
+import { iterationForDispatch } from './prototype.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -762,6 +763,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
        VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
     .run(run, tx.at, item.project, seq, item.id, role, backend.backend, backend.version, requestedModel, baseRevision, deadlineAt, parent, chain);
+  // The prototype iteration the run is attributed to, fixed now, in the
+  // transaction that creates it (R7; slice E1): the project's current
+  // iteration while it is open, else none. A session's run is attributed
+  // the same way where it is created (sessions/session.ts).
+  const iteration = iterationForDispatch(tx.db, item.project);
+  if (iteration !== null) tx.db.prepare('UPDATE "runs" SET "iteration" = ? WHERE "id" = ?').run(iteration, run);
   // The acceptance content the run is given, fixed now (E41 item 4).
   const candidateId = (JSON.parse(item.subject) as { candidate?: string }).candidate;
   const candidateRow = candidateId ? getCandidate(tx.db, candidateId) : undefined;

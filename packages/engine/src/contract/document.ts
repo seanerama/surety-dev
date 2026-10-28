@@ -262,6 +262,10 @@ const COLUMN_ENUMS: Record<string, string> = {
   'design_native_obligations.target': 'Target',
   'design_native_obligations.convention': 'NativeConvention',
   'design_native_obligations.status': 'NativeObligationStatus',
+  // Rapid prototype, slice E1 (migration 0044).
+  'projects.mode': 'ExecutionMode',
+  'prototype_iterations.mode': 'ExecutionMode',
+  'prototype_iterations.status': 'IterationStatus',
 };
 
 const pascal = (text: string): string =>

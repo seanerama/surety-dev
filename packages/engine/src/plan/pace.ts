@@ -17,17 +17,18 @@ import { memAvailable } from '../store/transitions/envelope.js';
 import type { Tx } from '../store/transitions/tx.js';
 import type { EngineRevision } from '../revision.js';
 
-type Unknown = { unknown: string; detail?: string };
-type Figure<T> = T | Unknown;
+export type Unknown = { unknown: string; detail?: string };
+export type Figure<T> = T | Unknown;
 
-const unknown = (reason: string): Unknown => ({ unknown: reason });
+export const unknown = (reason: string): Unknown => ({ unknown: reason });
 const ms = (t: string | null | undefined): number | null => {
   if (typeof t !== 'string') return null;
   const v = Date.parse(t);
   return Number.isNaN(v) ? null : v;
 };
 // Seconds from `a` to `b`, or unknown naming the endpoint not recorded.
-function between(a: string | null | undefined, b: string | null | undefined, what: [string, string]): Figure<number> {
+// Also the prototype iteration read's (prototype/iterations.ts).
+export function between(a: string | null | undefined, b: string | null | undefined, what: [string, string]): Figure<number> {
   const x = ms(a);
   const y = ms(b);
   if (x === null) return unknown(`${what[0]} was not recorded`);

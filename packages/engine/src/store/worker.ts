@@ -204,6 +204,7 @@ import {
 import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
+import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
@@ -540,6 +541,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'decision.intents': (d, a: { decisions: string[]; kind: string }) =>
     a.decisions.flatMap((id) => (d.prepare('SELECT "id" FROM "effect_intents" WHERE "decision" = ? AND "kind" = ?').all(id, a.kind) as { id: string }[]).map((r) => r.id)),
   'pace.view': (d, a) => paceView(d, a),
+  // Rapid prototype, slice E1 (R7, R9): the iteration reads.
+  'iterations.list': (d, a: { project: string }) => listIterations(d, a),
+  'iteration.read': (d, a: { project: string; iteration: string }) => readIteration(d, a),
+  'iteration.receipt': (d, a: { project: string; iteration: string }) => iterationReceipt(d, a),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
