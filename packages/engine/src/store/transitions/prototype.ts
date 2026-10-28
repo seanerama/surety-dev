@@ -39,20 +39,28 @@ export function limitsOf(policy: Policy): Record<string, number> {
 
 // A new iteration of a rapid_prototype project, `preparing`, its seq the
 // project's next, its limits the effective policy's now.
-export function createIteration(tx: Tx, args: { project: string; limits: Record<string, number>; predecessor?: string | null }): string {
+// Slice E4 (R7, R8): an Iterate gives the predecessor and the owner's short
+// change request (kept as typed, NULL when none was given).
+export function createIteration(tx: Tx, args: { project: string; limits: Record<string, number>; predecessor?: string | null; change?: string | null }): string {
   const id = tx.newId('it_');
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "prototype_iterations" WHERE "project" = ?').get(args.project) as { n: number };
   tx.db
     .prepare(
-      `INSERT INTO "prototype_iterations" ("id", "created_at", "project", "seq", "predecessor", "mode", "status", "limits_json")
-       VALUES (?, ?, ?, ?, ?, 'rapid_prototype', 'preparing', ?)`,
+      `INSERT INTO "prototype_iterations" ("id", "created_at", "project", "seq", "predecessor", "mode", "status", "limits_json", "change_text")
+       VALUES (?, ?, ?, ?, ?, 'rapid_prototype', 'preparing', ?, ?)`,
     )
-    .run(id, tx.at, args.project, n, args.predecessor ?? null, JSON.stringify(args.limits));
-  tx.emit('prototype.iteration_created', { project: args.project, iteration: id }, { seq: n, predecessor: args.predecessor ?? null, limits: args.limits });
+    .run(id, tx.at, args.project, n, args.predecessor ?? null, JSON.stringify(args.limits), args.change ?? null);
+  tx.emit('prototype.iteration_created', { project: args.project, iteration: id }, { seq: n, predecessor: args.predecessor ?? null, limits: args.limits, ...(args.predecessor ? { change: args.change ?? null } : {}) });
   // Slice E3 (R5): the owner is asked at once to authorize the one run that
   // prepares the iteration's brief; nothing is dispatched before the answer.
   const asked = raisePreparation(tx, { project: args.project, iteration: id });
-  tx.db.prepare('UPDATE "prototype_iterations" SET "next_step" = ? WHERE "id" = ?').run(asked ? 'approve preparation or discard' : 'request preparation or discard', id);
+  // An Iterate on a project paused (by a Stop of the predecessor): nothing
+  // is dispatched until the owner resumes it, and the next step says so. (A
+  // new app is created paused by the new-app route; its first iteration's
+  // next step is unchanged.)
+  const paused = !!args.predecessor && (tx.db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(args.project) as { paused: number } | undefined)?.paused === 1;
+  const next = asked ? 'approve preparation or discard' : 'request preparation or discard';
+  tx.db.prepare('UPDATE "prototype_iterations" SET "next_step" = ? WHERE "id" = ?').run(paused ? `resume the project (it is paused), then ${next}` : next, id);
   return id;
 }
 
@@ -72,15 +80,47 @@ export function iterationForDispatch(db: Db, project: string): string | null {
   return it !== null && ATTRIBUTABLE_STATUSES.includes(it.status) ? it.id : null;
 }
 
+// Why a candidate is not the iteration's own (null when it is): the
+// iteration has no approved brief, the candidate was nominated on an
+// earlier spec revision than the brief's (or on none), or an earlier
+// iteration recorded it as its Alpha.
+export function alphaNotOwn(db: Db, iteration: string, candidate: string): string | null {
+  const it = db.prepare('SELECT "seq", "project", "brief_spec_revision" FROM "prototype_iterations" WHERE "id" = ?').get(iteration) as { seq: number; project: string; brief_spec_revision: string | null } | undefined;
+  if (!it) return 'the iteration is not recorded';
+  const earlier = db.prepare('SELECT "seq" FROM "prototype_iterations" WHERE "project" = ? AND "candidate" = ? AND "seq" < ? ORDER BY "seq" DESC LIMIT 1').get(it.project, candidate, it.seq) as { seq: number } | undefined;
+  if (earlier) return `candidate ${candidate} is iteration ${earlier.seq}'s Alpha, not iteration ${it.seq}'s`;
+  if (it.brief_spec_revision === null) return `iteration ${it.seq} has no approved brief: no candidate is its own yet`;
+  const version = (rev: string | null) => (rev === null ? null : ((db.prepare('SELECT "version" FROM "spec_revisions" WHERE "id" = ?').get(rev) as { version: number } | undefined)?.version ?? null));
+  const c = db.prepare('SELECT "spec_revision" FROM "candidates" WHERE "id" = ?').get(candidate) as { spec_revision: string | null } | undefined;
+  const brief = version(it.brief_spec_revision);
+  const own = version(c?.spec_revision ?? null);
+  if (brief === null || own === null || own < brief) {
+    return `candidate ${candidate} was nominated on spec version ${own ?? 'unknown'}, before iteration ${it.seq}'s approved brief (spec version ${brief ?? 'unknown'})`;
+  }
+  return null;
+}
+
 // alpha_complete satisfied for a candidate of a rapid_prototype project
 // (deploy.ts afterCompletion): the iteration open now records the candidate,
 // the deployment request the operation served, when Alpha was reached, and
 // its owner-facing outcome `alpha_ready`. History: kept as recorded whatever
 // later happens to the deployment (a teardown makes `alpha.current` null in
 // the read, never this).
+//
+// Slice E4 (R7, R8): only a candidate of the iteration's own approved brief
+// satisfies its Alpha: one nominated on the brief's approved spec revision
+// or a later one of the project, and no earlier iteration's recorded
+// candidate. A predecessor's candidate (its deployment completing late, or
+// deployed again) is never the new iteration's Alpha: the refusal is an
+// event, and the iteration is unchanged.
 export function recordIterationAlpha(tx: Tx, args: { project: string; candidate: string; request: string | null; operation: string }): void {
   const id = iterationForDispatch(tx.db, args.project);
   if (id === null) return;
+  const why = alphaNotOwn(tx.db, id, args.candidate);
+  if (why !== null) {
+    tx.emit('prototype.alpha_not_attributed', { project: args.project, iteration: id }, { candidate: args.candidate, deployment_request: args.request, operation: args.operation, reason: why });
+    return;
+  }
   tx.db
     .prepare(
       `UPDATE "prototype_iterations" SET "status" = 'alpha_ready', "candidate" = ?, "deployment_request" = ?, "alpha_at" = ?, "ended_at" = ?,

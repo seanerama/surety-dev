@@ -150,7 +150,7 @@ test('rapid_prototype: T1, the preset bootstrap policy as revision 1 (no widenin
   const list = listIterations(db, { project: p.id });
   assert.equal(typeof list.served_at, 'string');
   assert.deepEqual(list.iterations, [
-    { id: p.iteration, seq: 1, mode: 'rapid_prototype', status: 'preparing', predecessor: null, brief: { spec_revision: null, decision: null, record: null, version: null }, next_step: 'approve preparation or discard', created_at: its[0].created_at, approved_at: null, alpha_at: null, ended_at: null },
+    { id: p.iteration, seq: 1, mode: 'rapid_prototype', status: 'preparing', predecessor: null, change: null, brief: { spec_revision: null, decision: null, record: null, version: null }, next_step: 'approve preparation or discard', created_at: its[0].created_at, approved_at: null, alpha_at: null, ended_at: null },
   ]);
   assert.deepEqual(readIteration(db, { project: p.id, iteration: p.iteration }).iteration.limits, ITERATION_LIMITS);
 });
@@ -320,7 +320,17 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
     db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress) VALUES (?, ?, ?, 1, 'rev', 'lin', ?, 'engine_cadence', 'alpha_deployed')`).run(`cand_${n}`, AT, proj, AT);
     db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, outcome) VALUES (?, ?, ?, 'k', 'policy', ?, ?, 'deployed')`).run(`dreq_${n}`, AT, proj, `cand_${n}`, `env_${n}`);
   }
+  // Slice E4: only a candidate of the iteration's own approved brief is its
+  // Alpha. Before the brief is approved, none is (the refusal an event, the
+  // iteration unchanged); the brief approved on spec revision 1 and the
+  // candidate nominated on it, it is.
+  db.prepare(`INSERT INTO spec_revisions (id, created_at, project, version, git_path, git_blob, semantic_digest, approved_by, approved_at) VALUES ('sr_1', ?, ?, 1, '.surety/spec/spec.md', 'blob', 'digest', 'human', ?)`).run(AT, p.id, AT);
   db.pragma('foreign_keys = ON');
+  transact(db, ENGINE_ACTOR, (tx) => recordIterationAlpha(tx, { project: p.id, candidate: 'cand_1', request: 'dreq_1', operation: 'op_1' }));
+  assert.deepEqual([iterationOf(db, p.id)[0].status, iterationOf(db, p.id)[0].candidate], ['preparing', null], 'no approved brief: no candidate is the iteration\'s');
+  assert.match(JSON.parse(db.prepare(`SELECT payload FROM events WHERE type = 'prototype.alpha_not_attributed'`).get().payload).reason, /has no approved brief/);
+  db.prepare(`UPDATE prototype_iterations SET brief_spec_revision = 'sr_1', approved_at = ?, status = 'building' WHERE id = ?`).run(AT, p.iteration);
+  db.prepare(`UPDATE candidates SET spec_revision = 'sr_1' WHERE id = 'cand_1'`).run();
   transact(db, ENGINE_ACTOR, (tx) => recordIterationAlpha(tx, { project: p.id, candidate: 'cand_1', request: 'dreq_1', operation: 'op_1' }));
   const it = iterationOf(db, p.id)[0];
   assert.deepEqual([it.status, it.candidate, it.deployment_request, it.outcome_reason, it.next_step, it.alpha_at !== null], ['alpha_ready', 'cand_1', 'dreq_1', 'alpha_complete', 'open_alpha', true]);

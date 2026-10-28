@@ -34,6 +34,7 @@ import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { receiptResponse } from '../prototype/iterations.js';
+import { changeOf } from '../prototype/iterate.js';
 import { ownerReview } from '../design/owner-review.js';
 import { REVIEW_BODY_CAP, reviewTooLarge } from '../design/evidence.js';
 import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
@@ -916,6 +917,18 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
             noFields(b);
             return { project, iteration };
           },
+        };
+      }
+      // Slice E4 (R7, R8): Iterate. A new iteration continuing from this
+      // one, with the owner's optional short change request; its
+      // preparation's authorization raised; nothing is dispatched.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'iterate' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.iterate',
+          args: (b) => ({ project, iteration, change: changeOf(onlyFields(b, ['change']).change) }),
         };
       }
       if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'receipt.json' && get) {

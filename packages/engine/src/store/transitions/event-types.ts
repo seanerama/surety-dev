@@ -271,6 +271,11 @@ export const EVENT_OWNERS = {
   'prototype.plan_policy_authorized': 'prototype/brief.ts',
   'prototype.plan_routed_to_owner': 'prototype/brief.ts',
   'prototype.iteration_status_changed': 'prototype/brief.ts',
+  // Slice E4 (R7, R8): an iteration iterated (the new one continuing from
+  // it), and a candidate that is not the open iteration's own refused as its
+  // Alpha (a predecessor's deployment never satisfies it).
+  'prototype.iteration_iterated': 'prototype/iterate.ts',
+  'prototype.alpha_not_attributed': 'store/transitions/prototype.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

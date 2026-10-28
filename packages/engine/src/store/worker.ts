@@ -207,6 +207,7 @@ import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
 import { briefFacts, requestPreparation } from '../prototype/brief.js';
+import { iterate } from '../prototype/iterate.js';
 import { askOfSession, enforceIterationLimit, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
@@ -347,6 +348,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'discard', previewHash: a.preview_hash, facts: a.facts ?? {} }),
   // Slice E3 (R5): the brief's preparation asked for again.
   'iteration.prepare': (tx, a: { project: string; iteration: string }) => requestPreparation(tx, a),
+  // Slice E4 (R7, R8): Iterate, a new iteration continuing from the current one.
+  'iteration.iterate': (tx, a: { project: string; iteration: string; change: string | null }) => iterate(tx, a),
   'decision.answer': (tx, a) => answerDecision(tx, a),
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),

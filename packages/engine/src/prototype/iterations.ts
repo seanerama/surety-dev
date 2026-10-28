@@ -55,6 +55,7 @@ interface IterationRow {
   ended_at: string | null;
   brief_record: string | null;
   brief_json: string | null;
+  change_text: string | null;
 }
 
 // The providers whose normalized categories are mutually exclusive, so that
@@ -141,6 +142,9 @@ function summaryOf(r: IterationRow) {
     mode: r.mode,
     status: r.status,
     predecessor: r.predecessor,
+    // Slice E4: the owner's change request an Iterate gave (null for a
+    // first iteration or none given).
+    change: r.change_text,
     brief: { spec_revision: r.brief_spec_revision, decision: r.brief_decision, record: r.brief_record, version: briefVersion(r) },
     next_step: r.next_step,
     created_at: r.created_at,
@@ -320,6 +324,41 @@ function alphaNow(db: Db, project: string, it: IterationRow, environment: string
   return { observed_at: obs.observed_at, healthy: obs.condition === 'healthy', condition: obs.condition };
 }
 
+// The statement served with `app_totals` (slice E4; R7, R9): what is summed
+// and how, so that nothing is read as more than it is.
+export const CUMULATIVE_RULE =
+  "The app's totals: every run attributed to any iteration of this project (runs.iteration, fixed when each run was dispatched), each counted once, whatever the iteration's status; the categories, the token total, the cost statuses and the unknown allowances by the same rules as one iteration's totals (a total only where every provider's categories are mutually exclusive, a lower bound while any invocation's usage is pending or incomplete; unknown never 0). A run dispatched while no iteration was open is in no iteration and not counted. Each iteration's own totals exclude its predecessors.";
+
+// The app's totals over every iteration of the project (slice E4): the
+// project's attributed runs' invocations, each once.
+function appTotals(db: Db, project: string) {
+  const runRows = db
+    .prepare(`SELECT r."id", r."role" FROM "runs" r JOIN "prototype_iterations" p ON p."id" = r."iteration" WHERE p."project" = ? ORDER BY r."seq"`)
+    .all(project) as { id: string; role: string }[];
+  const all: InvocationView[] = [];
+  for (const r of runRows) {
+    const receipts = db.prepare('SELECT "id", "turn", "provider", "model_requested" FROM "invocation_receipts" WHERE "run" = ? ORDER BY rowid').all(r.id) as { id: string; turn: string | null; provider: string; model_requested: string }[];
+    for (const x of receipts) all.push(invocationOf(db, project, x));
+  }
+  const roles: string[] = [];
+  for (const r of runRows) if (!roles.includes(r.role)) roles.push(r.role);
+  const completeness = { complete: 0, pending: 0, incomplete: 0, not_launched: 0 };
+  for (const i of all) completeness[i.usage.state] += 1;
+  const cost = costTotals(all);
+  const iterations = (db.prepare('SELECT COUNT(*) AS n FROM "prototype_iterations" WHERE "project" = ?').get(project) as { n: number }).n;
+  return {
+    iterations,
+    agent_runs: runRows.length,
+    roles_used: roles,
+    invocations: all.length,
+    tokens: tokenTotals(all),
+    completeness,
+    cost: { reported_usd: cost.reported_usd, estimated_usd: cost.estimated_usd, unknown_invocations: cost.unknown_invocations, pending_invocations: cost.pending_invocations, pricing_bases: cost.pricing_bases },
+    unknown_allowance_tokens: all.reduce<number | null>((s, i) => addKnown(s, i.unknown_allowance_tokens), null),
+    cumulative_rule: CUMULATIVE_RULE,
+  };
+}
+
 // GET /v1/projects/:p/iterations/:i
 export function readIteration(db: Db, args: { project: string; iteration: string }) {
   const it = iterationRow(db, args.project, args.iteration);
@@ -455,6 +494,8 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       },
     },
     remaining,
+    // Slice E4: the whole app's totals, every iteration of the project once.
+    app_totals: appTotals(db, args.project),
     // The first plan (R1): its bundle and how it was published.
     plan: planOf(db, it),
     owner_approvals: ownerApprovals(db, it),
@@ -463,6 +504,21 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       approval_to_alpha_seconds: interval(it.approved_at, it.alpha_at, ['the brief approved', 'Alpha reached']),
       elapsed_seconds: interval(it.created_at, it.ended_at ?? now, ['the iteration created', 'now']),
       runtime_limit_seconds: runtimeLimit,
+    },
+    // Slice E4 (demonstration 9): the iteration's brief, whole, as prepared
+    // (and approved, when approved_at is set); null before one is prepared.
+    brief: parseJson<Record<string, unknown>>(it.brief_json),
+    // What the receipt keeps of the prototype's limits, and what it never
+    // claims: Alpha ready means the automated checks passed and the
+    // deployment was verified by them; no person's acceptance of the
+    // prototype (its use, its look) is recorded by the engine.
+    limitations: {
+      brief: briefList(it.brief_json, 'limitations'),
+      left_out: briefList(it.brief_json, 'left_out'),
+      mocked: briefList(it.brief_json, 'mocked'),
+      human_acceptance: 'not_recorded',
+      statement:
+        'Surety records no human acceptance of this prototype. Alpha ready means its automated checks passed and its deployment was verified by them; whether the prototype is acceptable to use or to look at is the owner\'s judgement, not recorded here.',
     },
     outcome: { status: it.status, reason: it.outcome_reason, next_step: it.next_step },
     // What Stop and Discard would do now (slice E2; R4, R8): the console
@@ -476,6 +532,13 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       current: alphaNow(db, args.project, it, request?.environment ?? null),
     },
   };
+}
+
+// One list of the brief's (null when no brief, or the field is not a list).
+function briefList(text: string | null, key: string): string[] | null {
+  const b = parseJson<Record<string, unknown>>(text);
+  const v = b?.[key];
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
 }
 
 // The iteration's first plan: its bundle, its phase plan, and who
