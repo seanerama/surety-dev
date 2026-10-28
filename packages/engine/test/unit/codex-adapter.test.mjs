@@ -122,7 +122,7 @@ test('a good stream: the thread id, the items, one cumulative usage with the thr
   assert.equal(codex.codexFailure(r.summary), null);
 });
 
-test('the usage normalisation: billable input is input less cached, cached counted once, reasoning not added, cost unknown with no price table', () => {
+test('the usage normalisation: billable input is input less cached, cached counted once, reasoning not added, cost unknown for a model the price table does not list (C2)', () => {
   const raw = foldObservations(feed(GOOD).usage);
   const n = normalizeFor('codex', raw);
   assert.equal(CODEX_NORMALIZATION, 'codex-exec-json-1');
@@ -134,7 +134,7 @@ test('the usage normalisation: billable input is input less cached, cached count
   assert.equal(normalizeFor('scripted', raw).billable_in, 24763);
   // cached above input contradicts the assumed relation: billable unknown, never negative
   assert.equal(normalizeFor('codex', { input_tokens: 10, cached_input_tokens: 20, output_tokens: 1, usage_final: true }).billable_in, null);
-  // no price table: no spend estimate, never zero
+  // a model the Codex price table (C2) does not list: no spend estimate, never zero
   assert.equal(attemptSpendEstimate('codex', 'gpt-5.5-codex', 200_000), null);
   assert.equal(normalizeFor('codex', { ...raw, model: 'gpt-5.5-codex' }).cost_status, 'unknown');
 });
