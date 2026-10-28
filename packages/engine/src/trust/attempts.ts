@@ -962,8 +962,9 @@ interface ContinuationFacts {
 // backend that wrote nothing at all and exited nonzero (as Claude Code does
 // for a flag it does not know, which it reports on standard error before
 // the run; the class is inferred and the evidence says so); a candidate
-// destination the proxy refused; a positive canary whose agent used no
-// tool. Otherwise the kind's own class.
+// destination the proxy refused; a usage or rate limit the Codex stream
+// names (K7, 2026-10-28); a positive canary whose agent used no tool.
+// Otherwise the kind's own class.
 export function realFailureClass(
   kind: string,
   fallback: string,
@@ -982,10 +983,11 @@ export function realFailureClass(
     beyondDomain?: boolean;
   },
 ): string {
-  // Codex's usage limits and other provider errors (C2) are not classes of
-  // their own: they fall to the kind's class below, the provider's own
-  // class (`usage_limit`, `provider_error`) kept in the canary's
-  // provider_error record. An authentication failure is `auth_failed`.
+  // An authentication failure is `auth_failed`. A usage or rate limit the
+  // Codex stream names is `usage_limit` (K7, Sean's approval of 2026-10-28),
+  // below, in place of the kind's class; Codex's other provider errors (C2)
+  // fall to the kind's class. Either way the provider's own class stays in
+  // the canary's provider_error record.
   if (f.authFailure !== null) return 'auth_failed';
   // The model that answered was not the entry's (E86 item 3).
   if (f.fallback === true) return 'model_fallback';
@@ -995,6 +997,7 @@ export function realFailureClass(
   if (read !== null && read.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
   const refusedCandidate = (f.obs?.egress ?? []).some((e) => e.decision === 'refused' && f.candidates.includes(e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()));
   if (refusedCandidate) return 'proxy_refused';
+  if (f.codex != null && codexFailure(f.codex)?.class === 'usage_limit') return 'usage_limit';
   if (kind === 'positive' && f.stream != null && f.stream.tool_uses.length === 0 && f.obs?.exitClass === 'clean') return 'tool_action_missing';
   // Codex's tool actions are its command and file-change items.
   if (kind === 'positive' && f.stream == null && f.codex != null && !f.codex.items.some((i) => i.type === 'command_execution' || i.type === 'file_change') && f.obs?.exitClass === 'clean') return 'tool_action_missing';

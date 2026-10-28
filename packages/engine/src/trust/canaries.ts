@@ -18,7 +18,12 @@ export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 
 // Sean's approval of 2026-10-27): the canary never ran, held at its
 // dispatch until its deadline or refused at its first turn's admission. It
 // cost nothing and is not a failure of the canary's kind: a test that never
-// ran is never reported as a failed test.
+// ran is never reported as a failed test. `usage_limit` (K7, Sean's approval
+// of 2026-10-28; a D2 A.2 addition pending the owner's edit of D2's
+// appendix): the provider refused the canary's turn for a usage or rate
+// limit (a 429, an exhausted quota), as the backend's stream names it. It is
+// neither an invalid result nor an authentication failure, and the owner
+// sees it as a limit.
 export const CANARY_FAILURE_CLASSES = [
   'auth_failed',
   'proxy_refused',
@@ -32,6 +37,7 @@ export const CANARY_FAILURE_CLASSES = [
   'model_fallback',
   'continuation_failed',
   'not_dispatched',
+  'usage_limit',
 ] as const;
 export type CanaryFailureClass = (typeof CANARY_FAILURE_CLASSES)[number];
 

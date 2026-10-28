@@ -54,7 +54,7 @@ async function runCanary(dir, attempt, kind, mode = {}) {
   const modeFile = join(root, 'mode.json');
   writeFileSync(modeFile, JSON.stringify({ root, linger_ms: 50, ...mode }));
   const env = { PATH: process.env.PATH, FAKE_CODEX_MODE: modeFile, ...templates.templateEnv(T, mode.key === undefined ? KEY : mode.key) };
-  if (mode.key === null) for (const v of [T.keyVariable, ...T.keyAliases]) delete env[v];
+  if (mode.key === null) for (const v of templates.keyVariables('codex')) delete env[v];
   const child = spawn(process.execPath, [FAKE, ...T.render({ model: MODEL, invocation: 'inv_x' })], { env, stdio: ['pipe', 'pipe', 'ignore'] });
   child.stdin.end(T.stdin);
   let stdout = '';
@@ -221,9 +221,11 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
     ['cancellation', true, null],
     ['containment', true, null],
   ]);
+  assert.equal(T.version, 'codex-exec-4', 'the attempt is on template version 4');
   const pos = a.evidence(a.canaries[0]);
-  assert.deepEqual(pos.credential_delivery.variables, ['CODEX_API_KEY', 'OPENAI_API_KEY']);
-  assert.equal(pos.credential_delivery.variable, null, 'which variable Codex read is not established');
+  assert.deepEqual(pos.credential_delivery.variables, ['CODEX_API_KEY'], 'K3: the key in CODEX_API_KEY alone');
+  assert.equal(pos.credential_delivery.variable, null, 'the stream does not name the variable Codex read');
+  assert.match(pos.credential_delivery.how, /the key in CODEX_API_KEY was the only credential/);
   assert.equal(pos.credential_delivery.established, true);
   assert.match(pos.credential_delivery.how, /turn\.completed.*agent message.*by elimination/);
   assert.equal(pos.stream.backend, 'codex');
@@ -240,6 +242,7 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
   assert.deepEqual(cont.capabilities.tools, [], 'no inventory: nothing claimed');
   assert.deepEqual(cont.capabilities.template_disabled, [...templates.CODEX_DISABLED_FEATURES, 'web_search', 'agents']);
   assert.equal(cont.capabilities.feature_inventory.verified, true, 'the 0.160.0 inventory, every family feature disabled or off');
+  for (const h of HARDENING) assert.ok(cont.capabilities.feature_inventory.disabled_by_template.includes(h), `${h} recorded disabled by the template`);
   assert.deepEqual(cont.capabilities.feature_inventory.left_enabled, []);
   assert.ok(cont.controls.some((c) => c.name === 'provider_tunnel' && c.ran));
   const e = a.concluded.entry;
@@ -394,7 +397,7 @@ test('the spend estimate: from the pricing-page Codex price table, a lower bound
   assert.equal(normalizeFor('codex', { input_tokens: 10, cached_input_tokens: 0, output_tokens: 1, usage_final: false, model: MODEL }).cost_status, 'unknown', 'partial usage is not priced');
 });
 
-test('the failure classes: Codex auth_failed is auth_failed; usage_limit and provider_error fall to the kind\'s class, the provider\'s class kept in the record', async (t) => {
+test('the failure classes: Codex auth_failed is auth_failed; usage_limit is usage_limit (K7); provider_error falls to the kind\'s class; the provider\'s class kept in the record', async (t) => {
   const sum = (lines) => {
     const s = new codex.CodexStream();
     for (const l of lines) s.feed(JSON.stringify(l));
@@ -409,7 +412,14 @@ test('the failure classes: Codex auth_failed is auth_failed; usage_limit and pro
   assert.equal(codex.codexFailure(other).class, 'provider_error');
   const base = { stream: null, obs: { exitClass: 'error_exit', exitStatus: 1, egress: [] }, candidates: ['api.openai.com'], capabilities: null, containmentHeld: false };
   assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: auth, authFailure: codex.codexAuthFailure(auth) }), 'auth_failed');
-  assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: limit, authFailure: null }), 'invalid_result');
+  assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: limit, authFailure: null }), 'usage_limit');
+  assert.equal(realFailureClass('cancellation', 'barrier_not_reached', { ...base, codex: limit, authFailure: null }), 'usage_limit');
+  assert.equal(realFailureClass('containment', 'containment_failed', { ...base, codex: limit, authFailure: null }), 'usage_limit');
+  // An authentication failure still comes first, and a provider error is not a limit.
+  assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: limit, authFailure: 'unexpected status 401 Unauthorized' }), 'auth_failed');
+  assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: other, authFailure: null }), 'invalid_result');
+  // Claude's stream is unchanged: no Codex stream, no usage_limit.
+  assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: null, stream: null, authFailure: null }), 'invalid_result');
   assert.equal(realFailureClass('cancellation', 'barrier_not_reached', { ...base, codex: other, authFailure: null }), 'barrier_not_reached');
   // A stream with no line and a nonzero exit: unsupported_flag, as for claude.
   assert.equal(realFailureClass('positive', 'invalid_result', { ...base, codex: sum([]), authFailure: null }), 'unsupported_flag');
@@ -423,16 +433,69 @@ test('the failure classes: Codex auth_failed is auth_failed; usage_limit and pro
   assert.equal(realBackendOf('scripted'), null);
   assert.deepEqual(codexBeyondDomain(null, null), []);
 
-  // In an attempt: a usage limit on the positive canary fails it as the
-  // kind's class, its provider_error record naming usage_limit.
+  // In an attempt: a usage limit on the positive canary fails it
+  // usage_limit, its provider_error record naming usage_limit as before.
   const a = await attempt(t, { modes: { positive: { outcome: 'usage_limit' } } });
-  assert.deepEqual(a.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'invalid_result']]);
-  assert.equal(a.providerError(a.canaries[0]).provider_error.failure.class, 'usage_limit');
+  assert.deepEqual(a.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'usage_limit']]);
+  const pe = a.providerError(a.canaries[0]);
+  assert.equal(pe.failure_class, 'usage_limit');
+  assert.equal(pe.provider_error.failure.class, 'usage_limit');
+  assert.match(pe.provider_error.failure.message, /429 Too Many Requests/);
+  assert.equal(a.concluded.entry, undefined, 'no entry');
+});
+
+test('usage_limit is a CanaryFailureClass (D2 A.2 addition, K7 of 2026-10-28), last, after not_dispatched, and in the published contract', async () => {
+  assert.ok(C.CANARY_FAILURE_CLASSES.includes('usage_limit'));
+  assert.equal(C.CANARY_FAILURE_CLASSES.at(-1), 'usage_limit');
+  assert.equal(C.CANARY_FAILURE_CLASSES.indexOf('usage_limit'), C.CANARY_FAILURE_CLASSES.indexOf('not_dispatched') + 1);
+  assert.ok(!C.CANARY_FAILURE_CLASSES.includes('provider_error'), 'provider_error stays inside the canary\'s record, not a class');
+  const { exportContract } = await import(join(dist, 'contract', 'document.js'));
+  assert.deepEqual(exportContract().enums.CanaryFailureClass, [...C.CANARY_FAILURE_CLASSES]);
+  const committed = JSON.parse(readFileSync(join(here, '..', '..', 'api', 'schema.json'), 'utf8'));
+  assert.deepEqual(committed.enums.CanaryFailureClass, [...C.CANARY_FAILURE_CLASSES], 'the committed contract carries it');
 });
 
 // ---- the feature inventory (C2b; D2 §4.6, D2-T13) ----
 
 const REAL_0160 = readFileSync(join(here, 'fixtures', 'codex', 'features-0.160.0.txt'), 'utf8');
+const HARDENING = ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot'];
+
+test('the classification against the saved 0.160.0 list: no unknown name, every basis stated; the source-grounded classes (C2c, K6 of 2026-10-28)', () => {
+  const { features } = CF.parseCodexFeatures(REAL_0160);
+  const unknown = features.filter((f) => !CF.CODEX_FEATURE_CLASSES.has(f.name)).map((f) => f.name);
+  assert.deepEqual(unknown, [], 'no name of the saved inventory is unknown to the table');
+  assert.equal(CF.CODEX_FEATURE_CLASSES.size, features.length, 'the table names exactly the 154 features the list names');
+  for (const [n, c] of CF.CODEX_FEATURE_CLASSES) assert.ok(c.basis.length > 20, `${n} has a basis`);
+  const cls = (n) => CF.CODEX_FEATURE_CLASSES.get(n);
+  // Hardening: outside the family, the template disables them.
+  for (const h of HARDENING) {
+    assert.deepEqual([cls(h).family, cls(h).hardening], [false, true], h);
+    assert.ok(templates.CODEX_DISABLED_FEATURES.includes(h), `--disable ${h}`);
+  }
+  assert.equal([...CF.CODEX_FEATURE_CLASSES.values()].filter((c) => c.hardening).length, 6);
+  // unified_exec: the command tool, not delegation; it cannot be disabled.
+  assert.deepEqual([cls('unified_exec').family, cls('unified_exec').hardening], [false, false]);
+  assert.match(cls('unified_exec').basis, /cannot be disabled \(core\/src\/config\/managed_features\.rs:157-165\).*D2 §4\.4/);
+  // Web search: the top-level key governs it; the -c override is the control.
+  assert.equal(cls('web_search_request').family, true);
+  assert.match(cls('web_search_request').basis, /top-level `web_search` key.*do not switch it off.*web_search="disabled"/);
+  assert.match(cls('web_search_request').basis, /hosted tool.*api\.openai\.com/);
+  for (const w of ['standalone_web_search', 'web_search_cached', 'web_search_request']) assert.ok(CF.codexTemplateDisables().has(w), `${w} covered by the override`);
+  assert.ok(CF.codexTemplateDisables([], ['web_search="disabled"']).has('web_search_request'), 'the override alone covers it');
+  // No reader: fail closed, said so.
+  assert.equal(cls('workspace_dependencies').family, true);
+  assert.match(cls('workspace_dependencies').basis, /^no reader in codex-rs at this tag; behaviour unestablished; fail closed/);
+  // Removed no-ops and the multi_agent_v2-dependent names say so.
+  for (const r of ['enable_fanout', 'remote_control', 'send_async_message']) assert.match(cls(r).basis, /removed at this tag, a no-op/, r);
+  for (const r of ['agent_message_board', 'defer_mailbox_preemption']) assert.match(cls(r).basis, /only with multi_agent_v2/, r);
+  // Named wrongly by name before, now by source: startup ordering, Windows only.
+  assert.equal(cls('deferred_executor').family, false);
+  assert.match(cls('deferred_executor').basis, /startup ordering, not scheduling/);
+  assert.equal(cls('prefer_mxc').family, false);
+  // A name classified by name only is off in the saved list, and says so.
+  const on = new Map(features.map((f) => [f.name, f.enabled]));
+  for (const [n, c] of CF.CODEX_FEATURE_CLASSES) if (/by name only/.test(c.basis)) assert.equal(on.get(n), false, `${n}: by name only, off`);
+});
 
 test('the feature inventory: 0.160.0\'s list as recorded, every name classified, every --disable a feature it names; all family features disabled or off passes', () => {
   const { features, unparsed } = CF.parseCodexFeatures(REAL_0160);
@@ -447,6 +510,10 @@ test('the feature inventory: 0.160.0\'s list as recorded, every name classified,
   assert.ok(j.disabled_by_template.includes('multi_agent') && j.disabled_by_template.includes('daemon_auto_start'));
   assert.ok(j.unavailable.includes('multi_agent') === false && j.unavailable.includes('agent_message_board'), 'a family feature the list reports off is unavailable');
   assert.ok(j.outside_family_enabled.includes('unified_exec'), 'outside the family: recorded only');
+  // Version 4's six hardening disables are reported disabled by the template.
+  for (const h of HARDENING) assert.ok(j.disabled_by_template.includes(h), `${h} is disabled_by_template`);
+  for (const h of HARDENING) assert.ok(!j.outside_family_enabled.includes(h), h);
+  assert.equal(j.disabled_by_template.length, 33, 'the 27 family features the template switches off, and the six hardening ones');
   // Each family feature on in 0.160.0 is one the template disables.
   for (const f of features.filter((x) => x.enabled && CF.CODEX_FEATURE_CLASSES.get(x.name).family)) assert.ok(j.disabled_by_template.includes(f.name), f.name);
 });
@@ -469,6 +536,29 @@ test('the feature inventory judged: a family feature the template leaves on, an 
   const outside = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(js_repl\s+removed\s+)false$/m, '$1true'), sha256: 'x' });
   assert.equal(outside.verified, true);
   assert.ok(outside.outside_family_enabled.includes('js_repl'));
+});
+
+test('the feature inventory judged: a hardening feature left on is recorded, never a failure; a family feature left on still fails', () => {
+  // Judged against version 3's disables (no hardening ones): every hardening
+  // feature is on in the list and left on, and the attempt still passes.
+  const v3 = CF.codexTemplateDisables(templates.CODEX_DISABLED_FEATURES.filter((f) => !HARDENING.includes(f)));
+  const j = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' }, v3);
+  assert.equal(j.verified, true, JSON.stringify(j.reasons));
+  assert.deepEqual(j.left_enabled, []);
+  for (const h of HARDENING) {
+    assert.ok(j.outside_family_enabled.includes(h), `${h} recorded on`);
+    assert.ok(!j.disabled_by_template.includes(h), `${h} not shown disabled`);
+  }
+  assert.equal(j.disabled_by_template.length, 27);
+  // A family feature the template does not disable, on: fails, named.
+  const noGoals = CF.codexTemplateDisables(templates.CODEX_DISABLED_FEATURES.filter((f) => f !== 'goals'));
+  const g = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' }, noGoals);
+  assert.equal(g.verified, false);
+  assert.deepEqual(g.left_enabled, ['goals']);
+  // A hardening feature off in the list and not disabled: neither shown disabled nor recorded on.
+  const off = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(sleep_tool\s+stable\s+)true$/m, '$1false'), sha256: 'x' }, v3);
+  assert.equal(off.verified, true);
+  assert.ok(!off.outside_family_enabled.includes('sleep_tool') && !off.disabled_by_template.includes('sleep_tool'));
 });
 
 test('the inventory recorded: features list run by the static checks with the constructed environment, its text and SHA-256; a binary that does not answer has none', async (t) => {

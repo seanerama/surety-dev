@@ -1087,7 +1087,8 @@
       "containment_failed",
       "model_fallback",
       "continuation_failed",
-      "not_dispatched"
+      "not_dispatched",
+      "usage_limit"
     ]
   },
   "tables": {
