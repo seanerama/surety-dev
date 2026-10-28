@@ -39,6 +39,11 @@ export const CANARY_DEADLINES = { positive: 900, cancellation: 600, containment:
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `${field} ${why}.`, 'Correct the request; nothing was written.', { field });
 
+// Codex sessions are not built (M5's not-claimed list, "Codex sessions"; C2
+// of Codex support): `session_headless` is refused for codex, so the
+// continuation canary never runs against it.
+export const CODEX_SESSIONS_NOT_BUILT = "session_headless is not offered for codex: Codex sessions are not built (M5's not-claimed list), so no continuation canary runs against Codex; qualify codex with one_shot_headless";
+
 export interface QualifyRequest {
   backend: string;
   mode: string;
@@ -107,6 +112,9 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   if (mode !== 'one_shot_headless' && mode !== 'session_headless') throw invalid('mode', 'must be one_shot_headless or session_headless');
   // Each assistant turn is one-shot; no session is qualified for it.
   if (purpose === 'assistant' && mode !== 'one_shot_headless') throw invalid('mode', 'must be one_shot_headless for the workspace assistant');
+  // Codex sessions are not built (M5's not-claimed list; C2 of Codex
+  // support): the continuation canary never runs against Codex.
+  if (backend === 'codex' && mode === 'session_headless') throw invalid('mode', CODEX_SESSIONS_NOT_BUILT);
   if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
   const list = body.candidate_egress ?? [];
   if (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0)) throw invalid('candidate_egress', 'must be a list of host names');
@@ -188,6 +196,7 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
   if (body.model !== undefined && !isModelName(body.model)) throw invalid('model', 'must be a model name');
   const entry = ctx?.entryOf ? await ctx.entryOf(body.entry) : null;
   if (entry === null) throw new Refusal(404, 'not_found', `No trust entry ${body.entry} exists.`, 'Name an active entry.', { entry: body.entry });
+  if (entry.backend === 'codex') throw invalid('mode', CODEX_SESSIONS_NOT_BUILT);
   if (entry.status !== 'active') throw new Refusal(409, 'backend_refused', `Trust entry ${entry.id} is ${entry.status}, not active: only an active entry is qualified for sessions.`, 'Activate the entry first.', { entry: entry.id, status: entry.status });
   if (entry.session_qualified === 1) throw new Refusal(409, 'illegal_transition', `Trust entry ${entry.id} is already qualified for sessions.`, 'Nothing to do.', { entry: entry.id });
   // The canary runs on the entry's own model (D6 §2.6; D2 §7.2).

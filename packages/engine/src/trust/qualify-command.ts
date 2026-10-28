@@ -15,8 +15,11 @@ import { readToken } from '../token.js';
 
 // The provider each backend reaches by default, offered as the attempt's
 // candidate egress when none is named (D2 §§2.4, 7.2): the destination the
-// approval preview shows, never added to afterwards.
-export const DEFAULT_EGRESS: Readonly<Record<string, string[]>> = { claude: ['api.anthropic.com'] };
+// approval preview shows, never added to afterwards. Codex's (C2 of Codex
+// support): OpenAI's API, which the API-key mode reaches; its telemetry hosts
+// are never added (the template switches them off; a contact is refused and
+// reported). The ChatGPT hosts belong to a mode not built.
+export const DEFAULT_EGRESS: Readonly<Record<string, string[]>> = { claude: ['api.anthropic.com'], codex: ['api.openai.com'] };
 
 export interface QualifyCommand {
   body: Record<string, unknown>;
