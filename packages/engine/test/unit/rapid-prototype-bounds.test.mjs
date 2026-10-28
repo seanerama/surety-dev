@@ -426,6 +426,9 @@ test('Stop: the preview lists the running runs; confirmation pauses the project,
   assert.match(manifest.runs[0].fate, /human_stop.*charged with its unknown allowance/);
   assert.deepEqual([manifest.project_paused, manifest.outcome], [true, { status: 'stopped', next_step: 'resume (POST …/resume), iterate or discard' }]);
   assert.match(d.question, /^Stop prototype iteration 1\? The project is paused .* 2 run\(s\) of it have not ended/);
+  // Slice E5 (gap 4): the ways back it names are the ones that work.
+  assert.ok(d.question.endsWith(`To go on: resume it (POST /v1/projects/${p.id}/iterations/${p.iteration}/resume), iterate, or discard; raising a limit does not reopen a stopped iteration.`), d.question);
+  assert.doesNotMatch(d.question, /Resume by raising a limit/);
   assert.equal(db.prepare('SELECT paused FROM projects WHERE id = ?').get(p.id).paused, 0, 'nothing happens before the confirmation');
   assert.throws(() => transact(db, HUMAN, (tx) => controlIteration(tx, { project: p.id, iteration: p.iteration, action: 'stop', previewHash: 'nope', facts: {} })), (e) => e.code === 'decision_stale');
 

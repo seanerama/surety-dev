@@ -1235,6 +1235,8 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     const stopPath = `/v1/projects/${p}/iterations/${it.id}/stop`;
     const ask = await fx.post(stopPath, {});
     assert.equal(ask.status, 409);
+    const confirm = await fx.decision(p, ask.body.subject.decision);
+    assert.ok(confirm.question.endsWith(`To go on: resume it (POST /v1/projects/${p}/iterations/${it.id}/resume), iterate, or discard; raising a limit does not reopen a stopped iteration.`), `the Stop question names the ways back that work (${confirm.question})`);
     await fx.ok(fx.post(stopPath, { preview_hash: ask.body.subject.preview_hash }), 200, 'Stop confirmed');
     let read = await fx.iteration(p, it.id);
     assert.deepEqual([read.iteration.status, read.outcome.next_step, (await fx.project(p)).paused], ['stopped', 'resume (POST …/resume), iterate or discard', true]);
