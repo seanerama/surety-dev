@@ -1,5 +1,5 @@
 // Developer tests for the Codex adapter (C1 of Codex support, 2026-10-27;
-// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-2` template's command
+// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-3` template's command
 // line, standard input and environment; the `codex exec --json` stream read
 // into usage observations and the terminal event; the ledger's
 // `codex-exec-json-1` normalization (cached input split out of input, cost
@@ -60,8 +60,8 @@ const GOOD = [
   { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
 ];
 
-test('the template: codex-exec-2, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off', () => {
-  assert.equal(T.version, 'codex-exec-2');
+test('the template: codex-exec-3, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, no --skip-git-repo-check', () => {
+  assert.equal(T.version, 'codex-exec-3');
   assert.equal(T.authMode, 'api_key');
   assert.equal(T.keyRef, 'backend/codex/api_key');
   const args = T.render({ model: 'gpt-5.5-codex', invocation: 'inv_X' });
@@ -75,9 +75,13 @@ test('the template: codex-exec-2, the prompt on standard input exactly, no promp
   assert.equal(args[args.indexOf('-C') + 1], '/surety/workspace');
   assert.equal(args[args.indexOf('-o') + 1], '/surety/out/last-message.txt', 'the one file it is told to write is under /surety/out');
   for (const a of args.filter((x) => x.startsWith('-') && x !== '-')) assert.ok(EXEC_HELP_0160.includes(a), `${a} is an option of codex exec 0.160.0`);
-  for (const f of ['--ephemeral', '--ignore-user-config', '--ignore-rules', '--strict-config', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox']) assert.ok(args.includes(f), f);
+  for (const f of ['--ephemeral', '--ignore-user-config', '--ignore-rules', '--strict-config', '--dangerously-bypass-approvals-and-sandbox']) assert.ok(args.includes(f), f);
+  assert.ok(!args.includes('--skip-git-repo-check'), 'D2 §4.6: not passed, so a broken git view fails visibly');
+  assert.ok(!T.text.includes('--skip-git-repo-check'));
   const disabled = args.flatMap((a, i) => (a === '--disable' ? [args[i + 1]] : []));
-  assert.deepEqual(disabled, ['multi_agent', 'goals', 'hooks', 'apps', 'memories']);
+  assert.deepEqual(disabled.slice(0, 5), ['multi_agent', 'goals', 'hooks', 'apps', 'memories']);
+  assert.deepEqual(disabled, [...templates.CODEX_DISABLED_FEATURES]);
+  for (const f of ['daemon_auto_start', 'worktrees', 'guardian_approval', 'in_app_local_automation', 'browser_use', 'computer_use', 'plugins', 'code_mode_host']) assert.ok(disabled.includes(f), f);
   const overrides = args.flatMap((a, i) => (a === '-c' ? [args[i + 1]] : []));
   for (const o of ['web_search="disabled"', 'tools.web_search=false', 'check_for_update_on_startup=false', 'analytics.enabled=false', 'feedback.enabled=false', 'otel.metrics_exporter="none"', 'otel.exporter="none"', 'otel.trace_exporter="none"', 'agents.enabled=false', 'history.persistence="none"', 'cli_auth_credentials_store="ephemeral"', 'forced_login_method="api"']) {
     assert.ok(overrides.includes(o), o);

@@ -140,7 +140,7 @@ const CLAUDE_SUBSCRIPTION: Template = {
 // D2 §4.6, Codex CLI 0.160.0 (as installed and pinned by copy; the flags
 // below are each in that version's `codex exec --help`, saved by the
 // 2026-10-27 assessment, and the `-c` keys in the Codex configuration
-// reference read the same day). Version 2 (C1 of Codex support; the
+// reference read the same day). Version 3 (C1 and C2b of Codex support; the
 // assessment's G3, G4, G5, G11):
 //   - the prompt: `-` makes standard input the whole prompt (`codex exec
 //     --help`: "if `-` is used, instructions are read from stdin"), and the
@@ -168,7 +168,44 @@ const CLAUDE_SUBSCRIPTION: Template = {
 //     `forced_login_method="api"`: an API key only, never a ChatGPT login.
 //     `features.unified_exec` cannot be switched off (the reference: user
 //     opt-outs are ignored); what it runs stays in the domain (D2 §4.4).
-export const CODEX_DISABLED_FEATURES = ['multi_agent', 'goals', 'hooks', 'apps', 'memories'] as const;
+//   - also off (C2b, 2026-10-28): every other feature 0.160.0's own
+//     `codex features list` reports on (`true`) that is a delegation,
+//     scheduling or background feature, or reaches beyond the domain's own
+//     tools (D2 §4.6, D2-T13): the shared daemon's auto-start, worktrees,
+//     the guardian reviewer, local automations, the browser and computer
+//     tools, plugins and their remote and sharing parts, skills' MCP
+//     installs, the code-mode host (a companion process), tool suggestions,
+//     workspace dependencies, the app's updates. The classification of every
+//     feature that list names is adapters/codex-features.ts's, and the
+//     attempt judges its own inventory against this list.
+//   - no `--skip-git-repo-check` (C2b): D2 §4.6 does not pass it, "so a
+//     broken git view fails visibly"; the fixture project and every run's
+//     workspace are git checkouts the engine makes.
+// Version 3 differs from version 2 by those two changes alone.
+export const CODEX_DISABLED_FEATURES = [
+  'multi_agent',
+  'goals',
+  'hooks',
+  'apps',
+  'memories',
+  'daemon_auto_start',
+  'worktrees',
+  'guardian_approval',
+  'in_app_local_automation',
+  'in_app_browser',
+  'in_app_updates',
+  'browser_use',
+  'browser_use_external',
+  'browser_use_full_cdp_access',
+  'computer_use',
+  'plugins',
+  'plugin_sharing',
+  'remote_plugin',
+  'skill_mcp_dependency_install',
+  'code_mode_host',
+  'tool_suggest',
+  'workspace_dependencies',
+] as const;
 export const CODEX_CONFIG_OVERRIDES = [
   'web_search="disabled"',
   'tools.web_search=false',
@@ -195,7 +232,6 @@ const codexArgs = (model: string): string[] => [
   '--ignore-user-config',
   '--ignore-rules',
   '--strict-config',
-  '--skip-git-repo-check',
   ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
   ...CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]),
   '--dangerously-bypass-approvals-and-sandbox',
@@ -209,7 +245,7 @@ const codexArgs = (model: string): string[] => [
 ];
 
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-2',
+  version: 'codex-exec-3',
   text:
     `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
     `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> OPENAI_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,

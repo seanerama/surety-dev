@@ -229,7 +229,7 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
   assert.equal(cont.capabilities.delegation_verified, true, JSON.stringify(cont.capabilities.reasons));
   assert.equal(cont.capabilities.basis, 'stream_and_host');
   assert.deepEqual(cont.capabilities.tools, [], 'no inventory: nothing claimed');
-  assert.deepEqual(cont.capabilities.template_disabled, ['multi_agent', 'goals', 'hooks', 'apps', 'memories', 'web_search', 'agents']);
+  assert.deepEqual(cont.capabilities.template_disabled, [...templates.CODEX_DISABLED_FEATURES, 'web_search', 'agents']);
   assert.ok(cont.controls.some((c) => c.name === 'provider_tunnel' && c.ran));
   const e = a.concluded.entry;
   assert.ok(e, 'the entry is written proposed');
