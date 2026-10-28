@@ -1055,7 +1055,10 @@
       "refused",
       "waiting_on_you",
       "running",
+      "checking",
       "ready",
+      "deploying",
+      "build_complete",
       "idle",
       "unknown"
     ],

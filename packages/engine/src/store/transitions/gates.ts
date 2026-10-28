@@ -204,7 +204,7 @@ export interface StateOf {
 }
 
 // D1 §9.2 step 3, with L4, for one result row.
-function resultState(r: Pick<ResultRow, 'execution_established' | 'signaled' | 'deadline_hit' | 'orphans' | 'exit_status'>): CheckState {
+export function resultState(r: Pick<ResultRow, 'execution_established' | 'signaled' | 'deadline_hit' | 'orphans' | 'exit_status'>): CheckState {
   if (r.execution_established === 0) return 'skipped';
   // L4: other processes alive at the check's own exit fail it too.
   if (r.signaled === 1 || r.deadline_hit === 1 || r.orphans !== 0 || r.exit_status === null || r.exit_status !== 0) return 'failed';
