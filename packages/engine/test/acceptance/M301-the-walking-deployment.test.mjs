@@ -15,6 +15,13 @@
 // `alpha_deployed`; and the teardown. If the journey cannot be made, every
 // case fails with the step it stopped at.
 //
+// Objection 220 (the owner's ruling S3 of 2026-10-28; SEAM.md §576): case
+// (f) reads the historical completion where it happened (the progress taken
+// at completion, before the teardown, and candidate.advanced in the
+// completion's transaction), and its second test reads current
+// availability after the teardown: the candidate `developing`, withdrawn
+// once by the teardown's finalizer, the historical record unchanged.
+//
 // Not this row's: the artifact's bounds and refusals (M308, M309), the
 // real unit (M307), reconcile's other outcomes (M320).
 
@@ -64,6 +71,17 @@ import {
 } from './harness/deploy/kernel.mjs';
 
 const json = (t) => (typeof t === 'string' ? JSON.parse(t) : t);
+// The candidate as it stands, and the historical deployment record that a
+// teardown keeps (objection 220; the owner's ruling S3 of 2026-10-28;
+// SEAM.md §576): the deployment requests and their outcome, the round's
+// verifications, the alpha_complete evaluations and the observation history.
+const history = (home, project, candidate, rounds) => ({
+  candidate: candidateRow(home, candidate),
+  requests: withStore(home, (db) => db.prepare('SELECT * FROM "deployment_requests" WHERE "candidate" = ? ORDER BY rowid').all(candidate)),
+  verifications: rounds.flatMap((r) => verificationsOf(home, r.id)),
+  evaluations: withStore(home, (db) => db.prepare(`SELECT * FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY rowid`).all(candidate)),
+  observations: withStore(home, (db) => db.prepare('SELECT o.* FROM "observation_history" o JOIN "environments" e ON e."id" = o."environment" WHERE e."project" = ? ORDER BY o.rowid').all(project)),
+});
 const hasTable = (home, name) => withStore(home, (db) => db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) !== undefined);
 
 describe('M301 the deployment journey on the scripted adapter: configure, request, intend, deploy, verify, complete, tear down', () => {
@@ -104,14 +122,14 @@ describe('M301 the deployment journey on the scripted adapter: configure, reques
     await completeRound(ctx, J.execution);
     J.rounds = roundsOf(fx.home, op.id);
     J.verifications = verificationsOf(fx.home, J.rounds[0].id);
-    J.atCompletion = { record: environmentRecord(fx.home, env.id), leases: environmentLeases(fx.home, env.id), op: operationRow(fx.home, op.id), read: (await operationsRead(fx.engine, project)).find((o) => o.id === op.id) };
+    J.atCompletion = { record: environmentRecord(fx.home, env.id), leases: environmentLeases(fx.home, env.id), op: operationRow(fx.home, op.id), read: (await operationsRead(fx.engine, project)).find((o) => o.id === op.id), ...history(fx.home, project, candidate.id, J.rounds) };
 
     // The teardown.
     await scriptCall(fx.engine, env.id, 'teardown', [{ result: 'issued', apply: true }]);
     const asked = await teardown(fx.engine, project, env.name);
     assert.ok(asked.status >= 200 && asked.status < 300, `the operator's teardown is accepted (→ ${asked.status} ${asked.text})`);
     J.teardown = await tickUntil(fx.engine, project, () => operationsOf(fx.home, project, 'teardown').find((o) => o.finalized_at !== null), { max: 12, what: 'the teardown to be finalized' });
-    J.after = { record: environmentRecord(fx.home, env.id), adapter: await adapterState(fx.engine, env.id), read: (await operationsRead(fx.engine, project)).find((o) => o.id === J.teardown.id) };
+    J.after = { record: environmentRecord(fx.home, env.id), adapter: await adapterState(fx.engine, env.id), read: (await operationsRead(fx.engine, project)).find((o) => o.id === J.teardown.id), ...history(fx.home, project, candidate.id, J.rounds) };
   });
   after(() => shared.cleanup());
 
@@ -241,15 +259,22 @@ describe('M301 the deployment journey on the scripted adapter: configure, reques
     assert.equal(rounds[0].round, 1);
   });
 
-  test('(f) alpha_complete satisfied: in one transaction the candidate developing → alpha_deployed (candidate.advanced) and the work item complete; the lease released; no releases row', () => {
+  // Objection 220 (the owner's ruling S3 of 2026-10-28; SEAM.md §576): two
+  // meanings, read each at the moment it means. The historical completion
+  // (the candidate reached alpha_deployed when alpha_complete was satisfied)
+  // is the candidate.advanced event in the completion's transaction and the
+  // progress read at completion, before the teardown; current availability
+  // is candidates.progress after the teardown, which the teardown withdraws.
+  test('(f) alpha_complete satisfied: in one transaction the candidate developing → alpha_deployed (candidate.advanced) and the work item complete; the lease released; no releases row (the historical completion, read at completion)', () => {
     const { fx, project, candidate, request, atCompletion } = J;
-    assert.equal(candidateRow(fx.home, candidate.id).progress, 'alpha_deployed');
+    assert.equal(atCompletion.candidate.progress, 'alpha_deployed', 'at completion, before the teardown, the candidate is alpha_deployed');
     const evaluations = withStore(fx.home, (db) => db.prepare(`SELECT * FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY rowid`).all(candidate.id));
     const satisfied = evaluations.filter((e) => e.outcome === 'satisfied');
     assert.equal(satisfied.length, 1, 'one satisfied alpha_complete evaluation');
     const advanced = eventsOfType(fx.home, 'candidate.advanced');
     assert.equal(advanced.length, 1, 'candidate.advanced, once');
     assert.equal(advanced[0].subject?.candidate, candidate.id);
+    assert.deepEqual([advanced[0].payload?.from, advanced[0].payload?.to], ['developing', 'alpha_deployed'], 'the historical record: developing → alpha_deployed');
     assert.equal(workItem(fx.home, request.work_item.id).status, 'complete', 'the deploy work item is complete');
     const completed = withStore(fx.home, (db) =>
       db.prepare(`SELECT * FROM "events" WHERE "type" LIKE 'work.%' AND json_extract("subject", '$.work_item') = ? AND json_extract("payload", '$.to') = 'complete'`).all(request.work_item.id),
@@ -262,6 +287,30 @@ describe('M301 the deployment journey on the scripted adapter: configure, reques
     assert.equal(atCompletion.op.status, 'succeeded');
     assert.equal(atCompletion.op.orchestration_stage, 'ended');
     if (hasTable(fx.home, 'releases')) assert.equal(withStore(fx.home, (db) => db.prepare('SELECT COUNT(*) AS n FROM "releases" WHERE "project" = ?').get(project).n), 0, 'no releases row');
+  });
+
+  test('(f) after the teardown: no claim of current availability, the candidate developing with exactly one candidate.alpha_withdrawn naming the environment and the teardown operation; the historical record unchanged', () => {
+    const { fx, candidate, env, teardown: op, atCompletion, after } = J;
+    assert.equal(after.candidate.progress, 'developing', 'after the teardown the candidate is no longer alpha_deployed: nothing of it runs there now');
+    const withdrawn = eventsOfType(fx.home, 'candidate.alpha_withdrawn');
+    assert.equal(withdrawn.length, 1, 'candidate.alpha_withdrawn, once');
+    assert.deepEqual(
+      [withdrawn[0].subject?.candidate, withdrawn[0].payload?.from, withdrawn[0].payload?.to, withdrawn[0].payload?.environment, withdrawn[0].payload?.operation],
+      [candidate.id, 'alpha_deployed', 'developing', env.id, op.id],
+      'it names the candidate, alpha_deployed → developing, the environment and the teardown operation',
+    );
+    const finalized = eventsOfType(fx.home, 'operation.finalized').filter((e) => e.subject?.operation === op.id);
+    assert.equal(finalized.length, 1, 'the teardown operation was finalized once');
+    assert.equal(withdrawn[0].tx, finalized[0].tx, "the withdrawal is in the teardown's finalizing transaction");
+    // The historical deployment record, kept as it was at completion.
+    assert.equal(eventsOfType(fx.home, 'candidate.advanced').length, 1, 'candidate.advanced is kept, once');
+    assert.deepEqual(after.requests, atCompletion.requests, 'the deployment request rows, their outcome among them, are unchanged');
+    assert.ok(after.requests.length >= 1 && after.requests.every((r) => r.outcome === 'deployed'), `the request's outcome stays deployed (${JSON.stringify(after.requests.map((r) => r.outcome))})`);
+    assert.deepEqual(after.verifications, atCompletion.verifications, 'the round\'s verification rows are unchanged');
+    assert.deepEqual(after.evaluations, atCompletion.evaluations, 'the alpha_complete evaluations are unchanged');
+    assert.deepEqual(after.observations.slice(0, atCompletion.observations.length), atCompletion.observations, 'the observation history is kept (appended to only)');
+    assert.deepEqual(after.record.last_verified, atCompletion.record.last_verified, 'last_verified is kept');
+    assert.deepEqual([after.candidate.id, after.candidate.revision, after.candidate.seq], [atCompletion.candidate.id, atCompletion.candidate.revision, atCompletion.candidate.seq], 'the candidate row is the same candidate; only its current progress moved');
   });
 
   test('(g) surety env teardown: a teardown operation journaled as teardown_apply, applied; attempted teardown_applied; last_verified kept; observed not written by the teardown', () => {

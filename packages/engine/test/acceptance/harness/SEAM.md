@@ -8475,3 +8475,17 @@ R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 mi
 - **`contract/decisions.json`**: `prototype_preparation_approval`'s manifest gains `continues` and `change`, after `policy_revision`, as the contract orders them. `continues` is null for a first iteration, else the predecessor and its brief. `change` is null or the owner's change request.
 - **M73's manifest check is one-way.** Each key the table lists must be in the contract, but the check does not catch a contract key the table omits. M73 therefore passed before these two keys were listed and passes now.
 - **Iterate's behaviour is not pinned by an acceptance row yet:** the new iteration, its predecessor, its change text and the events `prototype.iteration_iterated` and `prototype.alpha_not_attributed`.
+
+## 576. M301 (f): the historical completion and current availability (objection 220; the owner's ruling S3 of 2026-10-28; the Builder's `build/rapid-prototype` 4bb74433, slice E5; the Verifier, on `verify/rapid-prototype`)
+
+S3, verbatim: "Make current Alpha availability consistent across modes. Teardown must remove any claim that the Alpha is currently available. Preserve the historical deployment record. Have the Verifier distinguish those meanings before restating M301."
+
+- **Historical.** The candidate reached `alpha_deployed` when `alpha_complete` was satisfied. A teardown never changes any of the following:
+  - the `candidate.advanced` event (`developing → alpha_deployed`), in the completion's transaction;
+  - the satisfied `alpha_complete` evaluation;
+  - the deployment request and its outcome `deployed`;
+  - the round's verification and `last_verified`;
+  - the observation history, which is only appended to;
+  - for a rapid prototype, the iteration's `alpha_at` and outcome `alpha_ready`.
+- **Current.** `candidates.progress` read now, plus, for a prototype, `alpha.current` in the iteration read. A finalized teardown of the environment withdraws a candidate still `alpha_deployed` there in every mode: progress becomes `developing`, and the finalizer's transaction (`operation.finalized`) writes one `candidate.alpha_withdrawn` {from, to, environment, operation}.
+- **M301 (f)** reads the historical meaning from rows taken at completion, before the teardown. A second (f) test reads the current meaning after the teardown and asserts that the historical rows are unchanged. The objection's answer lists the cases.
