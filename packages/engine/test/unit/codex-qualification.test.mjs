@@ -641,6 +641,65 @@ test('the inventory recorded: features list run by the static checks under the t
   assert.equal(await featureInventory(bin('codex-d', {}), 'codex', ['--strict-config', ...ARGS]), null);
 });
 
+// C2e (observed on MAIN 2026-10-28): the real 0.160.0 binary's `features
+// list` exits 1 "failed to resolve CODEX_HOME" when CODEX_HOME names no
+// directory, while `--version` only warns; the static checks once set
+// CODEX_HOME in their environment without making it. The fake now fails as
+// the real binary does, so this pins the directory's creation.
+test('the static checks make the CODEX_HOME they name (C2e): features list answers under the real static environment; with the directory gone it fails as the real binary does', async (t) => {
+  const { versionOf } = await import(join(dist, 'invoke', 'static.js'));
+  const dir = mkdtempSync(join(tmpdir(), 'cq-home-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const m = join(dir, 'mode.json');
+  writeFileSync(m, '{}');
+  const script = (name, before) => {
+    const p = join(dir, name);
+    writeFileSync(p, `#!/bin/sh\n${before}FAKE_CODEX_MODE="${m}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
+    chmodSync(p, 0o755);
+    return p;
+  };
+  // What the static environment gives the binary: CODEX_HOME an existing,
+  // empty directory, recorded by the wrapper before the fake runs.
+  const seen = join(dir, 'seen.txt');
+  const plain = script('codex', `{ [ -d "$CODEX_HOME" ] && echo dir || echo missing; ls -A "$CODEX_HOME" 2>/dev/null | wc -l; } > "${seen}"\n`);
+  const inv = await featureInventory(plain, 'codex', CF.CODEX_FEATURES_ARGS);
+  assert.notEqual(inv, null, 'features list answers: the static checks made CODEX_HOME');
+  assert.equal(inv.text, REAL_TEMPLATE);
+  assert.deepEqual(readFileSync(seen, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean), ['dir', '0'], 'an existing, empty directory');
+  assert.equal(await versionOf(plain, 'codex'), 'codex-cli 0.160.0');
+  assert.notEqual(await helpHash(plain, 'codex'), null);
+  // The directory gone before the fake starts (the defect's environment):
+  // features list fails, so no inventory; --version still answers.
+  const gone = script('codex-gone', 'rmdir "$CODEX_HOME" || exit 9\n');
+  assert.equal(await featureInventory(gone, 'codex', CF.CODEX_FEATURES_ARGS), null, 'no inventory with CODEX_HOME missing');
+  assert.equal(await versionOf(gone, 'codex'), 'codex-cli 0.160.0', '--version does not need CODEX_HOME');
+  // The fake run directly, as the real binary answered on 2026-10-28: a
+  // missing CODEX_HOME exits 1 with the real message on standard error and
+  // nothing on standard output; unset likewise; an existing empty one exits 0.
+  const run = (env) => new Promise((resolve) => {
+    const c = spawn(process.execPath, [FAKE, ...CF.CODEX_FEATURES_ARGS], { env: { PATH: process.env.PATH, FAKE_CODEX_MODE: m, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.stderr.on('data', (d) => (err += d));
+    c.on('close', (status) => resolve({ status, out, err }));
+  });
+  const missing = await run({ CODEX_HOME: join(dir, 'no-such-codex-home') });
+  assert.equal(missing.status, 1);
+  assert.equal(missing.out, '');
+  assert.match(missing.err, /^Error: failed to resolve CODEX_HOME\n/);
+  const unset = await run({});
+  assert.equal(unset.status, 1);
+  assert.match(unset.err, /^Error: failed to resolve CODEX_HOME\n/);
+  const notDir = await run({ CODEX_HOME: m });
+  assert.equal(notDir.status, 1, 'a file is not a directory');
+  const empty = join(dir, 'empty-codex-home');
+  mkdirSync(empty);
+  const present = await run({ CODEX_HOME: empty });
+  assert.equal(present.status, 0);
+  assert.equal(present.out, REAL_TEMPLATE);
+});
+
 test('the driver: all family features disabled or off, the three canaries run; one left on, or an unknown one, fails delegation_unverified, named, before any canary is launched', async (t) => {
   const ok = await attempt(t);
   assert.deepEqual(ok.canaries.map((c) => c.passed), [true, true, true]);
