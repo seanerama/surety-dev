@@ -365,6 +365,13 @@ export function requestPreparation(tx: Tx, args: { project: string; iteration: s
   }
   const pending = preparationPending(tx.db, it.id);
   if (pending !== null) throw new Refusal(409, 'illegal_transition', `A brief preparation of iteration ${it.seq} is already authorized and not over (work item ${pending}).`, 'Wait for it to end.', { iteration: it.id, work_item: pending });
+  // Slice E5b (row M602 (d); objection 221): a preparation already put to
+  // the owner and not yet answered is refused, naming it, never answered
+  // again as if it were a new one.
+  const asked = tx.db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(it.id) as { id: string } | undefined;
+  if (asked) {
+    throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq}'s brief preparation is already awaiting your authorization (decision ${asked.id}).`, 'Answer or reject that decision first.', { iteration: it.id, decision: asked.id });
+  }
   const d = raisePreparation(tx, args);
   if (d === null) throw new Refusal(409, 'illegal_transition', `The preparation of iteration ${it.seq} cannot be asked now.`, 'Read the iteration.', { iteration: it.id });
   if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'approve preparation or discard');

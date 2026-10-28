@@ -664,6 +664,10 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     const firstRecord = (await fx.iteration(p, it.id)).iteration.brief.record;
     const asked = await fx.ok(fx.post(`/v1/projects/${p}/iterations/${it.id}/prepare`), 201, 'POST …/prepare asks for another preparation');
     assert.equal(asked.decision.kind, 'prototype_preparation_approval');
+    // Slice E5b (row M602 (d)): asked again while that one is open, 409, naming it.
+    const twice = await fx.post(`/v1/projects/${p}/iterations/${it.id}/prepare`);
+    assert.equal(twice.status, 409, `…/prepare while a preparation approval is open (→ ${twice.status} ${twice.text})`);
+    assert.deepEqual([twice.body.code, twice.body.reason, twice.body.subject.decision], ['illegal_transition', `Iteration ${it.seq}'s brief preparation is already awaiting your authorization (decision ${asked.decision.id}).`, asked.decision.id]);
     await fx.answerOpen(p, 'prototype_preparation_approval');
     const item = (await fx.work(p)).filter((w) => w.kind === 'brief_preparation').at(-1);
     assert.equal(item.status, 'eligible', 'one more preparation registered');

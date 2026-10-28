@@ -307,6 +307,14 @@ test('the preparation authorization: raised with the iteration; role, model, per
   const again = transact(db, HUMAN, (tx) => B.requestPreparation(tx, { project: p.id, iteration: p.iteration }));
   assert.equal(again.status, 201);
   assert.equal(decisionsOf(db, p.id, 'prototype_preparation_approval').filter((x) => x.status === 'open').length, 1);
+  // Slice E5b (row M602 (d); objection 221): asked again while that one is
+  // open, refused, naming it; nothing more is raised.
+  const open = decisionsOf(db, p.id, 'prototype_preparation_approval').find((x) => x.status === 'open');
+  assert.throws(
+    () => transact(db, HUMAN, (tx) => B.requestPreparation(tx, { project: p.id, iteration: p.iteration })),
+    (e) => e.status === 409 && e.code === 'illegal_transition' && e.reason === `Iteration 1's brief preparation is already awaiting your authorization (decision ${open.id}).` && e.whatToDo === 'Answer or reject that decision first.' && e.subject.decision === open.id,
+  );
+  assert.equal(decisionsOf(db, p.id, 'prototype_preparation_approval').filter((x) => x.status === 'open').length, 1);
 });
 
 test('a paid provider: the question states the provider, model and the estimate at the price table, never a cap', async (t) => {
