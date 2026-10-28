@@ -17,6 +17,9 @@ export interface BackendSpec {
   stdin?: string;
   // Host paths the sandbox binds at their real paths beyond its profile's.
   binds?: { path: string; writable: boolean }[];
+  // Files its template names for the domain to carry, under
+  // /surety/context (C2g: Codex's model catalog; templates.ts `files`).
+  files?: readonly { path: string; content: string }[];
 }
 
 // What the execution boundary reports of a domain (build spec §6

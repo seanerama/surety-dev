@@ -4,7 +4,7 @@
 // --json` JSONL in the shapes OpenAI's non-interactive page documents
 // (`thread.started`, `turn.started`, `item.*`, `turn.completed` with
 // `usage`, `turn.failed`, `error`), reads its prompt from standard input as
-// the `codex-exec-4` template's `-` asks, and acts out a role's run or a
+// the `codex-exec-4` and `-5` templates' `-` asks, and acts out a role's run or a
 // qualification canary from <root>/surety/context/canary.json, as the fake
 // claude does (test/acceptance/harness/standin/fake-claude.mjs). Its error
 // texts are modelled on the Codex CLI's "unexpected status 401
@@ -59,6 +59,26 @@
 // `exec` likewise needs CODEX_HOME to name an existing directory (C2f): it
 // exits 1, nothing on standard output, "Error finding codex home: ..." on
 // standard error, before its prompt is read.
+//
+// `exec` and the model catalog (C2g): the tool mode comes from the model's
+// catalog entry, as in the real 0.160.0 binary (core/src/tools/mod.rs:
+// 75-85). With `-c model_catalog_json=<path>` (an absolute path looked for
+// under `root`) that file is the only catalog: one that does not exist,
+// is not JSON or holds no model exits 1, nothing on standard output, the
+// message on standard error in the form the real binary's `features list`
+// printed for the same files on 2026-10-28 ("Error: failed to load
+// configuration" and its cause; `exec`'s own wording was not observed).
+// A model the catalog lists takes its `tool_mode`; one it does not list,
+// or one with none, falls back to the flags (Direct unless `--enable
+// code_mode_only`). Without the `-c`, the bundled catalog: every model
+// "code_mode_only" except gpt-5.5 (models-manager/models.json, 0.160.0).
+// With the code-mode host disabled (`--disable code_mode_host`, as the
+// templates pass), code_mode_only fails closed: the fake replays the
+// shape attempt #2 on MAIN recorded on 2026-10-28 (an `error` item with
+// the real message, the turn, two agent messages, `turn.completed` with
+// usage, exit 0) and runs no command, changes no file, writes no result.
+// The dump records what it was given: `model_catalog` {arg, exists,
+// parses, models, tool_mode}.
 //
 // `codex features list` prints, by default, the list the real Codex CLI
 // 0.160.0 printed in an empty CODEX_HOME on 2026-10-28 (saved verbatim as
@@ -151,6 +171,14 @@ const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 // standard output. An absolute CODEX_HOME is looked for under `root`, as
 // every /surety path of this fake is (under "/", inside a domain, it is the
 // path itself).
+const catalogArg = (() => {
+  for (let i = 0; i + 1 < argv.length; i++) if ((argv[i] === '-c' || argv[i] === '--config') && argv[i + 1].startsWith('model_catalog_json=')) return argv[i + 1].slice('model_catalog_json='.length);
+  return null;
+})();
+const modelArg = (() => {
+  const i = argv.findIndex((a) => a === '-m' || a === '--model');
+  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null;
+})();
 if (argv[0] === 'exec') {
   const codexHome = process.env.CODEX_HOME;
   let isDir = false;
@@ -165,6 +193,46 @@ if (argv[0] === 'exec') {
   }
 }
 
+// The model catalog (C2g), read as the configuration loads, before the
+// prompt.
+const catalog = { arg: catalogArg, exists: null, parses: null, models: null, tool_mode: null };
+if (argv[0] === 'exec') {
+  const failLoad = (cause) => {
+    if (mode.dump) writeFileSync(mode.dump, JSON.stringify({ argv, stdin: null, key_variables: [], key_read: null, codex_home: process.env.CODEX_HOME ?? null, model_catalog: catalog }));
+    process.stderr.write(`Error: failed to load configuration\n\nCaused by:\n    ${cause}\n`);
+    process.exit(1);
+  };
+  let toolMode;
+  if (catalogArg !== null) {
+    const path = catalogArg.startsWith('/') ? at(catalogArg.slice(1)) : catalogArg;
+    let text = null;
+    try {
+      text = readFileSync(path, 'utf8');
+      catalog.exists = true;
+    } catch {
+      catalog.exists = false;
+      failLoad('No such file or directory (os error 2)');
+    }
+    let parsed = null;
+    try {
+      parsed = JSON.parse(text);
+      catalog.parses = parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.models);
+    } catch (err) {
+      catalog.parses = false;
+      failLoad(`failed to parse model_catalog_json path \`${catalogArg}\` as JSON: ${err.message}`);
+    }
+    if (!catalog.parses) failLoad(`failed to parse model_catalog_json path \`${catalogArg}\` as JSON: missing field \`models\``);
+    catalog.models = parsed.models.map((m) => m?.slug ?? null);
+    if (parsed.models.length === 0) failLoad(`model_catalog_json path \`${catalogArg}\` must contain at least one model`);
+    toolMode = parsed.models.find((m) => m?.slug === modelArg)?.tool_mode ?? null;
+  } else toolMode = modelArg === 'gpt-5.5' ? null : 'code_mode_only';
+  // A model whose catalog sets none: the flags (tools/mod.rs:76-84).
+  if (toolMode === null || !['direct', 'code_mode', 'code_mode_only'].includes(toolMode)) toolMode = argv.some((a, i) => a === '--enable' && argv[i + 1] === 'code_mode_only') ? 'code_mode_only' : 'direct';
+  catalog.tool_mode = toolMode;
+}
+const hostDisabled = argv.some((a, i) => a === '--disable' && argv[i + 1] === 'code_mode_host');
+const codeModeClosed = argv[0] === 'exec' && catalog.tool_mode === 'code_mode_only' && hostDisabled;
+
 const stdin = await new Promise((resolve) => {
   const chunks = [];
   process.stdin.on('data', (c) => chunks.push(c));
@@ -178,7 +246,7 @@ const reads = mode.reads ?? 'CODEX_API_KEY';
 const keyRead = (reads === 'either' ? ['CODEX_API_KEY', 'OPENAI_API_KEY'] : [reads]).find((v) => keyVars.includes(v)) ?? null;
 const key = keyRead === null ? undefined : process.env[keyRead];
 if (mode.dump) {
-  writeFileSync(mode.dump, JSON.stringify({ argv, stdin, key_variables: keyVars, key_read: keyRead, codex_home: process.env.CODEX_HOME ?? null }));
+  writeFileSync(mode.dump, JSON.stringify({ argv, stdin, key_variables: keyVars, key_read: keyRead, codex_home: process.env.CODEX_HOME ?? null, model_catalog: catalog }));
 }
 
 // Codex's own checks of its command line: `exec`, `--json`, the prompt on
@@ -219,6 +287,16 @@ if (mode.outcome === 'malformed') {
 if (!stdin.includes('/surety/context/prompt.md') || !stdin.includes('/surety/out/result.json')) {
   out({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'fake: no prompt naming /surety/context/prompt.md was given' } });
   out({ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0 } });
+  process.exit(0);
+}
+
+// Code Mode only with its host disabled (C2g): the shape attempt #2 on MAIN
+// recorded (2026-10-28), no tool, no file, no result.
+if (codeModeClosed) {
+  out({ type: 'item.completed', item: { id: 'item_cm', type: 'error', message: 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.' } });
+  out({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'I’ll read the prompt and write the requested result to `/surety/out/result.json`.\n' } });
+  out({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'I couldn’t read the prompt or write the result because the execution tool returned `code-mode host is disabled`. `/surety/out/result.json` was not created.' } });
+  out({ type: 'turn.completed', usage: mode.usage ?? { input_tokens: 23186, cached_input_tokens: 15398, output_tokens: 138, reasoning_output_tokens: 12 } });
   process.exit(0);
 }
 

@@ -41,7 +41,8 @@
 // not honour shows `true`.
 //
 // Three classes: the family; outside the family; and hardening (outside
-// the family, disabled by the template all the same: version 4, K6a).
+// the family, disabled by the template all the same: version 4, K6a, and
+// version 5's code_mode and code_mode_only, C2g).
 //
 // The judgement:
 //   - every feature the template `--disable`s, family or hardening, must
@@ -72,6 +73,21 @@
 // `--ignore-user-config` and a volatile CODEX_HOME leave no configuration
 // that could switch anything on in a run; the static checks' CODEX_HOME is
 // a fresh empty directory (invoke/static.ts).
+//
+// The limit of this inventory (C2g, found 2026-10-28; the driver's K12
+// source report): `features list` reports only the local feature flags
+// (cli/src/main.rs:1806-1837 prints config.features.enabled(id)). What the
+// model's catalog metadata sets is applied at runtime and is not visible
+// there: tool_mode (which wins over the code_mode and code_mode_only flags,
+// core/src/tools/mod.rs:75-85), multi_agent_version, supports_search_tool,
+// apply_patch_tool_type, shell_type and experimental_supported_tools
+// (core/src/tools/spec_plan.rs, the report's item 4). So an inventory that
+// verifies says nothing of them. The evidence for those is the catalog file
+// the template gives Codex (adapters/codex-catalog.ts, named by SHA-256 in
+// the template's text) and the attempt's own stream (the tools the
+// canaries' runs actually used). Version 5's `--disable code_mode` and
+// `--disable code_mode_only` are judged here like any other `--disable`
+// (hardening: the fallback only, belt and braces).
 
 import { CODEX_CONFIG_OVERRIDES, CODEX_DISABLED_FEATURES } from './templates.js';
 
@@ -182,6 +198,13 @@ const GROUPS: readonly Group[] = [
   { family: false, hardening: true, basis: 'hardening, not the family: the command tool\'s PTY mode, whose children get no parent-death signal (utils/pty/src/spawn_helper_main.rs:69-73)', names: ['unified_exec_tty'] },
   { family: false, hardening: true, basis: 'hardening, not the family: clock.sleep blocks the current turn for 1 ms to 12 h and schedules nothing (core/src/tools/handlers/sleep.rs:28, 96-133)', names: ['sleep_tool'] },
   { family: false, hardening: true, basis: 'hardening, not the family: writes the shell\'s exported environment, so the key, under $CODEX_HOME/shell_snapshots/ (shell-command/src/shell_snapshot_capture.rs:160-178; core/src/shell_snapshot.rs:105-107)', names: ['shell_snapshot'] },
+  {
+    family: false,
+    hardening: true,
+    basis:
+      'hardening, not the family (version 5, C2g; belt and braces): the tool-mode fallback for a model whose catalog entry sets no tool_mode (core/src/tools/mod.rs:75-85); code_mode_only hides every direct tool behind Code Mode, which fails closed with the code-mode host disabled (core/src/tools/code_mode/mod.rs:108-121), so the template keeps the fallback Direct; ineffective for gpt-6.1-sol, whose catalog sets tool_mode (adapters/codex-catalog.ts)',
+    names: ['code_mode', 'code_mode_only'],
+  },
 
   // ---- outside the family, read from the source ----
   {
@@ -224,7 +247,7 @@ const GROUPS: readonly Group[] = [
   {
     family: false,
     basis: `the command tool's variants and approvals: what they run stays in the domain and ends with it (D2 §4.4)${BY_NAME}`,
-    names: ['shell_snapshot_v2', 'shell_zsh_fork', 'powershell_shell_version', 'exec_permission_approvals', 'request_permissions_tool', 'request_rule', 'code_mode', 'code_mode_buffered_exec', 'code_mode_interrupt', 'code_mode_only'],
+    names: ['shell_snapshot_v2', 'shell_zsh_fork', 'powershell_shell_version', 'exec_permission_approvals', 'request_permissions_tool', 'request_rule', 'code_mode_buffered_exec', 'code_mode_interrupt'],
   },
   { family: false, basis: `file edits in the workspace${BY_NAME}`, names: ['apply_patch_preserve_line_endings', 'apply_patch_streaming_events', 'cwd_relative_turn_diffs', 'codex_git_commit'] },
   {

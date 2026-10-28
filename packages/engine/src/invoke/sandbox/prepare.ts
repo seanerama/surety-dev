@@ -23,7 +23,7 @@ import { finishEgress, startEgress } from '../proxy/egress.js';
 import type { DomainProxy } from '../proxy/proxy.js';
 import type { BackendLaunch } from '../sandboxed.js';
 import { INIT_SCRIPT } from '../sandboxed.js';
-import { type CandidateDiff, type ContextFacts, type EngineCommitsInRange, PROBE_PROGRAM, writeContextPackage } from './context.js';
+import { type CandidateDiff, type ContextFacts, type EngineCommitsInRange, PROBE_PROGRAM, writeContextPackage, writeTemplateFiles } from './context.js';
 import { designPackageFor } from '../../design/package.js';
 import { isAncestor } from '../../git/repo.js';
 import { SHA, git, repoContext } from '../../git/exec.js';
@@ -247,6 +247,10 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       }
     },
   });
+  // The files the backend's template names (C2g: Codex's model catalog at
+  // /surety/context/model-catalog.json), beside whichever package was
+  // written, read-only to the agent like it. None for the Claude templates.
+  writeTemplateFiles(join(area, 'context'), backend.files);
 
   // The cgroup, only while the launch is not closed (D2 §3.2). The read and
   // the creation are one step of the main thread: nothing that could close

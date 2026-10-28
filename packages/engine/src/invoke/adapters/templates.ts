@@ -14,6 +14,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { CODEX_MODEL_CATALOG_PATH, CODEX_MODEL_CATALOG_SHA256, CODEX_MODEL_CATALOG_TEXT } from './codex-catalog.js';
+
 export type AuthMode = 'api_key' | 'subscription_token';
 export const AUTH_MODES: readonly AuthMode[] = ['api_key', 'subscription_token'];
 
@@ -28,8 +30,8 @@ export interface Template {
   keyVariable: string;
   // Further variables the same credential is delivered in, where which one
   // the backend reads is not established; the canary records which was
-  // used. No template has one now (Codex's codex-exec-4 delivers its key in
-  // CODEX_API_KEY alone, K3 of 2026-10-28).
+  // used. No template has one now (Codex's codex-exec-4 and -5 deliver its
+  // key in CODEX_API_KEY alone, K3 of 2026-10-28).
   keyAliases?: readonly string[];
   // The fixed variables the template sets beside the credential.
   env: Readonly<Record<string, string>>;
@@ -46,7 +48,19 @@ export interface Template {
   // template fixes it (Codex: the fixed prompt); otherwise the scripted
   // protocol's request line, which a real backend's template does not read.
   stdin?: string;
+  // Files the role domain must carry for the backend (C2g): each at its
+  // path under /surety/context (read-only to the agent), with this exact
+  // content, written by the domain's preparation beside the context
+  // package (sandbox/prepare.ts, writeTemplateFiles). Part of the
+  // template: its text names each file's SHA-256, so a changed file is a
+  // new template version. The Claude templates name none.
+  files?: readonly TemplateFile[];
   render(args: { model: string; invocation: string }): string[];
+}
+
+export interface TemplateFile {
+  path: string;
+  content: string;
 }
 
 // The fixed prompt (D2 §1.2): it points at the context package and never
@@ -213,6 +227,35 @@ const CLAUDE_SUBSCRIPTION: Template = {
 //         shell_snapshot_capture.rs:160-178; core/src/shell_snapshot.rs:
 //         105-107); a copy of the secret on disk while it lives.
 // Version 4 differs from version 3 by those two changes alone.
+//
+// Version 5 (C2g of Codex support, 2026-10-28; the driver's K12 source
+// report, option B, pending the owner's choice):
+//   - the model catalog: `-c model_catalog_json=/surety/context/
+//     model-catalog.json`, a catalog of our own (adapters/codex-catalog.ts)
+//     holding gpt-6.1-sol's bundled entry with "tool_mode": "direct". In
+//     0.160.0 the execution-tool mode comes from the model's catalog
+//     metadata (core/src/tools/mod.rs:75-85), and the bundled catalog sets
+//     gpt-6.1-sol's to "code_mode_only", which hides every direct tool and
+//     needs the code-mode host, the companion process this template
+//     disables (code_mode_host above): attempt #2 on MAIN ended with no
+//     command and no file change. When set it is the only catalog
+//     (model-provider/src/provider.rs:426-431). `model_catalog_json` is a
+//     known top-level key (config/src/config_toml.rs:400), so
+//     `--strict-config` accepts it; `exec --help` cannot show that, and
+//     `exec` was not run: the real binary's `features list` was, which
+//     loads and validates the catalog (codex-catalog.ts). The domain
+//     carries the file (`files` below); the template's text names its
+//     SHA-256, so a changed catalog is a new template version. The -c is
+//     not among CODEX_CONFIG_OVERRIDES: the static checks' `features list`
+//     runs on the host, where the file is not, and that list shows no
+//     catalog metadata (codex-features.ts).
+//   - `--disable code_mode --disable code_mode_only`: belt and braces,
+//     harmless. The flags are only the fallback for a model whose catalog
+//     sets no tool_mode (tools/mod.rs:76), so they are ineffective for
+//     gpt-6.1-sol with its catalog; they keep the fallback Direct for a
+//     model that sets none, or whose tool_mode string Codex does not read
+//     (protocol/src/openai_models.rs:352-361 reads an unknown one as none).
+// Version 5 differs from version 4 by those two changes alone.
 export const CODEX_DISABLED_FEATURES = [
   'multi_agent',
   'goals',
@@ -243,6 +286,9 @@ export const CODEX_DISABLED_FEATURES = [
   'unified_exec_tty',
   'sleep_tool',
   'shell_snapshot',
+  // Version 5 (C2g): hardening, not the family; belt and braces.
+  'code_mode',
+  'code_mode_only',
 ] as const;
 export const CODEX_CONFIG_OVERRIDES = [
   'web_search="disabled"',
@@ -272,6 +318,9 @@ const codexArgs = (model: string): string[] => [
   '--strict-config',
   ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
   ...CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]),
+  // Version 5 (C2g): the model catalog the domain carries.
+  '-c',
+  `model_catalog_json=${CODEX_MODEL_CATALOG_PATH}`,
   '--dangerously-bypass-approvals-and-sandbox',
   '-C',
   '/surety/workspace',
@@ -283,10 +332,11 @@ const codexArgs = (model: string): string[] => [
 ];
 
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-4',
+  version: 'codex-exec-5',
   text:
     `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
-    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
+    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) ` +
+    `(file: ${CODEX_MODEL_CATALOG_PATH} sha256:${CODEX_MODEL_CATALOG_SHA256}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
   authMode: 'api_key',
   keyRef: 'backend/codex/api_key',
   keyVariable: 'CODEX_API_KEY',
@@ -294,6 +344,7 @@ const CODEX_API_KEY: Template = {
   persistenceFlags: ['--ephemeral'],
   tools: [],
   stdin: `${PROMPT}\n`,
+  files: [{ path: CODEX_MODEL_CATALOG_PATH, content: CODEX_MODEL_CATALOG_TEXT }],
   render: ({ model }) => codexArgs(model),
 };
 

@@ -311,6 +311,9 @@ function realBackend(claim: Claim): BackendSpec | null {
     // What the template writes on standard input (Codex: the fixed prompt);
     // otherwise the request line.
     ...(template.stdin === undefined ? {} : { stdin: template.stdin }),
+    // The files the template names for the domain (Codex: its model
+    // catalog, C2g), written beside the context package.
+    ...(template.files === undefined ? {} : { files: template.files }),
     // The backend's installation, read-only at its pinned path (D2 §2.3).
     binds: [{ path: e.binary_path, writable: false }],
   };

@@ -1,5 +1,5 @@
 // Developer tests for the Codex adapter (C1 of Codex support, 2026-10-27;
-// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-4` template's command
+// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-5` template's command
 // line, standard input and environment; the `codex exec --json` stream read
 // into usage observations and the terminal event; the ledger's
 // `codex-exec-json-1` normalization (cached input split out of input, cost
@@ -12,7 +12,8 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -31,6 +32,8 @@ const { exitCause } = await import(join(dist, 'invoke', 'exit-cause.js'));
 
 const { homeDirEntries } = await import(join(dist, 'invoke', 'sandbox', 'mounts.js'));
 const { populateVolatile } = await import(join(dist, 'invoke', 'domain-init.js'));
+const { writeTemplateFiles } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
+const catalogMod = await import(join(dist, 'invoke', 'adapters', 'codex-catalog.js'));
 
 const FAKE = join(here, 'fixtures', 'codex', 'fake-codex.mjs');
 
@@ -39,6 +42,11 @@ const FAKE = join(here, 'fixtures', 'codex', 'fake-codex.mjs');
 // domain init's own population of the volatile filesystem, here at
 // <root>/surety. Codex's exec, and the fake's, exits 1 without it.
 const makeHome = (root) => populateVolatile({ vol: join(root, 'surety'), volDirs: ['home'], volEntries: homeDirEntries(templates.templateEnv(T, null)) });
+// The template's files in the context package as the domain's preparation
+// writes them (C2g; prepare.ts writeTemplateFiles): the model catalog at
+// <root>/surety/context/model-catalog.json. Codex's exec, and the fake's,
+// exits 1 when the catalog the template names is not there.
+const makeContext = (root) => writeTemplateFiles(join(root, 'surety', 'context'), T.files);
 const KEY = 'sk-proj-SYNTHETICCODEXTESTKEY000000000000000000000000';
 const T = templates.templateOf('codex');
 
@@ -69,8 +77,8 @@ const GOOD = [
   { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
 ];
 
-test('the template: codex-exec-4, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, the six hardening disables, no --skip-git-repo-check', () => {
-  assert.equal(T.version, 'codex-exec-4');
+test('the template: codex-exec-5, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, the eight hardening disables, the model catalog, no --skip-git-repo-check', () => {
+  assert.equal(T.version, 'codex-exec-5');
   assert.equal(T.authMode, 'api_key');
   assert.equal(T.keyRef, 'backend/codex/api_key');
   const args = T.render({ model: 'gpt-5.5-codex', invocation: 'inv_X' });
@@ -92,14 +100,20 @@ test('the template: codex-exec-4, the prompt on standard input exactly, no promp
   assert.deepEqual(disabled, [...templates.CODEX_DISABLED_FEATURES]);
   for (const f of ['daemon_auto_start', 'worktrees', 'guardian_approval', 'in_app_local_automation', 'browser_use', 'computer_use', 'plugins', 'code_mode_host']) assert.ok(disabled.includes(f), f);
   // Version 4 (K6a, 2026-10-28): six hardening disables after version 3's twenty-two, each once.
-  assert.deepEqual(disabled.slice(-6), ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot']);
-  assert.equal(disabled.length, 28);
+  assert.deepEqual(disabled.slice(-8, -2), ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot']);
+  // Version 5 (C2g): code_mode and code_mode_only, last.
+  assert.deepEqual(disabled.slice(-2), ['code_mode', 'code_mode_only']);
+  assert.equal(disabled.length, 30);
   assert.equal(new Set(disabled).size, disabled.length, 'no feature disabled twice');
   for (const f of disabled) assert.ok(T.text.includes(`--disable ${f} `), `the template text names --disable ${f}`);
   const overrides = args.flatMap((a, i) => (a === '-c' ? [args[i + 1]] : []));
   for (const o of ['web_search="disabled"', 'tools.web_search=false', 'check_for_update_on_startup=false', 'analytics.enabled=false', 'feedback.enabled=false', 'otel.metrics_exporter="none"', 'otel.exporter="none"', 'otel.trace_exporter="none"', 'agents.enabled=false', 'history.persistence="none"', 'cli_auth_credentials_store="ephemeral"', 'forced_login_method="api"']) {
     assert.ok(overrides.includes(o), o);
   }
+  // Version 5 (C2g): the model catalog the domain carries, after the overrides.
+  assert.ok(overrides.includes('model_catalog_json=/surety/context/model-catalog.json'));
+  assert.equal(overrides.filter((o) => o.startsWith('model_catalog_json=')).length, 1);
+  assert.ok(!templates.CODEX_CONFIG_OVERRIDES.some((o) => o.startsWith('model_catalog_json')), 'not among the overrides the static features list runs with');
   assert.ok(!args.some((a) => a.includes('sk-') || a.includes('<')), 'no credential and no placeholder in the rendered argv');
   assert.match(T.text, /\(environment: CODEX_API_KEY=<credential> CODEX_HOME=\/surety\/home\/\.codex\)/);
   assert.ok(!T.text.includes('OPENAI_API_KEY'), 'K3: OPENAI_API_KEY is not set (exec does not read it)');
@@ -253,16 +267,23 @@ function runFake(mode, { killAfterMs = null } = {}) {
   mkdirSync(join(root, 'surety', 'out'), { recursive: true });
   mkdirSync(join(root, 'surety', 'workspace'), { recursive: true });
   makeHome(root);
+  if (!mode.no_catalog) makeContext(root);
   writeFileSync(join(root, 'surety', 'context', 'prompt.md'), '# The task\nDo the synthetic thing.\n');
   const modeFile = join(dir, 'mode.json');
   const dump = join(dir, 'dump.json');
   writeFileSync(modeFile, JSON.stringify({ root, dump, ...mode }));
   const env = { PATH: '/usr/bin:/bin', HOME: join(dir, 'home'), FAKE_CODEX_MODE: modeFile, ...templates.templateEnv(T, mode.key === undefined ? KEY : mode.key) };
   if (mode.key === null) for (const v of templates.keyVariables('codex')) delete env[v];
-  const child = spawn(process.execPath, [FAKE, ...T.render({ model: 'gpt-5.5-codex', invocation: 'inv_F' })], { env, stdio: ['pipe', 'pipe', 'ignore'] });
+  let argv = T.render({ model: mode.model ?? 'gpt-5.5-codex', invocation: 'inv_F' });
+  // `v4_args`: the template's arguments without the catalog's -c (version 4's).
+  if (mode.v4_args) argv = argv.filter((a, i) => !a.startsWith('model_catalog_json=') && !(a === '-c' && argv[i + 1]?.startsWith('model_catalog_json=')));
+  const child = spawn(process.execPath, [FAKE, ...argv], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {});
   child.stdin.end(T.stdin);
   let stdout = '';
+  let stderr = '';
   child.stdout.on('data', (d) => (stdout += d));
+  child.stderr.on('data', (d) => (stderr += d));
   const timer = killAfterMs === null ? null : setTimeout(() => child.kill('SIGTERM'), killAfterMs);
   return new Promise((resolve) =>
     child.on('close', (code, signal) => {
@@ -281,7 +302,7 @@ function runFake(mode, { killAfterMs = null } = {}) {
         given = null;
       }
       rmSync(dir, { recursive: true, force: true });
-      resolve({ code, signal, result, given, ...r });
+      resolve({ code, signal, result, given, stderr, ...r });
     }),
   );
 }
@@ -343,6 +364,7 @@ test('the fake codex: a positive canary writes its edit and result from canary.j
     mkdirSync(join(root, 'surety', 'context'), { recursive: true });
     mkdirSync(join(root, 'surety', 'workspace'), { recursive: true });
     makeHome(root);
+    makeContext(root);
     writeFileSync(join(root, 'surety', 'context', 'prompt.md'), 'canary\n');
     writeFileSync(join(root, 'surety', 'context', 'canary.json'), JSON.stringify({ kind: 'positive', edit: { path: 'canary/edit.txt', content: 'token-123\n' }, result: { status: 'completed', summary: 'canary done' } }));
     const modeFile = join(dir, 'mode.json');
@@ -361,4 +383,95 @@ test('the fake codex: a positive canary writes its edit and result from canary.j
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- the model catalog (C2g of Codex support, 2026-10-28) -----------------------------
+
+// The gpt-6.1-sol entry of Codex 0.160.0's bundled catalog
+// (codex-rs/models-manager/models.json, lines 177-353, tag rust-v0.160.0),
+// saved verbatim beside the fake.
+const BUNDLED_ENTRY_TEXT = readFileSync(join(here, 'fixtures', 'codex', 'gpt-6.1-sol-0.160.0.json'), 'utf8');
+const BUNDLED_ENTRY = JSON.parse(BUNDLED_ENTRY_TEXT);
+
+test('the catalog: one model, gpt-6.1-sol, tool_mode "direct", every other key the bundled entry\'s, in its order; the text is the catalog and the SHA-256 is the text\'s', () => {
+  const { CODEX_MODEL_CATALOG_TEXT: text, CODEX_MODEL_CATALOG_SHA256: sha, CODEX_MODEL_CATALOG_PATH: path } = catalogMod;
+  const c = JSON.parse(text);
+  assert.deepEqual(Object.keys(c), ['models'], 'ModelsResponse has one field, models');
+  assert.equal(c.models.length, 1);
+  const m = c.models[0];
+  assert.equal(m.slug, 'gpt-6.1-sol');
+  assert.equal(m.tool_mode, 'direct');
+  assert.equal(BUNDLED_ENTRY.slug, 'gpt-6.1-sol');
+  assert.equal(BUNDLED_ENTRY.tool_mode, 'code_mode_only', 'the bundled entry hides every direct tool');
+  assert.equal(Object.keys(BUNDLED_ENTRY).length, 50);
+  assert.deepEqual(Object.keys(m), Object.keys(BUNDLED_ENTRY), 'the same 50 keys in the same order');
+  const differs = Object.keys(m).filter((k) => JSON.stringify(m[k]) !== JSON.stringify(BUNDLED_ENTRY[k]));
+  assert.deepEqual(differs, ['tool_mode'], 'exactly one change');
+  assert.deepEqual({ ...m, tool_mode: BUNDLED_ENTRY.tool_mode }, BUNDLED_ENTRY);
+  assert.equal(text, JSON.stringify({ models: [{ ...BUNDLED_ENTRY, tool_mode: 'direct' }] }), 'the text is the bundled entry, re-serialized, with the one change');
+  assert.equal(sha, createHash('sha256').update(text, 'utf8').digest('hex'));
+  assert.match(sha, /^[0-9a-f]{64}$/);
+  assert.equal(path, '/surety/context/model-catalog.json');
+});
+
+test('the template names the catalog: its text the path and SHA-256, its files the path and the exact text; a changed catalog would change the text; Claude\'s templates name none', () => {
+  const { CODEX_MODEL_CATALOG_TEXT: text, CODEX_MODEL_CATALOG_SHA256: sha } = catalogMod;
+  assert.ok(T.text.includes(`(file: /surety/context/model-catalog.json sha256:${sha})`));
+  assert.ok(T.text.includes('-c model_catalog_json=/surety/context/model-catalog.json'));
+  assert.ok(T.text.includes('--disable code_mode ') && T.text.includes('--disable code_mode_only '));
+  assert.deepEqual(T.files, [{ path: '/surety/context/model-catalog.json', content: text }]);
+  for (const mode of ['api_key', 'subscription_token']) {
+    assert.equal(templates.templateOf('claude', { authMode: mode }).files, undefined, `claude ${mode}`);
+    assert.equal(templates.templateOf('claude', { authMode: mode, purpose: 'assistant' }).files, undefined, `claude assistant ${mode}`);
+  }
+  assert.equal(templates.SCRIPTED_TEMPLATE.files, undefined);
+});
+
+test('the domain carries the catalog (writeTemplateFiles, as prepare.ts calls it): the Codex template\'s file at context/model-catalog.json with that exact content; nothing for Claude; a path outside /surety/context refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cx-ctx-'));
+  try {
+    const cx = join(dir, 'codex', 'context');
+    mkdirSync(cx, { recursive: true });
+    assert.deepEqual(writeTemplateFiles(cx, templates.templateOf('codex').files), ['/surety/context/model-catalog.json']);
+    assert.deepEqual(readdirSync(cx), ['model-catalog.json']);
+    assert.equal(readFileSync(join(cx, 'model-catalog.json'), 'utf8'), catalogMod.CODEX_MODEL_CATALOG_TEXT);
+    assert.equal(createHash('sha256').update(readFileSync(join(cx, 'model-catalog.json'))).digest('hex'), catalogMod.CODEX_MODEL_CATALOG_SHA256);
+    for (const mode of ['api_key', 'subscription_token']) {
+      const cl = join(dir, `claude-${mode}`, 'context');
+      mkdirSync(cl, { recursive: true });
+      assert.deepEqual(writeTemplateFiles(cl, templates.templateOf('claude', { authMode: mode }).files), []);
+      assert.deepEqual(readdirSync(cl), [], `nothing for claude ${mode}`);
+    }
+    for (const bad of ['/surety/out/x.json', '/surety/context/../out/x', '/surety/context/', 'model-catalog.json', '/surety/context//x', '/surety/contextx/y']) {
+      assert.throws(() => writeTemplateFiles(join(dir, 'bad'), [{ path: bad, content: 'x' }]), /must be a file under \/surety\/context/, bad);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the fake codex and the catalog: gpt-6.1-sol with the catalog works directly; without the -c (version 4) it replays MAIN\'s Code Mode refusal and does nothing; with the -c and no file it exits 1 before the prompt', async () => {
+  const ok = await runFake({ model: 'gpt-6.1-sol' });
+  assert.equal(ok.code, 0);
+  assert.deepEqual(ok.given.model_catalog, { arg: '/surety/context/model-catalog.json', exists: true, parses: true, models: ['gpt-6.1-sol'], tool_mode: 'direct' });
+  assert.deepEqual(ok.terminals, ['success']);
+  assert.ok(ok.summary.items.some((i) => i.type === 'command_execution'), 'a direct tool ran');
+  assert.deepEqual(ok.result, { status: 'completed', summary: 'fake: the role did its work' });
+  assert.deepEqual(ok.summary.errors, []);
+  // Version 4's arguments (no catalog): the bundled catalog's code_mode_only.
+  const v4 = await runFake({ model: 'gpt-6.1-sol', v4_args: true });
+  assert.equal(v4.code, 0);
+  assert.deepEqual(v4.given.model_catalog, { arg: null, exists: null, parses: null, models: null, tool_mode: 'code_mode_only' });
+  assert.deepEqual(v4.terminals, ['success']);
+  assert.deepEqual(v4.summary.errors, ['Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.']);
+  assert.ok(!v4.summary.items.some((i) => i.type === 'command_execution' || i.type === 'file_change'), 'no command, no file change');
+  assert.equal(v4.result, null, 'no result');
+  // The -c with no file in the domain: the configuration does not load.
+  const gone = await runFake({ model: 'gpt-6.1-sol', no_catalog: true });
+  assert.equal(gone.code, 1);
+  assert.deepEqual(gone.terminals, []);
+  assert.equal(gone.summary.thread_id, null, 'nothing on standard output');
+  assert.equal(gone.stderr, 'Error: failed to load configuration\n\nCaused by:\n    No such file or directory (os error 2)\n');
+  assert.deepEqual(gone.given.model_catalog, { arg: '/surety/context/model-catalog.json', exists: false, parses: null, models: null, tool_mode: null });
+  assert.equal(gone.result, null);
 });
