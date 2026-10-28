@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -36,6 +36,10 @@ const { prepareQualify, CODEX_SESSIONS_NOT_BUILT } = await import(join(dist, 'tr
 const { parseQualify, DEFAULT_EGRESS } = await import(join(dist, 'trust', 'qualify-command.js'));
 const { attemptSpendEstimate, attemptSpendUnavailable, normalizeFor, CODEX_PRICE_TABLE } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
 
+const { buildPlan, homeDirs, planEntries, planFingerprint } = await import(join(dist, 'invoke', 'sandbox', 'mounts.js'));
+const { populateVolatile } = await import(join(dist, 'invoke', 'domain-init.js'));
+const { launchEnv } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
+
 const FAKE = join(here, 'fixtures', 'codex', 'fake-codex.mjs');
 const KEY = 'sk-proj-SYNTHETICCODEXTESTKEY000000000000000000000000';
 const T = templates.templateOf('codex');
@@ -44,10 +48,33 @@ const ONE_BACKEND = { samples: 6, max_backend: 1, max_members: 2, unclassified: 
 
 // ---- the fake codex, run as the template runs it ----
 
+// The domain's volatile filesystem as the engine plans it and the domain
+// init's setup stage populates it (C2f): the plan built from the role's
+// launch environment (prepare.ts launchEnv, the template's own beside it),
+// its volatile directories and entries made by the init's own
+// populateVolatile, here at <root>/surety (the tmpfs, its mount and the
+// binds are the sandbox's and are not made here). `unmade`: the plan as it
+// was built before C2f, given no environment, so that nothing is made in
+// the home (MAIN's domain of 2026-10-28).
+function domainPlan(dir, templateEnv, { unmade = false } = {}) {
+  const env = launchEnv('dom_x', 'inv_x', templateEnv);
+  const tools = { mount: '/usr/bin/mount', umount: '/usr/bin/umount', pivot_root: '/usr/sbin/pivot_root', ip: '/usr/sbin/ip', unshare: '/usr/bin/unshare', setpriv: '/usr/bin/setpriv' };
+  const area = mkdtempSync(join(dir, 'area-'));
+  const plan = buildPlan({ area, context: area, workspace: null, readPaths: [], writablePaths: [], volBytes: 1 << 20, volInodes: 64, shmBytes: 1 << 20, tools, node: process.execPath, initNodeCopy: process.execPath, initScript: process.execPath, holdVolatile: true, ...(unmade ? {} : { env }) });
+  return { env, plan };
+}
+function populateDomain(root, plan) {
+  populateVolatile({ ...plan, vol: join(root, 'surety') });
+}
+
 // One canary's run: the fake given the template's arguments, environment and
-// standard input, in a root of its own holding canary.json and prompt.md.
+// standard input, in a root of its own holding canary.json and prompt.md,
+// its home populated by the engine's plan (C2f; `home: 'unmade'` as before).
 async function runCanary(dir, attempt, kind, mode = {}) {
   const root = mkdtempSync(join(dir, `${kind}-`));
+  const { home: homeMode, ...fakeMode } = mode;
+  mode = fakeMode;
+  populateDomain(root, domainPlan(dir, templates.templateEnv(T, null), { unmade: homeMode === 'unmade' }).plan);
   for (const d of ['surety/context', 'surety/out', 'surety/workspace']) mkdirSync(join(root, d), { recursive: true });
   writeFileSync(join(root, 'surety/context/prompt.md'), '# the prompt\n');
   writeFileSync(join(root, 'surety/context/canary.json'), JSON.stringify(C.canaryInstructions({ attempt, kind, deadlineSeconds: 60 })));
@@ -55,9 +82,13 @@ async function runCanary(dir, attempt, kind, mode = {}) {
   writeFileSync(modeFile, JSON.stringify({ root, linger_ms: 50, ...mode }));
   const env = { PATH: process.env.PATH, FAKE_CODEX_MODE: modeFile, ...templates.templateEnv(T, mode.key === undefined ? KEY : mode.key) };
   if (mode.key === null) for (const v of templates.keyVariables('codex')) delete env[v];
-  const child = spawn(process.execPath, [FAKE, ...T.render({ model: MODEL, invocation: 'inv_x' })], { env, stdio: ['pipe', 'pipe', 'ignore'] });
+  const child = spawn(process.execPath, [FAKE, ...T.render({ model: MODEL, invocation: 'inv_x' })], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  // A fake that exits before reading its prompt closes the pipe under it.
+  child.stdin.on('error', () => {});
   child.stdin.end(T.stdin);
   let stdout = '';
+  let stderr = '';
+  child.stderr.on('data', (d) => (stderr += d));
   child.stdout.on('data', (d) => (stdout += d));
   let barrierSeen = false;
   let termToExitMs = null;
@@ -81,7 +112,7 @@ async function runCanary(dir, attempt, kind, mode = {}) {
   const edit = C.canaryEdit(attempt);
   const editPath = join(root, 'surety/workspace', edit.path);
   const editContent = existsSync(editPath) ? readFileSync(editPath, 'utf8') : null;
-  return { code, summary: s.summary(), result, editContent, barrierSeen, termToExitMs };
+  return { code, stdout, stderr, summary: s.summary(), result, editContent, barrierSeen, termToExitMs };
 }
 
 // What the choke point would keep of the run (choke.ts recordCanary). The
@@ -698,6 +729,60 @@ test('the static checks make the CODEX_HOME they name (C2e): features list answe
   const present = await run({ CODEX_HOME: empty });
   assert.equal(present.status, 0);
   assert.equal(present.out, REAL_TEMPLATE);
+});
+
+// C2f (observed on MAIN 2026-10-28, attempt qa_01M61GA1Z60NSN48J3T0G5DV1M):
+// the role's environment named CODEX_HOME=/surety/home/.codex and the XDG
+// directories, the volatile home started empty, and Codex 0.160.0's exec
+// exited 1 at once ("Error finding codex home: ..."), nothing on standard
+// output; the positive canary failed unsupported_flag. The plan now makes
+// every directory the launch environment names in the home, and the fake's
+// exec fails as the real binary does without it.
+test('the domain makes the directories its environment names in the home (C2f): .codex and the XDG ones, empty, 0700, before launch; without them exec fails as on MAIN, the positive canary unsupported_flag', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cq-dom-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const WANT = ['.cache', '.codex', '.config', '.local/share', '.local/state'];
+  // The plan, from the launch environment the engine constructs.
+  const { env, plan } = domainPlan(dir, templates.templateEnv(T, KEY));
+  assert.equal(env.CODEX_HOME, '/surety/home/.codex', "the template's CODEX_HOME in the launch environment");
+  assert.deepEqual(homeDirs(env), WANT, 'every directory the environment names under /surety/home; HOME, TMPDIR and the rest not');
+  assert.deepEqual(plan.volEntries.filter((e) => e.path.startsWith('home/')), WANT.map((d) => ({ path: `home/${d}`, kind: 'dir', mode: 0o700 })));
+  assert.ok(!JSON.stringify(plan).includes(KEY), 'the key is in no part of the plan');
+  // Nothing else of the plan changes: its mounts, the recorded entries and
+  // the profile fingerprint are those of a plan given no environment.
+  const before = domainPlan(dir, templates.templateEnv(T, KEY), { unmade: true }).plan;
+  assert.deepEqual(before.volEntries.filter((e) => e.path.startsWith('home/')), [], 'before C2f: nothing made in the home');
+  assert.deepEqual([plan.fstab, plan.lateFstab, plan.volDirs].map((x) => x.length), [before.fstab, before.lateFstab, before.volDirs].map((x) => x.length));
+  const strip = (p, area) => JSON.stringify(p).split(area).join('<area>');
+  assert.equal(strip(planEntries(plan), dirname(plan.vol)), strip(planEntries(before), dirname(before.vol)), 'the same mounts');
+  assert.equal(planFingerprint(plan), planFingerprint(before), 'the same profile fingerprint');
+  // The init's own population of the volatile filesystem makes them, empty.
+  const root = mkdtempSync(join(dir, 'root-'));
+  populateDomain(root, plan);
+  for (const d of WANT) {
+    const at = join(root, 'surety', 'home', d);
+    const st = statSync(at);
+    assert.ok(st.isDirectory(), `${d} made`);
+    assert.equal(st.mode & 0o777, 0o700, `${d} mode 0700`);
+    assert.deepEqual(readdirSync(at), [], `${d} empty`);
+    assert.equal(st.uid, process.getuid(), `${d} owned as the home is`);
+  }
+  assert.deepEqual(readdirSync(join(root, 'surety', 'home')).sort(), ['.cache', '.codex', '.config', '.local']);
+  // The canaries on it pass; the positive one's exec answered.
+  const ok = await attempt(t);
+  assert.deepEqual(ok.canaries.map((c) => [c.kind, c.passed]), [['positive', true], ['cancellation', true], ['containment', true]]);
+  // The fix reverted (the plan given no environment, MAIN's domain): exec
+  // exits 1 at once, nothing on standard output, the real binary's message
+  // on standard error, and the positive canary fails unsupported_flag.
+  const bare = await runCanary(dir, 'att_bare', 'positive', { home: 'unmade' });
+  assert.equal(bare.code, 1);
+  assert.equal(bare.stdout, '', 'no stream line');
+  assert.equal(bare.stderr, 'Error finding codex home: CODEX_HOME points to "/surety/home/.codex", but that path does not exist\n');
+  assert.equal(bare.result, null);
+  assert.equal(bare.editContent, null);
+  const main = await attempt(t, { modes: { positive: { home: 'unmade' } } });
+  assert.deepEqual(main.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'unsupported_flag']], 'as on MAIN: the attempt ends at the positive canary');
+  assert.equal(main.concluded.entry ?? null, null, 'no entry');
 });
 
 test('the driver: all family features disabled or off, the three canaries run; one left on, or an unknown one, fails delegation_unverified, named, before any canary is launched', async (t) => {

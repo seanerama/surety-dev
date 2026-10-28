@@ -29,7 +29,16 @@ const { Launcher, adapterStreamFor } = await import(join(dist, 'invoke', 'choke.
 const { newHandle } = await import(join(dist, 'runtime.js'));
 const { exitCause } = await import(join(dist, 'invoke', 'exit-cause.js'));
 
+const { homeDirEntries } = await import(join(dist, 'invoke', 'sandbox', 'mounts.js'));
+const { populateVolatile } = await import(join(dist, 'invoke', 'domain-init.js'));
+
 const FAKE = join(here, 'fixtures', 'codex', 'fake-codex.mjs');
+
+// The domain's home as the engine makes it (C2f): every directory the
+// template's environment names under /surety/home (CODEX_HOME), made by the
+// domain init's own population of the volatile filesystem, here at
+// <root>/surety. Codex's exec, and the fake's, exits 1 without it.
+const makeHome = (root) => populateVolatile({ vol: join(root, 'surety'), volDirs: ['home'], volEntries: homeDirEntries(templates.templateEnv(T, null)) });
 const KEY = 'sk-proj-SYNTHETICCODEXTESTKEY000000000000000000000000';
 const T = templates.templateOf('codex');
 
@@ -243,6 +252,7 @@ function runFake(mode, { killAfterMs = null } = {}) {
   mkdirSync(join(root, 'surety', 'context'), { recursive: true });
   mkdirSync(join(root, 'surety', 'out'), { recursive: true });
   mkdirSync(join(root, 'surety', 'workspace'), { recursive: true });
+  makeHome(root);
   writeFileSync(join(root, 'surety', 'context', 'prompt.md'), '# The task\nDo the synthetic thing.\n');
   const modeFile = join(dir, 'mode.json');
   const dump = join(dir, 'dump.json');
@@ -332,6 +342,7 @@ test('the fake codex: a positive canary writes its edit and result from canary.j
     const root = join(dir, 'root');
     mkdirSync(join(root, 'surety', 'context'), { recursive: true });
     mkdirSync(join(root, 'surety', 'workspace'), { recursive: true });
+    makeHome(root);
     writeFileSync(join(root, 'surety', 'context', 'prompt.md'), 'canary\n');
     writeFileSync(join(root, 'surety', 'context', 'canary.json'), JSON.stringify({ kind: 'positive', edit: { path: 'canary/edit.txt', content: 'token-123\n' }, result: { status: 'completed', summary: 'canary done' } }));
     const modeFile = join(dir, 'mode.json');

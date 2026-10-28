@@ -56,6 +56,10 @@
 // standard error and prints nothing, while `--version` and `--help` still
 // answer.
 //
+// `exec` likewise needs CODEX_HOME to name an existing directory (C2f): it
+// exits 1, nothing on standard output, "Error finding codex home: ..." on
+// standard error, before its prompt is read.
+//
 // `codex features list` prints, by default, the list the real Codex CLI
 // 0.160.0 printed in an empty CODEX_HOME on 2026-10-28 (saved verbatim as
 // features-0.160.0.txt beside this file; the evidence folder
@@ -138,6 +142,28 @@ if (argv.length >= 2 && argv.at(-2) === 'features' && argv.at(-1) === 'list') {
 const root = mode.root ?? '/';
 const at = (p) => join(root, p);
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+
+// `exec` needs CODEX_HOME to name an existing directory too (C2f, observed
+// on MAIN 2026-10-28 and reproduced with the real 0.160.0 binary, no key,
+// no network): unset, or naming no directory, it exits 1 at once, before
+// reading its prompt, with "Error finding codex home: CODEX_HOME points to
+// "<path>", but that path does not exist" on standard error and nothing on
+// standard output. An absolute CODEX_HOME is looked for under `root`, as
+// every /surety path of this fake is (under "/", inside a domain, it is the
+// path itself).
+if (argv[0] === 'exec') {
+  const codexHome = process.env.CODEX_HOME;
+  let isDir = false;
+  try {
+    isDir = codexHome !== undefined && codexHome !== '' && statSync(codexHome.startsWith('/') ? at(codexHome.slice(1)) : codexHome).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) {
+    process.stderr.write(`Error finding codex home: CODEX_HOME points to ${JSON.stringify(codexHome ?? '')}, but that path does not exist\n`);
+    process.exit(1);
+  }
+}
 
 const stdin = await new Promise((resolve) => {
   const chunks = [];
