@@ -17,7 +17,8 @@ import type { StoreClient } from './store/client.js';
 import type { Scope } from './boundary/scope.js';
 import type { SandboxLaunch } from './invoke/sandboxed.js';
 import type { DomainProxy } from './invoke/proxy/proxy.js';
-import type { BackendSampling, ClaudeStream } from './invoke/adapters/claude.js';
+import type { BackendSampling } from './invoke/adapters/claude.js';
+import type { AdapterStream } from './invoke/adapters/codex.js';
 import type { Sampler } from './invoke/sampler.js';
 import { seamBoundary } from './testing/seam.js';
 import { redactText, redactValue } from './records/redact.js';
@@ -152,8 +153,8 @@ export interface RunHandle {
   // on.
   egressEvidence: import('./invoke/proxy/egress.js').EgressEvidence[];
   // A real backend's stream, as its adapter reads it (invoke/adapters/
-  // claude.ts); null for the scripted protocol.
-  adapterStream: ClaudeStream | null;
+  // claude.ts, codex.ts); null for the scripted protocol.
+  adapterStream: AdapterStream | null;
   // A real backend's canary: the host's samples of its domain's processes
   // (D2 §7.2), from the backend's start to its exit.
   sampler: Sampler | null;

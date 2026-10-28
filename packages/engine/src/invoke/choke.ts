@@ -39,7 +39,7 @@ import { engineNode } from './sandbox/tools.js';
 import { readPopulated, verifyLimits } from '../boundary/cgroup.js';
 import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
-import { TEMPLATES, templateOf } from './adapters/templates.js';
+import { TEMPLATES, templateEnv, templateOf } from './adapters/templates.js';
 import { helpHash } from './static.js';
 import { type ResultCollection, collectResult, inventory, inventoryRecord } from './collect.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
@@ -51,6 +51,7 @@ import { assistantCanaryEvidenceId, canaryEdit } from '../trust/canaries.js';
 import { validateReply } from '../assistant/turn-package.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
+import { type AdapterStream, type CodexStreamSummary, CodexStream } from './adapters/codex.js';
 import { exitCause } from './exit-cause.js';
 import { type ContainmentWatch, watchContainment } from './containment.js';
 import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
@@ -91,6 +92,9 @@ export interface CanaryObservation {
   // A real backend's: its stream as the adapter read it, and the host's
   // samples of its domain's processes; null for the scripted backend.
   stream: ClaudeStreamSummary | null;
+  // A Codex backend's stream as its adapter read it (C1 of Codex support);
+  // null for every other backend. Not yet judged (C2).
+  codexStream: CodexStreamSummary | null;
   sampling: BackendSampling | null;
   exitStatus: number | null;
 }
@@ -114,10 +118,27 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     termToExitMs: launch?.termToExitMs() ?? null,
     egress: handle.egressEntries ?? [],
     providerFilesRecord: c.providerRecord,
-    stream: handle.adapterStream?.summary() ?? null,
+    stream: claudeSummary(handle),
+    codexStream: codexSummary(handle),
     sampling: stopSampler(handle),
     exitStatus: typeof handle.exit?.code === 'number' ? handle.exit.code : null,
   });
+}
+
+// The run's stream summary by its adapter: Claude Code's, Codex's.
+export const claudeSummary = (handle: RunHandle): ClaudeStreamSummary | null => (handle.adapterStream instanceof ClaudeStream ? handle.adapterStream.summary() : null);
+export const codexSummary = (handle: RunHandle): CodexStreamSummary | null => (handle.adapterStream instanceof CodexStream ? handle.adapterStream.summary() : null);
+
+// The adapter that reads an entry's backend's stream (D2 §1.1): Claude
+// Code's for `claude`, Codex's for `codex` (C1 of Codex support); null, the
+// scripted protocol, for every other. Under Claude's subscription token the
+// reported cost is Claude Code's own estimate, recorded `estimated` (E74
+// item 1).
+export function adapterStreamFor(entry: { backend: string; auth_mode: string } | null): AdapterStream | null {
+  if (entry === null) return null;
+  if (entry.backend === 'claude') return new ClaudeStream({ costAs: entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
+  if (entry.backend === 'codex') return new CodexStream();
+  return null;
 }
 
 function collectedValue(c: Collected): unknown {
@@ -277,8 +298,12 @@ function realBackend(claim: Claim): BackendSpec | null {
     command: e.binary_path,
     args: template.render({ model: e.model, invocation: claim.invocation }),
     // The template's fixed variables and the credential of the entry's mode
-    // in the variable that mode's template names (E74 items 1 and 3).
-    env: { ...template.env, ...(key === null ? {} : { [template.keyVariable]: key }) },
+    // in the variable (or variables) that mode's template names (E74 items 1
+    // and 3).
+    env: templateEnv(template, key),
+    // What the template writes on standard input (Codex: the fixed prompt);
+    // otherwise the request line.
+    ...(template.stdin === undefined ? {} : { stdin: template.stdin }),
     // The backend's installation, read-only at its pinned path (D2 §2.3).
     binds: [{ path: e.binary_path, writable: false }],
   };
@@ -337,11 +362,8 @@ export class Launcher {
     const handle = newHandle(claim);
     // The help was checked just now, for this very entry: not again.
     if (preflight !== null && claim.trust_entry === preflight.entry && preflight.found_help !== null) handle.helpChecked = preflight.found_help;
-    // The adapter that reads a real backend's stream (D2 §1.1): Claude
-    // Code's for `claude`; the scripted protocol otherwise.
-    // Under the subscription token the reported cost is Claude Code's own
-    // estimate, recorded `estimated` (E74 item 1).
-    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream({ costAs: claim.entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
+    // The adapter that reads a real backend's stream (D2 §1.1).
+    handle.adapterStream = adapterStreamFor(claim.entry);
     this.rt.handles.set(claim.run, handle);
     // The baseline of a fresh checkout of the base, read now: it is fixed
     // with the workspace's intent.
@@ -380,7 +402,7 @@ export class Launcher {
     const claim = await this.rt.engine<Claim | null>('session.turn_claim', { run: args.run, invocation: args.invocation, scripted: backend?.version ?? null });
     if (!claim || this.rt.handles.has(claim.run)) return false;
     const handle = newHandle(claim);
-    if (claim.entry !== null && claim.entry.backend === 'claude') handle.adapterStream = new ClaudeStream({ costAs: claim.entry.auth_mode === 'subscription_token' ? 'estimated' : 'reported' });
+    handle.adapterStream = adapterStreamFor(claim.entry);
     this.rt.handles.set(claim.run, handle);
     const ctx = repoContext(target.repo);
     const tree = await treeOf(ctx, claim.base_revision).catch(() => null);
@@ -795,7 +817,7 @@ export class Launcher {
       });
     });
     child.stdin!.on('error', () => {});
-    child.stdin!.end(requestLine(handle, handle.workspacePath!, this.kernelContext.get(claim.invocation) ?? null));
+    child.stdin!.end(backend.stdin ?? requestLine(handle, handle.workspacePath!, this.kernelContext.get(claim.invocation) ?? null));
     this.kernelContext.delete(claim.invocation);
 
     try {
@@ -865,7 +887,7 @@ export class Launcher {
     }
     let prepared: Awaited<ReturnType<typeof prepareSandbox>>;
     try {
-      prepared = await prepareSandbox(this.rt, handle, backend, requestLine(handle, '/surety/workspace', '/surety/context'), repo);
+      prepared = await prepareSandbox(this.rt, handle, backend, backend.stdin ?? requestLine(handle, '/surety/workspace', '/surety/context'), repo);
     } catch (err) {
       log('sandbox', err, { run: claim.run });
       await transcript.abandon();
@@ -1038,7 +1060,7 @@ export class Launcher {
         // While an expired lease is pending its challenge (SEAM.md §130), a
         // usage line is recorded and checked against the budget at once; a
         // result and a heartbeat wait for the challenge's outcome.
-        const usageOnly = handle.adapterStream !== null ? ClaudeStream.usageOnly(line) : isUsageLine(line);
+        const usageOnly = handle.adapterStream !== null ? handle.adapterStream.usageOnly(line) : isUsageLine(line);
         if ((handle.gate || this.pausedPastLease(handle)) && !usageOnly) {
           this.gate(handle).lines.push(line);
           continue;
@@ -1204,7 +1226,7 @@ export class Launcher {
     if (claim.attempt !== null) return this.decideCanary(handle, cls, c, accepted);
     // A model fallback (E86 item 3): the work is not the entry's model's, so
     // its result is not accepted as the entry's work.
-    const fallback = claim.entry !== null ? claudeModelFallback(handle.adapterStream?.summary() ?? null, claim.entry.model) : null;
+    const fallback = claim.entry !== null ? claudeModelFallback(claudeSummary(handle), claim.entry.model) : null;
     if (cls === 'clean' && fallback !== null) {
       // Kept as unaccepted, never the run's result.
       await this.publishUnaccepted(handle, c);
@@ -1245,7 +1267,7 @@ export class Launcher {
       if (accepted) return { outcome: 'failed', reason: 'invalid_result', reasonText: 'exit class error_exit: a well-formed result contradicts the failed exit' };
       // The cause, as far as the engine saw it: the backend's terminal
       // event and the domain's egress refusals.
-      const cause = exitCause(handle.adapterStream?.summary() ?? null, handle.egressEntries);
+      const cause = exitCause(claudeSummary(handle), handle.egressEntries, codexSummary(handle));
       return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}${fallback ? `; ${fallback.text}` : ''}` };
     }
     await this.publishUnaccepted(handle, c);
@@ -1612,7 +1634,7 @@ export class Launcher {
   // the scripted protocol's are; the terminal event noted for the exit
   // class. Its result is the file, read after termination (D2 §1.4), never
   // a line; and nothing else in the stream is a command to the engine.
-  private async adapterCallback(handle: RunHandle, stream: ClaudeStream, line: string): Promise<void> {
+  private async adapterCallback(handle: RunHandle, stream: AdapterStream, line: string): Promise<void> {
     const r = stream.feed(line);
     const { run, generation, invocation } = handle.claim;
     for (const u of r.usage) {

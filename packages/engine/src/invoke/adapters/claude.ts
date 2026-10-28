@@ -185,6 +185,10 @@ export class ClaudeStream {
   // Whether a line only reports usage, so that it may be acted on while an
   // expired lease waits for its challenge (D2 §3.5; choke.ts): an assistant
   // message. A result is the terminal event and waits.
+  usageOnly(line: string): boolean {
+    return ClaudeStream.usageOnly(line);
+  }
+
   static usageOnly(line: string): boolean {
     try {
       const m = JSON.parse(line) as unknown;
