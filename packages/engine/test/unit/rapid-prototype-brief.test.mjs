@@ -481,7 +481,8 @@ test('demonstration on the scripted backend: idea to alpha_ready through prepara
   // 8. The candidate deployed to Alpha (M4's machinery; a fixture here) and the E1 hook: alpha_ready.
   db.pragma('foreign_keys = OFF');
   db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, current_generation) VALUES ('env_a', ?, ?, 'alpha_fx', 'local_service', 'x', '{}', 1)`).run(AT, p.id);
-  db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress) VALUES ('cand_a', ?, ?, 1, 'sha_plan', 'lin', ?, 'engine_cadence', 'alpha_deployed')`).run(AT, p.id, AT);
+  // Nominated on the approved brief's spec revision (slice E4: only a candidate of the iteration's own brief is its Alpha).
+  db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress, spec_revision) VALUES ('cand_a', ?, ?, 1, 'sha_plan', 'lin', ?, 'engine_cadence', 'alpha_deployed', ?)`).run(AT, p.id, AT, spec.id);
   db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, outcome) VALUES ('dreq_a', ?, ?, 'k', 'policy', 'cand_a', 'env_a', 'deployed')`).run(AT, p.id);
   db.pragma('foreign_keys = ON');
   transact(db, ENGINE_ACTOR, (tx) => recordIterationAlpha(tx, { project: p.id, candidate: 'cand_a', request: 'dreq_a', operation: 'op_a' }));

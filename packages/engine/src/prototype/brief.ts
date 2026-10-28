@@ -35,7 +35,8 @@
 // before approving it) is deferred; the brief approval card offers approve
 // and reject only, and a changed brief is a new preparation (POST
 // …/iterations/:i/prepare). Iterate (a new iteration with its predecessor)
-// is slice E4's.
+// is slice E4's (prototype/iterate.ts); a continuing iteration's question and
+// package name what it continues (continuationOf).
 
 import { Refusal } from '../refusal.js';
 import { PROTOTYPE_LIMIT_KEYS } from '../config/schema.js';
@@ -110,6 +111,8 @@ interface IterationLite {
   next_step: string | null;
   outcome_reason: string | null;
   created_at: string;
+  predecessor: string | null;
+  change_text: string | null;
 }
 
 const iterationById = (db: Db, id: string): IterationLite | undefined => db.prepare('SELECT * FROM "prototype_iterations" WHERE "id" = ?').get(id) as IterationLite | undefined;
@@ -167,7 +170,51 @@ export const PREPARATION_KEYS = [
   'idea_version',
   'idea_blob',
   'policy_revision',
+  // Slice E4 (R7): the iteration it continues and the owner's change.
+  'continues',
+  'change',
 ];
+
+// Slice E4 (R7): the iteration an Iterate continues (its predecessor), and
+// the latest approved brief along the chain of predecessors (the brief the
+// new preparation starts from): null for a first iteration.
+export interface Continuation {
+  predecessor: string;
+  predecessor_seq: number;
+  change: string | null;
+  // The latest approved brief among the predecessors (by the chain, not by
+  // time), and the iteration that approved it; null when none was approved.
+  previous_brief: Record<string, unknown> | null;
+  previous_brief_iteration_seq: number | null;
+  previous_brief_spec_revision: string | null;
+}
+
+export function continuationOf(db: Db, iteration: string): Continuation | null {
+  const it = iterationById(db, iteration);
+  if (!it || it.predecessor === null) return null;
+  const pred = iterationById(db, it.predecessor);
+  if (!pred) return null;
+  let at: (IterationLite & { brief_spec_revision?: string | null }) | undefined = pred;
+  const seen = new Set<string>();
+  while (at && !(at.approved_at !== null && at.brief_json !== null)) {
+    seen.add(at.id);
+    at = at.predecessor === null || seen.has(at.predecessor) ? undefined : iterationById(db, at.predecessor);
+  }
+  let brief: Record<string, unknown> | null = null;
+  try {
+    brief = at?.brief_json ? (JSON.parse(at.brief_json) as Record<string, unknown>) : null;
+  } catch {
+    brief = null;
+  }
+  return {
+    predecessor: pred.id,
+    predecessor_seq: pred.seq,
+    change: it.change_text,
+    previous_brief: brief,
+    previous_brief_iteration_seq: brief === null ? null : at!.seq,
+    previous_brief_spec_revision: brief === null ? null : ((at as { brief_spec_revision?: string | null }).brief_spec_revision ?? null),
+  };
+}
 
 // The work items of the iteration's preparations not yet over.
 function preparationPending(db: Db, iteration: string): string | null {
@@ -182,12 +229,13 @@ function preparationPending(db: Db, iteration: string): string | null {
 
 export function preparationManifest(db: Db, iteration: string): Record<string, unknown> {
   const it = iterationById(db, iteration);
-  if (!it) return { iteration, iteration_seq: null, iteration_status: null, role: PREPARATION_ROLE, provider: null, model: null, resolution: null, run_token_limit: null, estimated_usd: null, estimate_basis: null, paid: null, authorizes: null, idea_version: null, idea_blob: null, policy_revision: null };
+  if (!it) return { iteration, iteration_seq: null, iteration_status: null, role: PREPARATION_ROLE, provider: null, model: null, resolution: null, run_token_limit: null, estimated_usd: null, estimate_basis: null, paid: null, authorizes: null, idea_version: null, idea_blob: null, policy_revision: null, continues: null, change: null };
   const rm = roleModelOf(db, it.project, PREPARATION_ROLE);
   const limit = projectPolicy(db, it.project).budget_run_billable_tokens!;
   const paid = rm.provider !== 'scripted';
   const est = paid ? attemptSpendEstimate(rm.provider, rm.model, limit, 1) : null;
   const p = db.prepare('SELECT "idea_version", "idea_blob" FROM "projects" WHERE "id" = ?').get(it.project) as { idea_version: number | null; idea_blob: string | null };
+  const cont = continuationOf(db, it.id);
   return {
     iteration: it.id,
     iteration_seq: it.seq,
@@ -211,6 +259,8 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
     idea_version: p.idea_version,
     idea_blob: p.idea_blob,
     policy_revision: policyRevision(db, it.project),
+    continues: cont === null ? null : { iteration: cont.predecessor, seq: cont.predecessor_seq, previous_brief_iteration_seq: cont.previous_brief_iteration_seq, previous_brief_spec_revision: cont.previous_brief_spec_revision },
+    change: cont === null ? null : cont.change,
   };
 }
 
@@ -231,9 +281,16 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     const cost = m.paid
       ? `Its per-run limit is ${String(m.run_token_limit)} billable tokens; at the price table that is an estimated ${usd(m.estimated_usd)} at most (${String(m.estimate_basis)}): an estimate, not a cap.`
       : `Its per-run limit is ${String(m.run_token_limit)} billable tokens. The scripted provider is unpaid: no paid work follows.`;
+    // Slice E4 (R7): an iteration that continues another says which, and
+    // the change the owner asked for.
+    const cont = m.continues as { seq: number; previous_brief_iteration_seq: number | null } | null;
+    const continues =
+      cont === null
+        ? ''
+        : ` This is iteration ${it.seq} of the app, continuing from iteration ${cont.seq}: ${m.change === null ? 'you gave no change request' : `the change you asked for is "${String(m.change)}"`}; the preparation starts from ${cont.previous_brief_iteration_seq === null ? 'the idea (no earlier brief was approved)' : `the brief approved in iteration ${cont.previous_brief_iteration_seq}`}, and its brief, once you approve it, is a new specification revision. Iteration ${cont.seq}'s runs, usage, receipt and Alpha are kept as they are.`;
     return {
       manifest: m,
-      question: `Authorize one brief preparation run for prototype iteration ${it.seq}? It runs ${who}, reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.${refused}`,
+      question: `Authorize one brief preparation run for prototype iteration ${it.seq}?${continues} It runs ${who}, reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.${refused}`,
       options: [
         {
           key: 'approve',
@@ -739,6 +796,9 @@ export interface BriefPreparationFacts {
   // What a preparation of the same iteration last ended with, when one did
   // (a refused brief, a rejected one): what to do differently.
   previous: { run: string; outcome: string | null; reason_text: string | null } | null;
+  // Slice E4 (R7): the iteration this one continues, the owner's change, and
+  // the latest approved brief of its predecessors; null for a first iteration.
+  continues: Continuation | null;
 }
 
 export function briefPreparationFacts(db: Db, item: { id: string; project: string; subject: string }): BriefPreparationFacts | null {
@@ -749,7 +809,7 @@ export function briefPreparationFacts(db: Db, item: { id: string; project: strin
   const prev = db
     .prepare(`SELECT r."id", r."outcome", r."reason_text" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."iteration" = ? AND w."kind" = 'brief_preparation' AND r."state" = 'ended' AND w."id" <> ? ORDER BY r."seq" DESC LIMIT 1`)
     .get(it.id, item.id) as { id: string; outcome: string | null; reason_text: string | null } | undefined;
-  return { iteration: it.id, iteration_seq: it.seq, idea_path: '.surety/idea.md', idea_version: p.idea_version, objectives: { ...OBJECTIVES }, model_fields: MODEL_FIELDS, engine_fields: ENGINE_FIELDS, previous: prev ? { run: prev.id, outcome: prev.outcome, reason_text: prev.reason_text } : null };
+  return { iteration: it.id, iteration_seq: it.seq, idea_path: '.surety/idea.md', idea_version: p.idea_version, objectives: { ...OBJECTIVES }, model_fields: MODEL_FIELDS, engine_fields: ENGINE_FIELDS, previous: prev ? { run: prev.id, outcome: prev.outcome, reason_text: prev.reason_text } : null, continues: continuationOf(db, it.id) };
 }
 
 export const BRIEF_TASK = "Prepare this rapid prototype's brief: read the idea (.surety/idea.md), write the minimal specification into .surety/spec/spec.md, and report the brief's idea-derived fields in your result's `brief`. You approve nothing: the owner approves the brief.";
@@ -765,6 +825,22 @@ export function briefPreparationText(f: BriefPreparationFacts): string[] {
     `3. If the idea does not fit ${f.objectives.max} objectives, propose a smaller scope: keep the objectives that show the idea best, and list everything you leave out in \`left_out\`. Never drop a requirement silently; what is mocked goes in \`mocked\`, what you assume in \`assumptions\`, the prototype's known limits in \`limitations\`, and the idea's constraints in \`constraints\`.`,
     `Do not report ${f.engine_fields.join(', ')}: the engine fills them from what it serves (the target and its exposure, the models, the limits, the preparation, the stop conditions). A brief that is not in this form is refused and nothing is approved.`,
     ...(f.previous ? ['', `The iteration's last preparation run (${f.previous.run}) ended ${f.previous.outcome ?? 'unknown'}${f.previous.reason_text ? `: ${f.previous.reason_text}` : ''}.`] : []),
+    ...(f.continues ? continuationText(f.continues) : []),
+  ];
+}
+
+// Slice E4 (R7): what a preparation of an iteration that continues another
+// is told: the previous approved brief (whole, in /surety/context/
+// prototype-brief.json as `continues.previous_brief`) and the owner's change.
+export function continuationText(c: Continuation): string[] {
+  return [
+    '',
+    '## Continuing from the previous iteration',
+    '',
+    `This iteration continues from iteration ${c.predecessor_seq}. The owner's change request: ${c.change === null ? '(none given: keep the scope, and correct what the previous iteration left unfinished)' : JSON.stringify(c.change)}.`,
+    c.previous_brief === null
+      ? 'No earlier brief was approved: prepare the brief from the idea, with the change.'
+      : `The previous approved brief (iteration ${c.previous_brief_iteration_seq}) is in /surety/context/prototype-brief.json under continues.previous_brief, and the specification it approved is .surety/spec/spec.md in your workspace. Start from them: change what the change request asks, keep the rest, and write the whole specification again as its next version (its Spec version one more than the current one, its change log naming the change). The brief you report is the whole brief for this iteration, not a difference.`,
   ];
 }
 
