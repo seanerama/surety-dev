@@ -8469,3 +8469,9 @@ R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 mi
   - a manifest binding the role, provider and model, the run's token limit with its estimated cost and basis, whether it is paid, what it authorizes, the idea and the policy revision;
   - no effect intent.
 - **No Verifier table holds these, so they are not tabled:** the record kind `prototype_brief`, the routing value `policy_authorized` and the `prototype.*` events. No acceptance row yet pins the preparation approval, the brief, or the policy-authorized first plan.
+
+## 574. The preparation approval binds what it continues and the change (row M73; objection 219; the owner's rulings R7 and R8 of 2026-10-28; the Builder's `build/rapid-prototype` 516f9a91, slice E4; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/decisions.json`**: `prototype_preparation_approval`'s manifest gains `continues` and `change`, after `policy_revision`, as the contract orders them. `continues` is null for a first iteration, else the predecessor and its brief. `change` is null or the owner's change request.
+- **M73's manifest check is one-way.** Each key the table lists must be in the contract, but the check does not catch a contract key the table omits. M73 therefore passed before these two keys were listed and passes now.
+- **Iterate's behaviour is not pinned by an acceptance row yet:** the new iteration, its predecessor, its change text and the events `prototype.iteration_iterated` and `prototype.alpha_not_attributed`.
