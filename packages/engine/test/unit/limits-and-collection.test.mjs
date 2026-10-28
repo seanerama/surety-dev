@@ -170,3 +170,35 @@ test('credential paths', () => {
   for (const p of ['/surety/home/.ssh', '/surety/home/.ssh/id_rsa', '/surety/home/.netrc', '/surety/home/.config/gh/hosts.yml', '/surety/home/.claude/x']) assert.ok(collect.isCredentialPath(p), p);
   for (const p of ['/surety/home/settings.json', '/tmp/.netrc', '/surety/home/.config/other']) assert.ok(!collect.isCredentialPath(p), p);
 });
+
+test('Codex shell snapshots (C2d): $CODEX_HOME/shell_snapshots/ looked at through the hold, entries and regular files counted, nothing read, no link followed; not held is unknown, never absent', async () => {
+  const { CODEX_ENV } = await import(join(dist, 'invoke', 'adapters', 'templates.js'));
+  assert.equal(collect.CODEX_SHELL_SNAPSHOTS.location, `${CODEX_ENV.CODEX_HOME}/shell_snapshots`, 'the template\'s CODEX_HOME');
+  assert.equal(collect.CODEX_SHELL_SNAPSHOTS.at, `home/${CODEX_ENV.CODEX_HOME.slice('/surety/home/'.length)}/shell_snapshots`);
+  assert.deepEqual(collect.codexShellSnapshots(null), { state: 'not_held' });
+  assert.deepEqual(collect.codexShellSnapshots({ held: false, vol: '/nonexistent' }), { state: 'not_held' });
+  const h = fakeHold();
+  try {
+    assert.deepEqual(collect.codexShellSnapshots(h), { state: 'absent' }, 'no .codex');
+    mkdirSync(join(h.vol, 'home', '.codex'));
+    assert.deepEqual(collect.codexShellSnapshots(h), { state: 'absent' }, 'no shell_snapshots');
+    mkdirSync(join(h.vol, 'home', '.codex', 'shell_snapshots'));
+    assert.deepEqual(collect.codexShellSnapshots(h), { state: 'present', type: 'dir', entries: 0, files: 0 });
+    writeFileSync(join(h.vol, 'home', '.codex', 'shell_snapshots', 'a.sh'), 'export CODEX_API_KEY=sk-synthetic\n');
+    mkdirSync(join(h.vol, 'home', '.codex', 'shell_snapshots', 'd'));
+    assert.deepEqual(collect.codexShellSnapshots(h), { state: 'present', type: 'dir', entries: 2, files: 1 });
+    // A link in place of the directory is reported, never followed.
+    const elsewhere = scratch();
+    writeFileSync(join(elsewhere, 'x.sh'), 'x');
+    rmSync(join(h.vol, 'home', '.codex', 'shell_snapshots'), { recursive: true });
+    symlinkSync(elsewhere, join(h.vol, 'home', '.codex', 'shell_snapshots'));
+    assert.deepEqual(collect.codexShellSnapshots(h), { state: 'present', type: 'symlink', entries: 1, files: 0 });
+    rmSync(elsewhere, { recursive: true, force: true });
+    // The inventory still lists .codex as a credential location and does not walk it.
+    const inv = await collect.inventory(h, BOUNDS, []);
+    assert.ok(inv.excluded.some((e) => e.path === '/surety/home/.codex'));
+    assert.ok(!inv.locations.some((l) => l.path.startsWith('/surety/home/.codex/')));
+  } finally {
+    rmSync(h.vol, { recursive: true, force: true });
+  }
+});

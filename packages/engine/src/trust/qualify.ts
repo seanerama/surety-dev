@@ -20,7 +20,8 @@ import { ECHO_HOST } from '../invoke/proxy/echo.js';
 import { Refusal } from '../refusal.js';
 import { PROJECT_POLICY } from '../config/schema.js';
 import { seamQualifyMode, seamRefuseBinary } from '../testing/seam.js';
-import { helpHash, versionOf } from '../invoke/static.js';
+import { featureInventory, helpHash, versionOf } from '../invoke/static.js';
+import { CODEX_FEATURES_ARGS } from '../invoke/adapters/codex-features.js';
 import { resolveInstallation } from './fixture.js';
 import { pinBinary } from './pin.js';
 
@@ -39,6 +40,11 @@ export const CANARY_DEADLINES = { positive: 900, cancellation: 600, containment:
 
 const invalid = (field: string, why: string) => new Refusal(400, 'invalid_value', `${field} ${why}.`, 'Correct the request; nothing was written.', { field });
 
+// Codex sessions are not built (M5's not-claimed list, "Codex sessions"; C2
+// of Codex support): `session_headless` is refused for codex, so the
+// continuation canary never runs against it.
+export const CODEX_SESSIONS_NOT_BUILT = "session_headless is not offered for codex: Codex sessions are not built (M5's not-claimed list), so no continuation canary runs against Codex; qualify codex with one_shot_headless";
+
 export interface QualifyRequest {
   backend: string;
   mode: string;
@@ -48,6 +54,11 @@ export interface QualifyRequest {
   binary_sha256: string;
   help_sha256: string;
   version: string;
+  // Codex's `codex features list` (D2 §4.6, D2-T13): its text and SHA-256,
+  // and the arguments it was run with (C2d: under the template's own
+  // feature configuration), judged by the attempt's driver; null for a
+  // backend that has none.
+  feature_inventory: { text: string; sha256: string; args: readonly string[] } | null;
   template: string;
   template_version: string;
   candidate_egress: string[];
@@ -107,6 +118,9 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
   if (mode !== 'one_shot_headless' && mode !== 'session_headless') throw invalid('mode', 'must be one_shot_headless or session_headless');
   // Each assistant turn is one-shot; no session is qualified for it.
   if (purpose === 'assistant' && mode !== 'one_shot_headless') throw invalid('mode', 'must be one_shot_headless for the workspace assistant');
+  // Codex sessions are not built (M5's not-claimed list; C2 of Codex
+  // support): the continuation canary never runs against Codex.
+  if (backend === 'codex' && mode === 'session_headless') throw invalid('mode', CODEX_SESSIONS_NOT_BUILT);
   if (typeof body.model !== 'string' || body.model.trim() === '' || body.model.startsWith('-')) throw invalid('model', 'must be a model name');
   const list = body.candidate_egress ?? [];
   if (!Array.isArray(list) || list.some((h) => typeof h !== 'string' || h.trim().length === 0)) throw invalid('candidate_egress', 'must be a list of host names');
@@ -163,6 +177,7 @@ export async function prepareQualify(b: unknown, ctx: QualifyContext | null = nu
     binary_sha256: statics.sha256,
     help_sha256: statics.help,
     version: statics.version,
+    feature_inventory: statics.features,
     template: template.text,
     template_version: template.version,
     candidate_egress: [...new Set(list.map((h) => canonicalHost(String(h))))],
@@ -188,6 +203,7 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
   if (body.model !== undefined && !isModelName(body.model)) throw invalid('model', 'must be a model name');
   const entry = ctx?.entryOf ? await ctx.entryOf(body.entry) : null;
   if (entry === null) throw new Refusal(404, 'not_found', `No trust entry ${body.entry} exists.`, 'Name an active entry.', { entry: body.entry });
+  if (entry.backend === 'codex') throw invalid('mode', CODEX_SESSIONS_NOT_BUILT);
   if (entry.status !== 'active') throw new Refusal(409, 'backend_refused', `Trust entry ${entry.id} is ${entry.status}, not active: only an active entry is qualified for sessions.`, 'Activate the entry first.', { entry: entry.id, status: entry.status });
   if (entry.session_qualified === 1) throw new Refusal(409, 'illegal_transition', `Trust entry ${entry.id} is already qualified for sessions.`, 'Nothing to do.', { entry: entry.id });
   // The canary runs on the entry's own model (D6 §2.6; D2 §7.2).
@@ -245,6 +261,7 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
     binary_sha256: statics.sha256,
     help_sha256: statics.help,
     version: statics.version,
+    feature_inventory: statics.features,
     template: template.text,
     template_version: template.version,
     candidate_egress: egress,
@@ -256,7 +273,13 @@ async function prepareSessionQualify(body: Record<string, unknown>, ctx: Qualify
 // The static checks (D2 §7.2; SEAM.md §148): the binary's real path and its
 // file's SHA-256, and `--version` and `--help`, each run once, exactly so,
 // outside any domain. A real backend's binary is refused in the test mode.
-async function staticChecks(backend: string, given: string, pinHome: string | null): Promise<{ path: string; sha256: string; help: string; version: string }> {
+// Codex's also `codex features list` (D2 §4.6, D2-T13), recorded on the
+// attempt and judged by its driver (adapters/codex-features.ts).
+async function staticChecks(
+  backend: string,
+  given: string,
+  pinHome: string | null,
+): Promise<{ path: string; sha256: string; help: string; version: string; features: { text: string; sha256: string; args: readonly string[] } | null }> {
   if (!given.startsWith('/')) throw invalid('binary', 'must be an absolute path');
   let path: string;
   try {
@@ -281,5 +304,10 @@ async function staticChecks(backend: string, given: string, pinHome: string | nu
   const version = await versionOf(path, backend).catch(() => null);
   const help = await helpHash(path, backend).catch(() => null);
   if (version === null || help === null) throw new Refusal(409, 'backend_refused', `${path} did not answer --version and --help.`, 'Name a binary that answers both.', { field: 'binary' });
-  return { path, sha256, help, version };
+  let features: { text: string; sha256: string; args: readonly string[] } | null = null;
+  if (backend === 'codex') {
+    features = await featureInventory(path, backend, CODEX_FEATURES_ARGS).catch(() => null);
+    if (features === null) throw new Refusal(409, 'backend_refused', `${path} did not answer \`${CODEX_FEATURES_ARGS.join(' ')}\`, the feature inventory a Codex attempt is judged on (D2 §4.6).`, 'Name a Codex binary that answers it.', { field: 'binary' });
+  }
+  return { path, sha256, help, version, features };
 }

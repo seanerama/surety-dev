@@ -1087,7 +1087,8 @@
       "containment_failed",
       "model_fallback",
       "continuation_failed",
-      "not_dispatched"
+      "not_dispatched",
+      "usage_limit"
     ]
   },
   "tables": {
@@ -5178,6 +5179,15 @@
           "references": "trust_entries"
         },
         "profile": {
+          "required": false
+        },
+        "feature_inventory": {
+          "required": false
+        },
+        "feature_inventory_sha256": {
+          "required": false
+        },
+        "feature_inventory_args": {
           "required": false
         }
       }

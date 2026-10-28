@@ -12,6 +12,9 @@ export interface BackendSpec {
   args: string[];
   // Variables beyond the constructed environment (a provider key).
   env?: Record<string, string>;
+  // What is written on its standard input, where its template fixes it (a
+  // real backend's prompt); otherwise the scripted protocol's request line.
+  stdin?: string;
   // Host paths the sandbox binds at their real paths beyond its profile's.
   binds?: { path: string; writable: boolean }[];
 }

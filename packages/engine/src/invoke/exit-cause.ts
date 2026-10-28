@@ -9,6 +9,7 @@
 
 import { redactText } from '../records/redact.js';
 import type { ClaudeStreamSummary } from './adapters/claude.js';
+import { type CodexStreamSummary, codexFailure } from './adapters/codex.js';
 
 export const EXIT_CAUSE_MAX = 600;
 const TEXT_MAX = 240;
@@ -49,8 +50,12 @@ export function bounded(text: string, max: number): string {
 }
 
 // The cause, or null when the engine saw nothing that names one.
-export function exitCause(stream: ClaudeStreamSummary | null, egress: readonly EgressEntry[] | null): string | null {
+export function exitCause(stream: ClaudeStreamSummary | null, egress: readonly EgressEntry[] | null, codex: CodexStreamSummary | null = null): string | null {
   const parts: string[] = [];
+  // Codex's terminal event (`turn.failed`) or its error events, classed by
+  // their own words (adapters/codex.ts).
+  const failed = codex === null ? null : codexFailure(codex);
+  if (failed !== null) parts.push(`its stream reports ${failed.class}: "${bounded(scrubText(failed.message.split('\n')[0] ?? ''), TEXT_MAX)}"`);
   const r = stream?.result ?? null;
   if (r !== null && (r.is_error === true || r.subtype !== 'success')) {
     const what = [r.terminal_reason ?? r.subtype ?? 'error', r.api_error_status !== null ? `status ${r.api_error_status}` : null].filter((x): x is string => x !== null).join(', ');

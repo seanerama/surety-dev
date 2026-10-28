@@ -29,7 +29,7 @@ import {
   writeEntry,
 } from './trust.js';
 import type { Tx } from './tx.js';
-import { attemptSpendEstimate } from './ledger.js';
+import { attemptSpendEstimate, attemptSpendUnavailable } from './ledger.js';
 import { type RoleProfile, defaultProfileMax, engineSettings, projectPolicy, roleProfileOf } from './settings.js';
 
 // An attempt is proposed and its approval asked for; nothing runs until a
@@ -103,6 +103,7 @@ export function qualify(
     binary_sha256: string;
     help_sha256: string;
     version: string;
+    feature_inventory?: { text: string; sha256: string; args?: readonly string[] | null } | null;
     template: string;
     template_version: string;
     candidate_egress: string[];
@@ -180,8 +181,16 @@ export function qualify(
               ? "three canaries and the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
               : "three canaries at the fixture project's budget_run_billable_tokens, at the model's output rate",
           price_version: estimate.price_version,
+          // Codex's (C2b): read from OpenAI's pricing page, a lower bound
+          // with its reasons, and a legacy model's status.
+          ...(estimate.prices !== undefined ? { prices: estimate.prices } : {}),
+          ...(estimate.bound !== undefined ? { bound: estimate.bound, lower_bound_reasons: estimate.lower_bound_reasons ?? [] } : {}),
+          ...(estimate.model_status !== undefined ? { model_status: estimate.model_status } : {}),
         }
-      : {}),
+      : // Codex (C2): why there is no figure, never a 0.
+        a.backend === 'codex'
+        ? { estimate_unavailable: attemptSpendUnavailable(a.backend, a.model) }
+        : {}),
     auth_mode: a.auth_mode ?? 'api_key',
     ...(canaryLimit !== null ? { purpose: 'assistant', canary_limit_tokens: canaryLimit, charged_to: { account: 'project', project: a.fixture_project, as: 'qualification' } } : {}),
     // A provider-side cap is an API key's only (SEAM.md §160): a subscription
@@ -194,6 +203,7 @@ export function qualify(
     binary_path: a.binary_path,
     binary_sha256: a.binary_sha256,
     help_sha256: a.help_sha256,
+    feature_inventory: a.feature_inventory ?? null,
     template: a.template,
     template_version: a.template_version,
     model: a.model,

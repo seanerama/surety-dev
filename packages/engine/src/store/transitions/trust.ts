@@ -72,6 +72,13 @@ export interface AttemptRow {
   // M5 slice 33 (D6 §2.6; migration 0026).
   mode: 'one_shot_headless' | 'session_headless';
   session_entry: string | null;
+  // Codex's `codex features list` (D2 §4.6, D2-T13; migration 0042): its
+  // standard output and SHA-256; null for a backend that has none.
+  feature_inventory?: string | null;
+  feature_inventory_sha256?: string | null;
+  // The arguments that inventory was run with, a JSON array (C2d;
+  // migration 0043); null where none was recorded.
+  feature_inventory_args?: string | null;
 }
 
 export interface Boundary {
@@ -405,6 +412,9 @@ export interface AttemptInput {
   // D6-X09 (B09; SEAM.md §432): the role profile the attempt qualifies;
   // the engine's default under its ceiling when absent.
   profile?: RoleProfile | null;
+  // Codex's feature inventory (D2 §4.6; migration 0042), or none, with the
+  // arguments it was run with (C2d; migration 0043).
+  feature_inventory?: { text: string; sha256: string; args?: readonly string[] | null } | null;
 }
 
 // An attempt is written proposed, binding everything before any launch; the
@@ -416,8 +426,9 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
   tx.db
     .prepare(
       `INSERT INTO "qualification_attempts" ("id", "created_at", "backend", "version", "binary_path", "binary_sha256", "help_sha256", "template", "template_version",
-         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "mode", "session_entry", "profile")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)`,
+         "model", "auth_mode", "host_qualification", "profile_fingerprint", "fixture_project", "candidate_egress", "canary_deadlines", "spend", "status", "mode", "session_entry", "profile",
+         "feature_inventory", "feature_inventory_sha256", "feature_inventory_args")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -440,6 +451,9 @@ export function writeAttempt(tx: Tx, args: AttemptInput, label: Record<string, u
       args.mode ?? 'one_shot_headless',
       args.session_entry ?? null,
       args.profile === null ? null : JSON.stringify(args.profile ?? roleProfileOf(defaultProfileMax('role'))),
+      args.feature_inventory?.text ?? null,
+      args.feature_inventory?.sha256 ?? null,
+      args.feature_inventory?.args == null ? null : JSON.stringify(args.feature_inventory.args),
     );
   tx.emit('qualification.proposed', { project: args.fixture_project, qualification_attempt: id }, { ...label, backend: args.backend, version: args.version, model: args.model });
   return getAttempt(tx.db, id)!;

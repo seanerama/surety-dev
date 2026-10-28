@@ -1,0 +1,18 @@
+-- The arguments Codex's feature inventory was run with (D2 §4.6, row
+-- D2-T13; C2d of Codex support, the owner's question of 2026-10-28: what
+-- proves the settings the template requires off are off). Since C2d the
+-- static checks run `codex features list` under the template's own feature
+-- configuration (every `--disable` and every `-c` override of the template,
+-- `features list` last), and the attempt's driver requires each feature the
+-- template disables to read `false` in that list. This column records the
+-- exact argument list that produced `feature_inventory`, so that the
+-- judgement rests on what was run, not on what the engine's code says now.
+--
+--   feature_inventory_args  a JSON array of strings, the arguments after
+--                           the binary's path
+--
+-- NULL for a backend that has no inventory and for every attempt written
+-- before this migration; the driver judges an inventory with no recorded
+-- arguments, or other arguments than the template's, as not observed under
+-- the template's flags (delegation_unverified, before any canary).
+ALTER TABLE qualification_attempts ADD COLUMN feature_inventory_args TEXT;

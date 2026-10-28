@@ -26,6 +26,11 @@ export interface Template {
   keyRef: string;
   // The environment variable the credential is delivered in.
   keyVariable: string;
+  // Further variables the same credential is delivered in, where which one
+  // the backend reads is not established; the canary records which was
+  // used. No template has one now (Codex's codex-exec-4 delivers its key in
+  // CODEX_API_KEY alone, K3 of 2026-10-28).
+  keyAliases?: readonly string[];
   // The fixed variables the template sets beside the credential.
   env: Readonly<Record<string, string>>;
   // The flags by which the backend is asked to keep nothing between runs
@@ -37,6 +42,10 @@ export interface Template {
   // The provider session id the engine assigns before launch (D2 §1.7),
   // when the template passes one; recorded on the receipt.
   sessionIdOf?: (invocation: string) => string;
+  // What the engine writes on the backend's standard input, when the
+  // template fixes it (Codex: the fixed prompt); otherwise the scripted
+  // protocol's request line, which a real backend's template does not read.
+  stdin?: string;
   render(args: { model: string; invocation: string }): string[];
 }
 
@@ -129,36 +138,163 @@ const CLAUDE_SUBSCRIPTION: Template = {
   render: ({ model, invocation }) => ['-p', '--safe-mode', '--setting-sources', 'user', '--strict-mcp-config', ...claudeTail(model, invocation)],
 };
 
-// D2 §4.6, Codex CLI 0.159.2: the prompt on standard input.
+// D2 §4.6, Codex CLI 0.160.0 (as installed and pinned by copy; the flags
+// below are each in that version's `codex exec --help`, saved by the
+// 2026-10-27 assessment, and the `-c` keys in the Codex configuration
+// reference read the same day). Version 4 (C1, C2b and C2c of Codex
+// support; the assessment's G3, G4, G5, G11; the owner's decisions K3 and
+// K6a of 2026-10-28; each `--disable` name accepted by the 0.160.0 binary's
+// `features list`, checked 2026-10-28):
+//   - the prompt: `-` makes standard input the whole prompt (`codex exec
+//     --help`: "if `-` is used, instructions are read from stdin"), and the
+//     engine writes exactly the fixed prompt there (`stdin` below), which
+//     names /surety/context/prompt.md and /surety/out/result.json. Never the
+//     scripted protocol's request line, and never task text in an argument
+//     (D1 §17 item 3). (A prompt argument with stdin piped would append stdin
+//     as a `<stdin>` block, so the argument form is not used.)
+//   - the credential (version 4, K3 of the owner's decisions of 2026-10-28):
+//     the one held key in `CODEX_API_KEY` alone. By the source at tag
+//     rust-v0.160.0 (the driver's report codex-features-source.md, batch
+//     2026-10-28/codex-decisions), `exec` authenticates with CODEX_API_KEY,
+//     which wins over every other method (login/src/auth/manager.rs:
+//     1499-1505), and does not read OPENAI_API_KEY for model requests (the
+//     built-in OpenAI provider has no env_key, model-provider-info/src/
+//     lib.rs:520-525; its readers are the TUI's voice mode, onboarding and
+//     presence telemetry). Delivering it in OPENAI_API_KEY as well would only
+//     put a second copy of the secret into the environment every child shell
+//     command inherits, so version 4 does not.
+//   - what it writes: `--ephemeral` (no session files), CODEX_HOME in the
+//     volatile home, credentials in memory only
+//     (`cli_auth_credentials_store="ephemeral"`), no history; the last
+//     message to /surety/out/last-message.txt (transcript evidence only,
+//     D2 §4.6); the result is /surety/out/result.json, written by the agent
+//     as the prompt asks (D2 §1.4).
+//   - off: the provider-side web search (it would fetch outside Surety's
+//     egress proxy), update checks, analytics, feedback, the OpenTelemetry
+//     exporters (metrics default `statsig`), sub-agents (`agents.enabled`,
+//     feature `multi_agent`), goals (automatic continuation), hooks, apps and
+//     memories; approvals never prompt (Surety's sandbox is the sandbox).
+//     `forced_login_method="api"`: an API key only, never a ChatGPT login.
+//     `features.unified_exec` cannot be switched off (the reference: user
+//     opt-outs are ignored); what it runs stays in the domain (D2 §4.4).
+//   - also off (C2b, 2026-10-28): every other feature 0.160.0's own
+//     `codex features list` reports on (`true`) that is a delegation,
+//     scheduling or background feature, or reaches beyond the domain's own
+//     tools (D2 §4.6, D2-T13): the shared daemon's auto-start, worktrees,
+//     the guardian reviewer, local automations, the browser and computer
+//     tools, plugins and their remote and sharing parts, skills' MCP
+//     installs, the code-mode host (a companion process), tool suggestions,
+//     workspace dependencies, the app's updates. The classification of every
+//     feature that list names is adapters/codex-features.ts's, and the
+//     attempt judges its own inventory against this list.
+//   - no `--skip-git-repo-check` (C2b): D2 §4.6 does not pass it, "so a
+//     broken git view fails visibly"; the fixture project and every run's
+//     workspace are git checkouts the engine makes.
+//   - also off (version 4, K6a of the owner's decisions of 2026-10-28; each
+//     read from the source at tag rust-v0.160.0, report as above; none is of
+//     the family, each is hardening):
+//       unbounded_connection_retries: keeps a turn alive forever on a
+//         connection failure (core/src/responses_retry.rs:22-23, 92-116), so
+//         a refused egress would hang to the deadline instead of failing.
+//       system_proxy_fallback: retries bootstrap requests through
+//         HTTPS_PROXY/HTTP_PROXY/ALL_PROXY (backend-client/src/client.rs:
+//         343-360); off, fail closed.
+//       image_generation: calls images/generations through the provider and
+//         writes PNGs under CODEX_HOME (codex-api/src/endpoint/images.rs:68,
+//         81); not exposed under an API key, off to fail closed.
+//       unified_exec_tty: the PTY mode of the command tool, whose children
+//         get no parent-death signal (utils/pty/src/spawn_helper_main.rs:
+//         69-73).
+//       sleep_tool: `clock.sleep`, which blocks the turn for up to 12 h
+//         (core/src/tools/handlers/sleep.rs:28, 96-133); a stall buys
+//         nothing.
+//       shell_snapshot: writes the shell's exported environment, so the key,
+//         into $CODEX_HOME/shell_snapshots/ (shell-command/src/
+//         shell_snapshot_capture.rs:160-178; core/src/shell_snapshot.rs:
+//         105-107); a copy of the secret on disk while it lives.
+// Version 4 differs from version 3 by those two changes alone.
+export const CODEX_DISABLED_FEATURES = [
+  'multi_agent',
+  'goals',
+  'hooks',
+  'apps',
+  'memories',
+  'daemon_auto_start',
+  'worktrees',
+  'guardian_approval',
+  'in_app_local_automation',
+  'in_app_browser',
+  'in_app_updates',
+  'browser_use',
+  'browser_use_external',
+  'browser_use_full_cdp_access',
+  'computer_use',
+  'plugins',
+  'plugin_sharing',
+  'remote_plugin',
+  'skill_mcp_dependency_install',
+  'code_mode_host',
+  'tool_suggest',
+  'workspace_dependencies',
+  // Version 4 (K6a): hardening, not the family.
+  'unbounded_connection_retries',
+  'system_proxy_fallback',
+  'image_generation',
+  'unified_exec_tty',
+  'sleep_tool',
+  'shell_snapshot',
+] as const;
+export const CODEX_CONFIG_OVERRIDES = [
+  'web_search="disabled"',
+  'tools.web_search=false',
+  'check_for_update_on_startup=false',
+  'analytics.enabled=false',
+  'feedback.enabled=false',
+  'otel.metrics_exporter="none"',
+  'otel.exporter="none"',
+  'otel.trace_exporter="none"',
+  'agents.enabled=false',
+  'history.persistence="none"',
+  'cli_auth_credentials_store="ephemeral"',
+  'forced_login_method="api"',
+] as const;
+// Codex's own home in the volatile home (D2 §4.6), set explicitly.
+export const CODEX_ENV: Readonly<Record<string, string>> = Object.freeze({ CODEX_HOME: '/surety/home/.codex' });
+// The Codex CLI version this template was written and checked against.
+export const CODEX_TEMPLATE_CLI_VERSION = '0.160.0';
+
+const codexArgs = (model: string): string[] => [
+  'exec',
+  '--json',
+  '--ephemeral',
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--strict-config',
+  ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
+  ...CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]),
+  '--dangerously-bypass-approvals-and-sandbox',
+  '-C',
+  '/surety/workspace',
+  '-m',
+  model,
+  '-o',
+  '/surety/out/last-message.txt',
+  '-',
+];
+
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-1',
+  version: 'codex-exec-4',
   text:
-    'codex exec --json --ephemeral --ignore-user-config --ignore-rules --strict-config --disable multi_agent --dangerously-bypass-approvals-and-sandbox ' +
-    '-C /surety/workspace -m <m> -o /surety/out/last-message.txt -',
+    `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
+    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
   authMode: 'api_key',
   keyRef: 'backend/codex/api_key',
-  keyVariable: 'OPENAI_API_KEY',
-  env: {},
+  keyVariable: 'CODEX_API_KEY',
+  env: CODEX_ENV,
   persistenceFlags: ['--ephemeral'],
   tools: [],
-  render: ({ model }) => [
-    'exec',
-    '--json',
-    '--ephemeral',
-    '--ignore-user-config',
-    '--ignore-rules',
-    '--strict-config',
-    '--disable',
-    'multi_agent',
-    '--dangerously-bypass-approvals-and-sandbox',
-    '-C',
-    '/surety/workspace',
-    '-m',
-    model,
-    '-o',
-    '/surety/out/last-message.txt',
-    '-',
-  ],
+  stdin: `${PROMPT}\n`,
+  render: ({ model }) => codexArgs(model),
 };
 
 // Each backend's templates by mode; the `api_key` one is the default.
@@ -172,6 +308,21 @@ export const TEMPLATES: Readonly<Record<string, Template>> = { claude: CLAUDE_AP
 
 export const keyVariable = (backend: string, authMode: string = 'api_key'): string =>
   BY_MODE[backend]?.[authMode as AuthMode]?.keyVariable ?? `${backend.toUpperCase()}_API_KEY`;
+
+// Every variable a backend's credential is delivered in, in a mode: the
+// template's own and its aliases.
+export const keyVariables = (backend: string, authMode: string = 'api_key'): string[] => {
+  const t = BY_MODE[backend]?.[authMode as AuthMode];
+  return t === undefined ? [keyVariable(backend, authMode)] : [t.keyVariable, ...(t.keyAliases ?? [])].filter((v) => v !== '');
+};
+
+// The environment a template gives its backend beside the constructed one:
+// its fixed variables and the credential in each of its variables.
+export function templateEnv(t: Template, key: string | null): Record<string, string> {
+  const env: Record<string, string> = { ...t.env };
+  if (key !== null && t.keyVariable !== '') for (const v of [t.keyVariable, ...(t.keyAliases ?? [])]) env[v] = key;
+  return env;
+}
 
 // The secret reference of a backend's credential in a mode.
 export const credentialRef = (backend: string, authMode: string = 'api_key'): string => BY_MODE[backend]?.[authMode as AuthMode]?.keyRef ?? `backend/${backend}/api_key`;

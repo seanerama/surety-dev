@@ -30,6 +30,17 @@ import {
   claudeProviderError,
 } from '../invoke/adapters/claude.js';
 import {
+  type CodexStreamSummary,
+  codexAnswered,
+  codexAuthFailure,
+  codexCapabilities,
+  codexFailure,
+  codexKeyDelivery,
+  codexModelFallback,
+  codexModelReport,
+  codexProviderError,
+} from '../invoke/adapters/codex.js';
+import {
   CANARY_BARRIER,
   CANARY_UNLISTED,
   CONTAINMENT_ACTIONS,
@@ -50,7 +61,9 @@ import { ACTION_HARDENING, actionHardened } from '../invoke/probes/program.js';
 import { BOUNDARY_MECHANISM, ISOLATION_MECHANISM, hostIdentity } from './host.js';
 import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObservations } from '../invoke/choke.js';
 import { helpHash } from '../invoke/static.js';
-import { purposeOfTemplateVersion, templateOf } from '../invoke/adapters/templates.js';
+import { CODEX_DISABLED_FEATURES, keyVariables, purposeOfTemplateVersion, templateOf } from '../invoke/adapters/templates.js';
+import { type CodexFeatureJudgement, judgeCodexFeatures } from '../invoke/adapters/codex-features.js';
+import { CODEX_SHELL_SNAPSHOTS } from '../invoke/collect.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AttemptRow, EntryInput } from '../store/transitions/trust.js';
@@ -67,6 +80,62 @@ interface CanaryEntry {
   // A canary never dispatched (`not_dispatched`, B2): what held it, in the
   // blocker's own words; null where nothing held it at the deadline's read.
   wait_reason?: string | null;
+}
+
+// The backends whose canaries are judged on their streams (D2 §7.2): Claude
+// Code's, and Codex's (C2 of Codex support); null for the scripted backend,
+// whose canaries are the test's instruments.
+type RealBackend = 'claude' | 'codex';
+export const realBackendOf = (backend: string): RealBackend | null => (backend === 'claude' || backend === 'codex' ? backend : null);
+
+// One canary's stream, by its backend's adapter, and the host's samples.
+interface CanaryHistory {
+  stream: ClaudeStreamSummary | null;
+  codex: CodexStreamSummary | null;
+  sampling: BackendSampling | null;
+}
+
+// What an entry claims of the tool surface (D2 §4.5), from either backend's
+// judgement.
+interface BackendCapabilities {
+  tools: string[];
+  denied: string[];
+  features_disabled: string[];
+  delegation_verified: boolean;
+}
+
+// What Codex's template asks to be off (templates.ts): configuration,
+// recorded with the judgement, never claimed as observed.
+const CODEX_TEMPLATE_DISABLED = [...CODEX_DISABLED_FEATURES, 'web_search', 'agents'];
+
+// What of a Codex canary's own run reached beyond its domain (D2 §§4.1,
+// 4.6; C2): an item of a beyond-domain kind in its stream, or a second
+// backend process (a second `codex`, or a companion such as
+// `codex-code-mode-host`) on the host's samples of its domain. Empty where
+// none was seen.
+export function codexBeyondDomain(s: CodexStreamSummary | null, sampling: BackendSampling | null): string[] {
+  const out: string[] = [];
+  for (const b of s?.beyond_domain ?? []) out.push(`the stream shows a ${b.type} item (${b.kind})${b.id ? `, ${b.id}` : ''}`);
+  if (sampling !== null && sampling.max_backend > 1) out.push(`a second backend process appeared in the domain (at most ${sampling.max_backend} at once${sampling.backend_cmdlines.length > 0 ? `: ${sampling.backend_cmdlines.join(' | ').slice(0, 300)}` : ''})`);
+  return out;
+}
+
+// The attempt's recorded `codex features list` judged against the template
+// (adapters/codex-features.ts), with the arguments it was run with (C2d;
+// migration 0043); no inventory recorded judges unverified, and arguments
+// not recorded, or unreadable, judge it not observed under the template's
+// flags.
+export function codexFeatureJudgement(a: Pick<AttemptRow, 'feature_inventory' | 'feature_inventory_sha256' | 'feature_inventory_args'>): CodexFeatureJudgement {
+  const text = a.feature_inventory ?? null;
+  const sha256 = a.feature_inventory_sha256 ?? null;
+  let args: string[] | null = null;
+  try {
+    const v: unknown = JSON.parse(a.feature_inventory_args ?? 'null');
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) args = v as string[];
+  } catch {
+    args = null;
+  }
+  return judgeCodexFeatures(text === null || sha256 === null ? null : { text, sha256, args });
 }
 
 const POLL_MS = 250;
@@ -132,10 +201,33 @@ export class QualificationDriver {
       return;
     }
     const canaries: CanaryEntry[] = [];
+    // Codex's feature inventory (D2 §4.6, D2-T13; C2b), judged before any
+    // canary is launched: a delegation, scheduling or background feature
+    // the template leaves on, or a feature this engine does not know, fails
+    // the attempt as delegation_unverified, named, and nothing runs or is
+    // spent. Its positive canary is recorded not launched, with the
+    // judgement as its evidence. Since C2d the inventory is run under the
+    // template's flags, and a feature the template `--disable`s that it
+    // reports on was not honoured: a family feature fails as before, a
+    // hardening one alone as unsupported_flag (the judgement's class).
+    const features = a.backend === 'codex' ? codexFeatureJudgement(a) : null;
+    if (features !== null && !features.verified) {
+      const failureClass = features.failure_class ?? 'delegation_unverified';
+      const reason =
+        failureClass === 'unsupported_flag'
+          ? `the attempt's \`codex features list\`, run under the template's flags, reports on a hardening feature the template disables: ${features.not_honoured.join(', ')}; the flag was not honoured`
+          : "the attempt's `codex features list` inventory does not show every delegation, scheduling and background feature disabled or unavailable";
+      const record = await this.record(a, null, { kind: 'positive', outcome: 'not_launched', failure_class: failureClass, reason, feature_inventory: features });
+      const entry: CanaryEntry = { kind: 'positive', run: null, passed: false, failure_class: failureClass, provider_error: record, evidence: record, term_to_exit_ms: null };
+      canaries.push(entry);
+      await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected: [] });
+      await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: [] });
+      return;
+    }
     // A real backend's streams and the host's samples, canary by canary:
     // the tool surface and delegation are judged over all of them (D2 §4.5).
-    const history: { stream: ClaudeStreamSummary | null; sampling: BackendSampling | null }[] = [];
-    let capabilities: ClaudeCapabilities | null = null;
+    const history: CanaryHistory[] = [];
+    let capabilities: BackendCapabilities | null = null;
     const unexpected: { destination: string; refused_at: string }[] = [];
     // The candidate destinations the canaries were let through to.
     const used = new Set<string>();
@@ -377,21 +469,35 @@ export class QualificationDriver {
     unexpected: { destination: string; refused_at: string }[],
     host: { before: HostWitness; after: HostWitness } | null,
     used: Set<string>,
-    history: { stream: ClaudeStreamSummary | null; sampling: BackendSampling | null }[],
-  ): Promise<{ entry: CanaryEntry; capabilities: ClaudeCapabilities | null }> {
+    history: CanaryHistory[],
+  ): Promise<{ entry: CanaryEntry; capabilities: BackendCapabilities | null }> {
     const obs: CanaryObservation | undefined = canaryObservations.get(run);
     canaryObservations.delete(run);
     const facts = await this.rt.read<{ outcome: string | null; exit_class: string | null; transcript: string | null; provider_session_id: string | null }>('qualification.run_facts', { run });
-    // A real backend's stream, read by its adapter (D2 §7.2); null for the
-    // scripted backend, whose canaries are the test's instruments.
-    const real = a.backend === 'claude';
-    const stream = real ? (obs?.stream ?? null) : null;
-    if (real) history.push({ stream, sampling: obs?.sampling ?? null });
+    // A real backend's stream, read by its adapter (D2 §7.2): Claude Code's
+    // in `stream`, Codex's in `cx` (C2); both null for the scripted backend,
+    // whose canaries are the test's instruments.
+    const backendKind = realBackendOf(a.backend);
+    const real = backendKind !== null;
+    const stream = backendKind === 'claude' ? (obs?.stream ?? null) : null;
+    const cx = backendKind === 'codex' ? (obs?.codexStream ?? null) : null;
+    if (real) history.push({ stream, codex: cx, sampling: obs?.sampling ?? null });
     const authMode = a.auth_mode;
-    const authFailure = stream !== null ? claudeAuthFailure(stream, authMode) : null;
-    // A model fallback (E86 item 3): a canary with one fails.
-    const fallback = real ? claudeModelFallback(stream, a.model) : null;
-    let capabilities: ClaudeCapabilities | null = null;
+    const authFailure = stream !== null ? claudeAuthFailure(stream, authMode) : cx !== null ? codexAuthFailure(cx) : null;
+    // A model fallback (E86 item 3): a canary with one fails. Codex's stream
+    // names a model only where it does; one it never names is recorded "model
+    // not reported" (codexModelReport), never as the requested model.
+    const fallback = backendKind === 'claude' ? claudeModelFallback(stream, a.model) : backendKind === 'codex' ? codexModelFallback(cx, a.model) : null;
+    // The credential's delivery as the stream established it.
+    const deliveryOf = () => (stream !== null ? claudeKeyDelivery(stream, authMode) : cx !== null ? codexKeyDelivery(cx, keyVariables(a.backend, authMode)) : null);
+    // Codex: anything of this canary's own run that reached beyond its
+    // domain fails it, as delegation_unverified (C2).
+    const beyond = backendKind === 'codex' ? codexBeyondDomain(cx, obs?.sampling ?? null) : [];
+    // Codex (C2d): a file the run left in $CODEX_HOME/shell_snapshots/
+    // fails the canary as containment_failed.
+    const snaps = backendKind === 'codex' ? (obs?.codexShellSnapshots ?? null) : null;
+    const shellSnapshot = snaps !== null && snaps.state === 'present' && snaps.files > 0;
+    let capabilities: BackendCapabilities | null = null;
     const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
       // The authority is a role's text: redacted before it is kept (S2).
@@ -416,8 +522,8 @@ export class QualificationDriver {
       const judged = validateReply(obs?.resultValue ?? null, [assistantCanaryEvidenceId(a.id)]);
       const reply = 'reply' in judged ? judged.reply : null;
       const resultOk = obs?.verdict === 'accepted' && reply !== null && reply.cited_evidence.includes(assistantCanaryEvidenceId(a.id)) && reply.text.includes(assistantCanaryNonce(a.id));
-      const delivery = real && stream !== null ? claudeKeyDelivery(stream, authMode) : null;
-      passed = obs?.exitClass === 'clean' && resultOk && (!real || (stream !== null && authFailure === null && delivery?.established === true));
+      const delivery = real ? deliveryOf() : null;
+      passed = obs?.exitClass === 'clean' && resultOk && (!real || (delivery !== null && authFailure === null && delivery.established === true));
       detail = {
         ...detail,
         purpose,
@@ -427,7 +533,13 @@ export class QualificationDriver {
         expected: { result: want, cites: assistantCanaryEvidenceId(a.id), nonce: assistantCanaryNonce(a.id) },
         observed: { result: obs?.resultValue ?? null },
         credential_delivery: real
-          ? { auth_mode: authMode, variable: delivery?.variable ?? null, established: delivery?.established === true, how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the credential reached the backend only in ${delivery.variable}` }
+          ? {
+              auth_mode: authMode,
+              variable: delivery?.variable ?? null,
+              ...(delivery !== null && 'variables' in delivery ? { variables: delivery.variables } : {}),
+              established: delivery?.established === true,
+              how: delivery === null ? 'the stream was not read' : 'variables' in delivery ? `${delivery.basis}; the engine wrote no credential file` : `${delivery.basis}; the credential reached the backend only in ${delivery.variable}`,
+            }
           : { auth_mode: authMode, variable: null, established: false, how: 'the scripted backend takes no credential' },
       };
     } else if (kind === 'positive') {
@@ -440,8 +552,8 @@ export class QualificationDriver {
       // materialization without following a link, the result as collected,
       // and the credential's delivery as the stream established it, which a
       // real backend's positive canary requires (E74 item 3).
-      const delivery = real && stream !== null ? claudeKeyDelivery(stream, authMode) : null;
-      passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (stream !== null && authFailure === null && delivery?.established === true));
+      const delivery = real ? deliveryOf() : null;
+      passed = obs?.exitClass === 'clean' && resultOk && editOk && (!real || (delivery !== null && authFailure === null && delivery.established === true));
       detail = {
         ...detail,
         result_collection: obs?.verdict ?? null,
@@ -453,8 +565,14 @@ export class QualificationDriver {
           ? {
               auth_mode: authMode,
               variable: delivery?.variable ?? null,
+              ...(delivery !== null && 'variables' in delivery ? { variables: delivery.variables } : {}),
               established: delivery?.established === true,
-              how: delivery === null ? 'the stream was not read' : `${delivery.basis}; the engine wrote no credential file, the credential reached the backend only in ${delivery.variable}`,
+              how:
+                delivery === null
+                  ? 'the stream was not read'
+                  : 'variables' in delivery
+                    ? `${delivery.basis}; the engine wrote no credential file`
+                    : `${delivery.basis}; the engine wrote no credential file, the credential reached the backend only in ${delivery.variable}`,
             }
           : { auth_mode: authMode, variable: null, established: false, how: 'the scripted backend takes no credential' },
       };
@@ -463,7 +581,7 @@ export class QualificationDriver {
       // A real backend must have been authenticated and answering when it
       // reached the barrier (D2 §7.2): a model answer with no
       // authentication failure in its stream.
-      const answered = !real || (stream !== null && claudeAnswered(stream, authMode));
+      const answered = !real || (backendKind === 'claude' ? stream !== null && claudeAnswered(stream, authMode) : cx !== null && codexAnswered(cx));
       passed = obs?.barrierSeen === true && obs.exitClass === 'engine_signaled' && termToExit !== null && answered;
       detail = {
         ...detail,
@@ -520,16 +638,61 @@ export class QualificationDriver {
                 embedded_tool: samplings.reduce((n, x) => n + (x.embedded_tool ?? 0), 0),
                 embedded_tool_cmdlines: [...new Set(samplings.flatMap((x) => x.embedded_tool_cmdlines ?? []))].slice(0, 16),
               };
-        capabilities = claudeCapabilities(
-          history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
-          merged,
-          templateOf(a.backend, { authMode, purpose })?.tools ?? [],
-        );
-        detail = { ...detail, capabilities };
-        if (!capabilities.delegation_verified || authFailure !== null) passed = false;
+        // Codex (C2): no inventory exists; every canary's stream read whole
+        // with nothing beyond the domain, and one backend on the samples.
+        const judgedCaps: BackendCapabilities =
+          backendKind === 'codex'
+            ? codexCapabilities(history.map((h) => h.codex), merged, CODEX_TEMPLATE_DISABLED, codexFeatureJudgement(a))
+            : claudeCapabilities(
+                history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null),
+                merged,
+                templateOf(a.backend, { authMode, purpose })?.tools ?? [],
+              );
+        capabilities = judgedCaps;
+        detail = { ...detail, capabilities: judgedCaps };
+        if (!judgedCaps.delegation_verified || authFailure !== null) passed = false;
       }
     }
-    if (real) {
+    if (backendKind === 'codex') {
+      // What Codex's stream established (C2): the provider's thread, the
+      // terminal event and its usage, the items and any beyond the domain,
+      // key delivery, the model as reported (or not), the failure in the
+      // provider's words; and the host's samples.
+      detail = {
+        ...detail,
+        stream:
+          cx === null
+            ? null
+            : {
+                backend: 'codex',
+                thread_id: cx.thread_id,
+                threads: cx.threads,
+                turns_started: cx.turns_started,
+                terminal: cx.terminal,
+                terminals: cx.terminals,
+                usage: cx.usage,
+                types: cx.types,
+                item_types: cx.item_types,
+                items_truncated: cx.items_truncated,
+                beyond_domain: cx.beyond_domain,
+                protocol_errors: cx.protocol_errors,
+                credential_delivery: codexKeyDelivery(cx, keyVariables(a.backend, authMode)),
+                failure: codexFailure(cx),
+                auth_failure: authFailure,
+              },
+        model: codexModelReport(cx, a.model),
+        ...(beyond.length > 0 ? { beyond_domain: beyond } : {}),
+        // $CODEX_HOME/shell_snapshots/ as the collection saw it through the
+        // hold after termination (C2d; invoke/collect.ts): a regular file
+        // there is the shell's environment, so the key, written to disk by
+        // a shell_snapshot the template disables.
+        shell_snapshots: { path: CODEX_SHELL_SNAPSHOTS.location, ...(obs?.codexShellSnapshots ?? { state: 'not_observed' }) },
+        sampling: obs?.sampling ?? null,
+        exit_status: obs?.exitStatus ?? null,
+      };
+      if (beyond.length > 0) passed = false;
+      if (shellSnapshot) passed = false;
+    } else if (real) {
       // What the stream established, kept with the canary's evidence (D2
       // §§4.5, 7.2): the backend as it described itself, key delivery, usage,
       // the terminal event, the session id the engine assigned.
@@ -569,7 +732,7 @@ export class QualificationDriver {
           (detail.actions as { passed: boolean }[]).every((x) => x.passed) &&
           ((detail.controls as { ran: boolean }[] | undefined) ?? []).every((x) => x.ran) &&
           detail.reason === null;
-        failureClass = realFailureClass(kind, failureClass, { stream, authFailure, obs, candidates, capabilities, containmentHeld: held, fallback: fallback !== null });
+        failureClass = realFailureClass(kind, failureClass, { stream, codex: cx, authFailure, obs, candidates, capabilities, containmentHeld: held, fallback: fallback !== null, beyondDomain: beyond.length > 0, shellSnapshot });
       }
     }
     let providerError: string | null = null;
@@ -577,7 +740,7 @@ export class QualificationDriver {
       // The scripted backend's: the run's redacted output. A real backend's:
       // its structured provider error, redacted (D2 §7.2, N04).
       providerError = real
-        ? await this.record(a, run, redactValue({ kind, failure_class: failureClass, provider_error: stream === null ? null : claudeProviderError(stream, authMode), exit_class: facts.exit_class ?? obs?.exitClass ?? null, exit_status: obs?.exitStatus ?? null, transcript: facts.transcript }))
+        ? await this.record(a, run, redactValue({ kind, failure_class: failureClass, provider_error: stream !== null ? claudeProviderError(stream, authMode) : cx !== null ? codexProviderError(cx, authMode) : null, exit_class: facts.exit_class ?? obs?.exitClass ?? null, exit_status: obs?.exitStatus ?? null, transcript: facts.transcript }))
         : (facts.transcript ?? (await this.record(a, run, { kind, failure: FAILURE[kind], detail })));
     }
     return { entry: { kind, run, passed, failure_class: failureClass, provider_error: providerError, evidence, term_to_exit_ms: kind === 'cancellation' ? termToExit : null }, capabilities };
@@ -630,8 +793,8 @@ export class QualificationDriver {
     a: AttemptRow,
     canaries: CanaryEntry[],
     usedEgress: string[],
-    history: { stream: ClaudeStreamSummary | null }[],
-    capabilities: ClaudeCapabilities | null,
+    history: CanaryHistory[],
+    capabilities: BackendCapabilities | null,
   ): Promise<EntryInput> {
     const usage = await this.rt.read<{ observations: number; cost: boolean }>('qualification.usage', { attempt: a.id });
     // How often usage was reported: per model call where the canaries
@@ -639,9 +802,16 @@ export class QualificationDriver {
     // per invocation (the engine's reading for a stand-in; SEAM.md §148).
     // A real backend's from its streams: per call where an assistant message
     // carried usage, per invocation where only the result did.
+    // Codex's (C2): per invocation where a terminal event carried usage (its
+    // one turn's totals), none otherwise.
     const streams = history.map((h) => h.stream).filter((x): x is ClaudeStreamSummary => x !== null);
+    const codexStreams = history.map((h) => h.codex).filter((x): x is CodexStreamSummary => x !== null);
     const granularity =
-      a.backend === 'claude'
+      a.backend === 'codex'
+        ? codexStreams.some((x) => x.terminal?.usage_present === true)
+          ? 'invocation'
+          : 'none'
+        : a.backend === 'claude'
         ? streams.some((x) => x.usage_steps > 0)
           ? 'model_call'
           : streams.some((x) => x.result?.usage_present === true)
@@ -693,8 +863,25 @@ export class QualificationDriver {
       usage_granularity: granularity,
       // A real backend's per-call observations are increments, its terminal
       // one the cumulative total that replaces them (adapters/claude.ts).
-      usage_semantics: a.backend === 'claude' ? (granularity === 'model_call' ? 'delta' : granularity === 'invocation' ? 'cumulative' : null) : usage.observations > 0 ? 'cumulative' : null,
-      cost_reporting: usage.cost ? 'reported' : 'none',
+      // Codex's one observation per invocation is its turn's total
+      // (adapters/codex.ts).
+      usage_semantics:
+        a.backend === 'codex'
+          ? granularity === 'invocation'
+            ? 'cumulative'
+            : null
+          : a.backend === 'claude'
+            ? granularity === 'model_call'
+              ? 'delta'
+              : granularity === 'invocation'
+                ? 'cumulative'
+                : null
+            : usage.observations > 0
+              ? 'cumulative'
+              : null,
+      // Codex reports token counts and never a cost (D2 §4.6, CH §3.7):
+      // `tokens_only` where its usage was seen, never `reported`.
+      cost_reporting: a.backend === 'codex' ? (granularity === 'none' ? 'none' : 'tokens_only') : usage.cost ? 'reported' : 'none',
       enforceable_boundaries: granularity === 'none' || evidence.length === 0 ? [] : [{ boundary: 'invocation', mechanism: 'dispatch_check', evidence: evidence[0]!, overshoot: 'deadline' }],
       result_channel: 'file',
       // D6 §2.6: only from a passing continuation canary of this attempt.
@@ -804,21 +991,52 @@ interface ContinuationFacts {
 // backend that wrote nothing at all and exited nonzero (as Claude Code does
 // for a flag it does not know, which it reports on standard error before
 // the run; the class is inferred and the evidence says so); a candidate
-// destination the proxy refused; a positive canary whose agent used no
-// tool. Otherwise the kind's own class.
+// destination the proxy refused; a Codex run that left a file in
+// $CODEX_HOME/shell_snapshots/ (C2d), containment_failed after an
+// authentication failure; a usage or rate limit the Codex stream
+// names (K7, 2026-10-28); a positive canary whose agent used no tool.
+// Otherwise the kind's own class.
 export function realFailureClass(
   kind: string,
   fallback: string,
-  f: { stream: ClaudeStreamSummary | null; authFailure: string | null; obs: CanaryObservation | undefined; candidates: string[]; capabilities: ClaudeCapabilities | null; containmentHeld: boolean; fallback?: boolean },
+  f: {
+    stream: ClaudeStreamSummary | null;
+    // Codex's stream (C2), where the backend is Codex.
+    codex?: CodexStreamSummary | null;
+    authFailure: string | null;
+    obs: CanaryObservation | undefined;
+    candidates: string[];
+    capabilities: Pick<ClaudeCapabilities, 'delegation_verified'> | null;
+    containmentHeld: boolean;
+    fallback?: boolean;
+    // Codex (C2): the canary's own run reached beyond its domain (an item of
+    // a beyond-domain kind, a second backend process).
+    beyondDomain?: boolean;
+    // Codex (C2d): the run left a file in $CODEX_HOME/shell_snapshots/.
+    shellSnapshot?: boolean;
+  },
 ): string {
+  // An authentication failure is `auth_failed`. A usage or rate limit the
+  // Codex stream names is `usage_limit` (K7, Sean's approval of 2026-10-28),
+  // below, in place of the kind's class; Codex's other provider errors (C2)
+  // fall to the kind's class. Either way the provider's own class stays in
+  // the canary's provider_error record.
   if (f.authFailure !== null) return 'auth_failed';
+  // A shell snapshot left in Codex's home (C2d): the key on the volatile
+  // disk, which the template's `--disable shell_snapshot` exists to prevent.
+  if (f.shellSnapshot === true) return 'containment_failed';
   // The model that answered was not the entry's (E86 item 3).
   if (f.fallback === true) return 'model_fallback';
+  if (f.beyondDomain === true && !(kind === 'containment' && !f.containmentHeld)) return 'delegation_unverified';
   if (kind === 'containment' && f.containmentHeld && f.capabilities !== null && !f.capabilities.delegation_verified) return 'delegation_unverified';
-  if (f.stream !== null && f.stream.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
+  const read = f.stream ?? f.codex ?? null;
+  if (read !== null && read.lines === 0 && f.obs?.exitStatus !== null && f.obs?.exitStatus !== undefined && f.obs.exitStatus !== 0) return 'unsupported_flag';
   const refusedCandidate = (f.obs?.egress ?? []).some((e) => e.decision === 'refused' && f.candidates.includes(e.authority.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase()));
   if (refusedCandidate) return 'proxy_refused';
-  if (kind === 'positive' && f.stream !== null && f.stream.tool_uses.length === 0 && f.obs?.exitClass === 'clean') return 'tool_action_missing';
+  if (f.codex != null && codexFailure(f.codex)?.class === 'usage_limit') return 'usage_limit';
+  if (kind === 'positive' && f.stream != null && f.stream.tool_uses.length === 0 && f.obs?.exitClass === 'clean') return 'tool_action_missing';
+  // Codex's tool actions are its command and file-change items.
+  if (kind === 'positive' && f.stream == null && f.codex != null && !f.codex.items.some((i) => i.type === 'command_execution' || i.type === 'file_change') && f.obs?.exitClass === 'clean') return 'tool_action_missing';
   return fallback;
 }
 
