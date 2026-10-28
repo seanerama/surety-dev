@@ -945,6 +945,13 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
   // pair is raised for the owner.
   if (firstPlanOf(tx.db, args.run) !== null) {
     let plan: string | null = null;
+    // Slice E5 (S4): a later iteration's plan, against the approved
+    // architecture, publishes the architecture only when it changes it (as
+    // the owner's approval of an ordinary replan does); otherwise the plan,
+    // with its roadmap revision.
+    const firstArchitecture = !tx.db.prepare('SELECT 1 FROM "architecture_revisions" WHERE "project" = ?').get(args.project);
+    const ch = r.check.changes;
+    const architectureChanging = firstArchitecture || ch.changes_architecture.changed || ch.changes_adrs.added.length + ch.changes_adrs.changed.length + ch.changes_adrs.deleted.length > 0;
     routeFirstPlan(tx, {
       project: args.project,
       run: args.run,
@@ -953,11 +960,13 @@ export function finalizeReplan(tx: Tx, args: { project: string; run: string; pre
       check: r.check,
       publish: () => {
         const recorded = getBundle(tx.db, r.bundle)!;
-        const made = guarded(tx, recorded, () => publishBundle(tx, { bundle: r.bundle, by: POLICY_PUBLISHER, routing: POLICY_ROUTING }).plan);
+        const made = guarded(tx, recorded, () =>
+          architectureChanging ? publishBundle(tx, { bundle: r.bundle, by: POLICY_PUBLISHER, routing: POLICY_ROUTING }).plan : publishPlan(tx, { bundle: r.bundle, by: POLICY_PUBLISHER, routing: POLICY_ROUTING }),
+        );
         plan = made.ok ? made.value : null;
         return plan;
       },
-      raiseOwner: () => raiseBundleApprovals(tx, { project: args.project, run: args.run, bundle: r.bundle, architecture: true }),
+      raiseOwner: () => raiseBundleApprovals(tx, { project: args.project, run: args.run, bundle: r.bundle, architecture: architectureChanging }),
     });
     return plan;
   }
@@ -1000,7 +1009,9 @@ function raiseBundleApprovals(tx: Tx, args: { project: string; run: string; bund
 // A bundle that carries a plan and changes nothing of the approved
 // architecture, module map, ADRs or roadmap (§5.4): the plan alone
 // published, prepared against the approved revisions.
-export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engine:plan_check'; routing: 'human' | 'registered' }): string {
+// Slice E5 (S4): also a later prototype iteration's plan, published by the
+// prototype policy (`by` POLICY_PUBLISHER, routing `policy_authorized`).
+export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engine:plan_check' | typeof POLICY_PUBLISHER; routing: 'human' | 'registered' | typeof POLICY_ROUTING }): string {
   const b = getBundle(tx.db, args.bundle);
   if (!b) throw notFound('plan_bundle', args.bundle);
   if (b.status !== 'proposed') throw illegal(`publishing a ${b.status} bundle`, { plan_bundle: b.id });
@@ -1017,7 +1028,7 @@ export function publishPlan(tx: Tx, args: { bundle: string; by: 'human' | 'engin
   const arch = tx.db.prepare('SELECT "id" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string } | undefined;
   // A plan that carries a roadmap revision (a roadmap-only change, D6
   // §5.4): the revision published with it, under the approved architecture.
-  if (content.roadmap && content.roadmap_changed) publishRoadmap(tx, b, content.roadmap, JSON.parse(b.blobs) as Record<string, string>, arch?.id ?? null);
+  if (content.roadmap && content.roadmap_changed) publishRoadmap(tx, b, content.roadmap, JSON.parse(b.blobs) as Record<string, string>, arch?.id ?? null, args.by);
   const road = tx.db.prepare('SELECT "id" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(b.project) as { id: string } | undefined;
   const obligations = b.plan_check ? (tx.db.prepare('SELECT "planned_obligations" FROM "plan_checks" WHERE "id" = ?').get(b.plan_check) as { planned_obligations: string | null }).planned_obligations : null;
   const made = registerPlan(

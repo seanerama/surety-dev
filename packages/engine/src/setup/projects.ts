@@ -99,5 +99,11 @@ export async function prepareNewProject(rt: Runtime, body: unknown): Promise<Rec
   await run(['commit', '-q', '-m', 'Initial app brief']);
   await run(['checkout', '-q', '--detach']);
   const prepared = await prepareBootstrap(rt, { name: b.name.trim(), tier, dev_repo_path: repo, integration_branch: 'main', idea: b.idea }, { mode: mode as ExecutionMode });
-  return { ...prepared, initiallyPaused: true };
+  // A planned app is created paused (the onboarding design: the owner starts
+  // it). A rapid prototype is not (slice E5, the owner's ruling S1:
+  // "Creating the app must launch no paid work. Preparation approval
+  // authorizes exactly the disclosed preparation run"): nothing of it is
+  // dispatched until the owner approves its preparation, whose work item
+  // exists only after that approval (prototype/brief.ts).
+  return { ...prepared, initiallyPaused: mode !== 'rapid_prototype' };
 }

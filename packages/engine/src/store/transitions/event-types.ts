@@ -276,6 +276,9 @@ export const EVENT_OWNERS = {
   // Alpha (a predecessor's deployment never satisfies it).
   'prototype.iteration_iterated': 'prototype/iterate.ts',
   'prototype.alpha_not_attributed': 'store/transitions/prototype.ts',
+  // Slice E5 (gap 4): a stopped iteration resumed by the owner's deliberate
+  // POST …/iterations/:i/resume.
+  'prototype.iteration_resumed': 'store/transitions/prototype.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

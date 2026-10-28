@@ -1082,7 +1082,8 @@
       "prototype.plan_routed_to_owner",
       "prototype.iteration_status_changed",
       "prototype.iteration_iterated",
-      "prototype.alpha_not_attributed"
+      "prototype.alpha_not_attributed",
+      "prototype.iteration_resumed"
     ],
     "EngineMode": [
       "restricted",
@@ -8192,6 +8193,9 @@
       "owner": "prototype/iterate.ts"
     },
     "prototype.alpha_not_attributed": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_resumed": {
       "owner": "store/transitions/prototype.ts"
     }
   },

@@ -36,12 +36,15 @@ const { readIteration } = await import(join(dist, 'prototype', 'iterations.js'))
 const P = await import(join(dist, 'store', 'transitions', 'prototype.js'));
 const { controlIteration, answerDecision } = await import(join(dist, 'store', 'transitions', 'control.js'));
 const { openSession } = await import(join(dist, 'sessions', 'session.js'));
+const { budgetCheck } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+const B = await import(join(dist, 'prototype', 'brief.js'));
+const { iterate } = await import(join(dist, 'prototype', 'iterate.js'));
 
 setEngineSettings({ lease_ttl: 600, git_deadline: 30, decision_targets: {} });
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: 'req-1' };
 const AT = '2026-10-28T00:00:00.000Z';
-// The prototype preset's per-run limit (slice E3, the driver's setting).
-const RUN_LIMIT = 300_000;
+// The prototype preset's per-run limit (slice E5, the owner's ruling S5).
+const RUN_LIMIT = 5_000_000;
 
 function scratch(t) {
   assert.equal(configureHarness(true, []), null);
@@ -67,6 +70,11 @@ function scratch(t) {
     // brief preparation; here it is taken as answered (the limits are under
     // test, not the preparation), so that no owner question is open.
     db.prepare(`UPDATE decisions SET status = 'consumed', consumed_at = ? WHERE project = ? AND kind = 'prototype_preparation_approval'`).run(AT, made.project.id);
+    // Slice E5 (S5): a run is given up to the preset's 5,000,000 per-run
+    // limit, which the day's unknown-token limit (2,000,000 by default) would
+    // refuse a second run beside, or after a stopped one, on; the day is not
+    // under test here.
+    db.prepare(`UPDATE policy_revisions SET effective = json_set(effective, '$.budget_day_unknown_tokens', 100000000) WHERE project = ?`).run(made.project.id);
     return made.project;
   };
   return { db, create };
@@ -107,7 +115,7 @@ const iteration = (db, id) => db.prepare('SELECT * FROM prototype_iterations WHE
 const events = (db, type) => db.prepare('SELECT payload FROM events WHERE type = ? ORDER BY seq').all(type).map((e) => JSON.parse(e.payload));
 const eligibleAgain = (db, wi, attempts) => db.prepare(`UPDATE work_items SET status = 'eligible', repair_due = 1, repair_attempts = ? WHERE id = ?`).run(attempts, wi);
 
-test('tokens: committed plus the reservation is checked in the claim; two claims cannot both pass; settling holds, final records limit_reached; a raised limit reopens', async (t) => {
+test('tokens (S5): each claim is given its effective allowance, the lower of its per-run limit and what the iteration has left; two claims never both reserve the same remainder; settling holds, final records limit_reached; a raised limit reopens', async (t) => {
   const { db, create } = scratch(t);
   const p = await create({ prototype_budget_tokens: 400_000 });
   const a = item(db, p.id, 'a');
@@ -116,8 +124,10 @@ test('tokens: committed plus the reservation is checked in the claim; two claims
   const listed = dispatchCandidates(db).find((c) => c.project === p.id).items.map((i) => i.id);
   assert.deepEqual(listed, [a, b]);
   const first = claim(db, p.id, a);
-  assert.ok(first, 'the first claim: 0 committed + 300,000 reserved fits 400,000');
-  assert.equal(claim(db, p.id, b), null, 'the second claim, in its own transaction, sees the first one reservation: 600,000 > 400,000');
+  assert.ok(first, 'the first claim is given what the iteration has left, 400,000 of its 5,000,000 per-run limit');
+  const snap = JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE run = ?').get(first.run).budget_snapshot);
+  assert.deepEqual([snap.budget_run_billable_tokens, snap.prototype_allowance], [400_000, { iteration: p.iteration, run_limit_tokens: RUN_LIMIT, available_tokens: 400_000, effective_limit_tokens: 400_000, limited_by: 'iteration' }], 'fixed on its receipt');
+  assert.equal(claim(db, p.id, b), null, 'the second claim, in its own transaction, sees the first one reservation: nothing left');
   assert.equal(iteration(db, p.iteration).status, 'preparing', 'only reservations of runs under way stand in the way: held, not ended');
   const r = { run: first.run, inv: db.prepare('SELECT id FROM invocation_receipts WHERE run = ?').get(first.run).id, dom: db.prepare('SELECT id FROM execution_domains WHERE run = ?').get(first.run).id };
   launch(db, r);
@@ -125,36 +135,49 @@ test('tokens: committed plus the reservation is checked in the claim; two claims
   transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
   assert.equal(db.prepare('SELECT held FROM work_items WHERE id = ?').get(b).held, 'depends_on', 'the settling hold is recorded as a wait on running work');
   let read = readIteration(db, { project: p.id, iteration: p.iteration });
-  assert.deepEqual(read.remaining.committed, { settled_tokens: 0, unknown_allowance_tokens: 0, under_way_observed_tokens: 80_000, under_way_reserved_tokens: RUN_LIMIT - 80_000, total_tokens: RUN_LIMIT });
-  assert.equal(read.remaining.tokens, 400_000 - RUN_LIMIT, 'the read and the check count the same account');
+  assert.deepEqual(read.remaining.committed, { settled_tokens: 0, unknown_allowance_tokens: 0, under_way_observed_tokens: 80_000, under_way_reserved_tokens: 400_000 - 80_000, total_tokens: 400_000 }, 'the reservation is the effective allowance, never the per-run limit');
+  assert.equal(read.remaining.tokens, 0, 'the read and the check count the same account: never over-reserved');
   assert.deepEqual([read.remaining.enforced, read.remaining.enforcement, read.remaining.overshoot], [true, 'dispatch_check', 'running runs end at their own limits and deadlines']);
   assert.equal(read.remaining.next_dispatch.kind, 'settling');
-  assert.equal(read.remaining.next_run_reservation_tokens, RUN_LIMIT);
+  assert.match(read.remaining.next_dispatch.reason, /^tokens: prototype_budget_tokens 400000: committed 400000 .* leaves 0: a run would get no positive allowance \(its per-run limit 5000000, capped at what the iteration has left\); the estimated-cost check cannot pass on its own/);
+  assert.deepEqual([read.remaining.next_run_reservation_tokens, read.remaining.next_run_limited_by, read.remaining.run_limit_tokens], [null, null, RUN_LIMIT]);
+  const view = read.usage.runs[0].invocations[0];
+  assert.deepEqual([view.effective_limit_tokens, view.limited_by, view.run_limit_tokens, view.reserved_tokens], [400_000, 'iteration', RUN_LIMIT, 320_000], 'served on the invocation');
 
-  // What it observed can only grow: at 120,000 observed, 120,000 + 300,000
-  // passes the limit whatever the run does now.
+  // The run's own mid-run stop is at its effective allowance (ledger.ts
+  // budgetCheck), not at the per-run limit.
   usage(db, r, { input_tokens: 100_000, output_tokens: 20_000 });
-  assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).remaining.next_dispatch.kind, 'final');
+  assert.equal(budgetCheck(db, { run: r.run, invocation: r.inv }), null, 'under its allowance');
+  assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).remaining.next_dispatch.kind, 'settling', 'it may still end below its allowance');
   transact(db, ENGINE_ACTOR, (tx) => R.beginEnd(tx, { run: r.run, outcome: 'completed', reason: 'none' }));
   settle(db, r);
-  // Settled at 120,000: 120,000 + 300,000 > 400,000 whatever runs do now.
-  assert.equal(claim(db, p.id, b), null);
+  // Settled at 120,000: 280,000 left, which b is given.
+  const second = claim(db, p.id, b);
+  assert.ok(second, 'b is given what is left');
+  const r2 = { run: second.run, inv: db.prepare('SELECT id FROM invocation_receipts WHERE run = ?').get(second.run).id, dom: db.prepare('SELECT id FROM execution_domains WHERE run = ?').get(second.run).id };
+  assert.deepEqual(JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE id = ?').get(r2.inv).budget_snapshot).prototype_allowance.effective_limit_tokens, 280_000);
+  launch(db, r2);
+  usage(db, r2, { input_tokens: 250_000, output_tokens: 40_000 });
+  assert.equal(budgetCheck(db, { run: r2.run, invocation: r2.inv }), 'budget_run_billable_tokens', 'past its effective allowance (290,000 > 280,000) the run is stopped, though far under its per-run limit');
+  transact(db, ENGINE_ACTOR, (tx) => R.beginEnd(tx, { run: r2.run, outcome: 'completed', reason: 'none' }));
+  settle(db, r2);
+  // 410,000 settled: nothing left, whatever runs do now.
+  assert.equal(claim(db, p.id, item(db, p.id, 'c')), null);
   const it = iteration(db, p.iteration);
   assert.equal(it.status, 'limit_reached');
-  assert.match(it.outcome_reason, /^tokens: prototype_budget_tokens 400000: committed 120000 \(settled 120000, unknown allowances 0, under way 0 observed \+ 0 reserved\) \+ this run's reservation 300000 = 420000 exceeds it/);
+  assert.match(it.outcome_reason, /^tokens: prototype_budget_tokens 400000: committed 410000 \(settled 410000, unknown allowances 0, under way 0 observed \+ 0 reserved\) leaves 0: a run would get no positive allowance/);
   assert.equal(it.next_step, 'raise the limit or discard');
   assert.ok(it.ended_at);
   const [ev] = events(db, 'prototype.iteration_limit_reached');
-  assert.deepEqual([ev.limit, ev.committed, ev.reservation, ev.from], ['tokens', 120_000, RUN_LIMIT, 'preparing']);
+  assert.deepEqual([ev.limit, ev.committed, ev.available, ev.reservation, ev.from], ['tokens', 410_000, 0, RUN_LIMIT, 'preparing']);
   read = readIteration(db, { project: p.id, iteration: p.iteration });
   assert.deepEqual(read.outcome, { status: 'limit_reached', reason: it.outcome_reason, next_step: 'raise the limit or discard' });
   assert.equal(read.remaining.next_dispatch, null, 'an iteration that is not open is asked nothing');
   const now = readProject(db, { project: p.id }).project.now;
   assert.equal(now.state, 'idle');
   assert.match(now.reason, /^Prototype iteration 1 is limit_reached: tokens: prototype_budget_tokens 400000.*next: raise the limit or discard\.$/);
-  // A planned project's dispatch is never the iteration's to refuse: no
-  // other item of this one is dispatched either.
-  assert.equal(claim(db, p.id, item(db, p.id, 'c')), null);
+  assert.equal(claim(db, p.id, item(db, p.id, 'd')), null);
+  assert.deepEqual(P.raiseEffect(db, p.id, { prototype_budget_tokens: 1_000_000 }), { iteration: p.iteration, seq: 1, status: 'limit_reached', raises: ['prototype_budget_tokens'], reopens: true, reason: 'iteration 1 reached a limit; it is open again once the raised limit is committed, and its next dispatch is checked against the new limits' });
 
   // The owner raises the limit (a policy revision recorded): the iteration
   // follows the editable keys and is open again.
@@ -164,7 +187,123 @@ test('tokens: committed plus the reservation is checked in the claim; two claims
   const reopened = iteration(db, p.iteration);
   assert.deepEqual([reopened.status, reopened.outcome_reason, reopened.next_step, reopened.ended_at, JSON.parse(reopened.limits_json).prototype_budget_tokens], ['preparing', null, null, null, 1_000_000]);
   assert.equal(events(db, 'prototype.iteration_limits_changed')[0].reopened, true);
-  assert.ok(claim(db, p.id, b), 'checked against the raised limit');
+  const third = claim(db, p.id, item(db, p.id, 'e'));
+  assert.ok(third, 'checked against the raised limit');
+  assert.equal(JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE run = ?').get(third.run).budget_snapshot).prototype_allowance.effective_limit_tokens, 590_000);
+});
+
+test('concurrent dispatch (S5): claims racing on one tick never reserve more than the iteration allowance in all, whatever their order; each is given at most what is left', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ prototype_budget_tokens: 1_500_000 });
+  runWith(db, p.id, 'settled', { input_tokens: 200_000, output_tokens: 100_000 });
+  const items = ['w1', 'w2', 'w3', 'w4'].map((k) => item(db, p.id, k));
+  const listed = dispatchCandidates(db).find((c) => c.project === p.id).items.map((i) => i.id);
+  assert.deepEqual(listed, items, 'all four pass the scheduler\'s read at once');
+  const claims = items.map((wi) => claim(db, p.id, wi));
+  assert.equal(claims.filter(Boolean).length, 1, 'only one is given anything: it is given all that was left');
+  const reserved = db.prepare(`SELECT budget_snapshot FROM invocation_receipts i JOIN runs r ON r.id = i.run WHERE r.iteration = ? AND r.state <> 'ended'`).all(p.iteration).map((x) => JSON.parse(x.budget_snapshot).prototype_allowance.effective_limit_tokens);
+  assert.deepEqual(reserved, [1_200_000]);
+  const read = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.equal(read.remaining.committed.total_tokens, 1_500_000, 'settled 300,000 + reserved 1,200,000: exactly the allowance, never past it');
+  assert.equal(read.remaining.tokens, 0);
+  assert.equal(iteration(db, p.iteration).status, 'preparing', 'the others wait on the run under way (settling), the iteration open');
+});
+
+test('unknown accounting (S2): a settled invocation with no usage and no allowance ends the iteration limit_reached naming it; raising a limit does not reopen it and says why; prepare is refused with the same explanation; Iterate starts clean while the app keeps the unknown', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ prototype_budget_tokens: 1_500_000 });
+  runWith(db, p.id, 'known', { input_tokens: 10, output_tokens: 10 });
+  const silent = runWith(db, p.id, 'silent', null);
+  // No dispatch is asked: the tick records it (the next dispatch would be refused whatever it asked).
+  transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
+  const it = iteration(db, p.iteration);
+  assert.equal(it.status, 'limit_reached');
+  assert.equal(
+    it.outcome_reason,
+    `tokens: prototype_budget_tokens 1500000: what the iteration committed is unknown: 1 charged invocation(s) have unknown billable tokens and no unknown allowance (invocation ${silent.inv} of run ${silent.run} (builder, fix)): each was settled with no usage reported and no allowance charged for it, so what it used, and so what the iteration committed, is unknown, never 0. Raising a limit cannot resolve an unknown total; no run is dispatched against an unknown total`,
+  );
+  assert.equal(it.next_step, "iterate (a new iteration, whose own totals exclude this one's; the app's totals keep this unknown) or discard");
+  const [ev] = events(db, 'prototype.iteration_limit_reached');
+  assert.deepEqual([ev.unknown, ev.invocations, ev.runs], [true, [silent.inv], [silent.run]]);
+  let read = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.deepEqual([read.remaining.tokens, read.remaining.committed.total_tokens], [null, null], 'unknown, never the limit less 0');
+  assert.match(read.remaining.tokens_reason, new RegExp(`invocation ${silent.inv} of run ${silent.run}.*Raising a limit cannot resolve an unknown total$`));
+  assert.equal(read.controls.resume.available, false);
+
+  // Raising: refused to reopen, the submission says why, the event too.
+  const effect = P.raiseEffect(db, p.id, { prototype_budget_tokens: 3_000_000 });
+  assert.deepEqual([effect.reopens, effect.raises], [false, ['prototype_budget_tokens']]);
+  assert.match(effect.reason, new RegExp(`^iteration 1's accounting is unresolved: .*invocation ${silent.inv}.*\\. Next: iterate \\(a new iteration`));
+  const rev = db.prepare('SELECT p.policy_revision AS id, r.effective FROM projects p JOIN policy_revisions r ON r.id = p.policy_revision WHERE p.id = ?').get(p.id);
+  db.prepare('UPDATE policy_revisions SET effective = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(rev.effective), prototype_budget_tokens: 3_000_000 }), rev.id);
+  transact(db, HUMAN, (tx) => P.limitsChanged(tx, p.id));
+  assert.deepEqual([iteration(db, p.iteration).status, iteration(db, p.iteration).outcome_reason], ['limit_reached', it.outcome_reason], 'not reopened; the reason kept');
+  const changed = events(db, 'prototype.iteration_limits_changed').at(-1);
+  assert.deepEqual([changed.reopened, changed.status], [false, 'limit_reached']);
+  assert.match(changed.not_reopened_because, /accounting is unresolved/);
+  // "prepare again" does not bypass it.
+  assert.throws(
+    () => transact(db, HUMAN, (tx) => B.requestPreparation(tx, { project: p.id, iteration: p.iteration })),
+    (e) => e.status === 409 && /accounting is unresolved: 1 charged invocation\(s\) have unknown billable tokens/.test(e.reason) && /^Next: iterate/.test(e.whatToDo) && e.subject.unknown_invocations[0] === silent.inv,
+  );
+  // Iterate: the new iteration's own totals exclude the predecessor's; the app's keep the unknown.
+  const made = transact(db, HUMAN, (tx) => iterate(tx, { project: p.id, iteration: p.iteration, change: null }));
+  read = readIteration(db, { project: p.id, iteration: made.body.iteration.id });
+  assert.deepEqual([read.usage.totals.invocations, read.remaining.tokens_reason, read.remaining.tokens], [0, null, 3_000_000]);
+  assert.equal(read.app_totals.invocations, 2);
+  assert.equal(read.app_totals.completeness.incomplete, 1, "the unknown kept in the app's totals");
+  assert.notEqual(read.app_totals.tokens.total_is, 'complete', 'never stated as complete');
+});
+
+test('Stop and resume (gap 4): raising a limit never undoes a Stop; POST …/resume does, deliberately: the project unpaused, the iteration open again, its held work resumed', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ prototype_budget_tokens: 1_500_000 });
+  const a = dispatch(db, p.id, 'a');
+  launch(db, a);
+  usage(db, a, { input_tokens: 40, output_tokens: 2 });
+  assert.deepEqual(readIteration(db, { project: p.id, iteration: p.iteration }).controls.resume, { available: false, reason: 'iteration 1 is preparing: only a stopped iteration is resumed' });
+  const ask = transact(db, HUMAN, (tx) => controlIteration(tx, { project: p.id, iteration: p.iteration, action: 'stop', previewHash: undefined, facts: {} }));
+  transact(db, HUMAN, (tx) => controlIteration(tx, { project: p.id, iteration: p.iteration, action: 'stop', previewHash: ask.body.subject.preview_hash, facts: {} }));
+  settle(db, a);
+  assert.equal(db.prepare('SELECT status FROM work_items WHERE id = ?').get(a.wi).status, 'held', 'the stopped run\'s work is held');
+  assert.deepEqual([iteration(db, p.iteration).status, iteration(db, p.iteration).next_step], ['stopped', 'resume (POST …/resume), iterate or discard']);
+  // The stopped run is charged its effective allowance less what it observed.
+  const charged = readIteration(db, { project: p.id, iteration: p.iteration }).usage.runs[0].invocations[0];
+  assert.deepEqual([charged.effective_limit_tokens, charged.limited_by, charged.unknown_allowance_tokens], [1_500_000, 'iteration', 1_500_000 - 42]);
+
+  // Raising a limit: the limits follow, the Stop stands.
+  assert.deepEqual(P.raiseEffect(db, p.id, { prototype_budget_tokens: 4_000_000 }), {
+    iteration: p.iteration,
+    seq: 1,
+    status: 'stopped',
+    raises: ['prototype_budget_tokens'],
+    reopens: false,
+    reason: `iteration 1 was stopped by the owner: raising a limit does not undo a Stop; resume it deliberately (POST /v1/projects/${p.id}/iterations/${p.iteration}/resume)`,
+  });
+  const rev = db.prepare('SELECT p.policy_revision AS id, r.effective FROM projects p JOIN policy_revisions r ON r.id = p.policy_revision WHERE p.id = ?').get(p.id);
+  db.prepare('UPDATE policy_revisions SET effective = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(rev.effective), prototype_budget_tokens: 4_000_000 }), rev.id);
+  transact(db, HUMAN, (tx) => P.limitsChanged(tx, p.id));
+  assert.equal(iteration(db, p.iteration).status, 'stopped', 'a raised limit does not reopen a stopped iteration');
+  assert.equal(JSON.parse(iteration(db, p.iteration).limits_json).prototype_budget_tokens, 4_000_000, 'its limits follow the policy');
+  assert.equal(db.prepare('SELECT paused FROM projects WHERE id = ?').get(p.id).paused, 1);
+  assert.equal(claim(db, p.id, item(db, p.id, 'x')), null, 'still nothing dispatched');
+
+  // Resume: deliberate.
+  const read = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.deepEqual(read.controls.resume, { available: true, reason: "unpauses the project, opens the iteration again (preparing or awaiting its brief's approval) and resumes the 1 work item(s) its Stop held; checked against its limits at the next dispatch" });
+  const done = transact(db, HUMAN, (tx) => P.resumeIteration(tx, { project: p.id, iteration: p.iteration }));
+  assert.deepEqual(done.body, { iteration: { id: p.iteration, seq: 1, status: 'preparing', next_step: 'request preparation or discard' }, project_unpaused: true, resumed_work: [a.wi] });
+  assert.deepEqual([iteration(db, p.iteration).status, iteration(db, p.iteration).ended_at, db.prepare('SELECT paused FROM projects WHERE id = ?').get(p.id).paused], ['preparing', null, 0]);
+  assert.equal(db.prepare('SELECT status FROM work_items WHERE id = ?').get(a.wi).status, 'eligible');
+  assert.equal(events(db, 'prototype.iteration_resumed').length, 1);
+  assert.ok(claim(db, p.id, a.wi), 'dispatched again, under the raised limit');
+  assert.throws(() => transact(db, HUMAN, (tx) => P.resumeIteration(tx, { project: p.id, iteration: p.iteration })), (e) => e.status === 409 && /only a stopped iteration is resumed/.test(e.reason));
+  // A stopped iteration whose allowance is spent is not resumed until the limit is raised.
+  const q = await create({ prototype_budget_tokens: 100_000 });
+  runWith(db, q.id, 'big', { input_tokens: 90_000, output_tokens: 20_000 });
+  const askQ = transact(db, HUMAN, (tx) => controlIteration(tx, { project: q.id, iteration: q.iteration, action: 'stop', previewHash: undefined, facts: {} }));
+  transact(db, HUMAN, (tx) => controlIteration(tx, { project: q.id, iteration: q.iteration, action: 'stop', previewHash: askQ.body.subject.preview_hash, facts: {} }));
+  assert.throws(() => transact(db, HUMAN, (tx) => P.resumeIteration(tx, { project: q.id, iteration: q.iteration })), (e) => e.status === 409 && /leaves 0: a run would get no positive allowance.*; raise the limit, then resume/.test(e.reason));
 });
 
 test('estimated cost: settled reported and estimated only; an unknown cost is never 0, so the token check decides; reaching the threshold records limit_reached', async (t) => {
@@ -178,9 +317,9 @@ test('estimated cost: settled reported and estimated only; an unknown cost is ne
   assert.equal(read.remaining.usd_label, 'an estimated-cost threshold checked at dispatch, not a billing cap');
   assert.equal(read.remaining.next_dispatch, null, '0.6 known is under 1, and the token check passes: admitted');
   // Were the token check to fail, the cost check could not carry the dispatch.
-  setLimits(db, p.iteration, { prototype_budget_tokens: 200_000 });
+  setLimits(db, p.iteration, { prototype_budget_tokens: 40 });
   const held = P.prototypeBlocker(db, p.id, { reservation: RUN_LIMIT, repair: false, item_repairs: 0, work_item: null });
-  assert.match(held, /^prototype limit: tokens: .* exceeds it; the estimated-cost check cannot pass on its own: 1 invocation\(s\) of unknown cost and 0 under way not yet costed are not counted as 0, so the token check decides$/);
+  assert.match(held, /^prototype limit: tokens: .* leaves 0: a run would get no positive allowance \(its per-run limit 5000000, capped at what the iteration has left\); the estimated-cost check cannot pass on its own: 1 invocation\(s\) of unknown cost and 0 under way not yet costed are not counted as 0, so the token check decides$/);
   setLimits(db, p.iteration, { prototype_budget_tokens: 10_000_000 });
   runWith(db, p.id, 'c', { input_tokens: 10, output_tokens: 10, cost_usd: 0.5 });
   assert.equal(claim(db, p.id, item(db, p.id, 'd')), null);
@@ -285,7 +424,7 @@ test('Stop: the preview lists the running runs; confirmation pauses the project,
   const manifest = JSON.parse(d.dependency_manifest);
   assert.deepEqual(manifest.runs.map((r) => [r.run, r.stoppable]), [[a.run, true], [b.run, true]]);
   assert.match(manifest.runs[0].fate, /human_stop.*charged with its unknown allowance/);
-  assert.deepEqual([manifest.project_paused, manifest.outcome], [true, { status: 'stopped', next_step: 'resume by raising a limit / iterate / discard' }]);
+  assert.deepEqual([manifest.project_paused, manifest.outcome], [true, { status: 'stopped', next_step: 'resume (POST …/resume), iterate or discard' }]);
   assert.match(d.question, /^Stop prototype iteration 1\? The project is paused .* 2 run\(s\) of it have not ended/);
   assert.equal(db.prepare('SELECT paused FROM projects WHERE id = ?').get(p.id).paused, 0, 'nothing happens before the confirmation');
   assert.throws(() => transact(db, HUMAN, (tx) => controlIteration(tx, { project: p.id, iteration: p.iteration, action: 'stop', previewHash: 'nope', facts: {} })), (e) => e.code === 'decision_stale');
@@ -300,7 +439,7 @@ test('Stop: the preview lists the running runs; confirmation pauses the project,
     assert.deepEqual(db.prepare('SELECT outcome, reason_class FROM runs WHERE id = ?').get(s.run), { outcome: 'stopped', reason_class: 'human_stop' });
   }
   const it = iteration(db, p.iteration);
-  assert.deepEqual([it.status, it.next_step], ['stopped', 'resume by raising a limit / iterate / discard']);
+  assert.deepEqual([it.status, it.next_step], ['stopped', 'resume (POST …/resume), iterate or discard']);
   assert.match(it.outcome_reason, /^stopped by the owner \(decision .*\): the project paused, 2 run\(s\) stopped, each keeping its charge$/);
   // The runs end through the ordinary protocol and are charged.
   settle(db, a);
@@ -396,6 +535,7 @@ test('the controls object of an open iteration: what Stop and Discard would do n
   assert.deepEqual(read.controls, {
     stop: { available: true, reason: 'pauses the project so that nothing else is dispatched, and stops 0 running run(s) of the iteration, each keeping its charge and its unknown allowance; nothing of the usage is erased' },
     discard: { available: true, reason: 'stops 0 running run(s) of the iteration and leaves any Alpha in place; receipts, ledger rows, runs and records are kept', tears_down_alpha: false, kept_because: 'this iteration deployed nothing' },
+    resume: { available: false, reason: 'iteration 1 is preparing: only a stopped iteration is resumed' },
   });
   assert.equal('enforced_from' in read.remaining, false);
 });

@@ -291,9 +291,11 @@ test('the preparation authorization: raised with the iteration; role, model, per
   assert.deepEqual([d.status, d.subject_type, d.subject_id], ['open', 'prototype_iteration', p.iteration]);
   const m = JSON.parse(d.dependency_manifest);
   for (const k of B.PREPARATION_KEYS) assert.ok(k in m, `the manifest binds ${k}`);
-  assert.deepEqual([m.role, m.provider, m.model, m.run_token_limit, m.estimated_usd, m.paid, m.authorizes], ['spec_writer', 'scripted', 'scripted', 300_000, null, false, 'exactly one brief_preparation run']);
+  // Slice E5 (S5): the run's effective allowance, the per-run limit
+  // (5,000,000) capped at what the iteration has left (1,500,000).
+  assert.deepEqual([m.role, m.provider, m.model, m.run_token_limit, m.estimated_usd, m.paid, m.authorizes], ['spec_writer', 'scripted', 'scripted', 1_500_000, null, false, 'exactly one brief_preparation run']);
   assert.match(d.question, /the Spec Writer \(role spec_writer\) on scripted model scripted/);
-  assert.match(d.question, /per-run limit is 300000 billable tokens\. The scripted provider is unpaid: no paid work follows\./);
+  assert.match(d.question, /Its effective token limit is 1500000 billable tokens: the per-run limit of 5000000, capped at what the iteration has left of its token allowance\. The scripted provider is unpaid: no paid work follows\./);
   assert.match(d.question, /counted in the prototype's totals as its own subtotal/);
   assert.match(d.question, /Approving authorizes exactly one preparation run/);
   assert.equal(iteration(db, p.iteration).next_step, 'approve preparation or discard');
@@ -313,16 +315,16 @@ test('a paid provider: the question states the provider, model and the estimate 
   const rev = db.prepare('SELECT p.policy_revision AS id, r.effective FROM projects p JOIN policy_revisions r ON r.id = p.policy_revision WHERE p.id = ?').get(p.id);
   db.prepare('UPDATE policy_revisions SET effective = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(rev.effective), backend_spec_writer: 'claude', model_spec_writer: 'claude-sonnet-5-5' }), rev.id);
   const m = transact(db, ENGINE_ACTOR, (tx) => B.preparationManifest(tx.db, p.iteration));
-  assert.deepEqual([m.provider, m.model, m.paid, m.estimated_usd, m.resolution], ['claude', 'claude-sonnet-5-5', true, 3, 'refused']);
-  assert.match(m.estimate_basis, /^300000 billable tokens at the output rate of claude-sonnet-5-5 in price table anthropic-list/);
+  assert.deepEqual([m.provider, m.model, m.paid, m.estimated_usd, m.resolution], ['claude', 'claude-sonnet-5-5', true, 15, 'refused']);
+  assert.match(m.estimate_basis, /^1500000 billable tokens at the output rate of claude-sonnet-5-5 in price table anthropic-list/);
   // The open question no longer matches its manifest: reviewed, it is invalidated and asked again by the owner's request.
   const [old] = decisionsOf(db, p.id, 'prototype_preparation_approval');
   transact(db, ENGINE_ACTOR, (tx) => tx.db.prepare(`UPDATE decisions SET status = 'invalidated' WHERE id = ?`).run(old.id));
   transact(db, HUMAN, (tx) => B.requestPreparation(tx, { project: p.id, iteration: p.iteration }));
   const d = decisionsOf(db, p.id, 'prototype_preparation_approval').at(-1);
   assert.match(d.question, /on claude model claude-sonnet-5-5/);
-  assert.match(d.question, /an estimated \$3\.00 at most .*: an estimate, not a cap\./);
-  assert.match(JSON.parse(d.options).find((o) => o.key === 'approve').consequence_text, /paid by your provider account, up to 300000 billable tokens \(estimated \$3\.00 at most, not a cap\)/);
+  assert.match(d.question, /an estimated \$15\.00 at most .*: an estimate, not a cap\./);
+  assert.match(JSON.parse(d.options).find((o) => o.key === 'approve').consequence_text, /paid by your provider account, up to 1500000 billable tokens \(estimated \$15\.00 at most, not a cap\)/);
 });
 
 test('the brief: 3 to 5 objectives, one per requirement, each named; engine fields refused from the model; a smaller scope lists what is left out', () => {
@@ -360,6 +362,24 @@ test('withinPrototypeBounds: one phase, at most two stages, every requirement co
   assert.deepEqual(B.withinPrototypeBounds(content(), keys, { conformance: 'uncertain', uncertain: ['phase_size'] }).outside, ['the plan check found it uncertain: phase_size']);
 });
 
+test('withinPrototypeBounds for a later iteration (S4): its own single phase, the next one and the roadmap\'s last, at most two stages, within the approved brief, adding no permission, asset path or tier the approved module map does not hold', () => {
+  const p1 = { number: 1, goal: 'g', modules: ['app'], requirement_ids: ['R1', 'R2', 'R3'], depends_on: [] };
+  const p2 = { number: 2, goal: 'h', modules: ['app'], requirement_ids: ['R4'], depends_on: [1] };
+  const content = (over = {}) => ({ roadmap: roadmapOf([p1, p2]), plan: { phase: 2, stages: [stage(1, ['R4'])] }, modules: MODULES, adrs: {}, ...over });
+  const ctx = { requirement_keys: ['R1', 'R2', 'R3', 'R4'], phase: 2, earlier_implemented: ['R1', 'R2', 'R3'], approved_modules: MODULES.modules };
+  const ok = B.withinPrototypeBounds(content(), ctx);
+  assert.deepEqual([ok.within, ok.outside, ok.facts.expected_phase, ok.facts.plan_phase], [true, [], 2, 2]);
+  assert.deepEqual(B.withinPrototypeBounds(content({ plan: { phase: 2, stages: [stage(1, ['R4']), stage(2, ['R4']), stage(3, ['R4'])] } }), ctx).outside, ["the plan has 3 stages; a prototype's has at most 2"]);
+  assert.deepEqual(B.withinPrototypeBounds(content({ roadmap: roadmapOf([p1, p2, { number: 3, goal: 'later', modules: ['app'], requirement_ids: [], depends_on: [2] }]) }), ctx).outside, ['the roadmap has 3 phase(s) (1, 2, 3); a prototype adds exactly 1 phase per iteration: phase 2, after the 1 completed, and none after it']);
+  assert.deepEqual(B.withinPrototypeBounds(content({ plan: { phase: 2, stages: [stage(1, ['R1'])] } }), ctx).outside, ['requirement(s) R4 of the approved brief are implemented by no stage of phase 2 nor of the 1 completed']);
+  assert.deepEqual(B.withinPrototypeBounds(content({ plan: { phase: 2, stages: [stage(1, ['R4', 'R9'])] } }), ctx).outside, ["the plan implements R9, beyond the approved brief's requirements"]);
+  assert.deepEqual(B.withinPrototypeBounds(content(), { ...ctx, phase: 3 }).outside, ['the roadmap has 2 phase(s) (1, 2); a prototype adds exactly 1 phase per iteration: phase 3, after the 2 completed, and none after it', 'the plan is for phase 2, not phase 3']);
+  // A permission the approved map already holds is not new; a new one is.
+  const camera = [{ ...MODULES.modules[0], platform_permissions: [{ target: 'web', permission: 'camera', why: 'x' }] }];
+  assert.deepEqual(B.withinPrototypeBounds(content({ modules: { ...MODULES, modules: camera } }), { ...ctx, approved_modules: camera }).outside, []);
+  assert.deepEqual(B.withinPrototypeBounds(content({ modules: { ...MODULES, modules: camera } }), ctx).outside, ['the module map asks for platform permission(s): app: camera (web)']);
+});
+
 test('demonstration on the scripted backend: idea to alpha_ready through preparation, brief, policy-authorized first plan, check approval and the build', async (t) => {
   const { db, create } = scratch(t);
   const p = await create();
@@ -373,7 +393,7 @@ test('demonstration on the scripted backend: idea to alpha_ready through prepara
   const [item] = itemsOf(db, p.id, 'brief_preparation');
   assert.deepEqual([item.status, JSON.parse(item.subject).decision, R.ROLE_OF.brief_preparation], ['eligible', prep.id, 'spec_writer']);
   assert.deepEqual([iteration(db, p.iteration).status, iteration(db, p.iteration).next_step], ['preparing', 'wait: the brief is being prepared']);
-  assert.equal(events(db, 'prototype.preparation_authorized')[0].run_token_limit, 300_000);
+  assert.equal(events(db, 'prototype.preparation_authorized')[0].run_token_limit, 1_500_000, "the preparation run's effective allowance (S5)");
 
   // 2. The run: attributed to the iteration; the brief recorded; spec_approval raised with the brief in its manifest.
   const b1 = prepareBrief(db, p.id);
@@ -395,7 +415,7 @@ test('demonstration on the scripted backend: idea to alpha_ready through prepara
   assert.match(b1.brief.target.exposure_note, /has no configuration recorded yet: its port and who can reach it are not known, and the engine has not checked its exposure/);
   assert.deepEqual(b1.brief.models, [{ provider: 'scripted', model: 'scripted', roles: ['spec_writer', 'architect', 'verifier', 'builder'] }]);
   assert.deepEqual([b1.brief.limits.prototype_budget_tokens, b1.brief.limits.prototype_runtime_seconds], [1_500_000, 2700]);
-  assert.match(b1.brief.limits.reservation_rule, /budget_run_billable_tokens 300000/);
+  assert.match(b1.brief.limits.reservation_rule, /the lower of the per-run limit \(budget_run_billable_tokens 5000000\) and what the iteration has left/);
   assert.deepEqual([b1.brief.preparation.runs, b1.brief.preparation.tokens, b1.brief.preparation.usd, typeof b1.brief.preparation.authorized_at], [1, null, null, 'string']);
   assert.equal(b1.brief.stop_conditions.length, B.STOP_CONDITIONS.length);
 
@@ -459,6 +479,14 @@ test('demonstration on the scripted backend: idea to alpha_ready through prepara
   assert.deepEqual([iteration(db, p.iteration).status, iteration(db, p.iteration).next_step], ['building', 'none: building']);
 
   // 7. A stage's work parked fails the iteration with its reason; the owner's retry returns it to building.
+  // Slice E5 (S5): the timed-out run below is charged its effective
+  // allowance less what it observed (C4); under the default 1,500,000 that
+  // allowance is all the iteration had left. The allowance is raised here
+  // (and the day's unknown-token limit with it), as what is under test is
+  // the parked work's status, not the limits.
+  const lim = db.prepare('SELECT limits_json FROM prototype_iterations WHERE id = ?').get(p.iteration);
+  db.prepare('UPDATE prototype_iterations SET limits_json = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(lim.limits_json), prototype_budget_tokens: 20_000_000 }), p.iteration);
+  db.prepare(`UPDATE policy_revisions SET effective = json_set(effective, '$.budget_day_unknown_tokens', 50000000) WHERE project = ?`).run(p.id);
   const builds = itemsOf(db, p.id, 'stage_build');
   assert.equal(builds.length, 2, 'two stages, each its Builder\'s work');
   const sb = claim(db, p.id, builds[0].id);

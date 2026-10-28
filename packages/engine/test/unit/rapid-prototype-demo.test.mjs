@@ -25,6 +25,17 @@
 //   local_service adapter itself (a systemd user unit) cannot run in a unit
 //   test, and no unit is started here.
 //
+// Slice E5 (the owner's rulings S1 to S5 and the four validation gaps of
+// 2026-10-28) adds: a prototype created unpaused with nothing dispatched
+// before its preparation's approval (S1); the effective allowance of each
+// run, served on its invocations (S5); the unknown committed figure named,
+// with only working next steps, raising a limit not reopening it and
+// prepare refused (S2, case 7); (11) iteration 2 reaching its own Alpha
+// through one bounded phase of its own (S4, gap 3); (12) two stages racing
+// on one tick never over-reserving the allowance, and an engine killed and
+// restarted mid-run (gaps 1 and 2); (13) a raised limit never undoing a
+// Stop, and the deliberate resume (gap 4).
+//
 // Every assertion is read from the served API (the reads of the project,
 // its iterations, the receipt, the decisions, the work, the policy and the
 // event stream). The store is read only to drive the scripted boundaries
@@ -221,6 +232,24 @@ class Fixture {
   kindScript(kind, value) {
     this.writeScript(`kind-${kind}`, value);
   }
+  // Slice E5: the launches of a kind so far (the role program's own log),
+  // and the next launches of that kind scripted after them, each earlier
+  // ordinal keeping the script it had (`before`).
+  launchesOf(kind) {
+    const file = join(this.scripted, 'launches.jsonl');
+    if (!existsSync(file)) return 0;
+    return readFileSync(file, 'utf8').split('\n').filter((l) => {
+      try {
+        const e = JSON.parse(l);
+        return e.event === 'launch' && e.work_kind === kind;
+      } catch {
+        return false;
+      }
+    }).length;
+  }
+  kindNext(kind, scripts, before) {
+    this.kindScript(kind, [...Array(this.launchesOf(kind)).fill(before), ...scripts]);
+  }
   itemScript(workItem, scripts) {
     this.writeScript(workItem, scripts);
   }
@@ -311,7 +340,7 @@ const REQS = [
   { key: 'R3', title: 'Finish a task', statement: 'A user marks a task done.', crit: 'Given a task, when a user marks it done, then it is listed as done.' },
 ];
 
-function specText({ version = 1, purpose = 'A small task list, to show the idea.', changeLog = [] } = {}) {
+function specText({ version = 1, purpose = 'A small task list, to show the idea.', changeLog = [], reqs = REQS } = {}) {
   return `# Tasks
 
 **Spec version:** ${version}
@@ -333,12 +362,12 @@ One person on this host.
 
 ## 4. Requirements
 
-${REQS.map((r) => `### ${r.key}. ${r.title}\n\n${r.statement}\n\n**Rationale.** The prototype shows it.\n\n**Sensitive areas:** none\n\n**Acceptance criteria**\n\n- ${r.key}.1 ${r.crit}\n`).join('\n')}
+${reqs.map((r) => `### ${r.key}. ${r.title}\n\n${r.statement}\n\n**Rationale.** The prototype shows it.\n\n**Sensitive areas:** none\n\n**Acceptance criteria**\n\n- ${r.key}.1 ${r.crit}\n`).join('\n')}
 ## 5. Requirement index
 
 | Key | Title | Phase | Sensitive areas | Criteria |
 |---|---|---|---|---|
-${REQS.map((r) => `| ${r.key} | ${r.title} | 1 | none | ${r.key}.1 |`).join('\n')}
+${reqs.map((r) => `| ${r.key} | ${r.title} | ${r.phase ?? 1} | none | ${r.key}.1 |`).join('\n')}
 
 ## 6. Modules and protected paths
 
@@ -414,14 +443,14 @@ const STAGES = [
   { number: 1, goal: 'add and list tasks', tasks: ['write server.mjs with POST /tasks and GET /tasks'], modules: ['app'], implements: ['R1', 'R2'], adrs: [], depends_on: [], validation: { criteria: ['R1.1', 'R2.1'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] }, integration_obligations: [] },
   { number: 2, goal: 'finish a task', tasks: ['write src/done.mjs and POST /tasks/:id/done'], modules: ['app'], implements: ['R3'], adrs: [], depends_on: [1], validation: { criteria: ['R3.1'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] }, integration_obligations: [] },
 ];
-const firstPlanScript = ({ use = usage(2000, 0, 900) } = {}) => ({
+const firstPlanScript = ({ use = usage(2000, 0, 900), stages = STAGES } = {}) => ({
   steps: [
     use,
     write('.surety/architecture/architecture.md', '# Tasks: architecture\n\nOne module, `app`: `server.mjs` with Node\'s own `http`, and helpers under `src/`.\n'),
     write('.surety/architecture/modules.json', json(MODULES)),
     write('.surety/roadmap/roadmap.json', json(ROADMAP)),
     write('.surety/roadmap/roadmap.md', '# Roadmap\n\n1. The task list, end to end (R1, R2, R3).\n'),
-    { write: { path: '.surety/phases/phase-1.json', content: json({ phase: 1, prepared_against: { spec_version: 1, architecture_version: 1, roadmap_version: 1, revision: '__HEAD__' }, stages: STAGES, conformance: 'within_baseline' }), substitute_head: true } },
+    { write: { path: '.surety/phases/phase-1.json', content: json({ phase: 1, prepared_against: { spec_version: 1, architecture_version: 1, roadmap_version: 1, revision: '__HEAD__' }, stages, conformance: 'within_baseline' }), substitute_head: true } },
     write('.surety/phases/phase-1.md', '# Phase 1\n\n- Stage 1: add and list tasks\n- Stage 2: finish a task\n'),
     result({ summary: 'the first plan', plan: 'phase-1', conformance: 'within_baseline' }),
   ],
@@ -437,13 +466,31 @@ const CHECK_FILES = {
   '.surety/checks/defs/smoke.json': def('smoke', { kind: 'smoke', command: ['probe'], timeout_s: 60, gate_kinds: GATES }),
   '.surety/checks/defs/operation.json': def('operation', { kind: 'post_deploy_behavior', command: ['probe'], timeout_s: 60, gate_kinds: ['alpha_complete'], requires: ['environment', 'artifact_digest'] }),
 };
-const authoringScript = ({ use = usage(900, 100, 300) } = {}) => ({
-  steps: [use, ...Object.entries(CHECK_FILES).map(([p, c]) => write(p, c)), result({ proposal: { rationale: "The Verifier authors the prototype's checks before any stage builds.", requested_change_kind: 'unclassifiable' } })],
+const authoringScript = ({ use = usage(900, 100, 300), files = CHECK_FILES } = {}) => ({
+  steps: [use, ...Object.entries(files).map(([p, c]) => write(p, c)), result({ proposal: { rationale: "The Verifier authors the prototype's checks before any stage builds.", requested_change_kind: 'unclassifiable' } })],
 });
 const SERVER = "import { createServer } from 'node:http';\nconst tasks = [];\ncreateServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(tasks)); }).listen(Number(process.env.PORT), '127.0.0.1');\n";
 const builderScript = (stage, { use = usage(1500, 500, 700), steps = [] } = {}) => ({
   steps: [use, ...steps, stage === 1 ? write('server.mjs', SERVER) : write('src/done.mjs', 'export const done = (t) => ({ ...t, done: true });\n'), result()],
 });
+
+// Slice E5: a Builder writing one file of its own; iteration 2's
+// requirement, its plan (phase 2 only, one stage) and its check.
+const builderOwn = (path, content, { use = usage(1500, 500, 700) } = {}) => ({ steps: [use, write(path, content), result()] });
+const REQ4 = { key: 'R4', title: 'Count open tasks', statement: 'A user sees how many tasks are open.', crit: 'Given two open tasks and one done, when a user lists the tasks, then 2 open tasks are counted.', phase: 2 };
+const ROADMAP2 = { version: 2, architecture_version: 1, phases: [...ROADMAP.phases, { number: 2, goal: 'the open count', modules: ['app'], requirement_ids: ['R4'], depends_on: [1] }] };
+const STAGES2 = [{ number: 1, goal: 'count the open tasks', tasks: ['write src/count.mjs'], modules: ['app'], implements: ['R4'], adrs: [], depends_on: [], validation: { criteria: ['R4.1'], kinds: ['acceptance', 'smoke'], sensitive_areas: [] }, integration_obligations: [] }];
+const secondPlanScript = ({ use = usage(1800, 0, 700) } = {}) => ({
+  steps: [
+    use,
+    write('.surety/roadmap/roadmap.json', json(ROADMAP2)),
+    write('.surety/roadmap/roadmap.md', '# Roadmap\n\n1. The task list, end to end (R1, R2, R3).\n2. The open count (R4).\n'),
+    { write: { path: '.surety/phases/phase-2.json', content: json({ phase: 2, prepared_against: { spec_version: 2, architecture_version: 1, roadmap_version: 2, revision: '__HEAD__' }, stages: STAGES2, conformance: 'within_baseline' }), substitute_head: true } },
+    write('.surety/phases/phase-2.md', '# Phase 2\n\n- Stage 1: count the open tasks\n'),
+    result({ summary: "iteration 2's plan: phase 2", plan: 'phase-2', conformance: 'within_baseline' }),
+  ],
+});
+const CHECK_FILE_R4 = { '.surety/checks/defs/accept-r4.json': def('accept-r4', { kind: 'acceptance', command: ['probe'], timeout_s: 60, gate_kinds: GATES, covers: { criteria: ['R4.1'] } }) };
 
 // The scripts every prototype of this file follows by default (a launch of
 // a kind with its own work-item or run script follows that one instead).
@@ -477,8 +524,8 @@ const configContent = (port = 18080) => ({
 // The owner configures alpha; the test seam scripts the adapter's deploy
 // answers (SEAM.md §247) and records the adapter's qualification fixture
 // (§248), as M301 and M401 do.
-async function alphaReady(fx, project, { answers = [{ result: 'issued', apply: true }] } = {}) {
-  const res = await fx.put(`/v1/projects/${project}/environments/alpha/config`, configContent());
+async function alphaReady(fx, project, { answers = [{ result: 'issued', apply: true }], port = 18080 } = {}) {
+  const res = await fx.put(`/v1/projects/${project}/environments/alpha/config`, configContent(port));
   assert.ok([200, 201].includes(res.status), `PUT …/environments/alpha/config (→ ${res.status} ${res.text})`);
   const env = res.body.environment;
   await fx.ok(fx.post(`/v1/harness/deploy/environments/${env.id}/answers`, { call: 'deploy', answers }), 200, 'the scripted adapter takes its deploy answers');
@@ -510,12 +557,18 @@ async function newPrototype(fx, { name, idea = 'A small task list app: add, list
   const id = made.project?.id ?? made.id;
   assert.match(id ?? '', /^proj_/, `the new app is named (${JSON.stringify(made)})`);
   await waitFor(async () => (await fx.project(id)).registration_state === 'registered', { what: `project ${id} registered` });
-  // The new-app route creates the app paused (the onboarding design): the
-  // owner starts it (POST …/resume, an act on the project, not an answer to
-  // a decision). Nothing is dispatched before the preparation's approval
-  // either way.
-  assert.equal((await fx.project(id)).paused, true, 'a new app is created paused');
-  await fx.ok(fx.post(`/v1/projects/${id}/resume`), 200, 'POST …/resume');
+  // A planned app is created paused (the onboarding design): the owner
+  // starts it (POST …/resume). A rapid prototype is created unpaused (slice
+  // E5, the owner's ruling S1): creating it launches no work, and its
+  // preparation's work item exists only once the owner approves that run.
+  if (mode === 'rapid_prototype') {
+    assert.equal((await fx.project(id)).paused, false, 'a new prototype is created unpaused (S1)');
+    assert.deepEqual(await fx.work(id), [], 'no work item at creation');
+    assert.deepEqual((await fx.openDecisions(id)).map((d) => d.kind), ['prototype_preparation_approval'], 'only the preparation is asked');
+  } else {
+    assert.equal((await fx.project(id)).paused, true, 'a new planned app is created paused');
+    await fx.ok(fx.post(`/v1/projects/${id}/resume`), 200, 'POST …/resume');
+  }
   return id;
 }
 
@@ -542,6 +595,19 @@ async function pump(fx, project, done, { answer = [], max = 60, what = 'the jour
     if (wait) await fx.idle(project);
     else await sleep(300);
   }
+}
+
+// A policy submission as the owner makes it: a widening confirmed through
+// its decision. Returns what the submission said of the prototype's current
+// iteration (slice E5: whether a raise reopens it, and why not).
+async function answerPolicy(fx, p, res, what) {
+  if (res.status === 409) {
+    const d = await fx.decision(p, res.body.subject.decision);
+    await fx.ok(fx.answer(p, d), 200, `the owner approves ${what}`);
+    return res.body.subject.prototype;
+  }
+  assert.ok([200, 201, 202].includes(res.status), `${what} (→ ${res.status} ${res.text})`);
+  return res.body.prototype;
 }
 
 const current = async (fx, p) => (await fx.iterations(p)).iterations.at(-1);
@@ -687,6 +753,11 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     assert.equal(session.invocations.length, 2, 'one run, two invocations');
     assert.equal(new Set(session.invocations.map((i) => i.id)).size, 2, 'each invocation distinguishable');
     assert.equal(new Set(session.invocations.map((i) => i.turn)).size, 2, 'each its own turn');
+    // Slice E5 (S5): each turn given the session's effective allowance, the
+    // per-run limit capped at what the iteration had left; the session's
+    // bound, its earlier turn's charge included, is the same for both.
+    assert.ok(session.invocations.every((i) => i.limited_by === 'iteration' && i.run_limit_tokens === 5_000_000 && i.effective_limit_tokens > 0 && i.effective_limit_tokens <= 1_500_000), JSON.stringify(session.invocations));
+    assert.equal(session.invocations[0].effective_limit_tokens, session.invocations[1].effective_limit_tokens);
     assert.ok(session.invocations.every((i) => i.usage.state === 'complete' && i.usage.billable_in === 400 && i.usage.cached_in === 100 && i.usage.out === 80), JSON.stringify(session.invocations.map((i) => i.usage)));
     await fx.ok(fx.post(`/v1/projects/${p}/sessions/${run}/close`, { refuse: true }), 200, 'the session closed');
   });
@@ -897,14 +968,23 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     assert.deepEqual(restarted.usage.runs.map((r) => r.invocations.map((i) => i.id)), stopped.usage.runs.map((r) => r.invocations.map((i) => i.id)));
     assertAccounted(restarted, 'after the restart');
 
-    // (7) A limit: the owner lowers the token allowance below what the next
-    // run would reserve. The next dispatch is refused and the iteration is
-    // limit_reached; the unknown allowance is part of what was committed.
+    // (7) S5: the stopped run had been given its effective allowance, the
+    // per-run limit (5,000,000) capped at what the iteration had left, and is
+    // charged it less what it observed (C4): unknown usage consumes the
+    // allowance, never 0 (here all that was left of it at its dispatch).
+    const stoppedInv = restarted.usage.runs.find((x) => x.id === pending.run.id).invocations[0];
+    assert.deepEqual([stoppedInv.run_limit_tokens, stoppedInv.limited_by], [5_000_000, 'iteration'], `the run was given what the iteration had left (${JSON.stringify(stoppedInv)})`);
+    assert.equal(stoppedInv.unknown_allowance_tokens, stoppedInv.effective_limit_tokens - 1300, 'charged its effective allowance less the 1,300 it observed');
     const committed = restarted.remaining.committed.total_tokens;
-    assert.ok(committed > si.unknown_allowance_tokens, 'what was committed includes the unknown allowance');
-    const lowered = committed + 1000;
-    const res = await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: lowered });
-    assert.ok([200, 201].includes(res.status), `lowering the allowance applies directly (→ ${res.status} ${res.text})`);
+    assert.ok(committed <= 1_500_000, `never reserved past the allowance (${committed})`);
+    assert.equal(restarted.remaining.tokens, 1_500_000 - committed);
+    // A limit: the owner lowers the allowance to what was committed, so that
+    // nothing is left for the next run.
+    if (committed < 1_500_000) {
+      const res = await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: Math.max(committed, 10_000) });
+      assert.ok([200, 201].includes(res.status), `lowering the allowance applies directly (→ ${res.status} ${res.text})`);
+      await waitFor(async () => (await fx.iteration(p, it.id)).iteration.limits.prototype_budget_tokens === Math.max(committed, 10_000), { what: 'the lowered limit committed' });
+    }
     const held = (await fx.work(p)).find((w) => w.kind === 'stage_build' && w.status === 'held');
     assert.ok(held, 'the stopped run\'s work is held');
     await fx.ok(fx.post(`/v1/projects/${p}/work/${held.id}/resume`), 200, 'the owner resumes the held work');
@@ -913,36 +993,50 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     await fx.idle(p);
     const limited = await fx.iteration(p, it.id);
     assert.equal(limited.iteration.status, 'limit_reached', `the dispatch was refused at the limit (${JSON.stringify(limited.outcome)})`);
-    assert.match(limited.outcome.reason, /^tokens: prototype_budget_tokens/);
+    assert.match(limited.outcome.reason, /^tokens: prototype_budget_tokens \d+: committed \d+ .* leaves 0: a run would get no positive allowance \(its per-run limit 5000000, capped at what the iteration has left\)/);
     assert.equal(limited.outcome.next_step, 'raise the limit or discard');
     assert.equal(limited.usage.runs.length, runsBefore, 'no run was dispatched');
-    assert.equal(limited.remaining.tokens, lowered - committed, 'remaining is the limit less what was committed, the unknown allowance included');
+    assert.equal(limited.remaining.tokens, 0, 'nothing left: the unknown allowance included');
     await fx.tick(p);
     assert.equal((await fx.iteration(p, it.id)).usage.runs.length, runsBefore, 'still no run');
 
-    // Raised again (a widening, confirmed by the owner): open again, stage 1
-    // is built by a run that reports no usage at all. Its usage is unknown
-    // and, the scripted provider having said nothing, no allowance is
-    // charged (D2 C4): the iteration does not count it as 0, its committed
-    // tokens are unknown, and the next dispatch is refused.
-    const raise = await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: 1_500_000 });
-    if (raise.status === 409) {
-      const d = await fx.decision(p, raise.body.subject.decision);
-      await fx.ok(fx.answer(p, d), 200, 'the owner approves the raised allowance');
-    } else assert.ok([200, 201].includes(raise.status), `raising (→ ${raise.status} ${raise.text})`);
+    // Raised again (a widening, confirmed by the owner); the submission says
+    // it reopens the iteration. Stage 1 is built by a run that reports no
+    // usage at all: its usage is unknown and, the scripted provider having
+    // said nothing, no allowance is charged (D2 C4).
+    const raised = await answerPolicy(fx, p, await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: 3_000_000 }), 'the raised allowance');
+    assert.deepEqual([raised?.iteration, raised?.reopens, raised?.status], [it.id, true, 'limit_reached'], `the submission says it reopens the iteration (${JSON.stringify(raised)})`);
     await waitFor(async () => (await fx.iteration(p, it.id)).iteration.status === 'building', { what: 'the iteration open again' });
     const unknown = await pump(fx, p, async () => {
       const r = await fx.iteration(p, it.id);
       return r.iteration.status === 'limit_reached' ? r : undefined;
     }, { answer: CHECK_KINDS, what: 'the missing usage to stop dispatch' });
-    const missing = unknown.usage.runs.filter((x) => x.work_kind === 'stage_build').at(-1).invocations[0];
+    const missingRun = unknown.usage.runs.filter((x) => x.work_kind === 'stage_build').at(-1);
+    const missing = missingRun.invocations[0];
     assert.deepEqual([missing.usage.state, missing.usage.billable_in, missing.unknown_allowance_tokens], ['incomplete', null, null], 'missing usage: unknown, no figure');
+    assert.equal(missing.limited_by, 'iteration', 'it too was given what the iteration had left');
+    // S2: what is unknown is named; only what works is offered.
     assert.equal(unknown.remaining.tokens, null, 'the remaining allowance is unknown, never the limit less 0');
-    assert.match(unknown.remaining.tokens_reason, /unknown billable tokens/);
+    assert.ok(unknown.remaining.tokens_reason.includes(`invocation ${missing.id} of run ${missingRun.id} (builder, stage_build)`), unknown.remaining.tokens_reason);
     assert.equal(unknown.remaining.committed.total_tokens, null);
     assert.equal(unknown.usage.totals.tokens.total_is, 'lower_bound');
-    assert.match(unknown.outcome.reason, /unknown billable tokens and no unknown allowance/);
+    assert.ok(unknown.outcome.reason.includes(`invocation ${missing.id} of run ${missingRun.id}`), unknown.outcome.reason);
+    assert.match(unknown.outcome.reason, /unknown billable tokens and no unknown allowance .* Raising a limit cannot resolve an unknown total; no run is dispatched against an unknown total$/);
+    assert.equal(unknown.outcome.next_step, "iterate (a new iteration, whose own totals exclude this one's; the app's totals keep this unknown) or discard");
+    assert.equal(unknown.controls.resume.available, false);
     assertAccounted(unknown, 'after the missing usage');
+    // Raising a limit does not reopen it, and the submission says why.
+    const notReopened = await answerPolicy(fx, p, await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: 4_000_000 }), 'a second raise');
+    assert.equal(notReopened?.reopens, false);
+    assert.match(notReopened?.reason ?? '', /^iteration 1's accounting is unresolved: .*Raising a limit cannot resolve an unknown total\. Next: iterate/);
+    await waitFor(async () => (await fx.iteration(p, it.id)).iteration.limits.prototype_budget_tokens === 4_000_000, { what: 'the second raise committed' });
+    const still = await fx.iteration(p, it.id);
+    assert.deepEqual([still.iteration.status, still.outcome.reason], ['limit_reached', unknown.outcome.reason], 'not reopened; the original uncertainty kept');
+    // "prepare again" does not bypass it.
+    const prepAgain = await fx.post(`/v1/projects/${p}/iterations/${it.id}/prepare`, {});
+    assert.equal(prepAgain.status, 409);
+    assert.match(prepAgain.body.reason, /cannot be prepared again while its accounting is unresolved: 1 charged invocation\(s\) have unknown billable tokens/);
+    assert.deepEqual(prepAgain.body.subject.unknown_invocations, [missing.id]);
 
     // Stop: the project paused, nothing dispatched.
     const stopPath = `/v1/projects/${p}/iterations/${it.id}/stop`;
@@ -969,6 +1063,11 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     assert.deepEqual(left, [], 'nothing of iteration 1 remains to be dispatched under iteration 2');
     const one = await fx.iteration(p, it.id);
     assert.deepEqual([one.iteration.status, one.usage.totals], ['stopped', afterStop.usage.totals], 'iteration 1 keeps its outcome and accounting');
+    // S2: the new iteration's own totals exclude the predecessor's unknown;
+    // the app's totals keep it.
+    const fresh = await fx.iteration(p, made.iteration.id);
+    assert.deepEqual([fresh.usage.totals.invocations, fresh.remaining.tokens, fresh.remaining.tokens_reason], [0, 4_000_000, null]);
+    assert.ok(fresh.app_totals.completeness.incomplete >= 1 && fresh.app_totals.tokens.total_is !== 'complete', JSON.stringify(fresh.app_totals));
   });
 
   test('(10) a planned build beside the prototypes keeps its policy and behaviour', async () => {
@@ -990,4 +1089,180 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     await fx.tick(p);
     assert.deepEqual(await fx.work(p), [], 'nothing is dispatched for it');
   });
+
+  test('(11) gap 3, S4: iteration 2 reaches its own Alpha through one bounded phase of its own, without counting its predecessor\'s deployment', async () => {
+    const p = S.typed;
+    const two = S.two;
+    const oneId = S.typedRead.iteration.id;
+    const before1 = await fx.iteration(p, oneId);
+    const reqs2 = [...REQS, REQ4];
+    fx.kindNext('brief_preparation', [prepScript({ spec: specText({ version: 2, reqs: reqs2, changeLog: [{ version: 2, change: 'Show the number of open tasks at the top' }] }), brief: modelBrief({ objectives: reqs2.map((r) => `${r.key}: ${r.statement}`), included: ['adding, listing and finishing tasks', 'the number of open tasks'] }) })], prepScript());
+    fx.kindNext('replan', [secondPlanScript()], firstPlanScript());
+    fx.kindNext('check_authoring', [authoringScript({ files: { ...CHECK_FILES, ...CHECK_FILE_R4 } })], authoringScript());
+    fx.kindNext('stage_build', [builderOwn('src/count.mjs', 'export const open = (ts) => ts.filter((t) => !t.done).length;\n')], builderScript(1));
+    await fx.ok(fx.post(`/v1/harness/deploy/environments/${S.env.id}/answers`, { call: 'deploy', answers: [{ result: 'issued', apply: true }] }), 200, 'deploy answers for iteration 2');
+    const since = await fx.lastSeq();
+    await fx.answerOpen(p, 'prototype_preparation_approval');
+    await pump(fx, p, async () => (await fx.iteration(p, two)).iteration.status === 'awaiting_brief_approval', { what: "iteration 2's brief" });
+    const briefRead = await fx.iteration(p, two);
+    assert.deepEqual([briefRead.iteration.brief.version, briefRead.brief.objectives.length], [2, 4], 'a new specification revision, its four objectives');
+    await fx.answerOpen(p, 'spec_approval');
+    const acts = [];
+    await pump(
+      fx,
+      p,
+      async () => {
+        const routed = (await fx.events(since)).find((e) => e.type === 'prototype.plan_routed_to_owner');
+        if (routed) throw Object.assign(new Error(`iteration 2's plan was routed to the owner: ${JSON.stringify(routed.payload)}`), { fatal: true });
+        return (await fx.iteration(p, two)).iteration.status === 'alpha_ready' ? true : undefined;
+      },
+      { answer: CHECK_KINDS, acts, max: 100, what: "iteration 2's own Alpha" },
+    );
+    const read2 = await fx.iteration(p, two);
+    // Its own plan: one bounded phase, the next one (phase 2), published by the prototype policy.
+    assert.deepEqual([read2.plan.routing, read2.plan.approved_by, read2.plan.bundle_status], ['policy_authorized', 'policy:rapid_prototype', 'published']);
+    const authorized = (await fx.events(since)).filter((e) => e.type === 'prototype.plan_policy_authorized');
+    assert.equal(authorized.length, 1);
+    assert.deepEqual([authorized[0].subject.iteration, authorized[0].payload.plan_phase, authorized[0].payload.expected_phase, authorized[0].payload.stages, authorized[0].payload.phases], [two, 2, 2, 1, 2]);
+    assert.notEqual(read2.plan.bundle, before1.plan.bundle);
+    // Its own candidate and deployment, never its predecessor's.
+    assert.match(read2.alpha.candidate ?? '', /^cand_/);
+    assert.notEqual(read2.alpha.candidate, before1.alpha.candidate, 'its own candidate');
+    assert.ok(read2.alpha.deployment_request && read2.alpha.deployment_request !== before1.alpha.deployment_request, 'its own deployment request');
+    assert.ok(read2.iteration.alpha_at > before1.iteration.alpha_at);
+    assert.deepEqual(read2.owner_approvals.by_kind, { prototype_preparation_approval: 1, spec_approval: 1, check_correction_unclassifiable: 1 }, JSON.stringify(read2.owner_approvals));
+    // The predecessor's history unchanged; its stale deployment was refused as iteration 2's (case 8).
+    const after1 = await fx.iteration(p, oneId);
+    assert.deepEqual([after1.iteration.status, after1.iteration.alpha_at, after1.alpha.candidate, after1.alpha.deployment_request], [before1.iteration.status, before1.iteration.alpha_at, before1.alpha.candidate, before1.alpha.deployment_request], "iteration 1's Alpha history unchanged");
+    assert.deepEqual(after1.usage, before1.usage, "iteration 1's usage unchanged");
+    const stale = (await fx.events(0)).filter((e) => e.type === 'prototype.alpha_not_attributed' && e.subject.iteration === two);
+    assert.ok(stale.length >= 1 && stale.every((e) => e.payload.candidate === before1.alpha.candidate), 'the stale deployment of the predecessor was refused, never counted');
+    // Each iteration's runs its own; the app's totals both, once.
+    const ids1 = new Set(after1.usage.runs.map((r) => r.id));
+    assert.ok(read2.usage.runs.length > 0 && read2.usage.runs.every((r) => !ids1.has(r.id)), 'no run of iteration 1 counted in iteration 2');
+    assert.equal(read2.app_totals.agent_runs, after1.usage.totals.agent_runs + read2.usage.totals.agent_runs);
+    // Current availability: iteration 1's is no longer claimed, iteration
+    // 2's deployment running in the environment now.
+    assert.equal((await fx.iteration(p, oneId)).alpha.current, null, "iteration 1's Alpha is not claimed available: iteration 2's deployment runs there");
+    assert.deepEqual(read2.alpha.environment, after1.alpha.environment, 'the same environment, its deployment replaced');
+  });
+
+  test('(12) gaps 1 and 2: two stages eligible in one tick never over-reserve the shared allowance; a restart mid-run ends the run recovered, attributed, with its allowance and consistent totals, and the iteration offers a usable next step', async () => {
+    const p = await newPrototype(fx, { name: 'Tasks concurrent' });
+    const it = await current(fx, p);
+    const independent = STAGES.map((s) => ({ ...s, depends_on: [] }));
+    fx.kindNext('brief_preparation', [prepScript()], prepScript());
+    fx.kindNext('check_authoring', [authoringScript()], authoringScript());
+    fx.kindNext('replan', [firstPlanScript({ stages: independent })], firstPlanScript());
+    fx.kindNext('stage_build', [{ steps: [usage(1000, 0, 200), { hold: 'conc', heartbeat_ms: 250 }], on_term: 'exit' }, builderOwn('server.mjs', SERVER), builderOwn('src/b.mjs', 'export const b = 2;\n'), builderOwn('src/c.mjs', 'export const c = 3;\n')], builderScript(1));
+    await fx.answerOpen(p, 'prototype_preparation_approval');
+    await pump(fx, p, async () => (await current(fx, p)).status === 'awaiting_brief_approval', { what: 'the brief' });
+    await alphaReady(fx, p, { port: 18090 });
+    await fx.answerOpen(p, 'spec_approval');
+    // Gap 1: the two stages, independent, are both eligible once the checks are authored.
+    const racing = await pump(
+      fx,
+      p,
+      async () => {
+        const items = (await fx.work(p)).filter((w) => w.kind === 'stage_build');
+        const r = await fx.iteration(p, it.id);
+        const under = r.usage.runs.filter((x) => x.work_kind === 'stage_build' && x.finished_at === null);
+        return items.length === 2 && under.length >= 1 && under[0].invocations[0]?.usage.billable_in === 1000 ? { items, r, under } : undefined;
+      },
+      { answer: CHECK_KINDS, wait: false, what: 'a stage build under way beside the other' },
+    );
+    await fx.tick(p);
+    await fx.tick(p);
+    const r = await fx.iteration(p, it.id);
+    const under = r.usage.runs.filter((x) => x.work_kind === 'stage_build' && x.finished_at === null);
+    assert.equal(under.length, 1, `one stage build under way: the first claimed was given all the iteration had left (${JSON.stringify(r.usage.runs.map((x) => [x.work_kind, x.finished_at]))})`);
+    const inv = under[0].invocations[0];
+    assert.deepEqual([inv.limited_by, inv.run_limit_tokens], ['iteration', 5_000_000]);
+    assert.equal(r.remaining.committed.total_tokens, 1_500_000, 'settled + its reservation: exactly the allowance, never past it');
+    assert.equal(r.remaining.tokens, 0);
+    assert.equal(r.remaining.next_dispatch?.kind, 'settling', 'the other waits on the run under way');
+    assert.equal(r.remaining.next_run_reservation_tokens, null);
+    const waiting = (await fx.work(p)).filter((w) => w.kind === 'stage_build' && w.id !== under[0].work_item);
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].status, 'eligible', 'not dispatched: held on the reservation');
+    assertAccounted(r, 'two stages racing');
+
+    // Gap 2: the engine killed and restarted while the run executes.
+    const runId = under[0].id;
+    await fx.kill();
+    await fx.start();
+    const ended = await waitFor(async () => {
+      await fx.tick(p);
+      const x = await fx.iteration(p, it.id);
+      const run = x.usage.runs.find((y) => y.id === runId);
+      return run?.finished_at ? { x, run } : undefined;
+    }, { timeoutMs: 120_000, what: 'the interrupted run to end' });
+    assert.equal(ended.run.outcome, 'recovered', `the interrupted run ends recovered (${JSON.stringify(ended.run)})`);
+    assert.ok(ended.x.usage.runs.some((y) => y.id === runId), 'still attributed to its iteration');
+    const ri = ended.run.invocations[0];
+    assert.deepEqual([ri.usage.state, ri.usage.billable_in, ri.usage.out], ['incomplete', 1000, 200], 'what it observed is kept');
+    assert.equal(ri.unknown_allowance_tokens, ri.effective_limit_tokens - 1200, 'charged its effective allowance less what it observed, never 0');
+    assertAccounted(ended.x, 'after the restart');
+    assert.ok(ended.x.remaining.committed.total_tokens <= 1_500_000);
+    // A usable next step, each one working: with nothing left of the
+    // allowance the waiting stage's dispatch meets the limit (raise it); the
+    // recovered run's work is held, and the iteration names it (resume it).
+    const limited = await pump(fx, p, async () => {
+      const x = await fx.iteration(p, it.id);
+      return x.iteration.status === 'limit_reached' ? x : undefined;
+    }, { what: 'the next dispatch to meet the spent allowance' });
+    assert.equal(limited.outcome.next_step, 'raise the limit or discard');
+    const raised = await answerPolicy(fx, p, await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: 3_000_000 }), 'the raised allowance');
+    assert.equal(raised?.reopens, true);
+    const named = await pump(fx, p, async () => {
+      const x = await fx.iteration(p, it.id);
+      return x.iteration.status === 'awaiting_owner' && (x.outcome.next_step ?? '').startsWith('resume the held work') ? x : undefined;
+    }, { answer: CHECK_KINDS, what: 'the held work to be named' });
+    assert.ok(named.outcome.next_step.includes(`work/${ended.run.work_item}/resume`) && named.outcome.next_step.includes(`its run ${runId} ended recovered`), named.outcome.next_step);
+    await fx.ok(fx.post(`/v1/projects/${p}/work/${ended.run.work_item}/resume`), 200, 'the owner resumes the held work');
+    await pump(fx, p, async () => ((await fx.iteration(p, it.id)).iteration.status === 'alpha_ready' ? true : undefined), { answer: CHECK_KINDS, max: 100, what: 'alpha_ready after the recovery' });
+    const done = await fx.iteration(p, it.id);
+    assert.ok(done.usage.runs.some((y) => y.id === runId && y.outcome === 'recovered'), 'the recovered run kept in the receipt');
+    assertAccounted(done, 'at Alpha');
+  });
+
+  test('(13) gap 4: raising a budget does not silently undo an explicit Stop; resumption is the deliberate POST …/resume, served in controls.resume', async () => {
+    const p = S.imported;
+    const it = await current(fx, p);
+    const before = await fx.iteration(p, it.id);
+    assert.equal(before.iteration.status, 'awaiting_brief_approval');
+    assert.equal(before.controls.resume.available, false);
+    const stopPath = `/v1/projects/${p}/iterations/${it.id}/stop`;
+    const ask = await fx.post(stopPath, {});
+    assert.equal(ask.status, 409);
+    await fx.ok(fx.post(stopPath, { preview_hash: ask.body.subject.preview_hash }), 200, 'Stop confirmed');
+    let read = await fx.iteration(p, it.id);
+    assert.deepEqual([read.iteration.status, read.outcome.next_step, (await fx.project(p)).paused], ['stopped', 'resume (POST …/resume), iterate or discard', true]);
+    assert.equal(read.controls.resume.available, true, read.controls.resume.reason);
+    // The owner raises the allowance: the submission says the Stop stands.
+    const raised = await answerPolicy(fx, p, await fx.post(`/v1/projects/${p}/policy`, { prototype_budget_tokens: 2_000_000 }), 'the raised allowance');
+    assert.equal(raised?.reopens, false);
+    assert.equal(raised?.reason, `iteration ${it.seq} was stopped by the owner: raising a limit does not undo a Stop; resume it deliberately (POST /v1/projects/${p}/iterations/${it.id}/resume)`);
+    await waitFor(async () => (await fx.iteration(p, it.id)).iteration.limits.prototype_budget_tokens === 2_000_000, { what: 'the raise committed' });
+    await fx.tick(p);
+    read = await fx.iteration(p, it.id);
+    assert.deepEqual([read.iteration.status, (await fx.project(p)).paused], ['stopped', true], 'the raise committed, the Stop stands: still stopped and paused');
+    const changed = (await fx.events(0)).filter((e) => e.type === 'prototype.iteration_limits_changed' && e.subject.iteration === it.id).at(-1);
+    assert.deepEqual([changed.payload.reopened, changed.payload.status], [false, 'stopped']);
+    assert.match(changed.payload.not_reopened_because, /raising a limit does not undo a Stop/);
+    // The deliberate resume.
+    assert.equal((await fx.post(`/v1/projects/${p}/iterations/${it.id}/resume`, { note: 'x' })).status, 400, 'no field is taken');
+    const resumed = await fx.ok(fx.post(`/v1/projects/${p}/iterations/${it.id}/resume`, {}), 200, 'POST …/resume');
+    // The brief's approval bound the policy the raise changed, so it was
+    // invalidated: the iteration resumes preparing, and says what works.
+    assert.equal((await fx.decision(p, before.iteration.brief.decision)).status, 'invalidated');
+    assert.deepEqual([resumed.iteration.status, resumed.iteration.next_step, resumed.project_unpaused], ['preparing', 'request preparation or discard', true]);
+    read = await fx.iteration(p, it.id);
+    assert.deepEqual([read.iteration.status, read.outcome.next_step, (await fx.project(p)).paused], ['preparing', 'request preparation or discard', false]);
+    assert.equal(read.controls.resume.available, false);
+    assert.equal((await fx.post(`/v1/projects/${p}/iterations/${it.id}/resume`, {})).status, 409, 'resumed once: not stopped any more');
+    const asked = await fx.ok(fx.post(`/v1/projects/${p}/iterations/${it.id}/prepare`, {}), 201, 'the next step works: a preparation asked for');
+    assert.equal(asked.decision.kind, 'prototype_preparation_approval');
+  });
+
 });

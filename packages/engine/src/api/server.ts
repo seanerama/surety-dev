@@ -919,6 +919,20 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // Slice E5 (gap 4): a stopped iteration resumed by the owner's
+      // deliberate act (raising a limit never undoes a Stop).
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'resume' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.resume',
+          args: (b) => {
+            noFields(b);
+            return { project, iteration };
+          },
+        };
+      }
       // Slice E4 (R7, R8): Iterate. A new iteration continuing from this
       // one, with the owner's optional short change request; its
       // preparation's authorization raised; nothing is dispatched.
