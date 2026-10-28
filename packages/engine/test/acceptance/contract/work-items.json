@@ -1,5 +1,5 @@
 {
-  "$comment": "Verifier's expected work-item transition table. Derived from D1 A.5 (WorkItem) with build spec §6 correction 11 (Review B10): common transitions are templates limited to the statuses a kind can reach and to their named cause; returning from awaiting_decision restores the stored continuation only; Stop and Abandon exist from every status that owns a run, integrated and awaiting_decision included. Tests generate their cases from this file through ../harness/transitions.mjs and never read the engine's own table (build spec §4, Plan §2).",
+  "$comment": "Verifier's expected work-item transition table. Derived from D1 A.5 (WorkItem) with build spec §6 correction 11 (Review B10): common transitions are templates limited to the statuses a kind can reach and to their named cause; returning from awaiting_decision restores the stored continuation only; Stop and Abandon exist from every status that owns a run, integrated and awaiting_decision included. Tests generate their cases from this file through ../harness/transitions.mjs and never read the engine's own table (build spec §4, Plan §2). Rapid prototype to Alpha, slice E3 (the owner's ruling R5 of 2026-10-28; objection 218) adds `brief_preparation`, the Spec Writer's one bounded preparation run of a prototype iteration's brief, registered by the approve of a `prototype_preparation_approval`, on the integrated path as `replan`.",
   "statuses": ["eligible", "claimed", "executing", "integrating", "integrated", "verifying", "complete", "awaiting_decision", "held", "parked", "cancelled"],
   "terminal": ["complete", "cancelled"],
   "kinds": {
@@ -19,7 +19,8 @@
     "export": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
     "publish": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
     "deploy": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
-    "rollback": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] }
+    "rollback": { "m1": false, "path": ["eligible", "claimed", "executing", "complete"] },
+    "brief_preparation": { "m1": true, "role": "spec_writer", "path": ["eligible", "claimed", "executing", "integrating", "integrated", "complete"] }
   },
   "templates": {
     "$comment": "A template gives a kind the edge from → to for each `from` status the kind can reach: a status on its path, or one a template leads to from such a status. `stop` and `abandon` apply only to kinds whose path has `claimed`, the kinds a run can own. `to` is fixed except for `continue`. A.5 lists the first eight templates' edges; correction 11 adds `integrated` and `awaiting_decision` to stop and abandon. A template with `only_kinds` applies only to the kinds it lists (`park_at_registration`, replan only: H4's cap, E171 item 5, E172); a route reaches a status by such an edge only when no other route does.",

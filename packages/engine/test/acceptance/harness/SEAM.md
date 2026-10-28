@@ -8459,3 +8459,13 @@ R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 mi
 
   These are the engine's `PROJECT_POLICY` values and the generated appendix's. M73's project key list, M07-project-bootstrap-and-policy's effective defaults and M01's committed `.surety/policy.json` read them from the table. Raising any one is a widening, as raising a budget key is. The table states that in its `$comment` only, as it does for the budget keys.
 - **Not pinned here:** the keys' refusals, their widening when raised, and their enforcement (dispatch admission, the runtime deadline, the repair allowance). Those belong to slice E2's rows. The Builder's `test/unit/rapid-prototype.test.mjs` covers the refusals and widening meanwhile.
+
+## 573. The prototype brief's kinds (row M73; objection 218; the owner's rulings R5 and R1 of 2026-10-28; the Builder's `build/rapid-prototype` c24dd523, slice E3; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/work-items.json`** gains `brief_preparation`: dispatched (`m1` true), role `spec_writer`, `replan`'s integrated path. It is the Spec Writer's one bounded preparation run of a prototype iteration's brief, registered by the approve of a `prototype_preparation_approval`. The transition tests generate its cases from the table, as for every kind.
+- **`contract/decisions.json`** gains `prototype_preparation_approval`:
+  - subject a `prototype_iteration`;
+  - options approve and reject;
+  - a manifest binding the role, provider and model, the run's token limit with its estimated cost and basis, whether it is paid, what it authorizes, the idea and the policy revision;
+  - no effect intent.
+- **No Verifier table holds these, so they are not tabled:** the record kind `prototype_brief`, the routing value `policy_authorized` and the `prototype.*` events. No acceptance row yet pins the preparation approval, the brief, or the policy-authorized first plan.
