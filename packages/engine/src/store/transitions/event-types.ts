@@ -249,6 +249,13 @@ export const EVENT_OWNERS = {
   'prototype.iteration_created': 'store/transitions/prototype.ts',
   'prototype.iteration_alpha_ready': 'store/transitions/prototype.ts',
   'candidate.alpha_withdrawn': 'store/transitions/prototype.ts',
+  // Slice E2 (R4, R8): an iteration ended by a limit, by the owner's Stop or
+  // Discard, and its limits following a policy change (a raised one
+  // reopening it).
+  'prototype.iteration_limit_reached': 'store/transitions/prototype.ts',
+  'prototype.iteration_stopped': 'store/transitions/prototype.ts',
+  'prototype.iteration_discarded': 'store/transitions/prototype.ts',
+  'prototype.iteration_limits_changed': 'store/transitions/prototype.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

@@ -98,6 +98,15 @@ function runWith(db, project, trigger, raw, outcome, reason) {
   return r;
 }
 const iterationOf = (db, project) => db.prepare('SELECT * FROM prototype_iterations WHERE project = ? ORDER BY seq').all(project);
+// The iteration's recorded limits changed, as a test of what E1 reads needs
+// room for several runs: from slice E2 each dispatch reserves its run limit
+// (1,500,000 by default) against prototype_budget_tokens (1,500,000 by
+// default), so that under the defaults an iteration admits one run at a time
+// and one in all once any usage has settled.
+const setLimits = (db, iteration, change) => {
+  const row = db.prepare('SELECT limits_json FROM prototype_iterations WHERE id = ?').get(iteration);
+  db.prepare('UPDATE prototype_iterations SET limits_json = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(row.limits_json), ...change }), iteration);
+};
 
 test('a new app is planned by default: no bootstrap policy, no iteration, mode served, prototype null', async (t) => {
   const { db, create } = scratch(t);
@@ -174,6 +183,7 @@ test('the prototype keys: defaults, validation, and widening when raised as the 
 test('attribution: three Builder runs are three agent runs of one role, each its iteration’s, fixed at dispatch; usage pending then complete', async (t) => {
   const { db, create } = scratch(t);
   const p = await create({ mode: 'rapid_prototype' });
+  setLimits(db, p.iteration, { prototype_budget_tokens: 10_000_000 });
   runWith(db, p.id, 'a', { input_tokens: 100, cache_read_tokens: 20, output_tokens: 30 });
   runWith(db, p.id, 'b', { input_tokens: 10, cache_read_tokens: 0, output_tokens: 5 });
   const third = dispatch(db, p.id, 'c');
@@ -188,13 +198,13 @@ test('attribution: three Builder runs are three agent runs of one role, each its
   assert.deepEqual([pending.usage.state, pending.usage.billable_in, pending.cost.status, pending.status], ['pending', 7, 'unknown', 'launched']);
   assert.equal(pending.reserved_tokens, 1_500_000 - 9, 'it reserves its run limit less what it observed');
   assert.deepEqual([during.usage.totals.tokens.total, during.usage.totals.tokens.total_is], [175, 'lower_bound']);
-  assert.equal(during.remaining.tokens, 1_500_000 - (130 + 15) - 1_500_000, 'settled usage plus the outstanding reservation');
+  assert.equal(during.remaining.tokens, 10_000_000 - (130 + 15) - 9 - (1_500_000 - 9), 'settled usage plus what the run under way observed and still reserves');
 
   end(db, third);
   const after = readIteration(db, { project: p.id, iteration: p.iteration });
   assert.deepEqual(after.usage.totals.completeness, { complete: 3, pending: 0, incomplete: 0, not_launched: 0 });
   assert.deepEqual([after.usage.totals.tokens.billable_in, after.usage.totals.tokens.cached_in, after.usage.totals.tokens.out, after.usage.totals.tokens.total, after.usage.totals.tokens.total_is], [117, 21, 37, 175, 'complete']);
-  assert.equal(after.remaining.tokens, 1_500_000 - (117 + 37));
+  assert.equal(after.remaining.tokens, 10_000_000 - (117 + 37));
   assert.deepEqual(after.usage.runs.map((r) => [r.role, r.outcome, r.invocations.length, typeof r.duration_ms]), [['builder', 'completed', 1, 'number'], ['builder', 'completed', 1, 'number'], ['builder', 'completed', 1, 'number']]);
   assert.deepEqual(after.usage.runs[0].invocations[0].usage.raw_categories, { input_tokens: 100, cache_read_tokens: 20, output_tokens: 30 });
   assert.deepEqual(after.usage.totals.preparation, { runs: 0, tokens: 0, usd: 0 }, 'no preparation run exists: zero by count');
@@ -211,6 +221,7 @@ test('attribution: three Builder runs are three agent runs of one role, each its
 test('a run with two invocations counts two; an incomplete invocation shows its unknown allowance and no total of 0; cost statuses kept apart', async (t) => {
   const { db, create } = scratch(t);
   const p = await create({ mode: 'rapid_prototype' });
+  setLimits(db, p.iteration, { prototype_budget_tokens: 10_000_000 });
   // A session run of two turns: two invocations of one run (a one-shot run
   // has exactly one receipt, store constraint). Its rows written as the
   // session protocol leaves them, its attribution as session.ts sets it;
@@ -237,14 +248,15 @@ test('a run with two invocations counts two; an incomplete invocation shows its 
   // A stopped run: the engine ended it after one observation, so its usage
   // is incomplete and it carries the allowance (ledger.ts C4).
   runWith(db, p.id, 'b', { input_tokens: 10 }, 'stopped', 'human_stop');
-  // A run with no observation at all and no allowance (the scripted provider
-  // that said nothing): its usage unknown.
-  runWith(db, p.id, 'c', null);
   // A measured zero.
   runWith(db, p.id, 'd', { input_tokens: 0, cache_read_tokens: 0, output_tokens: 0, cost_usd: 0 });
+  // A run with no observation at all and no allowance (the scripted provider
+  // that said nothing): its usage unknown. Last: from slice E2 what the
+  // iteration committed is unknown after it, and no further run is admitted.
+  runWith(db, p.id, 'c', null);
 
   const read = readIteration(db, { project: p.id, iteration: p.iteration });
-  const [two, stopped, silent, zero] = read.usage.runs;
+  const [two, stopped, zero, silent] = read.usage.runs;
   assert.equal(two.invocations.length, 2);
   assert.equal(read.usage.totals.invocations, 5);
   assert.equal(read.usage.totals.agent_runs, 4);

@@ -20,7 +20,7 @@ import { envelopeHold } from './transitions/envelope.js';
 import { deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { readLogs } from './transitions/observe.js';
 import { projectPolicy } from './transitions/settings.js';
-import { currentIteration } from './transitions/prototype.js';
+import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import type { WorkRow } from './transitions/work.js';
 
 type Db = Database;
@@ -178,6 +178,8 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number)
   } else if (runs.length > 0) {
     state = 'running';
     reason = runs.length === 1 ? `Run ${runs[0]!.id} is under way.` : `${runs.length} runs are under way.`;
+    const proto = prototypeNow(db, project);
+    if (proto !== null) reason = `${reason} ${proto}`;
     primary = null;
   } else {
     const ready = dispatchable(db, project);
@@ -187,11 +189,28 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number)
       primary = 'tick';
     } else {
       state = 'idle';
-      reason = 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
+      // A rapid prototype held by its iteration (slice E2): the limit, the
+      // Stop or the Discard that holds it, and what the owner can do.
+      reason = prototypeNow(db, project) ?? 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
       primary = null;
     }
   }
   return { state, primary_action: primary, reason, cause };
+}
+
+// What holds a rapid prototype's dispatch by its iteration (slice E2; R4):
+// its current iteration ended by a limit, a Stop or a Discard, or a limit
+// the next run would meet; null otherwise (and for a planned project).
+function prototypeNow(db: Db, project: string): string | null {
+  const it = currentIteration(db, project);
+  if (it === null) return null;
+  const row = db.prepare('SELECT "seq", "outcome_reason", "next_step" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { seq: number; outcome_reason: string | null; next_step: string | null };
+  if (HOLDING_STATUSES.includes(it.status)) {
+    return `Prototype iteration ${row.seq} is ${it.status}${row.outcome_reason ? `: ${row.outcome_reason}` : ''}. Nothing more of it is dispatched; next: ${row.next_step ?? 'none'}.`;
+  }
+  if (!OPEN_ITERATION_STATUSES.includes(it.status)) return null;
+  const blocker = prototypeBlocker(db, project, { reservation: projectPolicy(db, project).budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null });
+  return blocker === null ? null : `The next run of prototype iteration ${row.seq} is held: ${blocker}.`;
 }
 
 // NOW when it cannot be computed (D1 §12.3): `unknown`, naming why, never a

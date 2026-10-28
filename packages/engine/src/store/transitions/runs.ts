@@ -30,7 +30,7 @@ import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
-import { iterationForDispatch } from './prototype.js';
+import { PROTOTYPE_LIMIT, askOfItem, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -507,6 +507,15 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     return `depends on turn ${heldTurn.number} of Designer session ${heldTurn.run}, held on ${limits.join(', ')}${waiting.length > 0 ? ` while ${waiting.join(', ')} reserve the day` : ''}; it starts first`;
   }
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
+  // A rapid prototype's iteration limits (R4; slice E2): the iteration's
+  // committed tokens (settled, unknown allowances, and what its runs under
+  // way observed and still reserve) plus this run's reservation, its
+  // estimated cost, its repairs and its runtime. A canary is its attempt's,
+  // never an iteration's to admit.
+  if (!opts.canary) {
+    const proto = prototypeBlocker(db, item.project, askOfItem(db, item));
+    if (proto !== null) return proto;
+  }
   // One Builder per failure (real loop run 3, L3-1): a fix waits while the
   // stage's own Builder is being sent back for its finding's check at its
   // finding's candidate (repair.ts).
@@ -668,7 +677,15 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
   const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
   if (args.attempt && !canary) return null;
-  if (dispatchBlocker(tx.db, item, { canary }) !== null) return null;
+  const blocker = dispatchBlocker(tx.db, item, { canary });
+  if (blocker !== null) {
+    // In the dispatch transaction (R4): a dispatch the iteration's limit
+    // refuses records the iteration `limit_reached`, so that two claims can
+    // never both pass against the same remaining allowance and the refusal
+    // is the iteration's state, not only this claim's.
+    if (!canary && blocker.startsWith(PROTOTYPE_LIMIT)) enforceIterationLimit(tx, item.project, askOfItem(tx.db, item));
+    return null;
+  }
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);

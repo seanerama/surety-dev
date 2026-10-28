@@ -881,6 +881,28 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         if (iteration === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'iteration.read', args: { project, iteration } }) }) };
       }
+      // Slice E2 (R4, R8): Stop and Discard of an iteration, each two steps
+      // through its confirmation; the running engine's facts about each of
+      // its runs under way read when the command is sent, as a run's Stop
+      // reads them.
+      if (rest.length === 3 && rest[0] === 'iterations' && (rest[2] === 'stop' || rest[2] === 'discard') && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'prepared',
+          name: rest[2] === 'stop' ? 'iteration.stop' : 'iteration.discard',
+          prepare: async (b) => {
+            const previewHash = optionalString(onlyFields(b, ['preview_hash']), 'preview_hash');
+            const runs = await store().call<string[]>('read', { name: 'iteration.under_way', args: { project, iteration } });
+            return {
+              project,
+              iteration,
+              preview_hash: previewHash,
+              facts: { exited_runs: runs.filter((r) => state.runtime?.exitedFirst(r) ?? false), decided_runs: runs.filter((r) => state.runtime?.endDecided(r) ?? false) },
+            };
+          },
+        };
+      }
       if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'receipt.json' && get) {
         const iteration = decodeSegment(rest[1]!);
         if (iteration === null) return null;

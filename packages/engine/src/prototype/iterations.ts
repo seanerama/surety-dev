@@ -22,6 +22,7 @@ import { between } from '../plan/pace.js';
 import { notFound, parseJson } from '../store/transitions/common.js';
 import { type Account, type Amounts, type LedgerRow, billable, fold, observedSoFar, outstandingReservation } from '../store/transitions/ledger.js';
 import { projectNotFound } from '../store/transitions/project.js';
+import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentIteration, iterationAccount, iterationControls, iterationVerdict } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
 
@@ -314,25 +315,15 @@ export function readIteration(db: Db, args: { project: string; iteration: string
   const prepTokens = tokenTotals(prep);
   const prepCost = costTotals(prep);
 
-  // Remaining (R4): the limit less settled usage and outstanding
-  // reservations, as the ledger counts a day against its limit: each
-  // charged invocation its billable tokens and its unknown allowance in
-  // force; each invocation under way what it observed plus what it still
-  // reserves (ledger.ts outstandingReservation). A charged invocation whose
-  // billable tokens are unknown and carries no allowance leaves the
-  // remainder unknown, never full.
-  const unknownTokens = all.filter((i) => i.usage.state !== 'pending' && i.usage.state !== 'not_launched' && billable(i.usage as Amounts) === null && i.unknown_allowance_tokens === null).length;
-  let consumed = 0;
-  for (const i of all) {
-    if (i.usage.state === 'not_launched') continue;
-    consumed += (billable(i.usage as Amounts) ?? 0) + (i.unknown_allowance_tokens ?? 0) + (i.reserved_tokens ?? 0);
-  }
-  const spentUsd = money((cost.reported_usd ?? 0) + (cost.estimated_usd ?? 0));
-  const repairsUsed = (
-    db
-      .prepare(`SELECT COALESCE(SUM(w."repair_attempts"), 0) AS n FROM "work_items" w WHERE w."id" IN (SELECT DISTINCT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL)`)
-      .get(it.id) as { n: number }
-  ).n;
+  // Remaining (R4): the limit less what the iteration committed, by the one
+  // account the dispatch check uses (store/transitions/prototype.ts
+  // iterationAccount): each charged invocation its billable tokens and its
+  // unknown allowance in force; each invocation under way what it observed
+  // plus what it still reserves (ledger.ts outstandingReservation). A
+  // charged invocation whose billable tokens are unknown and carries no
+  // allowance leaves the remainder unknown, never full.
+  const account = iterationAccount(db, args.project, it.id);
+  const spentUsd = money((account.reported_usd ?? 0) + (account.estimated_usd ?? 0));
   const now = nowIso();
   const runtimeEnd = it.alpha_at ?? it.ended_at ?? now;
   const runtimeUsed = it.approved_at === null ? null : between(it.approved_at, runtimeEnd, ['the brief approved', 'now']);
@@ -341,21 +332,46 @@ export function readIteration(db: Db, args: { project: string; iteration: string
   const usdLimit = limit('prototype_budget_usd_estimated');
   const runtimeLimit = limit('prototype_runtime_seconds');
   const repairsLimit = limit('prototype_repairs_per_iteration');
+  const policy = projectPolicy(db, args.project);
+  // What the next dispatch of a run would meet now (a one-shot's ask: its
+  // run limit, no repair), only while the iteration is the project's current
+  // and open one: the check itself (prototype.ts iterationVerdict).
+  const current = currentIteration(db, args.project);
+  const nextAsk = { reservation: policy.budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null };
+  const verdict = current?.id === it.id && OPEN_ITERATION_STATUSES.includes(current.status) ? iterationVerdict(db, it as Parameters<typeof iterationVerdict>[1], nextAsk, account) : null;
   const remaining = {
-    tokens: tokensLimit === null ? null : unknownTokens > 0 ? null : tokensLimit - consumed,
-    tokens_reason: unknownTokens > 0 ? `${unknownTokens} charged invocation(s) have unknown billable tokens and no unknown allowance` : null,
+    tokens: tokensLimit === null ? null : account.unknown_billable_invocations > 0 ? null : tokensLimit - account.committed_tokens,
+    tokens_reason: account.unknown_billable_invocations > 0 ? `${account.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance` : null,
+    // What the tokens remaining is the limit less: settled, the unknown
+    // allowances apart, and what runs under way observed and still reserve.
+    committed: {
+      settled_tokens: account.settled_tokens,
+      unknown_allowance_tokens: account.unknown_allowance_tokens,
+      under_way_observed_tokens: account.under_way_observed_tokens,
+      under_way_reserved_tokens: account.outstanding_reservation_tokens,
+      total_tokens: account.unknown_billable_invocations > 0 ? null : account.committed_tokens,
+    },
+    // What a run dispatched now reserves of it (its run limit).
+    next_run_reservation_tokens: nextAsk.reservation,
     // Settled reported and estimated cost only: an invocation under way adds
     // what it costs once charged; one whose cost is unknown leaves the
     // remainder unknown. A threshold, never a billing cap.
-    usd_estimated: usdLimit === null ? null : cost.unknown_invocations > 0 ? null : money(usdLimit - spentUsd),
-    usd_reason: cost.unknown_invocations > 0 ? `${cost.unknown_invocations} invocation(s) have unknown cost` : cost.pending_invocations > 0 ? `${cost.pending_invocations} invocation(s) under way are not yet costed` : null,
+    usd_estimated: usdLimit === null ? null : account.unknown_cost_invocations > 0 ? null : money(usdLimit - spentUsd),
+    usd_reason: account.unknown_cost_invocations > 0 ? `${account.unknown_cost_invocations} invocation(s) have unknown cost` : account.under_way_invocations > 0 ? `${account.under_way_invocations} invocation(s) under way are not yet costed` : null,
+    usd_label: 'an estimated-cost threshold checked at dispatch, not a billing cap',
     // Approval to Alpha, wall clock; the whole limit before the brief is
     // approved (the runtime has not started).
     runtime_seconds: runtimeLimit === null ? null : runtimeUsed === null ? runtimeLimit : typeof runtimeUsed === 'number' ? runtimeLimit - runtimeUsed : null,
     // The engine's own repair counter of the iteration's work items (D1 §4.3).
-    repairs_iteration: repairsLimit === null ? null : repairsLimit - repairsUsed,
-    enforced: false,
-    enforced_from: 'slice E2: admission at dispatch against these limits',
+    repairs_iteration: repairsLimit === null ? null : repairsLimit - account.repairs_used,
+    // Per work item: the lower of this and repair_attempts_max, the hard
+    // per-item cap, applies.
+    repairs_per_stage: limit('prototype_repairs_per_stage') === null ? null : Math.min(limit('prototype_repairs_per_stage')!, policy.repair_attempts_max!),
+    // What the dispatch check says of the next run now: null when it is
+    // admitted (or the iteration is not open); `settling` while only the
+    // reservations of runs under way stand in its way.
+    next_dispatch: verdict === null ? null : { kind: verdict.kind, limit: verdict.limit, reason: verdict.reason },
+    ...ENFORCEMENT,
   };
 
   const request = it.deployment_request === null
@@ -396,6 +412,9 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       runtime_limit_seconds: runtimeLimit,
     },
     outcome: { status: it.status, reason: it.outcome_reason, next_step: it.next_step },
+    // What Stop and Discard would do now (slice E2; R4, R8): the console
+    // shows these consequences, the confirmation's preview binds them.
+    controls: iterationControls(db, it.id),
     alpha: {
       candidate: it.candidate,
       deployment_request: it.deployment_request,

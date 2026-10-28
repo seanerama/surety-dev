@@ -9,6 +9,7 @@
 // the question stands, raises its next generation; and it escalates a
 // decision past its target.
 
+import { type AlphaDisposition, type RunFate, iterationControlManifest, runsUnderWay } from './prototype.js';
 import { recordAuthoringPending } from '../../plan/deferral.js';
 import { authoredAgainst } from '../../spec/change.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
@@ -73,6 +74,11 @@ export interface Facts {
   // A Stop's or an Abandon's run: its backend had already exited on its own
   // (Q13), as the running engine knows it.
   exited?: boolean;
+  // A Stop or a Discard of a prototype iteration (slice E2): of its runs
+  // under way, those whose backend had already exited on its own, and those
+  // whose end the running engine has already decided, as it knows them.
+  exited_runs?: string[];
+  decided_runs?: string[];
   // A protected application's revalidation (D3 §3.3; SEAM.md §218): the
   // class and the proposal's discovery as the classifier gives them again.
   classification?: string | null;
@@ -870,8 +876,39 @@ export function controlManifest(tx: Tx, runId: string, kind: 'stop_confirm' | 'a
   };
 }
 
+// A Stop or a Discard of a prototype iteration (slice E2; R4, R8): a
+// stop_confirm whose subject is the iteration and whose scope is the action.
+function iterationControlPreview(tx: Tx, d: Subject): Preview | null {
+  const action = d.scope === 'discard' ? 'discard' : 'stop';
+  const manifest = iterationControlManifest(tx.db, d.subject_id, action);
+  if (manifest === null) return null;
+  const runs = manifest.runs as RunFate[];
+  const alpha = manifest.alpha as AlphaDisposition | null;
+  const runsText = runs.length === 0 ? 'No run of it is running.' : `${runs.length} run(s) of it have not ended: ${runs.map((r) => `${r.role} run ${r.run}, ${r.fate}`).join('; ')}.`;
+  const alphaText = alpha === null ? '' : alpha.tears_down_alpha ? ` Its Alpha in environment ${alpha.environment!.name} is torn down; the Alpha stays recorded as history.` : ` No Alpha is torn down: ${alpha.kept_because}.`;
+  return {
+    manifest,
+    options: [
+      {
+        key: 'confirm',
+        label: action === 'stop' ? 'Stop prototype' : 'Discard iteration',
+        consequence:
+          action === 'stop'
+            ? 'The project is paused so that nothing else is dispatched, each running run of the iteration is stopped and keeps its charge and unknown allowance, and the iteration is stopped.'
+            : 'Each running run of the iteration is stopped and keeps its charge and unknown allowance, its own Alpha is torn down only if it is the deployment running now, and the iteration is discarded; receipts and accounting are kept.',
+        effect: { iteration: d.subject_id, status: action === 'stop' ? 'stopped' : 'discarded' },
+      },
+    ],
+    question:
+      action === 'stop'
+        ? `Stop prototype iteration ${String(manifest.iteration_seq)}? The project is paused so that nothing else of it is dispatched. ${runsText} Nothing of its usage is erased. Resume by raising a limit, iterate, or discard.`
+        : `Discard prototype iteration ${String(manifest.iteration_seq)}? ${runsText}${alphaText} Receipts, ledger rows, runs and records are kept.`,
+  };
+}
+
 function controlPreview(kind: 'stop_confirm' | 'abandon_confirm') {
   return (tx: Tx, d: Subject): Preview | null => {
+    if (d.subject_type === 'iteration') return kind === 'stop_confirm' ? iterationControlPreview(tx, d) : null;
     const run = getRun(tx, d.subject_id);
     if (!run || run.state === 'finalizing' || run.state === 'ended' || run.quarantined === 1) return null;
     const stop = kind === 'stop_confirm';
@@ -895,10 +932,11 @@ function controlPreview(kind: 'stop_confirm' | 'abandon_confirm') {
 function controlSpec(kind: 'stop_confirm' | 'abandon_confirm'): KindSpec {
   return {
     preview: controlPreview(kind),
-    manifest: (tx, d) => controlManifest(tx, d.subject_id, kind),
+    manifest: (tx, d) => (d.subject_type === 'iteration' ? (iterationControlManifest(tx.db, d.subject_id, d.scope === 'discard' ? 'discard' : 'stop') ?? {}) : controlManifest(tx, d.subject_id, kind)),
     reraise: false,
     answer(tx, d, option, note, facts) {
       consumeDecision(tx, d, option, note);
+      if (d.subject_type === 'iteration') return beginIterationControl(tx, d, facts ?? {});
       return beginControl(tx, d, kind === 'stop_confirm' ? 'stop' : 'abandon', facts?.exited === true);
     },
   };
@@ -908,8 +946,13 @@ function controlSpec(kind: 'stop_confirm' | 'abandon_confirm'): KindSpec {
 let beginControl: (tx: Tx, d: DecisionRow, kind: 'stop' | 'abandon', exited?: boolean) => CommandResult = () => {
   throw new Error('control is not wired');
 };
-export function wireControl(fn: typeof beginControl): void {
+// Set by control.ts: a confirmed Stop or Discard of a prototype iteration.
+let beginIterationControl: (tx: Tx, d: DecisionRow, facts: Facts) => CommandResult = () => {
+  throw new Error('iteration control is not wired');
+};
+export function wireControl(fn: typeof beginControl, iteration?: typeof beginIterationControl): void {
   beginControl = fn;
+  if (iteration) beginIterationControl = iteration;
 }
 
 // ---- out_of_band_change (SEAM.md §§32, 79) ---------------------------------------------
@@ -2686,6 +2729,9 @@ export function decisionSubjectRead(db: Db, args: { project: string; decision: s
     | { id: string; project: string; kind: string; subject_type: string; subject_id: string; status: string }
     | undefined;
   if (!d || d.project !== args.project) return null;
+  // A Stop or a Discard of a prototype iteration: its runs under way, for
+  // the running engine's facts about each.
+  if ((d.kind === 'stop_confirm' || d.kind === 'abandon_confirm') && d.subject_type === 'iteration') return { kind: d.kind, oob: null, run: null, runs: runsUnderWay(db, d.subject_id).map((r) => r.run) };
   if (d.kind === 'stop_confirm' || d.kind === 'abandon_confirm') return { kind: d.kind, oob: null, run: d.subject_type === 'run' ? d.subject_id : null };
   if (d.kind !== 'out_of_band_change') return { kind: d.kind, oob: null };
   const row = oobRow(db, d.subject_id);

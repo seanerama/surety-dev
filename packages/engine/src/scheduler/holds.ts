@@ -11,6 +11,7 @@ import { CHAIN_BOUNDARY, PREREQUISITES_PENDING, dispatchBlocker, replanPendingPr
 import { envelopeHold } from '../store/transitions/envelope.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type HoldDetail, type HoldReason, type WorkRow, setHold } from '../store/transitions/work.js';
+import { PROTOTYPE_LIMIT, askOfItem, enforceIterationLimit, settleIterationRuntime } from '../store/transitions/prototype.js';
 
 // The HoldReason a dispatch blocker names, or null.
 export function holdReasonOf(blocker: string): HoldReason | null {
@@ -30,6 +31,9 @@ export function holdReasonOf(blocker: string): HoldReason | null {
 export function markHolds(tx: Tx): number {
   const items = tx.db.prepare(`SELECT * FROM "work_items" WHERE "status" = 'eligible' OR "held" IS NOT NULL ORDER BY "project", "seq"`).all() as (WorkRow & { held: string | null })[];
   let changed = 0;
+  // A rapid prototype's iteration whose runtime has passed is limit_reached
+  // at the tick (R4; slice E2), whatever is eligible.
+  settleIterationRuntime(tx);
   const envelope = new Map<string, boolean>();
   const envelopeHolds = (project: string): boolean => {
     if (!envelope.has(project)) envelope.set(project, envelopeHold(tx.db, { kind: 'role', project }) !== null);
@@ -46,6 +50,9 @@ export function markHolds(tx: Tx): number {
         blocker = 'unreadable';
       }
       if (blocker !== null) reason = holdReasonOf(blocker);
+      // An iteration limit an eligible item meets is recorded on the
+      // iteration (R4; slice E2), as its claim would record it.
+      if (blocker !== null && blocker.startsWith(PROTOTYPE_LIMIT)) enforceIterationLimit(tx, item.project, askOfItem(tx.db, item));
       // Dispatchable and still eligible after dispatch: the envelope held it.
       else if (envelopeHolds(item.project)) reason = 'resource_envelope';
       // A replan held for its prerequisite results names them (M543).

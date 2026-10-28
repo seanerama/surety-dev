@@ -1063,7 +1063,11 @@
       "design.review_refused",
       "prototype.iteration_created",
       "prototype.iteration_alpha_ready",
-      "candidate.alpha_withdrawn"
+      "candidate.alpha_withdrawn",
+      "prototype.iteration_limit_reached",
+      "prototype.iteration_stopped",
+      "prototype.iteration_discarded",
+      "prototype.iteration_limits_changed"
     ],
     "EngineMode": [
       "restricted",
@@ -8080,6 +8084,18 @@
       "owner": "store/transitions/prototype.ts"
     },
     "candidate.alpha_withdrawn": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_limit_reached": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_stopped": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_discarded": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.iteration_limits_changed": {
       "owner": "store/transitions/prototype.ts"
     }
   },

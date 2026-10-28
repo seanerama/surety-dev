@@ -7,6 +7,7 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { limitsChanged } from './prototype.js';
 import { followUpsDue } from '../../plan/deferral.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { reraiseOnPolicy } from '../../adopt/records.js';
@@ -203,6 +204,10 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       if (inputs.decision) tx.db.prepare('UPDATE "policy_revisions" SET "decision" = ? WHERE "id" = ?').run(inputs.decision, id);
       tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(id, op.project);
       tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
+      // A rapid prototype's current iteration follows its editable limit
+      // keys; a raised limit reopens one that reached a limit or was stopped
+      // (R4; slice E2).
+      limitsChanged(tx, op.project);
       // The policy is part of every evaluation's inputs (D1 §9.5).
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).

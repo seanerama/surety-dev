@@ -15,7 +15,8 @@ import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
-import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
+import { type CommandResult, answerDecision, controlIteration, controlRun, requestTick, runRepresentation } from './transitions/control.js';
+import type { Facts } from './transitions/queue.js';
 import { liftToFull, recordBackup, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
 import { bootstrapProject, policyFacts, policySubmissionOf, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
@@ -205,6 +206,7 @@ import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
+import { askOfSession, enforceIterationLimit, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
@@ -336,6 +338,12 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean; exited?: boolean }) =>
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided, exited: a.exited === true }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
+  // Rapid prototype, slice E2 (R4, R8): a prototype iteration's Stop and
+  // Discard, each through its confirmation.
+  'iteration.stop': (tx, a: { project: string; iteration: string; preview_hash: string | undefined; facts: Facts }) =>
+    controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'stop', previewHash: a.preview_hash, facts: a.facts ?? {} }),
+  'iteration.discard': (tx, a: { project: string; iteration: string; preview_hash: string | undefined; facts: Facts }) =>
+    controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'discard', previewHash: a.preview_hash, facts: a.facts ?? {} }),
   'decision.answer': (tx, a) => answerDecision(tx, a),
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
@@ -545,6 +553,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'iterations.list': (d, a: { project: string }) => listIterations(d, a),
   'iteration.read': (d, a: { project: string; iteration: string }) => readIteration(d, a),
   'iteration.receipt': (d, a: { project: string; iteration: string }) => iterationReceipt(d, a),
+  // Slice E2: an iteration's runs under way, for the running engine's facts
+  // about each before its Stop or Discard.
+  'iteration.under_way': (d, a: { project: string; iteration: string }) =>
+    (d.prepare('SELECT 1 FROM "prototype_iterations" WHERE "id" = ? AND "project" = ?').get(a.iteration, a.project) ? runsUnderWay(d, a.iteration).map((r) => r.run) : []),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
@@ -623,6 +635,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
   'engine.backup': (tx, a) => recordBackup(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
+  // A session refused by a rapid prototype's iteration limit (slice E2):
+  // the limit recorded on the iteration, the verdict taken again.
+  'prototype.session_limit': (tx, a: { project: string; role: string | null }) =>
+    (typeof a.role === 'string' ? enforceIterationLimit(tx, a.project, askOfSession(tx.db, a.project, a.role)) : false),
   // The workspace assistant's turn under way (the assistant design §§1.3, 4).
   'assistant.dispatched': (tx, a: { invocation: string }) => turnDispatched(tx, a),
   'assistant.launched': (tx, a) => turnLaunched(tx, a),

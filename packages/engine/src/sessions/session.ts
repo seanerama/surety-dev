@@ -41,7 +41,7 @@ import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
 import { type OwnerEvidence, openOwnerReview } from '../design/owner-review.js';
 import { alphaSubject } from '../design/review.js';
-import { iterationForDispatch } from '../store/transitions/prototype.js';
+import { PROTOTYPE_LIMIT, askOfSession, iterationForDispatch, prototypeBlocker } from '../store/transitions/prototype.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -259,6 +259,17 @@ export function openSession(
     });
   }
   const role = args.role as SessionRole;
+  // A rapid prototype's iteration limits (R4; slice E2), as at a one-shot's
+  // dispatch: the session reserves its run budget. A canary session is its
+  // attempt's. Refused with what the dispatch check says; `final`: the
+  // driver records the iteration limit_reached (this transaction is
+  // refused, so writes nothing).
+  if (!args.attempt) {
+    const proto = prototypeBlocker(tx.db, p.id, askOfSession(tx.db, p.id, role));
+    if (proto !== null) {
+      throw new Refusal(409, 'prototype_limit_reached', `The session cannot open: ${proto}.`, 'Raise the limit, or discard the iteration.', { project: p.id, role, final: proto.startsWith(PROTOTYPE_LIMIT) });
+    }
+  }
   // The backend first (D6 §2.6), then the Architect's approved
   // specification (D6 §3.3, §3.5).
   const attempt = args.attempt ? getAttempt(tx.db, args.attempt) : undefined;
