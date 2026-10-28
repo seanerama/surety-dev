@@ -39,6 +39,9 @@ setEngineSettings({ lease_ttl: 600, git_deadline: 30, decision_targets: {} });
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: 'req-1' };
 const AT = '2026-10-28T00:00:00.000Z';
 const PROTO_LIMITS = { prototype_budget_tokens: 1_500_000, prototype_budget_usd_estimated: 15, prototype_runtime_seconds: 2700, prototype_repairs_per_stage: 2, prototype_repairs_per_iteration: 4 };
+// The prototype preset's per-run limit (slice E3, the driver's setting), snapshotted with the five keys.
+const RUN_LIMIT = 300_000;
+const ITERATION_LIMITS = { ...PROTO_LIMITS, budget_run_billable_tokens: RUN_LIMIT };
 
 // A scratch home, store and git configuration, under the harness so that the
 // scripted backend is every role's default, as in the kernel lane.
@@ -132,7 +135,7 @@ test('rapid_prototype: T1, the preset bootstrap policy as revision 1 (no widenin
   assert.deepEqual([pol.revision, pol.widens_authority, pol.committed, pol.decision, pol.git_path], [1, 0, 1, null, '.surety/policy.json']);
   const effective = JSON.parse(pol.effective);
   assert.deepEqual([effective.autonomy, effective.phase_size, effective.design, effective.alpha_deploy], ['phase', { min: 1, max: 2 }, 'off', 'on_phase_complete']);
-  assert.deepEqual(JSON.parse(pol.diff_summary), { autonomy: 'phase', phase_size: { min: 1, max: 2 }, design: 'off', alpha_deploy: 'on_phase_complete' });
+  assert.deepEqual(JSON.parse(pol.diff_summary), { autonomy: 'phase', phase_size: { min: 1, max: 2 }, design: 'off', alpha_deploy: 'on_phase_complete', budget_run_billable_tokens: RUN_LIMIT });
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'policy_widening'`).get().n, 0, 'no widening asked for');
   // The policy file is in the bootstrap commit, the recorded blob.
   const ls = await git(repoContext(p.repo), ['ls-tree', p.commit.tree, '.surety/policy.json']);
@@ -141,15 +144,15 @@ test('rapid_prototype: T1, the preset bootstrap policy as revision 1 (no widenin
   const its = iterationOf(db, p.id);
   assert.equal(its.length, 1);
   assert.deepEqual([its[0].id, its[0].seq, its[0].status, its[0].mode, its[0].predecessor], [p.iteration, 1, 'preparing', 'rapid_prototype', null]);
-  assert.deepEqual(JSON.parse(its[0].limits_json), PROTO_LIMITS);
+  assert.deepEqual(JSON.parse(its[0].limits_json), ITERATION_LIMITS);
   const read = readProject(db, { project: p.id }).project;
   assert.deepEqual([read.mode, read.prototype], ['rapid_prototype', { iteration: p.iteration, status: 'preparing' }]);
   const list = listIterations(db, { project: p.id });
   assert.equal(typeof list.served_at, 'string');
   assert.deepEqual(list.iterations, [
-    { id: p.iteration, seq: 1, mode: 'rapid_prototype', status: 'preparing', predecessor: null, brief: { spec_revision: null, decision: null }, created_at: its[0].created_at, approved_at: null, alpha_at: null, ended_at: null },
+    { id: p.iteration, seq: 1, mode: 'rapid_prototype', status: 'preparing', predecessor: null, brief: { spec_revision: null, decision: null, record: null, version: null }, next_step: 'approve preparation or discard', created_at: its[0].created_at, approved_at: null, alpha_at: null, ended_at: null },
   ]);
-  assert.deepEqual(readIteration(db, { project: p.id, iteration: p.iteration }).iteration.limits, PROTO_LIMITS);
+  assert.deepEqual(readIteration(db, { project: p.id, iteration: p.iteration }).iteration.limits, ITERATION_LIMITS);
 });
 
 test('the new-app route refuses an unknown mode and a prototype at another tier, creating nothing', async (t) => {
@@ -196,9 +199,9 @@ test('attribution: three Builder runs are three agent runs of one role, each its
   assert.deepEqual(during.usage.totals.completeness, { complete: 2, pending: 1, incomplete: 0, not_launched: 0 });
   const pending = during.usage.runs[2].invocations[0];
   assert.deepEqual([pending.usage.state, pending.usage.billable_in, pending.cost.status, pending.status], ['pending', 7, 'unknown', 'launched']);
-  assert.equal(pending.reserved_tokens, 1_500_000 - 9, 'it reserves its run limit less what it observed');
+  assert.equal(pending.reserved_tokens, RUN_LIMIT - 9, 'it reserves its run limit less what it observed');
   assert.deepEqual([during.usage.totals.tokens.total, during.usage.totals.tokens.total_is], [175, 'lower_bound']);
-  assert.equal(during.remaining.tokens, 10_000_000 - (130 + 15) - 9 - (1_500_000 - 9), 'settled usage plus what the run under way observed and still reserves');
+  assert.equal(during.remaining.tokens, 10_000_000 - (130 + 15) - 9 - (RUN_LIMIT - 9), 'settled usage plus what the run under way observed and still reserves');
 
   end(db, third);
   const after = readIteration(db, { project: p.id, iteration: p.iteration });
@@ -211,8 +214,10 @@ test('attribution: three Builder runs are three agent runs of one role, each its
   assert.equal(after.remaining.repairs_iteration, 4);
   assert.equal(after.remaining.runtime_seconds, 2700, 'not approved: the runtime has not started');
   assert.equal(after.time.approval_to_alpha_seconds, null);
-  // A run dispatched once the iteration has ended is not its.
-  db.prepare(`UPDATE prototype_iterations SET status = 'failed' WHERE id = ?`).run(p.iteration);
+  // A run dispatched once the iteration has ended is not its. (From slice
+  // E3 a `failed` iteration still takes the retried work of its parked item,
+  // so the ended status here is alpha_ready.)
+  db.prepare(`UPDATE prototype_iterations SET status = 'alpha_ready' WHERE id = ?`).run(p.iteration);
   const later = dispatch(db, p.id, 'd');
   assert.equal(db.prepare('SELECT iteration FROM runs WHERE id = ?').get(later.run).iteration, null);
   assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).usage.totals.agent_runs, 3, 'nothing joined by time');
@@ -265,13 +270,13 @@ test('a run with two invocations counts two; an incomplete invocation shows its 
   assert.deepEqual([est.cost.status, est.cost.usd, est.cost.pricing_basis], ['estimated', 7, 'scripted-prices-1']);
   assert.deepEqual([rep.cost.status, rep.cost.usd, rep.cost.pricing_basis], ['reported', 0.5, null]);
   const inc = stopped.invocations[0];
-  assert.deepEqual([inc.usage.state, inc.usage.billable_in, inc.usage.out, inc.unknown_allowance_tokens], ['incomplete', 10, null, 1_500_000 - 10]);
+  assert.deepEqual([inc.usage.state, inc.usage.billable_in, inc.usage.out, inc.unknown_allowance_tokens], ['incomplete', 10, null, RUN_LIMIT - 10]);
   const none = silent.invocations[0];
   assert.deepEqual([none.usage.state, none.usage.billable_in, none.unknown_allowance_tokens, none.cost.status], ['incomplete', null, null, 'unknown']);
   assert.deepEqual([zero.invocations[0].cost.status, zero.invocations[0].cost.usd], ['measured_zero', 0]);
   const totals = read.usage.totals;
   assert.deepEqual(totals.completeness, { complete: 3, pending: 0, incomplete: 2, not_launched: 0 });
-  assert.equal(totals.unknown_allowance_tokens, 1_500_000 - 10, 'the allowance shown apart from observed usage');
+  assert.equal(totals.unknown_allowance_tokens, RUN_LIMIT - 10, 'the allowance shown apart from observed usage');
   assert.deepEqual([totals.cost.reported_usd, totals.cost.estimated_usd, totals.cost.unknown_invocations], [0.5, 7, 2]);
   assert.deepEqual(totals.roles_used, ['architect', 'builder'], 'distinct roles that ran, in the order they first ran');
   assert.equal(totals.tokens.total_is, 'lower_bound');

@@ -206,6 +206,7 @@ import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
+import { briefFacts, requestPreparation } from '../prototype/brief.js';
 import { askOfSession, enforceIterationLimit, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
@@ -344,6 +345,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
     controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'stop', previewHash: a.preview_hash, facts: a.facts ?? {} }),
   'iteration.discard': (tx, a: { project: string; iteration: string; preview_hash: string | undefined; facts: Facts }) =>
     controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'discard', previewHash: a.preview_hash, facts: a.facts ?? {} }),
+  // Slice E3 (R5): the brief's preparation asked for again.
+  'iteration.prepare': (tx, a: { project: string; iteration: string }) => requestPreparation(tx, a),
   'decision.answer': (tx, a) => answerDecision(tx, a),
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
@@ -553,6 +556,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'iterations.list': (d, a: { project: string }) => listIterations(d, a),
   'iteration.read': (d, a: { project: string; iteration: string }) => readIteration(d, a),
   'iteration.receipt': (d, a: { project: string; iteration: string }) => iterationReceipt(d, a),
+  // Slice E3: what the engine serves into a brief, read at its preparation's acceptance.
+  'prototype.brief_facts': (d, a: { project: string; run: string; environments: string[] }) => briefFacts(d, a),
   // Slice E2: an iteration's runs under way, for the running engine's facts
   // about each before its Stop or Discard.
   'iteration.under_way': (d, a: { project: string; iteration: string }) =>

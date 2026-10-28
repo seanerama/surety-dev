@@ -256,6 +256,21 @@ export const EVENT_OWNERS = {
   'prototype.iteration_stopped': 'store/transitions/prototype.ts',
   'prototype.iteration_discarded': 'store/transitions/prototype.ts',
   'prototype.iteration_limits_changed': 'store/transitions/prototype.ts',
+  // Slice E3 (R1, R3, R5): the preparation authorized or declined, its run
+  // failed, the brief prepared (its spec_approval raised), approved or
+  // rejected, the first plan asked for and published by the prototype
+  // policy or routed to the owner, and the iteration's status following the
+  // owner's open questions and the work's failures.
+  'prototype.preparation_authorized': 'prototype/brief.ts',
+  'prototype.preparation_declined': 'prototype/brief.ts',
+  'prototype.preparation_failed': 'prototype/brief.ts',
+  'prototype.brief_prepared': 'prototype/brief.ts',
+  'prototype.brief_approved': 'prototype/brief.ts',
+  'prototype.brief_rejected': 'prototype/brief.ts',
+  'prototype.first_plan_requested': 'prototype/brief.ts',
+  'prototype.plan_policy_authorized': 'prototype/brief.ts',
+  'prototype.plan_routed_to_owner': 'prototype/brief.ts',
+  'prototype.iteration_status_changed': 'prototype/brief.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

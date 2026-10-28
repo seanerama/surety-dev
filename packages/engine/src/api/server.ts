@@ -903,6 +903,21 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // Slice E3 (R5): the brief's preparation asked for again (after a
+      // declined authorization, a failed run or a rejected brief): its
+      // authorization raised for the owner; nothing is dispatched.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'prepare' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.prepare',
+          args: (b) => {
+            noFields(b);
+            return { project, iteration };
+          },
+        };
+      }
       if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'receipt.json' && get) {
         const iteration = decodeSegment(rest[1]!);
         if (iteration === null) return null;

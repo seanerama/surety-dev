@@ -53,6 +53,8 @@ interface IterationRow {
   approved_at: string | null;
   alpha_at: string | null;
   ended_at: string | null;
+  brief_record: string | null;
+  brief_json: string | null;
 }
 
 // The providers whose normalized categories are mutually exclusive, so that
@@ -85,6 +87,53 @@ function iterationRow(db: Db, project: string, iteration: string): IterationRow 
   return row;
 }
 
+function briefVersion(r: IterationRow): number | null {
+  const b = parseJson<{ version?: unknown }>(r.brief_json);
+  return typeof b?.version === 'number' ? b.version : null;
+}
+
+// The owner's approvals of the iteration's work (R5: the initial paid flow
+// has three: preparation, brief and check), by stable relationship, never a
+// time window: a decision about the iteration itself, about one of its runs,
+// or about a protected proposal one of its runs made; consumed with
+// `approve`. Plans published by the prototype policy are no approval.
+function ownerApprovals(db: Db, it: IterationRow) {
+  const rows = db
+    .prepare(
+      `SELECT d."id", d."kind", d."consumed_at", d."answer" FROM "decisions" d
+       WHERE d."project" = ? AND d."status" = 'consumed' AND (
+         (d."subject_type" = 'prototype_iteration' AND d."subject_id" = ?)
+         OR (d."subject_type" = 'run' AND d."subject_id" IN (SELECT "id" FROM "runs" WHERE "iteration" = ?))
+         OR (d."kind" LIKE 'check_correction_%' AND d."subject_id" IN (SELECT p."id" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."iteration" = ?)))
+       ORDER BY d."seq"`,
+    )
+    .all(it.project, it.id, it.id, it.id) as { id: string; kind: string; consumed_at: string | null; answer: string | null }[];
+  const approved = rows.filter((r) => parseJson<{ option?: unknown }>(r.answer)?.option === 'approve');
+  const byKind: Record<string, number> = {};
+  for (const r of approved) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+  return { count: approved.length, by_kind: byKind, decisions: approved.map((r) => ({ id: r.id, kind: r.kind, consumed_at: r.consumed_at })) };
+}
+
+// Approval of each preparation to its run's end (R5), summed over the
+// preparations whose run ended; null while none has.
+function preparationSeconds(db: Db, it: IterationRow): number | null {
+  const rows = db
+    .prepare(
+      `SELECT d."consumed_at", r."finished_at" FROM "decisions" d
+       JOIN "work_items" w ON w."kind" = 'brief_preparation' AND json_extract(w."subject", '$.decision') = d."id"
+       JOIN "runs" r ON r."work_item" = w."id"
+       WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ? AND d."status" = 'consumed' AND r."finished_at" IS NOT NULL
+       ORDER BY r."seq"`,
+    )
+    .all(it.id) as { consumed_at: string | null; finished_at: string }[];
+  let total: number | null = null;
+  for (const r of rows) {
+    const s = between(r.consumed_at, r.finished_at, ['the preparation authorized', 'its run ended']);
+    if (typeof s === 'number') total = (total ?? 0) + s;
+  }
+  return total;
+}
+
 function summaryOf(r: IterationRow) {
   return {
     id: r.id,
@@ -92,7 +141,8 @@ function summaryOf(r: IterationRow) {
     mode: r.mode,
     status: r.status,
     predecessor: r.predecessor,
-    brief: { spec_revision: r.brief_spec_revision, decision: r.brief_decision },
+    brief: { spec_revision: r.brief_spec_revision, decision: r.brief_decision, record: r.brief_record, version: briefVersion(r) },
+    next_step: r.next_step,
     created_at: r.created_at,
     approved_at: r.approved_at,
     alpha_at: r.alpha_at,
@@ -386,7 +436,7 @@ export function readIteration(db: Db, args: { project: string; iteration: string
 
   return {
     ...head,
-    iteration: { ...summaryOf(it), limits: Object.fromEntries(PROTOTYPE_LIMIT_KEYS.map((k) => [k, limit(k)])) },
+    iteration: { ...summaryOf(it), limits: { ...Object.fromEntries(PROTOTYPE_LIMIT_KEYS.map((k) => [k, limit(k)])), budget_run_billable_tokens: typeof limits.budget_run_billable_tokens === 'number' ? limits.budget_run_billable_tokens : null } },
     usage: {
       runs,
       totals: {
@@ -405,8 +455,11 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       },
     },
     remaining,
+    // The first plan (R1): its bundle and how it was published.
+    plan: planOf(db, it),
+    owner_approvals: ownerApprovals(db, it),
     time: {
-      preparation_seconds: null,
+      preparation_seconds: preparationSeconds(db, it),
       approval_to_alpha_seconds: interval(it.approved_at, it.alpha_at, ['the brief approved', 'Alpha reached']),
       elapsed_seconds: interval(it.created_at, it.ended_at ?? now, ['the iteration created', 'now']),
       runtime_limit_seconds: runtimeLimit,
@@ -423,6 +476,16 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       current: alphaNow(db, args.project, it, request?.environment ?? null),
     },
   };
+}
+
+// The iteration's first plan: its bundle, its phase plan, and who
+// published it (`policy_authorized` by the prototype policy, or the owner's
+// approval), as recorded.
+function planOf(db: Db, it: IterationRow) {
+  if (it.plan_bundle === null) return null;
+  const b = db.prepare('SELECT "status", "approvals" FROM "plan_bundles" WHERE "id" = ?').get(it.plan_bundle) as { status: string; approvals: string } | undefined;
+  const p = it.phase_plan === null ? undefined : (db.prepare('SELECT "routing", "approved_by" FROM "phase_plans" WHERE "id" = ?').get(it.phase_plan) as { routing: string | null; approved_by: string | null } | undefined);
+  return { bundle: it.plan_bundle, bundle_status: b?.status ?? null, approvals: parseJson<Record<string, unknown>>(b?.approvals ?? null), phase_plan: it.phase_plan, routing: p?.routing ?? null, approved_by: p?.approved_by ?? null };
 }
 
 // GET /v1/projects/:p/iterations/:i/receipt.json: the iteration read with

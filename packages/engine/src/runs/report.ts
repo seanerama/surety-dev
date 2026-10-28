@@ -138,6 +138,10 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
   spec_change_requests: (v) => listOf(v, (r) => Array.isArray(r.keys) && r.keys.every(isString) && isString(r.text) && Object.keys(r).every((k) => k === 'keys' || k === 'text')),
   // D7 §6.5, B.17 (G15): a Builder's bindings, each closed.
   asset_bindings: (v) => assetBindingsProblem(v) === null,
+  // Rapid prototype, slice E3: a brief preparation's brief, an object here;
+  // its fields are validated at acceptance against the specification it
+  // goes with (prototype/brief.ts validateModelBrief), each refusal named.
+  brief: (v) => isObject(v),
 };
 
 // B.17's binding: `{slot, variant, target, path, form}`, `form` copy or
@@ -182,6 +186,7 @@ const ROLE_ONLY: Record<string, string> = {
   spec_applicability: 'verifier',
   spec_change_requests: 'architect',
   asset_bindings: 'builder',
+  brief: 'spec_writer',
 };
 
 // Fields no role's result may carry: no role registers a check execution or

@@ -171,7 +171,8 @@
       "trust_activation",
       "design_approval",
       "design_due",
-      "design_verdicts"
+      "design_verdicts",
+      "prototype_preparation_approval"
     ],
     "DecisionStatus": [
       "open",
@@ -634,7 +635,8 @@
       "design_check",
       "design_inventory",
       "design_observation",
-      "design_evidence"
+      "design_evidence",
+      "prototype_brief"
     ],
     "PostScan": [
       "pending",
@@ -815,7 +817,8 @@
       "deploy",
       "rollback",
       "adoption_baseline",
-      "conformance"
+      "conformance",
+      "brief_preparation"
     ],
     "WorkItemStatus": [
       "eligible",
@@ -1067,7 +1070,17 @@
       "prototype.iteration_limit_reached",
       "prototype.iteration_stopped",
       "prototype.iteration_discarded",
-      "prototype.iteration_limits_changed"
+      "prototype.iteration_limits_changed",
+      "prototype.preparation_authorized",
+      "prototype.preparation_declined",
+      "prototype.preparation_failed",
+      "prototype.brief_prepared",
+      "prototype.brief_approved",
+      "prototype.brief_rejected",
+      "prototype.first_plan_requested",
+      "prototype.plan_policy_authorized",
+      "prototype.plan_routed_to_owner",
+      "prototype.iteration_status_changed"
     ],
     "EngineMode": [
       "restricted",
@@ -5187,6 +5200,13 @@
         },
         "ended_at": {
           "required": false
+        },
+        "brief_record": {
+          "required": false,
+          "references": "records"
+        },
+        "brief_json": {
+          "required": false
         }
       }
     },
@@ -6811,6 +6831,18 @@
           "verifying",
           "complete"
         ]
+      },
+      "brief_preparation": {
+        "m1": true,
+        "path": [
+          "eligible",
+          "claimed",
+          "executing",
+          "integrating",
+          "integrated",
+          "complete"
+        ],
+        "role": "spec_writer"
       }
     },
     "templates": {
@@ -7448,6 +7480,27 @@
         "review",
         "review_blob",
         "evidence"
+      ],
+      "target_seconds": 172800
+    },
+    "prototype_preparation_approval": {
+      "enabled": true,
+      "manifest": [
+        "iteration",
+        "iteration_seq",
+        "iteration_status",
+        "role",
+        "provider",
+        "model",
+        "resolution",
+        "run_token_limit",
+        "estimated_usd",
+        "estimate_basis",
+        "paid",
+        "authorizes",
+        "idea_version",
+        "idea_blob",
+        "policy_revision"
       ],
       "target_seconds": 172800
     }
@@ -8097,6 +8150,36 @@
     },
     "prototype.iteration_limits_changed": {
       "owner": "store/transitions/prototype.ts"
+    },
+    "prototype.preparation_authorized": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.preparation_declined": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.preparation_failed": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.brief_prepared": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.brief_approved": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.brief_rejected": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.first_plan_requested": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.plan_policy_authorized": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.plan_routed_to_owner": {
+      "owner": "prototype/brief.ts"
+    },
+    "prototype.iteration_status_changed": {
+      "owner": "prototype/brief.ts"
     }
   },
   "config": {
@@ -8226,7 +8309,8 @@
           "requirement_confirm": 172800,
           "design_approval": 172800,
           "design_due": 172800,
-          "design_verdicts": 172800
+          "design_verdicts": 172800,
+          "prototype_preparation_approval": 172800
         }
       },
       "ui_bootstrap": {

@@ -2,6 +2,7 @@
 
 import { designCatalogueFacts, designChangeFacts } from '../design/review-package.js';
 import { replanFacts } from '../plan/replan-package.js';
+import { briefPreparationFacts } from '../prototype/brief.js';
 import { activeStages, dependsOnEntries, dependsOnNumbers } from '../plan/active.js';
 import { phaseVerificationFacts } from '../plan/phase.js';
 import type { Database } from 'better-sqlite3';
@@ -389,6 +390,8 @@ export function contextFacts(db: Database, args: { run: string }) {
     owner_correct_check: item.kind === 'check_correction' && finding ? ownerAskedCorrection(db, finding.id) : false,
     // The replan one-shot's package (D6 §3.5, §5.6; M424 (b)).
     replan: item.kind === 'replan' ? replanFacts(db, item) : null,
+    // A rapid prototype's brief preparation (slice E3; prototype/brief.ts).
+    prototype_brief: item.kind === 'brief_preparation' ? briefPreparationFacts(db, item) : null,
     // The phase Verifier's (D6 §5.8; M429 (a)): the phase evaluation and
     // the phase's findings.
     phase: phaseVerificationFacts(db, item),

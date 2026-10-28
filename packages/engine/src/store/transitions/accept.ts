@@ -15,6 +15,7 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import type { ReplanPrepared } from '../../plan/bundle.js';
+import type { PreparedBrief } from '../../prototype/brief.js';
 import { type ChainOrigin, originOfItem, transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
@@ -333,6 +334,8 @@ export function intendIntegration(
     plans: PlanInput[];
     // A replan's B.5 plan, checked on the main thread (runs/accept.ts).
     replan?: ReplanPrepared;
+    // A prototype's brief, prepared on the main thread (runs/accept.ts; slice E3).
+    brief?: PreparedBrief;
     // D7 §6.5 (G15): a UI Builder's validated asset bindings.
     asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived'; slot_version: number }[];
     deadlineSeconds: number;
@@ -370,6 +373,7 @@ export function intendIntegration(
     stage: subject.stage ?? null,
     plans: args.plans,
     ...(args.replan ? { replan: args.replan } : {}),
+    ...(args.brief ? { brief: args.brief } : {}),
     ...(args.asset_bindings && args.asset_bindings.length > 0 ? { asset_bindings: args.asset_bindings } : {}),
     architect: run.role === 'architect',
     nominate,

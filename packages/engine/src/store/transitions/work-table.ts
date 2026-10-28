@@ -44,6 +44,9 @@ export const WORK_KINDS = [
   'rollback',
   'adoption_baseline',
   'conformance',
+  // Rapid prototype, slice E3 (R5): the Spec Writer's one-shot that
+  // prepares a prototype's brief and its minimal specification.
+  'brief_preparation',
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -67,6 +70,9 @@ export const KIND_PATHS: Record<WorkKind, readonly WorkStatus[]> = {
   assessment: INTEGRATE,
   adoption_baseline: INTEGRATE,
   conformance: BUILD,
+  // Integrated as a replan is: its specification is committed onto the
+  // integration branch, and its spec_approval raised (prototype/brief.ts).
+  brief_preparation: INTEGRATE,
   spec_change: PROPOSE,
   triage_accept: DECIDE,
   export: RUN_ONLY,
@@ -78,7 +84,7 @@ export const KIND_PATHS: Record<WorkKind, readonly WorkStatus[]> = {
 // The kinds M1 dispatches (build spec §3). Every other kind is refused before
 // it becomes work and is never launched.
 // D6 (M5 slice 31b): the phase's verification and the specification change.
-export const DISPATCHABLE: readonly WorkKind[] = ['stage_build', 'fix', 'verification', 'review', 'check_correction', 'check_authoring', 'replan', 'assessment', 'phase_verification', 'spec_change'];
+export const DISPATCHABLE: readonly WorkKind[] = ['stage_build', 'fix', 'verification', 'review', 'check_correction', 'check_authoring', 'replan', 'assessment', 'phase_verification', 'spec_change', 'brief_preparation'];
 
 export const CONTINUATIONS: readonly WorkStatus[] = ['executing', 'integrating', 'verifying'];
 

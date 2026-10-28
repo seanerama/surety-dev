@@ -11,6 +11,7 @@ import type { Policy } from '../../config/project-policy.js';
 import { type LedgerRow, billable, fold, observedSoFar, outstandingReservation, runBudgetOf } from './ledger.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
+import { raisePreparation } from '../../prototype/brief.js';
 
 type Db = Tx['db'];
 
@@ -19,11 +20,20 @@ export type IterationStatus = (typeof ITERATION_STATUSES)[number];
 // An open iteration is one whose work is not over: a run dispatched while
 // it is open is the iteration's.
 export const OPEN_ITERATION_STATUSES: readonly IterationStatus[] = ['preparing', 'awaiting_brief_approval', 'building', 'awaiting_owner'];
+// Slice E3: a failed iteration (a work item of it parked) is ended until the
+// owner's retry returns the work (prototype/brief.ts syncIterationStatuses);
+// what is dispatched for it meanwhile (the retried work) is still its own,
+// and is checked against its limits as an open iteration's is.
+export const ATTRIBUTABLE_STATUSES: readonly IterationStatus[] = [...OPEN_ITERATION_STATUSES, 'failed'];
 
 // The five limit keys of a policy, as the iteration snapshots them (R4).
 export function limitsOf(policy: Policy): Record<string, number> {
   const out: Record<string, number> = {};
   for (const key of PROTOTYPE_LIMIT_KEYS) out[key] = policy[key] as number;
+  // And the per-run limit each dispatch reserves against the token
+  // allowance (slice E3: the preset sets it so that the allowance admits
+  // several runs), for the brief and the read.
+  out.budget_run_billable_tokens = policy.budget_run_billable_tokens as number;
   return out;
 }
 
@@ -39,6 +49,10 @@ export function createIteration(tx: Tx, args: { project: string; limits: Record<
     )
     .run(id, tx.at, args.project, n, args.predecessor ?? null, JSON.stringify(args.limits));
   tx.emit('prototype.iteration_created', { project: args.project, iteration: id }, { seq: n, predecessor: args.predecessor ?? null, limits: args.limits });
+  // Slice E3 (R5): the owner is asked at once to authorize the one run that
+  // prepares the iteration's brief; nothing is dispatched before the answer.
+  const asked = raisePreparation(tx, { project: args.project, iteration: id });
+  tx.db.prepare('UPDATE "prototype_iterations" SET "next_step" = ? WHERE "id" = ?').run(asked ? 'approve preparation or discard' : 'request preparation or discard', id);
   return id;
 }
 
@@ -55,7 +69,7 @@ export function currentIteration(db: Db, project: string): { id: string; status:
 // run exists.
 export function iterationForDispatch(db: Db, project: string): string | null {
   const it = currentIteration(db, project);
-  return it !== null && OPEN_ITERATION_STATUSES.includes(it.status) ? it.id : null;
+  return it !== null && ATTRIBUTABLE_STATUSES.includes(it.status) ? it.id : null;
 }
 
 // alpha_complete satisfied for a candidate of a rapid_prototype project
@@ -362,7 +376,7 @@ export function prototypeBlocker(db: Db, project: string, ask: DispatchAsk): str
   if (HOLDING_STATUSES.includes(it.status)) {
     return `${PROTOTYPE_LIMIT}: iteration ${it.seq} is ${it.status}${it.outcome_reason ? ` (${it.outcome_reason})` : ''}; next: ${it.next_step ?? 'none'}`;
   }
-  if (!OPEN_ITERATION_STATUSES.includes(it.status)) return null;
+  if (!ATTRIBUTABLE_STATUSES.includes(it.status)) return null;
   const v = iterationVerdict(db, it, ask);
   if (v === null) return null;
   return v.kind === 'final' ? `${PROTOTYPE_LIMIT}: ${v.reason}` : `${PROTOTYPE_SETTLING} ${it.seq}: ${v.reason}`;
@@ -379,7 +393,7 @@ function endIteration(tx: Tx, it: IterationRowLite, status: 'limit_reached' | 's
 // again here, never from the caller. Returns whether it was recorded.
 export function enforceIterationLimit(tx: Tx, project: string, ask: DispatchAsk): boolean {
   const it = currentRow(tx.db, project);
-  if (!it || !OPEN_ITERATION_STATUSES.includes(it.status)) return false;
+  if (!it || !ATTRIBUTABLE_STATUSES.includes(it.status)) return false;
   const v = iterationVerdict(tx.db, it, ask);
   if (v === null || v.kind !== 'final') return false;
   endIteration(tx, it, 'limit_reached', v.reason, LIMIT_NEXT_STEP, 'prototype.iteration_limit_reached', { limit: v.limit, ...v.facts });
@@ -413,7 +427,7 @@ export function settleIterationRuntime(tx: Tx): number {
 // limits (a stopped project stays paused until the owner resumes it).
 export function limitsChanged(tx: Tx, project: string): void {
   const it = currentRow(tx.db, project);
-  if (!it || it.status === 'discarded' || !(OPEN_ITERATION_STATUSES.includes(it.status) || HOLDING_STATUSES.includes(it.status))) return;
+  if (!it || it.status === 'discarded' || !(ATTRIBUTABLE_STATUSES.includes(it.status) || HOLDING_STATUSES.includes(it.status))) return;
   const from = limitsOfRow(it);
   const to = limitsOf(projectPolicy(tx.db, project));
   const changed = PROTOTYPE_LIMIT_KEYS.filter((k) => from[k] !== to[k]);

@@ -16,6 +16,7 @@ import { KEPT_STAGE_RULE, REBUILT_STAGE_RULE, touchedCriteria } from './check.js
 import { keptOf, replacementOf, subjectWorkOf } from './replace.js';
 import { gitOk, repoContext } from '../git/exec.js';
 import type { Tx } from '../store/transitions/tx.js';
+import { FIRST_PLAN_SOURCE, PROTOTYPE_BOUNDS } from '../prototype/brief.js';
 
 type Db = Tx['db'];
 
@@ -83,6 +84,9 @@ export interface ReplanFacts {
   // The criteria the replacement's trigger touched (its stale `criterion:`
   // entries): what a new stage must validate.
   touched?: string[];
+  // A rapid prototype's first plan (slice E3; R1): the approved brief and
+  // the bounds within which the prototype policy publishes the plan.
+  prototype?: { iteration: string; bounds: { phases: number; max_stages: number }; brief: unknown } | null;
 }
 
 const json = (text: unknown): unknown => {
@@ -215,7 +219,14 @@ export function replanFacts(db: Db, item: { id: string; project: string; trigger
     refusal: last ? { run: last.id, reason_class: last.reason_class, reason_text: last.reason_text, plan_check: check ? { id: check.id, phase: check.phase_number, reasons: json(check.reasons) } : null } : null,
     ...keptStagesOf(db, item),
     touched: touchedOf(item),
+    prototype: item.trigger_source === FIRST_PLAN_SOURCE && item.trigger_id ? prototypeFacts(db, item.trigger_id) : null,
   };
+}
+
+// The approved brief of a prototype's iteration, for its first plan.
+function prototypeFacts(db: Db, iteration: string): NonNullable<ReplanFacts['prototype']> {
+  const it = db.prepare('SELECT "brief_json" FROM "prototype_iterations" WHERE "id" = ?').get(iteration) as { brief_json: string | null } | undefined;
+  return { iteration, bounds: { ...PROTOTYPE_BOUNDS }, brief: it?.brief_json ? json(it.brief_json) : null };
 }
 
 // The kept stages the plan check will count for this replan (the driver's
@@ -287,10 +298,26 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
   return out;
 }
 
+// A rapid prototype's first plan (slice E3; R1): what the Architect is
+// asked, and the bounds the prototype policy publishes within.
+export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>): string[] {
+  return [
+    '',
+    '## A rapid prototype\'s first plan',
+    '',
+    `This project is a rapid prototype. Nothing is approved yet but its brief and minimal specification (/surety/context/spec.md; the brief in /surety/context/prototype-brief.json). Write the first architecture and its one phase: .surety/architecture/architecture.md, .surety/architecture/modules.json, any ADR under .surety/adrs/ the brief's constraints call for, .surety/roadmap/roadmap.json with exactly ${p.bounds.phases} phase, and .surety/phases/phase-1.json with at most ${p.bounds.max_stages} stages that together implement every requirement of the specification.`,
+    'Your plan\'s prepared_against names spec version as given, architecture version 1, roadmap version 1, and the revision you start from; roadmap.json names architecture version 1.',
+    'Make the ordinary implementation choices yourself, consistent with the brief: modules, interfaces, the structure of the code. Stay within its scope, constraints, models and permissions: add no environment, platform permission, asset or tier override, and leave nothing it includes to a later phase.',
+    `Within these bounds the plan is published by the prototype policy without asking the owner (recorded as policy-authorized). A plan outside them (more than ${p.bounds.phases} phase, more than ${p.bounds.max_stages} stages, a requirement left unplanned, or anything beyond the brief) goes to the owner for approval.`,
+  ];
+}
+
 export function replanPromptText(r: ReplanFacts): string[] {
   const next = (r.completed_plan?.phase_number ?? 0) + 1;
   const reasons = (r.refusal?.plan_check?.reasons as { code: string; subjects: string[] }[] | null | undefined) ?? null;
-  return [
+  const lead = r.prototype
+    ? [...prototypePlanText(r.prototype), 'Your result names the plan (`plan`: "phase-1") and declares `conformance` (within_baseline or uncertain).']
+    : [
     '',
     '## The replan',
     '',
@@ -302,6 +329,9 @@ export function replanPromptText(r: ReplanFacts): string[] {
     '- /surety/context/findings.json, deferrals.json, objections.json: the phase\'s findings with their dispositions, what is deferred and the open objections.',
     'Write the next phase\'s plan in the form the engine reads (below), and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner.',
     'Your result names the plan (`plan`: "phase-<n>") and declares `conformance` (within_baseline or uncertain).',
+  ];
+  return [
+    ...lead,
     ...(r.refusal
       ? [
           '',

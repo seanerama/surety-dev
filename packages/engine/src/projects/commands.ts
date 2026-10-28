@@ -79,6 +79,10 @@ export const RAPID_PROTOTYPE_PRESET: Policy = {
   phase_size: { min: 1, max: 2 },
   design: 'off',
   alpha_deploy: 'on_phase_complete',
+  // Slice E3 (the driver's setting, reversible): a per-run limit that lets
+  // the 1,500,000-token iteration allowance admit several runs under E2's
+  // reservation rule (each dispatch reserves its run limit).
+  budget_run_billable_tokens: 300_000,
 };
 
 // The bootstrap policy a mode starts with: none for `planned` (the schema

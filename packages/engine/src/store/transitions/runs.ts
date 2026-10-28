@@ -31,6 +31,7 @@ import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './wor
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
 import { PROTOTYPE_LIMIT, askOfItem, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
+import { preparationEnded } from '../../prototype/brief.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -183,6 +184,9 @@ export const ROLE_OF: Record<string, string> = {
   // proposed specification change is the Spec Writer's one-shot.
   phase_verification: 'verifier',
   spec_change: 'spec_writer',
+  // Rapid prototype, slice E3 (R5): the brief's preparation is the Spec
+  // Writer's one-shot.
+  brief_preparation: 'spec_writer',
   review: 'reviewer',
   replan: 'architect',
   assessment: 'architect',
@@ -1434,6 +1438,15 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     else transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon_after_exit' });
     return;
   }
+  // A rapid prototype's brief preparation (slice E3; R5): its authorization
+  // was for exactly one run, so a run that ended other than completed is
+  // never repaired or retried: its work is cancelled and the iteration's
+  // next step is to prepare again (prototype/brief.ts). An integration the
+  // journal still holds is the journal's, as for any integrating kind.
+  if (item.kind === 'brief_preparation' && run.outcome !== 'completed' && !((item.status === 'integrating' && integrationPending) || item.status === 'integrated')) {
+    preparationEnded(tx, item, run);
+    return;
+  }
   switch (run.outcome) {
     case 'completed':
       // A specification change's correction whose run captured a proposal
@@ -1587,7 +1600,7 @@ export function stopAfterExitOf(db: Tx['db'], run: string): { kind: string } | u
     .get(run) as { kind: string } | undefined;
 }
 
-const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];
+const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment', 'brief_preparation'];
 
 // A limit was reached, or a person must act: the item parks with a visible
 // blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;

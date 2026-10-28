@@ -62,6 +62,7 @@ import { DESIGN_DUE, DESIGN_DUE_KEYS, requestDesignerSession } from '../../desig
 import { designBatchKeyOf } from '../../design/batch-key.js';
 import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
 import { DESIGN_CONFLICT, DESIGN_CONFLICT_SCOPE } from '../../design/findings.js';
+import { PREPARATION_KEYS, PROTOTYPE_PREPARATION_APPROVAL } from '../../prototype/brief.js';
 
 type Db = Tx['db'];
 
@@ -2240,6 +2241,11 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   get design_verdicts() {
     return DESIGN_VERDICTS;
   },
+  // Rapid prototype, slice E3 (R5): one brief preparation run authorized
+  // (prototype/brief.ts). Read when asked for: the two modules import each other.
+  get prototype_preparation_approval() {
+    return PROTOTYPE_PREPARATION_APPROVAL;
+  },
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -2283,6 +2289,9 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   },
   get design_verdicts() {
     return DESIGN_VERDICTS_KEYS;
+  },
+  get prototype_preparation_approval() {
+    return PREPARATION_KEYS;
   },
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,

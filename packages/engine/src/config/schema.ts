@@ -231,6 +231,9 @@ export const DECISION_KINDS = [
   'design_approval',
   'design_due',
   'design_verdicts',
+  // Rapid prototype, slice E3 (the owner's ruling R5 of 2026-10-28): the
+  // bounded authorization of one brief preparation run.
+  'prototype_preparation_approval',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
@@ -270,6 +273,8 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   design_approval: 172_800,
   design_due: 172_800,
   design_verdicts: 172_800,
+  // R5 (slice E3): as the products' approvals, 2 d.
+  prototype_preparation_approval: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). The project
