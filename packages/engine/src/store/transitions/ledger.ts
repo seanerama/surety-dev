@@ -122,6 +122,36 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
   return { ...base, cost_status: 'unknown', cost_usd: null };
 }
 
+// ---- Codex's normalization (D2 §§1.5, 4.6; invoke/adapters/codex.ts) -----------------
+//
+// The adapter's one observation per invocation is the totals of `codex exec`'s
+// one turn (`turn.completed`'s `usage`, cumulative): `input_tokens`,
+// `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, and
+// `usage_final`, with the provider's `thread_id`. As the Responses API
+// counts them (an assumption the positive canary establishes, C3), input
+// includes the cached input and output includes the reasoning tokens. So
+// billable input is input less cached input, never with it (D1 §13.2): the
+// cached input is counted once, as cached; the reasoning tokens are kept in
+// the raw usage and never added to output. A count not reported is
+// unknown, and so is a difference that needs it, or one that would be
+// negative. Codex reports no cost and there is no Codex price table yet
+// (C2): the cost is unknown, never zero.
+export const CODEX_NORMALIZATION = 'codex-exec-json-1';
+
+function normalizeCodex(raw: Record<string, unknown>): Normalized {
+  const input = amount(raw.input_tokens);
+  const cached = amount(raw.cached_input_tokens);
+  return {
+    billable_in: input === null || cached === null || cached > input ? null : input - cached,
+    cached_in: cached,
+    out: amount(raw.output_tokens),
+    model_observed: typeof raw.model === 'string' ? raw.model : null,
+    normalization_version: CODEX_NORMALIZATION,
+    cost_status: 'unknown',
+    cost_usd: null,
+  };
+}
+
 // The most a qualification attempt's canaries can cost in billable tokens,
 // as an estimate (D2 §7.2, Q7; SEAM.md §161): three canaries, each at the
 // fixture project's run limit, priced at the model's output rate (the
@@ -137,15 +167,16 @@ export function attemptSpendEstimate(provider: string, model: string, runLimitTo
 // The provider's normalization; the scripted one for every provider without
 // its own.
 export function normalizeFor(provider: string, raw: Record<string, unknown>): Normalized {
-  return provider === 'claude' ? normalizeClaude(raw) : normalize(raw);
+  return provider === 'claude' ? normalizeClaude(raw) : provider === 'codex' ? normalizeCodex(raw) : normalize(raw);
 }
 
 // Whether an invocation's observations include its terminal usage: for
 // Claude Code, the result's totals (`usage_final`); a stream that ended
-// without them is incomplete whatever per-call usage it carried. Other
-// providers as M1 had it.
+// without them is incomplete whatever per-call usage it carried. For Codex,
+// the terminal turn's usage with every count the ledger needs
+// (`usage_final`). Other providers as M1 had it.
 export function terminalUsageObserved(provider: string, raw: Record<string, unknown>): boolean {
-  return provider === 'claude' ? raw.usage_final === true : true;
+  return provider === 'claude' || provider === 'codex' ? raw.usage_final === true : true;
 }
 
 const providerOf = (db: Db, invocation: string): string =>
