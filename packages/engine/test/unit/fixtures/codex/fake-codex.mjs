@@ -38,6 +38,17 @@
 //   features:  the whole list's text instead (a string), e.g. "" for an
 //              empty one
 //   features_exit: the exit status of `features list` (default 0)
+//   features_ignore_disable: names whose `--disable` in front of
+//              `features list` this fake accepts but does not honour (C2d:
+//              the feature then reads as the list has it, e.g. `true`)
+//
+// `features list` takes, in front of it, what the real 0.160.0 binary
+// accepts there (C2d, checked 2026-10-28): `--disable <name>` (the name
+// then reads `false`; an unknown name exits 1 "Error: Unknown feature
+// flag: <name>", as the real binary does), `--enable <name>`, and
+// `-c <key=value>` (accepted, no row changes, as observed); anything else
+// exits 2, as the real binary does for `--ignore-user-config`, and
+// `--strict-config` exits 1 with the real binary's message.
 //
 // `codex features list` prints, by default, the list the real Codex CLI
 // 0.160.0 printed in an empty CODEX_HOME on 2026-10-28 (saved verbatim as
@@ -68,18 +79,42 @@ try {
 } catch {
   mode = {};
 }
-// `codex features list` (C2b): the inventory the static checks record.
-if (argv.length === 2 && argv[0] === 'features' && argv[1] === 'list') {
+// `codex features list` (C2b): the inventory the static checks record,
+// with the template's flags in front of it (C2d).
+if (argv.length >= 2 && argv.at(-2) === 'features' && argv.at(-1) === 'list') {
   let text = typeof mode.features === 'string' ? mode.features : readFileSync(new URL('./features-0.160.0.txt', import.meta.url), 'utf8');
-  if (mode.features_set && typeof mode.features_set === 'object') {
-    const lines = text.split('\n').filter((l) => l.trim() !== '');
-    for (const [name, on] of Object.entries(mode.features_set)) {
-      const i = lines.findIndex((l) => l.split(/\s+/)[0] === name);
-      if (i >= 0) lines[i] = lines[i].replace(/(true|false)\s*$/, on ? 'true' : 'false');
-      else lines.push(`${name.padEnd(41)}${'under development'.padEnd(19)}${on ? 'true' : 'false'}`);
+  let lines = text.split('\n').filter((l) => l.trim() !== '');
+  const setState = (name, on) => {
+    const i = lines.findIndex((l) => l.split(/\s+/)[0] === name);
+    if (i >= 0) lines[i] = lines[i].replace(/(true|false)\s*$/, on ? 'true' : 'false');
+    return i >= 0;
+  };
+  const ignored = new Set(Array.isArray(mode.features_ignore_disable) ? mode.features_ignore_disable : []);
+  const flags = argv.slice(0, -2);
+  for (let i = 0; i < flags.length; i += 2) {
+    const [flag, value] = [flags[i], flags[i + 1]];
+    if (flag === '--strict-config') {
+      process.stderr.write('Error: `--strict-config` is not supported for `codex features`\n');
+      process.exit(1);
     }
-    text = `${lines.join('\n')}\n`;
+    if ((flag !== '--disable' && flag !== '--enable' && flag !== '-c') || value === undefined) {
+      process.stderr.write(`error: unexpected argument '${flag}' found\n`);
+      process.exit(2);
+    }
+    if (flag === '-c') continue;
+    if (!lines.some((l) => l.split(/\s+/)[0] === value)) {
+      process.stderr.write(`Error: Unknown feature flag: ${value}\n`);
+      process.exit(1);
+    }
+    if (flag === '--disable' && ignored.has(value)) continue;
+    setState(value, flag === '--enable');
   }
+  if (mode.features_set && typeof mode.features_set === 'object') {
+    for (const [name, on] of Object.entries(mode.features_set)) {
+      if (!setState(name, on)) lines.push(`${name.padEnd(41)}${'under development'.padEnd(19)}${on ? 'true' : 'false'}`);
+    }
+  }
+  text = lines.length === 0 ? text : `${lines.join('\n')}\n`;
   process.stdout.write(text);
   process.exit(Number(mode.features_exit ?? 0));
 }

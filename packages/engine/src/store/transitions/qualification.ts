@@ -103,7 +103,7 @@ export function qualify(
     binary_sha256: string;
     help_sha256: string;
     version: string;
-    feature_inventory?: { text: string; sha256: string } | null;
+    feature_inventory?: { text: string; sha256: string; args?: readonly string[] | null } | null;
     template: string;
     template_version: string;
     candidate_egress: string[];

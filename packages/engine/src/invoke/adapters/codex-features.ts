@@ -29,28 +29,69 @@
 // reading did not trace keep a classification by name, which their basis
 // states. No feature's behaviour was observed in a run.
 //
-// Three classes: the family; outside the family; and hardening (outside
-// the family, disabled by the template all the same: version 4, K6a). A
-// hardening feature the template disables is reported in
-// `disabled_by_template`, so the record shows the template switched it off;
-// one left on is recorded only (`outside_family_enabled`) and never fails
-// the attempt: only a family feature left on, or an unknown one, does.
+// The inventory is observed under the template's own feature
+// configuration (C2d of Codex support; the owner's question of 2026-10-28:
+// what proves the settings the template requires off are off): the static
+// checks run `codex <every --disable of the template> <every -c override
+// of the template> features list` (CODEX_FEATURES_ARGS, derived from the
+// template's own constants so the two cannot drift), and the attempt
+// records that argument list beside the text and its SHA-256 (migration
+// 0043). So the list shows each feature's effective state with the
+// template's flags applied, and a `--disable` the binary accepts but does
+// not honour shows `true`.
 //
-// The judgement: a feature of the family passes when the template disables
-// it (`--disable <feature>`, or a `-c` override the template passes that
-// covers it) or the inventory reports it off (`false`: the template enables
-// nothing, and `--ignore-user-config` and a volatile CODEX_HOME leave no
-// configuration that could). One the template leaves on fails the attempt
-// as delegation_unverified, named; so does a feature the table does not
-// know (a new feature is reported and fails until the template is extended),
-// a line that is not a feature, and an inventory that names nothing or not
-// `multi_agent` (which D2 §4.6 requires the template to disable). Features
-// outside the family are recorded only.
+// Three classes: the family; outside the family; and hardening (outside
+// the family, disabled by the template all the same: version 4, K6a).
+//
+// The judgement:
+//   - every feature the template `--disable`s, family or hardening, must
+//     read `false` in the observed list; it is then reported in
+//     `disabled_by_template` (observed off). One that reads `true` is not
+//     honoured, named in `not_honoured`, and fails the attempt before any
+//     canary: a family feature as delegation_unverified, a hardening one as
+//     unsupported_flag (D2 A.2: a flag the backend does not support; here
+//     accepted without effect). One the list does not name is not observed
+//     off and fails the same way.
+//   - a family feature covered only by a `-c` override (web search's three
+//     names, governed by the top-level `web_search` key, not by their
+//     feature flags; and the two sub-agent names `agents.enabled=false`
+//     covers beside the `--disable`d multi_agent) is not proven off by its
+//     row in the list, since the override acts on another key: it is
+//     reported in `disabled_by_template` and in `configured_only`, its
+//     basis the template's configuration, as before C2d.
+//   - any other family feature passes when the list reports it off
+//     (`false`; `unavailable`), and one on fails as delegation_unverified,
+//     named (`left_enabled`); so does a feature the table does not know (a
+//     new feature is reported and fails until the template is extended), a
+//     line that is not a feature, an inventory that names nothing or not
+//     `multi_agent` (which D2 §4.6 requires the template to disable), and
+//     an inventory not run with exactly CODEX_FEATURES_ARGS (none recorded,
+//     or others: then it was not observed under the template's flags).
+//   - a feature outside the family that the template does not disable is
+//     recorded only (`outside_family_enabled` when on).
+// `--ignore-user-config` and a volatile CODEX_HOME leave no configuration
+// that could switch anything on in a run; the static checks' CODEX_HOME is
+// a fresh empty directory (invoke/static.ts).
 
 import { CODEX_CONFIG_OVERRIDES, CODEX_DISABLED_FEATURES } from './templates.js';
 
-// The arguments the static checks run for the inventory.
-export const CODEX_FEATURES_ARGS: readonly string[] = ['features', 'list'];
+// The arguments the static checks run for the inventory (C2d): the
+// template's own `--disable`s and `-c` overrides, then `features list`,
+// last. The template's `--ignore-user-config` and `--strict-config` are not
+// passed: the 0.160.0 binary rejects both in front of `features list`
+// (checked 2026-10-28 in an empty CODEX_HOME: `--ignore-user-config` exit 2,
+// "unexpected argument '--ignore-user-config' found"; `--strict-config` exit
+// 1, "`--strict-config` is not supported for `codex features`"). With every
+// `--disable` and `-c` it exits 0 and prints its 154 rows, each `--disable`d
+// feature `false` (saved as test/unit/fixtures/codex/
+// features-0.160.0-template.txt). The static checks' CODEX_HOME is a fresh
+// empty directory, so there is no user configuration to ignore.
+export const CODEX_FEATURES_ARGS: readonly string[] = Object.freeze([
+  ...CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
+  ...CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]),
+  'features',
+  'list',
+]);
 
 type Group = { family: boolean; hardening?: true; basis: string; names: readonly string[] };
 
@@ -245,10 +286,20 @@ export interface CodexFeature {
 export interface CodexFeatureJudgement {
   verified: boolean;
   sha256: string | null;
+  // The arguments the inventory was run with, as the attempt recorded them
+  // (C2d); null where none were recorded.
+  args: string[] | null;
   features: number;
-  // The family's features, and the hardening features, the template
-  // disables (configured, not observed).
+  // The features the template disables: each `--disable`d one observed
+  // `false` in the inventory run under the template's flags, and the family
+  // features a `-c` override alone covers (`configured_only`).
   disabled_by_template: string[];
+  // Of those, the ones the list cannot show (web search's names, governed
+  // by the top-level key): their basis is the template's configuration.
+  configured_only: string[];
+  // Features the template `--disable`s that the observed list reports on,
+  // or does not name: the flag was not honoured. Each fails the attempt.
+  not_honoured: string[];
   // The family's features the inventory reports off.
   unavailable: string[];
   // The family's features on and not disabled: each fails the attempt.
@@ -260,6 +311,10 @@ export interface CodexFeatureJudgement {
   outside_family_enabled: string[];
   unparsed: string[];
   reasons: string[];
+  // The class the attempt fails with when not verified: unsupported_flag
+  // when the only failures are hardening features not honoured, otherwise
+  // delegation_unverified; null when verified.
+  failure_class: 'delegation_unverified' | 'unsupported_flag' | null;
 }
 
 const LINE = /^(\S+)\s+(\S.*?)\s+(true|false)$/;
@@ -277,33 +332,82 @@ export function parseCodexFeatures(text: string): { features: CodexFeature[]; un
   return { features, unparsed };
 }
 
-// The attempt's inventory judged against the template (null: none recorded).
-export function judgeCodexFeatures(inventory: { text: string; sha256: string } | null, disables: ReadonlySet<string> = codexTemplateDisables()): CodexFeatureJudgement {
-  const out: CodexFeatureJudgement = { verified: false, sha256: inventory?.sha256 ?? null, features: 0, disabled_by_template: [], unavailable: [], left_enabled: [], unknown: [], outside_family_enabled: [], unparsed: [], reasons: [] };
+// The attempt's inventory judged against the template (null: none
+// recorded). `flags` are the template's `--disable`s, each required off in
+// the observed list; `disables` adds what its `-c` overrides cover.
+export function judgeCodexFeatures(
+  inventory: { text: string; sha256: string; args?: readonly string[] | null } | null,
+  disables: ReadonlySet<string> = codexTemplateDisables(),
+  flags: readonly string[] = CODEX_DISABLED_FEATURES,
+  expectedArgs: readonly string[] = CODEX_FEATURES_ARGS,
+): CodexFeatureJudgement {
+  const out: CodexFeatureJudgement = {
+    verified: false,
+    sha256: inventory?.sha256 ?? null,
+    args: inventory?.args == null ? null : [...inventory.args],
+    features: 0,
+    disabled_by_template: [],
+    configured_only: [],
+    not_honoured: [],
+    unavailable: [],
+    left_enabled: [],
+    unknown: [],
+    outside_family_enabled: [],
+    unparsed: [],
+    reasons: [],
+    failure_class: 'delegation_unverified',
+  };
   if (inventory === null) {
     out.reasons.push('the attempt recorded no `codex features list` inventory');
     return out;
   }
+  // Reasons that are a delegation failure; a hardening flag not honoured is
+  // counted apart.
+  let hardeningOnly = 0;
+  if (out.args === null) out.reasons.push("the attempt recorded no arguments for its inventory, so it is not known to have run under the template's flags");
+  else if (out.args.length !== expectedArgs.length || out.args.some((a, i) => a !== expectedArgs[i])) out.reasons.push(`the inventory was run with other arguments than the template's flags (\`${out.args.join(' ').slice(0, 300)}\`), so it was not observed under them`);
   const { features, unparsed } = parseCodexFeatures(inventory.text);
   out.features = features.length;
   out.unparsed = unparsed.slice(0, 32);
+  const flagged = new Set(flags);
   for (const f of features) {
     const c = CODEX_FEATURE_CLASSES.get(f.name);
     if (c === undefined) out.unknown.push(f);
-    else if (!c.family) {
-      // Hardening: shown disabled where the template disables it; never a
-      // failure either way.
-      if (c.hardening && disables.has(f.name)) out.disabled_by_template.push(f.name);
-      else if (f.enabled) out.outside_family_enabled.push(f.name);
-    } else if (disables.has(f.name)) out.disabled_by_template.push(f.name);
-    else if (!f.enabled) out.unavailable.push(f.name);
+    else if (flagged.has(f.name)) {
+      // A `--disable`d feature, family or hardening: observed off, or not
+      // honoured.
+      if (f.enabled) out.not_honoured.push(f.name);
+      else out.disabled_by_template.push(f.name);
+    } else if (!c.family) {
+      if (f.enabled) out.outside_family_enabled.push(f.name);
+    } else if (disables.has(f.name)) {
+      // Covered by a `-c` override only: configured, not observable here.
+      out.disabled_by_template.push(f.name);
+      out.configured_only.push(f.name);
+    } else if (!f.enabled) out.unavailable.push(f.name);
     else out.left_enabled.push(f.name);
   }
+  const named = new Set(features.map((f) => f.name));
   if (features.length === 0) out.reasons.push('the inventory names no feature');
-  else if (!features.some((f) => f.name === 'multi_agent')) out.reasons.push('the inventory does not name multi_agent, which D2 §4.6 requires the template to disable');
+  else if (!named.has('multi_agent')) out.reasons.push('the inventory does not name multi_agent, which D2 §4.6 requires the template to disable');
   if (unparsed.length > 0) out.reasons.push(`${unparsed.length} line(s) of the inventory are not a feature, its stage and its state: ${unparsed.slice(0, 3).map((l) => JSON.stringify(l)).join(', ')}`);
+  for (const n of out.not_honoured) {
+    out.reasons.push(`${n} is disabled by the template (--disable ${n}) but the inventory run under the template's flags reports it on: the flag was not honoured`);
+    if (CODEX_FEATURE_CLASSES.get(n)?.hardening === true) hardeningOnly++;
+  }
+  // A `--disable`d name the list does not name is not observed off (the
+  // 0.160.0 binary refuses an unknown name, so this is a changed binary).
+  if (features.length > 0) {
+    for (const n of flags) {
+      if (named.has(n)) continue;
+      out.not_honoured.push(n);
+      out.reasons.push(`${n} is disabled by the template (--disable ${n}) but the inventory run under the template's flags does not name it: it is not observed off`);
+      if (CODEX_FEATURE_CLASSES.get(n)?.hardening === true) hardeningOnly++;
+    }
+  }
   for (const n of out.left_enabled) out.reasons.push(`${n} is on in the inventory (${CODEX_FEATURE_CLASSES.get(n)!.basis}) and the template does not disable it`);
   for (const f of out.unknown) out.reasons.push(`${f.name} (${f.stage}, ${f.enabled ? 'on' : 'off'}) is a feature this engine does not know: it is not shown disabled or unavailable`);
   out.verified = out.reasons.length === 0;
+  out.failure_class = out.verified ? null : hardeningOnly === out.reasons.length ? 'unsupported_flag' : 'delegation_unverified';
   return out;
 }

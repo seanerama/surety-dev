@@ -121,9 +121,12 @@ export async function versionOf(path: string, backend: string): Promise<string |
 }
 
 // Codex's feature inventory (D2 §4.6): `codex features list`'s standard
-// output and its SHA-256; null when it could not be run or did not exit 0.
-export async function featureInventory(path: string, backend: string, args: readonly string[]): Promise<{ text: string; sha256: string } | null> {
+// output and its SHA-256, with the exact arguments it was run with (C2d:
+// the template's feature flags in front of `features list`,
+// adapters/codex-features.ts CODEX_FEATURES_ARGS); null when it could not
+// be run or did not exit 0.
+export async function featureInventory(path: string, backend: string, args: readonly string[]): Promise<{ text: string; sha256: string; args: readonly string[] } | null> {
   const r = await runStatic(path, backend, args);
   if (r === null || r.status !== 0) return null;
-  return { text: r.stdout.toString('utf8'), sha256: createHash('sha256').update(r.stdout).digest('hex') };
+  return { text: r.stdout.toString('utf8'), sha256: createHash('sha256').update(r.stdout).digest('hex'), args: [...args] };
 }

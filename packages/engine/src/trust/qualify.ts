@@ -55,8 +55,10 @@ export interface QualifyRequest {
   help_sha256: string;
   version: string;
   // Codex's `codex features list` (D2 §4.6, D2-T13): its text and SHA-256,
-  // judged by the attempt's driver; null for a backend that has none.
-  feature_inventory: { text: string; sha256: string } | null;
+  // and the arguments it was run with (C2d: under the template's own
+  // feature configuration), judged by the attempt's driver; null for a
+  // backend that has none.
+  feature_inventory: { text: string; sha256: string; args: readonly string[] } | null;
   template: string;
   template_version: string;
   candidate_egress: string[];
@@ -277,7 +279,7 @@ async function staticChecks(
   backend: string,
   given: string,
   pinHome: string | null,
-): Promise<{ path: string; sha256: string; help: string; version: string; features: { text: string; sha256: string } | null }> {
+): Promise<{ path: string; sha256: string; help: string; version: string; features: { text: string; sha256: string; args: readonly string[] } | null }> {
   if (!given.startsWith('/')) throw invalid('binary', 'must be an absolute path');
   let path: string;
   try {
@@ -302,7 +304,7 @@ async function staticChecks(
   const version = await versionOf(path, backend).catch(() => null);
   const help = await helpHash(path, backend).catch(() => null);
   if (version === null || help === null) throw new Refusal(409, 'backend_refused', `${path} did not answer --version and --help.`, 'Name a binary that answers both.', { field: 'binary' });
-  let features: { text: string; sha256: string } | null = null;
+  let features: { text: string; sha256: string; args: readonly string[] } | null = null;
   if (backend === 'codex') {
     features = await featureInventory(path, backend, CODEX_FEATURES_ARGS).catch(() => null);
     if (features === null) throw new Refusal(409, 'backend_refused', `${path} did not answer \`${CODEX_FEATURES_ARGS.join(' ')}\`, the feature inventory a Codex attempt is judged on (D2 §4.6).`, 'Name a Codex binary that answers it.', { field: 'binary' });

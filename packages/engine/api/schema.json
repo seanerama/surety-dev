@@ -5186,6 +5186,9 @@
         },
         "feature_inventory_sha256": {
           "required": false
+        },
+        "feature_inventory_args": {
+          "required": false
         }
       }
     },

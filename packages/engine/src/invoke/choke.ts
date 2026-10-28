@@ -41,7 +41,7 @@ import { domainLimits, prepareSandbox } from './sandbox/prepare.js';
 import { heldProviderCaps, heldSecret } from '../records/redact.js';
 import { TEMPLATES, templateEnv, templateOf } from './adapters/templates.js';
 import { helpHash } from './static.js';
-import { type ResultCollection, collectResult, inventory, inventoryRecord } from './collect.js';
+import { type ResultCollection, type ShellSnapshots, codexShellSnapshots, collectResult, inventory, inventoryRecord } from './collect.js';
 import { type BackendSpec, M1_BACKEND } from './backend.js';
 import { type ForbiddenContext, type PlanReason, validateReadPaths } from './sandbox/plan.js';
 import { GitViewRefused, repositoryCommonDir } from './sandbox/gitview.js';
@@ -95,6 +95,10 @@ export interface CanaryObservation {
   // A Codex backend's stream as its adapter read it (C1 of Codex support);
   // null for every other backend. Judged in trust/attempts.ts (C2).
   codexStream: CodexStreamSummary | null;
+  // A Codex canary's $CODEX_HOME/shell_snapshots/ as its collection saw it
+  // through the hold, after termination (C2d; collect.ts); null for every
+  // other backend, or where the run was not collected.
+  codexShellSnapshots?: ShellSnapshots | null;
   sampling: BackendSampling | null;
   exitStatus: number | null;
 }
@@ -120,6 +124,7 @@ function recordCanary(handle: RunHandle, exitClass: string, c: Collected, editCo
     providerFilesRecord: c.providerRecord,
     stream: claudeSummary(handle),
     codexStream: codexSummary(handle),
+    codexShellSnapshots: c.codexShellSnapshots ?? null,
     sampling: stopSampler(handle),
     exitStatus: typeof handle.exit?.code === 'number' ? handle.exit.code : null,
   });
@@ -173,6 +178,8 @@ interface Collected {
   providerRecord: string | null;
   boundText: string | null;
   unacceptedDone: boolean;
+  // A Codex qualification canary's shell snapshots (C2d), else absent.
+  codexShellSnapshots?: ShellSnapshots | null;
 }
 
 export interface DispatchTarget {
@@ -1457,7 +1464,10 @@ export class Launcher {
       excluded: inv.excluded.map((e) => redactText(e.path)),
     });
     const boundText = inv.truncated ? `collection reached ${inv.truncated.key} (${inv.truncated.value}): the provider_files record is truncated and the run's evidence incomplete` : null;
-    return { result, verdict, value, providerFiles, providerRecord, boundText, unacceptedDone: false };
+    // A Codex canary's shell snapshots (C2d): looked at through the same
+    // hold, after the same termination, judged in trust/attempts.ts.
+    const codexShellSnapshotsSeen = claim.attempt !== null && handle.adapterStream instanceof CodexStream ? codexShellSnapshots(hold) : null;
+    return { result, verdict, value, providerFiles, providerRecord, boundText, unacceptedDone: false, codexShellSnapshots: codexShellSnapshotsSeen };
   }
 
   // On a run's end decided by the engine (a Stop, a deadline, a bound) or by

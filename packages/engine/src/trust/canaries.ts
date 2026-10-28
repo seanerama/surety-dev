@@ -19,8 +19,8 @@ export const CANARY_KINDS: readonly CanaryKind[] = ['positive', 'cancellation', 
 // dispatch until its deadline or refused at its first turn's admission. It
 // cost nothing and is not a failure of the canary's kind: a test that never
 // ran is never reported as a failed test. `usage_limit` (K7, Sean's approval
-// of 2026-10-28; a D2 A.2 addition pending the owner's edit of D2's
-// appendix): the provider refused the canary's turn for a usage or rate
+// of 2026-10-28; D2 A.2 addition approved by the owner 2026-10-28
+// (recorded in E187)): the provider refused the canary's turn for a usage or rate
 // limit (a 429, an exhausted quota), as the backend's stream names it. It is
 // neither an invalid result nor an authentication failure, and the owner
 // sees it as a limit.

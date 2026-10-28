@@ -213,6 +213,67 @@ export async function inventory(hold: VolatileHold | null, bounds: Bounds, persi
   return out;
 }
 
+// Codex's shell snapshots (C2d of Codex support; the owner's question of
+// 2026-10-28): the template disables `shell_snapshot`, which otherwise
+// writes the shell's exported environment, so the key, under
+// $CODEX_HOME/shell_snapshots/ (shell-command/src/shell_snapshot_capture.rs:
+// 160-178; core/src/shell_snapshot.rs:105-107). CODEX_HOME is
+// /surety/home/.codex (adapters/templates.ts CODEX_ENV), in the volatile
+// home, which the inventory above lists as a credential location and never
+// walks. This looks there, through the same hold and after the same
+// termination, at what the run left: whether the directory exists and how
+// many entries and regular files it holds. Names and contents are neither
+// read nor kept (a snapshot holds the key). `not_held` where the volatile
+// filesystem is not held (nothing can be seen; unknown, not absent);
+// `unreadable` where the path exists and cannot be listed.
+export const CODEX_SHELL_SNAPSHOTS = { location: '/surety/home/.codex/shell_snapshots', at: 'home/.codex/shell_snapshots' } as const;
+
+export type ShellSnapshots =
+  | { state: 'not_held' }
+  | { state: 'absent' }
+  | { state: 'unreadable'; type: InventoryEntry['type'] }
+  | { state: 'present'; type: InventoryEntry['type']; entries: number; files: number };
+
+export function codexShellSnapshots(hold: VolatileHold | null): ShellSnapshots {
+  if (hold === null || !hold.held) return { state: 'not_held' };
+  // Each component checked without following a link: a link at .codex or
+  // at shell_snapshots is reported as what it is, never followed.
+  const parts = CODEX_SHELL_SNAPSHOTS.at.split('/');
+  let rel = '';
+  for (let i = 0; i < parts.length; i++) {
+    rel = rel === '' ? parts[i]! : `${rel}/${parts[i]}`;
+    let st;
+    try {
+      st = lstatSync(join(hold.vol, rel));
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { state: 'absent' } : { state: 'unreadable', type: 'other' };
+    }
+    const type: InventoryEntry['type'] = st.isDirectory() ? 'dir' : st.isFile() ? 'file' : st.isSymbolicLink() ? 'symlink' : st.isFIFO() ? 'fifo' : 'other';
+    if (i < parts.length - 1) {
+      // A parent that is not a directory holds no snapshot directory.
+      if (type !== 'dir') return { state: 'absent' };
+      continue;
+    }
+    if (type !== 'dir') return { state: 'present', type, entries: 1, files: type === 'file' ? 1 : 0 };
+    let names: string[];
+    try {
+      names = readdirSync(join(hold.vol, rel));
+    } catch {
+      return { state: 'unreadable', type };
+    }
+    let files = 0;
+    for (const n of names) {
+      try {
+        if (lstatSync(join(hold.vol, rel, n)).isFile()) files++;
+      } catch {
+        // gone meanwhile
+      }
+    }
+    return { state: 'present', type, entries: names.length, files };
+  }
+  return { state: 'absent' };
+}
+
 // The bytes of the `provider_files` record (SEAM.md §152; the shape the
 // canaries fill on an entry: locations, persistence flags, exclusions).
 export function inventoryRecord(inv: Inventory): Buffer {

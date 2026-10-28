@@ -63,6 +63,7 @@ import { type CanaryObservation, type DispatchTarget, type Launcher, canaryObser
 import { helpHash } from '../invoke/static.js';
 import { CODEX_DISABLED_FEATURES, keyVariables, purposeOfTemplateVersion, templateOf } from '../invoke/adapters/templates.js';
 import { type CodexFeatureJudgement, judgeCodexFeatures } from '../invoke/adapters/codex-features.js';
+import { CODEX_SHELL_SNAPSHOTS } from '../invoke/collect.js';
 import { readRecordBytes, writeWholeRecord } from '../records/files.js';
 import { type Runtime, log } from '../runtime.js';
 import type { AttemptRow, EntryInput } from '../store/transitions/trust.js';
@@ -120,11 +121,21 @@ export function codexBeyondDomain(s: CodexStreamSummary | null, sampling: Backen
 }
 
 // The attempt's recorded `codex features list` judged against the template
-// (adapters/codex-features.ts); no inventory recorded judges unverified.
-export function codexFeatureJudgement(a: Pick<AttemptRow, 'feature_inventory' | 'feature_inventory_sha256'>): CodexFeatureJudgement {
+// (adapters/codex-features.ts), with the arguments it was run with (C2d;
+// migration 0043); no inventory recorded judges unverified, and arguments
+// not recorded, or unreadable, judge it not observed under the template's
+// flags.
+export function codexFeatureJudgement(a: Pick<AttemptRow, 'feature_inventory' | 'feature_inventory_sha256' | 'feature_inventory_args'>): CodexFeatureJudgement {
   const text = a.feature_inventory ?? null;
   const sha256 = a.feature_inventory_sha256 ?? null;
-  return judgeCodexFeatures(text === null || sha256 === null ? null : { text, sha256 });
+  let args: string[] | null = null;
+  try {
+    const v: unknown = JSON.parse(a.feature_inventory_args ?? 'null');
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) args = v as string[];
+  } catch {
+    args = null;
+  }
+  return judgeCodexFeatures(text === null || sha256 === null ? null : { text, sha256, args });
 }
 
 const POLL_MS = 250;
@@ -195,11 +206,19 @@ export class QualificationDriver {
     // the template leaves on, or a feature this engine does not know, fails
     // the attempt as delegation_unverified, named, and nothing runs or is
     // spent. Its positive canary is recorded not launched, with the
-    // judgement as its evidence.
+    // judgement as its evidence. Since C2d the inventory is run under the
+    // template's flags, and a feature the template `--disable`s that it
+    // reports on was not honoured: a family feature fails as before, a
+    // hardening one alone as unsupported_flag (the judgement's class).
     const features = a.backend === 'codex' ? codexFeatureJudgement(a) : null;
     if (features !== null && !features.verified) {
-      const record = await this.record(a, null, { kind: 'positive', outcome: 'not_launched', failure_class: 'delegation_unverified', reason: 'the attempt\'s `codex features list` inventory does not show every delegation, scheduling and background feature disabled or unavailable', feature_inventory: features });
-      const entry: CanaryEntry = { kind: 'positive', run: null, passed: false, failure_class: 'delegation_unverified', provider_error: record, evidence: record, term_to_exit_ms: null };
+      const failureClass = features.failure_class ?? 'delegation_unverified';
+      const reason =
+        failureClass === 'unsupported_flag'
+          ? `the attempt's \`codex features list\`, run under the template's flags, reports on a hardening feature the template disables: ${features.not_honoured.join(', ')}; the flag was not honoured`
+          : "the attempt's `codex features list` inventory does not show every delegation, scheduling and background feature disabled or unavailable";
+      const record = await this.record(a, null, { kind: 'positive', outcome: 'not_launched', failure_class: failureClass, reason, feature_inventory: features });
+      const entry: CanaryEntry = { kind: 'positive', run: null, passed: false, failure_class: failureClass, provider_error: record, evidence: record, term_to_exit_ms: null };
       canaries.push(entry);
       await this.rt.engine('qualification.canary', { attempt, canary: entry, unexpected: [] });
       await this.rt.engine('qualification.conclude', { attempt, canaries, unexpected_contacts: [] });
@@ -474,6 +493,10 @@ export class QualificationDriver {
     // Codex: anything of this canary's own run that reached beyond its
     // domain fails it, as delegation_unverified (C2).
     const beyond = backendKind === 'codex' ? codexBeyondDomain(cx, obs?.sampling ?? null) : [];
+    // Codex (C2d): a file the run left in $CODEX_HOME/shell_snapshots/
+    // fails the canary as containment_failed.
+    const snaps = backendKind === 'codex' ? (obs?.codexShellSnapshots ?? null) : null;
+    const shellSnapshot = snaps !== null && snaps.state === 'present' && snaps.files > 0;
     let capabilities: BackendCapabilities | null = null;
     const candidates = JSON.parse(a.candidate_egress) as string[];
     for (const e of obs?.egress ?? []) {
@@ -659,10 +682,16 @@ export class QualificationDriver {
               },
         model: codexModelReport(cx, a.model),
         ...(beyond.length > 0 ? { beyond_domain: beyond } : {}),
+        // $CODEX_HOME/shell_snapshots/ as the collection saw it through the
+        // hold after termination (C2d; invoke/collect.ts): a regular file
+        // there is the shell's environment, so the key, written to disk by
+        // a shell_snapshot the template disables.
+        shell_snapshots: { path: CODEX_SHELL_SNAPSHOTS.location, ...(obs?.codexShellSnapshots ?? { state: 'not_observed' }) },
         sampling: obs?.sampling ?? null,
         exit_status: obs?.exitStatus ?? null,
       };
       if (beyond.length > 0) passed = false;
+      if (shellSnapshot) passed = false;
     } else if (real) {
       // What the stream established, kept with the canary's evidence (D2
       // §§4.5, 7.2): the backend as it described itself, key delivery, usage,
@@ -703,7 +732,7 @@ export class QualificationDriver {
           (detail.actions as { passed: boolean }[]).every((x) => x.passed) &&
           ((detail.controls as { ran: boolean }[] | undefined) ?? []).every((x) => x.ran) &&
           detail.reason === null;
-        failureClass = realFailureClass(kind, failureClass, { stream, codex: cx, authFailure, obs, candidates, capabilities, containmentHeld: held, fallback: fallback !== null, beyondDomain: beyond.length > 0 });
+        failureClass = realFailureClass(kind, failureClass, { stream, codex: cx, authFailure, obs, candidates, capabilities, containmentHeld: held, fallback: fallback !== null, beyondDomain: beyond.length > 0, shellSnapshot });
       }
     }
     let providerError: string | null = null;
@@ -962,7 +991,9 @@ interface ContinuationFacts {
 // backend that wrote nothing at all and exited nonzero (as Claude Code does
 // for a flag it does not know, which it reports on standard error before
 // the run; the class is inferred and the evidence says so); a candidate
-// destination the proxy refused; a usage or rate limit the Codex stream
+// destination the proxy refused; a Codex run that left a file in
+// $CODEX_HOME/shell_snapshots/ (C2d), containment_failed after an
+// authentication failure; a usage or rate limit the Codex stream
 // names (K7, 2026-10-28); a positive canary whose agent used no tool.
 // Otherwise the kind's own class.
 export function realFailureClass(
@@ -981,6 +1012,8 @@ export function realFailureClass(
     // Codex (C2): the canary's own run reached beyond its domain (an item of
     // a beyond-domain kind, a second backend process).
     beyondDomain?: boolean;
+    // Codex (C2d): the run left a file in $CODEX_HOME/shell_snapshots/.
+    shellSnapshot?: boolean;
   },
 ): string {
   // An authentication failure is `auth_failed`. A usage or rate limit the
@@ -989,6 +1022,9 @@ export function realFailureClass(
   // fall to the kind's class. Either way the provider's own class stays in
   // the canary's provider_error record.
   if (f.authFailure !== null) return 'auth_failed';
+  // A shell snapshot left in Codex's home (C2d): the key on the volatile
+  // disk, which the template's `--disable shell_snapshot` exists to prevent.
+  if (f.shellSnapshot === true) return 'containment_failed';
   // The model that answered was not the entry's (E86 item 3).
   if (f.fallback === true) return 'model_fallback';
   if (f.beyondDomain === true && !(kind === 'containment' && !f.containmentHeld)) return 'delegation_unverified';

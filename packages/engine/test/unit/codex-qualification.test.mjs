@@ -119,7 +119,7 @@ function observation(kind, r, sampling) {
 
 // ---- the driver against a stub of the store and the launcher ----
 
-async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, features = {} } = {}) {
+async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, features = {}, snapshots = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cq-attempt-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const home = join(dir, 'home');
@@ -157,6 +157,7 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, fea
     version: 'codex-cli 0.160.0',
     feature_inventory: inventory.text,
     feature_inventory_sha256: inventory.sha256,
+    feature_inventory_args: JSON.stringify(inventory.args),
     candidate_egress: JSON.stringify(['api.openai.com']),
     canary_deadlines: JSON.stringify({ positive: 30, cancellation: 30, containment: 30 }),
     fixture_project: 'prj_fixture',
@@ -202,7 +203,7 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, fea
       const r = await runCanary(dir, id, kind, modes[kind] ?? {});
       const run = `run_${kind}`;
       ran.push({ kind, r });
-      canaryObservations.set(run, observation(kind, r, sampling[kind] ?? ONE_BACKEND));
+      canaryObservations.set(run, { ...observation(kind, r, sampling[kind] ?? ONE_BACKEND), ...(snapshots[kind] === undefined ? {} : { codexShellSnapshots: snapshots[kind] }) });
       runs.set(item.id, run);
       return true;
     },
@@ -497,71 +498,128 @@ test('the classification against the saved 0.160.0 list: no unknown name, every 
   for (const [n, c] of CF.CODEX_FEATURE_CLASSES) if (/by name only/.test(c.basis)) assert.equal(on.get(n), false, `${n}: by name only, off`);
 });
 
-test('the feature inventory: 0.160.0\'s list as recorded, every name classified, every --disable a feature it names; all family features disabled or off passes', () => {
-  const { features, unparsed } = CF.parseCodexFeatures(REAL_0160);
+// The real 0.160.0 binary's list under the template's flags (C2d): run on
+// 2026-10-28 in an empty CODEX_HOME with exactly CF.CODEX_FEATURES_ARGS
+// (exit 0), saved verbatim.
+const REAL_TEMPLATE = readFileSync(join(here, 'fixtures', 'codex', 'features-0.160.0-template.txt'), 'utf8');
+const ARGS = [...CF.CODEX_FEATURES_ARGS];
+const judged = (text, ...rest) => CF.judgeCodexFeatures({ text, sha256: 'x', args: ARGS }, ...rest);
+
+test('the inventory\'s arguments are the template\'s own --disables and -c overrides, then features list, last (C2d): the two cannot drift', () => {
+  const want = [...templates.CODEX_DISABLED_FEATURES.flatMap((f) => ['--disable', f]), ...templates.CODEX_CONFIG_OVERRIDES.flatMap((c) => ['-c', c]), 'features', 'list'];
+  assert.deepEqual(ARGS, want);
+  assert.deepEqual(ARGS.slice(-2), ['features', 'list']);
+  // Every --disable and -c of the run's arguments is in the inventory's, in the same order.
+  const run = T.render({ model: MODEL, invocation: 'inv_x' });
+  const pairs = (a) => a.flatMap((x, i) => ((x === '--disable' || x === '-c') && i + 1 < a.length ? [`${x} ${a[i + 1]}`] : []));
+  assert.deepEqual(pairs(ARGS), pairs(run), 'the same feature configuration as the launched run');
+  assert.equal(pairs(ARGS).filter((p) => p.startsWith('--disable ')).length, 28);
+  // The two the 0.160.0 binary rejects in front of features list are not passed.
+  assert.ok(!ARGS.includes('--ignore-user-config') && !ARGS.includes('--strict-config'));
+});
+
+test('the real 0.160.0 list under the template\'s flags (saved): every --disabled name reads false, the same 154 names as the default list; the fake reproduces it byte for byte', async (t) => {
+  const { features, unparsed } = CF.parseCodexFeatures(REAL_TEMPLATE);
   assert.equal(features.length, 154);
   assert.deepEqual(unparsed, []);
-  for (const f of features) assert.ok(CF.CODEX_FEATURE_CLASSES.has(f.name), `${f.name} is classified`);
-  const names = new Set(features.map((f) => f.name));
-  for (const d of templates.CODEX_DISABLED_FEATURES) assert.ok(names.has(d), `--disable ${d} names a feature 0.160.0 lists`);
-  const j = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' });
+  const state = new Map(features.map((f) => [f.name, f.enabled]));
+  for (const d of templates.CODEX_DISABLED_FEATURES) assert.equal(state.get(d), false, `${d} reads false under the template's flags`);
+  for (const h of HARDENING) assert.equal(state.get(h), false, h);
+  assert.deepEqual(features.map((f) => f.name), CF.parseCodexFeatures(REAL_0160).features.map((f) => f.name));
+  assert.equal(state.get('unified_exec'), true, 'unified_exec cannot be disabled and the template does not try');
+  const dir = mkdtempSync(join(tmpdir(), 'cq-fake-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const m = join(dir, 'mode.json');
+  writeFileSync(m, '{}');
+  const p = join(dir, 'codex');
+  writeFileSync(p, `#!/bin/sh\nFAKE_CODEX_MODE="${m}" exec "${process.execPath}" "${FAKE}" "$@"\n`);
+  chmodSync(p, 0o755);
+  const inv = await featureInventory(p, 'codex', CF.CODEX_FEATURES_ARGS);
+  assert.equal(inv.text, REAL_TEMPLATE, 'the fake honouring every --disable prints what the real binary printed');
+});
+
+test('the feature inventory: the template-flag list as recorded, every name classified; every --disable observed off, the override-only names configured; passes', () => {
+  const j = judged(REAL_TEMPLATE);
   assert.equal(j.verified, true, JSON.stringify(j.reasons));
-  assert.deepEqual([j.left_enabled, j.unknown, j.unparsed], [[], [], []]);
-  assert.ok(j.disabled_by_template.includes('multi_agent') && j.disabled_by_template.includes('daemon_auto_start'));
-  assert.ok(j.unavailable.includes('multi_agent') === false && j.unavailable.includes('agent_message_board'), 'a family feature the list reports off is unavailable');
+  assert.equal(j.failure_class, null);
+  assert.deepEqual(j.args, ARGS);
+  assert.deepEqual([j.left_enabled, j.unknown, j.unparsed, j.not_honoured], [[], [], [], []]);
+  // Observed off: each of the 28 --disables, read false in the list.
+  for (const d of templates.CODEX_DISABLED_FEATURES) assert.ok(j.disabled_by_template.includes(d), `${d} observed off`);
+  for (const h of HARDENING) assert.ok(j.disabled_by_template.includes(h) && !j.configured_only.includes(h), `${h} observed off, not configured only`);
+  // Configured only: the names an override alone covers (web search, the sub-agent names beside multi_agent).
+  assert.deepEqual([...j.configured_only].sort(), ['multi_agent_mode', 'multi_agent_v2', 'standalone_web_search', 'web_search_cached', 'web_search_request']);
+  assert.equal(j.disabled_by_template.length, 33, 'the 28 observed off and the 5 configured only');
+  assert.ok(j.unavailable.includes('agent_message_board'), 'a family feature the list reports off is unavailable');
   assert.ok(j.outside_family_enabled.includes('unified_exec'), 'outside the family: recorded only');
-  // Version 4's six hardening disables are reported disabled by the template.
-  for (const h of HARDENING) assert.ok(j.disabled_by_template.includes(h), `${h} is disabled_by_template`);
-  for (const h of HARDENING) assert.ok(!j.outside_family_enabled.includes(h), h);
-  assert.equal(j.disabled_by_template.length, 33, 'the 27 family features the template switches off, and the six hardening ones');
-  // Each family feature on in 0.160.0 is one the template disables.
-  for (const f of features.filter((x) => x.enabled && CF.CODEX_FEATURE_CLASSES.get(x.name).family)) assert.ok(j.disabled_by_template.includes(f.name), f.name);
+});
+
+test('the feature inventory judged: the default list (no flags) shows every --disable not honoured; recorded with no arguments, or other ones, not observed under the template\'s flags', () => {
+  // The binary's defaults, as C2b recorded them: 27 of the 28 --disabled
+  // features read true, so none of those is shown off.
+  const d = judged(REAL_0160);
+  assert.equal(d.verified, false);
+  assert.equal(d.not_honoured.length, 27);
+  assert.equal(d.failure_class, 'delegation_unverified', 'family features among them');
+  const none = CF.judgeCodexFeatures({ text: REAL_TEMPLATE, sha256: 'x' });
+  assert.equal(none.verified, false);
+  assert.equal(none.failure_class, 'delegation_unverified');
+  assert.match(none.reasons.join('\n'), /recorded no arguments for its inventory, so it is not known to have run under the template's flags/);
+  const other = CF.judgeCodexFeatures({ text: REAL_TEMPLATE, sha256: 'x', args: ['features', 'list'] });
+  assert.equal(other.verified, false);
+  assert.match(other.reasons.join('\n'), /run with other arguments than the template's flags \(`features list`\)/);
 });
 
 test('the feature inventory judged: a family feature the template leaves on, an unknown feature, an empty list, an unparsed line, none recorded: each unverified, named', () => {
-  const on = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(agent_message_board\s+under development\s+)false$/m, '$1true'), sha256: 'x' });
+  const on = judged(REAL_TEMPLATE.replace(/^(agent_message_board\s+under development\s+)false$/m, '$1true'));
   assert.equal(on.verified, false);
   assert.deepEqual(on.left_enabled, ['agent_message_board']);
+  assert.equal(on.failure_class, 'delegation_unverified');
   assert.match(on.reasons.join('\n'), /agent_message_board is on in the inventory/);
-  const unknown = CF.judgeCodexFeatures({ text: `${REAL_0160}background_scheduler                     stable             false\n`, sha256: 'x' });
+  const unknown = judged(`${REAL_TEMPLATE}background_scheduler                     stable             false\n`);
   assert.equal(unknown.verified, false, 'an unknown feature fails even when off');
   assert.deepEqual(unknown.unknown, [{ name: 'background_scheduler', stage: 'stable', enabled: false }]);
   assert.match(unknown.reasons.join('\n'), /background_scheduler \(stable, off\) is a feature this engine does not know/);
-  assert.equal(CF.judgeCodexFeatures({ text: '', sha256: 'x' }).verified, false);
-  assert.match(CF.judgeCodexFeatures({ text: '', sha256: 'x' }).reasons[0], /names no feature/);
-  assert.match(CF.judgeCodexFeatures({ text: 'goals stable true\n', sha256: 'x' }).reasons.join('\n'), /does not name multi_agent/);
-  assert.match(CF.judgeCodexFeatures({ text: `${REAL_0160}what is this\n`, sha256: 'x' }).reasons.join('\n'), /not a feature, its stage and its state: "what is this"/);
+  assert.equal(judged('').verified, false);
+  assert.match(judged('').reasons[0], /names no feature/);
+  assert.match(judged('goals stable false\n').reasons.join('\n'), /does not name multi_agent/);
+  assert.match(judged(`${REAL_TEMPLATE}what is this\n`).reasons.join('\n'), /not a feature, its stage and its state: "what is this"/);
   assert.match(CF.judgeCodexFeatures(null).reasons[0], /recorded no `codex features list` inventory/);
-  // Outside the family: recorded only, never a failure.
-  const outside = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(js_repl\s+removed\s+)false$/m, '$1true'), sha256: 'x' });
+  assert.equal(CF.judgeCodexFeatures(null).failure_class, 'delegation_unverified');
+  // Outside the family and not disabled: recorded only, never a failure.
+  const outside = judged(REAL_TEMPLATE.replace(/^(js_repl\s+removed\s+)false$/m, '$1true'));
   assert.equal(outside.verified, true);
   assert.ok(outside.outside_family_enabled.includes('js_repl'));
 });
 
-test('the feature inventory judged: a hardening feature left on is recorded, never a failure; a family feature left on still fails', () => {
-  // Judged against version 3's disables (no hardening ones): every hardening
-  // feature is on in the list and left on, and the attempt still passes.
-  const v3 = CF.codexTemplateDisables(templates.CODEX_DISABLED_FEATURES.filter((f) => !HARDENING.includes(f)));
-  const j = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' }, v3);
-  assert.equal(j.verified, true, JSON.stringify(j.reasons));
-  assert.deepEqual(j.left_enabled, []);
+test('the feature inventory judged (C2d): a --disabled feature the list reports on was not honoured: hardening alone fails unsupported_flag, a family one delegation_unverified, both delegation_unverified; one the list omits is not observed off', () => {
+  const flip = (text, name) => text.replace(new RegExp(`^(${name}\\s+\\S.*?\\s+)false$`, 'm'), '$1true');
+  const snap = judged(flip(REAL_TEMPLATE, 'shell_snapshot'));
+  assert.equal(snap.verified, false);
+  assert.deepEqual(snap.not_honoured, ['shell_snapshot']);
+  assert.equal(snap.failure_class, 'unsupported_flag');
+  assert.deepEqual(snap.reasons, ["shell_snapshot is disabled by the template (--disable shell_snapshot) but the inventory run under the template's flags reports it on: the flag was not honoured"]);
+  assert.ok(!snap.disabled_by_template.includes('shell_snapshot'), 'not shown off');
   for (const h of HARDENING) {
-    assert.ok(j.outside_family_enabled.includes(h), `${h} recorded on`);
-    assert.ok(!j.disabled_by_template.includes(h), `${h} not shown disabled`);
+    const j = judged(flip(REAL_TEMPLATE, h));
+    assert.deepEqual([j.verified, j.failure_class, j.not_honoured], [false, 'unsupported_flag', [h]], h);
   }
-  assert.equal(j.disabled_by_template.length, 27);
-  // A family feature the template does not disable, on: fails, named.
-  const noGoals = CF.codexTemplateDisables(templates.CODEX_DISABLED_FEATURES.filter((f) => f !== 'goals'));
-  const g = CF.judgeCodexFeatures({ text: REAL_0160, sha256: 'x' }, noGoals);
-  assert.equal(g.verified, false);
-  assert.deepEqual(g.left_enabled, ['goals']);
-  // A hardening feature off in the list and not disabled: neither shown disabled nor recorded on.
-  const off = CF.judgeCodexFeatures({ text: REAL_0160.replace(/^(sleep_tool\s+stable\s+)true$/m, '$1false'), sha256: 'x' }, v3);
-  assert.equal(off.verified, true);
-  assert.ok(!off.outside_family_enabled.includes('sleep_tool') && !off.disabled_by_template.includes('sleep_tool'));
+  const goals = judged(flip(REAL_TEMPLATE, 'goals'));
+  assert.deepEqual([goals.verified, goals.failure_class, goals.not_honoured], [false, 'delegation_unverified', ['goals']]);
+  assert.match(goals.reasons[0], /^goals is disabled by the template \(--disable goals\) but the inventory run under the template's flags reports it on: the flag was not honoured$/);
+  const both = judged(flip(flip(REAL_TEMPLATE, 'goals'), 'sleep_tool'));
+  assert.deepEqual([both.failure_class, [...both.not_honoured].sort()], ['delegation_unverified', ['goals', 'sleep_tool']]);
+  const omitted = judged(REAL_TEMPLATE.replace(/^shell_snapshot\s.*\n/m, ''));
+  assert.deepEqual([omitted.verified, omitted.failure_class, omitted.not_honoured], [false, 'unsupported_flag', ['shell_snapshot']]);
+  assert.match(omitted.reasons[0], /does not name it: it is not observed off/);
+  // A hardening feature the template does not disable is recorded only, as before.
+  const noSleep = templates.CODEX_DISABLED_FEATURES.filter((f) => f !== 'sleep_tool');
+  const j = judged(flip(REAL_TEMPLATE, 'sleep_tool'), CF.codexTemplateDisables(noSleep), noSleep);
+  assert.equal(j.verified, true, JSON.stringify(j.reasons));
+  assert.ok(j.outside_family_enabled.includes('sleep_tool'));
 });
 
-test('the inventory recorded: features list run by the static checks with the constructed environment, its text and SHA-256; a binary that does not answer has none', async (t) => {
+test('the inventory recorded: features list run by the static checks under the template\'s flags, its text, SHA-256 and arguments; a binary that does not answer has none', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'cq-inv-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const bin = (name, mode) => {
@@ -573,16 +631,20 @@ test('the inventory recorded: features list run by the static checks with the co
     return p;
   };
   const inv = await featureInventory(bin('codex-a', {}), 'codex', CF.CODEX_FEATURES_ARGS);
-  assert.equal(inv.text, REAL_0160);
+  assert.equal(inv.text, REAL_TEMPLATE);
+  assert.deepEqual(inv.args, ARGS, 'the arguments it was run with');
   const { createHash } = await import('node:crypto');
-  assert.equal(inv.sha256, createHash('sha256').update(REAL_0160).digest('hex'));
+  assert.equal(inv.sha256, createHash('sha256').update(REAL_TEMPLATE).digest('hex'));
   assert.equal(await featureInventory(bin('codex-b', { features_exit: 2 }), 'codex', CF.CODEX_FEATURES_ARGS), null, 'a nonzero exit records none');
+  // The template's two flags the real binary rejects there: no inventory.
+  assert.equal(await featureInventory(bin('codex-c', {}), 'codex', ['--ignore-user-config', ...ARGS]), null);
+  assert.equal(await featureInventory(bin('codex-d', {}), 'codex', ['--strict-config', ...ARGS]), null);
 });
 
 test('the driver: all family features disabled or off, the three canaries run; one left on, or an unknown one, fails delegation_unverified, named, before any canary is launched', async (t) => {
   const ok = await attempt(t);
   assert.deepEqual(ok.canaries.map((c) => c.passed), [true, true, true]);
-  assert.equal(ok.inventory.text, REAL_0160);
+  assert.equal(ok.inventory.text, REAL_TEMPLATE);
   for (const [features, name] of [
     [{ features_set: { agent_message_board: true } }, 'agent_message_board'],
     [{ features_set: { overnight_runner: false } }, 'overnight_runner'],
@@ -597,6 +659,55 @@ test('the driver: all family features disabled or off, the three canaries run; o
     assert.equal(ev.feature_inventory.sha256, a.inventory.sha256, 'the judgement names the inventory it judged');
     assert.match(ev.feature_inventory.reasons.join('\n'), new RegExp(name));
   }
+});
+
+test('the driver (C2d, the owner\'s question of 2026-10-28): a binary that accepts --disable shell_snapshot and ignores it fails the attempt unsupported_flag, named, before any canary; honouring every disable, the six hardening names are observed off', async (t) => {
+  const bad = await attempt(t, { features: { features_ignore_disable: ['shell_snapshot'] } });
+  assert.match(bad.inventory.text, /^shell_snapshot\s+stable\s+true$/m, 'the fake reports it on under the template\'s flags');
+  assert.match(bad.inventory.text, /^sleep_tool\s+stable\s+false$/m, 'every other disable honoured');
+  assert.deepEqual(bad.canaries.map((c) => [c.kind, c.run, c.passed, c.failure_class]), [['positive', null, false, 'unsupported_flag']]);
+  assert.equal(bad.ran.length, 0, 'no canary was run');
+  assert.equal(bad.concluded.entry, undefined, 'no entry');
+  const ev = bad.evidence(bad.canaries[0]);
+  assert.equal(ev.outcome, 'not_launched');
+  assert.equal(ev.failure_class, 'unsupported_flag');
+  assert.match(ev.reason, /shell_snapshot/);
+  assert.deepEqual(ev.feature_inventory.not_honoured, ['shell_snapshot']);
+  assert.equal(ev.feature_inventory.failure_class, 'unsupported_flag');
+  assert.match(ev.feature_inventory.reasons.join('\n'), /shell_snapshot is disabled by the template \(--disable shell_snapshot\) but the inventory run under the template's flags reports it on: the flag was not honoured/);
+  assert.deepEqual(ev.feature_inventory.args, ARGS, 'the arguments the inventory was run with');
+  // A family feature ignored the same way stays delegation_unverified.
+  const fam = await attempt(t, { features: { features_ignore_disable: ['hooks'] } });
+  assert.deepEqual(fam.canaries.map((c) => [c.kind, c.run, c.passed, c.failure_class]), [['positive', null, false, 'delegation_unverified']]);
+  assert.equal(fam.ran.length, 0);
+  // The positive control: every disable honoured.
+  const good = await attempt(t);
+  assert.deepEqual(good.canaries.map((c) => c.passed), [true, true, true]);
+  const caps = good.evidence(good.canaries[2]).capabilities.feature_inventory;
+  assert.equal(caps.verified, true, JSON.stringify(caps.reasons));
+  for (const h of HARDENING) assert.ok(caps.disabled_by_template.includes(h) && !caps.configured_only.includes(h), `${h} observed off`);
+  assert.deepEqual(caps.not_honoured, []);
+});
+
+test('the shell snapshots (C2d): a Codex canary whose collection saw a file in $CODEX_HOME/shell_snapshots/ fails containment_failed, recorded; an empty one, or none, does not', async (t) => {
+  const left = { state: 'present', type: 'dir', entries: 1, files: 1 };
+  const pos = await attempt(t, { snapshots: { positive: left } });
+  assert.deepEqual(pos.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'containment_failed']]);
+  assert.deepEqual(pos.evidence(pos.canaries[0]).shell_snapshots, { path: '/surety/home/.codex/shell_snapshots', ...left });
+  const cont = await attempt(t, { snapshots: { containment: left } });
+  assert.deepEqual(cont.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [
+    ['positive', true, null],
+    ['cancellation', true, null],
+    ['containment', false, 'containment_failed'],
+  ]);
+  const empty = await attempt(t, { snapshots: { positive: { state: 'present', type: 'dir', entries: 0, files: 0 }, containment: { state: 'absent' } } });
+  assert.deepEqual(empty.canaries.map((c) => c.passed), [true, true, true]);
+  assert.deepEqual(empty.evidence(empty.canaries[0]).shell_snapshots, { path: '/surety/home/.codex/shell_snapshots', state: 'present', type: 'dir', entries: 0, files: 0 });
+  // Not observed is recorded as such, never as absent.
+  assert.deepEqual(empty.evidence(empty.canaries[1]).shell_snapshots, { path: '/surety/home/.codex/shell_snapshots', state: 'not_observed' });
+  // The auth failure stays first.
+  assert.equal(realFailureClass('positive', 'invalid_result', { stream: null, codex: null, authFailure: 'x', obs: undefined, candidates: [], capabilities: null, containmentHeld: false, shellSnapshot: true }), 'auth_failed');
+  assert.equal(realFailureClass('cancellation', 'barrier_not_reached', { stream: null, codex: null, authFailure: null, obs: undefined, candidates: [], capabilities: null, containmentHeld: false, shellSnapshot: true }), 'containment_failed');
 });
 
 // ---- the Codex price table (2026-10-28; PRICING.md of batch-2026-10-27d) ----
