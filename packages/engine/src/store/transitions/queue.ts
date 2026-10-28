@@ -902,7 +902,7 @@ function iterationControlPreview(tx: Tx, d: Subject): Preview | null {
     ],
     question:
       action === 'stop'
-        ? `Stop prototype iteration ${String(manifest.iteration_seq)}? The project is paused so that nothing else of it is dispatched. ${runsText} Nothing of its usage is erased. Resume by raising a limit, iterate, or discard.`
+        ? `Stop prototype iteration ${String(manifest.iteration_seq)}? The project is paused so that nothing else of it is dispatched. ${runsText} Nothing of its usage is erased. To go on: resume it (POST /v1/projects/${d.project}/iterations/${d.subject_id}/resume), iterate, or discard; raising a limit does not reopen a stopped iteration.`
         : `Discard prototype iteration ${String(manifest.iteration_seq)}? ${runsText}${alphaText} Receipts, ledger rows, runs and records are kept.`,
   };
 }

@@ -210,8 +210,8 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(id, op.project);
       tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
       // A rapid prototype's current iteration follows its editable limit
-      // keys; a raised limit reopens one that reached a limit or was stopped
-      // (R4; slice E2).
+      // keys; a raised limit reopens one that reached a limit (R4; slice
+      // E2), never a stopped one (slice E5, gap 4: POST …/resume does).
       limitsChanged(tx, op.project);
       // The policy is part of every evaluation's inputs (D1 §9.5).
       markStale(tx, { project: op.project });
