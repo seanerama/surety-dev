@@ -27,8 +27,9 @@ export interface Template {
   // The environment variable the credential is delivered in.
   keyVariable: string;
   // Further variables the same credential is delivered in, where which one
-  // the backend reads is not yet established (Codex: CODEX_API_KEY and
-  // OPENAI_API_KEY); the canary records which was used.
+  // the backend reads is not established; the canary records which was
+  // used. No template has one now (Codex's codex-exec-4 delivers its key in
+  // CODEX_API_KEY alone, K3 of 2026-10-28).
   keyAliases?: readonly string[];
   // The fixed variables the template sets beside the credential.
   env: Readonly<Record<string, string>>;
@@ -140,8 +141,10 @@ const CLAUDE_SUBSCRIPTION: Template = {
 // D2 §4.6, Codex CLI 0.160.0 (as installed and pinned by copy; the flags
 // below are each in that version's `codex exec --help`, saved by the
 // 2026-10-27 assessment, and the `-c` keys in the Codex configuration
-// reference read the same day). Version 3 (C1 and C2b of Codex support; the
-// assessment's G3, G4, G5, G11):
+// reference read the same day). Version 4 (C1, C2b and C2c of Codex
+// support; the assessment's G3, G4, G5, G11; the owner's decisions K3 and
+// K6a of 2026-10-28; each `--disable` name accepted by the 0.160.0 binary's
+// `features list`, checked 2026-10-28):
 //   - the prompt: `-` makes standard input the whole prompt (`codex exec
 //     --help`: "if `-` is used, instructions are read from stdin"), and the
 //     engine writes exactly the fixed prompt there (`stdin` below), which
@@ -149,11 +152,17 @@ const CLAUDE_SUBSCRIPTION: Template = {
 //     scripted protocol's request line, and never task text in an argument
 //     (D1 §17 item 3). (A prompt argument with stdin piped would append stdin
 //     as a `<stdin>` block, so the argument form is not used.)
-//   - the credential: Codex's non-interactive page documents `CODEX_API_KEY`
-//     for `codex exec`; its auth page names `OPENAI_API_KEY`. Which one
-//     0.160.0's `exec` reads is not established (the binary carries both
-//     names), so the one held key is delivered in both; the positive canary
-//     establishes which was used.
+//   - the credential (version 4, K3 of the owner's decisions of 2026-10-28):
+//     the one held key in `CODEX_API_KEY` alone. By the source at tag
+//     rust-v0.160.0 (the driver's report codex-features-source.md, batch
+//     2026-10-28/codex-decisions), `exec` authenticates with CODEX_API_KEY,
+//     which wins over every other method (login/src/auth/manager.rs:
+//     1499-1505), and does not read OPENAI_API_KEY for model requests (the
+//     built-in OpenAI provider has no env_key, model-provider-info/src/
+//     lib.rs:520-525; its readers are the TUI's voice mode, onboarding and
+//     presence telemetry). Delivering it in OPENAI_API_KEY as well would only
+//     put a second copy of the secret into the environment every child shell
+//     command inherits, so version 4 does not.
 //   - what it writes: `--ephemeral` (no session files), CODEX_HOME in the
 //     volatile home, credentials in memory only
 //     (`cli_auth_credentials_store="ephemeral"`), no history; the last
@@ -181,7 +190,29 @@ const CLAUDE_SUBSCRIPTION: Template = {
 //   - no `--skip-git-repo-check` (C2b): D2 §4.6 does not pass it, "so a
 //     broken git view fails visibly"; the fixture project and every run's
 //     workspace are git checkouts the engine makes.
-// Version 3 differs from version 2 by those two changes alone.
+//   - also off (version 4, K6a of the owner's decisions of 2026-10-28; each
+//     read from the source at tag rust-v0.160.0, report as above; none is of
+//     the family, each is hardening):
+//       unbounded_connection_retries: keeps a turn alive forever on a
+//         connection failure (core/src/responses_retry.rs:22-23, 92-116), so
+//         a refused egress would hang to the deadline instead of failing.
+//       system_proxy_fallback: retries bootstrap requests through
+//         HTTPS_PROXY/HTTP_PROXY/ALL_PROXY (backend-client/src/client.rs:
+//         343-360); off, fail closed.
+//       image_generation: calls images/generations through the provider and
+//         writes PNGs under CODEX_HOME (codex-api/src/endpoint/images.rs:68,
+//         81); not exposed under an API key, off to fail closed.
+//       unified_exec_tty: the PTY mode of the command tool, whose children
+//         get no parent-death signal (utils/pty/src/spawn_helper_main.rs:
+//         69-73).
+//       sleep_tool: `clock.sleep`, which blocks the turn for up to 12 h
+//         (core/src/tools/handlers/sleep.rs:28, 96-133); a stall buys
+//         nothing.
+//       shell_snapshot: writes the shell's exported environment, so the key,
+//         into $CODEX_HOME/shell_snapshots/ (shell-command/src/
+//         shell_snapshot_capture.rs:160-178; core/src/shell_snapshot.rs:
+//         105-107); a copy of the secret on disk while it lives.
+// Version 4 differs from version 3 by those two changes alone.
 export const CODEX_DISABLED_FEATURES = [
   'multi_agent',
   'goals',
@@ -205,6 +236,13 @@ export const CODEX_DISABLED_FEATURES = [
   'code_mode_host',
   'tool_suggest',
   'workspace_dependencies',
+  // Version 4 (K6a): hardening, not the family.
+  'unbounded_connection_retries',
+  'system_proxy_fallback',
+  'image_generation',
+  'unified_exec_tty',
+  'sleep_tool',
+  'shell_snapshot',
 ] as const;
 export const CODEX_CONFIG_OVERRIDES = [
   'web_search="disabled"',
@@ -245,14 +283,13 @@ const codexArgs = (model: string): string[] => [
 ];
 
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-3',
+  version: 'codex-exec-4',
   text:
     `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
-    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> OPENAI_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
+    `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) (Codex CLI ${CODEX_TEMPLATE_CLI_VERSION})`,
   authMode: 'api_key',
   keyRef: 'backend/codex/api_key',
   keyVariable: 'CODEX_API_KEY',
-  keyAliases: ['OPENAI_API_KEY'],
   env: CODEX_ENV,
   persistenceFlags: ['--ephemeral'],
   tools: [],

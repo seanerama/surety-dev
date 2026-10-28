@@ -4,7 +4,7 @@
 // --json` JSONL in the shapes OpenAI's non-interactive page documents
 // (`thread.started`, `turn.started`, `item.*`, `turn.completed` with
 // `usage`, `turn.failed`, `error`), reads its prompt from standard input as
-// the `codex-exec-3` template's `-` asks, and acts out a role's run or a
+// the `codex-exec-4` template's `-` asks, and acts out a role's run or a
 // qualification canary from <root>/surety/context/canary.json, as the fake
 // claude does (test/acceptance/harness/standin/fake-claude.mjs). Its error
 // texts are modelled on the Codex CLI's "unexpected status 401
@@ -16,7 +16,9 @@
 //   root:      the directory /surety is under (default "/"; a test outside a
 //              sandbox names a temporary directory)
 //   reads:     the key variable this fake "reads": "CODEX_API_KEY"
-//              (default), "OPENAI_API_KEY" or "either"
+//              (default; what Codex 0.160.0's exec reads), "OPENAI_API_KEY"
+//              (which codex-exec-4 no longer sets: such a fake gets no key)
+//              or "either"
 //   reject_key: a key value the provider refuses (an auth failure)
 //   outcome:   "success" (default) | "auth_failed" | "usage_limit" |
 //              "timeout" (hangs after turn.started until killed, or
@@ -28,8 +30,8 @@
 //   usage:     the turn's usage (default input 24763, cached 24448,
 //              output 122, reasoning 0: the page's own example)
 //   dump:      a path: what this launch was given (argv, the stdin text,
-//              which key variables were set, never their values) is
-//              written there as JSON
+//              which key variables were set, and the one it read, never
+//              their values) is written there as JSON
 //   features_set: `codex features list` (C2b): {name: true|false} sets a
 //              listed feature's state, or adds the feature (stage
 //              "under development") if the list does not name it
@@ -93,8 +95,12 @@ const stdin = await new Promise((resolve) => {
 });
 
 const keyVars = ['CODEX_API_KEY', 'OPENAI_API_KEY'].filter((v) => typeof process.env[v] === 'string' && process.env[v] !== '');
+// The key variable this fake read (by `reads`), null where it found none.
+const reads = mode.reads ?? 'CODEX_API_KEY';
+const keyRead = (reads === 'either' ? ['CODEX_API_KEY', 'OPENAI_API_KEY'] : [reads]).find((v) => keyVars.includes(v)) ?? null;
+const key = keyRead === null ? undefined : process.env[keyRead];
 if (mode.dump) {
-  writeFileSync(mode.dump, JSON.stringify({ argv, stdin, key_variables: keyVars, codex_home: process.env.CODEX_HOME ?? null }));
+  writeFileSync(mode.dump, JSON.stringify({ argv, stdin, key_variables: keyVars, key_read: keyRead, codex_home: process.env.CODEX_HOME ?? null }));
 }
 
 // Codex's own checks of its command line: `exec`, `--json`, the prompt on
@@ -108,8 +114,6 @@ const THREAD = '0199a213-81c0-7800-8aa1-bbab2a035a53';
 out({ type: 'thread.started', thread_id: THREAD });
 out({ type: 'turn.started' });
 
-const reads = mode.reads ?? 'CODEX_API_KEY';
-const key = reads === 'either' ? (process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY) : process.env[reads];
 const failed = (message, code = 1) => {
   out({ type: 'error', message });
   out({ type: 'turn.failed', error: { message } });

@@ -291,14 +291,14 @@ export function codexAnswered(s: CodexStreamSummary): boolean {
 }
 
 // What the stream established about the credential's delivery (D2 §§2.5,
-// 4.5; E74 item 3). The engine gives the one held key in both variables the
-// template names (CODEX_API_KEY and OPENAI_API_KEY), writes no credential
-// file, and the volatile CODEX_HOME holds no login
+// 4.5; E74 item 3). The engine gives the one held key in the variables the
+// template names (codex-exec-4: CODEX_API_KEY alone, K3 of 2026-10-28),
+// writes no credential file, and the volatile CODEX_HOME holds no login
 // (`forced_login_method="api"`, `cli_auth_credentials_store="ephemeral"`).
 // So a turn that completed with an agent message and no failure in the
-// stream authenticated with that key, by elimination; which of the two
-// variables Codex read is not established (the stream does not say), and
-// `variable` stays null.
+// stream authenticated with that key, by elimination. The stream never
+// names the variable Codex read, so `variable` stays null: the basis says
+// which variables the key was in, and that this is an elimination.
 export function codexKeyDelivery(s: CodexStreamSummary, variables: readonly string[]): { variable: null; variables: string[]; established: boolean | null; basis: string } {
   const auth = codexAuthFailure(s);
   const vars = [...variables];
@@ -309,7 +309,10 @@ export function codexKeyDelivery(s: CodexStreamSummary, variables: readonly stri
       variable: null,
       variables: vars,
       established: true,
-      basis: `the turn completed (turn.completed) with an agent message and no failure in the stream, and the key in ${vars.join(' and ')} was the only credential the engine gave the backend (by elimination; which of them Codex read is not established)`,
+      basis:
+        vars.length === 1
+          ? `the turn completed (turn.completed) with an agent message and no failure in the stream, and the key in ${vars[0]} was the only credential the engine gave the backend (by elimination; the stream does not name the variable read)`
+          : `the turn completed (turn.completed) with an agent message and no failure in the stream, and the key in ${vars.join(' and ')} was the only credential the engine gave the backend (by elimination; which of them Codex read is not established)`,
     };
   }
   return {

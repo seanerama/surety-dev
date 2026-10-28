@@ -15,10 +15,26 @@
 // goals, hooks, apps, memories, web search): a feature that delegates work
 // to another agent or model, schedules or continues work, runs or keeps a
 // process or service beyond the backend's one run, or reaches beyond the
-// domain's own tools (connectors, plugins, a browser or the desktop). A
-// feature whose name does not establish what it does is put in the family
-// (fail closed). The classification is by name, against the list and the
-// configuration reference; no feature's behaviour was observed.
+// domain's own tools (connectors, plugins, a browser or the desktop).
+//
+// The basis (C2c of Codex support; the owner's decision K6 of 2026-10-28):
+// the Codex CLI's source at tag rust-v0.160.0, as the driver's source
+// reading reports it (surety-evidence/batch-2026-10-28/codex-decisions/
+// codex-features-source.md). Each group's basis states what the source
+// shows the feature does, with its citation, paths relative to the
+// repository's codex-rs/ ("features lib.rs doc N" is the Feature enum's doc
+// comment, "spec N" its FEATURES entry). Where that reading established
+// nothing, the basis says so: a feature with no reader in the source is in
+// the family (fail closed), and the features off at this tag that the
+// reading did not trace keep a classification by name, which their basis
+// states. No feature's behaviour was observed in a run.
+//
+// Three classes: the family; outside the family; and hardening (outside
+// the family, disabled by the template all the same: version 4, K6a). A
+// hardening feature the template disables is reported in
+// `disabled_by_template`, so the record shows the template switched it off;
+// one left on is recorded only (`outside_family_enabled`) and never fails
+// the attempt: only a family feature left on, or an unknown one, does.
 //
 // The judgement: a feature of the family passes when the template disables
 // it (`--disable <feature>`, or a `-c` override the template passes that
@@ -36,62 +52,179 @@ import { CODEX_CONFIG_OVERRIDES, CODEX_DISABLED_FEATURES } from './templates.js'
 // The arguments the static checks run for the inventory.
 export const CODEX_FEATURES_ARGS: readonly string[] = ['features', 'list'];
 
-type Group = { family: boolean; basis: string; names: readonly string[] };
+type Group = { family: boolean; hardening?: true; basis: string; names: readonly string[] };
+
+// Not traced in the source by the 2026-10-28 reading: off (`false`) in the
+// 0.160.0 inventory, classified by name, recorded only if ever on.
+const BY_NAME = '; by name only: off at this tag and not traced in the source (codex-features-source.md), recorded only if on';
 
 // Every feature `codex features list` names at 0.160.0.
 const GROUPS: readonly Group[] = [
-  { family: true, basis: 'sub-agents and their messaging (delegation)', names: ['agent_message_board', 'multi_agent', 'multi_agent_mode', 'multi_agent_v2', 'enable_fanout', 'send_async_message', 'send_message_to_user_async', 'defer_mailbox_preemption'] },
-  { family: true, basis: 'goals and automations (scheduling or continuation)', names: ['goals', 'in_app_local_automation'] },
+  // ---- the family (delegation, scheduling, background, reach beyond the domain) ----
   {
     family: true,
-    basis: 'a daemon, executor, companion process or background task beyond the one run (background)',
-    names: ['daemon_auto_start', 'background_paginated_rollout_migration', 'deferred_executor', 'executor_capability_discovery', 'code_mode_host', 'code_mode_prewarm', 'remote_control', 'in_app_updates', 'chronicle'],
+    basis: 'sub-agents (delegation): multi_agent enables the collab tools (features lib.rs doc 205-206, spec 1330-1334), multi_agent_v2 registers the spawn and wait tools (core/src/tools/spec_plan.rs:720-723)',
+    names: ['multi_agent', 'multi_agent_v2'],
   },
-  { family: true, basis: 'work in a checkout of its own (delegation)', names: ['worktrees'] },
-  { family: true, basis: 'the guardian, a second model reviewing approvals (delegation)', names: ['guardian_approval', 'guardianv2', 'guardian_ext'] },
-  { family: true, basis: 'hooks (commands run on events)', names: ['hooks', 'plugin_hooks'] },
-  { family: true, basis: 'memories (carried between runs)', names: ['memories', 'external_agent_memory_import'] },
   {
     family: true,
-    basis: 'apps, plugins and connectors (reach beyond the domain)',
-    names: ['apps', 'apps_mcp_path_override', 'enable_mcp_apps', 'codex_apps_mcp_2026_07_28', 'plugins', 'plugin_sharing', 'remote_plugin', 'recommended_plugins', 'skill_mcp_dependency_install', 'tool_suggest'],
+    basis: 'messaging inside an agent tree (delegation), acting only with multi_agent_v2, which the template switches off: agent_message_board (doc 214-215; core/src/agent_message_board.rs:44-52), defer_mailbox_preemption (doc 209-211; core/src/session/turn.rs:2783-2794)',
+    names: ['agent_message_board', 'defer_mailbox_preemption'],
   },
-  { family: true, basis: 'web search (fetches outside the egress proxy)', names: ['standalone_web_search', 'web_search_cached', 'web_search_request'] },
-  { family: true, basis: 'a browser or the desktop (reach beyond the domain)', names: ['browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'in_app_browser'] },
-  { family: true, basis: 'what it does is not established from its name (fail closed)', names: ['workspace_dependencies', 'psp', 'prefer_mxc', 'use_xaa', 'artifact'] },
+  {
+    family: true,
+    basis: 'asynchronous messages to the user outside the turn (doc 324-325; core/src/tools/spec_plan.rs:1205-1214): not a sub-agent, kept in the family to fail closed',
+    names: ['send_message_to_user_async'],
+  },
+  {
+    family: true,
+    basis: 'the guardian, a separate review session of a second model judging approvals (delegation): doc 326-327, 341-342; core/src/guardian/decision.rs:111; core/src/session/step_activation.rs:143',
+    names: ['guardian_approval', 'guardianv2'],
+  },
+  {
+    family: true,
+    basis: 'scheduling or continuation: goals persists thread goals and continues them automatically (doc 345-346; exec/src/lib.rs:1063); in_app_local_automation runs the desktop\'s local automations (doc 268-271)',
+    names: ['goals', 'in_app_local_automation'],
+  },
+  {
+    family: true,
+    basis: 'a daemon, host process or background task beyond the one run (background): daemon_auto_start (doc 112-113), code_mode_host (doc 124-125, a standalone host process), code_mode_prewarm (core/src/session/startup_prewarm.rs:233-241), background_paginated_rollout_migration (doc 189-190; core/src/thread_manager.rs:456-480)',
+    names: ['daemon_auto_start', 'code_mode_host', 'code_mode_prewarm', 'background_paginated_rollout_migration'],
+  },
+  {
+    family: true,
+    basis: 'work in a checkout of its own, persisted outside the workspace: managed worktrees under $CODEX_HOME/worktrees (doc 199-200; worktree/src/settings.rs:44,51; exec/src/lib.rs:301-302)',
+    names: ['worktrees'],
+  },
+  { family: true, basis: 'hooks: commands run on lifecycle events, loaded from hooks.json (doc 107-108)', names: ['hooks'] },
+  {
+    family: true,
+    basis: 'memories carried between runs: startup memory extraction and file-backed consolidation (doc 180-181); import of external agents\' memory (doc 182-183; app-server/src/external_agent_migration/processor.rs:373)',
+    names: ['memories', 'external_agent_memory_import'],
+  },
+  {
+    family: true,
+    basis: 'apps, plugins, connectors and their installs (reach beyond the domain): apps (doc 220-221; features lib.rs:527-529), codex_apps_mcp_2026_07_28 (doc 228-229; core/src/config/mod.rs:1861-1865), plugins (doc 248-249), plugin_sharing (doc 294-295), remote_plugin (doc 292-293), recommended_plugins (stable, default off; needs apps and plugins, features lib.rs:531-535), skill_mcp_dependency_install (doc 312-313), tool_suggest (doc 244-245; core/src/tools/spec_plan.rs:1253-1267), executor_capability_discovery (plugin and skill manifests by an exec-server RPC, doc 250-251; core/src/session/mcp.rs:447)',
+    names: ['apps', 'codex_apps_mcp_2026_07_28', 'plugins', 'plugin_sharing', 'remote_plugin', 'recommended_plugins', 'skill_mcp_dependency_install', 'tool_suggest', 'executor_capability_discovery'],
+  },
+  {
+    family: true,
+    basis: 'routing or authorizing requests beyond the model provider: psp adds the routing cookie oai-chat-psp to first-party ChatGPT requests (doc 222-223; core/src/config/mod.rs:1708-1709); use_xaa authorizes configured MCP resources by an enterprise refresh token (doc 232-233; core/src/config/mod.rs:1775,1825)',
+    names: ['psp', 'use_xaa'],
+  },
+  {
+    family: true,
+    basis:
+      'web search, a hosted tool the provider runs behind api.openai.com (core/src/tools/hosted_spec.rs:32-33), which the egress allow-list cannot stop. Its mode is the top-level `web_search` key (core/src/config/mod.rs:2683-2694): `--disable web_search_cached` and `--disable web_search_request` do not switch it off (legacy flags, read only where the key is unset), so the control is the template\'s `-c web_search="disabled"` (with `-c tools.web_search=false`), which covers these; standalone_web_search is the extension-backed tool (doc 163-164; core/src/tools/spec_plan.rs:1489-1491)',
+    names: ['standalone_web_search', 'web_search_cached', 'web_search_request'],
+  },
+  {
+    family: true,
+    basis: 'a browser, the computer or the desktop app\'s updates (reach beyond the domain): requirements-only desktop gates, not reached by exec (features lib.rs doc 256-259, 272-291)',
+    names: ['browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'in_app_browser', 'in_app_updates'],
+  },
+  {
+    family: true,
+    basis: 'removed at this tag, a no-op: nothing reads it, or apply_map drops it (features lib.rs:596-632); what it was is delegation, remote control, hooks or apps (multi_agent_mode doc 216-217, enable_fanout doc 218-219, send_async_message doc 322-323, remote_control doc 427-428, guardian_ext doc 343-344, plugin_hooks doc 254-255, apps_mcp_path_override doc 234-235), so it stays in the family and fails closed if a later version revives it',
+    names: ['multi_agent_mode', 'enable_fanout', 'send_async_message', 'remote_control', 'guardian_ext', 'plugin_hooks', 'apps_mcp_path_override'],
+  },
+  {
+    family: true,
+    basis: 'no reader in codex-rs at this tag; behaviour unestablished; fail closed (workspace_dependencies: doc 385-386 and the config schema only; artifact: the config schema only, config/src/schema.rs:50; chronicle: a legacy alias only, features/src/legacy.rs:44-46; enable_mcp_apps: doc 224-225 only)',
+    names: ['workspace_dependencies', 'artifact', 'chronicle', 'enable_mcp_apps'],
+  },
+
+  // ---- hardening: not the family, disabled by the template (version 4, K6a) ----
+  { family: false, hardening: true, basis: 'hardening, not the family: keeps a turn alive forever on a connection failure (core/src/responses_retry.rs:22-23, 92-116), so a refused egress would hang to the deadline', names: ['unbounded_connection_retries'] },
+  { family: false, hardening: true, basis: 'hardening, not the family: retries bootstrap requests through HTTPS_PROXY, HTTP_PROXY or ALL_PROXY (backend-client/src/client.rs:343-360)', names: ['system_proxy_fallback'] },
+  { family: false, hardening: true, basis: 'hardening, not the family: calls images/generations through the provider and writes PNGs under CODEX_HOME (codex-api/src/endpoint/images.rs:68,81); not exposed under an API key', names: ['image_generation'] },
+  { family: false, hardening: true, basis: 'hardening, not the family: the command tool\'s PTY mode, whose children get no parent-death signal (utils/pty/src/spawn_helper_main.rs:69-73)', names: ['unified_exec_tty'] },
+  { family: false, hardening: true, basis: 'hardening, not the family: clock.sleep blocks the current turn for 1 ms to 12 h and schedules nothing (core/src/tools/handlers/sleep.rs:28, 96-133)', names: ['sleep_tool'] },
+  { family: false, hardening: true, basis: 'hardening, not the family: writes the shell\'s exported environment, so the key, under $CODEX_HOME/shell_snapshots/ (shell-command/src/shell_snapshot_capture.rs:160-178; core/src/shell_snapshot.rs:105-107)', names: ['shell_snapshot'] },
+
+  // ---- outside the family, read from the source ----
   {
     family: false,
-    basis: "the command tool and the shell: what it runs stays in the domain and ends with it (D2 §4.4)",
-    names: ['unified_exec', 'unified_exec_tty', 'unified_exec_zsh_fork', 'shell_tool', 'shell_snapshot', 'shell_snapshot_v2', 'shell_zsh_fork', 'powershell_shell_version', 'sleep_tool', 'write_stdin_approval', 'exec_permission_approvals', 'request_permissions_tool', 'request_rule', 'code_mode', 'code_mode_buffered_exec', 'code_mode_interrupt', 'code_mode_only', 'js_repl', 'js_repl_tools_only'],
+    basis:
+      'the command tool, not delegation: it cannot be disabled (core/src/config/managed_features.rs:157-165); a command can outlive its tool call and the turn and is ended at session shutdown (core/src/session/handlers.rs:307-310); what it runs is in the domain and ends with it (D2 §4.4: each turn a cgroup domain terminated with closure)',
+    names: ['unified_exec'],
   },
-  { family: false, basis: 'file edits in the workspace', names: ['apply_patch_freeform', 'apply_patch_preserve_line_endings', 'apply_patch_streaming_events', 'cwd_relative_turn_diffs', 'undo', 'codex_git_commit'] },
   {
     family: false,
-    basis: "the model's turn, its context and its transcript",
+    basis: 'the model turn\'s own mechanics, run inside the domain or sent to the model API only: shell_tool (doc 101-102; core/src/tools/spec_plan.rs:1079-1117), view_image (doc 103-104; spec_plan.rs:1283-1295), write_stdin_approval (doc 154-155; core/src/unified_exec/stdin_approval.rs:180-194), fast_mode (sends a service tier only when one is configured, and none is: core/src/session/mod.rs:1081-1097), compaction_image_budget (doc 379-380; core/src/compact_remote_v2.rs:316), content_item_kinds (doc 116-117; core/src/session/session.rs:1740), enable_request_compression (doc 193-194; session.rs:1742), skill_search (shadow-mode metrics, reaching the network only through the analytics exporter the template switches off: ext/skills/src/extension.rs:421-438)',
+    names: ['shell_tool', 'view_image', 'write_stdin_approval', 'fast_mode', 'compaction_image_budget', 'content_item_kinds', 'enable_request_compression', 'skill_search'],
+  },
+  {
+    family: false,
+    basis: 'startup ordering, not scheduling: turns may start while executors start, with a wait_for_environment tool (doc 174-175; core/src/tools/spec_plan.rs:1157-1167; core/src/session/session.rs:1441)',
+    names: ['deferred_executor'],
+  },
+  {
+    family: false,
+    basis: 'inert here: it acts only with MCP servers, the guardian or the zsh-fork shell, none of which runs (no MCP server configured, approvals bypassed, the guardian off): auth_elicitation (core/src/config/mod.rs:1866-1872; core/src/mcp_tool_call.rs:767-785), tool_call_mcp_elicitation (doc 359-360; mcp_tool_call.rs:1620-1629), guardian_reuse_parent_compaction (doc 330-332; core/src/guardian/review_session_context.rs:27), unified_exec_zsh_fork (removed, read at tools/src/tool_config.rs:51 only with shell_zsh_fork, which is off: spec 1002-1006)',
+    names: ['auth_elicitation', 'tool_call_mcp_elicitation', 'guardian_reuse_parent_compaction', 'unified_exec_zsh_fork'],
+  },
+  {
+    family: false,
+    basis: 'the TUI or the desktop app only, no reader in exec: in_app_chat (doc 260-263), in_app_dictation (doc 264-267), mentions_v2 (doc 318-319), realtime_conversation (doc 373-374; tui/src/chatwidget/realtime.rs:291)',
+    names: ['in_app_chat', 'in_app_dictation', 'mentions_v2', 'realtime_conversation'],
+  },
+  {
+    family: false,
+    basis: 'removed (or, transcript_v2, deprecated) at this tag, a no-op: nothing reads it, or apply_map drops it (features lib.rs:596-632, 653-656); sqlite\'s database opens regardless (exec/src/lib.rs:697)',
     names: [
-      'api_key_model_discovery', 'compaction_image_budget', 'concurrent_reasoning_summaries', 'content_item_kinds', 'context_management', 'current_time_reminder', 'deferred_tool_world_state',
-      'executed_tool_call_metadata', 'fast_mode', 'image_detail_original', 'image_generation', 'image_resize_notice', 'item_ids', 'mentions_v2', 'personality', 'reasoning_effort_override',
-      'remote_compaction_v2', 'remote_models', 'resize_all_images', 'retain_client_developer_messages', 'rollout_budget', 'step_model_switching', 'token_budget', 'transcript_v2', 'unified_image_budget',
-      'view_image', 'enable_request_compression', 'responses_websockets', 'responses_websockets_v2', 'local_thread_store_compression', 'local_thread_store_shared_compression', 'sqlite',
-      'omit_app_server_notification_media', 'unavailable_dummy_tools', 'default_mode_request_user_input', 'collaboration_modes', 'steer', 'instant_interrupt', 'search_tool', 'tool_search',
-      'tool_search_always_defer_mcp_tools',
+      'sqlite', 'steer', 'collaboration_modes', 'item_ids', 'resize_all_images', 'terminal_resize_reflow', 'tui_app_server', 'tool_search_always_defer_mcp_tools',
+      'js_repl', 'js_repl_tools_only', 'remote_compaction_v2', 'apply_patch_freeform', 'tool_search', 'image_detail_original', 'personality', 'undo', 'skill_env_var_dependency_prompt', 'transcript_v2',
+    ],
+  },
+  { family: false, basis: 'Windows only: prefers the native Windows sandbox (doc 409-410; core/src/config/mod.rs:3515)', names: ['prefer_mxc'] },
+
+  // ---- outside the family, by name only ----
+  {
+    family: false,
+    basis: `the command tool's variants and approvals: what they run stays in the domain and ends with it (D2 §4.4)${BY_NAME}`,
+    names: ['shell_snapshot_v2', 'shell_zsh_fork', 'powershell_shell_version', 'exec_permission_approvals', 'request_permissions_tool', 'request_rule', 'code_mode', 'code_mode_buffered_exec', 'code_mode_interrupt', 'code_mode_only'],
+  },
+  { family: false, basis: `file edits in the workspace${BY_NAME}`, names: ['apply_patch_preserve_line_endings', 'apply_patch_streaming_events', 'cwd_relative_turn_diffs', 'codex_git_commit'] },
+  {
+    family: false,
+    basis: `the model's turn, its context and its transcript${BY_NAME}`,
+    names: [
+      'api_key_model_discovery', 'concurrent_reasoning_summaries', 'context_management', 'current_time_reminder', 'deferred_tool_world_state', 'executed_tool_call_metadata', 'image_resize_notice',
+      'reasoning_effort_override', 'remote_models', 'retain_client_developer_messages', 'rollout_budget', 'step_model_switching', 'token_budget', 'unified_image_budget', 'responses_websockets',
+      'responses_websockets_v2', 'local_thread_store_compression', 'local_thread_store_shared_compression', 'omit_app_server_notification_media', 'unavailable_dummy_tools',
+      'default_mode_request_user_input', 'instant_interrupt', 'search_tool',
     ],
   },
   {
     family: false,
-    basis: "details of the guardian, which guardian_approval switches",
-    names: ['guardian_conversation_history_tools', 'guardian_enhanced_node_repl_transcripts', 'guardian_node_repl_transcript_images', 'guardian_reuse_parent_compaction', 'guardian_root_handoff_context', 'guardianv2.thread_context'],
+    basis: `details of the guardian, which guardian_approval switches${BY_NAME}`,
+    names: ['guardian_conversation_history_tools', 'guardian_enhanced_node_repl_transcripts', 'guardian_node_repl_transcript_images', 'guardian_root_handoff_context', 'guardianv2.thread_context'],
   },
-  { family: false, basis: 'MCP mechanics: the template configures no MCP server (--ignore-user-config, a volatile CODEX_HOME)', names: ['mcp_2026_07_28', 'mcp_oauth_refresh_coordination', 'non_prefixed_mcp_tool_names', 'tool_call_mcp_elicitation', 'auth_elicitation'] },
-  { family: false, basis: 'local skills', names: ['skill_search', 'skip_host_skill_discovery', 'skill_env_var_dependency_prompt'] },
-  { family: false, basis: "Codex's own sandbox and the platform (Codex's sandbox is bypassed; D2 §4.6, Q5)", names: ['elevated_windows_sandbox', 'experimental_windows_sandbox', 'windows_sandbox_service', 'use_legacy_landlock', 'use_linux_sandbox_bwrap', 'prevent_idle_sleep', 'nonfatal_clock_read_errors'] },
-  { family: false, basis: 'network, proxy and authentication handling', names: ['network_proxy', 'respect_system_proxy', 'system_proxy_fallback', 'unbounded_connection_retries', 'secret_auth_storage', 'use_agent_identity', 'bedrock_setup_wizard', 'external_migration'] },
-  { family: false, basis: 'the interactive app and terminal, and telemetry (the template turns analytics and the exporters off)', names: ['in_app_chat', 'in_app_dictation', 'realtime_conversation', 'terminal_resize_reflow', 'terminal_visualization_instructions', 'tui_app_server', 'workspace_owner_usage_nudge', 'runtime_metrics', 'analytics_plan_history'] },
+  { family: false, basis: `MCP mechanics: the template configures no MCP server (--ignore-user-config, a volatile CODEX_HOME)${BY_NAME}`, names: ['mcp_2026_07_28', 'mcp_oauth_refresh_coordination', 'non_prefixed_mcp_tool_names'] },
+  { family: false, basis: `local skills${BY_NAME}`, names: ['skip_host_skill_discovery'] },
+  {
+    family: false,
+    basis: `Codex's own sandbox and the platform (Codex's sandbox is bypassed; D2 §4.6, Q5)${BY_NAME}`,
+    names: ['elevated_windows_sandbox', 'experimental_windows_sandbox', 'windows_sandbox_service', 'use_legacy_landlock', 'use_linux_sandbox_bwrap', 'prevent_idle_sleep', 'nonfatal_clock_read_errors'],
+  },
+  { family: false, basis: `network, proxy and authentication handling${BY_NAME}`, names: ['network_proxy', 'respect_system_proxy', 'secret_auth_storage', 'use_agent_identity', 'bedrock_setup_wizard', 'external_migration'] },
+  {
+    family: false,
+    basis: `the interactive app and terminal, and telemetry (the template turns analytics and the exporters off)${BY_NAME}`,
+    names: ['terminal_visualization_instructions', 'workspace_owner_usage_nudge', 'runtime_metrics', 'analytics_plan_history'],
+  },
 ];
 
-export const CODEX_FEATURE_CLASSES: ReadonlyMap<string, { family: boolean; basis: string }> = new Map(GROUPS.flatMap((g) => g.names.map((n) => [n, { family: g.family, basis: g.basis }] as const)));
+export const CODEX_FEATURE_CLASSES: ReadonlyMap<string, { family: boolean; hardening: boolean; basis: string }> = new Map(
+  GROUPS.flatMap((g) => g.names.map((n) => [n, { family: g.family, hardening: g.hardening === true, basis: g.basis }] as const)),
+);
 
-// The features a `-c` override the template passes also switches off.
+// The features a `-c` override the template passes also switches off. Web
+// search is governed by the top-level `web_search` key, not by its two
+// legacy `--disable` flags (core/src/config/mod.rs:2683-2694; the web
+// search group's basis above), so `web_search="disabled"` is what covers
+// them; `agents.enabled=false` covers the sub-agent features.
 const OVERRIDE_COVERS: Readonly<Record<string, readonly string[]>> = {
   'agents.enabled=false': ['multi_agent', 'multi_agent_v2', 'multi_agent_mode'],
   'web_search="disabled"': ['standalone_web_search', 'web_search_cached', 'web_search_request'],
@@ -113,7 +246,8 @@ export interface CodexFeatureJudgement {
   verified: boolean;
   sha256: string | null;
   features: number;
-  // The family's features the template disables (configured, not observed).
+  // The family's features, and the hardening features, the template
+  // disables (configured, not observed).
   disabled_by_template: string[];
   // The family's features the inventory reports off.
   unavailable: string[];
@@ -121,7 +255,8 @@ export interface CodexFeatureJudgement {
   left_enabled: string[];
   // Features the table does not know: each fails the attempt.
   unknown: CodexFeature[];
-  // Features outside the family the inventory reports on (recorded only).
+  // Features outside the family the inventory reports on and the template
+  // does not disable, a hardening feature among them (recorded only).
   outside_family_enabled: string[];
   unparsed: string[];
   reasons: string[];
@@ -156,7 +291,10 @@ export function judgeCodexFeatures(inventory: { text: string; sha256: string } |
     const c = CODEX_FEATURE_CLASSES.get(f.name);
     if (c === undefined) out.unknown.push(f);
     else if (!c.family) {
-      if (f.enabled) out.outside_family_enabled.push(f.name);
+      // Hardening: shown disabled where the template disables it; never a
+      // failure either way.
+      if (c.hardening && disables.has(f.name)) out.disabled_by_template.push(f.name);
+      else if (f.enabled) out.outside_family_enabled.push(f.name);
     } else if (disables.has(f.name)) out.disabled_by_template.push(f.name);
     else if (!f.enabled) out.unavailable.push(f.name);
     else out.left_enabled.push(f.name);

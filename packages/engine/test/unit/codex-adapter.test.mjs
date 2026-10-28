@@ -1,5 +1,5 @@
 // Developer tests for the Codex adapter (C1 of Codex support, 2026-10-27;
-// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-3` template's command
+// D2 §§1.2, 1.5, 1.6, 1.7, 2.5, 4.6): the `codex-exec-4` template's command
 // line, standard input and environment; the `codex exec --json` stream read
 // into usage observations and the terminal event; the ledger's
 // `codex-exec-json-1` normalization (cached input split out of input, cost
@@ -60,8 +60,8 @@ const GOOD = [
   { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
 ];
 
-test('the template: codex-exec-3, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, no --skip-git-repo-check', () => {
-  assert.equal(T.version, 'codex-exec-3');
+test('the template: codex-exec-4, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, the six hardening disables, no --skip-git-repo-check', () => {
+  assert.equal(T.version, 'codex-exec-4');
   assert.equal(T.authMode, 'api_key');
   assert.equal(T.keyRef, 'backend/codex/api_key');
   const args = T.render({ model: 'gpt-5.5-codex', invocation: 'inv_X' });
@@ -82,21 +82,30 @@ test('the template: codex-exec-3, the prompt on standard input exactly, no promp
   assert.deepEqual(disabled.slice(0, 5), ['multi_agent', 'goals', 'hooks', 'apps', 'memories']);
   assert.deepEqual(disabled, [...templates.CODEX_DISABLED_FEATURES]);
   for (const f of ['daemon_auto_start', 'worktrees', 'guardian_approval', 'in_app_local_automation', 'browser_use', 'computer_use', 'plugins', 'code_mode_host']) assert.ok(disabled.includes(f), f);
+  // Version 4 (K6a, 2026-10-28): six hardening disables after version 3's twenty-two, each once.
+  assert.deepEqual(disabled.slice(-6), ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot']);
+  assert.equal(disabled.length, 28);
+  assert.equal(new Set(disabled).size, disabled.length, 'no feature disabled twice');
+  for (const f of disabled) assert.ok(T.text.includes(`--disable ${f} `), `the template text names --disable ${f}`);
   const overrides = args.flatMap((a, i) => (a === '-c' ? [args[i + 1]] : []));
   for (const o of ['web_search="disabled"', 'tools.web_search=false', 'check_for_update_on_startup=false', 'analytics.enabled=false', 'feedback.enabled=false', 'otel.metrics_exporter="none"', 'otel.exporter="none"', 'otel.trace_exporter="none"', 'agents.enabled=false', 'history.persistence="none"', 'cli_auth_credentials_store="ephemeral"', 'forced_login_method="api"']) {
     assert.ok(overrides.includes(o), o);
   }
   assert.ok(!args.some((a) => a.includes('sk-') || a.includes('<')), 'no credential and no placeholder in the rendered argv');
-  assert.match(T.text, /CODEX_API_KEY=<credential> OPENAI_API_KEY=<credential> CODEX_HOME=\/surety\/home\/\.codex/);
+  assert.match(T.text, /\(environment: CODEX_API_KEY=<credential> CODEX_HOME=\/surety\/home\/\.codex\)/);
+  assert.ok(!T.text.includes('OPENAI_API_KEY'), 'K3: OPENAI_API_KEY is not set (exec does not read it)');
   assert.match(T.text, /\(standard input: the fixed prompt\)/);
   assert.match(T.text, /Codex CLI 0\.160\.0/);
   assert.equal(templates.CODEX_TEMPLATE_CLI_VERSION, '0.160.0');
 });
 
-test('the environment: the one held key in both CODEX_API_KEY and OPENAI_API_KEY, CODEX_HOME in the volatile home; the grant lists both; Claude unchanged', () => {
-  assert.deepEqual(templates.templateEnv(T, KEY), { CODEX_HOME: '/surety/home/.codex', CODEX_API_KEY: KEY, OPENAI_API_KEY: KEY });
+test('the environment: the one held key in CODEX_API_KEY alone, never OPENAI_API_KEY (K3), CODEX_HOME in the volatile home; the grant lists CODEX_API_KEY only; Claude unchanged', () => {
+  assert.deepEqual(templates.templateEnv(T, KEY), { CODEX_HOME: '/surety/home/.codex', CODEX_API_KEY: KEY });
+  assert.ok(!('OPENAI_API_KEY' in templates.templateEnv(T, KEY)), 'the engine sets no OPENAI_API_KEY');
+  assert.equal(T.keyVariable, 'CODEX_API_KEY');
+  assert.deepEqual(T.keyAliases ?? [], [], 'no alias variable');
   assert.deepEqual(templates.templateEnv(T, null), { CODEX_HOME: '/surety/home/.codex' }, 'no key, no key variable');
-  assert.deepEqual(templates.keyVariables('codex'), ['CODEX_API_KEY', 'OPENAI_API_KEY']);
+  assert.deepEqual(templates.keyVariables('codex'), ['CODEX_API_KEY']);
   assert.deepEqual(templates.keyVariables('claude'), ['ANTHROPIC_API_KEY']);
   assert.deepEqual(templates.keyVariables('claude', 'subscription_token'), ['CLAUDE_CODE_OAUTH_TOKEN']);
   const c = templates.templateOf('claude');
@@ -267,20 +276,28 @@ function runFake(mode, { killAfterMs = null } = {}) {
   );
 }
 
-test('the fake codex: given the template, it reads the fixed prompt from stdin, sees both key variables, writes the result file, and its stream parses to a complete usage', async () => {
+test('the fake codex: given the template, it reads the fixed prompt from stdin, is given CODEX_API_KEY alone and reads it, writes the result file, and its stream parses to a complete usage', async () => {
   const r = await runFake({});
   assert.equal(r.code, 0);
   assert.equal(r.given.stdin, `${templates.PROMPT}\n`);
-  assert.deepEqual(r.given.key_variables, ['CODEX_API_KEY', 'OPENAI_API_KEY']);
+  assert.deepEqual(r.given.key_variables, ['CODEX_API_KEY'], 'the engine set CODEX_API_KEY only');
+  assert.equal(r.given.key_read, 'CODEX_API_KEY');
   assert.equal(r.given.codex_home, '/surety/home/.codex');
   assert.deepEqual(r.result, { status: 'completed', summary: 'fake: the role did its work' });
   assert.deepEqual(r.terminals, ['success']);
   assert.equal(r.summary.thread_id, '0199a213-81c0-7800-8aa1-bbab2a035a53');
   const n = normalizeFor('codex', foldObservations(r.usage));
   assert.deepEqual([n.billable_in, n.cached_in, n.out, n.cost_status], [315, 24448, 122, 'unknown']);
-  // a fake that reads OPENAI_API_KEY only is served by the same delivery
+  // A fake that reads OPENAI_API_KEY only now receives nothing: the engine
+  // no longer delivers the key there (K3), so it fails authentication.
   const o = await runFake({ reads: 'OPENAI_API_KEY' });
-  assert.deepEqual(o.terminals, ['success']);
+  assert.deepEqual(o.given.key_variables, ['CODEX_API_KEY']);
+  assert.equal(o.given.key_read, null, 'nothing in OPENAI_API_KEY');
+  assert.deepEqual(o.terminals, ['failure']);
+  assert.equal(codex.codexFailure(o.summary).class, 'auth_failed');
+  const either = await runFake({ reads: 'either' });
+  assert.equal(either.given.key_read, 'CODEX_API_KEY');
+  assert.deepEqual(either.terminals, ['success']);
 });
 
 test('the fake codex: a bad key, no key, a usage limit, a timeout, malformed output, no usage', async () => {
