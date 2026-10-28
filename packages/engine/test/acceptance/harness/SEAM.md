@@ -8445,3 +8445,17 @@ The owner's ruling of 2026-10-27, verbatim: "For policy updates, submitting valu
   - M528 (h): under design off the review is refused `design_review_unavailable` and no session is opened.
 
   No case needed a new revision, so none was changed to submit a different value.
+
+## 572. The prototype limit keys (rows M73, M07, M01; objection 217; the owner's ruling R4 of 2026-10-28; the Builder's `build/rapid-prototype` 38121c19; the Verifier, on `verify/rapid-prototype`)
+
+R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 million billable tokens, $15 estimated spend, 45 minutes, two repairs per stage and four per iteration. These are configuration defaults, not authorization for a paid demonstration."
+
+- **`contract/config.json`**, `project`, gains five rows:
+  - `prototype_budget_tokens`: 1,500,000 within 10,000 to 50,000,000, tokens;
+  - `prototype_budget_usd_estimated`: 15 within 0 to 10,000, usd, `integer: false`;
+  - `prototype_runtime_seconds`: 2,700 within 300 to 86,400, s;
+  - `prototype_repairs_per_stage`: 2 within 0 to 10, count;
+  - `prototype_repairs_per_iteration`: 4 within 0 to 40, count.
+
+  These are the engine's `PROJECT_POLICY` values and the generated appendix's. M73's project key list, M07-project-bootstrap-and-policy's effective defaults and M01's committed `.surety/policy.json` read them from the table. Raising any one is a widening, as raising a budget key is. The table states that in its `$comment` only, as it does for the budget keys.
+- **Not pinned here:** the keys' refusals, their widening when raised, and their enforcement (dispatch admission, the runtime deadline, the repair allowance). Those belong to slice E2's rows. The Builder's `test/unit/rapid-prototype.test.mjs` covers the refusals and widening meanwhile.
