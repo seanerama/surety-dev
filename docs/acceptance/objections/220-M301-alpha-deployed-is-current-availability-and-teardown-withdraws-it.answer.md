@@ -43,6 +43,23 @@ No other assertion of M301 was weakened or removed. Cases (a) to (e), (g) and (h
 
 The same two meanings are pinned in every mode by the M7 rows: M609 (a) and (c) and M612 (b) on the kernel lane, and M611 (c) and (d) on a real unit (sandbox lane).
 
+## The same read in two sandbox files
+
+M307 and M307 qualified by command make the same read. Their `before` hooks end with the teardown, and their cases (d) and (f)(d) read `candidates.progress` afterwards.
+
+Run alone on this branch, M307-the-deployment-journey-on-a-real-unit failed (d) the way M301 (f) did: `+ 'developing'`, `- 'alpha_deployed'`, tests 5, pass 4, fail 1.
+
+Both files are restated the same way:
+
+- the `before` hook keeps the candidate row taken at completion;
+- (d), and (f)(d), assert `alpha_deployed` from that row and `candidate.advanced` once (`developing → alpha_deployed`);
+- a second test of the same letter asserts, after the teardown:
+  - the candidate `developing`;
+  - one `candidate.alpha_withdrawn` naming the environment and the teardown operation;
+  - `candidate.advanced` still once.
+
+Nothing else in those files changed.
+
 ## Runs
 
 Run alone with `node --test` on this branch after `npm run build`, `TMPDIR=/tmp/rpv-m7`:
