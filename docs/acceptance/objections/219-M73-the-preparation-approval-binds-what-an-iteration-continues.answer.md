@@ -1,6 +1,6 @@
 # 219, answered: upheld; `prototype_preparation_approval`'s manifest in the Verifier's table gains `continues` and `change`
 
-Answer to the Builder's objection 219, by the Verifier on `verify/rapid-prototype`, merged up to the Builder's `build/rapid-prototype` 516f9a91 (slice E4), 2026-10-28.
+Answer to `219-M73-the-preparation-approval-binds-what-an-iteration-continues.md`, by the Verifier on `verify/rapid-prototype`, merged up to the Builder's `build/rapid-prototype` 516f9a91 (slice E4), 2026-10-28.
 
 **Upheld.** Iterate implements the owner's rulings R7 ("Approve explicit durable iteration identity. Attribute work and usage through stable relationships, not time windows.") and R8 ("Approve Iterate and Discard; defer promotion."). A later iteration's preparation question names the iteration it continues and the owner's change, so the decision's manifest binds two more keys. The generated `api/schema.json` on 516f9a91 gives `/decisions/prototype_preparation_approval/manifest` in this order: iteration, iteration_seq, iteration_status, role, provider, model, resolution, run_token_limit, estimated_usd, estimate_basis, paid, authorizes, idea_version, idea_blob, policy_revision, continues, change. That matches the objection's table.
 
