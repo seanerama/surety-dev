@@ -72,6 +72,9 @@ describe('M608 Stop and a deliberate resume', () => {
     const m = d.dependency_manifest;
     assert.deepEqual([m.iteration, m.action, m.project_paused, m.outcome?.status, m.outcome?.next_step], [it.id, 'stop', true, 'stopped', PROTO.next_steps.stop], 'the preview binds the action and its outcome');
     assert.deepEqual(m.runs.map((r) => [r.run, r.stoppable]), [[under.id, true]], 'the run under way listed');
+    // E5a (gap 4): the question names the ways back that work; a raise is not one.
+    assert.ok(d.question.endsWith(`To go on: resume it (POST /v1/projects/${p}/iterations/${it.id}/resume), iterate, or discard; raising a limit does not reopen a stopped iteration.`), `the Stop question names resume, iterate and discard (${d.question})`);
+    assert.doesNotMatch(d.question, /Resume by raising a limit/);
     assert.match(m.runs[0].fate, /^stopped by its stop protocol \(human_stop\); what it observed is kept, its usage is charged with its unknown allowance/, 'with its fate');
     assert.equal(runsOfIteration(fx.home, it.id).find((r) => r.id === under.id).state === 'ended', false, 'nothing is stopped before the confirmation');
     assert.equal((await projectRead(fx, p)).paused, false);
