@@ -50,6 +50,12 @@
 // exits 2, as the real binary does for `--ignore-user-config`, and
 // `--strict-config` exits 1 with the real binary's message.
 //
+// `features list` needs CODEX_HOME to name an existing directory, as the
+// real 0.160.0 binary does (C2e, checked 2026-10-28): unset, or naming no
+// directory, it exits 1 with "Error: failed to resolve CODEX_HOME" on
+// standard error and prints nothing, while `--version` and `--help` still
+// answer.
+//
 // `codex features list` prints, by default, the list the real Codex CLI
 // 0.160.0 printed in an empty CODEX_HOME on 2026-10-28 (saved verbatim as
 // features-0.160.0.txt beside this file; the evidence folder
@@ -58,7 +64,7 @@
 //
 // Built-ins only.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -82,6 +88,17 @@ try {
 // `codex features list` (C2b): the inventory the static checks record,
 // with the template's flags in front of it (C2d).
 if (argv.length >= 2 && argv.at(-2) === 'features' && argv.at(-1) === 'list') {
+  const codexHome = process.env.CODEX_HOME;
+  let isDir = false;
+  try {
+    isDir = codexHome !== undefined && codexHome !== '' && statSync(codexHome).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) {
+    process.stderr.write(`Error: failed to resolve CODEX_HOME\n\nCaused by:\n    CODEX_HOME points to ${JSON.stringify(codexHome ?? '')}, but that path does not exist\n`);
+    process.exit(1);
+  }
   let text = typeof mode.features === 'string' ? mode.features : readFileSync(new URL('./features-0.160.0.txt', import.meta.url), 'utf8');
   let lines = text.split('\n').filter((l) => l.trim() !== '');
   const setState = (name, on) => {

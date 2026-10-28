@@ -8,7 +8,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,12 +62,23 @@ export function runStatic(path: string, backend: string, arg: '--version' | '--h
     rmSync(home, { recursive: true, force: true });
     return v;
   };
+  const env = staticEnv(home);
+  // The directories the environment names exist, empty, before the binary
+  // starts: Codex 0.160.0's `features list` exits 1 ("failed to resolve
+  // CODEX_HOME") when CODEX_HOME names no directory, while its `--version`
+  // and `--help` only warn (C2e, observed on MAIN 2026-10-28). The XDG
+  // directories likewise, so that no check depends on a binary making them.
+  try {
+    for (const d of [env.CODEX_HOME!, env.XDG_CONFIG_HOME!, env.XDG_CACHE_HOME!, env.XDG_DATA_HOME!]) mkdirSync(d, { recursive: true });
+  } catch {
+    return Promise.resolve(done(null));
+  }
   return new Promise<StaticRun | null>((resolve) => {
     let child;
     try {
       // In a process group of its own, so that on the time limit the whole
       // group (whatever it started) is killed, not the binary alone.
-      child = spawn(path, args, { cwd: home, env: staticEnv(home), stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      child = spawn(path, args, { cwd: home, env, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     } catch {
       resolve(null);
       return;
