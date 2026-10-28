@@ -51,7 +51,7 @@ import { assistantCanaryEvidenceId, canaryEdit } from '../trust/canaries.js';
 import { validateReply } from '../assistant/turn-package.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
-import { type AdapterStream, type CodexStreamSummary, CodexStream } from './adapters/codex.js';
+import { type AdapterStream, type CodexStreamSummary, CODEX_COMPANION_PROCESSES, CodexStream } from './adapters/codex.js';
 import { exitCause } from './exit-cause.js';
 import { type ContainmentWatch, watchContainment } from './containment.js';
 import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
@@ -93,7 +93,7 @@ export interface CanaryObservation {
   // samples of its domain's processes; null for the scripted backend.
   stream: ClaudeStreamSummary | null;
   // A Codex backend's stream as its adapter read it (C1 of Codex support);
-  // null for every other backend. Not yet judged (C2).
+  // null for every other backend. Judged in trust/attempts.ts (C2).
   codexStream: CodexStreamSummary | null;
   sampling: BackendSampling | null;
   exitStatus: number | null;
@@ -973,9 +973,11 @@ export class Launcher {
             }).catch((err) => log('containment check', err, { run: claim.run }));
           }
           // A real backend's canary: the host samples the domain's members
-          // from the backend's start (D2 §7.2; M136 (c)).
+          // from the backend's start (D2 §7.2; M136 (c)); for Codex, a member
+          // running a companion program of its release is a second backend
+          // too (C2 of Codex support).
           if (claim.attempt !== null && handle.adapterStream !== null && claim.entry !== null && claim.cgroup_path !== null) {
-            handle.sampler = startBackendSampler(claim.cgroup_path, claim.entry.binary_path);
+            handle.sampler = startBackendSampler(claim.cgroup_path, claim.entry.binary_path, 250, undefined, claim.entry.backend === 'codex' ? CODEX_COMPANION_PROCESSES : []);
             handle.sampler.sample();
           }
           started();

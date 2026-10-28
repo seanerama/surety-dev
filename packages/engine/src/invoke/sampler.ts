@@ -6,7 +6,7 @@
 // where that is refused (a non-dumpable process, such as the domain init),
 // the first word of its command line. It signals, moves and writes nothing.
 
-import { closeSync, constants, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, constants, openSync, readSync, readlinkSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 
 import { readProcs } from '../boundary/cgroup.js';
@@ -94,7 +94,19 @@ export interface SamplerIo {
   cmdline(pid: number): string | null;
 }
 
-export function startBackendSampler(cgroupPath: string, binaryPath: string, everyMs = 250, io?: SamplerIo): Sampler {
+// A companion process (C2 of Codex support): a member running another
+// program of the backend's release that acts as a second agent process
+// (Codex's `codex-code-mode-host`), by the base name of its executable or,
+// where that cannot be read, of its argv[0]. Counted as a backend.
+export function isCompanion(exe: string | null, argv0: string | null, companions: readonly string[]): boolean {
+  if (companions.length === 0) return false;
+  const name = (p: string | null) => (p === null || p === '' ? null : basename(p.replace(/ \(deleted\)$/, '')));
+  const e = name(exe);
+  const a = name(argv0);
+  return (e !== null && companions.includes(e)) || (a !== null && companions.includes(a));
+}
+
+export function startBackendSampler(cgroupPath: string, binaryPath: string, everyMs = 250, io?: SamplerIo, companions: readonly string[] = []): Sampler {
   let target: { dev: number; ino: number } | null = null;
   if (io === undefined) {
     try {
@@ -106,7 +118,7 @@ export function startBackendSampler(cgroupPath: string, binaryPath: string, ever
   }
   const read: SamplerIo = io ?? {
     procs: () => readProcs(cgroupPath),
-    classify: (pid) => (target === null ? null : classifyMember(pid, target, binaryPath)),
+    classify: (pid) => (target === null ? null : classifyMember(pid, target, binaryPath, companions)),
     cmdline,
   };
   const known = io !== undefined || target !== null;
@@ -196,8 +208,18 @@ function uptime(): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function classifyMember(pid: number, target: { dev: number; ino: number }, binaryPath: string): MemberClass | null {
+function classifyMember(pid: number, target: { dev: number; ino: number }, binaryPath: string, companions: readonly string[] = []): MemberClass | null {
   const v = isBackend(pid, target, binaryPath);
+  if (v === false && companions.length > 0) {
+    let exe: string | null = null;
+    try {
+      exe = readlinkSync(`/proc/${pid}/exe`);
+    } catch {
+      exe = null;
+    }
+    const argv0 = (readBounded(`/proc/${pid}/cmdline`) ?? '').split('\0')[0] ?? null;
+    if (isCompanion(exe, argv0, companions)) return 'backend';
+  }
   if (v !== true) return v === null ? null : 'other';
   if (isEmbeddedTool(argvOf(pid))) return 'embedded_tool';
   return forkState(readBounded(`/proc/${pid}/stat`), uptime());
