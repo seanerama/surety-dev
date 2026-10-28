@@ -79,10 +79,12 @@ export const RAPID_PROTOTYPE_PRESET: Policy = {
   phase_size: { min: 1, max: 2 },
   design: 'off',
   alpha_deploy: 'on_phase_complete',
-  // Slice E3 (the driver's setting, reversible): a per-run limit that lets
-  // the 1,500,000-token iteration allowance admit several runs under E2's
-  // reservation rule (each dispatch reserves its run limit).
-  budget_run_billable_tokens: 300_000,
+  // Slice E5 (the owner's ruling S5 of 2026-10-28: "Set the per-run token
+  // limit to 5,000,000"): each run is given the lower of this and what its
+  // iteration has left (store/transitions/prototype.ts effectiveAllowanceOf),
+  // so the iteration allowance, independently configurable, is never
+  // reserved past and a prototype is never made impossible to start.
+  budget_run_billable_tokens: 5_000_000,
 };
 
 // The bootstrap policy a mode starts with: none for `planned` (the schema

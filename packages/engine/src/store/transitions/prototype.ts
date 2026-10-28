@@ -12,6 +12,8 @@ import { type LedgerRow, billable, fold, observedSoFar, outstandingReservation, 
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { raisePreparation } from '../../prototype/brief.js';
+import { Refusal } from '../../refusal.js';
+import { resumeWork } from './work.js';
 
 type Db = Tx['db'];
 
@@ -56,8 +58,8 @@ export function createIteration(tx: Tx, args: { project: string; limits: Record<
   const asked = raisePreparation(tx, { project: args.project, iteration: id });
   // An Iterate on a project paused (by a Stop of the predecessor): nothing
   // is dispatched until the owner resumes it, and the next step says so. (A
-  // new app is created paused by the new-app route; its first iteration's
-  // next step is unchanged.)
+  // new prototype is created unpaused by the new-app route, slice E5's S1:
+  // its first iteration's question is all there is until it is answered.)
   const paused = !!args.predecessor && (tx.db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(args.project) as { paused: number } | undefined)?.paused === 1;
   const next = asked ? 'approve preparation or discard' : 'request preparation or discard';
   tx.db.prepare('UPDATE "prototype_iterations" SET "next_step" = ? WHERE "id" = ?').run(paused ? `resume the project (it is paused), then ${next}` : next, id);
@@ -130,16 +132,22 @@ export function recordIterationAlpha(tx: Tx, args: { project: string; candidate:
   tx.emit('prototype.iteration_alpha_ready', { project: args.project, iteration: id }, { candidate: args.candidate, deployment_request: args.request, operation: args.operation });
 }
 
-// A finalized teardown of an environment of a rapid_prototype project
-// (deploy.ts finalizeDeploy): each candidate whose Alpha deployment request
-// to that environment was deployed, and which is still `alpha_deployed`, is
-// set back to `developing`, for nothing it deployed runs there now (ENGINE
-// §6: the label was never reset). Scoped to the environment's deployments;
-// a planned project's candidates are not changed (a design decision for the
-// owner, reported with slice E1). The iteration's `alpha_at` is unchanged.
+// A finalized teardown of an environment (deploy.ts finalizeDeploy): each
+// candidate whose Alpha deployment request to that environment was
+// deployed, and which is still `alpha_deployed`, is set back to
+// `developing`, for nothing it deployed runs there now (ENGINE §6: the label
+// was never reset). Scoped to the environment's deployments.
+//
+// Slice E5 (the owner's ruling S3 of 2026-10-28: "Make current Alpha
+// availability consistent across modes. Teardown must remove any claim that
+// the Alpha is currently available. Preserve the historical deployment
+// record."): every mode, a planned project's candidates as a prototype's.
+// `candidates.progress` is the current claim; the history is kept apart and
+// untouched: the deployment requests and their outcome, the operations and
+// their journal, the deployment verifications, the observation history, the
+// gate evaluation that satisfied alpha_complete, the `candidate.advanced`
+// event, and an iteration's `alpha_at`.
 export function withdrawAlpha(tx: Tx, args: { project: string; environment: string; operation: string }): string[] {
-  const mode = (tx.db.prepare('SELECT "mode" FROM "projects" WHERE "id" = ?').get(args.project) as { mode: string } | undefined)?.mode;
-  if (mode !== 'rapid_prototype') return [];
   const rows = tx.db
     .prepare(
       `SELECT DISTINCT c."id" FROM "candidates" c JOIN "deployment_requests" d ON d."candidate" = c."id"
@@ -180,7 +188,13 @@ export const PROTOTYPE_LIMIT = 'prototype limit';
 export const PROTOTYPE_SETTLING = 'depends on the runs under way of prototype iteration';
 
 const LIMIT_NEXT_STEP = 'raise the limit or discard';
-const STOP_NEXT_STEP = 'resume by raising a limit / iterate / discard';
+// Slice E5 (S2): a limit reached because what the iteration committed is
+// unknown offers only what works: raising a limit cannot resolve an unknown
+// total, and a preparation would be one more dispatch against it.
+export const UNKNOWN_NEXT_STEP = "iterate (a new iteration, whose own totals exclude this one's; the app's totals keep this unknown) or discard";
+// Slice E5 (gap 4): a Stop is undone only by a deliberate resume, never by
+// raising a limit.
+export const STOP_NEXT_STEP = 'resume (POST …/resume), iterate or discard';
 const DISCARD_NEXT_STEP = 'iterate';
 
 interface IterationRowLite {
@@ -229,12 +243,19 @@ export interface IterationAccount {
   estimated_usd: number | null;
   unknown_cost_invocations: number;
   repairs_used: number;
+  // Slice E5 (S2): each charged invocation whose billable tokens are unknown
+  // and which carries no allowance, with its run, so that what is unknown is
+  // named, never only counted.
+  unknown_billable: { invocation: string; run: string; role: string; work_kind: string | null }[];
 }
 
 export function iterationAccount(db: Db, project: string, iteration: string): IterationAccount {
   const receipts = db
-    .prepare(`SELECT i."id" FROM "invocation_receipts" i JOIN "runs" r ON r."id" = i."run" WHERE r."iteration" = ? ORDER BY r."seq", i.rowid`)
-    .all(iteration) as { id: string }[];
+    .prepare(
+      `SELECT i."id", i."run", r."role", w."kind" AS "work_kind" FROM "invocation_receipts" i JOIN "runs" r ON r."id" = i."run" LEFT JOIN "work_items" w ON w."id" = r."work_item"
+       WHERE r."iteration" = ? ORDER BY r."seq", i.rowid`,
+    )
+    .all(iteration) as { id: string; run: string; role: string; work_kind: string | null }[];
   const a: IterationAccount = {
     settled_tokens: 0,
     unknown_allowance_tokens: 0,
@@ -247,13 +268,17 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     estimated_usd: null,
     unknown_cost_invocations: 0,
     repairs_used: 0,
+    unknown_billable: [],
   };
-  for (const { id } of receipts) {
+  for (const { id, run, role, work_kind } of receipts) {
     const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(id) as LedgerRow[];
     if (rows.some((r) => r.corrects === null)) {
       const acc = fold(rows);
       const b = billable(acc);
-      if (b === null && acc.unknown_allowance_tokens === null) a.unknown_billable_invocations += 1;
+      if (b === null && acc.unknown_allowance_tokens === null) {
+        a.unknown_billable_invocations += 1;
+        a.unknown_billable.push({ invocation: id, run, role, work_kind });
+      }
       a.settled_tokens += b ?? 0;
       a.unknown_allowance_tokens += acc.unknown_allowance_tokens ?? 0;
       if ((acc.cost_status === 'reported' || acc.cost_status === 'measured_zero') && acc.cost_usd !== null) a.reported_usd = (a.reported_usd ?? 0) + acc.cost_usd;
@@ -281,10 +306,106 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
   return a;
 }
 
+// What the iteration's committed figure being unknown means, in words: the
+// invocations, each with its run, and what is unknown of them (S2). null
+// when nothing is unknown.
+export function unknownAccountingText(a: IterationAccount): string | null {
+  if (a.unknown_billable_invocations === 0) return null;
+  const which = a.unknown_billable.map((u) => `invocation ${u.invocation} of run ${u.run} (${u.role}${u.work_kind ? `, ${u.work_kind}` : ''})`).join('; ');
+  return `${a.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance (${which}): each was settled with no usage reported and no allowance charged for it, so what it used, and so what the iteration committed, is unknown, never 0. Raising a limit cannot resolve an unknown total`;
+}
+
+// The iteration's accounting unresolved (S2): its committed tokens unknown.
+// null when they are known (or the iteration has no token allowance).
+export function unresolvedAccounting(db: Db, project: string, iteration: string): { text: string; invocations: string[]; runs: string[] } | null {
+  const it = iterationById(db, iteration);
+  if (!it || num(limitsOfRow(it).prototype_budget_tokens) === null) return null;
+  const a = iterationAccount(db, project, iteration);
+  const text = unknownAccountingText(a);
+  return text === null ? null : { text, invocations: a.unknown_billable.map((u) => u.invocation), runs: [...new Set(a.unknown_billable.map((u) => u.run))] };
+}
+
+// ---- slice E5: the effective allowance of a run (the owner's ruling S5 of 2026-10-28) ----
+//
+// "Cap each run's effective allowance at the available iteration budget,
+// accounting for other active reservations, and show that effective limit
+// clearly." A run of a prototype iteration is admitted with the lower of
+// its per-run limit (`budget_run_billable_tokens`) and what the iteration
+// has left of its token allowance after its settled usage, its unknown
+// allowances and what the other runs under way observed and still reserve.
+// That effective allowance is fixed on the run's receipt at dispatch
+// (ledger.ts runLimit reads it): it is the run's reservation, the bound of
+// its unknown allowance, and the limit its own mid-run budget check stops it
+// at (ledger.ts budgetCheck). A run that cannot get a positive one is not
+// dispatched (iterationVerdict).
+
+export interface EffectiveAllowance {
+  iteration: string;
+  // The per-run limit asked (the policy's run budget).
+  run_limit_tokens: number;
+  // What the iteration has left now; null when it has no token allowance.
+  available_tokens: number | null;
+  effective_limit_tokens: number;
+  limited_by: 'run' | 'iteration';
+}
+
+// The effective allowance of a run asking `runLimit` of the iteration now;
+// null when none is positive or the committed figure is unknown.
+export function effectiveAllowanceOf(db: Db, it: IterationRowLite, runLimit: number, account: IterationAccount = iterationAccount(db, it.project, it.id)): EffectiveAllowance | null {
+  const tokens = num(limitsOfRow(it).prototype_budget_tokens);
+  if (tokens === null) return { iteration: it.id, run_limit_tokens: runLimit, available_tokens: null, effective_limit_tokens: runLimit, limited_by: 'run' };
+  if (account.unknown_billable_invocations > 0) return null;
+  const available = tokens - account.committed_tokens;
+  if (available <= 0) return null;
+  return available < runLimit
+    ? { iteration: it.id, run_limit_tokens: runLimit, available_tokens: available, effective_limit_tokens: available, limited_by: 'iteration' }
+    : { iteration: it.id, run_limit_tokens: runLimit, available_tokens: available, effective_limit_tokens: runLimit, limited_by: 'run' };
+}
+
+// The effective allowance of a run of the project dispatched now:
+// `undefined` when no iteration admits it (a planned project, or no
+// attributable iteration), null when the iteration has none to give.
+export function dispatchAllowance(db: Db, project: string, runLimit: number): EffectiveAllowance | null | undefined {
+  const mode = (db.prepare('SELECT "mode" FROM "projects" WHERE "id" = ?').get(project) as { mode: string } | undefined)?.mode;
+  if (mode !== 'rapid_prototype') return undefined;
+  const it = currentRow(db, project);
+  if (!it || !ATTRIBUTABLE_STATUSES.includes(it.status)) return undefined;
+  return effectiveAllowanceOf(db, it, runLimit);
+}
+
+// A session turn's (S5, as a one-shot's): the session's cumulative bound,
+// what its earlier turns were charged (`spent`) plus the lower of what the
+// session has left of its run budget and what the iteration has left. The
+// iteration's account already counts the earlier turns. `undefined` when no
+// iteration admits it; null when the iteration has none to give.
+export function sessionTurnAllowance(db: Db, run: { project: string; iteration: string | null }, runLimit: number, spent: number): EffectiveAllowance | null | undefined {
+  if (run.iteration === null) return undefined;
+  const it = iterationById(db, run.iteration);
+  if (!it || !ATTRIBUTABLE_STATUSES.includes(it.status) || currentRow(db, run.project)?.id !== it.id) return undefined;
+  const own = Math.max(0, runLimit - spent);
+  const e = effectiveAllowanceOf(db, it, own);
+  if (e === null || own <= 0) return null;
+  return { ...e, run_limit_tokens: runLimit, effective_limit_tokens: spent + e.effective_limit_tokens };
+}
+
+// The allowance a receipt fixed (its budget snapshot's `prototype_allowance`),
+// or null for a receipt that has none.
+export function receiptAllowance(db: Db, invocation: string): EffectiveAllowance | null {
+  const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
+  try {
+    const v = row ? (JSON.parse(row.budget_snapshot) as { prototype_allowance?: EffectiveAllowance }).prototype_allowance : undefined;
+    return v && typeof v.effective_limit_tokens === 'number' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 // What a dispatch asks of the iteration: the run's reservation (its run
 // limit: `budget_run_billable_tokens`, or a Designer session's own budget,
 // ledger.ts runBudgetOf), and whether it is a repair, with the work item's
-// repairs so far.
+// repairs so far. Slice E5 (S5): the reservation is the per-run limit
+// asked; what the run is given is its effective allowance, the lower of it
+// and what the iteration has left (effectiveAllowanceOf).
 export interface DispatchAsk {
   reservation: number;
   repair: boolean;
@@ -365,16 +486,21 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
   }
   const tokens = num(limits.prototype_budget_tokens);
   if (tokens !== null) {
-    if (account.unknown_billable_invocations > 0) {
+    // S2: an unknown committed figure is never read as 0, and no run is
+    // dispatched against it; what is unknown is named.
+    const unknown = unknownAccountingText(account);
+    if (unknown !== null) {
       return {
         kind: 'final',
         limit: 'tokens',
-        reason: `tokens: prototype_budget_tokens ${tokens}: ${account.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance, so what the iteration committed is unknown and this run's reservation of ${ask.reservation} cannot be shown to fit${usdNote}`,
-        facts: { value: tokens, unknown_billable_invocations: account.unknown_billable_invocations, reservation: ask.reservation },
+        reason: `tokens: prototype_budget_tokens ${tokens}: what the iteration committed is unknown: ${unknown}; no run is dispatched against an unknown total`,
+        facts: { value: tokens, unknown: true, unknown_billable_invocations: account.unknown_billable_invocations, invocations: account.unknown_billable.map((u) => u.invocation), runs: [...new Set(account.unknown_billable.map((u) => u.run))], reservation: ask.reservation },
       };
     }
-    const after = account.committed_tokens + ask.reservation;
-    if (after > tokens) {
+    // S5: the run is given the lower of its per-run limit and what the
+    // iteration has left; refused only when nothing is left.
+    const available = tokens - account.committed_tokens;
+    if (available <= 0) {
       const ended = account.committed_tokens - account.outstanding_reservation_tokens;
       const facts = {
         value: tokens,
@@ -383,10 +509,11 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
         unknown_allowances: account.unknown_allowance_tokens,
         under_way_observed: account.under_way_observed_tokens,
         under_way_reserved: account.outstanding_reservation_tokens,
+        available: Math.max(0, available),
         reservation: ask.reservation,
       };
-      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) + this run's reservation ${ask.reservation} = ${after} exceeds it${usdNote}`;
-      return { kind: ended + ask.reservation > tokens ? 'final' : 'settling', limit: 'tokens', reason: text, facts };
+      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) leaves ${Math.max(0, available)}: a run would get no positive allowance (its per-run limit ${ask.reservation}, capped at what the iteration has left)${usdNote}`;
+      return { kind: tokens - ended > 0 ? 'settling' : 'final', limit: 'tokens', reason: text, facts };
     }
   }
   return null;
@@ -436,7 +563,7 @@ export function enforceIterationLimit(tx: Tx, project: string, ask: DispatchAsk)
   if (!it || !ATTRIBUTABLE_STATUSES.includes(it.status)) return false;
   const v = iterationVerdict(tx.db, it, ask);
   if (v === null || v.kind !== 'final') return false;
-  endIteration(tx, it, 'limit_reached', v.reason, LIMIT_NEXT_STEP, 'prototype.iteration_limit_reached', { limit: v.limit, ...v.facts });
+  endIteration(tx, it, 'limit_reached', v.reason, v.facts.unknown === true ? UNKNOWN_NEXT_STEP : LIMIT_NEXT_STEP, 'prototype.iteration_limit_reached', { limit: v.limit, ...v.facts });
   return true;
 }
 
@@ -444,27 +571,63 @@ export function enforceIterationLimit(tx: Tx, project: string, ask: DispatchAsk)
 // passed is limit_reached though no dispatch was asked of it, so that its
 // state says what the next dispatch would meet. Only the runtime is
 // independent of a dispatch's ask; nothing running is touched.
+// Slice E5 (S2): so is an unknown committed figure (whatever a dispatch
+// asks, it is refused), at any open status: a preparing iteration's too, so
+// that its next step never offers a preparation that would be refused.
 export function settleIterationRuntime(tx: Tx): number {
   const rows = tx.db
-    .prepare(`SELECT * FROM "prototype_iterations" WHERE "approved_at" IS NOT NULL AND "status" IN (${OPEN_ITERATION_STATUSES.map(() => '?').join(', ')})`)
+    .prepare(`SELECT * FROM "prototype_iterations" WHERE "status" IN (${OPEN_ITERATION_STATUSES.map(() => '?').join(', ')})`)
     .all(...OPEN_ITERATION_STATUSES) as IterationRowLite[];
   let n = 0;
   for (const it of rows) {
     if (currentRow(tx.db, it.project)?.id !== it.id) continue;
     const v = iterationVerdict(tx.db, it, { reservation: 0, repair: false, item_repairs: 0, work_item: null });
-    if (v === null || v.limit !== 'runtime') continue;
-    endIteration(tx, it, 'limit_reached', v.reason, LIMIT_NEXT_STEP, 'prototype.iteration_limit_reached', { limit: v.limit, ...v.facts });
+    if (v === null || !(v.limit === 'runtime' || (v.limit === 'tokens' && v.facts.unknown === true))) continue;
+    endIteration(tx, it, 'limit_reached', v.reason, v.facts.unknown === true ? UNKNOWN_NEXT_STEP : LIMIT_NEXT_STEP, 'prototype.iteration_limit_reached', { limit: v.limit, ...v.facts });
     n++;
   }
   return n;
 }
 
+// Why raising a limit does not reopen the current iteration now (S2; gap
+// 4), or null when it would: a Stop is undone only by a deliberate resume,
+// and a committed figure that is unknown is not resolved by any limit.
+export function noReopenBecause(db: Db, it: IterationRowLite): string | null {
+  if (it.status === 'stopped') return `iteration ${it.seq} was stopped by the owner: raising a limit does not undo a Stop; resume it deliberately (POST /v1/projects/${it.project}/iterations/${it.id}/resume)`;
+  if (it.status === 'limit_reached') {
+    const u = unresolvedAccounting(db, it.project, it.id);
+    if (u !== null) return `iteration ${it.seq}'s accounting is unresolved: ${u.text}. Next: ${UNKNOWN_NEXT_STEP}`;
+  }
+  return null;
+}
+
+// What a policy submission that raises a prototype limit does to the
+// current iteration, for the submission's response (S2: "the policy
+// change's response says why"): null when it raises none, or the iteration
+// is neither limit_reached nor stopped.
+export function raiseEffect(db: Db, project: string, change: Record<string, unknown>): { iteration: string; seq: number; status: IterationStatus; raises: string[]; reopens: boolean; reason: string } | null {
+  const mode = (db.prepare('SELECT "mode" FROM "projects" WHERE "id" = ?').get(project) as { mode: string } | undefined)?.mode;
+  if (mode !== 'rapid_prototype') return null;
+  const it = currentRow(db, project);
+  if (!it || !(it.status === 'limit_reached' || it.status === 'stopped')) return null;
+  const from = limitsOfRow(it);
+  const raises = PROTOTYPE_LIMIT_KEYS.filter((k) => typeof change[k] === 'number' && (typeof from[k] !== 'number' || (change[k] as number) > from[k]!));
+  if (raises.length === 0) return null;
+  const why = noReopenBecause(db, it);
+  return why !== null
+    ? { iteration: it.id, seq: it.seq, status: it.status, raises, reopens: false, reason: why }
+    : { iteration: it.id, seq: it.seq, status: it.status, raises, reopens: true, reason: `iteration ${it.seq} reached a limit; it is open again once the raised limit is committed, and its next dispatch is checked against the new limits` };
+}
+
 // A policy revision recorded (finalize.ts, the policy finalizer): the
 // current iteration's limits follow the project's editable keys. A raised
-// limit is the way back from `limit_reached` and from `stopped` (their next
-// step): such an iteration is open again, `building` once its brief is
-// approved, else `preparing`; the next dispatch is checked against the new
-// limits (a stopped project stays paused until the owner resumes it).
+// limit is the way back from `limit_reached` (its next step): such an
+// iteration is open again, `building` once its brief is approved, else
+// `preparing`; the next dispatch is checked against the new limits.
+// Slice E5: never from `stopped` (gap 4: a Stop is undone only by the
+// owner's deliberate resume), and never while the committed figure is
+// unknown (S2): the limits follow, the iteration stays as it is, and the
+// event says why.
 export function limitsChanged(tx: Tx, project: string): void {
   const it = currentRow(tx.db, project);
   if (!it || it.status === 'discarded' || !(ATTRIBUTABLE_STATUSES.includes(it.status) || HOLDING_STATUSES.includes(it.status))) return;
@@ -473,11 +636,76 @@ export function limitsChanged(tx: Tx, project: string): void {
   const changed = PROTOTYPE_LIMIT_KEYS.filter((k) => from[k] !== to[k]);
   if (changed.length === 0) return;
   const raised = changed.filter((k) => typeof from[k] !== 'number' || to[k]! > from[k]!);
-  const reopen = raised.length > 0 && (it.status === 'limit_reached' || it.status === 'stopped');
+  const notBecause = raised.length > 0 ? noReopenBecause(tx.db, it) : null;
+  const reopen = raised.length > 0 && it.status === 'limit_reached' && notBecause === null;
   const status: IterationStatus = reopen ? (it.approved_at !== null ? 'building' : 'preparing') : it.status;
   tx.db.prepare('UPDATE "prototype_iterations" SET "limits_json" = ? WHERE "id" = ?').run(JSON.stringify(to), it.id);
   if (reopen) tx.db.prepare('UPDATE "prototype_iterations" SET "status" = ?, "outcome_reason" = NULL, "next_step" = NULL, "ended_at" = NULL WHERE "id" = ?').run(status, it.id);
-  tx.emit('prototype.iteration_limits_changed', { project, iteration: it.id }, { from, to, raised, reopened: reopen, status });
+  tx.emit('prototype.iteration_limits_changed', { project, iteration: it.id }, { from, to, raised, reopened: reopen, status, ...(notBecause !== null ? { not_reopened_because: notBecause } : {}) });
+}
+
+// ---- slice E5: Resume (gap 4: "resumption needs a deliberate action") ----
+//
+//   POST /v1/projects/:p/iterations/:i/resume
+//
+// On the project's current iteration while it is `stopped`: the project is
+// unpaused and the iteration open again, `building` once its brief is
+// approved (the tick then sets awaiting_owner while one of the owner's
+// questions about its work is open: prototype/brief.ts
+// syncIterationStatuses), else `preparing`; the work the Stop held (each
+// held work item whose last run is the iteration's) is resumed with it, as
+// POST …/work/:w/resume does. Refused while a limit would refuse its next
+// dispatch whatever runs do (the runtime passed, the allowance spent, or the
+// committed figure unknown): raise the limit first, or iterate or discard.
+export function resumeBlocker(db: Db, it: IterationRowLite): string | null {
+  if (currentRow(db, it.project)?.id !== it.id) return `iteration ${it.seq} is not the project's current iteration`;
+  if (it.status !== 'stopped') return `iteration ${it.seq} is ${it.status}: only a stopped iteration is resumed`;
+  const u = unresolvedAccounting(db, it.project, it.id);
+  if (u !== null) return `iteration ${it.seq}'s accounting is unresolved: ${u.text}. Next: ${UNKNOWN_NEXT_STEP}`;
+  const v = iterationVerdict(db, it, askOfItem(db, { id: '', project: it.project, repair_due: 0, repair_attempts: 0 }));
+  if (v !== null && v.kind === 'final') return `${v.reason}; raise the limit, then resume`;
+  return null;
+}
+
+export function resumeIteration(tx: Tx, args: { project: string; iteration: string }): { status: number; body: Record<string, unknown>; effects: { kind: 'tick' }[] } {
+  const it = iterationById(tx.db, args.iteration);
+  if (!it || it.project !== args.project) throw new Refusal(404, 'not_found', `Iteration ${args.iteration} of project ${args.project} does not exist.`, 'Read GET /v1/projects/:p/iterations.', { iteration: args.iteration });
+  const why = resumeBlocker(tx.db, it);
+  if (why !== null) throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq} cannot be resumed: ${why}.`, 'Read the iteration; its next step and controls say what is possible.', { iteration: it.id, status: it.status });
+  // The status the iteration's own state gives: building once its brief is
+  // approved; awaiting its brief's approval while that question is open;
+  // else preparing, its next step whether a preparation question is open.
+  const row = tx.db.prepare('SELECT "brief_decision" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { brief_decision: string | null };
+  const openQuestion = (id: string | null) => id !== null && tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "id" = ? AND "status" = 'open'`).get(id) !== undefined;
+  const preparationOpen = tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'open'`).get(it.id) !== undefined;
+  const [status, next]: [IterationStatus, string] =
+    it.approved_at !== null
+      ? ['building', 'none: building']
+      : openQuestion(row.brief_decision)
+        ? ['awaiting_brief_approval', 'approve the brief, or prepare again, or discard']
+        : ['preparing', preparationOpen ? 'approve preparation or discard' : 'request preparation or discard'];
+  tx.db.prepare('UPDATE "prototype_iterations" SET "status" = ?, "outcome_reason" = NULL, "next_step" = ?, "ended_at" = NULL WHERE "id" = ?').run(status, next, it.id);
+  const paused = (tx.db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(it.project) as { paused: number }).paused === 1;
+  if (paused) {
+    tx.db.prepare('UPDATE "projects" SET "paused" = 0 WHERE "id" = ?').run(it.project);
+    tx.emit('project.resumed', { project: it.project }, {});
+  }
+  const held = heldByIteration(tx.db, it);
+  for (const w of held) resumeWork(tx, { project: it.project, workItem: w });
+  tx.emit('prototype.iteration_resumed', { project: it.project, iteration: it.id }, { from: 'stopped', to: status, project_unpaused: paused, resumed_work: held });
+  return { status: 200, body: { iteration: { id: it.id, seq: it.seq, status, next_step: next }, project_unpaused: paused, resumed_work: held }, effects: [{ kind: 'tick' }] };
+}
+
+// The held work items whose last run is the iteration's (what its Stop held).
+function heldByIteration(db: Db, it: IterationRowLite): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT w."id" FROM "work_items" w WHERE w."project" = ? AND w."status" = 'held'
+           AND (SELECT r."iteration" FROM "runs" r WHERE r."work_item" = w."id" ORDER BY r."seq" DESC LIMIT 1) = ? ORDER BY w."seq"`,
+      )
+      .all(it.project, it.id) as { id: string }[]
+  ).map((w) => w.id);
 }
 
 // ---- Stop and Discard (R4, R8): what each would do, for the confirmation and the read ----
@@ -571,6 +799,8 @@ export function runsUnderWay(db: Db, iteration: string): RunFate[] {
 export interface IterationControls {
   stop: { available: boolean; reason: string };
   discard: { available: boolean; reason: string; tears_down_alpha: boolean; kept_because: string | null };
+  // Slice E5 (gap 4): the deliberate way back from a Stop.
+  resume: { available: boolean; reason: string };
 }
 
 // What Stop and Discard would do now, for the iteration read and the
@@ -593,7 +823,11 @@ export function iterationControls(db: Db, iteration: string): IterationControls 
           tears_down_alpha: alpha.tears_down_alpha,
           kept_because: alpha.kept_because,
         };
-  return { stop, discard };
+  const resumeWhy = resumeBlocker(db, it);
+  const resume = resumeWhy === null
+    ? { available: true, reason: `unpauses the project, opens the iteration again (${it.approved_at !== null ? 'building' : 'preparing or awaiting its brief\'s approval'}) and resumes the ${heldByIteration(db, it).length} work item(s) its Stop held; checked against its limits at the next dispatch` }
+    : { available: false, reason: resumeWhy };
+  return { stop, discard, resume };
 }
 
 export type IterationAction = 'stop' | 'discard';

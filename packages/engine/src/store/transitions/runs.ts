@@ -30,7 +30,7 @@ import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
-import { PROTOTYPE_LIMIT, askOfItem, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
+import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfItem, dispatchAllowance, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
 import { preparationEnded } from '../../prototype/brief.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
@@ -690,6 +690,13 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     if (!canary && blocker.startsWith(PROTOTYPE_LIMIT)) enforceIterationLimit(tx, item.project, askOfItem(tx.db, item));
     return null;
   }
+  // A rapid prototype's run is given its effective allowance (slice E5, the
+  // owner's ruling S5): the lower of its per-run limit and what its
+  // iteration has left, fixed on its receipt below. The check above refused
+  // a dispatch that would get none; read again here, in the claim's own
+  // transaction, so two claims never both reserve the same remainder.
+  const allowance = canary ? undefined : dispatchAllowance(tx.db, item.project, projectPolicy(tx.db, item.project).budget_run_billable_tokens!);
+  if (allowance === null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -855,6 +862,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     // An attempt that names its per-canary limit (the assistant's: its
     // turn limit, the assistant design §3 under B2) fixes it on the receipt.
     runLimit: backend.kind === 'attempt' ? attemptCanaryLimit(backend.attempt) : null,
+    allowance: allowance ?? null,
   });
   const domain = tx.newId('dom_');
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
@@ -958,7 +966,7 @@ export function attemptCanaryLimit(a: { spend: string }): number | null {
 
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null; runLimit?: number | null } = {}): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null; runLimit?: number | null; allowance?: EffectiveAllowance | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -966,10 +974,14 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
   if (!run.grant) throw illegal('Allocating a receipt for a run without a grant', { run: runId });
   const id = tx.newId('inv_');
   const policy = projectPolicy(tx.db, run.project);
+  // A prototype run's limit is its effective allowance (slice E5, S5): its
+  // reservation, the bound of its unknown allowance (ledger.ts runLimit) and
+  // its mid-run stop (ledger.ts budgetCheck), with what it was made of.
   const budget = {
-    budget_run_billable_tokens: opts.runLimit ?? policy.budget_run_billable_tokens,
+    budget_run_billable_tokens: opts.allowance ? opts.allowance.effective_limit_tokens : (opts.runLimit ?? policy.budget_run_billable_tokens),
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
+    ...(opts.allowance ? { prototype_allowance: opts.allowance } : {}),
   };
   // The provider session id, derived from this receipt's own id and bound to
   // it here, in the dispatch transaction, before any domain is placed (D2

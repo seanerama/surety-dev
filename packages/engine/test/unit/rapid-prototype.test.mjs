@@ -34,13 +34,15 @@ const { recordIterationAlpha, withdrawAlpha } = await import(join(dist, 'store',
 const { validatePolicySubmission, wideningKeys, projectEffectiveDefaults } = await import(join(dist, 'config', 'project-policy.js'));
 const { holdSecret } = await import(join(dist, 'records', 'redact.js'));
 const { chargeInvocation } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
+const { dispatchCandidates } = await import(join(dist, 'store', 'reads.js'));
+const { answerDecision } = await import(join(dist, 'store', 'transitions', 'control.js'));
 
 setEngineSettings({ lease_ttl: 600, git_deadline: 30, decision_targets: {} });
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: 'req-1' };
 const AT = '2026-10-28T00:00:00.000Z';
 const PROTO_LIMITS = { prototype_budget_tokens: 1_500_000, prototype_budget_usd_estimated: 15, prototype_runtime_seconds: 2700, prototype_repairs_per_stage: 2, prototype_repairs_per_iteration: 4 };
-// The prototype preset's per-run limit (slice E3, the driver's setting), snapshotted with the five keys.
-const RUN_LIMIT = 300_000;
+// The prototype preset's per-run limit (slice E5, the owner's ruling S5), snapshotted with the five keys.
+const RUN_LIMIT = 5_000_000;
 const ITERATION_LIMITS = { ...PROTO_LIMITS, budget_run_billable_tokens: RUN_LIMIT };
 
 // A scratch home, store and git configuration, under the harness so that the
@@ -62,11 +64,13 @@ function scratch(t) {
   let n = 0;
   // POST /v1/projects/new, prepared and recorded as the route does; then
   // registered and resumed so that it can dispatch.
-  const create = async (body = {}) => {
+  // `asCreated`: the pause left as the route created it (slice E5's S1).
+  const create = async (body = {}, { asCreated = false } = {}) => {
     const prepared = await prepareNewProject(rt, { name: 'Proto', idea: 'A small app.', dev_repo_path: join(dir, `app${++n}`), ...body });
     const made = transact(db, HUMAN, (tx) => bootstrapProject(tx, prepared));
-    db.prepare(`UPDATE projects SET registration_state = 'registered', paused = 0 WHERE id = ?`).run(made.project.id);
-    return { ...made.project, repo: prepared.repo, commit: prepared.commit };
+    if (asCreated) db.prepare(`UPDATE projects SET registration_state = 'registered' WHERE id = ?`).run(made.project.id);
+    else db.prepare(`UPDATE projects SET registration_state = 'registered', paused = 0 WHERE id = ?`).run(made.project.id);
+    return { ...made.project, repo: prepared.repo, commit: prepared.commit, initiallyPaused: prepared.initiallyPaused };
   };
   return { db, dir, create };
 }
@@ -155,6 +159,23 @@ test('rapid_prototype: T1, the preset bootstrap policy as revision 1 (no widenin
   assert.deepEqual(readIteration(db, { project: p.id, iteration: p.iteration }).iteration.limits, ITERATION_LIMITS);
 });
 
+test('S1: a new prototype is created unpaused and nothing of it is dispatchable until its preparation is approved; that approval registers exactly one preparation run; a planned app is still created paused', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ mode: 'rapid_prototype' }, { asCreated: true });
+  assert.equal(p.initiallyPaused, false);
+  assert.equal(db.prepare('SELECT paused FROM projects WHERE id = ?').get(p.id).paused, 0, 'unpaused');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items WHERE project = ?').get(p.id).n, 0, 'no work item: the preparation exists only after its approval');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs WHERE project = ?').get(p.id).n, 0);
+  assert.deepEqual(dispatchCandidates(db).find((c) => c.project === p.id)?.items ?? [], [], 'nothing for the scheduler to dispatch');
+  const open = db.prepare(`SELECT * FROM decisions WHERE project = ? AND status = 'open'`).all(p.id);
+  assert.deepEqual(open.map((d) => d.kind), ['prototype_preparation_approval'], 'the one question is the preparation\'s');
+  const answered = transact(db, HUMAN, (tx) => answerDecision(tx, { project: p.id, decision: open[0].id, option: 'approve', preview_hash: open[0].preview_hash, note: null, facts: {} }));
+  assert.equal(answered.status, 200);
+  assert.deepEqual(db.prepare('SELECT kind, status FROM work_items WHERE project = ?').all(p.id), [{ kind: 'brief_preparation', status: 'eligible' }], 'exactly the disclosed preparation run');
+  const planned = await create({ tier: 'T2' }, { asCreated: true });
+  assert.deepEqual([planned.initiallyPaused, db.prepare('SELECT paused FROM projects WHERE id = ?').get(planned.id).paused], [true, 1], 'a planned app is created paused, as before');
+});
+
 test('the new-app route refuses an unknown mode and a prototype at another tier, creating nothing', async (t) => {
   const { db, dir, create } = scratch(t);
   await assert.rejects(create({ mode: 'fast', tier: 'T1' }), (e) => e.status === 400 && e.code === 'invalid_value' && e.subject?.field === 'mode');
@@ -227,6 +248,12 @@ test('a run with two invocations counts two; an incomplete invocation shows its 
   const { db, create } = scratch(t);
   const p = await create({ mode: 'rapid_prototype' });
   setLimits(db, p.iteration, { prototype_budget_tokens: 10_000_000 });
+  // Slice E5 (S5): the stopped run below is charged its effective allowance
+  // (here its per-run limit, 5,000,000, the iteration having more left) less
+  // what it observed, which the day's unknown-token limit (2,000,000 by
+  // default) would refuse every later dispatch on; it is raised here, as
+  // what is under test is the iteration's read.
+  db.prepare(`UPDATE policy_revisions SET effective = json_set(effective, '$.budget_day_unknown_tokens', 50000000) WHERE project = ?`).run(p.id);
   // A session run of two turns: two invocations of one run (a one-shot run
   // has exactly one receipt, store constraint). Its rows written as the
   // session protocol leaves them, its attribution as session.ts sets it;
@@ -318,7 +345,13 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
   for (const [proj, n] of [[p.id, 1], [planned.id, 2]]) {
     db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, current_generation) VALUES (?, ?, ?, 'alpha', 'local_service', 'x', '{}', 1)`).run(`env_${n}`, AT, proj);
     db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress) VALUES (?, ?, ?, 1, 'rev', 'lin', ?, 'engine_cadence', 'alpha_deployed')`).run(`cand_${n}`, AT, proj, AT);
-    db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, outcome) VALUES (?, ?, ?, 'k', 'policy', ?, ?, 'deployed')`).run(`dreq_${n}`, AT, proj, `cand_${n}`, `env_${n}`);
+    db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, authorization, outcome) VALUES (?, ?, ?, 'k', 'policy', ?, ?, ?, 'deployed')`).run(`dreq_${n}`, AT, proj, `cand_${n}`, `env_${n}`, `auth_${n}`);
+    // Its deploy operation, ended (slice E5: what runs in the environment
+    // now is the newest deployed request's, unless a teardown followed).
+    db.prepare(
+      `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, orchestration_stage, authorization)
+       VALUES (?, ?, ?, ?, 'deploy', ?, '{}', ?, 1, 'succeeded', ?, 'ended', ?)`,
+    ).run(`op_${n}`, AT, proj, 100 + n, JSON.stringify({ environment: `env_${n}` }), `key_${n}`, AT, `auth_${n}`);
   }
   // Slice E4: only a candidate of the iteration's own approved brief is its
   // Alpha. Before the brief is approved, none is (the refusal an event, the
@@ -353,7 +386,11 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
   assert.equal(read.alpha.current, null, 'a torn-down Alpha is not current, however fresh the last observation');
   assert.deepEqual([read.alpha.deployed_at, read.iteration.alpha_at, read.outcome.status], [it.alpha_at, it.alpha_at, 'alpha_ready'], 'the history is kept');
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'candidate.alpha_withdrawn'`).get().n, 1);
-  // A planned project's candidate is not changed by its teardown.
-  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => withdrawAlpha(tx, { project: planned.id, environment: 'env_2', operation: 'op_td2' })), []);
-  assert.equal(db.prepare('SELECT progress FROM candidates WHERE id = ?').get('cand_2').progress, 'alpha_deployed');
+  // Slice E5 (the owner's ruling S3): every mode. A planned project's
+  // candidate is set back by its teardown too; its deployment history kept.
+  const requestsBefore = db.prepare(`SELECT * FROM deployment_requests WHERE candidate = 'cand_2'`).all();
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => withdrawAlpha(tx, { project: planned.id, environment: 'env_2', operation: 'op_td2' })), ['cand_2']);
+  assert.equal(db.prepare('SELECT progress FROM candidates WHERE id = ?').get('cand_2').progress, 'developing', 'no claim that the planned Alpha is available now');
+  assert.deepEqual(db.prepare(`SELECT * FROM deployment_requests WHERE candidate = 'cand_2'`).all(), requestsBefore, 'its deployment record is history, unchanged');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'candidate.alpha_withdrawn'`).get().n, 2);
 });

@@ -12,7 +12,7 @@ import { type Baseline, addCheckout, blockingObservation, integrationRef, openLi
 import { policyRevision, projectEffective } from './settings.js';
 import type { Policy } from '../../config/project-policy.js';
 import type { ExecutionMode } from '../../config/schema.js';
-import { createIteration, limitsOf } from './prototype.js';
+import { createIteration, limitsOf, raiseEffect } from './prototype.js';
 import type { CommandResult } from './control.js';
 import { type ProtectedSet, captureProposal, recordInitialVersion } from './protected.js';
 import { raiseQuestion, widenScope } from './queue.js';
@@ -359,6 +359,13 @@ export function submitPolicy(
     throw new Refusal(409, 'illegal_transition', 'The submission this repeats is not recorded.', 'Send the change again.', { project: args.project });
   }
   const facts = policyFacts(tx, { project: args.project });
+  // Slice E5 (the owner's ruling S2; gap 4): a submission that raises a
+  // limit of a rapid prototype whose current iteration reached a limit or
+  // was stopped says what the raise will do to it: reopen it, or not, and
+  // why (a Stop is undone only by resume; an unknown total is resolved by
+  // no limit).
+  const effect = raiseEffect(tx.db, args.project, args.ordinary as Record<string, unknown>);
+  const prototype = effect === null ? {} : { prototype: effect };
   let proposal: string | null = null;
   if (args.governed) {
     if (facts.head !== args.governed.head) {
@@ -390,7 +397,7 @@ export function submitPolicy(
       'confirm_required',
       `The change widens what the engine may do unasked (${args.widens.join(', ')}): it needs confirmation through decision ${decision.id}.`,
       'Answer the decision with its preview hash to commit the change.',
-      { decision: decision.id, preview_hash: decision.preview_hash, ...(proposal ? { proposal } : {}) },
+      { decision: decision.id, preview_hash: decision.preview_hash, ...(proposal ? { proposal } : {}), ...prototype },
     );
     recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome: 'refused', revision: null, operation: null, status: 409, answer: refusal.body() });
     return { status: 409, body: refusal.body() };
@@ -416,12 +423,12 @@ export function submitPolicy(
   }
   const commit = revision !== null ? { committed: false, commit: { state: 'pending' } } : { committed: false, commit: null };
   if (proposal !== null) {
-    const body = { outcome: 'accepted', proposal: { id: proposal }, ...(revision !== null ? { revision } : {}), ...commit };
+    const body = { outcome: 'accepted', proposal: { id: proposal }, ...(revision !== null ? { revision } : {}), ...commit, ...prototype };
     recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome: 'accepted', revision, operation, status: 202, answer: body });
     return { status: 202, body, effects: revision !== null ? [{ kind: 'journal', project: args.project }] : [] };
   }
   const outcome = revision !== null ? 'accepted' : 'unchanged';
-  const body = { outcome, revision, ...commit };
+  const body = { outcome, revision, ...commit, ...(revision !== null ? prototype : {}) };
   recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome, revision, operation, status: 200, answer: body });
   return { status: 200, body, effects: [{ kind: 'journal', project: args.project }] };
 }

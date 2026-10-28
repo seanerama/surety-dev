@@ -300,7 +300,20 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
 
 // A rapid prototype's first plan (slice E3; R1): what the Architect is
 // asked, and the bounds the prototype policy publishes within.
-export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>): string[] {
+export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phase = 1): string[] {
+  // Slice E5 (the owner's ruling S4): a later iteration's plan is its own
+  // single phase, the next one, against the approved baseline.
+  if (phase > 1) {
+    return [
+      '',
+      '## A rapid prototype iteration\'s plan',
+      '',
+      `This project is a rapid prototype; this iteration's brief and specification are approved (/surety/context/spec.md; the brief in /surety/context/prototype-brief.json), and phases 1 to ${phase - 1} are complete on the approved architecture and roadmap in this package. Plan this iteration's one phase, phase ${phase}: add it as the last phase of .surety/roadmap/roadmap.json (no phase after it), write .surety/phases/phase-${phase}.json with at most ${p.bounds.max_stages} stages that together implement every requirement of the specification the completed phases did not, and change the architecture or module map only as this phase needs.`,
+      'Your plan\'s prepared_against names the generation in /surety/context/generation.json and the revision you start from; a changed roadmap.json names the architecture version it is published with.',
+      'Make the ordinary implementation choices yourself, consistent with the brief: modules, interfaces, the structure of the code. Stay within its scope, constraints, models and permissions: add no environment, platform permission, asset or tier override, and leave nothing it includes to a later phase.',
+      `Within these bounds the plan is published by the prototype policy without asking the owner (recorded as policy-authorized). A plan outside them (a phase other than ${phase}, a phase after it, more than ${p.bounds.max_stages} stages, a requirement left unplanned, or anything beyond the brief) goes to the owner for approval.`,
+    ];
+  }
   return [
     '',
     '## A rapid prototype\'s first plan',
@@ -316,7 +329,7 @@ export function replanPromptText(r: ReplanFacts): string[] {
   const next = (r.completed_plan?.phase_number ?? 0) + 1;
   const reasons = (r.refusal?.plan_check?.reasons as { code: string; subjects: string[] }[] | null | undefined) ?? null;
   const lead = r.prototype
-    ? [...prototypePlanText(r.prototype), 'Your result names the plan (`plan`: "phase-1") and declares `conformance` (within_baseline or uncertain).']
+    ? [...prototypePlanText(r.prototype, next), `Your result names the plan (\`plan\`: "phase-${next}") and declares \`conformance\` (within_baseline or uncertain).`]
     : [
     '',
     '## The replan',

@@ -48,6 +48,7 @@ import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
 import { policyRevision, projectPolicy, roleModel } from '../store/transitions/settings.js';
 import { resolveBackend } from '../store/transitions/trust.js';
+import { UNKNOWN_NEXT_STEP, effectiveAllowanceOf, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
@@ -231,7 +232,13 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
   const it = iterationById(db, iteration);
   if (!it) return { iteration, iteration_seq: null, iteration_status: null, role: PREPARATION_ROLE, provider: null, model: null, resolution: null, run_token_limit: null, estimated_usd: null, estimate_basis: null, paid: null, authorizes: null, idea_version: null, idea_blob: null, policy_revision: null, continues: null, change: null };
   const rm = roleModelOf(db, it.project, PREPARATION_ROLE);
-  const limit = projectPolicy(db, it.project).budget_run_billable_tokens!;
+  // Slice E5 (S5): the run's effective allowance as it would be given now,
+  // the lower of the per-run limit and what the iteration has left; the
+  // per-run limit itself when none is positive now (the dispatch is then
+  // refused, and the read says why).
+  const perRun = projectPolicy(db, it.project).budget_run_billable_tokens!;
+  const allowance = effectiveAllowanceOf(db, it as unknown as Parameters<typeof effectiveAllowanceOf>[1], perRun);
+  const limit = allowance?.effective_limit_tokens ?? perRun;
   const paid = rm.provider !== 'scripted';
   const est = paid ? attemptSpendEstimate(rm.provider, rm.model, limit, 1) : null;
   const p = db.prepare('SELECT "idea_version", "idea_blob" FROM "projects" WHERE "id" = ?').get(it.project) as { idea_version: number | null; idea_blob: string | null };
@@ -278,9 +285,14 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     const m = preparationManifest(tx.db, it.id);
     const who = `the Spec Writer (role ${PREPARATION_ROLE}) on ${String(m.provider)} model ${String(m.model)}`;
     const refused = m.resolution === 'refused' ? ` The ${PREPARATION_ROLE} role's backend is refused now (${roleModelOf(tx.db, it.project, PREPARATION_ROLE).refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+    const perRun = projectPolicy(tx.db, it.project).budget_run_billable_tokens!;
+    const limitText =
+      m.run_token_limit === perRun
+        ? `Its token limit is ${String(m.run_token_limit)} billable tokens (the per-run limit)`
+        : `Its effective token limit is ${String(m.run_token_limit)} billable tokens: the per-run limit of ${perRun}, capped at what the iteration has left of its token allowance`;
     const cost = m.paid
-      ? `Its per-run limit is ${String(m.run_token_limit)} billable tokens; at the price table that is an estimated ${usd(m.estimated_usd)} at most (${String(m.estimate_basis)}): an estimate, not a cap.`
-      : `Its per-run limit is ${String(m.run_token_limit)} billable tokens. The scripted provider is unpaid: no paid work follows.`;
+      ? `${limitText}; at the price table that is an estimated ${usd(m.estimated_usd)} at most (${String(m.estimate_basis)}): an estimate, not a cap.`
+      : `${limitText}. The scripted provider is unpaid: no paid work follows.`;
     // Slice E4 (R7): an iteration that continues another says which, and
     // the change the owner asked for.
     const cont = m.continues as { seq: number; previous_brief_iteration_seq: number | null } | null;
@@ -336,6 +348,18 @@ export function requestPreparation(tx: Tx, args: { project: string; iteration: s
   const it = iterationById(tx.db, args.iteration);
   if (!it || it.project !== args.project) throw new Refusal(404, 'not_found', `Iteration ${args.iteration} of project ${args.project} does not exist.`, 'Read GET /v1/projects/:p/iterations.', { iteration: args.iteration });
   if (currentOf(tx.db, it.project)?.id !== it.id) throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq} is not the project's current iteration.`, 'Prepare the current iteration.', { iteration: it.id });
+  // Slice E5 (the owner's ruling S2): "'prepare again' must not bypass
+  // unresolved accounting": refused, with what is unknown, whatever the
+  // iteration's status.
+  const unresolved = unresolvedAccounting(tx.db, it.project, it.id);
+  if (unresolved !== null) {
+    throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq}'s brief cannot be prepared again while its accounting is unresolved: ${unresolved.text}.`, `Next: ${UNKNOWN_NEXT_STEP}.`, {
+      iteration: it.id,
+      status: it.status,
+      unknown_invocations: unresolved.invocations,
+      runs: unresolved.runs,
+    });
+  }
   if (it.status !== 'preparing' && it.status !== 'awaiting_brief_approval') {
     throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq} is ${it.status}: a brief is prepared only while it is preparing or awaiting its brief's approval.`, 'Read the iteration; its next step says what is possible.', { iteration: it.id, status: it.status });
   }
@@ -512,7 +536,7 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
   }
   const limits: BriefFacts['limits'] = {};
   for (const k of PROTOTYPE_LIMIT_KEYS) limits[k] = (policy[k] as number | undefined) ?? null;
-  limits.reservation_rule = `Each run reserves its per-run limit (budget_run_billable_tokens ${policy.budget_run_billable_tokens}) of the token allowance from dispatch until its usage is settled; usage that cannot be known is charged as an unknown allowance up to that limit, never as zero. Possible overshoot: what runs already running may still spend under their own limits.`;
+  limits.reservation_rule = `Each run is given an effective allowance at dispatch: the lower of the per-run limit (budget_run_billable_tokens ${policy.budget_run_billable_tokens}) and what the iteration has left of its token allowance after its settled usage, its unknown allowances and the reservations of the other runs under way. The run reserves that allowance from dispatch until its usage is settled, and is stopped at it; usage that cannot be known is charged as an unknown allowance up to it, never as zero. A run that would get no positive allowance is not dispatched. Possible overshoot: what runs already running may still spend under their own allowances.`;
   return { version: latest + 1, target: targetOf(db, args.project, args.environments), models, preparation, limits, stop_conditions: [...STOP_CONDITIONS] };
 }
 
@@ -626,39 +650,100 @@ export interface BoundsVerdict {
   within: boolean;
   // What is outside the bounds, each said plainly; empty when within.
   outside: string[];
-  facts: { phases: number; plan_phase: number | null; stages: number; adrs: number; requirements_uncovered: string[]; permissions: string[] };
+  facts: { phases: number; plan_phase: number | null; expected_phase: number; stages: number; adrs: number; requirements_uncovered: string[]; permissions: string[] };
 }
 
-// The one place the prototype policy's bounds are defined (R1): a bundle of
-// exactly one phase (the roadmap's only phase, the plan's), at most two
-// stages, implementing every requirement of the approved brief (its
-// coverage preserved: nothing deferred to a later phase), adding no
-// platform permission, asset path or tier override, and checked
+// What the bounds are judged against (slice E5, the owner's ruling S4: "one
+// bounded phase per iteration"): the approved brief's requirement keys; the
+// phase this iteration's plan is for (the project's completed phases plus
+// one: 1 for a first iteration); the requirements the completed phases'
+// stages implemented; and the approved module map, so that only what the
+// plan adds is new.
+export interface BoundsContext {
+  requirement_keys: string[];
+  phase?: number;
+  earlier_implemented?: string[];
+  approved_modules?: { name: string; platform_permissions?: { permission: string; target: string }[]; asset_paths?: unknown[]; tier_override?: unknown }[] | null;
+}
+
+// The one place the prototype policy's bounds are defined (R1; slice E5's
+// S4, "one bounded phase per iteration. Each iteration remains within its
+// approved brief, with at most two stages. Wider scope still asks me."): a
+// bundle whose plan is the iteration's own single phase (the next phase of
+// the project: phase 1 for a first iteration, and for a later one the phase
+// after those completed, the roadmap's last, so nothing is deferred to a
+// phase after it), at most two stages, implementing only requirements of
+// the approved brief and every one of them the completed phases did not (its
+// coverage preserved), adding no platform permission, asset path or tier
+// override the approved module map does not already hold, and checked
 // `within_baseline`. The bundle names no environment, provider or model (a
 // plan cannot: they are the specification's and the policy's), so those
 // cannot change through it. Ordinary implementation choices (modules,
 // interfaces, ADRs consistent with the brief) are the Architect's.
-export function withinPrototypeBounds(content: Pick<BundleContent, 'roadmap' | 'plan' | 'modules' | 'adrs'>, brief: { requirement_keys: string[] }, check?: Pick<PlanCheckResult, 'conformance' | 'uncertain'> | null): BoundsVerdict {
+export function withinPrototypeBounds(content: Pick<BundleContent, 'roadmap' | 'plan' | 'modules' | 'adrs'>, brief: BoundsContext, check?: Pick<PlanCheckResult, 'conformance' | 'uncertain'> | null): BoundsVerdict {
   const outside: string[] = [];
-  const phases = content.roadmap?.phases.length ?? 0;
+  const expected = brief.phase ?? 1;
+  const roadmapPhases = content.roadmap?.phases ?? [];
+  const phases = roadmapPhases.length;
   const plan = content.plan;
   const stages = plan?.stages.length ?? 0;
-  if (phases !== PROTOTYPE_BOUNDS.phases) outside.push(`the roadmap has ${phases} phase(s); a prototype's has exactly ${PROTOTYPE_BOUNDS.phases}`);
+  if (expected === 1) {
+    if (phases !== PROTOTYPE_BOUNDS.phases) outside.push(`the roadmap has ${phases} phase(s); a prototype's has exactly ${PROTOTYPE_BOUNDS.phases}`);
+  } else if (phases !== expected || roadmapPhases.some((p) => p.number > expected)) {
+    outside.push(`the roadmap has ${phases} phase(s) (${roadmapPhases.map((p) => p.number).join(', ')}); a prototype adds exactly ${PROTOTYPE_BOUNDS.phases} phase per iteration: phase ${expected}, after the ${expected - 1} completed, and none after it`);
+  }
   if (plan === null || plan === undefined) outside.push('the bundle carries no phase plan');
-  else if (plan.phase !== 1) outside.push(`the plan is for phase ${plan.phase}, not phase 1`);
+  else if (plan.phase !== expected) outside.push(`the plan is for phase ${plan.phase}, not phase ${expected}`);
   if (stages > PROTOTYPE_BOUNDS.max_stages) outside.push(`the plan has ${stages} stages; a prototype's has at most ${PROTOTYPE_BOUNDS.max_stages}`);
   if (plan && stages === 0) outside.push('the plan has no stage');
   const implemented = new Set((plan?.stages ?? []).flatMap((s) => s.implements));
-  const uncovered = brief.requirement_keys.filter((k) => !implemented.has(k)).sort();
-  if (uncovered.length > 0) outside.push(`requirement(s) ${uncovered.join(', ')} of the approved brief are implemented by no stage of the one phase`);
-  const permissions = content.modules.modules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`));
+  const earlier = new Set(brief.earlier_implemented ?? []);
+  const uncovered = brief.requirement_keys.filter((k) => !implemented.has(k) && !earlier.has(k)).sort();
+  if (uncovered.length > 0) {
+    outside.push(expected === 1 ? `requirement(s) ${uncovered.join(', ')} of the approved brief are implemented by no stage of the one phase` : `requirement(s) ${uncovered.join(', ')} of the approved brief are implemented by no stage of phase ${expected} nor of the ${expected - 1} completed`);
+  }
+  const beyond = [...implemented].filter((k) => !brief.requirement_keys.includes(k)).sort();
+  if (beyond.length > 0) outside.push(`the plan implements ${beyond.join(', ')}, beyond the approved brief's requirements`);
+  const approved = brief.approved_modules ?? [];
+  const held = new Set(approved.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)));
+  const permissions = content.modules.modules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)).filter((p) => !held.has(p));
   if (permissions.length > 0) outside.push(`the module map asks for platform permission(s): ${permissions.join('; ')}`);
-  const assets = content.modules.modules.filter((m) => (m.asset_paths ?? []).length > 0).map((m) => m.name);
+  const sameAssets = (m: { name: string; asset_paths?: unknown[] | undefined }) => JSON.stringify(approved.find((a) => a.name === m.name)?.asset_paths ?? []) === JSON.stringify(m.asset_paths ?? []);
+  const assets = content.modules.modules.filter((m) => (m.asset_paths ?? []).length > 0 && !sameAssets(m)).map((m) => m.name);
   if (assets.length > 0) outside.push(`module(s) ${assets.join(', ')} declare asset paths (design is off for a prototype)`);
-  const tiers = content.modules.modules.filter((m) => m.tier_override !== undefined).map((m) => `${m.name} (${String(m.tier_override)})`);
+  const tiers = content.modules.modules.filter((m) => m.tier_override !== undefined && approved.find((a) => a.name === m.name)?.tier_override !== m.tier_override).map((m) => `${m.name} (${String(m.tier_override)})`);
   if (tiers.length > 0) outside.push(`module(s) ${tiers.join(', ')} override the prototype's tier`);
   if (check && check.conformance === 'uncertain') outside.push(`the plan check found it uncertain${(check.uncertain ?? []).length > 0 ? `: ${(check.uncertain ?? []).join('; ')}` : ''}`);
-  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, stages, adrs: Object.keys(content.adrs).length, requirements_uncovered: uncovered, permissions } };
+  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, expected_phase: expected, stages, adrs: Object.keys(content.adrs).length, requirements_uncovered: uncovered, permissions } };
+}
+
+// What an iteration's plan is judged against now (S4): the approved brief's
+// requirements, the phase after those the project completed, what their
+// stages implemented, and the approved module map.
+export function boundsContextOf(db: Db, project: string): BoundsContext {
+  const done = (db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS n FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(project) as { n: number }).n;
+  const earlier = new Set<string>();
+  const rows = db
+    .prepare(`SELECT s."implements" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE s."project" = ? AND p."status" = 'completed' AND s."cancelled_at" IS NULL`)
+    .all(project) as { implements: string }[];
+  // A stage records the requirements it implements by their ids; the brief
+  // names them by their keys.
+  const keyOf = new Map((db.prepare('SELECT "id", "key" FROM "requirements" WHERE "project" = ?').all(project) as { id: string; key: string }[]).map((r) => [r.id, r.key]));
+  for (const r of rows) {
+    try {
+      for (const k of JSON.parse(r.implements) as unknown[]) if (typeof k === 'string') earlier.add(keyOf.get(k) ?? k);
+    } catch {
+      // an unreadable list adds nothing: its requirements count as not implemented
+    }
+  }
+  const arch = db.prepare('SELECT "module_map" FROM "architecture_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { module_map: string } | undefined;
+  let approved: BoundsContext['approved_modules'] = null;
+  try {
+    approved = arch ? ((JSON.parse(arch.module_map) as { modules?: BoundsContext['approved_modules'] }).modules ?? null) : null;
+  } catch {
+    approved = null;
+  }
+  return { requirement_keys: briefRequirementKeys(db, project), phase: done + 1, earlier_implemented: [...earlier].sort(), approved_modules: approved };
 }
 
 // Whether a replan's run is a prototype's first plan, and its iteration.
@@ -688,7 +773,7 @@ export function routeFirstPlan(
 ): 'published' | 'owner' | 'stale' {
   const first = firstPlanOf(tx.db, args.run);
   const it = first === null ? undefined : iterationById(tx.db, first.iteration);
-  const verdict = withinPrototypeBounds(args.content, { requirement_keys: briefRequirementKeys(tx.db, args.project) }, args.check);
+  const verdict = withinPrototypeBounds(args.content, boundsContextOf(tx.db, args.project), args.check);
   if (it) tx.db.prepare('UPDATE "prototype_iterations" SET "plan_bundle" = ? WHERE "id" = ?').run(args.bundle, it.id);
   if (verdict.within && it && isPrototype(tx.db, args.project)) {
     const approvals = { policy_authorized: { policy: 'rapid_prototype', iteration: it.id, bounds: PROTOTYPE_BOUNDS, policy_revision: policyRevision(tx.db, args.project) } };
@@ -765,6 +850,12 @@ export function syncIterationStatuses(tx: Tx): number {
       const last = tx.db.prepare(`SELECT "id", "outcome", "reason_class", "reason_text" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1`).get(parked.id) as { id: string; outcome: string | null; reason_class: string | null; reason_text: string | null } | undefined;
       const runText = last ? `; its last run ${last.id} ended ${last.outcome ?? 'unknown'}${last.reason_class && last.reason_class !== 'none' ? ` (${last.reason_class})` : ''}${last.reason_text ? `: ${last.reason_text}` : ''}` : '';
       want = { status: 'failed', next: 'retry or cancel the parked work (its blocker), or discard', reason: `${parked.kind} work ${parked.id} parked: ${why}${runText}`, ended: true };
+    } else if (heldOf(tx.db, it) !== null) {
+      // Slice E5 (gap 2): work of the iteration held after its run ended
+      // without completing (an engine restart recovered it, or the owner
+      // stopped the run) waits for the owner's resume: the next step names it.
+      const h = heldOf(tx.db, it)!;
+      want = { status: 'awaiting_owner', next: `resume the held work (POST /v1/projects/${it.project}/work/${h.id}/resume: ${h.kind}, its run ${h.run} ended ${h.outcome ?? 'unknown'}), or discard`, reason: null, ended: false };
     } else {
       const open = tx.db
         .prepare(`SELECT "kind" FROM "decisions" WHERE "project" = ? AND "status" = 'open' AND "kind" IN (${Object.keys(OWNER_KINDS).map(() => '?').join(', ')}) ORDER BY "seq" LIMIT 1`)
@@ -781,6 +872,18 @@ export function syncIterationStatuses(tx: Tx): number {
     n++;
   }
   return n;
+}
+
+// The first held work item whose last run is the iteration's, with that run.
+function heldOf(db: Db, it: IterationLite): { id: string; kind: string; run: string; outcome: string | null } | null {
+  return (
+    (db
+      .prepare(
+        `SELECT w."id", w."kind", r."id" AS "run", r."outcome" FROM "work_items" w JOIN "runs" r ON r."id" = (SELECT x."id" FROM "runs" x WHERE x."work_item" = w."id" ORDER BY x."seq" DESC LIMIT 1)
+         WHERE w."project" = ? AND w."status" = 'held' AND r."iteration" = ? ORDER BY w."seq" LIMIT 1`,
+      )
+      .get(it.project, it.id) as { id: string; kind: string; run: string; outcome: string | null } | undefined) ?? null
+  );
 }
 
 // ---- the preparation run's package (invoke/sandbox/context.ts) ---------------------------

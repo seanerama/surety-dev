@@ -22,7 +22,7 @@ import { between } from '../plan/pace.js';
 import { notFound, parseJson } from '../store/transitions/common.js';
 import { type Account, type Amounts, type LedgerRow, billable, fold, observedSoFar, outstandingReservation } from '../store/transitions/ledger.js';
 import { projectNotFound } from '../store/transitions/project.js';
-import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentIteration, iterationAccount, iterationControls, iterationVerdict } from '../store/transitions/prototype.js';
+import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, effectiveAllowanceOf, iterationAccount, iterationControls, iterationVerdict, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
 
@@ -180,6 +180,13 @@ interface InvocationView {
   model_requested: string;
   model_observed: string | null;
   provider: string;
+  // Slice E5 (S5): the effective allowance fixed on the receipt at dispatch,
+  // the lower of the per-run limit and what the iteration had left (for a
+  // session turn, the session's cumulative bound), and which one limited it;
+  // null on a receipt that fixed none.
+  effective_limit_tokens: number | null;
+  limited_by: 'run' | 'iteration' | null;
+  run_limit_tokens: number | null;
 }
 
 // One invocation as the ledger knows it: its rows folded (ledger.ts fold)
@@ -191,7 +198,17 @@ function invocationOf(db: Db, project: string, receipt: { id: string; turn: stri
   const status = statusRow?.status ?? null;
   const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(receipt.id) as LedgerRow[];
   const original = rows.find((r) => r.corrects === null);
-  const base = { id: receipt.id, turn: receipt.turn, status, model_requested: receipt.model_requested, provider: receipt.provider };
+  const allowance = receiptAllowance(db, receipt.id);
+  const base = {
+    id: receipt.id,
+    turn: receipt.turn,
+    status,
+    model_requested: receipt.model_requested,
+    provider: receipt.provider,
+    effective_limit_tokens: allowance?.effective_limit_tokens ?? null,
+    limited_by: allowance?.limited_by ?? null,
+    run_limit_tokens: allowance?.run_limit_tokens ?? null,
+  };
   if (original) {
     const a: Account = fold(rows);
     const estimated = a.cost_status === 'estimated';
@@ -305,14 +322,19 @@ function costTotals(invs: InvocationView[]) {
 }
 
 // Whether an Alpha deployment is available now (R7): the iteration's
-// candidate still `alpha_deployed`, and the newest installed observation of
-// its environment taken of the environment's current generation within the
-// project's freshness bound. Otherwise null: never inferred from the
-// historical outcome.
+// candidate still `alpha_deployed`, the deployment running in the
+// environment now its candidate's (slice E5: a later iteration's deployment
+// that replaced it, or a teardown, leaves no claim), and the newest
+// installed observation of its environment taken of the environment's
+// current generation within the project's freshness bound. Otherwise null:
+// never inferred from the historical outcome.
 function alphaNow(db: Db, project: string, it: IterationRow, environment: string | null) {
   if (it.candidate === null || environment === null) return null;
   const c = db.prepare('SELECT "progress" FROM "candidates" WHERE "id" = ?').get(it.candidate) as { progress: string } | undefined;
   if (c?.progress !== 'alpha_deployed') return null;
+  const running = currentDeploymentRequest(db, environment);
+  const runningCandidate = running === null ? null : ((db.prepare('SELECT "candidate" FROM "deployment_requests" WHERE "id" = ?').get(running) as { candidate: string } | undefined)?.candidate ?? null);
+  if (runningCandidate !== it.candidate) return null;
   const env = db.prepare('SELECT "current_generation" FROM "environments" WHERE "id" = ?').get(environment) as { current_generation: number | null } | undefined;
   const obs = db
     .prepare('SELECT "observed_at", "condition", "deployment_generation" FROM "observation_history" WHERE "environment" = ? AND "installed" = 1 ORDER BY "observed_at" DESC, rowid DESC LIMIT 1')
@@ -427,10 +449,15 @@ export function readIteration(db: Db, args: { project: string; iteration: string
   // and open one: the check itself (prototype.ts iterationVerdict).
   const current = currentIteration(db, args.project);
   const nextAsk = { reservation: policy.budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null };
-  const verdict = current?.id === it.id && OPEN_ITERATION_STATUSES.includes(current.status) ? iterationVerdict(db, it as Parameters<typeof iterationVerdict>[1], nextAsk, account) : null;
+  const open = current?.id === it.id && OPEN_ITERATION_STATUSES.includes(current.status);
+  const verdict = open ? iterationVerdict(db, it as Parameters<typeof iterationVerdict>[1], nextAsk, account) : null;
+  // Slice E5 (S5): what a run dispatched now would be given.
+  const nextAllowance = open ? effectiveAllowanceOf(db, it as Parameters<typeof effectiveAllowanceOf>[1], nextAsk.reservation, account) : null;
+  const unknown = unknownAccountingText(account);
   const remaining = {
-    tokens: tokensLimit === null ? null : account.unknown_billable_invocations > 0 ? null : tokensLimit - account.committed_tokens,
-    tokens_reason: account.unknown_billable_invocations > 0 ? `${account.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance` : null,
+    tokens: tokensLimit === null ? null : unknown !== null ? null : tokensLimit - account.committed_tokens,
+    // Slice E5 (S2): what is unknown, named.
+    tokens_reason: unknown,
     // What the tokens remaining is the limit less: settled, the unknown
     // allowances apart, and what runs under way observed and still reserve.
     committed: {
@@ -440,8 +467,13 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       under_way_reserved_tokens: account.outstanding_reservation_tokens,
       total_tokens: account.unknown_billable_invocations > 0 ? null : account.committed_tokens,
     },
-    // What a run dispatched now reserves of it (its run limit).
-    next_run_reservation_tokens: nextAsk.reservation,
+    // Slice E5 (S5): what a run dispatched now would be given and reserve
+    // of it, its effective allowance (the lower of the per-run limit and
+    // what the iteration has left); null when it would get none (or the
+    // iteration is not open), next_dispatch saying why.
+    next_run_reservation_tokens: nextAllowance?.effective_limit_tokens ?? null,
+    next_run_limited_by: nextAllowance?.limited_by ?? null,
+    run_limit_tokens: nextAsk.reservation,
     // Settled reported and estimated cost only: an invocation under way adds
     // what it costs once charged; one whose cost is unknown leaves the
     // remainder unknown. A threshold, never a billing cap.
