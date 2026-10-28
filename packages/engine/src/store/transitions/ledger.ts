@@ -134,22 +134,45 @@ function normalizeClaude(raw: Record<string, unknown>): Normalized {
 // cached input is counted once, as cached; the reasoning tokens are kept in
 // the raw usage and never added to output. A count not reported is
 // unknown, and so is a difference that needs it, or one that would be
-// negative. Codex reports no cost and there is no Codex price table yet
-// (C2): the cost is unknown, never zero.
+// negative. Codex reports no cost (D2 §4.6: tokens only), so a cost is never
+// `reported`: it is `estimated` from CODEX_PRICE_TABLE where the stream named
+// the one model the invocation used, the table prices it and the usage is
+// final; otherwise unknown, never zero.
 export const CODEX_NORMALIZATION = 'codex-exec-json-1';
+
+// The Codex price table (C2 of Codex support; the assessment's owner
+// decision 5): USD per million tokens, by model. UNCONFIRMED: the figures
+// are OpenAI's list rates for these models as this engine's author recalled
+// them on 2026-10-27, not read from OpenAI's pricing page that day and not
+// confirmed on Sean's account; no entry is known. Every figure made from it
+// says so in its price version. A model it does not list has no estimate
+// (null, with the reason), never 0.
+export const CODEX_PRICE_TABLE = {
+  version: 'openai-list-as-recalled-2026-10-27-unconfirmed',
+  confirmed: false,
+  models: {
+    'gpt-5': { input: 1.25, cached_in: 0.125, out: 10 },
+    'gpt-5-codex': { input: 1.25, cached_in: 0.125, out: 10 },
+    'gpt-5-mini': { input: 0.25, cached_in: 0.025, out: 2 },
+  } as Record<string, { input: number; cached_in: number; out: number }>,
+};
 
 function normalizeCodex(raw: Record<string, unknown>): Normalized {
   const input = amount(raw.input_tokens);
   const cached = amount(raw.cached_input_tokens);
-  return {
+  const base = {
     billable_in: input === null || cached === null || cached > input ? null : input - cached,
     cached_in: cached,
     out: amount(raw.output_tokens),
     model_observed: typeof raw.model === 'string' ? raw.model : null,
     normalization_version: CODEX_NORMALIZATION,
-    cost_status: 'unknown',
-    cost_usd: null,
   };
+  const prices = base.model_observed === null ? undefined : CODEX_PRICE_TABLE.models[base.model_observed];
+  if (prices && raw.usage_final === true && base.billable_in !== null && base.cached_in !== null && base.out !== null) {
+    const usd = (base.billable_in * prices.input + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
+    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CODEX_NORMALIZATION}+${CODEX_PRICE_TABLE.version}` };
+  }
+  return { ...base, cost_status: 'unknown', cost_usd: null };
 }
 
 // The most a qualification attempt's canaries can cost in billable tokens,
@@ -158,10 +181,25 @@ function normalizeCodex(raw: Record<string, unknown>): Normalized {
 // highest); null where the model has no price (never 0). An estimate, never
 // a maximum: cache reads and the overshoot to each canary's deadline are
 // outside it (D2 §4.2).
-export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number, invocations = 3): { usd: number; price_version: string } | null {
+// Codex's (C2) from CODEX_PRICE_TABLE, whose prices are unconfirmed: the
+// estimate says so (`prices: 'unconfirmed'`), never a confident figure.
+export function attemptSpendEstimate(provider: string, model: string, runLimitTokens: number, invocations = 3): { usd: number; price_version: string; prices?: 'unconfirmed' } | null {
+  if (provider === 'codex') {
+    const p = CODEX_PRICE_TABLE.models[model];
+    if (!p) return null;
+    return { usd: money((invocations * runLimitTokens * p.out) / 1_000_000), price_version: CODEX_PRICE_TABLE.version, prices: 'unconfirmed' };
+  }
   const prices = provider === 'claude' ? CLAUDE_PRICE_TABLE.models[model] : undefined;
   if (!prices) return null;
   return { usd: money((invocations * runLimitTokens * prices.out) / 1_000_000), price_version: CLAUDE_PRICE_TABLE.version };
+}
+
+// Why an attempt has no spend estimate (C2): the model is not in its
+// provider's price table, or the provider has none; null where it has one.
+export function attemptSpendUnavailable(provider: string, model: string): string | null {
+  if (provider === 'codex') return CODEX_PRICE_TABLE.models[model] ? null : `no Codex price for ${model}: the Codex price table (${CODEX_PRICE_TABLE.version}) lists ${Object.keys(CODEX_PRICE_TABLE.models).join(', ')} only, so the spend is not estimated (unknown, never 0)`;
+  if (provider === 'claude') return CLAUDE_PRICE_TABLE.models[model] ? null : `no Claude price for ${model} in the price table (${CLAUDE_PRICE_TABLE.version})`;
+  return `${provider} has no price table`;
 }
 
 // The provider's normalization; the scripted one for every provider without

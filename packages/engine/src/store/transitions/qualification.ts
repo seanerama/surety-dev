@@ -29,7 +29,7 @@ import {
   writeEntry,
 } from './trust.js';
 import type { Tx } from './tx.js';
-import { attemptSpendEstimate } from './ledger.js';
+import { attemptSpendEstimate, attemptSpendUnavailable } from './ledger.js';
 import { type RoleProfile, defaultProfileMax, engineSettings, projectPolicy, roleProfileOf } from './settings.js';
 
 // An attempt is proposed and its approval asked for; nothing runs until a
@@ -180,8 +180,13 @@ export function qualify(
               ? "three canaries and the continuation canary's two turns at the fixture project's budget_run_billable_tokens, at the model's output rate"
               : "three canaries at the fixture project's budget_run_billable_tokens, at the model's output rate",
           price_version: estimate.price_version,
+          // Codex's prices are unconfirmed (C2): the figure says so.
+          ...(estimate.prices === 'unconfirmed' ? { prices: 'unconfirmed' } : {}),
         }
-      : {}),
+      : // Codex (C2): why there is no figure, never a 0.
+        a.backend === 'codex'
+        ? { estimate_unavailable: attemptSpendUnavailable(a.backend, a.model) }
+        : {}),
     auth_mode: a.auth_mode ?? 'api_key',
     ...(canaryLimit !== null ? { purpose: 'assistant', canary_limit_tokens: canaryLimit, charged_to: { account: 'project', project: a.fixture_project, as: 'qualification' } } : {}),
     // A provider-side cap is an API key's only (SEAM.md §160): a subscription
