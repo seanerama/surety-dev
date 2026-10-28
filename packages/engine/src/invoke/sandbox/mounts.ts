@@ -35,7 +35,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, posix, relative } from 'node:path';
 
 export interface Entry {
   path: string;
@@ -136,7 +136,42 @@ export interface PlanInput {
   // The domain's egress socket (D2 §2.4), bound beside the init.
   egressSocket?: string | null;
   holdVolatile?: boolean;
+  // The backend's constructed launch environment (D2 §1.2): every directory
+  // it names under /surety/home is made, empty, on the volatile filesystem
+  // before the role starts (homeDirEntries).
+  env?: Readonly<Record<string, string>>;
 }
+
+// The volatile home (D2 §2.3), as the role sees it.
+export const VOLATILE_HOME = '/surety/home';
+
+// The directories a launch environment names under the volatile home, each
+// relative to it: every value that is one absolute path strictly under
+// /surety/home (HOME itself, which the bind is, and anything else are not),
+// sorted. The template's own (Codex's CODEX_HOME, /surety/home/.codex) and
+// the four XDG_* ones are among them. Why they are made (C2f, observed on
+// MAIN 2026-10-28, attempt qa_01M61GA1Z60NSN48J3T0G5DV1M): the volatile
+// home starts empty, and Codex 0.160.0's `exec` exits 1 at once with "Error
+// finding codex home: CODEX_HOME points to <path>, but that path does not
+// exist", writing nothing, where its --version and --help only warn; the
+// positive canary then failed unsupported_flag. Claude Code makes what it
+// is missing. The static checks make the same directories in their own home
+// (static.ts, C2e).
+export function homeDirs(env: Readonly<Record<string, string>>): string[] {
+  const out = new Set<string>();
+  for (const value of Object.values(env)) {
+    if (typeof value !== 'string' || !value.startsWith(`${VOLATILE_HOME}/`) || /[\0\n:]/.test(value)) continue;
+    const rel = posix.normalize(value.slice(VOLATILE_HOME.length + 1)).replace(/\/+$/, '');
+    if (rel === '' || rel === '.' || rel.split('/').includes('..')) continue;
+    out.add(rel);
+  }
+  return [...out].sort();
+}
+
+// Those directories as entries on the volatile filesystem, made by the
+// domain init's setup stage after `home` (domain-init.ts populateVolatile):
+// each empty, mode 0700, owned as `home` is.
+export const homeDirEntries = (env: Readonly<Record<string, string>>): Entry[] => homeDirs(env).map((rel) => ({ path: `home/${rel}`, kind: 'dir', mode: 0o700 }));
 
 // D2 §2.3: the files of /etc a role sees.
 export const ETC_FILES = ['passwd', 'group', 'nsswitch.conf', 'ld.so.cache', 'localtime', 'ssl/certs/ca-certificates.crt'];
@@ -384,6 +419,10 @@ export function buildPlan(input: PlanInput): Plan {
   }
   b.dir('/surety/home');
   b.line(join(vol, 'home'), '/surety/home', 'none', 'bind,nosuid,nodev');
+  // The directories the launch environment names in the home, made before
+  // anything is mounted on it (homeDirs: Codex exits 1 on a missing
+  // CODEX_HOME). No mount, and nothing the fingerprints cover, changes.
+  if (input.env) volEntries.push(...homeDirEntries(input.env));
   b.dir('/surety/out');
   b.line(join(vol, 'out'), '/surety/out', 'none', 'bind,nosuid,nodev');
   b.dir('/tmp', 0o1777);

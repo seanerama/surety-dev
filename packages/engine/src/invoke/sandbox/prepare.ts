@@ -107,6 +107,28 @@ export function volatileBounds(rt: Runtime, workItem: string): { bytes: number; 
   return { bytes: o?.writable_bytes ?? rt.setting('domain_writable_bytes'), inodes: o?.writable_inodes ?? rt.setting('domain_writable_inodes') };
 }
 
+// D2 §1.2: a role's launch environment is constructed, never inherited. The
+// directories it names in the volatile home (the XDG ones, the template's
+// own: Codex's CODEX_HOME) are made, empty, before the role starts: the plan
+// is given this environment (mounts.ts homeDirs: Codex 0.160.0's exec exits
+// 1 on a CODEX_HOME that does not exist; C2f, observed on MAIN 2026-10-28).
+export function launchEnv(domain: string, invocation: string, backendEnv: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  return {
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+    LANG: 'C.UTF-8',
+    HOME: '/surety/home',
+    XDG_CONFIG_HOME: '/surety/home/.config',
+    XDG_CACHE_HOME: '/surety/home/.cache',
+    XDG_DATA_HOME: '/surety/home/.local/share',
+    XDG_STATE_HOME: '/surety/home/.local/state',
+    TMPDIR: '/tmp',
+    HTTPS_PROXY: `http://127.0.0.1:${FORWARDER_PORT}`,
+    [DOMAIN_MARKER]: domain,
+    [INVOCATION_MARKER]: invocation,
+    ...(backendEnv ?? {}),
+  };
+}
+
 export interface PreparedSandbox {
   plan: Plan;
   backend: BackendLaunch;
@@ -276,6 +298,9 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
   });
   handle.egress = egress;
 
+  // D2 §1.2: the environment is constructed, never inherited (launchEnv).
+  const env = launchEnv(claim.domain, claim.invocation, backend.env);
+
   let plan: Plan;
   try {
     const vb = volatileBounds(rt, claim.work_item ?? claim.run);
@@ -300,6 +325,7 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
       workspaceBinds: workspace === null || claim.role === 'verifier' ? [] : protectedBinds(workspace, handle.protectedRoots, join(area, 'git', 'empty')),
       egressSocket: egress.socketPath,
       holdVolatile: true,
+      env,
     });
     // The validated plan has the authority (D2 §2.3; A.6 P12): published as
     // a qualification_evidence record of the run and recorded on the domain
@@ -319,21 +345,6 @@ export async function prepareSandbox(rt: Runtime, handle: RunHandle, backend: Ba
     throw err;
   }
 
-  // D2 §1.2: the environment is constructed, never inherited.
-  const env: Record<string, string> = {
-    PATH: '/usr/local/bin:/usr/bin:/bin',
-    LANG: 'C.UTF-8',
-    HOME: '/surety/home',
-    XDG_CONFIG_HOME: '/surety/home/.config',
-    XDG_CACHE_HOME: '/surety/home/.cache',
-    XDG_DATA_HOME: '/surety/home/.local/share',
-    XDG_STATE_HOME: '/surety/home/.local/state',
-    TMPDIR: '/tmp',
-    HTTPS_PROXY: `http://127.0.0.1:${FORWARDER_PORT}`,
-    [DOMAIN_MARKER]: claim.domain,
-    [INVOCATION_MARKER]: claim.invocation,
-    ...(backend.env ?? {}),
-  };
   return {
     plan,
     backend: {

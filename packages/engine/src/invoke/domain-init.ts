@@ -316,6 +316,15 @@ async function authorizeService(): Promise<void> {
   if (!answer || answer.t !== 'granted') process.exit(0);
 }
 
+// The volatile filesystem's first contents, made by the setup stage once it
+// is mounted and before the first table: its directories, then the plan's
+// entries on it (the git view's; the directories the launch environment
+// names in the home, mounts.ts homeDirEntries).
+export function populateVolatile(plan: Pick<Plan, 'vol' | 'volDirs' | 'volEntries'>): void {
+  for (const d of plan.volDirs) mkdirSync(join(plan.vol, d), { recursive: true, mode: 0o755 });
+  for (const e of plan.volEntries ?? []) make(plan.vol, e);
+}
+
 async function setup(): Promise<void> {
   if (process.argv[3] === 'service') await authorizeService();
   send({ t: 'hello', stage: 'setup' });
@@ -327,8 +336,7 @@ async function setup(): Promise<void> {
     mknod = tools.mknod ?? null;
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.rootBytes},mode=0755,nosuid`, 'surety-root', plan.stage]);
     run(tools.mount, ['-t', 'tmpfs', '-o', `size=${plan.volBytes},nr_inodes=${plan.volInodes},mode=0755,nosuid,nodev`, 'surety-volatile', plan.vol]);
-    for (const d of plan.volDirs) mkdirSync(join(plan.vol, d), { recursive: true, mode: 0o755 });
-    for (const e of plan.volEntries ?? []) make(plan.vol, e);
+    populateVolatile(plan);
     for (const e of plan.skeleton) make(plan.stage, e);
     const fstab = join(plan.vol, '.fstab');
     writeFileSync(fstab, `${plan.fstab.join('\n')}\n`);
