@@ -550,6 +550,28 @@
       "M559-the-assistant-turn-answer.test.mjs",
       "M560-qualification-admission-and-not-dispatched.test.mjs",
       "M561-policy-submission-outcomes.test.mjs"
+    ],
+    "49": [
+      "M601-the-mode-and-its-preset.test.mjs",
+      "M602-preparation-is-authorized-before-it-runs.test.mjs",
+      "M603-the-brief.test.mjs",
+      "M604-one-brief-approval-authorizes-the-build.test.mjs",
+      "M605-agent-runs-roles-and-model-calls.test.mjs",
+      "M606-accounting-completeness.test.mjs",
+      "M607-limits-and-the-shared-allowance.test.mjs",
+      "M608-stop-and-a-deliberate-resume.test.mjs",
+      "M609-discard-touches-only-its-own-iteration.test.mjs",
+      "M610-iterate-and-the-second-alpha.test.mjs",
+      "M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs",
+      "M612-the-receipt-and-the-untouched-planned-workflow.test.mjs",
+      "M613-static-mode-of-local-service.test.mjs",
+      "M614-serving-verification-of-a-static-site.test.mjs",
+      "M615-the-downloadable-deliverable.test.mjs",
+      "M616-deployment-compatibility-and-readiness.test.mjs"
+    ],
+    "50": [
+      "M611-a-disposable-local-service-alpha.test.mjs",
+      "M613-static-mode-on-a-real-unit.test.mjs"
     ]
   },
   "sandbox": [
@@ -670,7 +692,9 @@
     "M557-the-assistant-qualification.test.mjs",
     "M558-the-assistant-context.test.mjs",
     "M559-the-assistant-turn-answer.test.mjs",
-    "M560-qualification-admission-and-not-dispatched.test.mjs"
+    "M560-qualification-admission-and-not-dispatched.test.mjs",
+    "M611-a-disposable-local-service-alpha.test.mjs",
+    "M613-static-mode-on-a-real-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

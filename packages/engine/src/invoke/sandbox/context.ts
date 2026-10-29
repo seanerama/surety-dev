@@ -29,6 +29,7 @@ import type { PhaseVerificationFacts } from '../../plan/phase.js';
 import { type DesignCatalogueFacts, type DesignChangeFacts, designChangeElements, verifierDesignElements } from '../../packages/design-reads.js';
 import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
 import { CHANGE_SPEC_CATEGORIES, DISPOSITIONS } from '../../runs/report.js';
+import { BRIEF_RESULT_SCHEMA, BRIEF_TASK, type BriefPreparationFacts, briefPreparationText } from '../../prototype/brief.js';
 
 export const PROBE_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'probes', 'program.js');
 
@@ -41,6 +42,8 @@ export type ContextFacts = {
   proposal?: Record<string, unknown> | null;
   // A spec change's request (D6 §4.3): the owner's words, for the Spec Writer.
   change_request?: Record<string, unknown> | null;
+  // A rapid prototype's brief preparation (slice E3; prototype/brief.ts).
+  prototype_brief?: BriefPreparationFacts | null;
   run: { id: string; role: string; base_revision: string; content_hash: string | null };
   work_item: { id: string; kind: string; subject: string; project: string };
   stage: Record<string, unknown> | null;
@@ -764,7 +767,9 @@ export function writeContextPackage(
           ? writing
             ? "Write or correct the project's protected checks, as the section below says."
             : "Write or correct the project's protected checks. The project's check facts (its protected roots, programs, requirements and criteria) could not be read, so none is given here: change nothing, and say so in your summary."
-          : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
+          : claim.work_kind === 'brief_preparation'
+            ? BRIEF_TASK
+            : (ROLE_TASK[role] ?? 'Do the work the work item below names.'),
     '',
     `Work item: ${claim.work_item} (${claim.work_kind}); run ${claim.run}; base revision ${claim.base_revision}.`,
     ...(goal !== null ? ['', '## The stage', '', `Stage ${String(facts?.stage?.number ?? '')}: ${goal}`] : []),
@@ -781,6 +786,7 @@ export function writeContextPackage(
     ...builderScope,
     ...(opts.design ? opts.design.prompt : []),
     ...(facts?.replan ? replanPromptText(facts.replan) : []),
+    ...(facts?.prototype_brief ? briefPreparationText(facts.prototype_brief) : []),
     ...(facts?.phase
       ? [
           '',
@@ -831,7 +837,11 @@ export function writeContextPackage(
   const schema = facts?.replan ? { ...base, title: "The Architect's replan result, written to /surety/out/result.json", required: ['status', 'summary', 'plan', 'conformance'], properties: { ...(base.properties as Record<string, unknown>), ...REPLAN_RESULT_FIELDS, findings: FIELDS.findings, ...added } } : base;
   // A UI Builder's result declares its asset bindings (D7 §6.5, B.17).
   const withBindings = opts.design ? { ...authored, properties: { ...(authored.properties as Record<string, unknown>), asset_bindings: ASSET_BINDINGS_SCHEMA } } : authored;
-  put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : withBindings, null, 2)}\n`);
+  // A brief preparation's result carries the brief's idea-derived fields (slice E3).
+  const withBrief = claim.work_kind === 'brief_preparation' ? { ...withBindings, title: "The Spec Writer's brief preparation result, written to /surety/out/result.json", required: ['status', 'summary', 'brief'], properties: { ...(withBindings.properties as Record<string, unknown>), brief: BRIEF_RESULT_SCHEMA } } : withBindings;
+  put('result-schema.json', 'result_schema', null, `${JSON.stringify(facts?.replan ? schema : withBrief, null, 2)}\n`);
+  if (facts?.prototype_brief) put('prototype-brief.json', 'instructions', facts.prototype_brief.iteration, `${JSON.stringify(facts.prototype_brief, null, 2)}\n`);
+  if (facts?.replan?.prototype) put('prototype-brief.json', 'instructions', facts.replan.prototype.iteration, `${JSON.stringify(facts.replan.prototype, null, 2)}\n`);
   // The design's files, each confirmed inside the package (the slice-40 review's B1).
   for (const f of opts.design?.files ?? []) {
     if (!f.path.startsWith('design/') || within(dir, f.path) === null) throw new Error(`the design file ${JSON.stringify(f.path)} would be written outside the context package`);

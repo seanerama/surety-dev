@@ -44,6 +44,7 @@ import {
 import { type ManifestEntry, rehash, sweepArtifacts } from './artifact.js';
 import { heldDigests, secretDigestKey } from './config.js';
 import { judgeReconcile } from './reconcile.js';
+import { staticServer } from './static-site.js';
 import { Observer } from './observe.js';
 
 export class ReleaseOperator {
@@ -223,7 +224,16 @@ export class ReleaseOperator {
     await this.observeServiceDomains(project).catch((err) => log('service domains', err, { project }));
     const work = await this.rt.read<{ intend: { work_item: string }[]; teardowns: string[]; drive: string[] }>('deploy.work', { project });
     for (const w of work.intend) {
-      const made = await this.rt.engine<{ operation?: string }>('deploy.intend', { workItem: w.work_item, incarnation: this.rt.incarnation });
+      // The engine's static server, by path and SHA-256, for a static
+      // configuration's intent (SHAPES.md §2); null when it cannot be read.
+      let staticServerNow: { path: string; digest: string } | null = null;
+      try {
+        const s = staticServer();
+        staticServerNow = { path: s.path, digest: s.digest };
+      } catch (err) {
+        log('static server', err, { project });
+      }
+      const made = await this.rt.engine<{ operation?: string }>('deploy.intend', { workItem: w.work_item, incarnation: this.rt.incarnation, staticServer: staticServerNow });
       if (made.operation) {
         await pausePoint('deploy.intended');
         work.drive.push(made.operation);

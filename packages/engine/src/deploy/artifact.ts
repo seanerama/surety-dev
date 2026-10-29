@@ -48,6 +48,7 @@ import { ENGINE_VERSION } from '../index.js';
 import { Refusal } from '../refusal.js';
 import type { SealedArtifact } from '../store/transitions/deploy.js';
 import { pausePoint } from '../testing/seam.js';
+import { outputKindOfTree } from './static-site.js';
 
 export type ManifestEntry = [path: string, type: 'file', mode: '100644' | '100755', size: number, sha256: string];
 export type ArtifactRefusal = 'symlink' | 'submodule' | 'special_file' | 'too_many' | 'too_large' | 'retention_full' | 'disk_reserve' | 'prepare_deadline';
@@ -349,11 +350,14 @@ export async function sealArtifact(args: { home: string; project: string; repo: 
   const blobs = await list(args.repo, args.revision, args.exclude, b);
   const bytes = await readBlobs(args.repo, blobs, b);
   const manifest = manifestOf(blobs, bytes);
+  // The tree's output kind, from the tree alone (static-site.ts).
+  const pkg = blobs.find((x) => x.path === 'package.json');
+  const outputKind = outputKindOfTree(manifest, (p) => (p === 'package.json' && pkg ? (bytes.get(pkg.oid) ?? null) : null));
   const digest = digestOfManifest(manifest);
   const total = manifest.reduce((n, e) => n + e[3], 0);
   const spec = specFingerprint(args.exclude);
   const target = sealedPath(args.home, args.project, digest);
-  const result = (reused: SealedArtifact['reused'], created: boolean): Sealed => ({ digest, manifest, path: target, bytes: total, entries: manifest.length, reused, spec, created });
+  const result = (reused: SealedArtifact['reused'], created: boolean): Sealed => ({ digest, manifest, path: target, bytes: total, entries: manifest.length, reused, spec, created, output_kind: outputKind });
   if (existsSync(target)) {
     // Reuse: the sealed copy rehashed first; the staging copy never made.
     return result(rehash(target, manifest) === 'ok' ? 'ok' : 'corrupt', false);

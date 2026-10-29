@@ -16,6 +16,8 @@
 //                           the work item's scripts are consulted
 //   scripts/kind-<kind>.json M5 (SEAM.md §350): a script for every launch of that work kind with no
 //                           script of its own, or an array by that kind's launch ordinal
+//   claims/kind-<kind>-<n>  created exclusively by the launch that takes ordinal n of a kind's
+//                           array (SEAM.md §579), so that launches started together differ
 //   scripts/default.json    one script, for a launch with no script of its own
 //   release/<key>.<name>    a file whose existence releases the hold <name>;
 //                           <key> is the invocation id, the work item id or "all"
@@ -411,6 +413,31 @@ function priorLaunches(value, field = 'work_item') {
 
 const HOLD_FOREVER = { steps: [{ hold: 'unscripted' }] };
 
+// The launch ordinal of a work kind, claimed (SEAM.md §579). Two launches of
+// one kind started together (two stages dispatched on one tick) both count
+// the log before either has logged its launch, so the count alone gives
+// both the same element of the kind's array. Each launch therefore claims
+// its ordinal by creating claims/kind-<kind>-<n> exclusively, from the
+// logged count up: the first free n is its own. Where the claim cannot be
+// made at all (not EEXIST), the logged count stands, as before.
+function claimKindOrdinal(kind, logged) {
+  const claims = join(dir, 'claims');
+  try {
+    mkdirSync(claims, { recursive: true });
+  } catch {
+    return logged;
+  }
+  for (let n = logged; n < logged + 1000; n++) {
+    try {
+      closeSync(openSync(join(claims, `kind-${kind}-${n}`), 'wx'));
+      return n;
+    } catch (e) {
+      if (e?.code !== 'EEXIST') return logged;
+    }
+  }
+  return logged;
+}
+
 // A canary's launch (M2 slice 13 part 2; SEAM.md §149) follows
 // scripts/canary-<kind>.json, its n-th launch of that kind element n-1.
 function priorCanaryLaunches(kind) {
@@ -452,7 +479,7 @@ function chooseScript(workItem, index, run = null, kind = null) {
   if (typeof kind === 'string' && /^[a-z_]+$/.test(kind)) {
     const byKind = readJson(join(dir, 'scripts', `kind-${kind}.json`));
     if (Array.isArray(byKind)) {
-      const n = priorLaunches(kind, 'work_kind');
+      const n = claimKindOrdinal(kind, priorLaunches(kind, 'work_kind'));
       if (byKind[n] !== undefined) return { script: byKind[n], source: 'kind' };
     } else if (byKind !== undefined) return { script: byKind, source: 'kind' };
   }

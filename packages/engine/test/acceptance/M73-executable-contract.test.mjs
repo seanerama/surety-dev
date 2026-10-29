@@ -42,6 +42,8 @@ import { tableNames, withStore } from './harness/store.mjs';
 import { LIFECYCLE, WORK, legalEdges } from './harness/transitions.mjs';
 
 const CONTRACT_REFUSED = 8;
+// D4 §13's amendments as the Verifier states them (contract/static-preview.json; SEAM.md §577).
+const STATIC_PREVIEW = JSON.parse(readFileSync(new URL('./contract/static-preview.json', import.meta.url), 'utf8'));
 const API_DIR = join(REPO_ROOT, 'packages', 'engine', 'api');
 const D1 = join(REPO_ROOT, 'docs', 'design', 'sdlc-design-D1-engine-core.md');
 
@@ -128,6 +130,9 @@ const MUTATIONS = [
     check: 'structural',
   },
 ];
+
+// The Verifier's prototype table (SEAM.md §575).
+const PROTO = JSON.parse(readFileSync(new URL('./contract/prototype.json', import.meta.url), 'utf8'));
 
 describe('M73 the executable contract and the generated appendix', () => {
   // The engine's own contract, exported once. A case that cannot have it
@@ -230,6 +235,16 @@ describe('M73 the executable contract and the generated appendix', () => {
     }
     const enabled = Object.keys(doc.decisions).filter((kind) => doc.decisions[kind].enabled).sort();
     assert.deepEqual(enabled, Object.keys(DECISIONS.kinds).sort(), 'no other decision kind is enabled in M1');
+    // SEAM.md §575 (the M7 rows; slice E5's `prototype.iteration_resumed`): the
+    // prototype's events both ways, each declared with its owner, and its
+    // modes and iteration statuses as the Verifier's table names them.
+    for (const type of PROTO.events) {
+      assert.ok(doc.enums.EventType.includes(type), `${type} is an EventType`);
+      assert.ok(typeof doc.events[type]?.owner === 'string' && doc.events[type].owner !== '' && doc.events[type].reserved !== true, `${type} is declared with its owner (${JSON.stringify(doc.events[type])})`);
+    }
+    assert.deepEqual(doc.enums.EventType.filter((type) => type.startsWith('prototype.')).sort(), PROTO.events.filter((type) => type.startsWith('prototype.')).sort(), "every prototype.* EventType of the contract is in the Verifier's prototype table, and no other");
+    assert.deepEqual(doc.enums.ExecutionMode, PROTO.modes, 'the execution modes');
+    assert.deepEqual(doc.enums.IterationStatus, PROTO.iteration_statuses, 'the iteration statuses');
     // Correction 20: the closed configuration, key by key.
     for (const scope of ['engine', 'project']) {
       const expected = Object.fromEntries(Object.entries(CONTRACT[scope]).filter(([key]) => !key.startsWith('$')));
@@ -239,6 +254,32 @@ describe('M73 the executable contract and the generated appendix', () => {
           if (typeof spec[bound] === 'number') assert.equal(doc.config[scope][key][bound], spec[bound], `${scope}.${key}: ${bound}`);
         }
       }
+    }
+  });
+
+  // D4 §13 (the owner's amendments of 2026-10-29; rows M613 to M616): the
+  // Verifier's table contract/static-preview.json, held both ways (SEAM.md §577).
+  test("the contract holds D4 §13's amendments as the Verifier's static-preview table states them: the enumerations exactly, the events owned, the new tables' columns and keys", (t) => {
+    const { doc } = fixture(t);
+    for (const [name, values] of Object.entries(STATIC_PREVIEW.enums)) {
+      assert.deepEqual([...(doc.enums[name] ?? [])].sort(), [...values].sort(), `the enumeration ${name}, no more and no fewer`);
+    }
+    for (const type of STATIC_PREVIEW.events) {
+      assert.ok(doc.enums.EventType.includes(type), `${type} is an EventType`);
+      assert.ok(typeof doc.events[type]?.owner === 'string' && doc.events[type].owner !== '' && doc.events[type].reserved !== true, `${type} is declared with its owner (${JSON.stringify(doc.events[type])})`);
+    }
+    for (const [name, table] of Object.entries(STATIC_PREVIEW.tables)) {
+      const fields = doc.tables[name]?.fields;
+      assert.ok(fields, `the table ${name} is declared`);
+      assert.deepEqual(Object.keys(fields).sort(), [...table.columns].sort(), `${name}: exactly its columns`);
+      const refs = Object.fromEntries(Object.entries(fields).filter(([, f]) => f.references !== undefined).map(([f, spec]) => [f, spec.references]));
+      assert.deepEqual(refs, table.references, `${name}: exactly its foreign keys`);
+      for (const [field, enumName] of Object.entries(table.enums)) assert.equal(fields[field].enum, enumName, `${name}.${field} is of ${enumName}`);
+    }
+    for (const [path, spec] of Object.entries(STATIC_PREVIEW.columns)) {
+      const [table, field] = path.split('.');
+      assert.ok(doc.tables[table]?.fields?.[field], `${path} is declared`);
+      if (spec.enum !== undefined) assert.equal(doc.tables[table].fields[field].enum, spec.enum, `${path} is of ${spec.enum}`);
     }
   });
 

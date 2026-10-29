@@ -10,6 +10,9 @@ import { type DecisionRow, consumeDecision, currentPreview, openDecision, stale 
 import { type Facts, KINDS, answerQueued, raiseQuestion, wireControl } from './queue.js';
 import { beginEnd, getRun } from './runs.js';
 import type { Tx } from './tx.js';
+import { type IterationAction, alphaDisposition, iterationControlManifest, recordIterationControl, runsUnderWay } from './prototype.js';
+import { setPaused } from './project.js';
+import { requestTeardown } from './deploy.js';
 
 // What a command hands back to the main thread besides its reply: work that
 // must start once the transaction has committed.
@@ -82,11 +85,112 @@ function applyControl(tx: Tx, kind: Control, runId: string, exited = false, deci
   return { status: 200, body: { run: { id: runId, state: ended.state, outcome: ended.outcome } }, effects: [{ kind: 'end_run', run: runId }] };
 }
 
-wireControl((tx: Tx, d: DecisionRow, kind: Control, exited?: boolean) => {
-  const run = getRun(tx, d.subject_id)!;
-  const result = applyControl(tx, kind, run.id, exited === true, d.id);
-  return { ...result, body: { decision: { id: d.id, status: 'consumed' }, ...(result.body as object) } };
-});
+wireControl(
+  (tx: Tx, d: DecisionRow, kind: Control, exited?: boolean) => {
+    const run = getRun(tx, d.subject_id)!;
+    const result = applyControl(tx, kind, run.id, exited === true, d.id);
+    return { ...result, body: { decision: { id: d.id, status: 'consumed' }, ...(result.body as object) } };
+  },
+  (tx: Tx, d: DecisionRow, facts: Facts) => applyIterationControl(tx, d, facts),
+);
+
+// ---- a prototype iteration's Stop and Discard (slice E2; R4, R8) ----------------------
+
+// The effect of a consumed Stop or Discard of an iteration. Each run of the
+// iteration under way is stopped through the existing per-run Stop: a
+// stop_confirm about the run, raised and consumed here as covered by the
+// iteration's confirmation, then the run-end protocol (human_stop), so that
+// each run's end, charge and unknown allowance are what any Stop gives them
+// and nothing of the usage is erased. A quarantined run, one already ending,
+// or one whose end the running engine has decided keeps its course. Stop
+// pauses the project first, so that nothing else is dispatched; Discard
+// tears down the iteration's own Alpha through the ordinary teardown, only
+// when its deployment is the one running in the environment now (R8).
+function applyIterationControl(tx: Tx, d: DecisionRow, facts: Facts): CommandResult {
+  const action: IterationAction = d.scope === 'discard' ? 'discard' : 'stop';
+  const project = d.project!;
+  const effects: Effect[] = [];
+  if (action === 'stop') setPaused(tx, { project, paused: true });
+  const exited = new Set(facts.exited_runs ?? []);
+  const decided = new Set(facts.decided_runs ?? []);
+  const stopped: { run: string; decision: string; outcome: string | null; applied_to: 'run' | 'work' }[] = [];
+  const kept: { run: string; why: string }[] = [];
+  for (const r of runsUnderWay(tx.db, d.subject_id)) {
+    if (!r.stoppable || decided.has(r.run)) {
+      kept.push({ run: r.run, why: decided.has(r.run) ? 'its end was already decided' : r.fate });
+      continue;
+    }
+    const own = raiseQuestion(tx, { project, kind: 'stop_confirm', subjectType: 'run', subjectId: r.run });
+    if (own === null) {
+      kept.push({ run: r.run, why: 'it can no longer be stopped' });
+      continue;
+    }
+    consumeDecision(tx, own, 'confirm', `covered by the confirmation of prototype iteration ${action} ${d.id}`);
+    const result = applyControl(tx, 'stop', r.run, exited.has(r.run), own.id);
+    effects.push(...(result.effects ?? []));
+    const body = result.body as { run?: { outcome?: string | null } };
+    stopped.push({ run: r.run, decision: own.id, outcome: body.run?.outcome ?? null, applied_to: exited.has(r.run) ? 'work' : 'run' });
+  }
+  let teardown: { environment: string; operation_requested: boolean } | null = null;
+  if (action === 'discard') {
+    const alpha = alphaDisposition(tx.db, d.subject_id);
+    if (alpha.tears_down_alpha && alpha.environment) {
+      const t = requestTeardown(tx, { project, environment: alpha.environment.name });
+      effects.push(...(t.effects ?? []));
+      teardown = { environment: alpha.environment.name, operation_requested: true };
+    }
+  }
+  recordIterationControl(tx, { iteration: d.subject_id, action, decision: d.id, stopped: stopped.map((x) => x.run), teardown: teardown ? { environment: teardown.environment } : null });
+  if (!effects.some((e) => e.kind === 'tick')) effects.push({ kind: 'tick' });
+  return {
+    status: 200,
+    body: {
+      decision: { id: d.id, status: 'consumed' },
+      iteration: { id: d.subject_id, status: action === 'stop' ? 'stopped' : 'discarded' },
+      project: { id: project, paused: (tx.db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(project) as { paused: number }).paused === 1 },
+      runs: { stopped, kept },
+      teardown,
+    },
+    effects,
+  };
+}
+
+// POST /v1/projects/:p/iterations/:i/stop and /discard: two steps, as a
+// run's Stop (controlRun): without a preview hash the confirmation is raised
+// (or the open one returned) and the answer is 409 confirm_required; with
+// its preview hash it is consumed and applied. The confirmation is a
+// stop_confirm whose subject is the iteration and whose scope is the action.
+export function controlIteration(tx: Tx, args: { project: string; iteration: string; action: IterationAction; previewHash: string | undefined; facts: Facts }): CommandResult {
+  const it = tx.db.prepare('SELECT "id", "status", "seq" FROM "prototype_iterations" WHERE "id" = ? AND "project" = ?').get(args.iteration, args.project) as { id: string; status: string; seq: number } | undefined;
+  if (!tx.db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
+  if (!it) throw notFound('iteration', args.iteration);
+  if (args.previewHash === undefined) {
+    if (iterationControlManifest(tx.db, it.id, args.action) === null) {
+      throw illegal(`${args.action === 'stop' ? 'Stop' : 'Discard'} of a ${it.status} iteration`, { iteration: it.id, status: it.status });
+    }
+    const decision = raiseQuestion(tx, { project: args.project, kind: 'stop_confirm', subjectType: 'iteration', subjectId: it.id, scope: args.action })!;
+    const refusal = new Refusal(
+      409,
+      'confirm_required',
+      `${args.action === 'stop' ? 'Stop' : 'Discard'} of prototype iteration ${it.seq} needs confirmation through decision ${decision.id}.`,
+      'Send the same request again with {"preview_hash": <the preview hash>} to confirm.',
+      { decision: decision.id, preview_hash: decision.preview_hash },
+    );
+    return { status: 409, body: refusal.body() };
+  }
+  const open = openDecision(tx, args.project, 'stop_confirm', 'iteration', it.id, args.action);
+  if (!open) {
+    const last = tx.db.prepare(`SELECT * FROM "decisions" WHERE "kind" = 'stop_confirm' AND "subject_type" = 'iteration' AND "subject_id" = ? AND "scope" = ? AND "preview_hash" = ? LIMIT 1`).get(it.id, args.action, args.previewHash) as
+      | DecisionRow
+      | undefined;
+    if (last?.status === 'consumed') throw new Refusal(409, 'decision_consumed', `Decision ${last.id} is consumed.`, 'Read the iteration; the confirmation took effect.', { decision: last.id });
+    throw new Refusal(409, 'decision_stale', 'No confirmation is open for this iteration, or it was replaced.', 'Send the request without a preview hash to get the current confirmation.', { iteration: it.id });
+  }
+  const now = KINDS.stop_confirm.preview(tx, open);
+  if (args.previewHash !== open.preview_hash || now === null || currentPreview(open, now.manifest, now.options) !== open.preview_hash) throw stale(open);
+  consumeDecision(tx, open, 'confirm', null);
+  return applyIterationControl(tx, open, args.facts);
+}
 
 // POST /v1/projects/:p/runs/:r/stop and /abandon. Without a preview hash the
 // confirmation decision is raised (or the open one returned) and the answer

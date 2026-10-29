@@ -4,6 +4,7 @@
 // from durable facts, so a step repeated after a failure writes what it
 // would have written the first time (E28 item 1).
 
+import type { TreeAnswer } from '../../deploy/output-kind.js';
 import { assertEdge } from './lifecycle.js';
 import { type AlphaPrepared, type Report, recordReport } from './findings.js';
 import { type ChangeKind, captureProposal, effectiveVersion } from './protected.js';
@@ -15,6 +16,7 @@ import { type Baseline, integrationRef, nextCounter, nominationRef, projectRepoR
 import { getRun } from './runs.js';
 import type { Tx } from './tx.js';
 import type { ReplanPrepared } from '../../plan/bundle.js';
+import type { PreparedBrief } from '../../prototype/brief.js';
 import { type ChainOrigin, originOfItem, transitionWork, workItemOfRun } from './work.js';
 import { type Presence } from './evidence.js';
 import { TIER_RANK, cadenceTier } from '../../checks/scope.js';
@@ -333,6 +335,8 @@ export function intendIntegration(
     plans: PlanInput[];
     // A replan's B.5 plan, checked on the main thread (runs/accept.ts).
     replan?: ReplanPrepared;
+    // A prototype's brief, prepared on the main thread (runs/accept.ts; slice E3).
+    brief?: PreparedBrief;
     // D7 §6.5 (G15): a UI Builder's validated asset bindings.
     asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived'; slot_version: number }[];
     deadlineSeconds: number;
@@ -370,6 +374,7 @@ export function intendIntegration(
     stage: subject.stage ?? null,
     plans: args.plans,
     ...(args.replan ? { replan: args.replan } : {}),
+    ...(args.brief ? { brief: args.brief } : {}),
     ...(args.asset_bindings && args.asset_bindings.length > 0 ? { asset_bindings: args.asset_bindings } : {}),
     architect: run.role === 'architect',
     nominate,
@@ -393,7 +398,7 @@ export function intendIntegration(
 // The intent of a nomination (D1 §7.7): the immutable ref
 // refs/surety/cand/<seq> at the revision found due, written by a ref update
 // whose finalizer writes the candidate. Clears what was due.
-export function intendNomination(tx: Tx, args: { project: string; deadlineSeconds: number }): IntentResult | null {
+export function intendNomination(tx: Tx, args: { project: string; deadlineSeconds: number; tree?: TreeAnswer | null }): IntentResult | null {
   const row = tx.db.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
   if (!row) throw notFound('project', args.project);
   if (row.nomination_due === null) return null;
@@ -422,6 +427,9 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
     chain: due.chain,
     chain_origin: due.origin ?? null,
     ...(due.presence ? { module_presence: due.presence } : {}),
+    // The revision's tree as the main thread read it before the intent
+    // (journal/nominate.ts): the deployment compatibility's (§5).
+    ...(args.tree && args.tree.revision === due.revision ? { output_tree: args.tree } : {}),
   };
   return intendOperation(tx, {
     project: args.project,

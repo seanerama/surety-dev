@@ -36,7 +36,7 @@ import { parseSpecification } from '../spec/semantics.js';
 import { discover } from '../checks/discovery.js';
 import { proposedCheckRefusal, proposesChecks } from './report.js';
 import { blockingFindings } from '../spec/approval.js';
-import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
+import { type AdrFrontMatter, MODULES_FILE, PLAN_FILE, ROADMAP_FILE, type PhasePlanFile, parsePhasePlan } from '../plan/schemas.js';
 import { architectFindings } from '../plan/findings.js';
 import { rebaseTree } from '../git/rebase.js';
 import { type MetadataBaseline, type Violation, snapshotTree, validateDiff, validateOutside } from '../git/snapshot.js';
@@ -56,11 +56,12 @@ import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
 import { pausePoint, seamSpecBlobFault } from '../testing/seam.js';
 import type { ApplicabilityEntry } from '../spec/change.js';
+import { type BriefFacts, type PreparedBrief, briefShapeProblem, composeBrief, validateModelBrief } from '../prototype/brief.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
 
-export const INTEGRATING_KINDS = ['stage_build', 'fix', 'replan', 'assessment'];
+export const INTEGRATING_KINDS = ['stage_build', 'fix', 'replan', 'assessment', 'brief_preparation'];
 // A Verifier's and a Reviewer's kinds: validated, never committed (SEAM.md §68).
 export const REPORTING_KINDS = ['verification', 'review', 'check_correction', 'check_authoring', 'phase_verification'];
 // A Spec Writer's one-shot (D6 §4.3): committed onto a side ref, never integrated.
@@ -353,6 +354,18 @@ export class Acceptor {
             legacy = [];
           }
         }
+        // A rapid prototype's brief preparation (slice E3; R3, R5): the
+        // specification it committed parsed, its brief validated and
+        // completed with what the engine serves, and written as a record,
+        // before the intent; a brief or a specification the engine cannot
+        // take refuses the integration (`invalid_result`), and the iteration
+        // stays preparing (prototype/brief.ts preparationEnded).
+        let brief: PreparedBrief | null = null;
+        if (facts.work.kind === 'brief_preparation') {
+          const prepared = await this.briefOf(facts, target.sha);
+          if ('refused' in prepared) return failed('invalid_result', prepared.refused);
+          brief = prepared.brief;
+        }
         // A UI Builder's asset bindings (D7 §6.5; G15), validated against
         // the tree to integrate; a failure refuses the integration.
         const bindings = (facts.result?.report as { asset_bindings?: AssetBinding[] } | undefined)?.asset_bindings ?? [];
@@ -367,7 +380,7 @@ export class Acceptor {
         const intent = await this.journal.withProject(facts.project.id, () =>
           this.journal.intend(
             'accept.intend_integration',
-            { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), ...(bound.length > 0 ? { asset_bindings: bound } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
+            { run, repo, head, commit: target.sha, plans: legacy, ...(replan ? { replan } : {}), ...(brief ? { brief } : {}), ...(bound.length > 0 ? { asset_bindings: bound } : {}), deadlineSeconds: this.rt.setting('git_deadline') },
             'ref_update',
           ),
         );
@@ -457,6 +470,37 @@ export class Acceptor {
     return { outcome: 'completed', reason: 'none' };
   }
 
+  // A brief preparation's product (slice E3): the specification at the
+  // run's commit, parsed and refused on any finding that would block its
+  // approval; the result's brief validated against it (3 to 5 objectives,
+  // one per requirement, R3); completed with the facts the engine serves
+  // (the target and its exposure, the roles' models, the limits, the
+  // preparation, the stop conditions) and written as the brief's record.
+  private async briefOf(facts: AcceptFacts, sha: string): Promise<{ brief: PreparedBrief } | { refused: string }> {
+    const ctx = repoContext(facts.project.repo);
+    const path = '.surety/spec/spec.md';
+    const tree = await treeOf(ctx, sha);
+    const entries = tree === null ? null : await listTree(ctx, tree);
+    if (entries === null) return { refused: "the brief preparation's tree could not be read" };
+    const entry = [...entries.values()].find((e) => e.path === path && e.type === 'blob');
+    if (!entry) return { refused: `the brief preparation left no ${path}: the brief is approved with its minimal specification` };
+    const text = await catBlob(ctx, sha, path);
+    if (text === null) return { refused: `${path} at ${sha} could not be read` };
+    const parsed = parseSpecification(text);
+    if (!parsed.readable || parsed.representation === null) return { refused: `the prepared specification is not readable: ${parsed.findings.map((f) => f.why).join('; ')}` };
+    const blocking = blockingFindings(parsed.findings);
+    if (blocking.length > 0) return { refused: `spec_semantics_invalid: the prepared specification cannot be approved: ${blocking.map((f) => `${f.where}: ${f.code}: ${f.why}`).join('; ')}` };
+    const model = validateModelBrief((facts.result?.report as { brief?: unknown } | undefined)?.brief, parsed.representation);
+    if ('refused' in model) return { refused: `the brief is refused: ${model.refused}` };
+    const served = await this.rt.read<BriefFacts>('prototype.brief_facts', { project: facts.project.id, run: facts.run.id, environments: parsed.representation.environments.map((e) => e.name) });
+    const brief = composeBrief(model.brief, served, nowIso());
+    const problem = briefShapeProblem(brief);
+    if (problem !== null) return { refused: `the brief is refused: ${problem}` };
+    const content = Buffer.from(`${JSON.stringify({ brief }, null, 2)}\n`);
+    const record = await writeWholeRecord(this.rt, { project: facts.project.id, run: facts.run.id, kind: 'prototype_brief', content });
+    return { brief: { brief, record, digest: sha256(content.toString('utf8')), blob: entry.oid, semantic_digest: parsed.digest, representation: parsed.representation, findings: parsed.findings } };
+  }
+
   // A replan's B.5 plan, checked against the approved bundle (D6 §5.3,
   // §5.4): null when the commit carries no plan in that form.
   private async replanOf(facts: AcceptFacts, sha: string, paths: string[], base: string): Promise<{ replan: ReplanPrepared } | { refused: string } | { held: PendingPrerequisite[] } | null> {
@@ -485,7 +529,10 @@ export class Acceptor {
     // kept stages are stages of the plan; any other plan replaces nothing.
     const replacement = b.replacement !== null && b.replacement.phase === plan.phase ? b.replacement : null;
     const approved = b.baseline.approved;
-    if (approved === null) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
+    // A rapid prototype's first plan (slice E3; R1) is the first
+    // architecture with its one phase, checked as an Architect's first close
+    // is: against no approved architecture. Any other replan plans against one.
+    if (approved === null && b.first_plan !== true) return { refused: 'PLAN_STALE_BASELINE: no approved architecture and roadmap to plan against' };
     // The commit's own architecture, module map, ADRs and roadmap, read from
     // its tree and diffed against the approved baseline by the check (D6
     // §5.4; the 31b review's S4): a replan that changes any of them is
@@ -517,7 +564,8 @@ export class Acceptor {
       adrFront[key] = a.front;
       adrs[key] = { text: a.text, status: a.front.status, ...(a.front.supersedes ? { supersedes: a.front.supersedes } : {}) };
     }
-    const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved.roadmap;
+    const roadmap = plan.roadmap_revision ?? parsedArch.parsed.roadmap ?? approved?.roadmap ?? null;
+    if (roadmap === null) return { refused: `the first plan's tree has no ${ROADMAP_FILE}: the first architecture is approved with its roadmap and its first phase's plan` };
     const architectureText = parsedArch.parsed.architecture_text;
     // A replan that changes the approved architecture text, module map or an
     // ADR is published with the next architecture version; one that changes

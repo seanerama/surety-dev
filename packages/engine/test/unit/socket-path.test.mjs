@@ -60,6 +60,7 @@ test("Node binds a longer path cut and reports no error: the defect the check st
       server.once('error', (err) => resolve({ error: err.code }));
       server.listen(path, () => resolve({ listening: true }));
     });
+    if (bound.error === 'EINVAL') return assert.throws(() => assertSocketPath(path), { code: 'socket_path_too_long' }, 'libuv >= 1.52 (Node >= 24.19) refuses the name itself; the engine refuses it before binding');
     assert.deepEqual(bound, { listening: true }, 'Node reports the 115-byte path bound');
     const names = readdirSync(dir);
     assert.equal(names.length, 1);

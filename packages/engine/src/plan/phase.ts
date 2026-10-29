@@ -108,7 +108,7 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // A phase verification of a candidate a later one superseded (M545).
   retireSupersededVerifications(tx, args.project);
   const plan = openPlan(tx.db, args.project);
-  if (!plan) return NONE;
+  if (!plan) return completedPhaseGateDue(tx, args.project) ?? NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
   const candidate = phaseCandidate(tx, plan, tier);
   if (!candidate) return NONE;
@@ -353,11 +353,69 @@ function alphaBarrierStep(tx: Tx, project: string): void {
 
 // Whether every phase of the current roadmap has a completed plan (the plan
 // read's `build.complete`, SEAM.md §352).
+// The phase gate of a complete build, evaluated again by the engine
+// (laplab-validation E2): once every phase is complete no plan is open, so
+// the step above never reads the phase gate again; a change after the
+// completion that makes the current candidate's latest phase evaluation
+// stale (an applied protected version, such as the engine's own serving
+// check: its checks registered again on the candidate) would otherwise
+// leave it stale until a client asked for the gate, and the deliverable
+// (store/transitions/deliverable.ts), which needs it satisfied and not
+// stale, refused. Due when the build is complete, the current candidate's
+// latest phase evaluation is stale and of a completed plan, that
+// evaluation was computed under the approved specification still current
+// (its scope's `spec_revision`), and none of the candidate's check
+// executions is still to end (the gate reads their results, as the step
+// above waits for them). An approved change of the specification after the
+// completion (a change after the final phase, a design approved at Alpha)
+// leaves the completed phase's gate as its history: what follows from the
+// change is the replan and its delivery phase (M433 (c), M517 (f)), or
+// nothing (M530 (g)), never a new evaluation of the completed phase by the
+// engine; a client asking for the gate still computes it. Each new
+// evaluation is current when written, so the gate is due again only after
+// something marks it stale again: one evaluation per staleness.
+function completedPhaseGateDue(tx: Tx, project: string): PhaseStepResult | null {
+  if (!buildComplete(tx.db, project)) return null;
+  const candidate = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
+  if (!candidate) return null;
+  const ev = tx.db
+    .prepare(
+      `SELECT e."stale", e."phase_plan", s."spec_revision" FROM "gate_evaluations" e JOIN "acceptance_scopes" s ON s."id" = e."scope" WHERE e."candidate" = ? AND e."gate_kind" = 'phase' ORDER BY e.rowid DESC LIMIT 1`,
+    )
+    .get(candidate.id) as { stale: number; phase_plan: string | null; spec_revision: string | null } | undefined;
+  if (!ev || ev.stale !== 1 || ev.phase_plan === null) return null;
+  const specNow = (tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined)?.id ?? null;
+  if (ev.spec_revision !== specNow) return null;
+  const plan = tx.db.prepare('SELECT "completed_at" FROM "phase_plans" WHERE "id" = ? AND "project" = ?').get(ev.phase_plan, project) as { completed_at: string | null } | undefined;
+  if (!plan || plan.completed_at === null) return null;
+  const coming = tx.db
+    .prepare(`SELECT 1 FROM "check_executions" WHERE "candidate" = ? AND "status" NOT IN ('recorded', 'cancelled', 'not_run', 'interrupted', 'quarantined') LIMIT 1`)
+    .get(candidate.id);
+  if (coming) return null;
+  return { evaluate: { candidate: candidate.id, phase_plan: ev.phase_plan }, completed: null };
+}
+
 export function buildComplete(db: Db, project: string): boolean {
   const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
   const phases = parseJson<{ number: number }[]>(road?.phases ?? null) ?? [];
   if (phases.length === 0) return false;
   return phases.every((ph) => db.prepare(`SELECT 1 FROM "phase_plans" WHERE "project" = ? AND "phase_number" = ? AND "completed_at" IS NOT NULL`).get(project, ph.number) !== undefined);
+}
+
+// When the build became complete, as recorded: the newest `completed_at`
+// among the completed plans of the current roadmap's phases (the
+// completion that made every phase complete, or a later one of the same
+// phases). null while the build is not complete.
+export function buildCompletedAt(db: Db, project: string): string | null {
+  if (!buildComplete(db, project)) return null;
+  const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
+  const numbers = (parseJson<{ number: number }[]>(road?.phases ?? null) ?? []).map((ph) => ph.number);
+  let latest: string | null = null;
+  for (const n of numbers) {
+    const row = db.prepare(`SELECT MAX("completed_at") AS "at" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = ? AND "completed_at" IS NOT NULL`).get(project, n) as { at: string | null };
+    if (row.at !== null && (latest === null || row.at > latest)) latest = row.at;
+  }
+  return latest;
 }
 
 // ---- the `phase` gate's own reasons (D6 §5.8; A.4; K5; B07) ---------------------------------
