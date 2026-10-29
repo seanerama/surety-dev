@@ -7,6 +7,7 @@
 
 import { ensureAncestry, ensureNominationAncestry, ensureNominationPresence, ensurePresence } from '../gates/prepare.js';
 import { type Runtime, log } from '../runtime.js';
+import { treeAt } from '../deploy/compatibility-eval.js';
 import type { IntentResult } from '../store/transitions/journal.js';
 import type { Journal } from './driver.js';
 
@@ -22,7 +23,12 @@ export async function nominate(rt: Runtime, journal: Journal, project: string): 
       await ensureNominationPresence(rt, project).catch((err) => log('module presence', err, { project }));
       if (!(await rt.read<boolean>('nomination.due_project', { project }))) return;
       await journal.withProject(project, async () => {
-        const intent = await journal.intend('nomination.intend', { project, deadlineSeconds: rt.setting('git_deadline') }, 'ref_update');
+        // The revision's tree, read before the intent and frozen with it:
+        // the finalizer evaluates the deployment compatibility from it in
+        // the nomination's own transaction (the static-preview shapes, §5).
+        const due = await rt.read<{ revision: string; repo: string } | null>('nomination.due_revision', { project });
+        const tree = due === null ? null : await treeAt(rt, due.repo, due.revision).catch(() => null);
+        const intent = await journal.intend('nomination.intend', { project, deadlineSeconds: rt.setting('git_deadline'), tree }, 'ref_update');
         if (!('operation' in (intent as IntentResult))) return;
         const settled = await journal.drive((intent as { operation: string }).operation);
         if (settled.end !== 'finalized') log('nomination', new Error(`the nomination of project ${project} is ${settled.end}`), { operation: settled.op.id });

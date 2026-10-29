@@ -54,6 +54,8 @@ import {
   recordInventoryRead,
   resolveOnReplacement,
 } from './observe.js';
+import { recordCompatibility } from '../../deploy/compatibility.js';
+import type { TreeAnswer } from '../../deploy/output-kind.js';
 
 type Db = Tx['db'];
 
@@ -211,7 +213,7 @@ export function identityMethodOf(db: Db, env: EnvRow): string | null {
 // equal to the current version's writes nothing and answers it.
 export function writeConfigVersion(
   tx: Tx,
-  args: { project: string; name: string; content: ConfigContent; identity: string; secretDigests: { ref: string; digest: string }[]; homeHash: string },
+  args: { project: string; name: string; content: ConfigContent; identity: string; secretDigests: { ref: string; digest: string }[]; homeHash: string; tree?: TreeAnswer | null },
 ): CommandResult {
   if (!tx.db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
   if (args.name === DESIGN_PREVIEW_ENV) throw environmentReserved(args.project);
@@ -263,6 +265,10 @@ export function writeConfigVersion(
   tx.db.prepare('UPDATE "environments" SET "current_config" = ?, "adapter" = ?, "verify_spec" = ? WHERE "id" = ?').run(id, args.content.adapter, verifySpec, env.id);
   tx.emit('environment.configured', { project: args.project, environment: env.id }, { config: id, version: n, config_identity: args.identity, name: env.name });
   markStaleDeploy(tx);
+  // Whether the project's environments can host its output, evaluated
+  // again with this configuration (the static-preview shapes, §5): the
+  // current candidate's tree as the route's preparation read it.
+  recordCompatibility(tx, { project: args.project, trigger: 'environment_configured', tree: args.tree ?? null });
   return answer(201, getEnv(tx.db, env.id)!, getConfig(tx.db, id)!);
 }
 

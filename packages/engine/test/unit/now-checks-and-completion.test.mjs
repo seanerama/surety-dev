@@ -5,7 +5,8 @@
 // deployment. Now the read serves `checks` (the current candidate's checks,
 // each key once at its latest execution) and NOW is `checking` while they
 // are in flight with no run, `deploying` while a deployment is under way and
-// `build_complete` when the build is done and deploying to preview is next.
+// `build_complete` when the build is done, continued with its readiness to
+// deploy (deploy-readiness.test.mjs).
 // A waiting decision keeps precedence; a store that cannot be read gives
 // `unknown` and no counts. Against a scratch store, foreign keys off, the
 // rows the minimum the projection reads (now-refused.test.mjs's harness).
@@ -217,14 +218,16 @@ function deployOp(db, id, candidate, stage) {
   ).run(id, AT, ++seq, JSON.stringify({ candidate }), `k_${id}`, AT, stage);
 }
 
-test('a completed build under alpha_deploy manual with no deployment: build_complete, deploy next; nothing claims more', (t) => {
+test('a completed build under alpha_deploy manual with no deployment: build_complete, its readiness to deploy next; nothing claims more', (t) => {
   const db = store(t);
   completeBuild(db);
   const p = read(db);
+  // The environment has no configuration (deploy-readiness.test.mjs has
+  // every readiness state): implementation complete, not deployable yet.
   assert.deepEqual(p.now, {
     state: 'build_complete',
-    primary_action: 'deploy',
-    reason: 'The planned build and its automated gates are complete. No preview deployment is under way; deploying the candidate to preview is the next step.',
+    primary_action: 'configure_environment',
+    reason: 'The planned build and its automated gates are complete. Its environment alpha is not configured for hosting yet.',
     cause: null,
   });
   assert.doesNotMatch(p.now.reason, /visual|human|production|accept/i);

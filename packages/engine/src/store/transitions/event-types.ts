@@ -244,6 +244,9 @@ export const EVENT_OWNERS = {
   'design.asset_bound': 'design/approval.ts',
   // H5 (E171 item 5; SEAM.md §553): an unrecorded review's file moved to reviews/refused/.
   'design.review_refused': 'design/review-refused.ts',
+  // The owner's instruction of 2026-10-29 (the static-preview shapes, §5):
+  // one per evaluation of whether the environments can host the output.
+  'deployment.compatibility_evaluated': 'deploy/compatibility.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

@@ -23,6 +23,8 @@ import { projectOptions, projectPolicy } from './transitions/settings.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete } from '../plan/phase.js';
+import { type Compatibility, readinessOf, servedCompatibility, unreadCompatibility } from '../deploy/compatibility.js';
+import type { TreeAnswer } from '../deploy/output-kind.js';
 import type { WorkRow } from './transitions/work.js';
 
 type Db = Database;
@@ -394,7 +396,17 @@ function candidateDeployed(db: Db, project: string, candidate: string): 'current
 // The checks as NOW reads them: their progress, or `unreadable` with why.
 type ChecksRead = { progress: CheckProgress | null } | { unreadable: string };
 
-function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, checks: ChecksRead) {
+// NOW's build_complete continues with the deploy readiness (the owner's
+// instruction of 2026-10-29: "Build complete" distinguishes completed
+// implementation from readiness to deploy): its sentence, and the primary
+// action it allows (deploy only when ready; configure_environment when the
+// environment is not configured; none otherwise).
+interface ReadinessForNow {
+  sentence: string;
+  primary: 'deploy' | 'configure_environment' | null;
+}
+
+function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, checks: ChecksRead, readiness: () => ReadinessForNow) {
   const refusal = refusalOf(db, project, runs);
   let state: NowState;
   let reason: string;
@@ -438,9 +450,13 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
       reason = deploying;
       primary = null;
     } else if (buildCompleteAwaitingDeploy(db, project)) {
+      // Implementation complete; whether it can be deployed is the
+      // readiness's, never claimed here (no visual acceptance, no
+      // production readiness).
+      const r = readiness();
       state = 'build_complete';
-      reason = 'The planned build and its automated gates are complete. No preview deployment is under way; deploying the candidate to preview is the next step.';
-      primary = 'deploy';
+      reason = `The planned build and its automated gates are complete.${r.sentence}`;
+      primary = r.primary;
     } else {
       state = 'idle';
       reason = 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
@@ -524,7 +540,38 @@ function environmentsOf(db: Db, project: string) {
 
 // ---- the projections ----------------------------------------------------------------------
 
-function projectSummary(db: Db, project: string) {
+// The deployment compatibility a read serves, and the build's readiness to
+// deploy (deploy/compatibility.ts): unknown with the reason when the store
+// cannot be read for it, never a default.
+function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibility: Compatibility; complete: boolean | null; readiness: ReturnType<typeof readinessOf>['readiness']; now: ReadinessForNow } {
+  const at = nowIso();
+  let compatibility: Compatibility;
+  try {
+    compatibility = servedCompatibility(db, project, trees, at);
+  } catch (err) {
+    compatibility = unreadCompatibility(err, at);
+  }
+  let complete: boolean | null;
+  try {
+    complete = buildComplete(db, project);
+  } catch {
+    complete = null;
+  }
+  if (complete === null) {
+    const reason = 'Whether the planned build is complete cannot be read from the store.';
+    return { compatibility, complete, readiness: { state: 'unknown', reason, environment: null }, now: { sentence: '', primary: null } };
+  }
+  const { readiness, sentence } = readinessOf(complete, compatibility);
+  return { compatibility, complete, readiness, now: { sentence, primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : null } };
+}
+
+function projectSummary(db: Db, project: string, trees: TreeAnswer[] = []) {
+  return projectRead(db, project, trees).summary;
+}
+
+function projectRead(db: Db, project: string, trees: TreeAnswer[]) {
+  let facts: ReturnType<typeof deployFacts> | null = null;
+  const deploy = () => (facts ??= deployFacts(db, project, trees));
   const runs = executionRuns(db, project);
   const decisions = openDecisionCount(db, project);
   let now;
@@ -545,38 +592,51 @@ function projectSummary(db: Db, project: string) {
     }
     if ('unreadable' in read) checksReason = `The automated checks cannot be shown: the store could not be read (${read.unreadable}).`;
     else checks = read.progress;
-    now = nowOf(db, project, runs, decisions, read);
+    now = nowOf(db, project, runs, decisions, read, () => deploy().now);
   } catch (err) {
     now = unknownNow(err);
     if (!checksRead) checksReason = `The automated checks cannot be shown: the store could not be read (${err instanceof Error ? err.message : String(err)}).`;
   }
   return {
-    id: project,
-    now,
-    checks,
-    checks_reason: checksReason,
-    execution: { runs },
-    open_decisions: { count: decisions },
-    spend_today: spendToday(db, project),
+    summary: {
+      id: project,
+      now,
+      checks,
+      checks_reason: checksReason,
+      execution: { runs },
+      open_decisions: { count: decisions },
+      spend_today: spendToday(db, project),
+    },
+    deploy,
   };
 }
 
 // GET /v1/projects
-export function listProjects(db: Db, _args: Record<string, unknown> = {}) {
+// `trees`: the current candidates' trees the main thread read for this
+// read (deploy/compatibility-eval.ts treesForRead), when no current
+// evaluation records them.
+export function listProjects(db: Db, args: { trees?: TreeAnswer[] } = {}) {
   const head = envelope(db);
   const ids = (db.prepare('SELECT "id" FROM "projects" ORDER BY rowid, "id"').all() as { id: string }[]).map((r) => r.id);
-  return { ...head, projects: ids.map((id) => projectSummary(db, id)) };
+  return { ...head, projects: ids.map((id) => projectSummary(db, id, args.trees ?? [])) };
 }
 
 // GET /v1/projects/:p
-export function readProject(db: Db, args: { project: string }) {
+export function readProject(db: Db, args: { project: string; trees?: TreeAnswer[] }) {
   mustProject(db, args.project);
   const head = envelope(db);
   const row = db.prepare('SELECT "id", "name", "tier", "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(args.project) as Record<string, unknown>;
+  const read = projectRead(db, args.project, args.trees ?? []);
+  const deploy = read.deploy();
   return {
     ...head,
     project: {
-      ...projectSummary(db, args.project),
+      ...read.summary,
+      // Whether the environments can host the build's output (the
+      // static-preview shapes, §5), and the build's completion beside its
+      // readiness to deploy: implementation complete is not deployable.
+      deployment_compatibility: deploy.compatibility,
+      build: { complete: deploy.complete, deploy_readiness: deploy.readiness },
       name: row.name,
       tier: row.tier,
       paused: row.paused === 1,
@@ -810,9 +870,19 @@ export function readOperations(db: Db, args: { project: string }) {
 // the configuration in force beside what the running service was launched
 // with, the generation and the operation in flight, all as stored. A read:
 // no adapter call, no record written, no observation's age refreshed.
-export function readOneEnvironment(db: Db, args: { project: string; environment: string }) {
+export function readOneEnvironment(db: Db, args: { project: string; environment: string; trees?: TreeAnswer[] }) {
   mustProject(db, args.project);
-  return { ...envelope(db), ...readEnvironment(db, args) };
+  const read = readEnvironment(db, args);
+  // The deployment compatibility as the project read serves it, this
+  // environment's entry only (the static-preview shapes, §5).
+  let compatibility: Compatibility;
+  try {
+    compatibility = servedCompatibility(db, args.project, args.trees ?? [], nowIso());
+  } catch (err) {
+    compatibility = unreadCompatibility(err, nowIso());
+  }
+  const own = compatibility.environments === null ? null : compatibility.environments.filter((e) => e.environment === read.environment.id);
+  return { ...envelope(db), ...read, environment: { ...read.environment, deployment_compatibility: { ...compatibility, environments: own } } };
 }
 
 // GET /v1/projects/:p/environments/:e/logs (D4 §6.1, A.8; SEAM.md §294):

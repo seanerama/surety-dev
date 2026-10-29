@@ -14,6 +14,7 @@ import type { Runtime } from '../runtime.js';
 import { type ConfigContent, DESIGN_PREVIEW_ENV, type SealedArtifact, environmentReserved } from '../store/transitions/deploy.js';
 import { seamArtifactFreeBytes } from '../testing/seam.js';
 import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded, sealArtifact } from './artifact.js';
+import { candidateTree } from './compatibility-eval.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
@@ -27,7 +28,11 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
   if (name === DESIGN_PREVIEW_ENV) throw environmentReserved(project);
   const content: ConfigContent = validateConfig(body);
   const digests = secretDigests(rt.home, content);
-  return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home) };
+  // The current candidate's tree, for the deployment compatibility the
+  // configuration's transaction records (the static-preview shapes, §5);
+  // not read is recorded as not read, and the configuration stands.
+  const tree = await candidateTree(rt, project).catch(() => null);
+  return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home), tree };
 }
 
 // POST /v1/projects/:p/environments/:e/config/resolve-secrets (D4 §3.2;

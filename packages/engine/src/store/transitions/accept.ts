@@ -4,6 +4,7 @@
 // from durable facts, so a step repeated after a failure writes what it
 // would have written the first time (E28 item 1).
 
+import type { TreeAnswer } from '../../deploy/output-kind.js';
 import { assertEdge } from './lifecycle.js';
 import { type AlphaPrepared, type Report, recordReport } from './findings.js';
 import { type ChangeKind, captureProposal, effectiveVersion } from './protected.js';
@@ -393,7 +394,7 @@ export function intendIntegration(
 // The intent of a nomination (D1 §7.7): the immutable ref
 // refs/surety/cand/<seq> at the revision found due, written by a ref update
 // whose finalizer writes the candidate. Clears what was due.
-export function intendNomination(tx: Tx, args: { project: string; deadlineSeconds: number }): IntentResult | null {
+export function intendNomination(tx: Tx, args: { project: string; deadlineSeconds: number; tree?: TreeAnswer | null }): IntentResult | null {
   const row = tx.db.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(args.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
   if (!row) throw notFound('project', args.project);
   if (row.nomination_due === null) return null;
@@ -422,6 +423,9 @@ export function intendNomination(tx: Tx, args: { project: string; deadlineSecond
     chain: due.chain,
     chain_origin: due.origin ?? null,
     ...(due.presence ? { module_presence: due.presence } : {}),
+    // The revision's tree as the main thread read it before the intent
+    // (journal/nominate.ts): the deployment compatibility's (§5).
+    ...(args.tree && args.tree.revision === due.revision ? { output_tree: args.tree } : {}),
   };
   return intendOperation(tx, {
     project: args.project,

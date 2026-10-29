@@ -205,6 +205,16 @@
       "consumed",
       "superseded"
     ],
+    "DeploymentCompatibilityTrigger": [
+      "plan_published",
+      "environment_configured",
+      "candidate_nominated"
+    ],
+    "DeploymentCompatibilityOutputKind": [
+      "static_site",
+      "node_service",
+      "unknown"
+    ],
     "DeploymentRequestsRequestedBy": [
       "human",
       "policy"
@@ -1045,7 +1055,8 @@
       "design.review_requested",
       "design.verdicts_confirmed",
       "design.asset_bound",
-      "design.review_refused"
+      "design.review_refused",
+      "deployment.compatibility_evaluated"
     ],
     "EngineMode": [
       "restricted",
@@ -2343,6 +2354,41 @@
           "required": true
         },
         "binding_hash": {
+          "required": true
+        }
+      }
+    },
+    "deployment_compatibility": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "trigger": {
+          "required": true,
+          "enum": "DeploymentCompatibilityTrigger"
+        },
+        "basis": {
+          "required": true
+        },
+        "candidate": {
+          "required": false,
+          "references": "candidates"
+        },
+        "tree": {
+          "required": false
+        },
+        "output_kind": {
+          "required": true,
+          "enum": "DeploymentCompatibilityOutputKind"
+        },
+        "evaluation": {
           "required": true
         }
       }
@@ -7978,6 +8024,9 @@
     },
     "design.review_refused": {
       "owner": "design/review-refused.ts"
+    },
+    "deployment.compatibility_evaluated": {
+      "owner": "deploy/compatibility.ts"
     }
   },
   "config": {
