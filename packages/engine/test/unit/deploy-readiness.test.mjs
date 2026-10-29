@@ -801,12 +801,19 @@ test("E4: the environment read serves the open relay's bound address (host, port
   assert.deepEqual(readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.relay, { attempt: 'att_1', generation: 1, port: 37361, opened_at: AT, host: '127.0.0.1', url: 'http://127.0.0.1:37361/' });
 });
 
-test('E2: after the build is complete the engine evaluates a stale phase gate again by itself, once the candidate\'s checks have ended; never while they run, never a satisfied one', (t) => {
+test('E2: after the build is complete the engine evaluates a stale phase gate again by itself, once the candidate\'s checks have ended; never while they run, never a satisfied one, never one computed under a specification since changed', (t) => {
   const { db } = builtStaticSite(t);
   const step = () => transact(db, ENGINE_ACTOR, (tx) => phaseStep(tx, { project: 'prj_1' }));
+  const specNow = () => db.prepare(`SELECT id, version FROM spec_revisions WHERE project = 'prj_1' ORDER BY version DESC LIMIT 1`).get() ?? null;
+  // The evaluation's scope, built under the approved specification now current.
+  db.prepare(
+    `INSERT INTO acceptance_scopes (id, created_at, project, candidate, gate_kind, spec_revision, effective_protected_version, source_revision, delivered_requirement_ids, partial_requirement_ids,
+       sensitivity_categories, required_check_ids, runner_classes, required_signoffs, validated, scope_hash, acceptance_content_hash)
+     VALUES ('asc_1', ?, 'prj_1', 'cand_1', 'phase', ?, 'pv_1', 'r', '[]', '[]', '[]', '[]', '{}', '[]', 1, 'sh', 'ah')`,
+  ).run(AT, specNow()?.id ?? null);
   db.prepare(
     `INSERT INTO gate_evaluations (id, created_at, project, scope, candidate, gate_kind, computed_at, inputs_hash, inputs_snapshot, check_states, outcome, reasons, satisfiers, stale, phase_plan, plan_generation)
-     VALUES ('ge_1', ?, 'prj_1', '{}', 'cand_1', 'phase', ?, 'h', '{}', '{}', 'satisfied', '[]', '[]', 0, 'plan_1', 1)`,
+     VALUES ('ge_1', ?, 'prj_1', 'asc_1', 'cand_1', 'phase', ?, 'h', '{}', '{}', 'satisfied', '[]', '[]', 0, 'plan_1', 1)`,
   ).run(AT, AT);
   assert.equal(step().evaluate, null, 'a current satisfied evaluation: nothing to do');
   db.prepare(`UPDATE gate_evaluations SET stale = 1 WHERE id = 'ge_1'`).run();
@@ -817,6 +824,12 @@ test('E2: after the build is complete the engine evaluates a stale phase gate ag
   assert.equal(step().evaluate, null, 'its checks still running: wait for their results');
   db.prepare(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_1'`).run();
   assert.deepEqual(step().evaluate, { candidate: 'cand_1', phase_plan: 'plan_1' });
+  // An approved change of the specification after the completion (M433 (c),
+  // M517 (f), M530 (g)): the completed phase's gate is its history, not
+  // evaluated again by the engine, stale or not.
+  const version = (specNow()?.version ?? 0) + 1;
+  db.prepare(`INSERT INTO spec_revisions (id, created_at, project, version, git_path, git_blob, semantic_digest, semantics, approved_by, approved_at) VALUES ('sr_e2', ?, 'prj_1', ?, '.surety/spec/spec.md', 'b9', 'd9', 'ss_9', 'human', ?)`).run(AT, version, AT);
+  assert.equal(step().evaluate, null, 'computed under a specification since changed: left as history');
 });
 
 test('RECORD-engine item 3: a rapid prototype with its build complete and undeployed reads build_complete only when its iteration is simply built; its own status (limit_reached, stopped, discarded, failed, awaiting_*) is never hidden', async (t) => {
