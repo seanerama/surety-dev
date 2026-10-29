@@ -621,6 +621,12 @@ export interface Admission {
   // Bound to a deployment verification (D4 §5.1): its source projection is
   // empty.
   deployment: boolean;
+  // The serving check's facts (SHAPES.md §3): the deployment's static root
+  // and entry (".", index.html for a service configuration), the digest the
+  // deployment recorded and the one the execution is bound to, and the
+  // sealed artifact's manifest as recorded. null for any other check, or
+  // when the deployment's artifact is not recorded.
+  serving: { root: string; entry: string; deployed_digest: string; execution_digest: string | null; manifest: unknown[] } | null;
 }
 
 const addSeconds = (iso: string, seconds: number) => new Date(Date.parse(iso) + seconds * 1000).toISOString();
@@ -705,6 +711,31 @@ export function admitExecution(
     execution_seq: x.execution_seq as number,
     link: linkOf(tx.db, x),
     deployment: typeof x.deployment === 'string',
+    serving: (JSON.parse(check.definition) as { kind?: string }).kind === 'post_deploy_serving' ? servingOf(tx.db, args.project, x) : null,
+  };
+}
+
+// The serving check's facts, from the execution's deployment (SHAPES.md §3).
+function servingOf(db: Db, project: string, x: Record<string, unknown>): Admission['serving'] {
+  if (typeof x.deployment !== 'string') return null;
+  let dep: { operation?: string };
+  try {
+    dep = JSON.parse(x.deployment) as typeof dep;
+  } catch {
+    return null;
+  }
+  const op = dep.operation ? (db.prepare('SELECT "finalizer_inputs" FROM "operations" WHERE "id" = ?').get(dep.operation) as { finalizer_inputs: string } | undefined) : undefined;
+  if (!op) return null;
+  const frozen = JSON.parse(op.finalizer_inputs) as { artifact_digest?: string | null; static?: { root?: string; entry?: string } | null };
+  if (typeof frozen.artifact_digest !== 'string') return null;
+  const art = db.prepare(`SELECT "manifest" FROM "artifacts" WHERE "project" = ? AND "digest" = ? AND "status" = 'sealed'`).get(project, frozen.artifact_digest) as { manifest: string } | undefined;
+  if (!art) return null;
+  return {
+    root: frozen.static?.root ?? '.',
+    entry: frozen.static?.entry ?? 'index.html',
+    deployed_digest: frozen.artifact_digest,
+    execution_digest: typeof x.artifact_digest === 'string' ? x.artifact_digest : null,
+    manifest: JSON.parse(art.manifest) as unknown[],
   };
 }
 

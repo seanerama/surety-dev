@@ -8,7 +8,9 @@ import { canonical, sha256 } from './common.js';
 import type { Tx } from './tx.js';
 
 // The kinds of an environment-bound check (D4 §5.1).
-export const POST_DEPLOY_KINDS = ['post_deploy_identity', 'post_deploy_behavior'];
+import { candidateOutputKind, deploymentRequirementMet, missingDeploymentKind } from './serving.js';
+
+export const POST_DEPLOY_KINDS = ['post_deploy_identity', 'post_deploy_behavior', 'post_deploy_serving'];
 import { MODULE_PRESENCE, type ScopeCheck, type Tier, type ScopeModule, type ScopeRequirement, type ScopeResult, type Signoff, TIER_RANK, cadenceTier, computeScope, sameSignoff, signoffsOf, withoutJudgedByPerson } from '../../checks/scope.js';
 import { designHumanCriteria } from '../../design/criterion-map.js';
 
@@ -376,8 +378,11 @@ export function requiredSet(db: Db, args: { project: string; candidate: Candidat
     const { rows } = scopeInputs(db, { project: args.project, kind: 'alpha_complete', stage: null, version: args.version });
     const required = rows.filter((c) => c.required === 1 && POST_DEPLOY_KINDS.includes(c.kind) && gateKindsOf(c).includes('alpha_complete'));
     const ids = new Set(required.map((c) => c.id));
-    const behaviour = required.some((c) => c.kind === 'post_deploy_behavior');
-    const missing = { criteria: [], uncertain: [], kinds: behaviour ? [] : ['kind:post_deploy_behavior'], areas: [], unread: base.scope.missing.unread };
+    // J4 as the owner's ruling of 2026-10-29 amends it (serving.ts): a static
+    // site's requirement is met by the engine's serving check too.
+    const output = candidateOutputKind(db, args.project, args.candidate.revision);
+    const met = deploymentRequirementMet(required.map((c) => c.kind), output);
+    const missing = { criteria: [], uncertain: [], kinds: met ? [] : [missingDeploymentKind(output)], areas: [], unread: base.scope.missing.unread };
     return { ...base, required, scope: { ...base.scope, required: rows.filter((c) => ids.has(c.id)).map(toScopeCheck), missing } };
   }
   const projectTier = (db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;

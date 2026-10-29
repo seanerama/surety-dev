@@ -25,6 +25,7 @@ import { assertRefused } from '../acceptance/harness/fixtures.mjs';
 import { sharedFixture } from '../acceptance/harness/gates.mjs';
 import { scriptedEngine, tickUntil } from '../acceptance/harness/runs.mjs';
 import { withStore } from '../acceptance/harness/store.mjs';
+import { SITE, writeTree } from './static-fixtures.mjs';
 import { DEPLOY_DEFS, RUNTIME, configContent, deploy, deployable, operationsOf, putConfig, qualifyByFixture, requestDeployment, scriptCall } from '../acceptance/harness/deploy/kernel.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -37,13 +38,6 @@ const { outputKindOfTree, staticStart } = await import(join(dist, 'deploy', 'sta
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const SERVER_SHA = sha(readFileSync(server));
 
-export const SITE = Object.freeze({
-  'index.html': '<!doctype html><html><head><link rel="stylesheet" href="style.css"><script type="module" src="./js/app.js"></script></head><body><img src="img/logo.svg" alt="logo"><p>Lap Lab</p></body></html>\n',
-  'style.css': 'body { font-family: sans-serif; }\n',
-  'js/app.js': "import { lap } from './lap.js';\ndocument.body.dataset.lap = lap;\n",
-  'js/lap.js': 'export const lap = 1;\n',
-  'img/logo.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>\n',
-});
 const STATIC = { mode: 'static', start: undefined };
 
 // ---- the configuration (SHAPES.md §2) ---------------------------------------------------
@@ -124,12 +118,6 @@ const get = (port, path, method = 'GET') =>
     req.end();
   });
 
-export function writeTree(dir, files) {
-  for (const [path, text] of Object.entries(files)) {
-    mkdirSync(dirname(join(dir, path)), { recursive: true });
-    writeFileSync(join(dir, path), text);
-  }
-}
 
 test('the plain mode serves the entry at / and every file\'s bytes as they are: GET and HEAD only, nothing outside the root, no frame, banner or index', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'static-site-'));

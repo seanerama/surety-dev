@@ -14,6 +14,9 @@ import type { Runtime } from '../runtime.js';
 import { ADAPTERS } from '../store/transitions/deploy.js';
 import { adapterVersion } from './qualification.js';
 import { CONFIG_MODES, STATIC_ENTRY_DEFAULT, staticServer } from './static-site.js';
+import { SERVING_CHECK_KEY } from './serving-install.js';
+import { SERVING_COMMAND, SERVING_DESCRIPTION, SERVING_KIND } from '../checks/schema.js';
+import { SERVING_STATEMENT } from '../store/transitions/serving.js';
 
 // The outputs local_service hosts, and those the engine also packages.
 export const ADAPTER_OUTPUTS = Object.freeze([
@@ -50,7 +53,13 @@ export async function adapterRead(rt: Runtime, adapter: string): Promise<Record<
     qualification,
     runtime: { path: node, sha256: await nodeSha256(node), version: process.version },
     modes: [...CONFIG_MODES],
-    static: { server: { path: server.path, sha256: server.sha256 }, entry_default: STATIC_ENTRY_DEFAULT },
+    static: {
+      server: { path: server.path, sha256: server.sha256 },
+      entry_default: STATIC_ENTRY_DEFAULT,
+      // The engine's serving check (SHAPES.md §3), proposed by the engine
+      // for a project configured in static mode (deploy/serving-install.ts).
+      serving_check: { kind: SERVING_KIND, key: SERVING_CHECK_KEY, command: SERVING_COMMAND, gate_kinds: ['alpha_complete'], description: SERVING_DESCRIPTION, records: SERVING_STATEMENT },
+    },
     outputs: ADAPTER_OUTPUTS.map((o) => ({ ...o })),
   };
 }

@@ -55,6 +55,12 @@ import { protectedSetAt } from '../protected/set.js';
 import type { Definition, Governed } from './schema.js';
 import { PROJECT_POLICY } from '../config/schema.js';
 import { checkSecretVariable, targetValue, targetVariable } from './variables.js';
+import { servingProgramPath } from './programs/path.js';
+import { SERVING_KIND } from './schema.js';
+
+// The largest manifest the serving check is handed, in bytes of JSON (one
+// variable of the check's environment; Linux bounds a string at 128 KiB).
+export const SERVING_MANIFEST_MAX = 120_000;
 
 let tools: ResolvedTools | null = null;
 
@@ -113,6 +119,18 @@ const sha256File = (path: string): string | null => {
 // cannot be read or is not the pinned program (`toolchain_missing`).
 export function resolveProgram(governed: Governed, def: Definition): { name: string; path: string | null; sha256: string | null; problem: string | null } {
   const name = def.command[0]!;
+  // The serving check's program is the engine's own (SHAPES.md §3), recorded
+  // by path and SHA-256 as any program is.
+  if (def.kind === SERVING_KIND) {
+    let path: string | null = null;
+    try {
+      path = servingProgramPath();
+    } catch {
+      path = null;
+    }
+    const sha = path === null ? null : sha256File(path);
+    return { name, path, sha256: sha, problem: path === null || sha === null ? "the engine's serving program cannot be read" : null };
+  }
   const entry = governed.check_commands[name];
   const path = entry?.path ?? null;
   const sha = path === null ? null : sha256File(path);
@@ -344,6 +362,8 @@ export class Supervisor implements DomainHolder {
   // only (D4 §7.2): set at its start, placed in its environment at launch.
   private readonly secretEnv: Record<string, string> = {};
   private secretRefs: string[] = [];
+  // The serving check's variables (SHAPES.md §3), set before its launch.
+  private servingEnv: Record<string, string> | null = null;
   // The effective asset files the definition's asset_inputs name (D7 §6.5).
   private assetFiles: { slot: string; variant: string; format: string; bytes: Buffer }[] | null = null;
   private secretRefsRecorded = false;
@@ -485,6 +505,23 @@ export class Supervisor implements DomainHolder {
         files.push({ slot: f.slot, variant: f.variant, format: f.format, bytes });
       }
       this.assetFiles = files;
+    }
+    // The serving check (SHAPES.md §3): bound to a deployment, the
+    // deployment's artifact read from the store; its manifest is handed over
+    // in a variable, within the bound one variable can carry.
+    if (def.kind === SERVING_KIND) {
+      const s = a.serving;
+      if (!a.link || s === null) return this.notRun('environment_unbound', 'the serving check is bound to no deployment whose artifact the engine recorded');
+      const manifest = JSON.stringify(s.manifest);
+      if (Buffer.byteLength(manifest) > SERVING_MANIFEST_MAX) return this.notRun('mount_plan_refused', `the sealed artifact's manifest (${Buffer.byteLength(manifest)} bytes) is larger than the serving check can be handed (${SERVING_MANIFEST_MAX} bytes)`);
+      this.servingEnv = {
+        SURETY_SERVING_URL: targetValue(a.link.port),
+        SURETY_STATIC_ROOT: s.root,
+        SURETY_STATIC_ENTRY: s.entry,
+        SURETY_ARTIFACT_DIGEST: s.execution_digest ?? '',
+        SURETY_DEPLOYED_ARTIFACT_DIGEST: s.deployed_digest,
+        SURETY_ARTIFACT_MANIFEST: manifest,
+      };
     }
     // The program, resolved now and recorded whether pinned or not (Q6).
     const program = resolveProgram(governed, def);
@@ -667,6 +704,8 @@ export class Supervisor implements DomainHolder {
       node: engineNode(),
       initNodeCopy: await initNodeIn(area, copy),
       initScript: INIT_SCRIPT,
+      // The serving check's program, the engine's own, read-only at its path.
+      ...(def.kind === SERVING_KIND ? { programs: [servingProgramPath()] } : {}),
     });
     // The validated plan, recorded on the domain before the launcher starts.
     const entries = planEntries(plan);
@@ -682,9 +721,11 @@ export class Supervisor implements DomainHolder {
     const env = checkEnvironment({ governed, def, ids: { check: a.key, candidate: a.candidate, revision: a.revision, version: a.version }, marker: a.domain, proxy: this.egress !== null });
     if (this.link && a.link) for (const t of a.link.targets) env[targetVariable(t)] = targetValue(a.link.port);
     Object.assign(env, this.secretEnv);
+    if (this.servingEnv !== null) Object.assign(env, this.servingEnv);
     for (const f of this.assetFiles ?? []) env[assetVariable(f.slot, f.variant)] = `${ASSETS_MOUNT}/${f.slot}/${f.variant}.${f.format}`;
     const backend: BackendLaunch = {
-      argv: [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
+      // The serving check: the engine's node running the engine's program.
+      argv: def.kind === SERVING_KIND ? [engineNode(), servingProgramPath()] : [governed.check_commands[def.command[0]!]!.path, ...def.command.slice(1)],
       env,
       cwd: checkCwd(def),
       stdin: null,

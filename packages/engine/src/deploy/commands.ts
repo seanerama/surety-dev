@@ -16,6 +16,7 @@ import { seamArtifactFreeBytes } from '../testing/seam.js';
 import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded, sealArtifact } from './artifact.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
 import { checkStaticEntry, staticSpec } from './static-site.js';
+import { prepareServingProposal } from './serving-install.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
 // version's content. Validated, its secret references resolved to digests
@@ -28,7 +29,10 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
   if (name === DESIGN_PREVIEW_ENV) throw environmentReserved(project);
   const content: ConfigContent = validateConfig(body);
   const digests = secretDigests(rt.home, content);
-  return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home) };
+  // A static configuration: the engine's own serving check proposed with it
+  // when the project has none (the owner's ruling of 2026-10-29).
+  const serving = staticSpec(content) !== null ? await prepareServingProposal(rt, project, name) : null;
+  return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home), serving };
 }
 
 // POST /v1/projects/:p/environments/:e/config/resolve-secrets (D4 §3.2;

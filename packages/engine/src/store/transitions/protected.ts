@@ -48,7 +48,7 @@ export interface ProposalRow {
   id: string;
   project: string;
   seq: number;
-  proposed_by: 'verifier_run' | 'human';
+  proposed_by: 'verifier_run' | 'human' | 'engine';
   run: string | null;
   base_revision: string;
   tree_id: string;
@@ -124,7 +124,8 @@ export function getProposal(tx: Tx, id: string): ProposalRow | undefined {
 
 export interface CaptureArgs {
   project: string;
-  proposedBy: 'verifier_run' | 'human';
+  // `engine`: the engine's own serving check (deploy/serving-install.ts).
+  proposedBy: 'verifier_run' | 'human' | 'engine';
   run: string | null;
   base: string;
   tree: string;

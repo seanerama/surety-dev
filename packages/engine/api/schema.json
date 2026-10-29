@@ -31,6 +31,11 @@
       "sealed",
       "failed"
     ],
+    "OutputKind": [
+      "static_site",
+      "node_service",
+      "unknown"
+    ],
     "AssessmentsProvenance": [
       "claimed"
     ],
@@ -128,7 +133,8 @@
       "failure_recovery",
       "sensitivity_floor",
       "post_deploy_identity",
-      "post_deploy_behavior"
+      "post_deploy_behavior",
+      "post_deploy_serving"
     ],
     "Tier": [
       "T1",
@@ -558,7 +564,8 @@
     ],
     "ProposedBy": [
       "verifier_run",
-      "human"
+      "human",
+      "engine"
     ],
     "ProtectedChangeKind": [
       "initial",
@@ -1500,6 +1507,10 @@
         },
         "failed_at": {
           "required": false
+        },
+        "output_kind": {
+          "required": false,
+          "enum": "OutputKind"
         }
       }
     },
@@ -2472,6 +2483,9 @@
         "invalidated_reason": {
           "required": false,
           "enum": "VerificationInvalidation"
+        },
+        "serving": {
+          "required": false
         }
       }
     },
@@ -3695,6 +3709,9 @@
           "references": "phase_plans"
         },
         "plan_generation": {
+          "required": false
+        },
+        "serving": {
           "required": false
         }
       }
