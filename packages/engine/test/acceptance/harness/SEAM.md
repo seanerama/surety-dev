@@ -8445,3 +8445,15 @@ The owner's ruling of 2026-10-27, verbatim: "For policy updates, submitting valu
   - M528 (h): under design off the review is refused `design_review_unavailable` and no session is opened.
 
   No case needed a new revision, so none was changed to submit a different value.
+
+## 572. D4 §13's amendments in the contract document: the Verifier's table `contract/static-preview.json` (rows M73, M613 to M616; D4 §13, the owner's amendments of 2026-10-29; the M7 plan §3b DRAFT 1; the Verifier, on `verify/static-preview` from the driver's 0311382c)
+
+- **What M73 now holds both ways.** Run alone on 0311382c before this change, M73 passed 11 of 11: its tables (work kinds, decision kinds, engine and project configuration keys) name nothing D4 §13 adds, so nothing pinned the additions. The new table, read by one new M73 case, holds the engine's exported contract to:
+  - six enumerations exactly (sorted comparison): `CheckKind` (M3's nine and `post_deploy_serving`), `ProposedBy` (`verifier_run`, `human`, `engine`), `OutputKind` and `DeploymentCompatibilityOutputKind` (`static_site`, `node_service`, `unknown`), `DeploymentCompatibilityTrigger` (`plan_published`, `environment_configured`, `candidate_nominated`), `DeliverableFormat` (`zip`);
+  - the events `deliverable.built` and `deployment.compatibility_evaluated`, each an `EventType` declared with an owner and not reserved;
+  - the tables `deliverables` and `deployment_compatibility`: exactly their columns, exactly their foreign keys (`project` → projects, `candidate` → candidates), and the enumerations of their kind columns;
+  - `checks.kind` of `CheckKind`, `protected_proposals.proposed_by` of `ProposedBy`, `artifacts.output_kind` of `OutputKind`, and the `serving` columns of `gate_evaluations` and `deployment_verifications`.
+- **Where the values come from.** The kinds, the event, the triggers and the output kinds are D4 §13's words; `zip` and the deliverable's fields are SHAPES.md §4's. The column names and the event `deliverable.built` are where D4 and SHAPES are silent: fixed here from the Builders' records (commits 8a31133d, 72e4bb88, 8da1df83), so a later change to them is a change this table must be told of.
+- **Not in the contract document.** The routes (`GET /v1/adapters/:a`, `…/candidates/:c/deliverable`, `…/deliverable/download`) and the environment configuration's `mode` and `static` have no place in the document (it has no routes and no environment-configuration keys). Rows M613 and M615 pin them over HTTP.
+- **One trigger D4 names and the engine does not record.** D4 §13.4 says the evaluation is recorded "on first read". The engine computes it for a read and records nothing (D1 §12, row M70: a projection writes nothing; the Builder's record). The table holds the three recorded triggers. No row of §3b pins "on first read"; it is reported to the owner, not tested.
+
