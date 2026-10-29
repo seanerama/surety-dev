@@ -28,9 +28,12 @@
 // removes it when it stops; the test only reads the manager
 // (`systemctl --user list-units`), never stops, starts or reloads anything
 // (M4 build spec §4.1 rules 1 and 2). A host where `systemctl --user` cannot
-// be run fails the row; it does not skip it. Homes are made under /tmp/scui
-// (at most 56 bytes; E134) and removed, their engines killed through the
-// child handle by pid, by the harness's fail-closed teardown.
+// be run fails the row; it does not skip it. Homes are made directly under
+// the temporary directory (TMPDIR, as every other acceptance home; at most
+// 56 bytes, E134) and removed, their engines killed through the child handle
+// by pid, by the harness's fail-closed teardown. Not under a fixed /tmp: on a
+// host whose /tmp is tmpfs the engine refuses the home (`unsafe_filesystem`),
+// and the gate names a disk-backed TMPDIR for that reason.
 //
 // Reading of the row: SHELL_CSP is a document policy (api/shell.ts: "The
 // shell document's content security policy"); the engine sends it on `/`, the
@@ -40,6 +43,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -49,7 +53,6 @@ import { forgetHome, registerHome, teardownHome } from './harness/teardown.mjs';
 
 const STARTUP_STEPS = ['scope', 'lock', 'listen', 'store', 'recovery', 'integrity', 'host_qualification', 'full', 'scheduler'];
 const DEFENSIVE_HEADERS = { 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store', 'x-frame-options': 'DENY' };
-const SCUI = '/tmp/scui';
 
 // The engine's own CSP string, read from the source so the row pins it.
 function shellCspFromSource() {
@@ -59,11 +62,10 @@ function shellCspFromSource() {
   return m[2];
 }
 
-// A disposable home under /tmp/scui, at most 56 bytes (E134), registered for
-// the fail-closed teardown and removed after the test.
+// A disposable home directly under the temporary directory, at most 56 bytes
+// (E134), registered for the fail-closed teardown and removed after the test.
 function scuiHome(t) {
-  mkdirSync(SCUI, { recursive: true });
-  const home = mkdtempSync(join(SCUI, 'm547-'));
+  const home = mkdtempSync(join(tmpdir(), 'm547-'));
   assert.ok(Buffer.byteLength(home) <= 56, `the home ${home} is ${Buffer.byteLength(home)} bytes`);
   registerHome(home, home);
   t.after(() => {
