@@ -13,7 +13,7 @@ import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
 import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
-import { compatibilityTarget, compatibilityTargets, recordCompatibility } from '../deploy/compatibility.js';
+import { candidateKind, compatibilityTarget, compatibilityTargets, recordCompatibility } from '../deploy/compatibility.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
@@ -438,6 +438,8 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   // main thread reads a candidate's tree for (deploy/compatibility-eval.ts).
   'deploy.compatibility_target': (d, a) => compatibilityTarget(d, a),
   'deploy.compatibility_targets': (d) => compatibilityTargets(d),
+  // A candidate's output kind as an evaluation recorded it (the deliverable's).
+  'deploy.compatibility_kind': (d, a) => candidateKind(d, a),
   // The adapter qualification's reads (D4 §2.6; deploy/qualify.ts).
   'qualify.facts': (d, a) => qualificationFacts(d, a),
   'qualify.paths': (d) => qualificationPaths(d),

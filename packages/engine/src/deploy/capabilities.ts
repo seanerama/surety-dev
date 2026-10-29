@@ -5,11 +5,13 @@
 // to be what the adapter capability read (GET /v1/adapters/:a, §1) serves
 // too, so the two never say different things.
 //
-// `static` is the mode of §2 (`mode: 'static'` in a configuration). The
-// table states it as the agreed capability of local_service; the
-// configuration validation and the static server that make it run are §2's
-// (deploy/config.ts takes the field once they exist). A configuration that
-// names no mode is in `default_mode`, today's rules unchanged.
+// The single source of the modes and outputs: the configuration's
+// validation takes its modes from here (deploy/static-site.ts CONFIG_MODES,
+// deploy/config.ts), and GET /v1/adapters/local_service serves its modes
+// and outputs from here (deploy/adapter-read.ts). `static` is §2's mode
+// (`mode: 'static'`, the engine's own static server, deploy/static-site.ts).
+// A configuration that names no mode is in `default_mode`, today's rules
+// unchanged. The adapter's version is deploy/qualification.ts's.
 
 import type { OutputKind } from './output-kind.js';
 
@@ -21,7 +23,6 @@ export interface AdapterMode {
 }
 
 export interface AdapterCapabilities {
-  adapter_version: string;
   default_mode: string;
   modes: Record<string, AdapterMode>;
   outputs: { kind: Exclude<OutputKind, 'unknown'>; hosted: boolean; downloadable?: boolean }[];
@@ -29,7 +30,6 @@ export interface AdapterCapabilities {
 
 export const ADAPTER_CAPABILITIES: Readonly<Record<string, AdapterCapabilities>> = Object.freeze({
   local_service: {
-    adapter_version: '1',
     default_mode: 'service',
     modes: {
       service: { hosts: 'node_service', what: 'hosts a Node service started from the artifact' },

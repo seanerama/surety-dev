@@ -155,7 +155,10 @@ async function build(rt: Runtime, facts: DeliverableFacts): Promise<Built> {
     });
     const pkg = entries.find((e) => e.name === 'package.json')?.bytes ?? null;
     const read = (p: string): Buffer | null => (p === 'package.json' ? pkg : null);
-    const kind = outputKindOfTree(manifest, read);
+    // The candidate's output kind as the deployment compatibility recorded
+    // it from the candidate's tree (deploy/compatibility.ts), else the
+    // sealed tree's.
+    const kind = (await evaluatedKind(rt, facts.project.id, facts.candidate.id)) ?? outputKindOfTree(manifest, read);
     const start = startScriptOf(read);
     const zip = writeZip(entries, new Date(facts.candidate.nominated_at));
     const hex = sealed.digest.slice('sha256:'.length);
@@ -226,12 +229,17 @@ async function prepared(rt: Runtime, project: string, candidate: string): Promis
   return { facts, row: b.row, bytes: v.bytes, start: b.start };
 }
 
+// The output kind an evaluation of the deployment compatibility recorded
+// for the candidate from its tree, or null (none, or not readable).
+const evaluatedKind = (rt: Runtime, project: string, candidate: string): Promise<OutputKind | null> =>
+  rt.read<OutputKind | null>('deploy.compatibility_kind', { project, candidate }).catch(() => null);
+
 const nodeVersionOf = (runtimes: DeliverableFacts['runtimes']): string | null => (runtimes.some((r) => r.path === process.execPath) ? process.version : null);
 
 // GET …/deliverable.
 export async function deliverableRead(rt: Runtime, project: string, candidate: string): Promise<Record<string, unknown>> {
   const { facts, row, start } = await prepared(rt, project, candidate);
-  const { platform, instructions, prerequisites } = platformOf(row.output_kind, { start, node: nodeVersionOf(facts.runtimes) });
+  const { platform, instructions, prerequisites } = platformOf((await evaluatedKind(rt, project, candidate)) ?? row.output_kind, { start, node: nodeVersionOf(facts.runtimes) });
   return {
     deliverable: {
       candidate: row.candidate,

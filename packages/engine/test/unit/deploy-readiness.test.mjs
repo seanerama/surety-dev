@@ -17,11 +17,10 @@
 // build_complete text and primary action in each readiness state; a store
 // that cannot be read gives unknown with why.
 //
-// The hostable static case: this branch has no static mode in the
-// configuration's validation (§2 is the other slice's), so a version whose
-// content carries `mode: 'static'` is written through the transition as §2's
-// validation will admit it (not through validateConfig); hostable is also
-// tested with a Node service in service mode through validated content.
+// Every configuration's content is validated by validateConfig, as the
+// route does: §2's `mode: 'static'` (merged from build/static-preview) and
+// the service mode. The adapter read's modes and outputs, the validation's
+// modes and the compatibility's are one table (deploy/capabilities.ts).
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -49,6 +48,9 @@ const { intendNomination } = await import(join(dist, 'store', 'transitions', 'ac
 const { executionInputsDigest } = await import(join(dist, 'plan', 'check.js'));
 const { ADAPTER_CAPABILITIES, modesOf, HOSTING_REQUIRED } = await import(join(dist, 'deploy', 'capabilities.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
+const { CONFIG_MODES } = await import(join(dist, 'deploy', 'static-site.js'));
+const { adapterRead } = await import(join(dist, 'deploy', 'adapter-read.js'));
+const { candidateKind } = await import(join(dist, 'deploy', 'compatibility.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -120,9 +122,9 @@ function specEnvironment(db, name = 'alpha') {
 }
 
 const SERVICE_CONTENT = { adapter: 'local_service', adapter_version: '1', targets: ['alpha'], runtime: { path: '/usr/bin/node', sha256: HEX }, start: ['node', 'server.mjs'], port: 8080 };
-// §2's static mode, as its validation will admit it: no start, the static root and entry.
+// §2's static mode, validated: no start; the static root and entry defaulted.
 const { start: _start, ...NO_START } = SERVICE_CONTENT;
-const STATIC_CONTENT = { ...NO_START, mode: 'static', static: { root: '.', entry: 'index.html' } };
+const STATIC_CONTENT = validateConfig({ ...structuredClone(NO_START), mode: 'static' });
 
 // PUT …/config through the transition (the route validates first).
 function configure(db, name, content, tree = null) {
@@ -196,6 +198,14 @@ test('the output kinds and the capabilities table: local_service in service mode
   assert.equal(modesOf('kubernetes'), null);
   assert.deepEqual(ADAPTER_CAPABILITIES.local_service.outputs, [{ kind: 'node_service', hosted: true }, { kind: 'static_site', hosted: true, downloadable: true }]);
   assert.deepEqual(HOSTING_REQUIRED, { static_site: false, node_service: true, unknown: null });
+});
+
+test('one table: the configuration validation\'s modes and the adapter read\'s modes and outputs are the capabilities table\'s', async () => {
+  assert.deepEqual([...CONFIG_MODES], modesOf('local_service'));
+  const read = await adapterRead({ read: async () => ({ status: 'none', id: null, at: null }) }, 'local_service');
+  assert.deepEqual(read.modes, modesOf('local_service'));
+  assert.deepEqual(read.outputs, ADAPTER_CAPABILITIES.local_service.outputs);
+  assert.throws(() => validateConfig({ ...structuredClone(SERVICE_CONTENT), mode: 'kubernetes' }), /mode/);
 });
 
 test('the output kind from the approved specification and architecture: a browser app is a static site, a Node service is one, silence is unknown', () => {
@@ -325,7 +335,8 @@ test('configured in service mode for a static site: unsupported, naming the miss
     },
   ]);
   assert.deepEqual(events(db).map((e) => [e.trigger, e.environments[0].state]), [['environment_configured', 'unsupported']]);
-  // §2's static mode (written as its validation will admit it).
+  // §2's static mode, validated (its root and entry filled in).
+  assert.deepEqual(STATIC_CONTENT.static, { root: '.', entry: 'index.html' });
   configure(db, 'alpha', STATIC_CONTENT);
   c = read(db).deployment_compatibility;
   assert.deepEqual(c.environments.map((e) => [e.mode, e.state, e.missing_capability, e.reason]), [['static', 'hostable', null, 'alpha is configured for local_service in static mode, which hosts a static site.']]);
@@ -430,12 +441,16 @@ test('the build complete in service mode for a static site: unsupported, no prim
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} Its environment alpha cannot host this output: ${missing}.`, cause: null });
 });
 
-test('the build complete in static mode: ready, deploy', async (t) => {
+test('the build complete in static mode: ready, deploy; the reason says where the engine\'s serving check stands', async (t) => {
   const { db, site } = builtStaticSite(t);
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   configure(db, 'alpha', STATIC_CONTENT);
+  const READY = 'The environment alpha can host this output (static site) with local_service in static mode.';
+  // No protected version: the serving check's state is not read, and said so.
+  assert.deepEqual(read(db).build.deploy_readiness, { state: 'ready', reason: `${READY} Whether the engine's serving check is in place could not be read.`, environment: 'alpha' });
+  db.prepare(`INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, roots, effective_from) VALUES ('pv_1', ?, 'prj_1', 1, 'f1', 'initial', 'h', 'human', ?, 1, '[]', ?)`).run(AT, AT, AT);
   const p = read(db);
-  assert.deepEqual(p.build.deploy_readiness, { state: 'ready', reason: 'The environment alpha can host this output (static site) with local_service in static mode.', environment: 'alpha' });
+  assert.deepEqual(p.build.deploy_readiness, { state: 'ready', reason: `${READY} The engine's serving check has not been proposed yet.`, environment: 'alpha' });
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: 'deploy', reason: `${BUILD_DONE} It can be deployed to alpha (static site, local_service static mode).`, cause: null });
   assert.doesNotMatch(p.now.reason, /visual|human|production|accept/i);
 });
@@ -463,8 +478,12 @@ test('several environments: the first hostable is named; with none hostable, the
   const { db, site } = builtStaticSite(t);
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   specEnvironment(db, 'beta');
-  configure(db, 'beta', { ...STATIC_CONTENT, targets: ['beta'] });
-  assert.deepEqual(read(db).build.deploy_readiness, { state: 'ready', reason: 'The environment beta can host this output (static site) with local_service in static mode.', environment: 'beta' });
+  configure(db, 'beta', validateConfig({ ...structuredClone(NO_START), targets: ['beta'], mode: 'static' }));
+  assert.deepEqual(read(db).build.deploy_readiness, {
+    state: 'ready',
+    reason: "The environment beta can host this output (static site) with local_service in static mode. Whether the engine's serving check is in place could not be read.",
+    environment: 'beta',
+  });
   assert.equal(read(db).now.reason, `${BUILD_DONE} It can be deployed to beta (static site, local_service static mode).`);
   configure(db, 'beta', validateConfig({ ...structuredClone(SERVICE_CONTENT), targets: ['beta'] }));
   assert.deepEqual(read(db).build.deploy_readiness.environment, 'alpha', 'none hostable: the first');
@@ -510,4 +529,16 @@ test("a nomination's intent freezes the revision's tree as read before it, for i
   due('d'.repeat(40));
   const second = intend(tree);
   assert.equal(inputsOf(second.operation).output_tree, undefined);
+});
+
+test("the candidate's output kind for the deliverable: the one an evaluation recorded from its tree, else none (the sealed tree's then)", async (t) => {
+  const db = store(t);
+  const site = repoWith(t, { 'index.html': '' });
+  candidate(db, 'cand_1', 1, site.revision);
+  assert.equal(candidateKind(db, { project: 'prj_1', candidate: 'cand_1' }), null, 'no evaluation: null');
+  nominationEvaluation(db, { revision: site.revision, unread: 'git failed' });
+  assert.equal(candidateKind(db, { project: 'prj_1', candidate: 'cand_1' }), null, 'a tree not read: null, never a guess');
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  assert.equal(candidateKind(db, { project: 'prj_1', candidate: 'cand_1' }), 'static_site');
+  assert.equal(candidateKind(db, { project: 'prj_other', candidate: 'cand_1' }), null, "another project's path: null");
 });

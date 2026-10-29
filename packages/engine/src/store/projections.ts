@@ -23,7 +23,7 @@ import { projectOptions, projectPolicy } from './transitions/settings.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete } from '../plan/phase.js';
-import { type Compatibility, readinessOf, servedCompatibility, unreadCompatibility } from '../deploy/compatibility.js';
+import { type Compatibility, readinessOf, servedCompatibility, servingCheckState, unreadCompatibility } from '../deploy/compatibility.js';
 import type { TreeAnswer } from '../deploy/output-kind.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -561,7 +561,7 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
     const reason = 'Whether the planned build is complete cannot be read from the store.';
     return { compatibility, complete, readiness: { state: 'unknown', reason, environment: null }, now: { sentence: '', primary: null } };
   }
-  const { readiness, sentence } = readinessOf(complete, compatibility);
+  const { readiness, sentence } = readinessOf(complete, compatibility, compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined);
   return { compatibility, complete, readiness, now: { sentence, primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : null } };
 }
 

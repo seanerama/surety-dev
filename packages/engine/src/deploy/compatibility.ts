@@ -29,7 +29,7 @@
 import type { Database } from 'better-sqlite3';
 
 import { approvedModuleMap, approvedSpec } from '../design/policy.js';
-import { DESIGN_PREVIEW_ENV } from '../store/transitions/deploy.js';
+import { DESIGN_PREVIEW_ENV, servingInstallFacts } from '../store/transitions/deploy.js';
 import { canonical, parseJson } from '../store/transitions/common.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { ADAPTER_CAPABILITIES, HOSTING_REQUIRED, KIND_LABEL, modeOfContent, withArticle } from './capabilities.js';
@@ -235,6 +235,32 @@ export function recordCompatibility(tx: Tx, args: { project: string; trigger: Co
   return { id, ...evaluation };
 }
 
+// A candidate's output kind as an evaluation recorded it from the
+// candidate's tree as read (its revision's), or null when none did (the
+// deliverable then derives it from the sealed tree, deploy/deliverable.ts).
+export function candidateKind(db: Db, args: { project: string; candidate: string }): OutputKind | null {
+  const c = db.prepare('SELECT "id", "revision" FROM "candidates" WHERE "id" = ? AND "project" = ?').get(args.candidate, args.project) as { id: string; revision: string } | undefined;
+  return c ? (recordedTree(db, args.project, c) as { kind: OutputKind } | null)?.kind ?? null : null;
+}
+
+// The engine's serving check for a static site (SHAPES.md §3), as the
+// configuration's answer states it (`serving_check.state`): present,
+// pending (proposed, not yet applied), none, or unread.
+export function servingCheckState(db: Db, project: string): 'present' | 'pending' | 'none' | 'unread' {
+  try {
+    return servingInstallFacts(db, { project }).state;
+  } catch {
+    return 'unread';
+  }
+}
+
+const SERVING_SENTENCE: Record<ReturnType<typeof servingCheckState>, string> = {
+  present: " The engine's serving check is in place: after deployment it verifies that the entry page and its assets are served from the artifact (serving verified, not functional or visual acceptance).",
+  pending: " The engine's serving check is proposed and not yet applied.",
+  none: " The engine's serving check has not been proposed yet.",
+  unread: " Whether the engine's serving check is in place could not be read.",
+};
+
 // What the main thread needs to evaluate: the repository, the current
 // candidate, and whether its tree must be read (no evaluation recorded one).
 export function compatibilityTarget(db: Db, args: { project: string }): { repo: string | null; candidate: { id: string; revision: string } | null; tree_known: boolean; recorded: boolean; current: boolean } {
@@ -294,7 +320,9 @@ export function deploymentEnvironment(compat: Compatibility): EnvironmentCompati
 }
 
 // The readiness, and the sentence NOW's build_complete continues with.
-export function readinessOf(complete: boolean, compat: Compatibility): { readiness: DeployReadiness; sentence: string } {
+// `serving`: the engine's serving check's state, said in the reason when
+// a static site is ready in static mode.
+export function readinessOf(complete: boolean, compat: Compatibility, serving?: ReturnType<typeof servingCheckState>): { readiness: DeployReadiness; sentence: string } {
   const env = deploymentEnvironment(compat);
   const environment = env?.name ?? null;
   if (compat.environments === null) {
@@ -308,7 +336,11 @@ export function readinessOf(complete: boolean, compat: Compatibility): { readine
   switch (env.state) {
     case 'hostable':
       return {
-        readiness: { state: 'ready', reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.`, environment },
+        readiness: {
+          state: 'ready',
+          reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${compat.output_kind === 'static_site' && serving !== undefined ? SERVING_SENTENCE[serving] : ''}`,
+          environment,
+        },
         sentence: ` It can be deployed to ${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode).`,
       };
     case 'unconfigured':

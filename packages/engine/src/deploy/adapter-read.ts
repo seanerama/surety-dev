@@ -13,16 +13,16 @@ import { Refusal } from '../refusal.js';
 import type { Runtime } from '../runtime.js';
 import { ADAPTERS } from '../store/transitions/deploy.js';
 import { adapterVersion } from './qualification.js';
-import { CONFIG_MODES, STATIC_ENTRY_DEFAULT, staticServer } from './static-site.js';
+import { STATIC_ENTRY_DEFAULT, staticServer } from './static-site.js';
+import { ADAPTER_CAPABILITIES, modesOf } from './capabilities.js';
 import { SERVING_CHECK_KEY } from './serving-install.js';
 import { SERVING_COMMAND, SERVING_DESCRIPTION, SERVING_KIND } from '../checks/schema.js';
 import { SERVING_STATEMENT } from '../store/transitions/serving.js';
 
-// The outputs local_service hosts, and those the engine also packages.
-export const ADAPTER_OUTPUTS = Object.freeze([
-  { kind: 'node_service', hosted: true },
-  { kind: 'static_site', hosted: true, downloadable: true },
-]);
+// The outputs local_service hosts, and those the engine also packages: the
+// adapter capabilities table's (deploy/capabilities.ts), the one source the
+// deployment compatibility reads too.
+export const ADAPTER_OUTPUTS = ADAPTER_CAPABILITIES.local_service!.outputs;
 
 let runtimeHash: { key: string; sha256: string } | null = null;
 async function nodeSha256(path: string): Promise<string> {
@@ -52,7 +52,7 @@ export async function adapterRead(rt: Runtime, adapter: string): Promise<Record<
     adapter_version: adapterVersion(adapter),
     qualification,
     runtime: { path: node, sha256: await nodeSha256(node), version: process.version },
-    modes: [...CONFIG_MODES],
+    modes: modesOf(adapter) ?? [],
     static: {
       server: { path: server.path, sha256: server.sha256 },
       entry_default: STATIC_ENTRY_DEFAULT,
@@ -60,6 +60,6 @@ export async function adapterRead(rt: Runtime, adapter: string): Promise<Record<
       // for a project configured in static mode (deploy/serving-install.ts).
       serving_check: { kind: SERVING_KIND, key: SERVING_CHECK_KEY, command: SERVING_COMMAND, gate_kinds: ['alpha_complete'], description: SERVING_DESCRIPTION, records: SERVING_STATEMENT },
     },
-    outputs: ADAPTER_OUTPUTS.map((o) => ({ ...o })),
+    outputs: (ADAPTER_CAPABILITIES[adapter]?.outputs ?? []).map((o) => ({ ...o })),
   };
 }

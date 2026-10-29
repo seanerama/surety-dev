@@ -18,11 +18,14 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 
 import { previewServerPath } from '../design/preview/path.js';
+import { ADAPTER_CAPABILITIES } from './capabilities.js';
 import { Refusal } from '../refusal.js';
 
 export const STATIC_ROOT_DEFAULT = '.';
 export const STATIC_ENTRY_DEFAULT = 'index.html';
-export const CONFIG_MODES = ['service', 'static'] as const;
+// The modes a configuration may name: the adapter capabilities table's
+// (deploy/capabilities.ts), the one source the adapter read serves too.
+export const CONFIG_MODES = Object.freeze(Object.keys(ADAPTER_CAPABILITIES.local_service!.modes)) as readonly ('service' | 'static')[];
 
 export interface StaticSpec {
   root: string;
