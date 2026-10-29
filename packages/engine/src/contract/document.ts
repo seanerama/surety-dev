@@ -221,6 +221,8 @@ const COLUMN_ENUMS: Record<string, string> = {
   'artifacts.status': 'ArtifactStatus',
   // Static sites (the owner's instruction of 2026-10-29): what a sealed tree is.
   'artifacts.output_kind': 'OutputKind',
+  'deliverables.format': 'DeliverableFormat',
+  'deliverables.output_kind': 'OutputKind',
   'adapter_qualifications.status': 'AdapterQualificationStatus',
   'adapter_qualification_runs.status': 'AdapterQualificationRunStatus',
   'operations.orchestration_stage': 'OrchestrationStage',
