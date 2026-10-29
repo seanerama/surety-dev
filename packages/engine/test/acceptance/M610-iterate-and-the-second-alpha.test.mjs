@@ -116,6 +116,15 @@ describe('M610 Iterate and the second Alpha', () => {
     assert.equal(after1.outcome.next_step, PROTO.next_steps.alpha_gone, "next_step: the engine's guidance that the Alpha is no longer deployed");
     assert.equal(after1.iteration.next_step, after1.outcome.next_step, 'the iteration read serves the same guidance');
     assert.equal(list.find((i) => i.seq === 1).next_step, after1.outcome.next_step, 'and the list');
+    // The recorded outcome beside current guidance (the plan's M611 (e); the
+    // owner's ruling of 2026-10-29: "next_step means current guidance.
+    // Historical outcomes remain preserved separately."; SEAM.md §582).
+    const rec = after1.outcome.recorded;
+    assert.deepEqual([rec?.status, rec?.reason, rec?.next_step], ['alpha_ready', 'alpha_complete', 'open_alpha'], `outcome.recorded keeps the stored outcome as written (${JSON.stringify(rec)})`);
+    assert.match(rec.recorded_at ?? '', /^\d{4}-\d{2}-\d{2}T/, 'when it was written');
+    assert.deepEqual(rec, S.oneRead.outcome.recorded, 'unchanged by the teardown and the iterate');
+    assert.equal(S.oneRead.outcome.recorded.next_step, S.oneRead.outcome.next_step, 'before the teardown, guidance and record agreed');
+    assert.ok(typeof after1.outcome.note === 'string' && /current guidance/.test(after1.outcome.note) && /recorded/.test(after1.outcome.note), `outcome.note says which is which (${after1.outcome.note})`);
     assert.deepEqual([after1.iteration.status, after1.iteration.alpha_at, after1.alpha.candidate, after1.alpha.deployment_request], [S.oneRead.iteration.status, S.oneRead.iteration.alpha_at, S.oneRead.alpha.candidate, S.oneRead.alpha.deployment_request]);
 
     // Running: iteration 2 has not ended; iteration 1 is no longer the current one.

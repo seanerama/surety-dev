@@ -4982,3 +4982,16 @@ Every other Reviewer `fix` in `test/acceptance/` names a check, or is plan-targe
 Harness: `harness/scripted/child.mjs` claims a kind's launch ordinal (the cause of M610 (a)'s intermittent "not reached in 60 ticks"); `harness/deploy/static-journey.mjs` `STATIC_PAGE_BUILT` and `pageBuilt`'s `built`. Tables: `prototype.json` (`candidate.alpha_replaced`, `next_steps.alpha_gone`), `static-preview.json` (`readiness_states`). SEAM's static-preview §§572, 573 renumbered §§577, 578.
 
 **Not covered:** a replacement on a real unit (M611 (e)'s kernel file only); a deployment applied and then failing verification (the old candidate withdrawn at finalization); the other-environment exception; the relay read until M613 (d) runs on a qualified host.
+
+## The owner's rulings of 2026-10-29 on the read (M610 (a), M611 (e), M616 (e); objection 226; SEAM §582)
+
+2026-10-29, by the Verifier, on `verify/alpha-preview` at f6807fcd.
+
+| Row | File | Added or restated |
+|---|---|---|
+| M610 | `M610-iterate-and-the-second-alpha.test.mjs` | (a) `outcome.recorded` and `outcome.note` beside the current `next_step` |
+| M611 | `M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs` | (e) the same after a replacement and a teardown |
+| M611 | `M611-a-disposable-local-service-alpha.test.mjs` (sandbox) | (e) a second describe: replacement and teardown observations on a real unit; four cases |
+| M616 | `M616-deployment-compatibility-and-readiness.test.mjs` | (e) two `ready` cases restated (objection 226); build complete beside an open approval on the read and the list; the phase-completion path to a ready deliverable; a serving check not proposed (a third describe) |
+
+**Not covered:** `means: verified` (no M616 case deploys); the real-unit describe has not run on a host H12 admits.

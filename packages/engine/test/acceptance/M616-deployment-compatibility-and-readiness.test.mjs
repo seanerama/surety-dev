@@ -40,7 +40,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { after, before, describe, test } from 'node:test';
 
-import { consume, openDecision } from './harness/decisions.mjs';
+import { consume, openDecision, reject } from './harness/decisions.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { proposalsOf, sharedFixture } from './harness/gates.mjs';
 import { recordChecks } from './harness/prototype.mjs';
@@ -50,6 +50,15 @@ import { configContent, configure } from './harness/deploy/kernel.mjs';
 import { STATIC_PAGE_BUILT, pageBuilt, pagePublished, servicePublished, silentPublished } from './harness/deploy/static-journey.mjs';
 
 const BUILD_DONE = 'The planned build and its automated gates are complete.';
+// The owner's ruling of 2026-10-29 (objection 226): `ready` means ready to
+// request deployment, not verified and not open, and says what follows.
+const READY_TO_REQUEST = (where) => `${BUILD_DONE} It is ready to request deployment to alpha (${where}), not verified and not open: `;
+const FOLLOWS_END = / follow before the preview opens\b/;
+async function listSummary(fx, id) {
+  const res = await fx.engine.get('/v1/projects');
+  assert.equal(res.status, 200, `GET /v1/projects (→ ${res.status} ${res.text})`);
+  return res.body.projects.find((x) => x.id === id);
+}
 // The readiness states the plan's M616 (e) names (contract/static-preview.json, SEAM.md §579).
 const READINESS = JSON.parse(readFileSync(new URL('./contract/static-preview.json', import.meta.url), 'utf8')).readiness_states;
 const all = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
@@ -164,8 +173,16 @@ describe('M616 (a), (d), (e) a browser app: its compatibility at publication, it
     assert.equal(r.state, 'ready');
     assert.equal(r.environment, 'alpha');
     assert.match(r.reason, /^The environment alpha can host this output \(Node service\) with local_service in service mode\./, r.reason);
+    // Objection 226, the owner's ruling of 2026-10-29: ready to request
+    // deployment, not verified and not open; what follows is named.
+    assert.equal(r.means, 'request_deployment');
+    assert.deepEqual(r.follows, ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'], 'no deployment-specific post-deploy check yet: its authoring, its approval, the request again, the deployment and its verification');
+    assert.match(r.reason, /Ready to request deployment, not verified and not open: /, r.reason);
     assert.equal(J.inService.now.state, 'build_complete', JSON.stringify(J.inService.now));
-    assert.equal(J.inService.now.reason, `${BUILD_DONE} It can be deployed to alpha (Node service, local_service service mode).`);
+    assert.ok(J.inService.now.reason.startsWith(READY_TO_REQUEST('Node service, local_service service mode')), J.inService.now.reason);
+    assert.match(J.inService.now.reason, FOLLOWS_END, J.inService.now.reason);
+    assert.match(J.inService.now.reason, /approval/, 'it says the approval follows');
+    assert.match(J.inService.now.reason, /verification/, 'and the verification');
     assert.equal(J.inService.now.primary_action, 'deploy');
     assert.doesNotMatch(J.inService.now.reason, /visual|accept|production/i, 'nothing claims acceptance or production readiness');
   });
@@ -268,6 +285,7 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     const proposal = J.proposals[0];
     J.decision = await openDecision(fx, p.id, 'check_correction_tightening', proposal.id, { max: 8 });
     J.asked = await projectRead(fx, p.id);
+    J.askedListed = await listSummary(fx, p.id);
     await consume(fx, p.id, J.decision, 'approve');
     J.approved = await projectRead(fx, p.id);
     J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
@@ -278,6 +296,16 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
       await tick(fx.engine, p.id);
     }
     J.ready = await projectRead(fx, p.id);
+    J.readyListed = await listSummary(fx, p.id);
+    // The phase-completion path (the owner's instruction of 2026-10-29): the
+    // stored phase gate, made stale by the applied version, re-evaluated by
+    // the tick after the checks ended; no client asked for it (this file
+    // never calls …/gates/phase).
+    J.candidate = J.ready.checks.candidate;
+    J.phaseEvaluations = all(fx.home, `SELECT "id", "outcome", "stale", "computed_at" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' ORDER BY rowid`, J.candidate);
+    J.appliedAt = all(fx.home, `SELECT "at" FROM "events" WHERE "type" = 'protected.applied' AND json_extract("subject", '$.project') = ? ORDER BY "seq"`, p.id).at(-1)?.at ?? null;
+    J.phaseEvents = all(fx.home, `SELECT "actor_kind", "request_id", "payload" FROM "events" WHERE "type" = 'gate.evaluated' AND json_extract("subject", '$.candidate') = ? ORDER BY "seq"`, J.candidate).filter((e) => JSON.parse(e.payload).gate_kind === 'phase');
+    J.deliverable = await fx.engine.get(`/v1/projects/${p.id}/candidates/${J.candidate}/deliverable`);
   });
   after(() => shared.cleanup());
 
@@ -317,6 +345,20 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     assert.equal(J.asked.now.state, 'waiting_on_you', 'a decision waiting comes first in NOW');
   });
 
+  test('(e) an open decision first in the primary status, the build\'s completion a separate fact on the project read and the list summary', () => {
+    for (const [what, read] of [['the project read', J.asked], ['the list summary', J.askedListed]]) {
+      assert.ok(read, `${what} serves the project`);
+      assert.deepEqual([read.now.state, read.now.primary_action], ['waiting_on_you', 'answer_decision'], `${what}: the open approval ranks first (${JSON.stringify(read.now)})`);
+      assert.ok(read.build && typeof read.build === 'object', `${what}: build is served (${JSON.stringify(read.build)})`);
+      assert.equal(read.build.complete, true, `${what}: the build is complete`);
+      assert.match(read.build.completed_at ?? '', /^\d{4}-\d{2}-\d{2}T/, `${what}: completed_at`);
+      assert.equal(read.build.deploy_readiness.state, 'blocked', `${what}: its readiness beside it`);
+      assert.equal(read.build.deploy_readiness.decision, J.decision.id);
+    }
+    assert.deepEqual(J.askedListed.build, J.asked.build, 'the same fact on both reads');
+    assert.equal(J.built.build.completed_at, J.asked.build.completed_at, 'completed_at is the build\'s completion, unchanged by the configuration and the question');
+  });
+
   test('(e) approved and not yet applied: still blocked, no decision, no deploy', () => {
     assert.notEqual(J.approvedStatus, 'applied', `read before the version is applied (${J.approvedStatus})`);
     const r = J.approved.build.deploy_readiness;
@@ -337,11 +379,72 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     assert.notEqual(J.applied.now.primary_action, 'deploy');
   });
 
+  test('(e) the phase-completion path: the stale phase gate re-evaluated by the tick after the checks ended; readiness and the deliverable ready with no client asking for the gate', () => {
+    assert.ok(J.appliedAt, 'the serving check\'s version was applied');
+    const ev = J.phaseEvaluations;
+    assert.ok(ev.length >= 2, `the phase gate was evaluated at the phase's completion and again (${JSON.stringify(ev)})`);
+    assert.ok(ev.slice(0, -1).some((e) => e.stale === 1), 'the applied version made the earlier evaluation stale');
+    const last = ev.at(-1);
+    assert.deepEqual([last.outcome, last.stale], ['satisfied', 0], `the newest phase evaluation is satisfied and current (${JSON.stringify(last)})`);
+    assert.ok(Date.parse(last.computed_at) > Date.parse(J.appliedAt), `re-evaluated after the version was applied (${last.computed_at} > ${J.appliedAt})`);
+    assert.ok(J.phaseEvents.length >= 1, `gate.evaluated events of the phase gate (${JSON.stringify(J.phaseEvents)})`);
+    assert.deepEqual([J.phaseEvents.at(-1).actor_kind, J.phaseEvents.at(-1).request_id], ['engine', null], 'the re-evaluation is the engine\'s own, at a tick, not a request');
+    assert.equal(J.ready.build.deploy_readiness.state, 'ready');
+    assert.equal(J.deliverable.status, 200, `the deliverable is served (→ ${J.deliverable.status} ${J.deliverable.text})`);
+    assert.equal(J.deliverable.body.deliverable.ready, true, JSON.stringify(J.deliverable.body));
+    assert.deepEqual(J.readyListed.build, J.ready.build, 'the list summary serves the same build fact');
+  });
+
   test('(e) the checks passed: ready, deploy', () => {
     const r = J.ready.build.deploy_readiness;
     assert.equal(r.state, 'ready', JSON.stringify(r));
+    assert.equal(r.means, 'request_deployment', 'ready to request deployment, not verified');
+    assert.deepEqual(r.follows, ['deployment', 'verification'], 'its serving check in place: the deployment and its verification follow');
     assert.equal(J.ready.now.state, 'build_complete');
-    assert.equal(J.ready.now.reason, `${BUILD_DONE} It can be deployed to alpha (static site, local_service static mode).`);
+    assert.ok(J.ready.now.reason.startsWith(READY_TO_REQUEST('static site, local_service static mode')), J.ready.now.reason);
+    assert.match(J.ready.now.reason, FOLLOWS_END, J.ready.now.reason);
+    assert.match(J.ready.now.reason, /verification/);
     assert.equal(J.ready.now.primary_action, 'deploy');
+  });
+});
+
+// The owner's ruling of 2026-10-29 (objection 226): "If a serving check has
+// not yet been proposed, readiness may mean ready to request deployment,
+// not 'verified' or 'ready to open.' State that approval and verification
+// follow." The static page configured in static mode; the owner rejects the
+// engine's proposal, so no serving check is in place or pending.
+describe('M616 (e) a static page whose serving check is not proposed: ready to request deployment; its proposal, approval, the deployment and its verification follow', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    const { p } = await pagePublished(fx, { name: 'pantry-static-none' });
+    await pageBuilt(fx, p, { built: STATIC_PAGE_BUILT });
+    await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18635));
+    const proposal = proposalsOf(fx.home, p.id).find((x) => x.proposed_by === 'engine');
+    const d = await openDecision(fx, p.id, 'check_correction_tightening', proposal.id, { max: 8 });
+    await reject(fx, p.id, d);
+    J.status = await tickUntil(fx.engine, p.id, () => {
+      const x = proposalsOf(fx.home, p.id).find((y) => y.id === proposal.id);
+      return x && !['captured', 'classified', 'awaiting_human', 'approved'].includes(x.status) ? x.status : undefined;
+    }, { max: 8, what: "the engine's proposal settled by the rejection" });
+    J.read = await projectRead(fx, p.id);
+  });
+  after(() => shared.cleanup());
+
+  test('(e) ready to request deployment, not verified and not open; the proposal, the approval, the deployment and its verification follow', () => {
+    assert.notEqual(J.status, 'applied', `the proposal was not applied (${J.status})`);
+    const r = J.read.build.deploy_readiness;
+    assert.equal(r.state, 'ready', JSON.stringify(r));
+    assert.equal(r.means, 'request_deployment');
+    assert.deepEqual(r.follows, ['serving_check_proposal', 'approval', 'deployment', 'verification']);
+    assert.ok(READINESS.includes(r.state));
+    assert.equal(J.read.now.state, 'build_complete', JSON.stringify(J.read.now));
+    assert.ok(J.read.now.reason.startsWith(READY_TO_REQUEST('static site, local_service static mode')), J.read.now.reason);
+    assert.match(J.read.now.reason, FOLLOWS_END, J.read.now.reason);
+    assert.match(J.read.now.reason, /approval/, 'it states that the approval follows');
+    assert.match(J.read.now.reason, /verification/, 'and the verification');
+    assert.doesNotMatch(J.read.now.reason, /can be deployed|is verified|is open/i, 'never verified or open');
+    assert.equal(J.read.now.primary_action, 'deploy');
   });
 });

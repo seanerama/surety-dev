@@ -18,7 +18,8 @@
 //       `alpha.current` null, its served `next_step` no longer `open_alpha`;
 //       its history kept (outcome status and reason, `alpha_at`, its
 //       candidate, deployment request and deployed_at, the request rows,
-//       `candidate.advanced`).
+//       `candidate.advanced`), and `outcome.recorded {status, reason,
+//       next_step, recorded_at}` the stored outcome as written (open_alpha).
 //   (e) the observation made before that deployment was finalized reads
 //       `unknown`/`expired` with `ended_by` (kind deployment, the operation),
 //       on the environment read and on the environments list (`state`
@@ -132,6 +133,11 @@ describe('M611 (e) replacement and the end of an observation, on the scripted ta
     assert.notEqual(oneAfter.outcome.next_step, 'open_alpha', 'it no longer offers to open the Alpha');
     assert.equal(oneAfter.outcome.next_step, PROTO.next_steps.alpha_gone, 'the guidance that its Alpha is no longer deployed');
     assert.equal(list.find((i) => i.id === J.one)?.next_step, oneAfter.outcome.next_step, 'the list serves the same guidance');
+    // The recorded outcome kept beside it (the plan's M611 (e); SEAM.md §582).
+    assert.deepEqual(oneAfter.outcome.recorded, oneRead.outcome.recorded, 'outcome.recorded unchanged by the replacement');
+    assert.deepEqual([oneAfter.outcome.recorded?.status, oneAfter.outcome.recorded?.reason, oneAfter.outcome.recorded?.next_step], [oneRead.outcome.status, oneRead.outcome.reason, 'open_alpha'], 'the stored outcome as written: open_alpha recorded');
+    assert.match(oneAfter.outcome.recorded.recorded_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(typeof oneAfter.outcome.note, 'string');
     // History, kept as recorded.
     assert.deepEqual([oneAfter.outcome.status, oneAfter.outcome.reason], [oneRead.outcome.status, oneRead.outcome.reason], 'the historical outcome');
     assert.deepEqual(
@@ -178,6 +184,8 @@ describe('M611 (e) replacement and the end of an observation, on the scripted ta
     assert.equal(J.twoAfter.alpha.current_state, 'torn_down', J.twoAfter.alpha.current_reason);
     assert.equal(J.twoAfter.alpha.current, null);
     assert.equal(J.twoAfter.outcome.next_step, PROTO.next_steps.alpha_gone);
+    assert.deepEqual(J.twoAfter.outcome.recorded, J.twoAtAlpha.outcome.recorded, 'its recorded outcome unchanged by the teardown');
+    assert.equal(J.twoAfter.outcome.recorded?.next_step, 'open_alpha');
     assert.deepEqual([J.twoAfter.outcome.status, J.twoAfter.iteration.alpha_at], [J.twoAtAlpha.outcome.status, J.twoAtAlpha.iteration.alpha_at], 'its history kept');
   });
 });
