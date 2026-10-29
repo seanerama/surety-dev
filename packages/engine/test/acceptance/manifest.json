@@ -550,6 +550,15 @@
       "M559-the-assistant-turn-answer.test.mjs",
       "M560-qualification-admission-and-not-dispatched.test.mjs",
       "M561-policy-submission-outcomes.test.mjs"
+    ],
+    "49": [
+      "M613-static-mode-of-local-service.test.mjs",
+      "M614-serving-verification-of-a-static-site.test.mjs",
+      "M615-the-downloadable-deliverable.test.mjs",
+      "M616-deployment-compatibility-and-readiness.test.mjs"
+    ],
+    "50": [
+      "M613-static-mode-on-a-real-unit.test.mjs"
     ]
   },
   "sandbox": [
@@ -670,7 +679,8 @@
     "M557-the-assistant-qualification.test.mjs",
     "M558-the-assistant-context.test.mjs",
     "M559-the-assistant-turn-answer.test.mjs",
-    "M560-qualification-admission-and-not-dispatched.test.mjs"
+    "M560-qualification-admission-and-not-dispatched.test.mjs",
+    "M613-static-mode-on-a-real-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
