@@ -362,17 +362,30 @@ function alphaBarrierStep(tx: Tx, project: string): void {
 // leave it stale until a client asked for the gate, and the deliverable
 // (store/transitions/deliverable.ts), which needs it satisfied and not
 // stale, refused. Due when the build is complete, the current candidate's
-// latest phase evaluation is stale and of a completed plan, and none of
-// the candidate's check executions is still to end (the gate reads their
-// results, as the step above waits for them).
+// latest phase evaluation is stale and of a completed plan, that
+// evaluation was computed under the approved specification still current
+// (its scope's `spec_revision`), and none of the candidate's check
+// executions is still to end (the gate reads their results, as the step
+// above waits for them). An approved change of the specification after the
+// completion (a change after the final phase, a design approved at Alpha)
+// leaves the completed phase's gate as its history: what follows from the
+// change is the replan and its delivery phase (M433 (c), M517 (f)), or
+// nothing (M530 (g)), never a new evaluation of the completed phase by the
+// engine; a client asking for the gate still computes it. Each new
+// evaluation is current when written, so the gate is due again only after
+// something marks it stale again: one evaluation per staleness.
 function completedPhaseGateDue(tx: Tx, project: string): PhaseStepResult | null {
   if (!buildComplete(tx.db, project)) return null;
   const candidate = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
   if (!candidate) return null;
-  const ev = tx.db.prepare(`SELECT "stale", "phase_plan" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' ORDER BY rowid DESC LIMIT 1`).get(candidate.id) as
-    | { stale: number; phase_plan: string | null }
-    | undefined;
+  const ev = tx.db
+    .prepare(
+      `SELECT e."stale", e."phase_plan", s."spec_revision" FROM "gate_evaluations" e JOIN "acceptance_scopes" s ON s."id" = e."scope" WHERE e."candidate" = ? AND e."gate_kind" = 'phase' ORDER BY e.rowid DESC LIMIT 1`,
+    )
+    .get(candidate.id) as { stale: number; phase_plan: string | null; spec_revision: string | null } | undefined;
   if (!ev || ev.stale !== 1 || ev.phase_plan === null) return null;
+  const specNow = (tx.db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { id: string } | undefined)?.id ?? null;
+  if (ev.spec_revision !== specNow) return null;
   const plan = tx.db.prepare('SELECT "completed_at" FROM "phase_plans" WHERE "id" = ? AND "project" = ?').get(ev.phase_plan, project) as { completed_at: string | null } | undefined;
   if (!plan || plan.completed_at === null) return null;
   const coming = tx.db
