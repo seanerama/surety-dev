@@ -429,38 +429,43 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
     // Whether checks are under way is not known: neither checking nor any
     // state after it is established.
     return { state: 'unknown' as const, primary_action: null, reason: `The project's state cannot be computed: its automated checks could not be read (${checks.unreadable}).`, cause: 'store_error' };
-  } else if (checks.progress !== null && checks.progress.queued + checks.progress.running > 0) {
-    const c = checks.progress;
-    state = 'checking';
-    reason = `Checking${c.phase === null ? '' : ` phase ${c.phase}`}: ${c.completed} of ${c.planned} checks completed.`;
-    primary = null;
-    if (c.held !== null) {
-      reason += ` ${c.held.count === 1 ? 'One queued check is' : `${c.held.count} queued checks are`} held (${c.held.code}): ${c.held.reason}`;
-      if (c.held.decision !== null) primary = 'answer_decision';
-    }
   } else {
-    const ready = dispatchable(db, project);
-    const deploying = ready > 0 ? null : deploymentUnderWay(db, project);
-    if (ready > 0) {
-      state = 'ready';
-      reason = ready === 1 ? 'One work item is eligible and can be dispatched at the next tick.' : `${ready} work items are eligible and can be dispatched at the next tick.`;
-      primary = 'tick';
-    } else if (deploying !== null) {
+    // A deployment under way outranks its own verification checks (the
+    // owner's distinction, the console Builder's observation on the kernel
+    // lane): the post-deploy check in flight is shown in `checks` beside it.
+    const deploying = deploymentUnderWay(db, project);
+    const c = checks.progress;
+    if (deploying !== null) {
       state = 'deploying';
       reason = deploying;
       primary = null;
-    } else if (buildCompleteAwaitingDeploy(db, project)) {
-      // Implementation complete; whether it can be deployed is the
-      // readiness's, never claimed here (no visual acceptance, no
-      // production readiness).
-      const r = readiness();
-      state = 'build_complete';
-      reason = `The planned build and its automated gates are complete.${r.sentence}`;
-      primary = r.primary;
-    } else {
-      state = 'idle';
-      reason = 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
+    } else if (c !== null && c.queued + c.running > 0) {
+      state = 'checking';
+      reason = `Checking${c.phase === null ? '' : ` phase ${c.phase}`}: ${c.completed} of ${c.planned} checks completed.`;
       primary = null;
+      if (c.held !== null) {
+        reason += ` ${c.held.count === 1 ? 'One queued check is' : `${c.held.count} queued checks are`} held (${c.held.code}): ${c.held.reason}`;
+        if (c.held.decision !== null) primary = 'answer_decision';
+      }
+    } else {
+      const ready = dispatchable(db, project);
+      if (ready > 0) {
+        state = 'ready';
+        reason = ready === 1 ? 'One work item is eligible and can be dispatched at the next tick.' : `${ready} work items are eligible and can be dispatched at the next tick.`;
+        primary = 'tick';
+      } else if (buildCompleteAwaitingDeploy(db, project)) {
+        // Implementation complete; whether it can be deployed is the
+        // readiness's, never claimed here (no visual acceptance, no
+        // production readiness).
+        const r = readiness();
+        state = 'build_complete';
+        reason = `The planned build and its automated gates are complete.${r.sentence}`;
+        primary = r.primary;
+      } else {
+        state = 'idle';
+        reason = 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
+        primary = null;
+      }
     }
   }
   return { state, primary_action: primary, reason, cause };

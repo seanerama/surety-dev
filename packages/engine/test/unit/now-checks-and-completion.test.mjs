@@ -62,7 +62,7 @@ function candidate(db, id, seq, supersededBy) {
 let seq = 0;
 // One execution of a check: its status, and a result row when recorded
 // (`result`: 'passed', 'failed' or 'not_run').
-function execution(db, { candidate = 'cand_1', key, status, result = null, trigger = { source: 'nomination', id: candidate, generation: 1 }, retryOf = null, version = 'pv_1', runnerClass = 'direct' }) {
+function execution(db, { candidate = 'cand_1', key, status, result = null, trigger = { source: 'nomination', id: candidate, generation: 1 }, retryOf = null, version = 'pv_1', runnerClass = 'direct', deployment = null }) {
   seq += 1;
   const id = `cx_${seq}`;
   let resultId = null;
@@ -74,9 +74,9 @@ function execution(db, { candidate = 'cand_1', key, status, result = null, trigg
     ).run(resultId, AT, `chk_${key}`, candidate, A, version, seq, result === 'not_run' ? 0 : 1, result === 'passed' ? 0 : result === 'failed' ? 1 : null, id, result === 'not_run' ? 'environment_unbound' : null);
   }
   db.prepare(
-    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, retry_of, status, result, not_run_reason, registered_at)
-     VALUES (?, ?, 'prj_1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, AT, `chk_${key}`, key, candidate, A, version, runnerClass, seq, JSON.stringify(trigger), `tk_${seq}`, retryOf, status, resultId, result === 'not_run' ? 'environment_unbound' : null, AT);
+    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, retry_of, status, result, not_run_reason, registered_at, deployment)
+     VALUES (?, ?, 'prj_1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, AT, `chk_${key}`, key, candidate, A, version, runnerClass, seq, JSON.stringify(trigger), `tk_${seq}`, retryOf, status, resultId, result === 'not_run' ? 'environment_unbound' : null, AT, deployment === null ? null : JSON.stringify(deployment));
   return id;
 }
 
@@ -247,6 +247,34 @@ test('the same with a deployment under way: deploying, naming the operation, nev
   completeBuild(db);
   deployOp(db, 'op_1', 'cand_1', 'verification');
   assert.deepEqual(read(db).now, { state: 'deploying', primary_action: null, reason: 'Deployment operation op_1 of candidate cand_1 to alpha is under way (its verification stage).', cause: null });
+});
+
+test('a deployment in its verification stage, its post-deploy check queued: deploying outranks checking, and checks counts the check beside it', (t) => {
+  const db = store(t);
+  completeBuild(db);
+  deployOp(db, 'op_1', 'cand_1', 'verification');
+  const binding = { operation: 'op_1', attempt: 'att_1', deployment_generation: 1 };
+  execution(db, { key: 'post', status: 'queued', trigger: { source: 'deployment_verification', id: 'round_1', generation: 1 }, deployment: binding });
+  const p = read(db);
+  assert.deepEqual(p.now, { state: 'deploying', primary_action: null, reason: 'Deployment operation op_1 of candidate cand_1 to alpha is under way (its verification stage).', cause: null });
+  assert.deepEqual([p.checks.planned, p.checks.completed, p.checks.queued, p.checks.running], [2, 1, 1, 0], 'the phase check recorded, the post-deploy check queued');
+  // Its operation ended, the check still running: checking.
+  db.prepare(`UPDATE operations SET orchestration_stage = 'ended' WHERE id = 'op_1'`).run();
+  db.prepare(`UPDATE check_executions SET status = 'running' WHERE key = 'post'`).run();
+  assert.deepEqual([read(db).now.state, read(db).now.reason], ['checking', 'Checking phase 2: 1 of 2 checks completed.']);
+});
+
+test('dispatchable work beside a deployment under way: deploying, not ready', (t) => {
+  const db = store(t);
+  deployOp(db, 'op_1', 'cand_1', 'effect');
+  db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, prefix, current_generation, deployment_generation) VALUES ('env_1', ?, 'prj_1', 'alpha', 'local_service', 'x', '{}', 'p', 1, 1)`).run(AT);
+  db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_f', ?, 'prj_1', 2, 'fix', '{}', 'eligible', 'test', 'wi_f', 1, 0, 0, 0, 0)`,
+  ).run(AT);
+  assert.equal(read(db).now.state, 'deploying');
+  db.prepare(`UPDATE operations SET orchestration_stage = 'ended' WHERE id = 'op_1'`).run();
+  assert.equal(read(db).now.state, 'ready', 'the fixture is live: with the operation ended the work is ready');
 });
 
 test('deploy work requested and not yet intended: deploying, naming the work item and its hold', (t) => {
