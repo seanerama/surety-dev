@@ -247,6 +247,18 @@ export interface IterationAccount {
   // and which carries no allowance, with its run, so that what is unknown is
   // named, never only counted.
   unknown_billable: { invocation: string; run: string; role: string; work_kind: string | null }[];
+  // The owner's ruling of 2026-10-29 ("Clearly distinguish estimated
+  // allowance from measured consumption"): the committed figure split by
+  // kind. Measured: billable tokens the backends reported (settled, and
+  // observed so far of invocations under way). Estimated allowance: tokens
+  // charged or held in place of usage not known (unknown allowances, and
+  // what runs under way still reserve). committed = measured + allowance.
+  measured_tokens: number;
+  estimated_allowance_tokens: number;
+  // Invocations whose measured part is partial: under way, settled
+  // incomplete, or settled with unknown billable tokens; while any is, the
+  // measured figure is a lower bound of what was consumed.
+  partially_measured_invocations: number;
 }
 
 export function iterationAccount(db: Db, project: string, iteration: string): IterationAccount {
@@ -269,6 +281,9 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     unknown_cost_invocations: 0,
     repairs_used: 0,
     unknown_billable: [],
+    measured_tokens: 0,
+    estimated_allowance_tokens: 0,
+    partially_measured_invocations: 0,
   };
   for (const { id, run, role, work_kind } of receipts) {
     const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(id) as LedgerRow[];
@@ -281,6 +296,7 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
       }
       a.settled_tokens += b ?? 0;
       a.unknown_allowance_tokens += acc.unknown_allowance_tokens ?? 0;
+      if (b === null || !acc.usage_complete) a.partially_measured_invocations += 1;
       if ((acc.cost_status === 'reported' || acc.cost_status === 'measured_zero') && acc.cost_usd !== null) a.reported_usd = (a.reported_usd ?? 0) + acc.cost_usd;
       if (acc.cost_status === 'estimated' && acc.cost_usd !== null) a.estimated_usd = (a.estimated_usd ?? 0) + acc.cost_usd;
       if (acc.cost_status === 'unknown') a.unknown_cost_invocations += 1;
@@ -291,10 +307,13 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     if (status === 'refused') continue;
     const so = observedSoFar(db, id);
     a.under_way_invocations += 1;
+    a.partially_measured_invocations += 1;
     a.under_way_observed_tokens += billable(so) ?? 0;
     a.outstanding_reservation_tokens += outstandingReservation(db, id, project, so);
   }
-  a.committed_tokens = a.settled_tokens + a.unknown_allowance_tokens + a.under_way_observed_tokens + a.outstanding_reservation_tokens;
+  a.measured_tokens = a.settled_tokens + a.under_way_observed_tokens;
+  a.estimated_allowance_tokens = a.unknown_allowance_tokens + a.outstanding_reservation_tokens;
+  a.committed_tokens = a.measured_tokens + a.estimated_allowance_tokens;
   if (a.reported_usd !== null) a.reported_usd = money(a.reported_usd);
   if (a.estimated_usd !== null) a.estimated_usd = money(a.estimated_usd);
   // The engine's own repair counter of the iteration's work items (D1 §4.3).
@@ -313,6 +332,12 @@ export function unknownAccountingText(a: IterationAccount): string | null {
   if (a.unknown_billable_invocations === 0) return null;
   const which = a.unknown_billable.map((u) => `invocation ${u.invocation} of run ${u.run} (${u.role}${u.work_kind ? `, ${u.work_kind}` : ''})`).join('; ');
   return `${a.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance (${which}): each was settled with no usage reported and no allowance charged for it, so what it used, and so what the iteration committed, is unknown, never 0. Raising a limit cannot resolve an unknown total`;
+}
+
+// The committed figure in words, by kind (the owner's ruling of
+// 2026-10-29): what of it was measured and what is an estimated allowance.
+export function committedSplitText(a: IterationAccount): string {
+  return `Of the ${a.committed_tokens} committed, ${a.measured_tokens} is measured consumption (billable tokens the backend reported: ${a.settled_tokens} settled + ${a.under_way_observed_tokens} observed under way${a.partially_measured_invocations > 0 ? `; a lower bound, ${a.partially_measured_invocations} invocation(s) not fully measured` : ''}) and ${a.estimated_allowance_tokens} is estimated allowance, not consumption (${a.unknown_allowance_tokens} charged as unknown-usage allowances, conservatively, + ${a.outstanding_reservation_tokens} still reserved by runs under way)`;
 }
 
 // The iteration's accounting unresolved (S2): its committed tokens unknown.
@@ -511,8 +536,10 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
         under_way_reserved: account.outstanding_reservation_tokens,
         available: Math.max(0, available),
         reservation: ask.reservation,
+        measured: account.measured_tokens,
+        estimated_allowance: account.estimated_allowance_tokens,
       };
-      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) leaves ${Math.max(0, available)}: a run would get no positive allowance (its per-run limit ${ask.reservation}, capped at what the iteration has left)${usdNote}`;
+      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) leaves ${Math.max(0, available)}: a run would get no positive allowance (its per-run limit ${ask.reservation}, capped at what the iteration has left)${usdNote}. ${committedSplitText(account)}`;
       return { kind: tokens - ended > 0 ? 'settling' : 'final', limit: 'tokens', reason: text, facts };
     }
   }

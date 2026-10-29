@@ -260,7 +260,7 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
       ? 'scripted provider: unpaid, no price applies'
       : est === null
         ? (attemptSpendUnavailable(rm.provider, rm.model) ?? `no price for ${rm.provider} ${rm.model}`)
-        : `${limit} billable tokens at the output rate of ${rm.model} in price table ${est.price_version}${est.bound === 'lower' ? ' (a lower bound)' : ''}`,
+        : `${limit} billable tokens at the output rate of ${rm.model} in price table ${est.price_version}${est.bound === 'lower' ? ' (a lower bound)' : ''}: the run's allowance priced, an estimate of the most it may cost, not a measurement of what it will use`,
     paid,
     authorizes: 'exactly one brief_preparation run',
     idea_version: p.idea_version,
@@ -290,9 +290,12 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
       m.run_token_limit === perRun
         ? `Its token limit is ${String(m.run_token_limit)} billable tokens (the per-run limit)`
         : `Its effective token limit is ${String(m.run_token_limit)} billable tokens: the per-run limit of ${perRun}, capped at what the iteration has left of its token allowance`;
+    // The owner's ruling of 2026-10-29: the limit is an allowance, said as
+    // such, apart from what the run will be measured to use.
+    const allowanceText = ' This limit is an estimated allowance, the most the run may use, not a measurement: what it uses is counted as the backend reports it, and if its usage is not fully known it is charged its limit less what was observed, conservatively.';
     const cost = m.paid
-      ? `${limitText}; at the price table that is an estimated ${usd(m.estimated_usd)} at most (${String(m.estimate_basis)}): an estimate, not a cap.`
-      : `${limitText}. The scripted provider is unpaid: no paid work follows.`;
+      ? `${limitText}; at the price table that is an estimated ${usd(m.estimated_usd)} at most (${String(m.estimate_basis)}): an estimate, not a cap.${allowanceText}`
+      : `${limitText}. The scripted provider is unpaid: no paid work follows.${allowanceText}`;
     // Slice E4 (R7): an iteration that continues another says which, and
     // the change the owner asked for.
     const cont = m.continues as { seq: number; previous_brief_iteration_seq: number | null } | null;
@@ -543,7 +546,7 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
   }
   const limits: BriefFacts['limits'] = {};
   for (const k of PROTOTYPE_LIMIT_KEYS) limits[k] = (policy[k] as number | undefined) ?? null;
-  limits.reservation_rule = `Each run is given an effective allowance at dispatch: the lower of the per-run limit (budget_run_billable_tokens ${policy.budget_run_billable_tokens}) and what the iteration has left of its token allowance after its settled usage, its unknown allowances and the reservations of the other runs under way. The run reserves that allowance from dispatch until its usage is settled, and is stopped at it; usage that cannot be known is charged as an unknown allowance up to it, never as zero. A run that would get no positive allowance is not dispatched. Possible overshoot: what runs already running may still spend under their own allowances.`;
+  limits.reservation_rule = `Each run is given an effective allowance at dispatch: the lower of the per-run limit (budget_run_billable_tokens ${policy.budget_run_billable_tokens}) and what the iteration has left of its token allowance after its settled usage, its unknown allowances and the reservations of the other runs under way. The run reserves that allowance from dispatch until its usage is settled, and is stopped at it; usage that cannot be known is charged as an unknown allowance up to it, never as zero. A run that would get no positive allowance is not dispatched. Possible overshoot: what runs already running may still spend under their own allowances. The effective allowance, the reservation and the unknown allowance are estimated allowances, never measured consumption: the iteration read serves what the backends reported (usage) apart from them (unknown_allowance_tokens, reserved_tokens), and its committed figure names both parts.`;
   return { version: latest + 1, target: targetOf(db, args.project, args.environments), models, preparation, limits, stop_conditions: [...STOP_CONDITIONS] };
 }
 

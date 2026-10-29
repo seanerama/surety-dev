@@ -349,7 +349,59 @@ function alphaNow(db: Db, project: string, it: IterationRow, environment: string
 // The statement served with `app_totals` (slice E4; R7, R9): what is summed
 // and how, so that nothing is read as more than it is.
 export const CUMULATIVE_RULE =
-  "The app's totals: every run attributed to any iteration of this project (runs.iteration, fixed when each run was dispatched), each counted once, whatever the iteration's status; the categories, the token total, the cost statuses and the unknown allowances by the same rules as one iteration's totals (a total only where every provider's categories are mutually exclusive, a lower bound while any invocation's usage is pending or incomplete; unknown never 0). A run dispatched while no iteration was open is in no iteration and not counted. Each iteration's own totals exclude its predecessors.";
+  "The app's totals: every run attributed to any iteration of this project (runs.iteration, fixed when each run was dispatched), each counted once, whatever the iteration's status; the categories, the token total, the cost statuses and the unknown allowances by the same rules as one iteration's totals (a total only where every provider's categories are mutually exclusive, a lower bound while any invocation's usage is pending or incomplete; unknown never 0). A run dispatched while no iteration was open is in no iteration and not counted. Each iteration's own totals exclude its predecessors. The token categories and total are measured consumption (what the backends reported); unknown_allowance_tokens is an estimated allowance charged conservatively in place of usage that is not known, kept apart and never added to the total.";
+
+// The rules served beside the figures (the owner's ruling of 2026-10-29:
+// "Preserve unknown usage and conservative allowances. Clearly distinguish
+// estimated allowance from measured consumption.").
+export const TOTALS_RULE =
+  "tokens (billable_in, cached_in, out and total) are measured consumption: what the backends reported, summed over this iteration's invocations; a lower bound (total_is lower_bound) while any invocation's usage is pending or incomplete, and null, never 0, where nothing is known. unknown_allowance_tokens is an estimated allowance, not consumption: for each incomplete invocation, its effective limit less what it was observed to use, charged conservatively in place of the usage that is not known; it is kept apart and never added to the token total. preparation.tokens is the measured consumption of the brief preparation runs. cost.reported_usd is cost the provider reported; cost.estimated_usd is measured tokens priced at the price table, an estimate of cost, not an allowance.";
+export const COMMITTED_RULE =
+  'total_tokens = measured_tokens + estimated_allowance_tokens, the conservative figure the token limit is checked against, not consumption. measured_tokens = settled_tokens + under_way_observed_tokens: billable tokens the backends reported, a lower bound while measured_is is lower_bound. estimated_allowance_tokens = unknown_allowance_tokens + under_way_reserved_tokens: unknown-usage allowances charged for incomplete invocations, and what runs under way may still spend of their effective allowances. total_tokens is null, never a partial sum, while a charged invocation has unknown billable tokens and no allowance.';
+export const REMAINING_TOKENS_RULE =
+  'tokens = prototype_budget_tokens less committed.total_tokens (measured consumption plus estimated allowances), so it is what is left after conservative allowances, not the limit less consumption alone; null while what was committed is unknown (tokens_reason says why). next_run_reservation_tokens and run_limit_tokens are limits, estimated allowances a run would be given, not usage.';
+export const ACCOUNTING_BASIS = {
+  measured_consumption: {
+    meaning: 'Tokens and cost the backend reported for an invocation, as the ledger recorded them: observed, never estimated. A lower bound while any invocation is pending or incomplete; unknown is null, never 0.',
+    fields: [
+      'usage.runs[].invocations[].usage',
+      'usage.runs[].invocations[].cost.usd where cost.status is reported or measured_zero',
+      'usage.totals.tokens',
+      'usage.totals.cost.reported_usd',
+      'usage.totals.preparation.tokens',
+      'app_totals.tokens',
+      'app_totals.cost.reported_usd',
+      'remaining.committed.settled_tokens',
+      'remaining.committed.under_way_observed_tokens',
+      'remaining.committed.measured_tokens',
+    ],
+  },
+  estimated_allowance: {
+    meaning: 'Tokens set aside, limited or charged in place of usage that is not known: a reservation, a per-run or effective limit, or a conservative unknown-usage allowance. Never a measurement of what was used.',
+    fields: [
+      'usage.runs[].invocations[].unknown_allowance_tokens',
+      'usage.runs[].invocations[].reserved_tokens',
+      'usage.runs[].invocations[].effective_limit_tokens',
+      'usage.runs[].invocations[].run_limit_tokens',
+      'usage.totals.unknown_allowance_tokens',
+      'app_totals.unknown_allowance_tokens',
+      'remaining.committed.unknown_allowance_tokens',
+      'remaining.committed.under_way_reserved_tokens',
+      'remaining.committed.estimated_allowance_tokens',
+      'remaining.next_run_reservation_tokens',
+      'remaining.run_limit_tokens',
+      'iteration.limits',
+    ],
+  },
+  estimated_cost: {
+    meaning: 'Measured tokens priced at the price table (pricing_basis names it): an estimate of what measured usage cost, neither a reported cost nor an allowance.',
+    fields: ['usage.runs[].invocations[].cost.usd where cost.status is estimated', 'usage.totals.cost.estimated_usd', 'app_totals.cost.estimated_usd'],
+  },
+  combined: {
+    meaning: 'Figures that add measured consumption and estimated allowances (or reported and estimated cost), each with the rule that names its parts: conservative, never consumption alone.',
+    fields: ['remaining.committed.total_tokens (remaining.committed.rule)', 'remaining.tokens (remaining.tokens_rule)', 'remaining.usd_estimated (remaining.usd_label)', 'usage.totals.preparation.usd'],
+  },
+} as const;
 
 // The app's totals over every iteration of the project (slice E4): the
 // project's attributed runs' invocations, each once.
@@ -466,7 +518,17 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       under_way_observed_tokens: account.under_way_observed_tokens,
       under_way_reserved_tokens: account.outstanding_reservation_tokens,
       total_tokens: account.unknown_billable_invocations > 0 ? null : account.committed_tokens,
+      // The owner's ruling of 2026-10-29: the committed figure by kind.
+      // Measured consumption: settled + under way observed (what the
+      // backends reported), a lower bound while any invocation is not fully
+      // measured. Estimated allowance: unknown allowances + under way
+      // reserved, never consumption.
+      measured_tokens: account.measured_tokens,
+      measured_is: account.partially_measured_invocations > 0 ? 'lower_bound' : 'complete',
+      estimated_allowance_tokens: account.estimated_allowance_tokens,
+      rule: COMMITTED_RULE,
     },
+    tokens_rule: REMAINING_TOKENS_RULE,
     // Slice E5 (S5): what a run dispatched now would be given and reserve
     // of it, its effective allowance (the lower of the per-run limit and
     // what the iteration has left); null when it would get none (or the
@@ -523,11 +585,16 @@ export function readIteration(db: Db, args: { project: string; iteration: string
         // unknown usage shown as zero.
         preparation: prepRuns === 0 ? { runs: 0, tokens: 0, usd: 0 } : { runs: prepRuns, tokens: prepTokens.total, usd: prepCost.unknown_invocations > 0 || prepCost.pending_invocations > 0 ? null : money((prepCost.reported_usd ?? 0) + (prepCost.estimated_usd ?? 0)) },
         setup_qualification: { note: 'charged to the qualification fixture, not to this iteration' },
+        rule: TOTALS_RULE,
       },
     },
     remaining,
     // Slice E4: the whole app's totals, every iteration of the project once.
     app_totals: appTotals(db, args.project),
+    // The owner's ruling of 2026-10-29: which served figure is measured
+    // consumption, which an estimated allowance, which an estimated cost,
+    // and which a figure that adds them.
+    accounting_basis: ACCOUNTING_BASIS,
     // The first plan (R1): its bundle and how it was published.
     plan: planOf(db, it),
     owner_approvals: ownerApprovals(db, it),
