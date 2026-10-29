@@ -186,7 +186,11 @@ test('tokens (S5): each claim is given its effective allowance, the lower of its
   const [ev] = events(db, 'prototype.iteration_limit_reached');
   assert.deepEqual([ev.limit, ev.committed, ev.available, ev.reservation, ev.from], ['tokens', 410_000, 0, RUN_LIMIT, 'preparing']);
   read = readIteration(db, { project: p.id, iteration: p.iteration });
-  assert.deepEqual(read.outcome, { status: 'limit_reached', reason: it.outcome_reason, next_step: 'raise the limit or discard' });
+  const { recorded, note, ...outcome } = read.outcome;
+  assert.deepEqual(outcome, { status: 'limit_reached', reason: it.outcome_reason, next_step: 'raise the limit or discard' });
+  assert.deepEqual([recorded.status, recorded.reason, recorded.next_step], [outcome.status, outcome.reason, outcome.next_step], 'the recorded outcome as stored');
+  assert.equal(recorded.recorded_at, events(db, 'prototype.iteration_limit_reached').length === 1 ? db.prepare(`SELECT at FROM events WHERE type = 'prototype.iteration_limit_reached'`).get().at : undefined);
+  assert.ok(note.length > 0);
   assert.equal(read.remaining.next_dispatch, null, 'an iteration that is not open is asked nothing');
   const now = readProject(db, { project: p.id }).project.now;
   assert.equal(now.state, 'idle');
