@@ -59,8 +59,7 @@ import { fileURLToPath } from 'node:url';
 // docs/acceptance/sdlc-M7-acceptance-plan.md §3b (M613 to M616: static preview,
 // serving verification, the downloadable deliverable and deploy readiness, slices 49
 // and 50; DRAFT 1 for Sean's review under his instructions and rulings of 2026-10-29,
-// recorded in D4 §13). On this branch only; the M7 rows M601 to M612 are on
-// build/rapid-prototype and join at the merge.
+// recorded in D4 §13; joined with M601 to M612 on integration/alpha-preview, 2026-10-29).
 // Adding or removing a row is the owner's decision (build spec §9).
 const ROWS = [
   ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
