@@ -288,7 +288,14 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
   const candidates = db.prepare(`SELECT "id", "source_digest", "progress" FROM "candidates" WHERE "project" = ? ORDER BY "seq"`).all(project) as { id: string; source_digest: string | null; progress: string }[];
   for (const c of candidates) {
     if (c.source_digest === null || c.source_digest !== a.source_digest) continue;
-    if (c.progress !== 'alpha_deployed') continue;
+    // History, not current availability (the owner's ruling of 2026-10-29:
+    // "Keep historical deployment evidence separate from current
+    // availability"): the barrier asks whether the adopted code reached
+    // Alpha, which a later teardown or a replacing deployment of a changed
+    // candidate does not undo. A candidate alpha_deployed now, or one whose
+    // advance to alpha_deployed is recorded (candidate.advanced, written in
+    // the evaluation's transaction, D4 §5.5) and since withdrawn.
+    if (c.progress !== 'alpha_deployed' && !reachedAlpha(db, c.id)) continue;
     const last = db.prepare(`SELECT "outcome", "stale" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'alpha_complete' ORDER BY rowid DESC, "id" DESC LIMIT 1`).get(c.id) as { outcome: string; stale: number } | undefined;
     if (last && last.outcome === 'satisfied' && last.stale === 0) return { adopted: true, open: true, reason: null, candidate: c.id };
   }
@@ -298,6 +305,15 @@ export function alphaBarrier(db: Db, project: string): { adopted: boolean; open:
     reason: 'CONFORMANCE_ALPHA_PENDING: no candidate whose application source is A has a satisfied, current alpha_complete; the change-phase replan waits for the owner\'s deployment of the adopted code and its verification',
     candidate: null,
   };
+}
+
+// Whether the candidate's advance to alpha_deployed is recorded (history).
+function reachedAlpha(db: Db, candidate: string): boolean {
+  return (
+    db
+      .prepare(`SELECT 1 FROM "events" WHERE "type" = 'candidate.advanced' AND json_extract("subject", '$.candidate') = ? AND json_extract("payload", '$.to') = 'alpha_deployed' LIMIT 1`)
+      .get(candidate) !== undefined
+  );
 }
 
 // The barrier's tick step: phase 1 of an adopted project complete, the

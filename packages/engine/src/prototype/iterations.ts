@@ -22,7 +22,7 @@ import { between } from '../plan/pace.js';
 import { notFound, parseJson } from '../store/transitions/common.js';
 import { type Account, type Amounts, type LedgerRow, billable, fold, observedSoFar, outstandingReservation } from '../store/transitions/ledger.js';
 import { projectNotFound } from '../store/transitions/project.js';
-import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, effectiveAllowanceOf, iterationAccount, iterationControls, iterationVerdict, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
+import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, iterationAccount, iterationControls, iterationVerdict, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
 
@@ -135,7 +135,7 @@ function preparationSeconds(db: Db, it: IterationRow): number | null {
   return total;
 }
 
-function summaryOf(r: IterationRow) {
+function summaryOf(r: IterationRow, db?: Db) {
   return {
     id: r.id,
     seq: r.seq,
@@ -146,7 +146,7 @@ function summaryOf(r: IterationRow) {
     // first iteration or none given).
     change: r.change_text,
     brief: { spec_revision: r.brief_spec_revision, decision: r.brief_decision, record: r.brief_record, version: briefVersion(r) },
-    next_step: r.next_step,
+    next_step: db && r.next_step === 'open_alpha' ? servedNextStep(r.next_step, alphaStateOf(db, r).state) : r.next_step,
     created_at: r.created_at,
     approved_at: r.approved_at,
     alpha_at: r.alpha_at,
@@ -159,7 +159,7 @@ export function listIterations(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
   const rows = db.prepare('SELECT * FROM "prototype_iterations" WHERE "project" = ? ORDER BY "seq"').all(args.project) as IterationRow[];
-  return { ...head, iterations: rows.map(summaryOf) };
+  return { ...head, iterations: rows.map((r) => summaryOf(r, db)) };
 }
 
 const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
@@ -328,6 +328,52 @@ function costTotals(invs: InvocationView[]) {
 // installed observation of its environment taken of the environment's
 // current generation within the project's freshness bound. Otherwise null:
 // never inferred from the historical outcome.
+// What the iteration's Alpha is now, apart from its history (the owner's
+// ruling of 2026-10-29: "Keep historical deployment evidence separate from
+// current availability. Teardown or replacement must remove any claim that
+// the old candidate is currently available."): `available` (alpha.current
+// served), `not_observed` (still the deployment running there, but no fresh
+// observation of its current generation), `torn_down`, `replaced` (a newer
+// deployment runs in the environment), or `none` (no Alpha reached). Each
+// with the reason in words; a projection, writing nothing.
+export type AlphaCurrentState = 'available' | 'not_observed' | 'torn_down' | 'replaced' | 'none';
+function alphaState(db: Db, it: IterationRow, environment: { id: string; name: string } | null, current: unknown): { state: AlphaCurrentState; reason: string | null } {
+  if (it.candidate === null || environment === null) return { state: 'none', reason: 'this iteration reached no Alpha' };
+  if (current !== null) return { state: 'available', reason: null };
+  const ended = db
+    .prepare(
+      `SELECT "type", "at", "payload" FROM "events" WHERE "type" IN ('candidate.alpha_withdrawn', 'candidate.alpha_replaced') AND json_extract("subject", '$.candidate') = ?
+         AND json_extract("payload", '$.environment') = ? ORDER BY "seq" DESC LIMIT 1`,
+    )
+    .get(it.candidate, environment.id) as { type: string; at: string; payload: string } | undefined;
+  const c = db.prepare('SELECT "progress" FROM "candidates" WHERE "id" = ?').get(it.candidate) as { progress: string } | undefined;
+  const r = runningDeployment(db, environment.id);
+  const running = r?.request ?? null;
+  const runningCandidate = r?.candidate ?? null;
+  if (c?.progress !== 'alpha_deployed' && ended) {
+    const p = parseJson<{ operation?: string; replaced_by?: string | null }>(ended.payload) ?? {};
+    return ended.type === 'candidate.alpha_replaced'
+      ? { state: 'replaced', reason: `not currently available: a newer deployment${p.replaced_by ? ` of candidate ${p.replaced_by}` : ''} (operation ${p.operation ?? 'unknown'}) replaced candidate ${it.candidate} in environment ${environment.name} at ${ended.at}; its Alpha is history` }
+      : { state: 'torn_down', reason: `not currently available: environment ${environment.name} was torn down (operation ${p.operation ?? 'unknown'}) at ${ended.at}; its Alpha is history` };
+  }
+  if (running === null) return { state: 'torn_down', reason: `not currently available: nothing is deployed to environment ${environment.name} now; its Alpha is history` };
+  if (runningCandidate !== it.candidate) return { state: 'replaced', reason: `not currently available: the deployment running in environment ${environment.name} is request ${running}${runningCandidate ? ` of candidate ${runningCandidate}` : ''}, not this iteration's; its Alpha is history` };
+  if (c?.progress !== 'alpha_deployed') return { state: 'replaced', reason: `not currently available: candidate ${it.candidate} is ${c?.progress ?? 'not recorded'}, no longer alpha_deployed; its Alpha is history` };
+  return { state: 'not_observed', reason: `its deployment is the one running in environment ${environment.name}, but no installed observation of the environment's current generation within the freshness bound says it is up: availability not known now, so not claimed` };
+}
+
+// Served in place of a stored `open_alpha` once the iteration's Alpha is no
+// longer deployed (torn down or replaced): the stored next step is kept as
+// recorded; a read never offers to open an Alpha that is not there.
+export const ALPHA_GONE_NEXT_STEP = 'its Alpha is no longer deployed (torn down or replaced): iterate from the current iteration, or discard';
+const servedNextStep = (stored: string | null, state: AlphaCurrentState | null): string | null =>
+  stored === 'open_alpha' && (state === 'torn_down' || state === 'replaced') ? ALPHA_GONE_NEXT_STEP : stored;
+
+// The note served with `alpha`: which of its fields are history and which
+// is current availability.
+export const ALPHA_HISTORY_NOTE =
+  'candidate, deployment_request, environment and deployed_at are history: the Alpha this iteration reached, kept as recorded whatever happens later. current (with current_state and current_reason) is availability now: non-null only while the iteration\'s candidate is still alpha_deployed, its deployment is the one running in the environment and a fresh observation of the environment\'s current generation says so; a teardown or a replacing deployment makes it null.';
+
 function alphaNow(db: Db, project: string, it: IterationRow, environment: string | null) {
   if (it.candidate === null || environment === null) return null;
   const c = db.prepare('SELECT "progress" FROM "candidates" WHERE "id" = ?').get(it.candidate) as { progress: string } | undefined;
@@ -431,6 +477,14 @@ function appTotals(db: Db, project: string) {
     unknown_allowance_tokens: all.reduce<number | null>((s, i) => addKnown(s, i.unknown_allowance_tokens), null),
     cumulative_rule: CUMULATIVE_RULE,
   };
+}
+
+// The iteration's Alpha now, with its environment (for the list read).
+function alphaStateOf(db: Db, it: IterationRow): { state: AlphaCurrentState; reason: string | null } {
+  const request = it.deployment_request === null
+    ? null
+    : (db.prepare('SELECT d."environment" AS "id", e."name" FROM "deployment_requests" d JOIN "environments" e ON e."id" = d."environment" WHERE d."id" = ?').get(it.deployment_request) as { id: string; name: string } | undefined) ?? null;
+  return alphaState(db, it, request, alphaNow(db, it.project, it, request?.id ?? null));
 }
 
 // GET /v1/projects/:p/iterations/:i
@@ -562,6 +616,9 @@ export function readIteration(db: Db, args: { project: string; iteration: string
     : (db.prepare('SELECT d."id", d."environment", e."name" FROM "deployment_requests" d JOIN "environments" e ON e."id" = d."environment" WHERE d."id" = ?').get(it.deployment_request) as
         | { id: string; environment: string; name: string }
         | undefined);
+  const alphaEnv = request ? { id: request.environment, name: request.name } : null;
+  const alphaCurrent = alphaNow(db, args.project, it, request?.environment ?? null);
+  const alphaNowState = alphaState(db, it, alphaEnv, alphaCurrent);
   const interval = (a: string | null, b: string | null, what: [string, string]) => {
     const s = between(a, b, what);
     return typeof s === 'number' ? s : null;
@@ -569,7 +626,7 @@ export function readIteration(db: Db, args: { project: string; iteration: string
 
   return {
     ...head,
-    iteration: { ...summaryOf(it), limits: { ...Object.fromEntries(PROTOTYPE_LIMIT_KEYS.map((k) => [k, limit(k)])), budget_run_billable_tokens: typeof limits.budget_run_billable_tokens === 'number' ? limits.budget_run_billable_tokens : null } },
+    iteration: { ...summaryOf(it, db), limits: { ...Object.fromEntries(PROTOTYPE_LIMIT_KEYS.map((k) => [k, limit(k)])), budget_run_billable_tokens: typeof limits.budget_run_billable_tokens === 'number' ? limits.budget_run_billable_tokens : null } },
     usage: {
       runs,
       totals: {
@@ -619,16 +676,21 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       statement:
         'Surety records no human acceptance of this prototype. Alpha ready means its automated checks passed and its deployment was verified by them; whether the prototype is acceptable to use or to look at is the owner\'s judgement, not recorded here.',
     },
-    outcome: { status: it.status, reason: it.outcome_reason, next_step: it.next_step },
+    outcome: { status: it.status, reason: it.outcome_reason, next_step: servedNextStep(it.next_step, alphaNowState.state) },
     // What Stop and Discard would do now (slice E2; R4, R8): the console
     // shows these consequences, the confirmation's preview binds them.
     controls: iterationControls(db, it.id),
     alpha: {
       candidate: it.candidate,
       deployment_request: it.deployment_request,
-      environment: request ? { id: request.environment, name: request.name } : null,
+      environment: alphaEnv,
       deployed_at: it.alpha_at,
-      current: alphaNow(db, args.project, it, request?.environment ?? null),
+      current: alphaCurrent,
+      // The owner's ruling of 2026-10-29: availability now apart from the
+      // history above, with why it is not available when it is not.
+      current_state: alphaNowState.state,
+      current_reason: alphaNowState.reason,
+      history_note: ALPHA_HISTORY_NOTE,
     },
   };
 }

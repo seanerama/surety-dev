@@ -249,6 +249,10 @@ export const EVENT_OWNERS = {
   'prototype.iteration_created': 'store/transitions/prototype.ts',
   'prototype.iteration_alpha_ready': 'store/transitions/prototype.ts',
   'candidate.alpha_withdrawn': 'store/transitions/prototype.ts',
+  // The owner's ruling of 2026-10-29: a newer deployment replaced the
+  // candidate's in its environment (its claim of current availability
+  // withdrawn, its history kept).
+  'candidate.alpha_replaced': 'store/transitions/prototype.ts',
   // Slice E2 (R4, R8): an iteration ended by a limit, by the owner's Stop or
   // Discard, and its limits following a policy change (a raised one
   // reopening it).

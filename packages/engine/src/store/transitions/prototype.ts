@@ -148,17 +148,65 @@ export function recordIterationAlpha(tx: Tx, args: { project: string; candidate:
 // gate evaluation that satisfied alpha_complete, the `candidate.advanced`
 // event, and an iteration's `alpha_at`.
 export function withdrawAlpha(tx: Tx, args: { project: string; environment: string; operation: string }): string[] {
-  const rows = tx.db
-    .prepare(
-      `SELECT DISTINCT c."id" FROM "candidates" c JOIN "deployment_requests" d ON d."candidate" = c."id"
-       WHERE c."project" = ? AND c."progress" = 'alpha_deployed' AND d."environment" = ? AND d."outcome" = 'deployed' ORDER BY c."seq"`,
-    )
-    .all(args.project, args.environment) as { id: string }[];
-  for (const { id } of rows) {
+  const ids = claimingCandidates(tx.db, { project: args.project, environment: args.environment, except: null });
+  for (const id of ids) {
     tx.db.prepare(`UPDATE "candidates" SET "progress" = 'developing' WHERE "id" = ? AND "progress" = 'alpha_deployed'`).run(id);
     tx.emit('candidate.alpha_withdrawn', { project: args.project, candidate: id }, { from: 'alpha_deployed', to: 'developing', environment: args.environment, operation: args.operation });
   }
-  return rows.map((r) => r.id);
+  return ids;
+}
+
+// The candidates of the project still claiming current availability
+// (`alpha_deployed`) through a deployed request to the environment, other
+// than `except`, and whose deployment is not the current one of another
+// environment of the project (where it does still run: its claim stands
+// there).
+function claimingCandidates(db: Db, args: { project: string; environment: string; except: string | null }): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT c."id", c."seq" FROM "candidates" c JOIN "deployment_requests" d ON d."candidate" = c."id"
+       WHERE c."project" = ? AND c."progress" = 'alpha_deployed' AND d."environment" = ? AND d."outcome" = 'deployed' AND c."id" IS NOT ? ORDER BY c."seq"`,
+    )
+    .all(args.project, args.environment, args.except) as { id: string }[];
+  return rows.map((r) => r.id).filter((id) => !currentElsewhere(db, id, args.environment));
+}
+
+function currentElsewhere(db: Db, candidate: string, environment: string): boolean {
+  const others = db
+    .prepare(`SELECT DISTINCT "environment" FROM "deployment_requests" WHERE "candidate" = ? AND "environment" <> ? AND "outcome" = 'deployed'`)
+    .all(candidate, environment) as { environment: string }[];
+  return others.some((o) => {
+    const cur = currentDeploymentRequest(db, o.environment);
+    return cur !== null && (db.prepare('SELECT "candidate" FROM "deployment_requests" WHERE "id" = ?').get(cur) as { candidate: string } | undefined)?.candidate === candidate;
+  });
+}
+
+// The owner's ruling of 2026-10-29 ("Keep historical deployment evidence
+// separate from current availability. Teardown or replacement must remove
+// any claim that the old candidate is currently available."): replacement,
+// as S3 did for a teardown. A newer deploy operation's deployment becomes
+// the environment's current one when the operation is finalized
+// (deploy.ts finalizeDeploy: its effect confirmed and applied, the
+// environment's `running` record written with its generation, and what ran
+// before replaced, resolveOnReplacement; D4 §4.2, §6.3). From then on
+// nothing of an earlier candidate runs there: each candidate of the project
+// still `alpha_deployed` through a deployed request to that environment,
+// other than the new deployment's own, is set back to `developing`, in every
+// mode, with `candidate.alpha_replaced` naming the environment, the
+// operation and the candidate whose deployment replaced it. Whether the new
+// deployment later verifies does not matter: the old one was replaced when
+// it was applied. The history is kept apart and untouched: the deployment
+// requests and their outcome, the operations and their journal, the
+// verifications, the observation history, the gate evaluation that
+// satisfied alpha_complete, `candidate.advanced`, and an iteration's
+// candidate, deployment request and `alpha_at`.
+export function replaceAlpha(tx: Tx, args: { project: string; environment: string; operation: string; candidate: string | null }): string[] {
+  const ids = claimingCandidates(tx.db, { project: args.project, environment: args.environment, except: args.candidate });
+  for (const id of ids) {
+    tx.db.prepare(`UPDATE "candidates" SET "progress" = 'developing' WHERE "id" = ? AND "progress" = 'alpha_deployed'`).run(id);
+    tx.emit('candidate.alpha_replaced', { project: args.project, candidate: id }, { from: 'alpha_deployed', to: 'developing', environment: args.environment, operation: args.operation, replaced_by: args.candidate });
+  }
+  return ids;
 }
 
 // ---- slice E2: bounded execution (the owner's rulings R4 and R8 of 2026-10-28) ----
@@ -737,24 +785,37 @@ function heldByIteration(db: Db, it: IterationRowLite): string[] {
 
 // ---- Stop and Discard (R4, R8): what each would do, for the confirmation and the read ----
 
-// The deployment request whose deployment runs in the environment now: the
-// newest deployed request's operation, unless a teardown of the environment
-// finalized after it; null when none.
-export function currentDeploymentRequest(db: Db, environment: string): string | null {
-  const deployed = db
+// What runs in the environment now (the owner's ruling of 2026-10-29: a
+// deployment becomes the environment's current one when its deploy
+// operation is finalized, its effect applied, deploy.ts finalizeDeploy):
+// the newest deploy operation of the environment that was applied
+// (finalized) or whose request was deployed, unless a teardown was
+// finalized after it; with whether its request is `deployed` (verified and
+// completed: alpha_complete satisfied). null when nothing runs there.
+export function runningDeployment(db: Db, environment: string): { request: string; candidate: string | null; deployed: boolean; seq: number } | null {
+  const applied = db
     .prepare(
-      `SELECT d."id", o."seq" FROM "deployment_requests" d JOIN "operations" o ON o."authorization" = d."authorization"
-       WHERE d."environment" = ? AND d."outcome" = 'deployed' AND o."kind" = 'deploy' ORDER BY o."seq" DESC LIMIT 1`,
+      `SELECT d."id", d."candidate", d."outcome", o."seq" FROM "deployment_requests" d JOIN "operations" o ON o."authorization" = d."authorization"
+       WHERE d."environment" = ? AND o."kind" = 'deploy' AND (o."finalized_at" IS NOT NULL OR d."outcome" = 'deployed') ORDER BY o."seq" DESC LIMIT 1`,
     )
-    .get(environment) as { id: string; seq: number } | undefined;
-  if (!deployed) return null;
+    .get(environment) as { id: string; candidate: string | null; outcome: string; seq: number } | undefined;
+  if (!applied) return null;
   const torn = db
     .prepare(
       `SELECT o."seq" FROM "operations" o JOIN "deploy_journal_state" s ON s."operation" = o."id"
        WHERE o."kind" = 'teardown' AND json_extract(o."target", '$.environment') = ? AND s."state" = 'finalized' ORDER BY o."seq" DESC LIMIT 1`,
     )
     .get(environment) as { seq: number } | undefined;
-  return torn && torn.seq > deployed.seq ? null : deployed.id;
+  if (torn && torn.seq > applied.seq) return null;
+  return { request: applied.id, candidate: applied.candidate, deployed: applied.outcome === 'deployed', seq: applied.seq };
+}
+
+// The environment's current deployment: the request of what runs there
+// now, when it was deployed (verified and completed); null when nothing
+// runs there, or what runs there is a newer deployment not (yet) deployed.
+export function currentDeploymentRequest(db: Db, environment: string): string | null {
+  const r = runningDeployment(db, environment);
+  return r !== null && r.deployed ? r.request : null;
 }
 
 export interface AlphaDisposition {
@@ -784,8 +845,12 @@ export function alphaDisposition(db: Db, iteration: string): AlphaDisposition {
     .get(req.environment) as { id: string; kind: string } | undefined;
   if (inFlight) return { ...base, tears_down_alpha: false, kept_because: `${inFlight.kind} operation ${inFlight.id} of environment ${req.name} is under way; what runs there is not settled` };
   if (req.teardown_requested_at !== null) return { ...base, tears_down_alpha: false, kept_because: `a teardown of environment ${req.name} is already requested` };
-  const current = currentDeploymentRequest(db, req.environment);
-  if (current === null) return { ...base, tears_down_alpha: false, kept_because: `nothing is deployed to environment ${req.name} now` };
+  const running = runningDeployment(db, req.environment);
+  if (running === null) return { ...base, tears_down_alpha: false, kept_because: `nothing is deployed to environment ${req.name} now` };
+  const current = running.request;
+  if (!running.deployed && current !== it.deployment_request) {
+    return { ...base, tears_down_alpha: false, kept_because: `the deployment running in environment ${req.name} is request ${current}, newer and not this iteration's (applied, not deployed), and Discard never touches it` };
+  }
   if (current === it.deployment_request) return { ...base, tears_down_alpha: true, kept_because: null };
   const holder = db.prepare('SELECT "seq" FROM "prototype_iterations" WHERE "project" = ? AND "deployment_request" = ? LIMIT 1').get(it.project, current) as { seq: number } | undefined;
   if (holder && holder.seq > it.seq) {
