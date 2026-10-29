@@ -31,6 +31,7 @@ import type { Database } from 'better-sqlite3';
 import { approvedModuleMap, approvedSpec } from '../design/policy.js';
 import { DESIGN_PREVIEW_ENV, servingInstallFacts } from '../store/transitions/deploy.js';
 import { canonical, parseJson } from '../store/transitions/common.js';
+import { effectiveVersion } from '../store/transitions/protected.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { ADAPTER_CAPABILITIES, HOSTING_REQUIRED, KIND_LABEL, modeOfContent, withArticle } from './capabilities.js';
 import { type KindAnswer, type OutputKind, type TreeAnswer, architectureKind, combineKinds } from './output-kind.js';
@@ -61,12 +62,27 @@ export interface Compatibility {
   reason: string;
 }
 
-export const READINESS_STATES = ['ready', 'unconfigured', 'unsupported', 'unknown', 'not_complete'] as const;
+// `blocked` (laplab-validation E1): the environment can host the output but
+// the engine would refuse a deployment request now, for what is named
+// (the engine's serving check not yet applied, the candidate's checks
+// running again); `ready` only when the request would be admitted for
+// all the read can tell.
+export const READINESS_STATES = ['ready', 'blocked', 'unconfigured', 'unsupported', 'unknown', 'not_complete'] as const;
 export type ReadinessState = (typeof READINESS_STATES)[number];
 export interface DeployReadiness {
   state: ReadinessState;
   reason: string;
   environment: string | null;
+  // `blocked` only: the open decision whose answer unblocks it, or null.
+  decision?: string | null;
+}
+
+// What would refuse a deployment request now, though the environment can
+// host the output: a clause (lower case, no final stop) and the open
+// decision that settles it, if one does.
+export interface AdmissionBlock {
+  clause: string;
+  decision: string | null;
 }
 
 const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
@@ -261,6 +277,34 @@ const SERVING_SENTENCE: Record<ReturnType<typeof servingCheckState>, string> = {
   unread: " Whether the engine's serving check is in place could not be read.",
 };
 
+// The engine's serving check proposed and not applied while the deployment
+// scope needs it (laplab-validation E1): a static site in static mode whose
+// effective protected version has neither a required post_deploy_serving
+// nor a required post_deploy_behavior check of the alpha_complete scope
+// (serving.ts deploymentRequirementMet), with the engine's proposal still
+// before its application. A request now is refused ACCEPTANCE_SCOPE_INCOMPLETE
+// (kind:post_deploy_serving). null when nothing of that holds.
+export function servingPendingBlock(db: Db, project: string): AdmissionBlock | null {
+  const proposal = db
+    .prepare(`SELECT "id", "status" FROM "protected_proposals" WHERE "project" = ? AND "proposed_by" = 'engine' AND "status" IN ('captured', 'classified', 'awaiting_human', 'approved') ORDER BY "seq" DESC LIMIT 1`)
+    .get(project) as { id: string; status: string } | undefined;
+  if (!proposal) return null;
+  const effective = effectiveVersion(db, project);
+  if (effective) {
+    const kinds = (db.prepare(`SELECT "kind", "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "required" = 1 AND "kind" IN ('post_deploy_behavior', 'post_deploy_serving')`).all(effective.id) as { kind: string; gate_kinds: string }[])
+      .filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'))
+      .map((c) => c.kind);
+    if (kinds.length > 0) return null;
+  }
+  const decision = db
+    .prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open' ORDER BY rowid DESC LIMIT 1`)
+    .get(proposal.id) as { id: string } | undefined;
+  const what = `the engine's serving check (proposal ${proposal.id}), which the deployment needs, is not applied yet`;
+  if (decision) return { clause: `${what}: it waits for your answer on decision ${decision.id}`, decision: decision.id };
+  if (proposal.status === 'approved') return { clause: `${what}: it is approved and is being applied`, decision: null };
+  return { clause: `${what}: it is proposed and its question is raised at a coming tick`, decision: null };
+}
+
 // What the main thread needs to evaluate: the repository, the current
 // candidate, and whether its tree must be read (no evaluation recorded one).
 export function compatibilityTarget(db: Db, args: { project: string }): { repo: string | null; candidate: { id: string; revision: string } | null; tree_known: boolean; recorded: boolean; current: boolean } {
@@ -322,7 +366,14 @@ export function deploymentEnvironment(compat: Compatibility): EnvironmentCompati
 // The readiness, and the sentence NOW's build_complete continues with.
 // `serving`: the engine's serving check's state, said in the reason when
 // a static site is ready in static mode.
-export function readinessOf(complete: boolean, compat: Compatibility, serving?: ReturnType<typeof servingCheckState>): { readiness: DeployReadiness; sentence: string } {
+// `block`: what would refuse a request now (AdmissionBlock), asked only
+// when the environment can host the output.
+export function readinessOf(
+  complete: boolean,
+  compat: Compatibility,
+  serving?: ReturnType<typeof servingCheckState>,
+  block?: () => AdmissionBlock | null,
+): { readiness: DeployReadiness; sentence: string } {
   const env = deploymentEnvironment(compat);
   const environment = env?.name ?? null;
   if (compat.environments === null) {
@@ -334,7 +385,19 @@ export function readinessOf(complete: boolean, compat: Compatibility, serving?: 
     return { readiness: { state: 'unconfigured', reason: 'The project has no environment configured for hosting yet.', environment: null }, sentence: ' It has no environment configured for hosting yet.' };
   }
   switch (env.state) {
-    case 'hostable':
+    case 'hostable': {
+      const b = block?.() ?? null;
+      if (b !== null) {
+        return {
+          readiness: {
+            state: 'blocked',
+            reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode, but a deployment would be refused now: ${b.clause}.`,
+            environment,
+            decision: b.decision,
+          },
+          sentence: ` It cannot be deployed to ${env.name} yet: ${b.clause}.`,
+        };
+      }
       return {
         readiness: {
           state: 'ready',
@@ -343,6 +406,7 @@ export function readinessOf(complete: boolean, compat: Compatibility, serving?: 
         },
         sentence: ` It can be deployed to ${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode).`,
       };
+    }
     case 'unconfigured':
       return { readiness: { state: 'unconfigured', reason: `The environment ${env.name} is not configured for hosting yet.`, environment }, sentence: ` Its environment ${env.name} is not configured for hosting yet.` };
     case 'unsupported':

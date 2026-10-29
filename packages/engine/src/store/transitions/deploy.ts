@@ -3796,6 +3796,15 @@ export interface RelayRow {
 const relayOf = (db: Db, environment: string): RelayRow | null =>
   parseJson<RelayRow>((db.prepare('SELECT "relay" FROM "environments" WHERE "id" = ?').get(environment) as { relay: string | null } | undefined)?.relay ?? null);
 
+// The address the relay's listener is bound to: the loopback interface only
+// (deploy/service-host.ts openRelay), at the recorded port.
+export const RELAY_HOST = '127.0.0.1';
+
+// The relay as served (the environment read and POST …/relay's answer
+// alike; laplab-validation E4): the recorded row with its bound host and
+// the URL a browser on this host opens.
+const relayServed = (r: RelayRow): RelayRow & { host: string; url: string } => ({ ...r, host: RELAY_HOST, url: `http://${RELAY_HOST}:${r.port}/` });
+
 // What `POST …/relay` opens a relay to: the running generation's service and
 // its configured port. Refused when none runs, or when its supervision is
 // unknown (`redaction_unavailable`, D4 §§5.2, 7.3).
@@ -3837,10 +3846,10 @@ export function relayOpened(tx: Tx, args: { environment: string; attempt: string
   if (!env) throw notFound('environment', args.environment);
   const row: RelayRow = { attempt: args.attempt, generation: args.generation, port: args.port, opened_at: tx.at };
   const before = relayOf(tx.db, env.id);
-  if (before !== null && before.attempt === args.attempt && before.port === args.port) return { status: 200, body: { environment: { id: env.id, name: env.name }, relay: { ...before, host: '127.0.0.1' } } };
+  if (before !== null && before.attempt === args.attempt && before.port === args.port) return { status: 200, body: { environment: { id: env.id, name: env.name }, relay: relayServed(before) } };
   tx.db.prepare('UPDATE "environments" SET "relay" = ? WHERE "id" = ?').run(JSON.stringify(row), env.id);
-  tx.emit('environment.relay_opened', { project: env.project, environment: env.id }, { attempt: args.attempt, generation: args.generation, host: '127.0.0.1', port: args.port });
-  return { status: 201, body: { environment: { id: env.id, name: env.name }, relay: { ...row, host: '127.0.0.1' } } };
+  tx.emit('environment.relay_opened', { project: env.project, environment: env.id }, { attempt: args.attempt, generation: args.generation, host: RELAY_HOST, port: args.port });
+  return { status: 201, body: { environment: { id: env.id, name: env.name }, relay: relayServed(row) } };
 }
 
 // The relay closed: by command, at a teardown, at its generation's end, at
@@ -3899,14 +3908,19 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       mode: config ? modeOf(configContent(config)) : null,
       ...(config && staticSpec(configContent(config)) ? { static: { entry: staticSpec(configContent(config))!.entry, server_digest: latestServerDigest(db, env.id) } } : {}),
       running,
-      relay: relayOf(db, env.id),
+      // The open relay with its bound address (host, port, url), as POST
+      // …/relay answers it; null when none is open.
+      relay: (() => {
+        const r = relayOf(db, env.id);
+        return r === null ? null : relayServed(r);
+      })(),
       deployment_generation: env.deployment_generation,
       current_generation: env.current_generation,
       last_verified: parseJson<Record<string, unknown>>(rec?.last_verified ?? null),
       attempted: parseJson<Record<string, unknown>>(rec?.attempted ?? null),
       // The stored observation, its freshness computed at the read (D4 §6.1;
       // SEAM.md §292): an expired one is never shown as healthy.
-      observed: observedRead(db, { project: env.project, observed: rec?.observed ?? null, now: nowIso() }),
+      observed: observedRead(db, { project: env.project, observed: rec?.observed ?? null, now: nowIso(), environment: env.id, name: env.name }),
       // Every out-of-band change not settled, open or acknowledged (§6.3).
       out_of_band: environmentChangesRead(db, env.id),
       operation_in_flight: inFlight ? { id: inFlight.id, kind: inFlight.kind, status: inFlight.status, stage: inFlight.orchestration_stage } : null,

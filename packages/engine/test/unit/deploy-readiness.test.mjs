@@ -542,3 +542,209 @@ test("the candidate's output kind for the deliverable: the one an evaluation rec
   assert.equal(candidateKind(db, { project: 'prj_1', candidate: 'cand_1' }), 'static_site');
   assert.equal(candidateKind(db, { project: 'prj_other', candidate: 'cand_1' }), null, "another project's path: null");
 });
+
+// ---- the integration candidate's engine findings (laplab-validation E1 to E4; RECORD-engine item 3) ----
+
+const { phaseStep } = await import(join(dist, 'plan', 'phase.js'));
+
+const decisionRow = (db, id, subject, status = 'open') =>
+  db
+    .prepare(
+      `INSERT INTO decisions (id, created_at, project, seq, kind, subject_type, subject_id, semantic_generation, scope, question, options, dependency_manifest, transition_schema_version, preview_hash, evidence, blocked_while_open, raised_at, status)
+       VALUES (?, ?, 'prj_1', 1, 'check_correction_tightening', 'protected_proposal', ?, 1, 'subject', 'q', '[]', '{}', 1, 'h', '[]', '{}', ?, ?)`,
+    )
+    .run(id, AT, subject, AT, status);
+const effectiveV1 = (db) =>
+  db.prepare(`INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, roots, effective_from) VALUES ('pv_1', ?, 'prj_1', 1, 'f1', 'initial', 'h', 'human', ?, 1, '[]', ?)`).run(AT, AT, AT);
+const engineProposal = (db, status) =>
+  db.prepare(`INSERT INTO protected_proposals (id, created_at, project, seq, proposed_by, base_revision, tree_id, diff_hash, requested_change_kind, status) VALUES ('pp_1', ?, 'prj_1', 1, 'engine', 'b', 't', 'd', 'tightening', ?)`).run(AT, status);
+
+test("E1: the engine's serving check proposed and not applied: blocked (never ready), naming the open decision; answer_decision, never deploy; ready once it is in place", async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  engineProposal(db, 'awaiting_human');
+  decisionRow(db, 'dec_1', 'pp_1');
+  const HOST = 'The environment alpha can host this output (static site) with local_service in static mode';
+  const WHAT = "the engine's serving check (proposal pp_1), which the deployment needs, is not applied yet";
+  let p = read(db);
+  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it waits for your answer on decision dec_1.`, environment: 'alpha', decision: 'dec_1' });
+  assert.equal(p.now.state, 'waiting_on_you', 'the open decision is NOW');
+  // Answered and approved, not yet applied: still blocked, no decision; NOW's second sentence says it.
+  db.prepare(`UPDATE decisions SET status = 'answered' WHERE id = 'dec_1'`).run();
+  db.prepare(`UPDATE protected_proposals SET status = 'approved' WHERE id = 'pp_1'`).run();
+  p = read(db);
+  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it is approved and is being applied.`, environment: 'alpha', decision: null });
+  assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} It cannot be deployed to alpha yet: ${WHAT}: it is approved and is being applied.`, cause: null });
+  // Applied: the check is in the effective version, required in the alpha_complete scope: ready, deploy.
+  db.prepare(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'pp_1'`).run();
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_s', ?, 'prj_1', 'pv_1', 'surety-static-serving', 'post_deploy_serving', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  p = read(db);
+  assert.equal(p.build.deploy_readiness.state, 'ready');
+  assert.equal(p.build.deploy_readiness.decision, undefined, 'ready carries no decision member');
+  assert.equal(p.now.primary_action, 'deploy');
+});
+
+test("E1: a project's own required post_deploy_behavior check meets the requirement: the engine's pending proposal does not block", async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  engineProposal(db, 'approved');
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_b', ?, 'prj_1', 'pv_1', 'behaves', 'post_deploy_behavior', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  assert.equal(read(db).build.deploy_readiness.state, 'ready');
+});
+
+test("E1: the candidate's checks running again: blocked with the counts, no primary action; NOW is checking", async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_s', ?, 'prj_1', 'pv_1', 'surety-static-serving', 'post_deploy_serving', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  const ex = (id, key, status, n) =>
+    db
+      .prepare(
+        `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+         VALUES (?, ?, 'prj_1', ?, ?, 'cand_1', 'r', 'pv_1', 'direct', ?, '{"source":"protected_application"}', ?, ?, ?)`,
+      )
+      .run(id, AT, `chk_${key}`, key, n, `tk_${n}`, status, AT);
+  ex('cx_1', 'smoke', 'running', 1);
+  ex('cx_2', 'acceptance', 'queued', 2);
+  const p = read(db);
+  assert.deepEqual(p.build.deploy_readiness, {
+    state: 'blocked',
+    reason: "The environment alpha can host this output (static site) with local_service in static mode, but a deployment would be refused now: the candidate's automated checks are running (0 of 2 completed); it can be requested once they pass.",
+    environment: 'alpha',
+    decision: null,
+  });
+  assert.equal(p.now.state, 'checking');
+});
+
+// An environment configured (service mode), with an installed observation
+// made `ago` ms before now of generation 1, and the store's operation rows.
+function observedEnvironment(db, { ago = 2000 } = {}) {
+  configure(db, 'alpha', SERVICE_CONTENT);
+  const env = db.prepare(`SELECT id FROM environments WHERE name = 'alpha' AND prefix IS NOT NULL`).get().id;
+  const observedAt = new Date(Date.now() - ago).toISOString();
+  const observed = { id: 'obsh_1', environment: env, condition: 'healthy', detail: null, observed_at: observedAt, source: 'observation_job', read_interval: { from: observedAt, to: observedAt }, expected_revision: 1, deployment_generation: 1, facts: {} };
+  db.prepare(`INSERT INTO environment_records (id, created_at, project, environment, observed) VALUES ('er_1', ?, 'prj_1', ?, ?)`).run(AT, env, JSON.stringify(observed));
+  db.prepare(`INSERT INTO observation_history (id, created_at, project, environment, observed_at, source, condition, detail, read_interval, expected_revision, deployment_generation, facts, installed) VALUES ('obsh_1', ?, 'prj_1', ?, ?, 'observation_job', 'healthy', NULL, '{}', 1, 1, '{}', 1)`).run(AT, env, observedAt);
+  return { env, observedAt, observed };
+}
+let opSeq = 0;
+function finalizedOperation(db, env, { kind, finalizedAt, generation }) {
+  opSeq += 1;
+  const id = `op_${kind}_${opSeq}`;
+  db.prepare(
+    `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, finalizer_inputs, finalized_at)
+     VALUES (?, ?, 'prj_1', ?, ?, ?, '{}', ?, 1, 'succeeded', ?, '{}', ?)`,
+  ).run(id, AT, opSeq, kind, JSON.stringify({ environment: env }), `k${opSeq}`, AT, finalizedAt);
+  db.prepare(`INSERT INTO operation_attempts (id, created_at, project, operation, attempt_number, status, started_at, deployment_generation, reconciliation_reads) VALUES (?, ?, 'prj_1', ?, 1, 'succeeded', ?, ?, '[]')`).run(`att_${opSeq}`, AT, id, AT, generation);
+  return id;
+}
+
+test('E3: a finalized teardown ends the observation made before it at once: the environment read and the list say unknown, expired at the finalization, ended_by the teardown; the stored observation and its history untouched', (t) => {
+  const db = store(t);
+  approve(db, { rep: spec(), map: BROWSER_MAP });
+  const { env, observedAt, observed } = observedEnvironment(db);
+  // Before: fresh and healthy.
+  assert.equal(readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.observed.condition, 'healthy');
+  assert.equal(read(db).environments[0].state, 'healthy');
+  const finalizedAt = new Date(Date.parse(observedAt) + 1000).toISOString();
+  const op = finalizedOperation(db, env, { kind: 'teardown', finalizedAt, generation: 1 });
+  const o = readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.observed;
+  assert.equal(o.condition, 'unknown');
+  assert.equal(o.stored_condition, 'healthy');
+  assert.equal(o.freshness, 'expired');
+  assert.equal(o.expires_at, finalizedAt);
+  assert.equal(o.observed_at, observedAt, 'when it was observed is kept');
+  assert.deepEqual({ kind: o.ended_by.kind, operation: o.ended_by.operation, finalized_at: o.ended_by.finalized_at }, { kind: 'teardown', operation: op, finalized_at: finalizedAt });
+  assert.match(o.ended_by.reason, /before the teardown of alpha .* nothing deployed is available there until a new deployment\.$/);
+  const listed = read(db).environments[0];
+  assert.equal(listed.state, 'unknown');
+  assert.equal(listed.observed.condition, 'unknown');
+  assert.equal(listed.observed.freshness, 'expired');
+  assert.equal(listed.observed.ended_by.kind, 'teardown');
+  // Nothing written by the reads: the stored observation and the history as they were.
+  assert.deepEqual(JSON.parse(db.prepare(`SELECT observed FROM environment_records WHERE environment = ?`).get(env).observed), observed);
+  assert.equal(db.prepare(`SELECT condition FROM observation_history WHERE id = 'obsh_1'`).get().condition, 'healthy');
+  // The next observation, made after the finalization, reads as any does.
+  const next = { ...observed, id: 'obsh_2', condition: 'down', observed_at: new Date().toISOString() };
+  db.prepare(`UPDATE environment_records SET observed = ? WHERE environment = ?`).run(JSON.stringify(next), env);
+  const after = readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.observed;
+  assert.equal(after.condition, 'down');
+  assert.equal(after.freshness, 'fresh');
+  assert.equal(after.ended_by, undefined);
+});
+
+test("E3: a replacement (a later deployment finalized) ends the earlier observation too; a finalization of an earlier generation's attempt, or one before the observation, does not", (t) => {
+  const db = store(t);
+  approve(db, { rep: spec(), map: BROWSER_MAP });
+  const { env, observedAt } = observedEnvironment(db);
+  const at = (ms) => new Date(Date.parse(observedAt) + ms).toISOString();
+  finalizedOperation(db, env, { kind: 'deploy', finalizedAt: at(-500), generation: 1 });
+  finalizedOperation(db, env, { kind: 'teardown', finalizedAt: at(500), generation: 0 });
+  assert.equal(readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.observed.condition, 'healthy', 'neither ends it');
+  const op = finalizedOperation(db, env, { kind: 'deploy', finalizedAt: at(800), generation: 2 });
+  const o = readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.observed;
+  assert.deepEqual([o.condition, o.freshness, o.ended_by.kind, o.ended_by.operation], ['unknown', 'expired', 'deployment', op]);
+  assert.match(o.ended_by.reason, /replaced what ran: it describes what ran before, not what runs now/);
+  assert.equal(read(db).environments[0].state, 'unknown');
+});
+
+test("E4: the environment read serves the open relay's bound address (host, port, url) as POST …/relay answers it; null when none is open", (t) => {
+  const db = store(t);
+  approve(db, { rep: spec(), map: BROWSER_MAP });
+  configure(db, 'alpha', SERVICE_CONTENT);
+  assert.equal(readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.relay, null);
+  db.prepare(`UPDATE environments SET relay = ? WHERE name = 'alpha' AND prefix IS NOT NULL`).run(JSON.stringify({ attempt: 'att_1', generation: 1, port: 37361, opened_at: AT }));
+  assert.deepEqual(readOneEnvironment(db, { project: 'prj_1', environment: 'alpha' }).environment.relay, { attempt: 'att_1', generation: 1, port: 37361, opened_at: AT, host: '127.0.0.1', url: 'http://127.0.0.1:37361/' });
+});
+
+test('E2: after the build is complete the engine evaluates a stale phase gate again by itself, once the candidate\'s checks have ended; never while they run, never a satisfied one', (t) => {
+  const { db } = builtStaticSite(t);
+  const step = () => transact(db, ENGINE_ACTOR, (tx) => phaseStep(tx, { project: 'prj_1' }));
+  db.prepare(
+    `INSERT INTO gate_evaluations (id, created_at, project, scope, candidate, gate_kind, computed_at, inputs_hash, inputs_snapshot, check_states, outcome, reasons, satisfiers, stale, phase_plan, plan_generation)
+     VALUES ('ge_1', ?, 'prj_1', '{}', 'cand_1', 'phase', ?, 'h', '{}', '{}', 'satisfied', '[]', '[]', 0, 'plan_1', 1)`,
+  ).run(AT, AT);
+  assert.equal(step().evaluate, null, 'a current satisfied evaluation: nothing to do');
+  db.prepare(`UPDATE gate_evaluations SET stale = 1 WHERE id = 'ge_1'`).run();
+  db.prepare(
+    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+     VALUES ('cx_1', ?, 'prj_1', 'chk_a', 'a', 'cand_1', 'r', 'pv_2', 'direct', 1, '{"source":"protected_application"}', 'tk', 'running', ?)`,
+  ).run(AT, AT);
+  assert.equal(step().evaluate, null, 'its checks still running: wait for their results');
+  db.prepare(`UPDATE check_executions SET status = 'recorded' WHERE id = 'cx_1'`).run();
+  assert.deepEqual(step().evaluate, { candidate: 'cand_1', phase_plan: 'plan_1' });
+});
+
+test('RECORD-engine item 3: a rapid prototype with its build complete and undeployed reads build_complete only when its iteration is simply built; its own status (limit_reached, stopped, discarded, failed, awaiting_*) is never hidden', async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  db.prepare(`UPDATE projects SET mode = 'rapid_prototype'`).run();
+  const iteration = (status, reason = null, next = null) => {
+    db.prepare('DELETE FROM prototype_iterations').run();
+    db.prepare(`INSERT INTO prototype_iterations (id, created_at, project, seq, mode, status, limits_json, outcome_reason, next_step) VALUES ('it_1', ?, 'prj_1', 1, 'rapid_prototype', ?, '{}', ?, ?)`).run(AT, status, reason, next);
+  };
+  iteration('alpha_ready');
+  assert.equal(read(db).now.state, 'build_complete', 'built and not deployed: build_complete with the readiness sentence');
+  assert.ok(read(db).now.reason.startsWith(`${BUILD_DONE} It can be deployed to alpha`), read(db).now.reason);
+  iteration('limit_reached', 'the token limit was reached', 'raise the limit or discard');
+  assert.deepEqual(read(db).now, { state: 'idle', primary_action: null, reason: 'Prototype iteration 1 is limit_reached: the token limit was reached. Nothing more of it is dispatched; next: raise the limit or discard.', cause: null });
+  iteration('discarded', 'discarded by the owner', 'none');
+  assert.equal(read(db).now.state, 'idle');
+  assert.match(read(db).now.reason, /^Prototype iteration 1 is discarded/);
+  iteration('failed', 'a work item of it was parked', 'retry the parked work');
+  assert.deepEqual(read(db).now, { state: 'idle', primary_action: null, reason: 'Prototype iteration 1 is failed: a work item of it was parked. Next: retry the parked work.', cause: null });
+  iteration('awaiting_brief_approval');
+  const n = read(db).now;
+  assert.notEqual(n.state, 'build_complete');
+  assert.match(n.reason, /^(Prototype iteration 1 is awaiting_brief_approval\.|The next run of prototype iteration 1 is held)/, n.reason);
+  // A planned project keeps build_complete (no iteration).
+  db.prepare(`UPDATE projects SET mode = 'planned'`).run();
+  db.prepare('DELETE FROM prototype_iterations').run();
+  assert.equal(read(db).now.state, 'build_complete');
+});

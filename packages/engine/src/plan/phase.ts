@@ -108,7 +108,7 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // A phase verification of a candidate a later one superseded (M545).
   retireSupersededVerifications(tx, args.project);
   const plan = openPlan(tx.db, args.project);
-  if (!plan) return NONE;
+  if (!plan) return completedPhaseGateDue(tx, args.project) ?? NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
   const candidate = phaseCandidate(tx, plan, tier);
   if (!candidate) return NONE;
@@ -353,6 +353,35 @@ function alphaBarrierStep(tx: Tx, project: string): void {
 
 // Whether every phase of the current roadmap has a completed plan (the plan
 // read's `build.complete`, SEAM.md §352).
+// The phase gate of a complete build, evaluated again by the engine
+// (laplab-validation E2): once every phase is complete no plan is open, so
+// the step above never reads the phase gate again; a change after the
+// completion that makes the current candidate's latest phase evaluation
+// stale (an applied protected version, such as the engine's own serving
+// check: its checks registered again on the candidate) would otherwise
+// leave it stale until a client asked for the gate, and the deliverable
+// (store/transitions/deliverable.ts), which needs it satisfied and not
+// stale, refused. Due when the build is complete, the current candidate's
+// latest phase evaluation is stale and of a completed plan, and none of
+// the candidate's check executions is still to end (the gate reads their
+// results, as the step above waits for them).
+function completedPhaseGateDue(tx: Tx, project: string): PhaseStepResult | null {
+  if (!buildComplete(tx.db, project)) return null;
+  const candidate = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(project) as { id: string } | undefined;
+  if (!candidate) return null;
+  const ev = tx.db.prepare(`SELECT "stale", "phase_plan" FROM "gate_evaluations" WHERE "candidate" = ? AND "gate_kind" = 'phase' ORDER BY rowid DESC LIMIT 1`).get(candidate.id) as
+    | { stale: number; phase_plan: string | null }
+    | undefined;
+  if (!ev || ev.stale !== 1 || ev.phase_plan === null) return null;
+  const plan = tx.db.prepare('SELECT "completed_at" FROM "phase_plans" WHERE "id" = ? AND "project" = ?').get(ev.phase_plan, project) as { completed_at: string | null } | undefined;
+  if (!plan || plan.completed_at === null) return null;
+  const coming = tx.db
+    .prepare(`SELECT 1 FROM "check_executions" WHERE "candidate" = ? AND "status" NOT IN ('recorded', 'cancelled', 'not_run', 'interrupted', 'quarantined') LIMIT 1`)
+    .get(candidate.id);
+  if (coming) return null;
+  return { evaluate: { candidate: candidate.id, phase_plan: ev.phase_plan }, completed: null };
+}
+
 export function buildComplete(db: Db, project: string): boolean {
   const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
   const phases = parseJson<{ number: number }[]>(road?.phases ?? null) ?? [];

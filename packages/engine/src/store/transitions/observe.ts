@@ -641,13 +641,70 @@ export function environmentChangesRead(db: Db, environment: string) {
   }));
 }
 
+// What ended the stored observation's claim about now (the owner's ruling
+// of 2026-10-29: "Keep historical deployment evidence separate from current
+// availability. Teardown or replacement must remove any claim that the old
+// candidate is currently available"; laplab-validation E3): the newest
+// teardown or deployment of the environment finalized after the
+// observation was made (deploy.ts finalizeDeploy: the teardown removed what
+// ran, or the deployment replaced it), of the observation's generation or
+// a later one (a finalization of an earlier generation's attempt does not
+// speak for the environment, J9). The observation stays as it was, in
+// `environment_records.observed` and in `observation_history`; only its
+// reading as current ends. The next observation, made after the
+// finalization, is current as any is.
+export interface ObservationEnd {
+  kind: 'teardown' | 'deployment';
+  operation: string;
+  finalized_at: string;
+  reason: string;
+}
+
+export function observationEndedBy(db: Db, args: { environment: string; observed_at: string; generation: number | null; name?: string }): ObservationEnd | null {
+  const rows = db
+    .prepare(
+      `SELECT o."id", o."kind", o."finalized_at",
+              (SELECT a."deployment_generation" FROM "operation_attempts" a WHERE a."operation" = o."id" ORDER BY a.rowid DESC LIMIT 1) AS "generation"
+         FROM "operations" o
+        WHERE o."kind" IN ('deploy', 'teardown') AND json_extract(o."target", '$.environment') = ? AND o."finalized_at" IS NOT NULL AND o."finalized_at" > ?
+        ORDER BY o."finalized_at" DESC, o.rowid DESC`,
+    )
+    .all(args.environment, args.observed_at) as { id: string; kind: string; finalized_at: string; generation: number | null }[];
+  const end = rows.find((r) => r.generation !== null && (args.generation === null || r.generation >= args.generation));
+  if (!end) return null;
+  const name = args.name ?? args.environment;
+  return end.kind === 'teardown'
+    ? {
+        kind: 'teardown',
+        operation: end.id,
+        finalized_at: end.finalized_at,
+        reason: `Observed at ${args.observed_at}, before the teardown of ${name} (operation ${end.id}) was finalized at ${end.finalized_at}: what it observed no longer runs, so it says nothing about now and nothing deployed is available there until a new deployment.`,
+      }
+    : {
+        kind: 'deployment',
+        operation: end.id,
+        finalized_at: end.finalized_at,
+        reason: `Observed at ${args.observed_at}, before the deployment to ${name} (operation ${end.id}) was finalized at ${end.finalized_at} and replaced what ran: it describes what ran before, not what runs now; the next observation reads the new deployment.`,
+      };
+}
+
 // The stored observation with its freshness computed at the read (D4 §6.1;
-// D1-28): an expired one is shown `expired`, its condition `unknown`.
-export function observedRead(db: Db, args: { project: string; observed: string | null; now: string }): Record<string, unknown> {
+// D1-28): an expired one is shown `expired`, its condition `unknown`. One
+// made before a later teardown or deployment of the environment was
+// finalized (observationEndedBy) expired at that finalization: `expired`,
+// `expires_at` the finalization, its condition `unknown` (the stored one
+// kept beside as `stored_condition`), and `ended_by` saying what ended it.
+export function observedRead(db: Db, args: { project: string; observed: string | null; now: string; environment?: string; name?: string }): Record<string, unknown> {
   const stored = json<Record<string, unknown>>(args.observed) ?? {};
   const at = typeof stored.observed_at === 'string' ? Date.parse(stored.observed_at) : NaN;
   if (!Number.isFinite(at)) return { ...stored, condition: 'unknown', freshness: null, expires_at: null };
   const bound = projectPolicy(db, args.project).observation_freshness_bound! * 1000;
+  const environment = args.environment ?? (typeof stored.environment === 'string' ? stored.environment : null);
+  const generation = typeof stored.deployment_generation === 'number' ? stored.deployment_generation : null;
+  const ended = environment === null ? null : observationEndedBy(db, { environment, observed_at: stored.observed_at as string, generation, ...(args.name !== undefined ? { name: args.name } : {}) });
+  if (ended !== null) {
+    return { ...stored, condition: 'unknown', stored_condition: stored.condition, freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended };
+  }
   const age = Date.parse(args.now) - at;
   const freshness = age > bound ? 'expired' : age > bound / 2 ? 'stale' : 'fresh';
   return { ...stored, ...(freshness === 'expired' ? { condition: 'unknown', stored_condition: stored.condition } : {}), freshness, expires_at: new Date(at + bound).toISOString() };

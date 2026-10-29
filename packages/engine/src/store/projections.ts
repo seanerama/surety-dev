@@ -18,13 +18,13 @@ import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
 import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
-import { readLogs } from './transitions/observe.js';
+import { observationEndedBy, readLogs } from './transitions/observe.js';
 import { projectOptions, projectPolicy } from './transitions/settings.js';
 import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete } from '../plan/phase.js';
-import { type Compatibility, readinessOf, servedCompatibility, servingCheckState, unreadCompatibility } from '../deploy/compatibility.js';
+import { type AdmissionBlock, type Compatibility, deploymentEnvironment, readinessOf, servedCompatibility, servingCheckState, servingPendingBlock, unreadCompatibility } from '../deploy/compatibility.js';
 import type { TreeAnswer } from '../deploy/output-kind.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -404,7 +404,7 @@ type ChecksRead = { progress: CheckProgress | null } | { unreadable: string };
 // environment is not configured; none otherwise).
 interface ReadinessForNow {
   sentence: string;
-  primary: 'deploy' | 'configure_environment' | null;
+  primary: 'deploy' | 'configure_environment' | 'answer_decision' | null;
 }
 
 function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, checks: ChecksRead, readiness: () => ReadinessForNow) {
@@ -456,10 +456,11 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
         state = 'ready';
         reason = ready === 1 ? 'One work item is eligible and can be dispatched at the next tick.' : `${ready} work items are eligible and can be dispatched at the next tick.`;
         primary = 'tick';
-      } else if (buildCompleteAwaitingDeploy(db, project)) {
+      } else if (buildCompleteAwaitingDeploy(db, project) && prototypeOwnStatus(db, project) === null) {
         // Implementation complete; whether it can be deployed is the
         // readiness's, never claimed here (no visual acceptance, no
-        // production readiness).
+        // production readiness). A rapid prototype's iteration whose own
+        // status says more (prototypeOwnStatus) is never hidden by it.
         const r = readiness();
         state = 'build_complete';
         reason = `The planned build and its automated gates are complete.${r.sentence}`;
@@ -468,7 +469,7 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
         state = 'idle';
         // A rapid prototype held by its iteration (slice E2): the limit, the
         // Stop or the Discard that holds it, and what the owner can do.
-        reason = prototypeNow(db, project) ?? 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
+        reason = prototypeNow(db, project) ?? prototypeOwnStatus(db, project) ?? 'Nothing is under way, nothing waits for you, and no work can be dispatched.';
         primary = null;
       }
     }
@@ -489,6 +490,23 @@ function prototypeNow(db: Db, project: string): string | null {
   if (!OPEN_ITERATION_STATUSES.includes(it.status)) return null;
   const blocker = prototypeBlocker(db, project, { reservation: projectPolicy(db, project).budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null });
   return blocker === null ? null : `The next run of prototype iteration ${row.seq} is held: ${blocker}.`;
+}
+
+// A rapid prototype's own status where `build_complete` would hide it
+// (RECORD-engine item 3; D4 §13.4 with the prototype's iteration rules):
+// the current iteration ended by a limit, a Stop or a Discard, or its next
+// run held (prototypeNow); failed (a work item of it parked, the owner's
+// retry awaited); or still preparing, or awaiting the brief's approval or
+// the owner. null for a planned project, and for an iteration simply built
+// (`building` with nothing holding it, or `alpha_ready`): then
+// `build_complete` with the readiness sentence is what NOW says.
+function prototypeOwnStatus(db: Db, project: string): string | null {
+  const held = prototypeNow(db, project);
+  if (held !== null) return held;
+  const it = currentIteration(db, project);
+  if (it === null || it.status === 'building' || it.status === 'alpha_ready') return null;
+  const row = db.prepare('SELECT "seq", "outcome_reason", "next_step" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { seq: number; outcome_reason: string | null; next_step: string | null };
+  return `Prototype iteration ${row.seq} is ${it.status}${row.outcome_reason ? `: ${row.outcome_reason}` : ''}.${row.next_step ? ` Next: ${row.next_step}.` : ''}`;
 }
 
 // The build complete and its deployment the owner's to make (SEAM.md §352;
@@ -536,10 +554,22 @@ function environmentsOf(db: Db, project: string) {
     )
     .all(project) as { id: string; name: string; observed: string | null }[];
   return rows.map((row) => {
-    const stored = parseJson<{ condition: string; observed_at: string | null; source: string | null }>(row.observed);
+    const stored = parseJson<{ condition: string; observed_at: string | null; source: string | null; deployment_generation?: number | null }>(row.observed);
     if (stored === null || stored.observed_at === null) {
       // Never observed: the condition is unknown, and nothing says when.
       return { id: row.id, name: row.name, state: 'unknown', observed: { condition: 'unknown', observed_at: null, source: null, provenance: null, freshness: null, expires_at: null } };
+    }
+    // Made before a teardown or deployment of the environment was finalized
+    // (the owner's ruling of 2026-10-29; observe.ts observationEndedBy): it
+    // expired then, and says nothing about now; the stored one is unchanged.
+    const ended = observationEndedBy(db, { environment: row.id, observed_at: stored.observed_at, generation: typeof stored.deployment_generation === 'number' ? stored.deployment_generation : null, name: row.name });
+    if (ended !== null) {
+      return {
+        id: row.id,
+        name: row.name,
+        state: 'unknown',
+        observed: { condition: 'unknown', stored_condition: stored.condition, observed_at: stored.observed_at, source: stored.source, provenance: 'observed', freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended },
+      };
     }
     const at = Date.parse(stored.observed_at);
     const age = now - at;
@@ -586,8 +616,41 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
     const reason = 'Whether the planned build is complete cannot be read from the store.';
     return { compatibility, complete, readiness: { state: 'unknown', reason, environment: null }, now: { sentence: '', primary: null } };
   }
-  const { readiness, sentence } = readinessOf(complete, compatibility, compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined);
-  return { compatibility, complete, readiness, now: { sentence, primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : null } };
+  const { readiness, sentence } = readinessOf(complete, compatibility, compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined, () => admissionBlock(db, project, compatibility));
+  return {
+    compatibility,
+    complete,
+    readiness,
+    now: { sentence, primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : readiness.state === 'blocked' && readiness.decision ? 'answer_decision' : null },
+  };
+}
+
+// What would refuse a deployment request now though the environment can
+// host the output (laplab-validation E1; deploy/compatibility.ts
+// AdmissionBlock): the engine's serving check of a static site in static
+// mode not yet applied (refused ACCEPTANCE_SCOPE_INCOMPLETE
+// kind:post_deploy_serving), or the current candidate's checks still to
+// run or running (refused CHECK_NOT_PASSED until they pass). Unreadable
+// checks are said so, never taken as none.
+function admissionBlock(db: Db, project: string, compatibility: Compatibility): AdmissionBlock | null {
+  const env = deploymentEnvironment(compatibility);
+  if (compatibility.output_kind === 'static_site' && env?.mode === 'static') {
+    const serving = servingPendingBlock(db, project);
+    if (serving !== null) return serving;
+  }
+  let progress: CheckProgress | null;
+  try {
+    progress = checksOf(db, project);
+  } catch (err) {
+    return { clause: `whether the candidate's automated checks have passed could not be read (${err instanceof Error ? err.message : String(err)})`, decision: null };
+  }
+  if (progress !== null && progress.queued + progress.running > 0) {
+    return {
+      clause: `the candidate's automated checks are running (${progress.completed} of ${progress.planned} completed); it can be requested once they pass`,
+      decision: progress.held?.decision ?? null,
+    };
+  }
+  return null;
 }
 
 function projectSummary(db: Db, project: string, trees: TreeAnswer[] = []) {
