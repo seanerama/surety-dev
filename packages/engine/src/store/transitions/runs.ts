@@ -30,6 +30,8 @@ import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
+import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfItem, dispatchAllowance, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
+import { preparationEnded } from '../../prototype/brief.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -182,6 +184,9 @@ export const ROLE_OF: Record<string, string> = {
   // proposed specification change is the Spec Writer's one-shot.
   phase_verification: 'verifier',
   spec_change: 'spec_writer',
+  // Rapid prototype, slice E3 (R5): the brief's preparation is the Spec
+  // Writer's one-shot.
+  brief_preparation: 'spec_writer',
   review: 'reviewer',
   replan: 'architect',
   assessment: 'architect',
@@ -506,6 +511,15 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     return `depends on turn ${heldTurn.number} of Designer session ${heldTurn.run}, held on ${limits.join(', ')}${waiting.length > 0 ? ` while ${waiting.join(', ')} reserve the day` : ''}; it starts first`;
   }
   if (exhaustedLimits(db, item.project, { check: opts.check ?? true, dispatch: true }).length > 0) return 'budget exhausted';
+  // A rapid prototype's iteration limits (R4; slice E2): the iteration's
+  // committed tokens (settled, unknown allowances, and what its runs under
+  // way observed and still reserve) plus this run's reservation, its
+  // estimated cost, its repairs and its runtime. A canary is its attempt's,
+  // never an iteration's to admit.
+  if (!opts.canary) {
+    const proto = prototypeBlocker(db, item.project, askOfItem(db, item));
+    if (proto !== null) return proto;
+  }
   // One Builder per failure (real loop run 3, L3-1): a fix waits while the
   // stage's own Builder is being sent back for its finding's check at its
   // finding's candidate (repair.ts).
@@ -667,7 +681,22 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   const canaryOf = (item as WorkRow & { qualification_attempt?: string | null; canary_kind?: string | null });
   const canary = args.attempt !== undefined && args.attempt !== null && canaryOf.qualification_attempt === args.attempt;
   if (args.attempt && !canary) return null;
-  if (dispatchBlocker(tx.db, item, { canary }) !== null) return null;
+  const blocker = dispatchBlocker(tx.db, item, { canary });
+  if (blocker !== null) {
+    // In the dispatch transaction (R4): a dispatch the iteration's limit
+    // refuses records the iteration `limit_reached`, so that two claims can
+    // never both pass against the same remaining allowance and the refusal
+    // is the iteration's state, not only this claim's.
+    if (!canary && blocker.startsWith(PROTOTYPE_LIMIT)) enforceIterationLimit(tx, item.project, askOfItem(tx.db, item));
+    return null;
+  }
+  // A rapid prototype's run is given its effective allowance (slice E5, the
+  // owner's ruling S5): the lower of its per-run limit and what its
+  // iteration has left, fixed on its receipt below. The check above refused
+  // a dispatch that would get none; read again here, in the claim's own
+  // transaction, so two claims never both reserve the same remainder.
+  const allowance = canary ? undefined : dispatchAllowance(tx.db, item.project, projectPolicy(tx.db, item.project).budget_run_billable_tokens!);
+  if (allowance === null) return null;
   // The run's base: the checkpoint the work continues from (D1 §7.4), or the
   // commit the registry expects the integration branch at.
   const p = projectRepoRow(tx, item.project);
@@ -762,6 +791,12 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
        VALUES (?, ?, ?, ?, ?, ?, 'one_shot', 'claimed', ?, ?, ?, ?, ?, ?, 0, ?)`,
     )
     .run(run, tx.at, item.project, seq, item.id, role, backend.backend, backend.version, requestedModel, baseRevision, deadlineAt, parent, chain);
+  // The prototype iteration the run is attributed to, fixed now, in the
+  // transaction that creates it (R7; slice E1): the project's current
+  // iteration while it is open, else none. A session's run is attributed
+  // the same way where it is created (sessions/session.ts).
+  const iteration = iterationForDispatch(tx.db, item.project);
+  if (iteration !== null) tx.db.prepare('UPDATE "runs" SET "iteration" = ? WHERE "id" = ?').run(iteration, run);
   // The acceptance content the run is given, fixed now (E41 item 4).
   const candidateId = (JSON.parse(item.subject) as { candidate?: string }).candidate;
   const candidateRow = candidateId ? getCandidate(tx.db, candidateId) : undefined;
@@ -827,6 +862,7 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
     // An attempt that names its per-canary limit (the assistant's: its
     // turn limit, the assistant design §3 under B2) fixes it on the receipt.
     runLimit: backend.kind === 'attempt' ? attemptCanaryLimit(backend.attempt) : null,
+    allowance: allowance ?? null,
   });
   const domain = tx.newId('dom_');
   // D2 §3.2: the dispatch transaction allocates the domain `authorizable`,
@@ -930,7 +966,7 @@ export function attemptCanaryLimit(a: { spend: string }): number | null {
 
 // The scheduler's receipt allocation (D1 §2.6; correction 10): create or read
 // the one null-turn receipt of a one-shot run.
-export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null; runLimit?: number | null } = {}): string {
+export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: string | null; qualificationAttempt?: string | null; runLimit?: number | null; allowance?: EffectiveAllowance | null } = {}): string {
   const run = mustRun(tx, runId);
   const existing = tx.db.prepare('SELECT "id" FROM "invocation_receipts" WHERE "run" = ? AND "turn" IS NULL').get(runId) as { id: string } | undefined;
   if (existing) return existing.id;
@@ -938,10 +974,14 @@ export function allocateReceipt(tx: Tx, runId: string, opts: { trustEntry?: stri
   if (!run.grant) throw illegal('Allocating a receipt for a run without a grant', { run: runId });
   const id = tx.newId('inv_');
   const policy = projectPolicy(tx.db, run.project);
+  // A prototype run's limit is its effective allowance (slice E5, S5): its
+  // reservation, the bound of its unknown allowance (ledger.ts runLimit) and
+  // its mid-run stop (ledger.ts budgetCheck), with what it was made of.
   const budget = {
-    budget_run_billable_tokens: opts.runLimit ?? policy.budget_run_billable_tokens,
+    budget_run_billable_tokens: opts.allowance ? opts.allowance.effective_limit_tokens : (opts.runLimit ?? policy.budget_run_billable_tokens),
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
+    ...(opts.allowance ? { prototype_allowance: opts.allowance } : {}),
   };
   // The provider session id, derived from this receipt's own id and bound to
   // it here, in the dispatch transaction, before any domain is placed (D2
@@ -1410,6 +1450,15 @@ function workAfterRun(tx: Tx, run: RunRow): void {
     else transitionWork(tx, item, (item.prior_status ?? 'eligible') as WorkStatus, { dispatch_hold: 1 }, { ...cause, cause: 'abandon_after_exit' });
     return;
   }
+  // A rapid prototype's brief preparation (slice E3; R5): its authorization
+  // was for exactly one run, so a run that ended other than completed is
+  // never repaired or retried: its work is cancelled and the iteration's
+  // next step is to prepare again (prototype/brief.ts). An integration the
+  // journal still holds is the journal's, as for any integrating kind.
+  if (item.kind === 'brief_preparation' && run.outcome !== 'completed' && !((item.status === 'integrating' && integrationPending) || item.status === 'integrated')) {
+    preparationEnded(tx, item, run);
+    return;
+  }
   switch (run.outcome) {
     case 'completed':
       // A specification change's correction whose run captured a proposal
@@ -1563,7 +1612,7 @@ export function stopAfterExitOf(db: Tx['db'], run: string): { kind: string } | u
     .get(run) as { kind: string } | undefined;
 }
 
-const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment'];
+const KIND_INTEGRATES: readonly string[] = ['stage_build', 'fix', 'replan', 'assessment', 'brief_preparation'];
 
 // A limit was reached, or a person must act: the item parks with a visible
 // blocker and an open `blocker` decision that holds it (D1 §4.3, §10.6;

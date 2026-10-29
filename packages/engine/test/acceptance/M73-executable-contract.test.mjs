@@ -129,6 +129,9 @@ const MUTATIONS = [
   },
 ];
 
+// The Verifier's prototype table (SEAM.md §575).
+const PROTO = JSON.parse(readFileSync(new URL('./contract/prototype.json', import.meta.url), 'utf8'));
+
 describe('M73 the executable contract and the generated appendix', () => {
   // The engine's own contract, exported once. A case that cannot have it
   // fails with the reason.
@@ -230,6 +233,16 @@ describe('M73 the executable contract and the generated appendix', () => {
     }
     const enabled = Object.keys(doc.decisions).filter((kind) => doc.decisions[kind].enabled).sort();
     assert.deepEqual(enabled, Object.keys(DECISIONS.kinds).sort(), 'no other decision kind is enabled in M1');
+    // SEAM.md §575 (the M7 rows; slice E5's `prototype.iteration_resumed`): the
+    // prototype's events both ways, each declared with its owner, and its
+    // modes and iteration statuses as the Verifier's table names them.
+    for (const type of PROTO.events) {
+      assert.ok(doc.enums.EventType.includes(type), `${type} is an EventType`);
+      assert.ok(typeof doc.events[type]?.owner === 'string' && doc.events[type].owner !== '' && doc.events[type].reserved !== true, `${type} is declared with its owner (${JSON.stringify(doc.events[type])})`);
+    }
+    assert.deepEqual(doc.enums.EventType.filter((type) => type.startsWith('prototype.')).sort(), PROTO.events.filter((type) => type.startsWith('prototype.')).sort(), "every prototype.* EventType of the contract is in the Verifier's prototype table, and no other");
+    assert.deepEqual(doc.enums.ExecutionMode, PROTO.modes, 'the execution modes');
+    assert.deepEqual(doc.enums.IterationStatus, PROTO.iteration_statuses, 'the iteration statuses');
     // Correction 20: the closed configuration, key by key.
     for (const scope of ['engine', 'project']) {
       const expected = Object.fromEntries(Object.entries(CONTRACT[scope]).filter(([key]) => !key.startsWith('$')));

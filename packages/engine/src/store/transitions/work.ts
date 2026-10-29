@@ -366,7 +366,9 @@ export interface PlanStageInput {
 // - `fixture`: the labelled test fixture (src/testing/fixtures.ts; K4; M74),
 //   `approved_by` `test fixture`, the label on its rows' events.
 export type PlanAuthority =
-  | { kind: 'publication'; by: 'human' | 'engine:plan_check'; bundle: string; check: string | null; routing: 'human' | 'registered'; replaces?: Replaces | null }
+  // `policy:rapid_prototype` / `policy_authorized` (slice E3; R1): a rapid
+  // prototype's first plan, published by its policy within its bounds.
+  | { kind: 'publication'; by: 'human' | 'engine:plan_check' | 'policy:rapid_prototype'; bundle: string; check: string | null; routing: 'human' | 'registered' | 'policy_authorized'; replaces?: Replaces | null }
   | { kind: 'architect_integration' }
   | { kind: 'fixture' };
 

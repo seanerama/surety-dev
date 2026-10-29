@@ -8445,3 +8445,109 @@ The owner's ruling of 2026-10-27, verbatim: "For policy updates, submitting valu
   - M528 (h): under design off the review is refused `design_review_unavailable` and no session is opened.
 
   No case needed a new revision, so none was changed to submit a different value.
+
+## 572. The prototype limit keys (rows M73, M07, M01; objection 217; the owner's ruling R4 of 2026-10-28; the Builder's `build/rapid-prototype` 38121c19; the Verifier, on `verify/rapid-prototype`)
+
+R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 million billable tokens, $15 estimated spend, 45 minutes, two repairs per stage and four per iteration. These are configuration defaults, not authorization for a paid demonstration."
+
+- **`contract/config.json`**, `project`, gains five rows:
+  - `prototype_budget_tokens`: 1,500,000 within 10,000 to 50,000,000, tokens;
+  - `prototype_budget_usd_estimated`: 15 within 0 to 10,000, usd, `integer: false`;
+  - `prototype_runtime_seconds`: 2,700 within 300 to 86,400, s;
+  - `prototype_repairs_per_stage`: 2 within 0 to 10, count;
+  - `prototype_repairs_per_iteration`: 4 within 0 to 40, count.
+
+  These are the engine's `PROJECT_POLICY` values and the generated appendix's. M73's project key list, M07-project-bootstrap-and-policy's effective defaults and M01's committed `.surety/policy.json` read them from the table. Raising any one is a widening, as raising a budget key is. The table states that in its `$comment` only, as it does for the budget keys.
+- **Not pinned here:** the keys' refusals, their widening when raised, and their enforcement (dispatch admission, the runtime deadline, the repair allowance). Those belong to slice E2's rows. The Builder's `test/unit/rapid-prototype.test.mjs` covers the refusals and widening meanwhile.
+
+## 573. The prototype brief's kinds (row M73; objection 218; the owner's rulings R5 and R1 of 2026-10-28; the Builder's `build/rapid-prototype` c24dd523, slice E3; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/work-items.json`** gains `brief_preparation`: dispatched (`m1` true), role `spec_writer`, `replan`'s integrated path. It is the Spec Writer's one bounded preparation run of a prototype iteration's brief, registered by the approve of a `prototype_preparation_approval`. The transition tests generate its cases from the table, as for every kind.
+- **`contract/decisions.json`** gains `prototype_preparation_approval`:
+  - subject a `prototype_iteration`;
+  - options approve and reject;
+  - a manifest binding the role, provider and model, the run's token limit with its estimated cost and basis, whether it is paid, what it authorizes, the idea and the policy revision;
+  - no effect intent.
+- **No Verifier table holds these, so they are not tabled:** the record kind `prototype_brief`, the routing value `policy_authorized` and the `prototype.*` events. No acceptance row yet pins the preparation approval, the brief, or the policy-authorized first plan.
+
+## 574. The preparation approval binds what it continues and the change (row M73; objection 219; the owner's rulings R7 and R8 of 2026-10-28; the Builder's `build/rapid-prototype` 516f9a91, slice E4; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/decisions.json`**: `prototype_preparation_approval`'s manifest gains `continues` and `change`, after `policy_revision`, as the contract orders them. `continues` is null for a first iteration, else the predecessor and its brief. `change` is null or the owner's change request.
+- **M73's manifest check is one-way.** Each key the table lists must be in the contract, but the check does not catch a contract key the table omits. M73 therefore passed before these two keys were listed and passes now.
+- **Iterate's behaviour is not pinned by an acceptance row yet:** the new iteration, its predecessor, its change text and the events `prototype.iteration_iterated` and `prototype.alpha_not_attributed`.
+
+## 575. The M7 rows: Rapid prototype to Alpha (rows M601 to M612; the owner's draft M7 plan of 2026-10-28; his rulings R1 to R9 and S1 to S5; the Builder's `build/rapid-prototype` 4bb74433, slice E5; the Verifier, on `verify/rapid-prototype`)
+
+### The table and the contract
+
+- **`contract/prototype.json`** (new) holds the names the M7 rows read:
+  - the modes and the iteration statuses;
+  - the `prototype.*` events and `candidate.alpha_withdrawn`;
+  - the bootstrap preset, including S5's `budget_run_billable_tokens` 5,000,000;
+  - the bounds (one phase, two stages) and the objectives (3 to 5);
+  - the policy publisher and routing;
+  - the preparation's kind, role, decision and record kind;
+  - the brief's fields and the engine's fields;
+  - the next steps after a limit, an unknown total, a Stop and a Discard;
+  - the owner's three answers per iteration;
+  - the routes.
+
+  No M1 to M6 table holds any of these.
+- **M73** now holds the contract to the table's events in both directions:
+  - every event in the table is an EventType declared with an owner;
+  - every `prototype.*` EventType of the contract is in the table.
+
+  M73 also compares `ExecutionMode` and `IterationStatus` with the table. Slice E5's only contract change is the event `prototype.iteration_resumed`. Before this section, no table would have caught that event's absence.
+- **Not in the contract.** E5's response keys are not in `api/schema.json`, which holds no response shapes:
+  - on each invocation: `effective_limit_tokens`, `limited_by`, `run_limit_tokens`;
+  - in `remaining`: `next_run_reservation_tokens`, `next_run_limited_by`, `run_limit_tokens`, `tokens_reason`;
+  - `budget_snapshot.prototype_allowance` on a receipt;
+  - `prototype` {iteration, seq, status, raises, reopens, reason} in a policy submission's answer, or in its `subject` when the submission is a widening;
+  - `controls.resume`;
+  - the route `POST …/iterations/:i/resume` and the command `iteration.resume`.
+
+  The rows read these by name over HTTP. The receipt's `budget_snapshot` is read from the store.
+
+### The harness
+
+**`harness/prototype.mjs`** is the kernel lane's prototype. It restates the products of the Builder's developer demonstration (`test/unit/rapid-prototype-demo.test.mjs`) in the harness's own terms:
+
+- the per-kind scripts (§350);
+- a pump that records queued check executions through §190's route and answers only the kinds it is given;
+- the owner's reads and answers over HTTP;
+- the store reads the rows assert.
+
+`kindNext` pads a kind's script array with the default product after the scripts it adds. A launch past the end of a kind's array would otherwise follow the default script, which writes nothing, so a first plan would publish no phase.
+
+`toBrief({policy})` tightens the policy first. If the preparation question bound the earlier policy and no longer stands, it asks for the preparation again.
+
+### How the rows are read
+
+- **M605 (a) "agent_runs 3, roles_used ['builder']"** is read for the Builder's runs: three agent runs of role `builder`, and `builder` once in `roles_used`. Every iteration also has its preparation, plan and check-authoring runs, so its own `agent_runs` is more than 3. The row's point is runs, not roles, and the case asserts that.
+- **M605 (d)** restarts the engine between runs (SIGTERM, then a new engine on the same home). **M606 (d)** kills it while a run executes (SIGKILL), with the gaps' recovery path followed to Alpha.
+- **M607 (b)** has two cases, one for each answer the row allows:
+  - with the preset's per-run limit, the first run is given all the iteration has left, and the other is held `depends_on`;
+  - with a per-run limit of 800,000, both run, and the second is capped at what the first left.
+
+  In both, the reservations sum to the allowance, never more.
+- **M607 (c)** uses the scripted provider's raw `cost_usd`, which is a reported cost, to pass the threshold. **M612 (a)** uses the model `scripted-priced` for an estimated cost with its pricing basis (`scripted-prices-1`, ledger.ts).
+- **M612 (d)** runs on the kernel lane. A planned project goes through M5's steps (idea, Vision, Spec Writer, Architect, both approvals) to `developing` and its check authoring's dispatch, beside a prototype on the same engine. M401's own files remain the project-lane statement of "M401's assertions hold", unchanged.
+- **M611** (sandbox, slice 50) builds on `hostDeployable`:
+  - (d) is its planned project, deployed and torn down on its own unit;
+  - the prototype is made on the same engine, its checks run by the real runner through the M3 program and the target-check program;
+  - the prototype's candidate is deployed by the policy (`on_phase_complete`) on a real unit.
+- **M307 (d)** and **M307 qualified by command (f)(d)** read `candidates.progress` after their teardown, as M301 (f) did. Slice E5's S3 fails them on that read. They are restated under objection 220 (§576): the progress is taken at completion, and a second test reads the withdrawal after the teardown.
+
+## 576. M301 (f): the historical completion and current availability (objection 220; the owner's ruling S3 of 2026-10-28; the Builder's `build/rapid-prototype` 4bb74433, slice E5; the Verifier, on `verify/rapid-prototype`)
+
+S3, verbatim: "Make current Alpha availability consistent across modes. Teardown must remove any claim that the Alpha is currently available. Preserve the historical deployment record. Have the Verifier distinguish those meanings before restating M301."
+
+- **Historical.** The candidate reached `alpha_deployed` when `alpha_complete` was satisfied. A teardown never changes any of the following:
+  - the `candidate.advanced` event (`developing → alpha_deployed`), in the completion's transaction;
+  - the satisfied `alpha_complete` evaluation;
+  - the deployment request and its outcome `deployed`;
+  - the round's verification and `last_verified`;
+  - the observation history, which is only appended to;
+  - for a rapid prototype, the iteration's `alpha_at` and outcome `alpha_ready`.
+- **Current.** `candidates.progress` read now, plus, for a prototype, `alpha.current` in the iteration read. A finalized teardown of the environment withdraws a candidate still `alpha_deployed` there in every mode: progress becomes `developing`, and the finalizer's transaction (`operation.finalized`) writes one `candidate.alpha_withdrawn` {from, to, environment, operation}.
+- **M301 (f)** reads the historical meaning from rows taken at completion, before the teardown. A second (f) test reads the current meaning after the teardown and asserts that the historical rows are unchanged. The objection's answer lists the cases.

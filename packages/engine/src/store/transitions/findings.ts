@@ -55,6 +55,8 @@ export interface Report {
   // D7 §6.5, B.17, G15 (M6): a UI Builder's asset bindings, validated at
   // integration (design/asset-bindings.ts).
   asset_bindings?: { slot: string; variant: string; target: string; path: string; form: 'copy' | 'derived' }[];
+  // Rapid prototype, slice E3: a brief preparation's brief (prototype/brief.ts).
+  brief?: Record<string, unknown>;
 }
 
 const findingRowOf = (db: Tx['db'], id: string) => db.prepare('SELECT * FROM "findings" WHERE "id" = ?').get(id) as FindingRow | undefined;

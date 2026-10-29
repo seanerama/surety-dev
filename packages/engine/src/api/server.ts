@@ -33,6 +33,8 @@ import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, 
 import { homePaths } from '../paths.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
+import { receiptResponse } from '../prototype/iterations.js';
+import { changeOf } from '../prototype/iterate.js';
 import { ownerReview } from '../design/owner-review.js';
 import { REVIEW_BODY_CAP, reviewTooLarge } from '../design/evidence.js';
 import { ASSET_BODY_CAP, assetTooLarge, parseAssetAdd, prepareAssetsSubmit } from '../design/asset-commands.js';
@@ -869,6 +871,87 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       // D7 A.8 (SEAM.md §508): every asset binding, superseded ones included.
       if (rest.length === 2 && rest[0] === 'design' && rest[1] === 'bindings' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'design.bindings', args: { project } }) }) };
+      }
+      // Rapid prototype, slice E1 (R7, R9): the iterations, one iteration's
+      // usage, limits and Alpha, and its receipt as a download. Reads.
+      if (rest.length === 1 && rest[0] === 'iterations' && get) {
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'iterations.list', args: { project } }) }) };
+      }
+      if (rest.length === 2 && rest[0] === 'iterations' && get) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'iteration.read', args: { project, iteration } }) }) };
+      }
+      // Slice E2 (R4, R8): Stop and Discard of an iteration, each two steps
+      // through its confirmation; the running engine's facts about each of
+      // its runs under way read when the command is sent, as a run's Stop
+      // reads them.
+      if (rest.length === 3 && rest[0] === 'iterations' && (rest[2] === 'stop' || rest[2] === 'discard') && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'prepared',
+          name: rest[2] === 'stop' ? 'iteration.stop' : 'iteration.discard',
+          prepare: async (b) => {
+            const previewHash = optionalString(onlyFields(b, ['preview_hash']), 'preview_hash');
+            const runs = await store().call<string[]>('read', { name: 'iteration.under_way', args: { project, iteration } });
+            return {
+              project,
+              iteration,
+              preview_hash: previewHash,
+              facts: { exited_runs: runs.filter((r) => state.runtime?.exitedFirst(r) ?? false), decided_runs: runs.filter((r) => state.runtime?.endDecided(r) ?? false) },
+            };
+          },
+        };
+      }
+      // Slice E3 (R5): the brief's preparation asked for again (after a
+      // declined authorization, a failed run or a rejected brief): its
+      // authorization raised for the owner; nothing is dispatched.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'prepare' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.prepare',
+          args: (b) => {
+            noFields(b);
+            return { project, iteration };
+          },
+        };
+      }
+      // Slice E5 (gap 4): a stopped iteration resumed by the owner's
+      // deliberate act (raising a limit never undoes a Stop).
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'resume' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.resume',
+          args: (b) => {
+            noFields(b);
+            return { project, iteration };
+          },
+        };
+      }
+      // Slice E4 (R7, R8): Iterate. A new iteration continuing from this
+      // one, with the owner's optional short change request; its
+      // preparation's authorization raised; nothing is dispatched.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'iterate' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.iterate',
+          args: (b) => ({ project, iteration, change: changeOf(onlyFields(b, ['change']).change) }),
+        };
+      }
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'receipt.json' && get) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'direct',
+          handler: async () => receiptResponse(await store().call('read', { name: 'iteration.receipt', args: { project, iteration } }), iteration),
+        };
       }
       if (rest.length === 1 && rest[0] === 'pace' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'pace.view', args: { project } }) }) };

@@ -7,6 +7,7 @@
 // runs once: a finalized operation is never finalized again, so the receipts
 // keep the identities they were written with.
 
+import { limitsChanged } from './prototype.js';
 import { followUpsDue } from '../../plan/deferral.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { reraiseOnPolicy } from '../../adopt/records.js';
@@ -23,6 +24,7 @@ import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { type ChainOrigin, getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
+import { type PreparedBrief, recordPreparedBrief } from '../../prototype/brief.js';
 import { supersededWhileRunning } from '../../plan/replace.js';
 import { registerPhaseAtNomination } from '../../plan/phase.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
@@ -85,6 +87,10 @@ export interface RefInputs {
   // A replan's plan in Appendix B.5's form, checked before the intent
   // (runs/accept.ts; D6 §5.6): published here as its routing says.
   replan?: ReplanPrepared;
+  // A rapid prototype's brief preparation (slice E3): the brief and the
+  // specification's semantics, prepared before the intent (runs/accept.ts);
+  // its spec_approval raised here (prototype/brief.ts).
+  brief?: PreparedBrief;
   architect?: boolean;
   nominate?: { by: 'engine_cadence' | 'builder_request' } | null;
   chain?: number;
@@ -203,6 +209,10 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       if (inputs.decision) tx.db.prepare('UPDATE "policy_revisions" SET "decision" = ? WHERE "id" = ?').run(inputs.decision, id);
       tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(id, op.project);
       tx.emit('policy.changed', { project: op.project, policy_revision: id }, { revision: inputs.revision, change: inputs.change ?? {}, commit: inputs.new_oid, widens_authority: inputs.widens === true });
+      // A rapid prototype's current iteration follows its editable limit
+      // keys; a raised limit reopens one that reached a limit (R4; slice
+      // E2), never a stopped one (slice E5, gap 4: POST …/resume does).
+      limitsChanged(tx, op.project);
       // The policy is part of every evaluation's inputs (D1 §9.5).
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
@@ -331,6 +341,7 @@ function finalizeIntegration(tx: Tx, op: OpDetail, inputs: RefInputs): Record<st
     const published = finalizeReplan(tx, { project: op.project, run: inputs.run, prepared: inputs.replan, integrated: inputs.new_oid, base: op.payload.old_oid ?? null });
     if (published) plans.push(published);
   }
+  if (inputs.brief && inputs.run && item) recordPreparedBrief(tx, { project: op.project, run: inputs.run, work_item: item.id, prepared: inputs.brief });
   if (inputs.architect && item && status === 'integrated') {
     const now = getWorkItem(tx, item.id)!;
     transitionWork(tx, now, 'complete', {}, { run: inputs.run, operation: op.id });

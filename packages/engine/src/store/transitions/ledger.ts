@@ -843,7 +843,7 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     // A Designer turn reserves what its session has left (the driver's
     // decision on objection 156, item 5); every other invocation its run's
     // limit, as built.
-    if (opts.dispatch) runningAllowanceTokens += Math.max(0, (designerTurn(db, u.id) ? sessionRemainder(db, u.id, project) : runLimit(db, u.id, project)) - (billable(so) ?? 0));
+    if (opts.dispatch) runningAllowanceTokens += outstandingReservation(db, u.id, project, so);
   }
   let unknownCostTokens = 0;
   let allowanceTokens = 0;
@@ -856,6 +856,24 @@ function daySpend(db: Db, project: string, opts: { check: boolean; dispatch?: bo
     allowanceTokens += a.unknown_allowance_tokens ?? 0;
   }
   return { day, reportedUsd: money(reportedUsd), estimatedUsd: money(estimatedUsd), unknownCostTokens, allowanceTokens, runningAllowanceTokens };
+}
+
+// What an invocation under way still reserves, beyond what it has observed
+// (the day check's running allowance above, the one rule for it): a
+// Designer turn what its session has left, every other invocation its run's
+// limit, less the billable tokens observed so far, not below zero. Also the
+// prototype iteration read's outstanding reservation (prototype/iterations.ts).
+// A prototype session's turn (slice E5, S5) reserves what its session has
+// left of its effective allowance, as a Designer turn does: its receipt's
+// limit is the session's cumulative bound.
+export function outstandingReservation(db: Db, invocation: string, project: string | null, so: Amounts = observedSoFar(db, invocation)): number {
+  const turnBound = designerTurn(db, invocation) || prototypeTurn(db, invocation);
+  return Math.max(0, (turnBound ? sessionRemainder(db, invocation, project) : runLimit(db, invocation, project)) - (billable(so) ?? 0));
+}
+
+function prototypeTurn(db: Db, invocation: string): boolean {
+  const row = db.prepare('SELECT "turn" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { turn: string | null } | undefined;
+  return row !== undefined && row.turn !== null && receiptEffectiveLimit(db, invocation) !== null;
 }
 
 // The ledger read's account of the current day against the day limits.
@@ -935,7 +953,12 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string; ter
   const run = db.prepare('SELECT "project", "kind", "role" FROM "runs" WHERE "id" = ?').get(args.run) as { project: string; kind: string; role: string | null } | undefined;
   if (!run) throw notFound('run', args.run);
   seamBudgetRead(run.project);
-  const limit = runBudgetOf(db, run);
+  // A prototype run's limit is its effective allowance, fixed on its receipt
+  // at dispatch (slice E5, the owner's ruling S5: the lower of its per-run
+  // limit and what its iteration had left), when lower than the policy's.
+  const base = runBudgetOf(db, run);
+  const effective = receiptEffectiveLimit(db, args.invocation);
+  const limit = effective !== null && effective < base.limit ? { key: base.key, limit: effective } : base;
   // An unknown count is never read as zero (E74 item 3): where usage has
   // been observed and nothing billable in it is known, the run's budget
   // cannot be judged and the run does not go on without it (D1 §6.6). With
@@ -951,6 +974,18 @@ export function budgetCheck(db: Db, args: { run: string; invocation: string; ter
   if (spent !== null && spent > limit.limit) return limit.key;
   const [day] = exhaustedLimits(db, run.project, { check: false });
   return day ?? null;
+}
+
+// The effective allowance a prototype run's receipt fixed (store/
+// transitions/prototype.ts EffectiveAllowance), or null.
+function receiptEffectiveLimit(db: Db, invocation: string): number | null {
+  const row = db.prepare('SELECT "budget_snapshot" FROM "invocation_receipts" WHERE "id" = ?').get(invocation) as { budget_snapshot: string } | undefined;
+  try {
+    const v = row ? (JSON.parse(row.budget_snapshot) as { prototype_allowance?: { effective_limit_tokens?: unknown } }).prototype_allowance?.effective_limit_tokens : undefined;
+    return typeof v === 'number' ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 // What a session turn's earlier turns were charged (their billable tokens

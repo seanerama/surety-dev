@@ -42,6 +42,7 @@ import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectat
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
 import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
+import { recordIterationAlpha, withdrawAlpha } from './prototype.js';
 import {
   bumpRevision,
   changesInInterval,
@@ -3131,6 +3132,9 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
     }
     // What runs was replaced by the engine (D4 §6.3): the changes resolved.
     resolveOnReplacement(tx, { environment: frozen.environment, operation: op.id });
+    // A rapid prototype's candidate deployed here is no longer deployed
+    // (R7; slice E1): its label set back; its iteration's history kept.
+    withdrawAlpha(tx, { project: op.project, environment: frozen.environment, operation: op.id });
     endOperation(tx, op, 'none', 'teardown_applied');
     return { round: null, replay: false };
   }
@@ -3624,6 +3628,10 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
     if (c.progress === 'developing') {
       tx.db.prepare(`UPDATE "candidates" SET "progress" = 'alpha_deployed' WHERE "id" = ?`).run(c.id);
       tx.emit('candidate.advanced', { project: c.project, candidate: c.id }, { from: 'developing', to: 'alpha_deployed', evaluation: args.evaluation, operation: op.id });
+      // A rapid prototype's open iteration records its Alpha (R7; slice E1),
+      // with the deployment request this operation served.
+      const request = op.authorization === null ? undefined : (tx.db.prepare('SELECT "id" FROM "deployment_requests" WHERE "authorization" = ? ORDER BY rowid DESC LIMIT 1').get(op.authorization) as { id: string } | undefined);
+      recordIterationAlpha(tx, { project: c.project, candidate: c.id, request: request?.id ?? null, operation: op.id });
     }
     endOperation(tx, op, 'complete', 'alpha_complete');
     return;

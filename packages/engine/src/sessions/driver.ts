@@ -74,7 +74,7 @@ export class SessionDriver {
   ): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
-    const made = await this.rt.engine<{ run: Record<string, unknown>; review?: string; evidence?: string[] }>('session.open_tx', { project, ...args });
+    const made = await this.rt.engine<{ run: Record<string, unknown>; review?: string; evidence?: string[] }>('session.open_tx', { project, ...args }).catch((err) => this.limitMet(project, args.role, err));
     const answer = await this.withWorkspace(project, made.run.id as string);
     return made.review === undefined ? answer : { status: answer.status, body: { ...(answer.body as object), review: { id: made.review, subject: args.review }, evidence: made.evidence ?? [] } };
   }
@@ -82,9 +82,20 @@ export class SessionDriver {
   async resume(project: string, run: string, args: { dirty: { workspace: string; base: string; tree: string | null; unknown?: string } | null; scripted: string | null }): Promise<{ status: number; body: unknown }> {
     await this.rt.read('session.open_guard', { project });
     await pausePoint('session.admission');
-    const made = await this.rt.engine<{ run: Record<string, unknown>; offered: string | null }>('session.resume_tx', { project, run, ...args });
+    const made = await this.rt.engine<{ run: Record<string, unknown>; offered: string | null }>('session.resume_tx', { project, run, ...args }).catch((err) => this.limitMet(project, null, err));
     const answer = await this.withWorkspace(project, made.run.id as string);
     return { status: answer.status, body: { ...(answer.body as object), offered: made.offered } };
+  }
+
+  // A session refused by a rapid prototype's iteration limit (R4; slice E2):
+  // the limit is recorded on the iteration in a transaction of its own (the
+  // refused opening wrote nothing), the verdict taken again there; then the
+  // refusal stands.
+  private async limitMet(project: string, role: unknown, err: unknown): Promise<never> {
+    if (err instanceof Refusal && err.code === 'prototype_limit_reached' && (err.subject as { final?: unknown }).final === true) {
+      await this.rt.engine('prototype.session_limit', { project, role: typeof role === 'string' ? role : (err.subject as { role?: string }).role ?? null }).catch((e) => log('prototype limit', e, { project }));
+    }
+    throw err;
   }
 
   private async withWorkspace(project: string, run: string): Promise<{ status: number; body: unknown }> {

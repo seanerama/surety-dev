@@ -212,6 +212,12 @@ const WIDENING_KEYS = new Set([
   'snapshot_max_files',
   'snapshot_max_bytes',
   'snapshot_max_file_bytes',
+  // R4: the prototype iteration's limits widen as the budget keys do.
+  'prototype_budget_tokens',
+  'prototype_budget_usd_estimated',
+  'prototype_runtime_seconds',
+  'prototype_repairs_per_stage',
+  'prototype_repairs_per_iteration',
 ]);
 
 // The keys of a change that widen authority against the effective policy.

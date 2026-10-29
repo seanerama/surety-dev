@@ -59,6 +59,6 @@ test("H4's cap (E171 item 5, E172): eligible → parked for replan only", () => 
   }
 });
 
-test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring and K8\'s phase_verification and spec_change', () => {
-  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'check_authoring', 'check_correction', 'fix', 'phase_verification', 'replan', 'review', 'spec_change', 'stage_build', 'verification']);
+test('the engine dispatches exactly the kinds build spec §3 lists, with D6 K7\'s check_authoring and K8\'s phase_verification and spec_change, and the rapid prototype\'s brief_preparation (slice E3)', () => {
+  assert.deepEqual([...DISPATCHABLE].sort(), ['assessment', 'brief_preparation', 'check_authoring', 'check_correction', 'fix', 'phase_verification', 'replan', 'review', 'spec_change', 'stage_build', 'verification']);
 });

@@ -42,7 +42,9 @@ export type DecisionKind =
   // D7 A.2, G5 (M6): the design's decisions.
   | 'design_approval'
   | 'design_due'
-  | 'design_verdicts';
+  | 'design_verdicts'
+  // Rapid prototype, slice E3 (R5): one brief preparation run authorized.
+  | 'prototype_preparation_approval';
 
 export interface OptionSpec {
   key: string;
