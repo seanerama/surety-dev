@@ -6,7 +6,8 @@
 //   full:<key>   insert <key> in a transaction committed under synchronous=FULL
 //   off:<key>    insert <key> in a transaction committed under synchronous=OFF
 // The database is in WAL mode, as the engine's store is (D1 §6.1). When every
-// step is done the process writes "ready" and waits to be killed.
+// step is done the process writes "ready" and waits to be killed, holding the
+// connection open.
 
 import Database from 'better-sqlite3';
 
@@ -21,4 +22,11 @@ for (const step of steps) {
   db.prepare('INSERT INTO "kept" ("key") VALUES (?)').run(key);
 }
 process.stdout.write('ready\n');
-setInterval(() => {}, 1 << 30);
+// The wait refers to the connection, so the connection stays reachable and
+// open until the cut. A Database nothing refers to may be collected, and the
+// driver closes it when it is: the close checkpoints the WAL into the
+// database file (unsynced under synchronous=OFF) and removes the WAL, before
+// the cut. Node v26.7.0 often collects it within milliseconds of "ready"
+// (mini-hp01, 2026-10-28: "no such table: kept"); Node v22 later than the
+// cut, which hid it.
+setInterval(() => db.open, 1 << 30);
