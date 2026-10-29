@@ -69,6 +69,7 @@ type Lookup = {
   operation: string;
   project: string;
   preview: boolean;
+  static: boolean;
   status: string;
   launch_state: string | null;
   incarnation: string | null;
@@ -1036,8 +1037,9 @@ export class ServiceHost {
             node: engineNode(),
             initNodeCopy: await initNodeIn(area, x.copy),
             initScript: INIT_SCRIPT,
-            // The design preview runs the engine's own server, and only it.
-            ...(lk.preview && lk.start?.[1] === previewServerPath() ? { programs: [lk.start[1]] } : {}),
+            // The design preview, and a static configuration's deployment
+            // (SHAPES.md §2), run the engine's own server, and only it.
+            ...((lk.preview || lk.static) && lk.start?.[1] === previewServerPath() ? { programs: [lk.start[1]] } : {}),
           });
           ch.send({ t: 'plan', plan });
         } else if (m.stage === 'init') {

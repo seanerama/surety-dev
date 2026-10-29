@@ -31,6 +31,7 @@ import { resolveInstallation } from '../trust/fixture.js';
 import { join } from 'node:path';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
+import { adapterRead } from '../deploy/adapter-read.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { ownerReview } from '../design/owner-review.js';
@@ -328,6 +329,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           return { run: await qualifier.run(adapter) };
         },
       };
+    }
+    // SHAPES.md §1: the adapter's capability read.
+    if (s.length === 3 && s[1] === 'adapters' && get) {
+      const adapter = decodeSegment(s[2]!);
+      if (adapter === null) return null;
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await adapterRead(runtime(), adapter) }) };
     }
     // D6 §8.1 step 1, A.8 (SEAM.md §377): the adoption of an existing repository.
     if (s.length === 3 && s[1] === 'projects' && s[2] === 'adopt' && post) {

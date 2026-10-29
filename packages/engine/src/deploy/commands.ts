@@ -15,6 +15,7 @@ import { type ConfigContent, DESIGN_PREVIEW_ENV, type SealedArtifact, environmen
 import { seamArtifactFreeBytes } from '../testing/seam.js';
 import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded, sealArtifact } from './artifact.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
+import { checkStaticEntry, staticSpec } from './static-site.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
 // version's content. Validated, its secret references resolved to digests
@@ -138,6 +139,9 @@ async function checkRuntime(content: ConfigContent): Promise<void> {
     throw invalid('runtime.path', `names ${runtime.path}, which cannot be read`);
   }
   if (digest !== runtime.sha256) throw invalid('runtime.sha256', `is not the SHA-256 of ${runtime.path} on this host`);
+  // A static configuration names no start command: the engine's server runs
+  // under the runtime (SHAPES.md §2).
+  if (staticSpec(content) !== null) return;
   const start = content.start ?? [];
   if (start[0] !== runtime.path) throw invalid('start.0', `must be the configured runtime ${runtime.path}, not ${JSON.stringify(start[0])}`);
 }
@@ -241,7 +245,11 @@ export async function prepareDeployment(rt: Runtime, project: string, body: unkn
           startedMs,
           freeBytes: () => seamArtifactFreeBytes() ?? homeFreeBytes(rt.home),
           admission: (digest) => rt.read('deploy.artifact_admission', { project, digest }),
-          inspect: (paths) => checkStart(facts.config.content.start ?? [], paths),
+          inspect: (paths) => {
+            const spec = staticSpec(facts.config.content);
+            if (spec !== null) checkStaticEntry(spec, paths);
+            else checkStart(facts.config.content.start ?? [], paths);
+          },
         },
       });
     } catch (err) {

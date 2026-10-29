@@ -41,6 +41,7 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
+import { type FrozenStatic, modeOf, staticSpec, staticStart } from '../../deploy/static-site.js';
 import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
 import {
   bumpRevision,
@@ -98,6 +99,9 @@ export interface ConfigContent {
   secrets?: Record<string, string>;
   check_secrets?: string[];
   artifact?: { exclude?: string[] };
+  // SHAPES.md §2: absent is `service`; `static` names no start command.
+  mode?: 'service' | 'static';
+  static?: { root: string; entry: string };
   [key: string]: unknown;
 }
 
@@ -165,6 +169,9 @@ export interface FrozenIntent {
   // `design_previews` row it deploys or tears down. Driven by the
   // previewer only, never by the tick; no authorization, candidate or gate.
   preview?: string | null;
+  // A static configuration's deployment (SHAPES.md §2): its root, entry, the
+  // engine's server it runs and that server's SHA-256.
+  static?: FrozenStatic | null;
 }
 
 export const getEnv = (db: Db, id: string): EnvRow | undefined => db.prepare('SELECT * FROM "environments" WHERE "id" = ?').get(id) as EnvRow | undefined;
@@ -355,6 +362,21 @@ function qualificationOf(db: Db, adapter: string, version: string | null): Quali
   const q = db.prepare(`SELECT * FROM "adapter_qualifications" WHERE "adapter" = ? AND "adapter_version" = ? AND "status" = 'current'`).get(adapter, version) as QualificationRow | undefined;
   if (!q || qualificationDrift(db, q) !== null) return undefined;
   return q;
+}
+
+// The adapter capability read's qualification (SHAPES.md §1): `current`
+// with the row in force for the version this engine builds; `lapsed` when a
+// row of the adapter exists and none is in force (lapsed, or current but no
+// longer matching this engine and host), with the latest such row; `none`
+// when no row of the adapter was ever recorded.
+export function adapterQualificationRead(db: Db, args: { adapter: string }): { status: 'current' | 'none' | 'lapsed'; id: string | null; at: string | null } {
+  const q = qualificationOf(db, args.adapter, adapterVersion(args.adapter)) as (QualificationRow & { qualified_at?: string }) | undefined;
+  if (q) return { status: 'current', id: q.id, at: q.qualified_at ?? null };
+  const last = db.prepare('SELECT "id", "qualified_at", "lapsed_at" FROM "adapter_qualifications" WHERE "adapter" = ? ORDER BY rowid DESC LIMIT 1').get(args.adapter) as
+    | { id: string; qualified_at: string; lapsed_at: string | null }
+    | undefined;
+  if (!last) return { status: 'none', id: null, at: null };
+  return { status: 'lapsed', id: last.id, at: last.lapsed_at ?? last.qualified_at };
 }
 
 // The qualification current for an environment (SEAM.md §§248, 324): a
@@ -1641,7 +1663,7 @@ function insertOperation(tx: Tx, args: { project: string; kind: 'deploy' | 'tear
       args.authorization,
     );
   const journalKind = args.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply';
-  const payload = { environment: args.env.id, authorization: args.authorization, artifact_digest: args.frozen.artifact_digest };
+  const payload = { environment: args.env.id, authorization: args.authorization, artifact_digest: args.frozen.artifact_digest, ...(args.frozen.static ? { server_digest: args.frozen.static.server_digest } : {}) };
   tx.db
     .prepare(`INSERT INTO "deploy_journal_events" ("id", "created_at", "project", "operation", "seq", "journal_kind", "event_kind", "payload") VALUES (?, ?, ?, ?, 1, ?, 'intended', ?)`)
     .run(tx.newId('dje_'), tx.at, args.project, id, journalKind, JSON.stringify(payload));
@@ -1658,7 +1680,7 @@ function insertOperation(tx: Tx, args: { project: string; kind: 'deploy' | 'tear
 // freezes the operation's intent and starts its orchestration deadline. One
 // authorization makes at most one operation (the consumption and the
 // operation are this transaction; a unique index holds it).
-export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: string }): { operation: string } | { busy: string } | { skipped: string } {
+export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: string; staticServer?: { path: string; digest: string } | null }): { operation: string } | { busy: string } | { skipped: string } {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.kind !== 'deploy' || item.status !== 'eligible' || item.trigger_source !== 'deployment_request') return { skipped: 'not eligible deploy work' };
   const auth = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(item.trigger_id) as AuthRow | undefined;
@@ -1688,6 +1710,12 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
   }
   const config = tx.db.prepare('SELECT * FROM "environment_configs" WHERE "environment" = ? AND "config_identity" = ? ORDER BY "version" DESC LIMIT 1').get(env.id, auth.config_identity) as ConfigRow | undefined;
   const content = config ? configContent(config) : null;
+  // A static configuration (SHAPES.md §2): the engine's server, read by the
+  // main thread, is what the start command runs; without it nothing is
+  // intended (the next tick asks again).
+  const spec = staticSpec(content);
+  if (spec !== null && (!args.staticServer || !content?.runtime)) return { skipped: 'the static server is not known' };
+  const frozenStatic: FrozenStatic | null = spec !== null ? { ...spec, server: args.staticServer!.path, server_digest: args.staticServer!.digest } : null;
   const mapping = (JSON.parse(auth.source_delivery_mapping) as { mapping?: string }).mapping ?? null;
   const artifact = getArtifact(tx.db, item.project, auth.artifact_digest);
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, item.project).deploy_orchestration_deadline!);
@@ -1712,8 +1740,9 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
     adapter: env.adapter,
     adapter_version: content?.adapter_version ?? null,
     runtime: content?.runtime ?? null,
-    start: content?.start ?? null,
+    start: frozenStatic !== null ? staticStart(content!.runtime!.path, frozenStatic.server, frozenStatic) : (content?.start ?? null),
     lease: { id: lease.id, generation: lease.generation },
+    ...(frozenStatic !== null ? { static: frozenStatic } : {}),
   };
   const op = insertOperation(tx, {
     project: item.project,
@@ -2410,6 +2439,9 @@ export function launchLookup(db: Db, args: { attempt: string }) {
     // The design preview's deployment (D7 §5.7): its program is the
     // engine's server, bound read-only into the domain at its own path.
     preview: frozen.preview !== undefined && frozen.preview !== null,
+    // A static configuration's deployment (SHAPES.md §2): its program is
+    // the engine's server too, bound the same way.
+    static: frozen.static !== undefined && frozen.static !== null,
     status: a.status,
     launch_state: a.launch_state,
     incarnation: a.incarnation,
@@ -3757,6 +3789,11 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       adapter: env.adapter,
       prefix: env.prefix,
       config: config ? { id: config.id, version: config.version, config_identity: config.config_identity, status: config.status } : null,
+      // SHAPES.md §2: the configuration's mode (null with none), and for a
+      // static one its entry and the server the latest deployment ran (null
+      // before any).
+      mode: config ? modeOf(configContent(config)) : null,
+      ...(config && staticSpec(configContent(config)) ? { static: { entry: staticSpec(configContent(config))!.entry, server_digest: latestServerDigest(db, env.id) } } : {}),
       running,
       relay: relayOf(db, env.id),
       deployment_generation: env.deployment_generation,
@@ -3774,6 +3811,17 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       conditions,
     },
   };
+}
+
+// The server SHA-256 the environment's latest static deployment froze, or null.
+function latestServerDigest(db: Db, environment: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT json_extract(o."finalizer_inputs", '$.static.server_digest') AS "d" FROM "operations" o
+       WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND json_extract(o."finalizer_inputs", '$.static') IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(environment) as { d: string | null } | undefined;
+  return row?.d ?? null;
 }
 
 // The deployment parts of an operation, for the operations read.
