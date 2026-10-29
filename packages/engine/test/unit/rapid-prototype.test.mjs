@@ -30,7 +30,8 @@ const R = await import(join(dist, 'store', 'transitions', 'runs.js'));
 const { observeTrigger } = await import(join(dist, 'store', 'transitions', 'work.js'));
 const { readProject, listProjects } = await import(join(dist, 'store', 'projections.js'));
 const { listIterations, readIteration, iterationReceipt, receiptResponse } = await import(join(dist, 'prototype', 'iterations.js'));
-const { recordIterationAlpha, withdrawAlpha } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
+const { recordIterationAlpha, withdrawAlpha, replaceAlpha } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
+const { ALPHA_GONE_NEXT_STEP } = await import(join(dist, 'prototype', 'iterations.js'));
 const { validatePolicySubmission, wideningKeys, projectEffectiveDefaults } = await import(join(dist, 'config', 'project-policy.js'));
 const { holdSecret } = await import(join(dist, 'records', 'redact.js'));
 const { chargeInvocation } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
@@ -393,4 +394,80 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
   assert.equal(db.prepare('SELECT progress FROM candidates WHERE id = ?').get('cand_2').progress, 'developing', 'no claim that the planned Alpha is available now');
   assert.deepEqual(db.prepare(`SELECT * FROM deployment_requests WHERE candidate = 'cand_2'`).all(), requestsBefore, 'its deployment record is history, unchanged');
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'candidate.alpha_withdrawn'`).get().n, 2);
+});
+
+test('replacement (the owner\'s ruling of 2026-10-29): a newer deployment applied in the environment withdraws every other candidate\'s claim of current availability there, in every mode, with candidate.alpha_replaced; the history kept; the same candidate, or one current in another environment, keeps its claim', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ mode: 'rapid_prototype' });
+  const planned = await create({ tier: 'T1' });
+  db.pragma('foreign_keys = OFF');
+  const env = (id, proj) => db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, current_generation) VALUES (?, ?, ?, ?, 'local_service', 'x', '{}', 1)`).run(id, AT, proj, id === 'env_b' ? 'beta' : 'alpha');
+  const cand = (id, proj, seq, progress) => db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress, spec_revision) VALUES (?, ?, ?, ?, 'rev', 'lin', ?, 'engine_cadence', ?, 'sr_1')`).run(id, AT, proj, seq, AT, progress);
+  let opSeq = 100;
+  const deployed = (n, proj, candidate, environment, outcome = 'deployed') => {
+    db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, authorization, outcome) VALUES (?, ?, ?, ?, 'policy', ?, ?, ?, ?)`).run(`dreq_${n}`, AT, proj, `k${n}`, candidate, environment, `auth_${n}`, outcome);
+    db.prepare(
+      `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, orchestration_stage, authorization, finalized_at)
+       VALUES (?, ?, ?, ?, 'deploy', ?, '{}', ?, 1, 'succeeded', ?, 'ended', ?, ?)`,
+    ).run(`op_${n}`, AT, proj, ++opSeq, JSON.stringify({ environment }), `key_${n}`, AT, `auth_${n}`, AT);
+  };
+  env('env_1', p.id);
+  env('env_2', planned.id);
+  env('env_b', planned.id);
+  db.prepare(`INSERT INTO spec_revisions (id, created_at, project, version, git_path, git_blob, semantic_digest, approved_by, approved_at) VALUES ('sr_1', ?, ?, 1, '.surety/spec/spec.md', 'blob', 'digest', 'human', ?)`).run(AT, p.id, AT);
+  cand('cand_1', p.id, 1, 'alpha_deployed');
+  deployed(1, p.id, 'cand_1', 'env_1');
+  db.pragma('foreign_keys = ON');
+  db.prepare(`UPDATE prototype_iterations SET brief_spec_revision = 'sr_1', approved_at = ?, status = 'building' WHERE id = ?`).run(AT, p.iteration);
+  transact(db, ENGINE_ACTOR, (tx) => recordIterationAlpha(tx, { project: p.id, candidate: 'cand_1', request: 'dreq_1', operation: 'op_1' }));
+  const fresh = new Date().toISOString();
+  db.prepare(`INSERT INTO observation_history (id, created_at, project, environment, observed_at, source, condition, read_interval, expected_revision, deployment_generation, facts, installed) VALUES ('obs_1', ?, ?, 'env_1', ?, 'test', 'healthy', '{}', 1, 1, '{}', 1)`).run(fresh, p.id, fresh);
+  const ready = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.deepEqual([ready.alpha.current?.healthy, ready.alpha.current_state, ready.alpha.current_reason, ready.outcome.next_step], [true, 'available', null, 'open_alpha']);
+  assert.match(ready.alpha.history_note, /are history/);
+
+  // The same candidate deployed again: nothing replaced.
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => replaceAlpha(tx, { project: p.id, environment: 'env_1', operation: 'op_same', candidate: 'cand_1' })), []);
+  assert.equal(db.prepare('SELECT progress FROM candidates WHERE id = ?').get('cand_1').progress, 'alpha_deployed');
+
+  // A newer candidate's deployment applied (its verification still ahead).
+  db.pragma('foreign_keys = OFF');
+  cand('cand_3', p.id, 2, 'developing');
+  deployed(3, p.id, 'cand_3', 'env_1', 'pending');
+  db.pragma('foreign_keys = ON');
+  const requestsBefore = db.prepare(`SELECT * FROM deployment_requests ORDER BY id`).all();
+  const iterationBefore = db.prepare('SELECT * FROM prototype_iterations WHERE id = ?').get(p.iteration);
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => replaceAlpha(tx, { project: p.id, environment: 'env_1', operation: 'op_3', candidate: 'cand_3' })), ['cand_1']);
+  assert.equal(db.prepare('SELECT progress FROM candidates WHERE id = ?').get('cand_1').progress, 'developing', 'no claim that the replaced candidate is available now');
+  const ev = db.prepare(`SELECT subject, payload FROM events WHERE type = 'candidate.alpha_replaced'`).all();
+  assert.equal(ev.length, 1);
+  assert.equal(JSON.parse(ev[0].subject).candidate, 'cand_1');
+  const pl = JSON.parse(ev[0].payload);
+  assert.deepEqual([pl.from, pl.to, pl.environment, pl.operation, pl.replaced_by], ['alpha_deployed', 'developing', 'env_1', 'op_3', 'cand_3']);
+  assert.deepEqual(db.prepare(`SELECT * FROM deployment_requests ORDER BY id`).all(), requestsBefore, 'the deployment history unchanged');
+  assert.deepEqual(db.prepare('SELECT * FROM prototype_iterations WHERE id = ?').get(p.iteration), iterationBefore, "the iteration's record unchanged (its next_step included)");
+  const read = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.equal(read.alpha.current, null, 'not current, however fresh the last observation');
+  assert.equal(read.alpha.current_state, 'replaced');
+  assert.match(read.alpha.current_reason, /^not currently available: a newer deployment of candidate cand_3 \(operation op_3\) replaced candidate cand_1 in environment alpha at .*; its Alpha is history$/);
+  assert.deepEqual([read.alpha.candidate, read.alpha.deployment_request, read.alpha.deployed_at, read.iteration.alpha_at, read.outcome.status], ['cand_1', 'dreq_1', ready.alpha.deployed_at, ready.iteration.alpha_at, 'alpha_ready'], 'the history kept');
+  assert.deepEqual([read.outcome.next_step, read.iteration.next_step], [ALPHA_GONE_NEXT_STEP, ALPHA_GONE_NEXT_STEP], 'never offered to open an Alpha that is not there');
+  assert.equal(listIterations(db, { project: p.id }).iterations[0].next_step, ALPHA_GONE_NEXT_STEP);
+  assert.equal(iterationReceipt(db, { project: p.id, iteration: p.iteration }).alpha.current_state, 'replaced', 'the receipt says the same');
+
+  // Every mode: a planned project's candidate replaced; one deployed and
+  // current in another environment keeps its claim there.
+  db.pragma('foreign_keys = OFF');
+  cand('cand_p1', planned.id, 1, 'alpha_deployed');
+  cand('cand_p2', planned.id, 2, 'alpha_deployed');
+  deployed('p1', planned.id, 'cand_p1', 'env_2');
+  deployed('p2', planned.id, 'cand_p2', 'env_2');
+  deployed('p2b', planned.id, 'cand_p2', 'env_b');
+  cand('cand_p3', planned.id, 3, 'developing');
+  deployed('p3', planned.id, 'cand_p3', 'env_2', 'pending');
+  db.pragma('foreign_keys = ON');
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => replaceAlpha(tx, { project: planned.id, environment: 'env_2', operation: 'op_p3', candidate: 'cand_p3' })), ['cand_p1'], 'cand_p2 still runs in beta: its claim stands');
+  assert.deepEqual(db.prepare(`SELECT id, progress FROM candidates WHERE project = ? ORDER BY seq`).all(planned.id).map((c) => [c.id, c.progress]), [['cand_p1', 'developing'], ['cand_p2', 'alpha_deployed'], ['cand_p3', 'developing']]);
+  // A teardown of beta then withdraws cand_p2's (S3, now nowhere current).
+  assert.deepEqual(transact(db, ENGINE_ACTOR, (tx) => withdrawAlpha(tx, { project: planned.id, environment: 'env_b', operation: 'op_tdb' })), ['cand_p2']);
 });

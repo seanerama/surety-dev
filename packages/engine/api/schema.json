@@ -1088,6 +1088,7 @@
       "prototype.iteration_created",
       "prototype.iteration_alpha_ready",
       "candidate.alpha_withdrawn",
+      "candidate.alpha_replaced",
       "prototype.iteration_limit_reached",
       "prototype.iteration_stopped",
       "prototype.iteration_discarded",
@@ -8274,6 +8275,9 @@
       "owner": "store/transitions/prototype.ts"
     },
     "candidate.alpha_withdrawn": {
+      "owner": "store/transitions/prototype.ts"
+    },
+    "candidate.alpha_replaced": {
       "owner": "store/transitions/prototype.ts"
     },
     "prototype.iteration_limit_reached": {

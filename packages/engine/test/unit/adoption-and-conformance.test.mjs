@@ -32,6 +32,7 @@ function store() {
     CREATE TABLE gate_evaluations (id TEXT PRIMARY KEY, candidate TEXT, gate_kind TEXT, outcome TEXT, stale INTEGER, created_at TEXT);
     CREATE TABLE phase_plans (id TEXT PRIMARY KEY, project TEXT, phase_number INTEGER, completed_at TEXT, created_at TEXT);
     CREATE TABLE stages (id TEXT PRIMARY KEY, project TEXT, phase_plan TEXT, created_at TEXT, status TEXT, implements TEXT, source_revision TEXT, conformance_source_digest TEXT, conformance_state TEXT, cancelled_at TEXT, conformance INTEGER);
+    CREATE TABLE events (seq INTEGER PRIMARY KEY, type TEXT, subject TEXT, payload TEXT);
   `);
   db.prepare('INSERT INTO projects VALUES (?, ?)').run('p', JSON.stringify({ pinned_revision: A, source_digest: DIGEST_A, mode: 'full' }));
   db.prepare('INSERT INTO projects VALUES (?, ?)').run('plain', null);
@@ -68,6 +69,18 @@ test('the barrier stays closed for a failed, a stale or a missing alpha_complete
   assert.equal(alphaBarrier(db, 'p').open, false, 'stale');
   db.prepare('DELETE FROM gate_evaluations').run();
   assert.equal(alphaBarrier(db, 'p').open, false, 'none');
+});
+
+test('the barrier reads Alpha as history (the owner\'s ruling of 2026-10-29): a candidate of A that reached alpha_deployed and was since withdrawn (torn down or replaced) keeps it open; one that never advanced does not', () => {
+  const db = store();
+  candidate(db, 'c1', 1, DIGEST_A, 'developing');
+  completion(db, 'g1', 'c1', 'satisfied');
+  assert.equal(alphaBarrier(db, 'p').open, false, 'never advanced: closed');
+  db.prepare('INSERT INTO events (seq, type, subject, payload) VALUES (?, ?, ?, ?)').run(1, 'candidate.advanced', JSON.stringify({ project: 'p', candidate: 'c1' }), JSON.stringify({ from: 'developing', to: 'alpha_deployed' }));
+  db.prepare('INSERT INTO events (seq, type, subject, payload) VALUES (?, ?, ?, ?)').run(2, 'candidate.alpha_replaced', JSON.stringify({ project: 'p', candidate: 'c1' }), JSON.stringify({ from: 'alpha_deployed', to: 'developing' }));
+  assert.deepEqual([alphaBarrier(db, 'p').open, alphaBarrier(db, 'p').candidate], [true, 'c1'], 'advanced, then withdrawn: the barrier stays open');
+  db.prepare("UPDATE gate_evaluations SET stale = 1").run();
+  assert.equal(alphaBarrier(db, 'p').open, false, 'a stale alpha_complete still closes it');
 });
 
 test('the barrier opens for A\'s candidate, deployed and verified; a project that is not adopted has none', () => {

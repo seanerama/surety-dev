@@ -33,6 +33,7 @@ const { readProject } = await import(join(dist, 'store', 'projections.js'));
 const { dispatchCandidates } = await import(join(dist, 'store', 'reads.js'));
 const { markHolds } = await import(join(dist, 'scheduler', 'holds.js'));
 const { readIteration } = await import(join(dist, 'prototype', 'iterations.js'));
+const P_RULES = await import(join(dist, 'prototype', 'iterations.js'));
 const P = await import(join(dist, 'store', 'transitions', 'prototype.js'));
 const { controlIteration, answerDecision } = await import(join(dist, 'store', 'transitions', 'control.js'));
 const { openSession } = await import(join(dist, 'sessions', 'session.js'));
@@ -135,7 +136,21 @@ test('tokens (S5): each claim is given its effective allowance, the lower of its
   transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
   assert.equal(db.prepare('SELECT held FROM work_items WHERE id = ?').get(b).held, 'depends_on', 'the settling hold is recorded as a wait on running work');
   let read = readIteration(db, { project: p.id, iteration: p.iteration });
-  assert.deepEqual(read.remaining.committed, { settled_tokens: 0, unknown_allowance_tokens: 0, under_way_observed_tokens: 80_000, under_way_reserved_tokens: 400_000 - 80_000, total_tokens: 400_000 }, 'the reservation is the effective allowance, never the per-run limit');
+  assert.deepEqual(
+    read.remaining.committed,
+    {
+      settled_tokens: 0,
+      unknown_allowance_tokens: 0,
+      under_way_observed_tokens: 80_000,
+      under_way_reserved_tokens: 400_000 - 80_000,
+      total_tokens: 400_000,
+      measured_tokens: 80_000,
+      measured_is: 'lower_bound',
+      estimated_allowance_tokens: 400_000 - 80_000,
+      rule: P_RULES.COMMITTED_RULE,
+    },
+    'the reservation is the effective allowance, never the per-run limit; the committed figure split into measured consumption and estimated allowance',
+  );
   assert.equal(read.remaining.tokens, 0, 'the read and the check count the same account: never over-reserved');
   assert.deepEqual([read.remaining.enforced, read.remaining.enforcement, read.remaining.overshoot], [true, 'dispatch_check', 'running runs end at their own limits and deadlines']);
   assert.equal(read.remaining.next_dispatch.kind, 'settling');
@@ -190,6 +205,57 @@ test('tokens (S5): each claim is given its effective allowance, the lower of its
   const third = claim(db, p.id, item(db, p.id, 'e'));
   assert.ok(third, 'checked against the raised limit');
   assert.equal(JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE run = ?').get(third.run).budget_snapshot).prototype_allowance.effective_limit_tokens, 590_000);
+});
+
+test('S5 verified (the owner\'s ruling of 2026-10-29): the preset per-run limit is 5,000,000, and a claim is given min(5,000,000, the iteration allowance less settled usage, unknown allowances and the other running runs\' observed + reserved), fixed on its receipt in the claim\'s transaction', async (t) => {
+  const { RAPID_PROTOTYPE_PRESET } = await import(join(dist, 'projects', 'commands.js'));
+  const { projectPolicy } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+  assert.equal(RAPID_PROTOTYPE_PRESET.budget_run_billable_tokens, 5_000_000, 'the preset');
+  const { db, create } = scratch(t);
+  const p = await create({ prototype_budget_tokens: 20_000_000 });
+  assert.equal(projectPolicy(db, p.id).budget_run_billable_tokens, 5_000_000, 'the bootstrapped project\'s effective policy');
+  // Settled usage: 1,000,000 measured.
+  runWith(db, p.id, 'settled', { input_tokens: 900_000, output_tokens: 100_000 });
+  // An unknown allowance: a run the engine stopped after one observation
+  // (42 observed), charged its effective allowance (5,000,000) less that.
+  const stopped = dispatch(db, p.id, 'stopped');
+  launch(db, stopped);
+  usage(db, stopped, { input_tokens: 40, output_tokens: 2 });
+  transact(db, ENGINE_ACTOR, (tx) => R.beginEnd(tx, { run: stopped.run, outcome: 'stopped', reason: 'human_stop' }));
+  settle(db, stopped);
+  // Another run under way: 100,000 observed, the rest of its 5,000,000 reserved.
+  const running = dispatch(db, p.id, 'running');
+  launch(db, running);
+  usage(db, running, { input_tokens: 80_000, output_tokens: 20_000 });
+  const before = readIteration(db, { project: p.id, iteration: p.iteration }).remaining.committed;
+  assert.deepEqual(
+    [before.settled_tokens, before.unknown_allowance_tokens, before.under_way_observed_tokens, before.under_way_reserved_tokens],
+    [1_000_000 + 42, 5_000_000 - 42, 100_000, 5_000_000 - 100_000],
+    'settled usage, the unknown allowance (conservative: the incomplete run charged its allowance less what it observed), the running run observed + reserved',
+  );
+  assert.deepEqual([before.measured_tokens, before.measured_is, before.estimated_allowance_tokens, before.total_tokens], [1_100_042, 'lower_bound', 9_899_958, 11_000_000], 'measured consumption and estimated allowance apart, adding to what is committed');
+  const left = 20_000_000 - (before.settled_tokens + before.unknown_allowance_tokens + before.under_way_observed_tokens + before.under_way_reserved_tokens);
+  // 9,000,000 left: the per-run limit binds.
+  const a = dispatch(db, p.id, 'a');
+  const snapA = JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE id = ?').get(a.inv).budget_snapshot);
+  assert.deepEqual(snapA.prototype_allowance, { iteration: p.iteration, run_limit_tokens: 5_000_000, available_tokens: left, effective_limit_tokens: Math.min(5_000_000, left), limited_by: 'run' });
+  assert.equal(snapA.budget_run_billable_tokens, 5_000_000, 'the run\'s limit on its receipt: the bound of its unknown allowance and its mid-run stop');
+  // 4,000,000 left once a holds its 5,000,000: the iteration binds.
+  const b = dispatch(db, p.id, 'b');
+  const snapB = JSON.parse(db.prepare('SELECT budget_snapshot FROM invocation_receipts WHERE id = ?').get(b.inv).budget_snapshot);
+  assert.deepEqual(snapB.prototype_allowance, { iteration: p.iteration, run_limit_tokens: 5_000_000, available_tokens: left - 5_000_000, effective_limit_tokens: Math.min(5_000_000, left - 5_000_000), limited_by: 'iteration' });
+  assert.equal(snapB.budget_run_billable_tokens, 4_000_000);
+  const after = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.equal(after.remaining.committed.total_tokens, 20_000_000, 'never reserved past the iteration allowance');
+  assert.equal(after.remaining.tokens, 0);
+  assert.equal(claim(db, p.id, item(db, p.id, 'c')), null, 'nothing positive left: not dispatched');
+  // The rules served beside the figures name their kinds.
+  assert.match(after.remaining.committed.rule, /^total_tokens = measured_tokens \+ estimated_allowance_tokens/);
+  assert.match(after.remaining.tokens_rule, /not the limit less consumption alone/);
+  assert.match(after.usage.totals.rule, /are measured consumption/);
+  assert.ok(after.accounting_basis.estimated_allowance.fields.includes('usage.totals.unknown_allowance_tokens'));
+  assert.ok(after.accounting_basis.measured_consumption.fields.includes('usage.totals.tokens'));
+  assert.equal(after.usage.totals.unknown_allowance_tokens, 5_000_000 - 42, 'the unknown allowance kept as charged, never 0');
 });
 
 test('concurrent dispatch (S5): claims racing on one tick never reserve more than the iteration allowance in all, whatever their order; each is given at most what is left', async (t) => {
@@ -319,7 +385,7 @@ test('estimated cost: settled reported and estimated only; an unknown cost is ne
   // Were the token check to fail, the cost check could not carry the dispatch.
   setLimits(db, p.iteration, { prototype_budget_tokens: 40 });
   const held = P.prototypeBlocker(db, p.id, { reservation: RUN_LIMIT, repair: false, item_repairs: 0, work_item: null });
-  assert.match(held, /^prototype limit: tokens: .* leaves 0: a run would get no positive allowance \(its per-run limit 5000000, capped at what the iteration has left\); the estimated-cost check cannot pass on its own: 1 invocation\(s\) of unknown cost and 0 under way not yet costed are not counted as 0, so the token check decides$/);
+  assert.match(held, /^prototype limit: tokens: .* leaves 0: a run would get no positive allowance \(its per-run limit 5000000, capped at what the iteration has left\); the estimated-cost check cannot pass on its own: 1 invocation\(s\) of unknown cost and 0 under way not yet costed are not counted as 0, so the token check decides\. Of the 40 committed, 40 is measured consumption \(billable tokens the backend reported: 40 settled \+ 0 observed under way\) and 0 is estimated allowance, not consumption \(0 charged as unknown-usage allowances, conservatively, \+ 0 still reserved by runs under way\)$/);
   setLimits(db, p.iteration, { prototype_budget_tokens: 10_000_000 });
   runWith(db, p.id, 'c', { input_tokens: 10, output_tokens: 10, cost_usd: 0.5 });
   assert.equal(claim(db, p.id, item(db, p.id, 'd')), null);

@@ -148,17 +148,65 @@ export function recordIterationAlpha(tx: Tx, args: { project: string; candidate:
 // gate evaluation that satisfied alpha_complete, the `candidate.advanced`
 // event, and an iteration's `alpha_at`.
 export function withdrawAlpha(tx: Tx, args: { project: string; environment: string; operation: string }): string[] {
-  const rows = tx.db
-    .prepare(
-      `SELECT DISTINCT c."id" FROM "candidates" c JOIN "deployment_requests" d ON d."candidate" = c."id"
-       WHERE c."project" = ? AND c."progress" = 'alpha_deployed' AND d."environment" = ? AND d."outcome" = 'deployed' ORDER BY c."seq"`,
-    )
-    .all(args.project, args.environment) as { id: string }[];
-  for (const { id } of rows) {
+  const ids = claimingCandidates(tx.db, { project: args.project, environment: args.environment, except: null });
+  for (const id of ids) {
     tx.db.prepare(`UPDATE "candidates" SET "progress" = 'developing' WHERE "id" = ? AND "progress" = 'alpha_deployed'`).run(id);
     tx.emit('candidate.alpha_withdrawn', { project: args.project, candidate: id }, { from: 'alpha_deployed', to: 'developing', environment: args.environment, operation: args.operation });
   }
-  return rows.map((r) => r.id);
+  return ids;
+}
+
+// The candidates of the project still claiming current availability
+// (`alpha_deployed`) through a deployed request to the environment, other
+// than `except`, and whose deployment is not the current one of another
+// environment of the project (where it does still run: its claim stands
+// there).
+function claimingCandidates(db: Db, args: { project: string; environment: string; except: string | null }): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT c."id", c."seq" FROM "candidates" c JOIN "deployment_requests" d ON d."candidate" = c."id"
+       WHERE c."project" = ? AND c."progress" = 'alpha_deployed' AND d."environment" = ? AND d."outcome" = 'deployed' AND c."id" IS NOT ? ORDER BY c."seq"`,
+    )
+    .all(args.project, args.environment, args.except) as { id: string }[];
+  return rows.map((r) => r.id).filter((id) => !currentElsewhere(db, id, args.environment));
+}
+
+function currentElsewhere(db: Db, candidate: string, environment: string): boolean {
+  const others = db
+    .prepare(`SELECT DISTINCT "environment" FROM "deployment_requests" WHERE "candidate" = ? AND "environment" <> ? AND "outcome" = 'deployed'`)
+    .all(candidate, environment) as { environment: string }[];
+  return others.some((o) => {
+    const cur = currentDeploymentRequest(db, o.environment);
+    return cur !== null && (db.prepare('SELECT "candidate" FROM "deployment_requests" WHERE "id" = ?').get(cur) as { candidate: string } | undefined)?.candidate === candidate;
+  });
+}
+
+// The owner's ruling of 2026-10-29 ("Keep historical deployment evidence
+// separate from current availability. Teardown or replacement must remove
+// any claim that the old candidate is currently available."): replacement,
+// as S3 did for a teardown. A newer deploy operation's deployment becomes
+// the environment's current one when the operation is finalized
+// (deploy.ts finalizeDeploy: its effect confirmed and applied, the
+// environment's `running` record written with its generation, and what ran
+// before replaced, resolveOnReplacement; D4 §4.2, §6.3). From then on
+// nothing of an earlier candidate runs there: each candidate of the project
+// still `alpha_deployed` through a deployed request to that environment,
+// other than the new deployment's own, is set back to `developing`, in every
+// mode, with `candidate.alpha_replaced` naming the environment, the
+// operation and the candidate whose deployment replaced it. Whether the new
+// deployment later verifies does not matter: the old one was replaced when
+// it was applied. The history is kept apart and untouched: the deployment
+// requests and their outcome, the operations and their journal, the
+// verifications, the observation history, the gate evaluation that
+// satisfied alpha_complete, `candidate.advanced`, and an iteration's
+// candidate, deployment request and `alpha_at`.
+export function replaceAlpha(tx: Tx, args: { project: string; environment: string; operation: string; candidate: string | null }): string[] {
+  const ids = claimingCandidates(tx.db, { project: args.project, environment: args.environment, except: args.candidate });
+  for (const id of ids) {
+    tx.db.prepare(`UPDATE "candidates" SET "progress" = 'developing' WHERE "id" = ? AND "progress" = 'alpha_deployed'`).run(id);
+    tx.emit('candidate.alpha_replaced', { project: args.project, candidate: id }, { from: 'alpha_deployed', to: 'developing', environment: args.environment, operation: args.operation, replaced_by: args.candidate });
+  }
+  return ids;
 }
 
 // ---- slice E2: bounded execution (the owner's rulings R4 and R8 of 2026-10-28) ----
@@ -247,6 +295,18 @@ export interface IterationAccount {
   // and which carries no allowance, with its run, so that what is unknown is
   // named, never only counted.
   unknown_billable: { invocation: string; run: string; role: string; work_kind: string | null }[];
+  // The owner's ruling of 2026-10-29 ("Clearly distinguish estimated
+  // allowance from measured consumption"): the committed figure split by
+  // kind. Measured: billable tokens the backends reported (settled, and
+  // observed so far of invocations under way). Estimated allowance: tokens
+  // charged or held in place of usage not known (unknown allowances, and
+  // what runs under way still reserve). committed = measured + allowance.
+  measured_tokens: number;
+  estimated_allowance_tokens: number;
+  // Invocations whose measured part is partial: under way, settled
+  // incomplete, or settled with unknown billable tokens; while any is, the
+  // measured figure is a lower bound of what was consumed.
+  partially_measured_invocations: number;
 }
 
 export function iterationAccount(db: Db, project: string, iteration: string): IterationAccount {
@@ -269,6 +329,9 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     unknown_cost_invocations: 0,
     repairs_used: 0,
     unknown_billable: [],
+    measured_tokens: 0,
+    estimated_allowance_tokens: 0,
+    partially_measured_invocations: 0,
   };
   for (const { id, run, role, work_kind } of receipts) {
     const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(id) as LedgerRow[];
@@ -281,6 +344,7 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
       }
       a.settled_tokens += b ?? 0;
       a.unknown_allowance_tokens += acc.unknown_allowance_tokens ?? 0;
+      if (b === null || !acc.usage_complete) a.partially_measured_invocations += 1;
       if ((acc.cost_status === 'reported' || acc.cost_status === 'measured_zero') && acc.cost_usd !== null) a.reported_usd = (a.reported_usd ?? 0) + acc.cost_usd;
       if (acc.cost_status === 'estimated' && acc.cost_usd !== null) a.estimated_usd = (a.estimated_usd ?? 0) + acc.cost_usd;
       if (acc.cost_status === 'unknown') a.unknown_cost_invocations += 1;
@@ -291,10 +355,13 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     if (status === 'refused') continue;
     const so = observedSoFar(db, id);
     a.under_way_invocations += 1;
+    a.partially_measured_invocations += 1;
     a.under_way_observed_tokens += billable(so) ?? 0;
     a.outstanding_reservation_tokens += outstandingReservation(db, id, project, so);
   }
-  a.committed_tokens = a.settled_tokens + a.unknown_allowance_tokens + a.under_way_observed_tokens + a.outstanding_reservation_tokens;
+  a.measured_tokens = a.settled_tokens + a.under_way_observed_tokens;
+  a.estimated_allowance_tokens = a.unknown_allowance_tokens + a.outstanding_reservation_tokens;
+  a.committed_tokens = a.measured_tokens + a.estimated_allowance_tokens;
   if (a.reported_usd !== null) a.reported_usd = money(a.reported_usd);
   if (a.estimated_usd !== null) a.estimated_usd = money(a.estimated_usd);
   // The engine's own repair counter of the iteration's work items (D1 §4.3).
@@ -313,6 +380,12 @@ export function unknownAccountingText(a: IterationAccount): string | null {
   if (a.unknown_billable_invocations === 0) return null;
   const which = a.unknown_billable.map((u) => `invocation ${u.invocation} of run ${u.run} (${u.role}${u.work_kind ? `, ${u.work_kind}` : ''})`).join('; ');
   return `${a.unknown_billable_invocations} charged invocation(s) have unknown billable tokens and no unknown allowance (${which}): each was settled with no usage reported and no allowance charged for it, so what it used, and so what the iteration committed, is unknown, never 0. Raising a limit cannot resolve an unknown total`;
+}
+
+// The committed figure in words, by kind (the owner's ruling of
+// 2026-10-29): what of it was measured and what is an estimated allowance.
+export function committedSplitText(a: IterationAccount): string {
+  return `Of the ${a.committed_tokens} committed, ${a.measured_tokens} is measured consumption (billable tokens the backend reported: ${a.settled_tokens} settled + ${a.under_way_observed_tokens} observed under way${a.partially_measured_invocations > 0 ? `; a lower bound, ${a.partially_measured_invocations} invocation(s) not fully measured` : ''}) and ${a.estimated_allowance_tokens} is estimated allowance, not consumption (${a.unknown_allowance_tokens} charged as unknown-usage allowances, conservatively, + ${a.outstanding_reservation_tokens} still reserved by runs under way)`;
 }
 
 // The iteration's accounting unresolved (S2): its committed tokens unknown.
@@ -511,8 +584,10 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
         under_way_reserved: account.outstanding_reservation_tokens,
         available: Math.max(0, available),
         reservation: ask.reservation,
+        measured: account.measured_tokens,
+        estimated_allowance: account.estimated_allowance_tokens,
       };
-      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) leaves ${Math.max(0, available)}: a run would get no positive allowance (its per-run limit ${ask.reservation}, capped at what the iteration has left)${usdNote}`;
+      const text = `tokens: prototype_budget_tokens ${tokens}: committed ${account.committed_tokens} (settled ${account.settled_tokens}, unknown allowances ${account.unknown_allowance_tokens}, under way ${account.under_way_observed_tokens} observed + ${account.outstanding_reservation_tokens} reserved) leaves ${Math.max(0, available)}: a run would get no positive allowance (its per-run limit ${ask.reservation}, capped at what the iteration has left)${usdNote}. ${committedSplitText(account)}`;
       return { kind: tokens - ended > 0 ? 'settling' : 'final', limit: 'tokens', reason: text, facts };
     }
   }
@@ -710,24 +785,37 @@ function heldByIteration(db: Db, it: IterationRowLite): string[] {
 
 // ---- Stop and Discard (R4, R8): what each would do, for the confirmation and the read ----
 
-// The deployment request whose deployment runs in the environment now: the
-// newest deployed request's operation, unless a teardown of the environment
-// finalized after it; null when none.
-export function currentDeploymentRequest(db: Db, environment: string): string | null {
-  const deployed = db
+// What runs in the environment now (the owner's ruling of 2026-10-29: a
+// deployment becomes the environment's current one when its deploy
+// operation is finalized, its effect applied, deploy.ts finalizeDeploy):
+// the newest deploy operation of the environment that was applied
+// (finalized) or whose request was deployed, unless a teardown was
+// finalized after it; with whether its request is `deployed` (verified and
+// completed: alpha_complete satisfied). null when nothing runs there.
+export function runningDeployment(db: Db, environment: string): { request: string; candidate: string | null; deployed: boolean; seq: number } | null {
+  const applied = db
     .prepare(
-      `SELECT d."id", o."seq" FROM "deployment_requests" d JOIN "operations" o ON o."authorization" = d."authorization"
-       WHERE d."environment" = ? AND d."outcome" = 'deployed' AND o."kind" = 'deploy' ORDER BY o."seq" DESC LIMIT 1`,
+      `SELECT d."id", d."candidate", d."outcome", o."seq" FROM "deployment_requests" d JOIN "operations" o ON o."authorization" = d."authorization"
+       WHERE d."environment" = ? AND o."kind" = 'deploy' AND (o."finalized_at" IS NOT NULL OR d."outcome" = 'deployed') ORDER BY o."seq" DESC LIMIT 1`,
     )
-    .get(environment) as { id: string; seq: number } | undefined;
-  if (!deployed) return null;
+    .get(environment) as { id: string; candidate: string | null; outcome: string; seq: number } | undefined;
+  if (!applied) return null;
   const torn = db
     .prepare(
       `SELECT o."seq" FROM "operations" o JOIN "deploy_journal_state" s ON s."operation" = o."id"
        WHERE o."kind" = 'teardown' AND json_extract(o."target", '$.environment') = ? AND s."state" = 'finalized' ORDER BY o."seq" DESC LIMIT 1`,
     )
     .get(environment) as { seq: number } | undefined;
-  return torn && torn.seq > deployed.seq ? null : deployed.id;
+  if (torn && torn.seq > applied.seq) return null;
+  return { request: applied.id, candidate: applied.candidate, deployed: applied.outcome === 'deployed', seq: applied.seq };
+}
+
+// The environment's current deployment: the request of what runs there
+// now, when it was deployed (verified and completed); null when nothing
+// runs there, or what runs there is a newer deployment not (yet) deployed.
+export function currentDeploymentRequest(db: Db, environment: string): string | null {
+  const r = runningDeployment(db, environment);
+  return r !== null && r.deployed ? r.request : null;
 }
 
 export interface AlphaDisposition {
@@ -757,8 +845,12 @@ export function alphaDisposition(db: Db, iteration: string): AlphaDisposition {
     .get(req.environment) as { id: string; kind: string } | undefined;
   if (inFlight) return { ...base, tears_down_alpha: false, kept_because: `${inFlight.kind} operation ${inFlight.id} of environment ${req.name} is under way; what runs there is not settled` };
   if (req.teardown_requested_at !== null) return { ...base, tears_down_alpha: false, kept_because: `a teardown of environment ${req.name} is already requested` };
-  const current = currentDeploymentRequest(db, req.environment);
-  if (current === null) return { ...base, tears_down_alpha: false, kept_because: `nothing is deployed to environment ${req.name} now` };
+  const running = runningDeployment(db, req.environment);
+  if (running === null) return { ...base, tears_down_alpha: false, kept_because: `nothing is deployed to environment ${req.name} now` };
+  const current = running.request;
+  if (!running.deployed && current !== it.deployment_request) {
+    return { ...base, tears_down_alpha: false, kept_because: `the deployment running in environment ${req.name} is request ${current}, newer and not this iteration's (applied, not deployed), and Discard never touches it` };
+  }
   if (current === it.deployment_request) return { ...base, tears_down_alpha: true, kept_because: null };
   const holder = db.prepare('SELECT "seq" FROM "prototype_iterations" WHERE "project" = ? AND "deployment_request" = ? LIMIT 1').get(it.project, current) as { seq: number } | undefined;
   if (holder && holder.seq > it.seq) {

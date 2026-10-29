@@ -44,7 +44,7 @@ import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
 import { type FrozenStatic, modeOf, staticSpec, staticStart } from '../../deploy/static-site.js';
 import { SERVING_KIND, SERVING_STATEMENT, type ServingVerified, candidateOutputKind } from './serving.js';
 import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
-import { recordIterationAlpha, withdrawAlpha } from './prototype.js';
+import { recordIterationAlpha, replaceAlpha, withdrawAlpha } from './prototype.js';
 import {
   bumpRevision,
   changesInInterval,
@@ -3254,6 +3254,10 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
     tx.db
       .prepare('UPDATE "environment_records" SET "running" = ? WHERE "environment" = ?')
       .run(JSON.stringify({ config: frozen.config_version, config_version: frozen.config_number, config_identity: frozen.config_identity, secret_digests: frozen.secret_digests, generation: a.deployment_generation }), frozen.environment);
+    // The owner's ruling of 2026-10-29: this deployment is now what runs in
+    // the environment; an earlier candidate's claim to be available there
+    // now is withdrawn (prototype.ts replaceAlpha), its history kept.
+    replaceAlpha(tx, { project: op.project, environment: frozen.environment, operation: op.id, candidate: frozen.candidate });
   }
   tx.db.prepare(`UPDATE "operations" SET "orchestration_stage" = 'verification' WHERE "id" = ?`).run(op.id);
   const round = registerRound(tx, { operation: op.id, requiredOf: args.requiredOf, deadlineAt: null, origin: 'finalizer', lease: frozen.lease.generation });

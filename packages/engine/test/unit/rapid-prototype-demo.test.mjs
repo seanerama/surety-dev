@@ -56,6 +56,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const { ALPHA_GONE_NEXT_STEP } = await import(join(root, 'dist', 'prototype', 'iterations.js'));
 const CLI = join(root, 'dist', 'cli.js');
 const CHILD = join(root, 'test', 'acceptance', 'harness', 'scripted', 'child.mjs');
 
@@ -1149,6 +1150,22 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     // 2's deployment running in the environment now.
     assert.equal((await fx.iteration(p, oneId)).alpha.current, null, "iteration 1's Alpha is not claimed available: iteration 2's deployment runs there");
     assert.deepEqual(read2.alpha.environment, after1.alpha.environment, 'the same environment, its deployment replaced');
+    // The owner's ruling of 2026-10-29: replacement withdraws the claim as
+    // a teardown does. Iteration 1's candidate is no longer alpha_deployed,
+    // with candidate.alpha_replaced naming iteration 2's deployment; its
+    // history (above) is unchanged; the read says why and offers no open.
+    const replaced = (await fx.events(since)).filter((e) => e.type === 'candidate.alpha_replaced' && e.subject.candidate === before1.alpha.candidate);
+    assert.equal(replaced.length, 1, JSON.stringify(replaced));
+    assert.deepEqual([replaced[0].payload.from, replaced[0].payload.to, replaced[0].payload.environment, replaced[0].payload.replaced_by], ['alpha_deployed', 'developing', S.env.id, read2.alpha.candidate]);
+    const c1 = await fx.ok(fx.get(`/v1/projects/${p}/candidates/${before1.alpha.candidate}`), 200, 'GET …/candidates/:c');
+    assert.equal(c1.candidate?.progress ?? c1.progress, 'developing', "iteration 1's candidate no longer claims alpha_deployed");
+    const c2 = await fx.ok(fx.get(`/v1/projects/${p}/candidates/${read2.alpha.candidate}`), 200, 'GET …/candidates/:c');
+    assert.equal(c2.candidate?.progress ?? c2.progress, 'alpha_deployed', "iteration 2's candidate does");
+    const now1 = await fx.iteration(p, oneId);
+    assert.deepEqual([now1.alpha.current, now1.alpha.current_state], [null, 'replaced']);
+    assert.match(now1.alpha.current_reason, /^not currently available: a newer deployment of candidate cand_\S+ \(operation \S+\) replaced candidate /);
+    assert.equal(now1.outcome.next_step, ALPHA_GONE_NEXT_STEP, 'no open_alpha for a replaced Alpha');
+    assert.deepEqual([now1.outcome.status, now1.iteration.alpha_at, now1.alpha.deployed_at], ['alpha_ready', before1.iteration.alpha_at, before1.alpha.deployed_at], 'its history kept');
   });
 
   test('(12) gaps 1 and 2: two stages eligible in one tick never over-reserve the shared allowance; a restart mid-run ends the run recovered, attributed, with its allowance and consistent totals, and the iteration offers a usable next step', async () => {
