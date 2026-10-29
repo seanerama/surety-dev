@@ -70,6 +70,9 @@ export function authorableGap(db: Db, project: string, subjects: readonly string
   );
   const gap: DeploymentGap = { kinds: [], criteria: [], areas: [] };
   for (const s of subjects) {
+    // The engine's serving check is the engine's to propose, never a
+    // Verifier's to author (the owner's ruling of 2026-10-29; serving.ts).
+    if (s === 'kind:post_deploy_serving') return null;
     if (s.startsWith('kind:') && s.length > 5) gap.kinds.push(s.slice(5));
     else if (s.startsWith('area:') && s.length > 5) gap.areas.push(s.slice(5));
     else if (CRITERION.test(s) && !owed.has(s)) gap.criteria.push(s);

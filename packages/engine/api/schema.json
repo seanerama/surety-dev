@@ -31,6 +31,11 @@
       "sealed",
       "failed"
     ],
+    "OutputKind": [
+      "static_site",
+      "node_service",
+      "unknown"
+    ],
     "AssessmentsProvenance": [
       "claimed"
     ],
@@ -128,7 +133,8 @@
       "failure_recovery",
       "sensitivity_floor",
       "post_deploy_identity",
-      "post_deploy_behavior"
+      "post_deploy_behavior",
+      "post_deploy_serving"
     ],
     "Tier": [
       "T1",
@@ -178,6 +184,9 @@
       "answered",
       "consumed",
       "invalidated"
+    ],
+    "DeliverableFormat": [
+      "zip"
     ],
     "DeployJournalKind": [
       "deploy_apply",
@@ -568,7 +577,8 @@
     ],
     "ProposedBy": [
       "verifier_run",
-      "human"
+      "human",
+      "engine"
     ],
     "ProtectedChangeKind": [
       "initial",
@@ -963,6 +973,7 @@
       "environment.verified",
       "artifact.sealed",
       "artifact.failed",
+      "deliverable.built",
       "adapter.qualified",
       "adapter.qualification_lapsed",
       "candidate.advanced",
@@ -1511,6 +1522,10 @@
         },
         "failed_at": {
           "required": false
+        },
+        "output_kind": {
+          "required": false,
+          "enum": "OutputKind"
         }
       }
     },
@@ -2241,6 +2256,62 @@
         }
       }
     },
+    "deliverables": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "candidate": {
+          "required": true,
+          "references": "candidates"
+        },
+        "revision": {
+          "required": true
+        },
+        "artifact_digest": {
+          "required": true
+        },
+        "format": {
+          "required": true,
+          "enum": "DeliverableFormat"
+        },
+        "version": {
+          "required": true
+        },
+        "filename": {
+          "required": true
+        },
+        "path": {
+          "required": true
+        },
+        "bytes": {
+          "required": true
+        },
+        "sha256": {
+          "required": true
+        },
+        "entries": {
+          "required": true
+        },
+        "manifest": {
+          "required": true
+        },
+        "output_kind": {
+          "required": true,
+          "enum": "OutputKind"
+        },
+        "built_at": {
+          "required": true
+        }
+      }
+    },
     "deploy_journal_events": {
       "fields": {
         "id": {
@@ -2518,6 +2589,9 @@
         "invalidated_reason": {
           "required": false,
           "enum": "VerificationInvalidation"
+        },
+        "serving": {
+          "required": false
         }
       }
     },
@@ -3741,6 +3815,9 @@
           "references": "phase_plans"
         },
         "plan_generation": {
+          "required": false
+        },
+        "serving": {
           "required": false
         }
       }
@@ -7745,6 +7822,9 @@
     },
     "artifact.failed": {
       "owner": "store/transitions/deploy.ts"
+    },
+    "deliverable.built": {
+      "owner": "store/transitions/deliverable.ts"
     },
     "adapter.qualified": {
       "owner": "store/transitions/deploy.ts"

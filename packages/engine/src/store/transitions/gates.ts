@@ -28,6 +28,7 @@ import type { Tx } from './tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
 import { currentCandidate, findingVerifiable, isObjection, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
+import { candidateOutputKind, deploymentRequirementMet, missingDeploymentKind } from './serving.js';
 import { afterCompletion, deploymentVerdict, getEnv, identityMethodOf, qualificationFor, supersedeUnattempted } from './deploy.js';
 import { assetFixStages } from '../../design/asset-bindings.js';
 import { assetInputsCurrent } from '../../design/asset-inputs.js';
@@ -686,7 +687,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     if (!env || qualificationFor(db, env) === undefined) add('ADAPTER_UNQUALIFIED', [envId]);
     if (!env || identityMethodOf(db, env) === null) add('IDENTITY_METHOD_MISSING', [envId]);
     const completion = buildScope(db, { project: args.project, candidate, kind: 'alpha_complete', stage: null, environment: scope.environment, artifact: scope.artifact });
-    if (!completion.required.some((c) => c.kind === 'post_deploy_behavior')) add('ACCEPTANCE_SCOPE_INCOMPLETE', ['kind:post_deploy_behavior']);
+    // For a static site, the engine's serving check meets it too (the
+    // owner's ruling of 2026-10-29; serving.ts).
+    const output = candidateOutputKind(db, args.project, candidate.revision);
+    if (!deploymentRequirementMet(completion.required.map((c) => c.kind), output)) add('ACCEPTANCE_SCOPE_INCOMPLETE', [missingDeploymentKind(output)]);
   }
 
   // (8) Referenced evidence exists and verifies: what a decider's evidence
@@ -901,6 +905,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
       JSON.stringify(entries),
       JSON.stringify(missingVerifications),
     );
+  // Serving verified (the owner's ruling of 2026-10-29; serving.ts): what a
+  // satisfied completion of a static site rests on, recorded with it.
+  const serving = kind === 'alpha_complete' && outcome === 'satisfied' ? (verdict?.serving ?? null) : null;
+  if (serving !== null) db.prepare('UPDATE "gate_evaluations" SET "serving" = ? WHERE "id" = ?').run(JSON.stringify(serving), id);
   if (target.phasePlan) {
     const g = (db.prepare('SELECT "generation" FROM "phase_plans" WHERE "id" = ?').get(target.phasePlan) as { generation: number }).generation;
     db.prepare('UPDATE "gate_evaluations" SET "phase_plan" = ?, "plan_generation" = ? WHERE "id" = ?').run(target.phasePlan, g, id);
@@ -940,7 +948,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
   tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
-  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false, missing_verifications: missingVerifications } };
+  return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false, missing_verifications: missingVerifications, ...(serving !== null ? { serving } : {}) } };
 }
 
 export { heldByAncestry };

@@ -131,6 +131,8 @@ export const EVENT_OWNERS = {
   'environment.verified': 'store/transitions/deploy.ts',
   'artifact.sealed': 'store/transitions/deploy.ts',
   'artifact.failed': 'store/transitions/deploy.ts',
+  // SHAPES.md §4: a candidate's downloadable package, recorded once.
+  'deliverable.built': 'store/transitions/deliverable.ts',
   'adapter.qualified': 'store/transitions/deploy.ts',
   'adapter.qualification_lapsed': 'store/transitions/deploy.ts',
   'candidate.advanced': 'store/transitions/deploy.ts',

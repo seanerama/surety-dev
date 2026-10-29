@@ -33,6 +33,8 @@ import { treesForRead } from '../deploy/compatibility-eval.js';
 import type { TreeAnswer } from '../deploy/output-kind.js';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
+import { adapterRead } from '../deploy/adapter-read.js';
+import { deliverableDownload, deliverableRead } from '../deploy/deliverable.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { ownerReview } from '../design/owner-review.js';
@@ -337,6 +339,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         },
       };
     }
+    // SHAPES.md §1: the adapter's capability read.
+    if (s.length === 3 && s[1] === 'adapters' && get) {
+      const adapter = decodeSegment(s[2]!);
+      if (adapter === null) return null;
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await adapterRead(runtime(), adapter) }) };
+    }
     // D6 §8.1 step 1, A.8 (SEAM.md §377): the adoption of an existing repository.
     if (s.length === 3 && s[1] === 'projects' && s[2] === 'adopt' && post) {
       return { kind: 'prepared', name: 'project.adopt', prepare: (b) => prepareAdopt(runtime(), b), settle: (p) => settleAdopt(runtime(), p) };
@@ -388,6 +396,29 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const candidate = decodeSegment(rest[1]!);
         if (candidate === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.read', args: { project, candidate } }) }) };
+      }
+      // SHAPES.md §4: a candidate's downloadable package, and its bytes. The
+      // owner's ruling of 2026-10-29: "No additional owner approval is
+      // required to download an already-prepared deliverable through an
+      // authenticated request with access to that project. Downloading must
+      // not start agents, deploy anything or execute the program." The API
+      // token, as on every project route, and nothing else: no decision is
+      // raised, nothing is dispatched, deployed or run (deploy/deliverable.ts).
+      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'deliverable' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await deliverableRead(runtime(), project, candidate) }) };
+      }
+      if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'deliverable' && rest[3] === 'download' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return {
+          kind: 'direct',
+          handler: async () => {
+            const d = await deliverableDownload(runtime(), project, candidate);
+            return { status: 200, body: null, raw: d.bytes, type: 'application/zip', headers: { ...d.headers, 'content-length': String(d.bytes.length) } };
+          },
+        };
       }
       if (rest.length === 1 && rest[0] === 'work' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'work.list', args: { project } }) }) };

@@ -67,6 +67,9 @@ export interface CheckPlanInput {
   // The design's effective asset files it reads (D7 §6.5), read-only at
   // /surety/assets.
   assets?: string | null;
+  // The engine's own programs the check runs (the serving check's,
+  // SHAPES.md §3), read-only at their own paths.
+  programs?: string[];
 }
 
 export const ASSETS_MOUNT = '/surety/assets';
@@ -120,6 +123,11 @@ export function buildCheckPlan(input: CheckPlanInput): Plan {
   for (const p of input.readPaths) {
     for (const d of parents(p)) b.dir(d);
     b.bind(p);
+  }
+  for (const p of input.programs ?? []) {
+    if (input.readPaths.includes(p)) continue;
+    for (const d of parents(p)) b.dir(d);
+    b.bind(p, { noexec: true });
   }
   return {
     stage,

@@ -2,6 +2,7 @@
 // connection to store.db and executes one command at a time from the main
 // thread. Every command is short; none waits on git, an adapter or a stream.
 
+import { deliverableFacts, recordDeliverable } from './transitions/deliverable.js';
 import { parentPort, workerData } from 'node:worker_threads';
 
 import Database from 'better-sqlite3';
@@ -124,6 +125,8 @@ import {
   recordReconcile,
   requestDeployment,
   requestFacts,
+  adapterQualificationRead,
+  servingInstallFacts,
   policyRequestDue,
   policyPreparationFailed,
   policyRequestRefused,
@@ -413,6 +416,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'adapter.read': (d, a) => adapterQualificationRead(d, a),
+  'serving.install_facts': (d, a) => servingInstallFacts(d, a),
+  'deliverable.facts': (d, a) => deliverableFacts(d, a),
   'deploy.policy_due': (d, a) => policyRequestDue(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
@@ -779,6 +785,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The Release Operator's steps (D4 §§4, 5; deploy/release-operator.ts).
   'deploy.secrets_changed': (tx, a) => markSecretsChanged(tx, a),
   'deploy.intend': (tx, a) => intendDeploy(tx, a),
+  'deliverable.record': (tx, a) => recordDeliverable(tx, a),
   'deploy.intend_teardown': (tx, a) => intendTeardown(tx, a),
   'deploy.preconditions': (tx, a) => readPreconditions(tx, a, (t, e) => evaluateGate(t, e as never)),
   'deploy.precondition_failed': (tx, a) => preconditionFailed(tx, a),

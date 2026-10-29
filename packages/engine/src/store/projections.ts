@@ -910,11 +910,13 @@ export function readCandidate(db: Db, args: { project: string; candidate: string
   const successor = db
     .prepare('SELECT c."id" FROM "candidates" c JOIN "lineages" l ON l."id" = c."lineage" WHERE l."started_from_candidate" = ? ORDER BY c."seq" LIMIT 1')
     .get(args.candidate) as { id: string } | undefined;
-  const gates: Record<string, { id: string; outcome: string; stale: boolean; computed_at: string }> = {};
+  const gates: Record<string, { id: string; outcome: string; stale: boolean; computed_at: string; serving?: unknown }> = {};
   const evaluations = db
-    .prepare('SELECT "id", "gate_kind", "outcome", "stale", "computed_at" FROM "gate_evaluations" WHERE "candidate" = ? ORDER BY rowid')
-    .all(args.candidate) as { id: string; gate_kind: string; outcome: string; stale: number; computed_at: string }[];
-  for (const e of evaluations) gates[e.gate_kind] = { id: e.id, outcome: e.outcome, stale: e.stale === 1, computed_at: e.computed_at };
+    .prepare('SELECT "id", "gate_kind", "outcome", "stale", "computed_at", "serving" FROM "gate_evaluations" WHERE "candidate" = ? ORDER BY rowid')
+    .all(args.candidate) as { id: string; gate_kind: string; outcome: string; stale: number; computed_at: string; serving: string | null }[];
+  // An evaluation's `serving` (the owner's ruling of 2026-10-29): serving
+  // verified, never acceptance; shown only where one was recorded.
+  for (const e of evaluations) gates[e.gate_kind] = { id: e.id, outcome: e.outcome, stale: e.stale === 1, computed_at: e.computed_at, ...(e.serving !== null ? { serving: JSON.parse(e.serving) as unknown } : {}) };
   return {
     ...head,
     candidate: {

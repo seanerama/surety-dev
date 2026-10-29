@@ -40,7 +40,18 @@ export interface DiscoveryError {
   code: DiscoveryErrorCode;
 }
 
-export const CHECK_KINDS = ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery', 'sensitivity_floor', 'post_deploy_identity', 'post_deploy_behavior'];
+export const CHECK_KINDS = ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery', 'sensitivity_floor', 'post_deploy_identity', 'post_deploy_behavior', 'post_deploy_serving'];
+// The engine's serving check (SHAPES.md §3; the owner's rulings of
+// 2026-10-29): its kind, and the one command it runs, the engine's own
+// program (checks/programs/static-serving.mts), never a program of the
+// governed `check_commands`.
+export const SERVING_KIND = 'post_deploy_serving';
+export const SERVING_COMMAND = 'surety-static-serving';
+// What the serving check is, and is not: its description and the first line
+// of its output.
+export const SERVING_DESCRIPTION = 'serving check: the entry page and its referenced assets are served from the deployed artifact; not application behaviour, not visual acceptance';
+// The kinds a person or a Verifier writes: every kind but the engine's own.
+export const AUTHORED_KINDS = CHECK_KINDS.filter((k) => k !== SERVING_KIND);
 export const GATE_KINDS = ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
 export const SENSITIVE_AREAS = [
   'authentication',
@@ -65,6 +76,9 @@ export const SENSITIVE_AREA_NAMES: Readonly<Record<string, string>> = Object.fre
 // Kinds an acceptance-origin check covers criteria with (D3 §1.3).
 export const COVERING_KINDS = ['acceptance', 'integration', 'property', 'failure_recovery'];
 export const POST_DEPLOY = ['post_deploy_identity', 'post_deploy_behavior'];
+// The kinds bound to a deployment (D4 §5.1): the authored ones and the
+// engine's serving check.
+export const ENVIRONMENT_KINDS = [...POST_DEPLOY, SERVING_KIND];
 // A definition's `requires` values (D4 §5.1).
 export const REQUIRES_VALUES = ['environment', 'artifact_digest'] as const;
 export const SYSTEM_DIRS = ['/usr', '/bin', '/lib', '/lib64'];
@@ -468,7 +482,7 @@ const quoted = (xs: readonly string[]): string => xs.map((x) => `\`${x}\``).join
 export const DEFINITION_REFERENCE: Readonly<Record<string, MemberReference>> = Object.freeze({
   schema: { required: 'required', form: 'the number `1`.' },
   key: { required: 'required', form: `the definition file's name without \`.json\`, matching \`${KEY_FORM.source}\`; a check is known by its key across versions.` },
-  kind: { required: 'required', form: `one of ${quoted(CHECK_KINDS)}.` },
+  kind: { required: 'required', form: `one of ${quoted(AUTHORED_KINDS)}.` },
   origin: { required: 'default `acceptance`', form: '`acceptance` or `developer`. A developer check covers nothing and never counts toward criteria or the kinds a tier requires.' },
   command: {
     required: 'required',
@@ -584,7 +598,10 @@ export function parseDefinition(file: string, stem: string, text: string, govern
   if (!Array.isArray(v.command) || v.command.length < 1 || v.command.length > 64 || !v.command.every((a) => typeof a === 'string' && !a.includes('\0'))) e.at('/command', 'invalid_value');
   else {
     command = v.command as string[];
-    if (!Object.hasOwn(governed.check_commands, command[0]!)) e.at('/command/0', 'program_not_allowed');
+    // The serving check runs the engine's own program and nothing else.
+    if (kind === SERVING_KIND) {
+      if (command.length !== 1 || command[0] !== SERVING_COMMAND) e.at('/command', 'invalid_value');
+    } else if (!Object.hasOwn(governed.check_commands, command[0]!)) e.at('/command/0', 'program_not_allowed');
   }
   const cwd = v.cwd === undefined ? '.' : v.cwd;
   if (typeof cwd !== 'string' || (cwd !== '.' && !isRelative(cwd))) e.at('/cwd', 'invalid_value');
@@ -660,7 +677,19 @@ export function parseDefinition(file: string, stem: string, text: string, govern
         else if (requires.includes(x)) e.at(`/requires/${n}`, 'duplicate_entry');
         else requires.push(x);
       });
-    if (requires.length > 0 && kind !== null && !POST_DEPLOY.includes(kind)) e.at('/requires', 'invalid_value');
+    if (requires.length > 0 && kind !== null && !ENVIRONMENT_KINDS.includes(kind)) e.at('/requires', 'invalid_value');
+  }
+  // The serving check (SHAPES.md §3): bound to the deployment and its
+  // artifact, of `alpha_complete` alone, run directly; it receives no
+  // secret, no egress and no asset, covers nothing, and is an acceptance-
+  // origin check (a developer check counts toward no scope).
+  if (kind === SERVING_KIND) {
+    if (requires.length !== 2) e.at('/requires', 'invalid_value');
+    if (!Array.isArray(v.gate_kinds) || v.gate_kinds.length !== 1 || v.gate_kinds[0] !== 'alpha_complete') e.at('/gate_kinds', 'invalid_value');
+    if (v.runner_class !== undefined && v.runner_class !== 'direct') e.at('/runner_class', 'invalid_value');
+    if (origin !== 'acceptance') e.at('/origin', 'invalid_value');
+    if (v.covers !== undefined) e.at('/covers', 'covers_not_allowed');
+    for (const k of ['secrets', 'egress', 'asset_inputs', 'env', 'tier_floor', 'phase']) if (v[k] !== undefined) e.at(`/${k}`, 'invalid_value');
   }
   // inputs
   let inputs: string[] | undefined;

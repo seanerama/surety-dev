@@ -23,7 +23,7 @@ import { assertEdge } from './lifecycle.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, illegal, nextSeq, notFound, parseJson, sha256 } from './common.js';
 import { type CandidateRow, type CheckRow, POST_DEPLOY_KINDS, getCandidate } from './evidence.js';
-import { effectiveVersion } from './protected.js';
+import { captureProposal, effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
@@ -41,6 +41,8 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
+import { type FrozenStatic, modeOf, staticSpec, staticStart } from '../../deploy/static-site.js';
+import { SERVING_KIND, SERVING_STATEMENT, type ServingVerified, candidateOutputKind } from './serving.js';
 import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
 import {
   bumpRevision,
@@ -100,6 +102,9 @@ export interface ConfigContent {
   secrets?: Record<string, string>;
   check_secrets?: string[];
   artifact?: { exclude?: string[] };
+  // SHAPES.md §2: absent is `service`; `static` names no start command.
+  mode?: 'service' | 'static';
+  static?: { root: string; entry: string };
   [key: string]: unknown;
 }
 
@@ -167,6 +172,9 @@ export interface FrozenIntent {
   // `design_previews` row it deploys or tears down. Driven by the
   // previewer only, never by the tick; no authorization, candidate or gate.
   preview?: string | null;
+  // A static configuration's deployment (SHAPES.md §2): its root, entry, the
+  // engine's server it runs and that server's SHA-256.
+  static?: FrozenStatic | null;
 }
 
 export const getEnv = (db: Db, id: string): EnvRow | undefined => db.prepare('SELECT * FROM "environments" WHERE "id" = ?').get(id) as EnvRow | undefined;
@@ -211,9 +219,44 @@ export function identityMethodOf(db: Db, env: EnvRow): string | null {
 // secret digests (deploy/config.ts); the first version creates the
 // environment, its prefix fixed from the home's hash and its id. Content
 // equal to the current version's writes nothing and answers it.
+// The serving check's install facts (deploy/serving-install.ts).
+export function servingInstallFacts(db: Db, args: { project: string }) {
+  const p = db.prepare('SELECT "dev_repo_path", "integration_branch" FROM "projects" WHERE "id" = ?').get(args.project) as { dev_repo_path: string; integration_branch: string } | undefined;
+  if (!p) throw notFound('project', args.project);
+  const head = db.prepare('SELECT "expected_oid" FROM "ref_registry" WHERE "project" = ? AND "ref" = ?').get(args.project, `refs/heads/${p.integration_branch}`) as { expected_oid: string } | undefined;
+  const v = effectiveVersion(db, args.project);
+  const base = { repo: p.dev_repo_path, head: head?.expected_oid ?? null };
+  if (!v) return { ...base, definitions: null, timeout_max: null, state: 'unread' as const };
+  const governed = parseJson<{ check_discovery?: { definitions?: string }; runner_config?: { direct?: { timeout_max_s?: number } } }>((v as unknown as { governed: string | null }).governed ?? null);
+  const present = db.prepare(`SELECT 1 FROM "checks" WHERE "protected_version" = ? AND "kind" = 'post_deploy_serving'`).get(v.id) !== undefined;
+  const pending =
+    db
+      .prepare(`SELECT 1 FROM "protected_proposals" WHERE "project" = ? AND "proposed_by" = 'engine' AND "status" IN ('captured', 'classified', 'awaiting_human', 'approved')`)
+      .get(args.project) !== undefined;
+  return {
+    ...base,
+    definitions: governed?.check_discovery?.definitions ?? '.surety/checks/defs/',
+    timeout_max: governed?.runner_config?.direct?.timeout_max_s ?? 600,
+    state: present ? ('present' as const) : pending ? ('pending' as const) : ('none' as const),
+  };
+}
+
 export function writeConfigVersion(
   tx: Tx,
-  args: { project: string; name: string; content: ConfigContent; identity: string; secretDigests: { ref: string; digest: string }[]; homeHash: string; tree?: TreeAnswer | null },
+  args: {
+    project: string;
+    name: string;
+    content: ConfigContent;
+    identity: string;
+    secretDigests: { ref: string; digest: string }[];
+    homeHash: string;
+    // A static configuration's serving check, proposed by the engine
+    // (deploy/serving-install.ts), or why none is.
+    serving?: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null } | null;
+    // The current candidate's tree as the route's preparation read it, for
+    // the deployment compatibility (deploy/compatibility.ts).
+    tree?: TreeAnswer | null;
+  },
 ): CommandResult {
   if (!tx.db.prepare('SELECT 1 FROM "projects" WHERE "id" = ?').get(args.project)) throw notFound('project', args.project);
   if (args.name === DESIGN_PREVIEW_ENV) throw environmentReserved(args.project);
@@ -265,11 +308,44 @@ export function writeConfigVersion(
   tx.db.prepare('UPDATE "environments" SET "current_config" = ?, "adapter" = ?, "verify_spec" = ? WHERE "id" = ?').run(id, args.content.adapter, verifySpec, env.id);
   tx.emit('environment.configured', { project: args.project, environment: env.id }, { config: id, version: n, config_identity: args.identity, name: env.name });
   markStaleDeploy(tx);
+  const done = answer(201, getEnv(tx.db, env.id)!, getConfig(tx.db, id)!);
+  if (args.serving) (done.body as Record<string, unknown>).serving_check = captureServingProposal(tx, args.project, args.serving);
   // Whether the project's environments can host its output, evaluated
   // again with this configuration (the static-preview shapes, §5): the
   // current candidate's tree as the route's preparation read it.
   recordCompatibility(tx, { project: args.project, trigger: 'environment_configured', tree: args.tree ?? null });
-  return answer(201, getEnv(tx.db, env.id)!, getConfig(tx.db, id)!);
+  return done;
+}
+
+// The engine's serving check proposal captured with the configuration, as
+// any proposal is (protected.ts captureProposal), `proposed_by: engine`;
+// only while the integration head is the one it was prepared on and none
+// is present or pending.
+function captureServingProposal(
+  tx: Tx,
+  project: string,
+  s: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null },
+): { kind: string; proposal: string | null; state: string; reason: string | null } {
+  const facts = servingInstallFacts(tx.db, { project });
+  if (facts.state === 'present' || facts.state === 'pending') return { kind: 'post_deploy_serving', proposal: null, state: facts.state, reason: null };
+  if (s.proposal === null) return { kind: 'post_deploy_serving', proposal: null, state: 'not_proposed', reason: s.why };
+  if (facts.head !== s.proposal.head) return { kind: 'post_deploy_serving', proposal: null, state: 'not_proposed', reason: 'the integration branch moved while the proposal was prepared' };
+  const p = captureProposal(
+    tx,
+    {
+      project,
+      proposedBy: 'engine',
+      run: null,
+      base: s.proposal.head,
+      tree: s.proposal.tree,
+      diffHash: s.proposal.diffHash,
+      rationale: s.proposal.rationale,
+      requested: 'tightening',
+      changesRequiredSet: s.proposal.changesRequiredSet,
+    },
+    { engine_authored: 'post_deploy_serving' },
+  );
+  return { kind: 'post_deploy_serving', proposal: p.id, state: 'proposed', reason: null };
 }
 
 // The configurations whose secrets the main thread recomputes at start.
@@ -361,6 +437,21 @@ function qualificationOf(db: Db, adapter: string, version: string | null): Quali
   const q = db.prepare(`SELECT * FROM "adapter_qualifications" WHERE "adapter" = ? AND "adapter_version" = ? AND "status" = 'current'`).get(adapter, version) as QualificationRow | undefined;
   if (!q || qualificationDrift(db, q) !== null) return undefined;
   return q;
+}
+
+// The adapter capability read's qualification (SHAPES.md §1): `current`
+// with the row in force for the version this engine builds; `lapsed` when a
+// row of the adapter exists and none is in force (lapsed, or current but no
+// longer matching this engine and host), with the latest such row; `none`
+// when no row of the adapter was ever recorded.
+export function adapterQualificationRead(db: Db, args: { adapter: string }): { status: 'current' | 'none' | 'lapsed'; id: string | null; at: string | null } {
+  const q = qualificationOf(db, args.adapter, adapterVersion(args.adapter)) as (QualificationRow & { qualified_at?: string }) | undefined;
+  if (q) return { status: 'current', id: q.id, at: q.qualified_at ?? null };
+  const last = db.prepare('SELECT "id", "qualified_at", "lapsed_at" FROM "adapter_qualifications" WHERE "adapter" = ? ORDER BY rowid DESC LIMIT 1').get(args.adapter) as
+    | { id: string; qualified_at: string; lapsed_at: string | null }
+    | undefined;
+  if (!last) return { status: 'none', id: null, at: null };
+  return { status: 'lapsed', id: last.id, at: last.lapsed_at ?? last.qualified_at };
 }
 
 // The qualification current for an environment (SEAM.md §§248, 324): a
@@ -458,6 +549,8 @@ export interface SealedArtifact {
   entries: number;
   // The sealed copy was already there: what rehashing it found.
   reused: 'new' | 'ok' | 'corrupt';
+  // What the sealed tree is (static-site.ts outputKindOfTree).
+  output_kind?: 'static_site' | 'node_service' | 'unknown';
 }
 
 interface ArtifactRow {
@@ -504,6 +597,8 @@ export function recordArtifact(tx: Tx, project: string, s: SealedArtifact): Arti
   const existing = getArtifact(tx.db, project, s.digest);
   if (existing) {
     if (s.reused === 'corrupt') artifactCorrupt(tx, project, existing, 'reuse');
+    // A row recorded before its output kind was: the kind derived now.
+    if (s.output_kind) tx.db.prepare('UPDATE "artifacts" SET "output_kind" = ? WHERE "id" = ? AND "output_kind" IS NULL').run(s.output_kind, existing.id);
     const now = getArtifact(tx.db, project, s.digest)!;
     if (now.status !== 'sealed') {
       throw new Refusal(409, 'artifact_corrupt', `The sealed artifact ${s.digest} failed its rehash and is not deployed.`, 'Nothing was authorized. Read the security finding; the sealed copy must be replaced by hand.', {
@@ -515,10 +610,10 @@ export function recordArtifact(tx: Tx, project: string, s: SealedArtifact): Arti
   const id = tx.newId('art_');
   tx.db
     .prepare(
-      `INSERT INTO "artifacts" ("id", "created_at", "project", "digest", "manifest", "path", "status", "sealed_at", "bytes", "entries")
-       VALUES (?, ?, ?, ?, ?, ?, 'sealed', ?, ?, ?)`,
+      `INSERT INTO "artifacts" ("id", "created_at", "project", "digest", "manifest", "path", "status", "sealed_at", "bytes", "entries", "output_kind")
+       VALUES (?, ?, ?, ?, ?, ?, 'sealed', ?, ?, ?, ?)`,
     )
-    .run(id, tx.at, project, s.digest, JSON.stringify(s.manifest), s.path, tx.at, s.bytes, s.entries);
+    .run(id, tx.at, project, s.digest, JSON.stringify(s.manifest), s.path, tx.at, s.bytes, s.entries, s.output_kind ?? null);
   tx.emit('artifact.sealed', { project, artifact: id }, { digest: s.digest, entries: s.entries, bytes: s.bytes });
   return getArtifact(tx.db, project, s.digest)!;
 }
@@ -1647,7 +1742,7 @@ function insertOperation(tx: Tx, args: { project: string; kind: 'deploy' | 'tear
       args.authorization,
     );
   const journalKind = args.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply';
-  const payload = { environment: args.env.id, authorization: args.authorization, artifact_digest: args.frozen.artifact_digest };
+  const payload = { environment: args.env.id, authorization: args.authorization, artifact_digest: args.frozen.artifact_digest, ...(args.frozen.static ? { server_digest: args.frozen.static.server_digest } : {}) };
   tx.db
     .prepare(`INSERT INTO "deploy_journal_events" ("id", "created_at", "project", "operation", "seq", "journal_kind", "event_kind", "payload") VALUES (?, ?, ?, ?, 1, ?, 'intended', ?)`)
     .run(tx.newId('dje_'), tx.at, args.project, id, journalKind, JSON.stringify(payload));
@@ -1664,7 +1759,7 @@ function insertOperation(tx: Tx, args: { project: string; kind: 'deploy' | 'tear
 // freezes the operation's intent and starts its orchestration deadline. One
 // authorization makes at most one operation (the consumption and the
 // operation are this transaction; a unique index holds it).
-export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: string }): { operation: string } | { busy: string } | { skipped: string } {
+export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: string; staticServer?: { path: string; digest: string } | null }): { operation: string } | { busy: string } | { skipped: string } {
   const item = getWorkItem(tx, args.workItem);
   if (!item || item.kind !== 'deploy' || item.status !== 'eligible' || item.trigger_source !== 'deployment_request') return { skipped: 'not eligible deploy work' };
   const auth = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(item.trigger_id) as AuthRow | undefined;
@@ -1694,6 +1789,12 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
   }
   const config = tx.db.prepare('SELECT * FROM "environment_configs" WHERE "environment" = ? AND "config_identity" = ? ORDER BY "version" DESC LIMIT 1').get(env.id, auth.config_identity) as ConfigRow | undefined;
   const content = config ? configContent(config) : null;
+  // A static configuration (SHAPES.md §2): the engine's server, read by the
+  // main thread, is what the start command runs; without it nothing is
+  // intended (the next tick asks again).
+  const spec = staticSpec(content);
+  if (spec !== null && (!args.staticServer || !content?.runtime)) return { skipped: 'the static server is not known' };
+  const frozenStatic: FrozenStatic | null = spec !== null ? { ...spec, server: args.staticServer!.path, server_digest: args.staticServer!.digest } : null;
   const mapping = (JSON.parse(auth.source_delivery_mapping) as { mapping?: string }).mapping ?? null;
   const artifact = getArtifact(tx.db, item.project, auth.artifact_digest);
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, item.project).deploy_orchestration_deadline!);
@@ -1718,8 +1819,9 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
     adapter: env.adapter,
     adapter_version: content?.adapter_version ?? null,
     runtime: content?.runtime ?? null,
-    start: content?.start ?? null,
+    start: frozenStatic !== null ? staticStart(content!.runtime!.path, frozenStatic.server, frozenStatic) : (content?.start ?? null),
     lease: { id: lease.id, generation: lease.generation },
+    ...(frozenStatic !== null ? { static: frozenStatic } : {}),
   };
   const op = insertOperation(tx, {
     project: item.project,
@@ -2416,6 +2518,9 @@ export function launchLookup(db: Db, args: { attempt: string }) {
     // The design preview's deployment (D7 §5.7): its program is the
     // engine's server, bound read-only into the domain at its own path.
     preview: frozen.preview !== undefined && frozen.preview !== null,
+    // A static configuration's deployment (SHAPES.md §2): its program is
+    // the engine's server too, bound the same way.
+    static: frozen.static !== undefined && frozen.static !== null,
     status: a.status,
     launch_state: a.launch_state,
     incarnation: a.incarnation,
@@ -3459,7 +3564,14 @@ export function finalizeRound(
     if (state !== 'passed' && state !== 'failed') missing.push({ kind: reg ? 'check_result' : 'check_execution', id: reg?.id ?? c.id });
     results.push({ check: c.id, key: c.key, kind: c.kind, execution: reg?.id ?? null, result: res?.id ?? null, state });
   }
-  const behaviour = results.some((x) => x.kind === 'post_deploy_behavior' && x.state === 'passed');
+  // The behaviour result (D4 §5.3 item 6), or, for a static site, the
+  // engine's serving check passed (the owner's ruling of 2026-10-29;
+  // serving.ts): recorded as serving verified, never as acceptance.
+  const roundCandidate = getCandidate(tx.db, r.candidate);
+  const output = roundCandidate ? candidateOutputKind(tx.db, op.project, roundCandidate.revision) : 'unknown';
+  const servingPassed = output === 'static_site' ? results.find((x) => x.kind === SERVING_KIND && x.state === 'passed') : undefined;
+  const behaviour = results.some((x) => x.kind === 'post_deploy_behavior' && x.state === 'passed') || servingPassed !== undefined;
+  const serving: ServingVerified | null = servingPassed ? { serving_verified: true, check: servingPassed.check, key: servingPassed.key, execution: servingPassed.execution, result: servingPassed.result, statement: SERVING_STATEMENT } : null;
   const q = qualificationOf(tx.db, frozen.adapter, frozen.adapter_version);
   const qualified = r.adapter_qualification !== null && q?.id === r.adapter_qualification;
   if (!qualified) missing.push({ kind: 'qualification', id: r.adapter_qualification ?? frozen.adapter });
@@ -3526,6 +3638,7 @@ export function finalizeRound(
       invalidated === null ? null : tx.at,
       invalidated,
     );
+  if (serving !== null && outcome === 'verified') tx.db.prepare('UPDATE "deployment_verifications" SET "serving" = ? WHERE "id" = ?').run(JSON.stringify(serving), id);
   tx.db.prepare(`UPDATE "verification_rounds" SET "status" = 'decided', "step" = 'done', "reads" = ? WHERE "id" = ?`).run(JSON.stringify(entries), r.id);
   cancelRoundQueue(tx, r, 'its verification round was decided');
   if (args.reason === 'deadline') tx.emit('deploy.orchestration_deadline', { project: op.project, operation: op.id }, { stage: 'verification', round: r.id });
@@ -3536,7 +3649,7 @@ export function finalizeRound(
       tx.db
         .prepare('UPDATE "environment_records" SET "last_verified" = ? WHERE "id" = ?')
         .run(
-          JSON.stringify({ candidate: r.candidate, artifact_digest: frozen.artifact_digest, config_identity: r.config_identity, generation: r.deployment_generation, round: r.id, operation: op.id, at: tx.at, verification: id }),
+          JSON.stringify({ candidate: r.candidate, artifact_digest: frozen.artifact_digest, config_identity: r.config_identity, generation: r.deployment_generation, round: r.id, operation: op.id, at: tx.at, verification: id, ...(serving !== null ? { serving } : {}) }),
           rec.id,
         );
     } else writeAttempted(tx, op, a, outcome === 'failed' ? 'verification_failed' : 'verification_unknown');
@@ -3565,6 +3678,9 @@ export interface DeployVerdict {
   reasons: { code: string; subjects: string[] }[];
   // The deciding results a satisfied completion rests on, re-read now.
   results: { check: string; key: string; result: string | null; state: string }[];
+  // Serving verified by the engine's serving check, its result intact (the
+  // owner's ruling of 2026-10-29; serving.ts); null otherwise.
+  serving?: ServingVerified | null;
 }
 
 // What `alpha_complete` reads of the deployment (gates.ts): the verification
@@ -3579,7 +3695,7 @@ export function deploymentVerdict(db: Db, args: { operation: string }): DeployVe
   if (!round) return { reasons: [{ code: 'DEPLOY_VERIFICATION_MISSING', subjects: [op.id] }], results: [] };
   if (round.status === 'open') return { reasons: [{ code: 'DEPLOY_VERIFICATION_PENDING', subjects: [round.id] }], results: [] };
   const row = db.prepare('SELECT * FROM "deployment_verifications" WHERE "round" = ?').get(round.id) as
-    | { id: string; outcome: string; deployment_generation: number; invalidated_reason: string | null; behavioral_results: string; adapter_qualification: string | null }
+    | { id: string; outcome: string; deployment_generation: number; invalidated_reason: string | null; behavioral_results: string; adapter_qualification: string | null; serving: string | null }
     | undefined;
   if (!row) return { reasons: [{ code: 'DEPLOY_VERIFICATION_MISSING', subjects: [round.id] }], results: [] };
   const reasons: DeployVerdict['reasons'] = [];
@@ -3614,7 +3730,9 @@ export function deploymentVerdict(db: Db, args: { operation: string }): DeployVe
   // acknowledged one is a disposition and holds nothing here.
   const open = openChanges(db, frozen.environment);
   if (open.length > 0) reasons.push({ code: 'OUT_OF_BAND_CHANGE', subjects: open.map((r) => r.id) });
-  return { reasons, results };
+  const stored2 = parseJson<ServingVerified>(row.serving);
+  const serving = stored2 !== null && row.outcome === 'verified' && results.some((x) => x.check === stored2.check && x.state === 'passed') ? stored2 : null;
+  return { reasons, results, serving };
 }
 
 // A satisfied `alpha_complete` (§5.5), in the evaluation's transaction: the
@@ -3763,6 +3881,11 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       adapter: env.adapter,
       prefix: env.prefix,
       config: config ? { id: config.id, version: config.version, config_identity: config.config_identity, status: config.status } : null,
+      // SHAPES.md §2: the configuration's mode (null with none), and for a
+      // static one its entry and the server the latest deployment ran (null
+      // before any).
+      mode: config ? modeOf(configContent(config)) : null,
+      ...(config && staticSpec(configContent(config)) ? { static: { entry: staticSpec(configContent(config))!.entry, server_digest: latestServerDigest(db, env.id) } } : {}),
       running,
       relay: relayOf(db, env.id),
       deployment_generation: env.deployment_generation,
@@ -3780,6 +3903,17 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       conditions,
     },
   };
+}
+
+// The server SHA-256 the environment's latest static deployment froze, or null.
+function latestServerDigest(db: Db, environment: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT json_extract(o."finalizer_inputs", '$.static.server_digest') AS "d" FROM "operations" o
+       WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND json_extract(o."finalizer_inputs", '$.static') IS NOT NULL ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(environment) as { d: string | null } | undefined;
+  return row?.d ?? null;
 }
 
 // The deployment parts of an operation, for the operations read.

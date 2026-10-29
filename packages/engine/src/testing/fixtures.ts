@@ -251,7 +251,7 @@ export function installFixturePlan(db: Database, actor: Actor, args: PlanBody & 
   });
 }
 
-const CHECK_KINDS = ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery', 'sensitivity_floor', 'post_deploy_identity', 'post_deploy_behavior'];
+const CHECK_KINDS = ['acceptance', 'smoke', 'integration', 'security_lint', 'property', 'failure_recovery', 'sensitivity_floor', 'post_deploy_identity', 'post_deploy_behavior', 'post_deploy_serving'];
 const GATE_KINDS = ['stage', 'phase', 'alpha_authorize', 'alpha_complete', 'beta_authorize', 'beta_complete', 'live_authorize', 'live_complete'];
 
 // POST /v1/harness/fixtures/checks (SEAM.md §67).
