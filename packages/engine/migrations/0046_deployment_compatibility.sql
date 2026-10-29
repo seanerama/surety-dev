@@ -25,8 +25,8 @@
 --   evaluation   the served object: { evaluated_at, output_kind,
 --                environments: [{ environment, name, adapter, mode, state,
 --                missing_capability, reason }], hosting_required, reason }
--- Numbered 0045, not 0044: the static-preview slice built beside this one
--- (deliverables) takes 0044.
+-- Numbered 0046: the static-preview slice built beside this one takes 0044
+-- (the serving check and static sites) and 0045 (deliverables).
 CREATE TABLE deployment_compatibility (
   id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
