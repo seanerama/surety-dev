@@ -1,4 +1,4 @@
-// Row M616's projects (the M7 plan §3b; D4 §13.4; SEAM.md §573): the
+// Row M616's projects (the M7 plan §3b; D4 §13.4; SEAM.md §578): the
 // design journey's reference project (Pantry, harness/design/reference.mjs)
 // in three variants, each taken through the owner's production routes to
 // its published plan (D6 §1 steps 1 to 4; design off), and the browser app
@@ -120,13 +120,21 @@ export function pageScripts(fx) {
 // The page published: {p, spec, arch}.
 export const pagePublished = (fx, { name = 'pantry-page' } = {}) => toPublished(fx, { policy: PAGE_POLICY, name, spec: PAGE_SPEC, files: PAGE_FILES });
 
+// What a static page's Builder writes instead (row M616 (e)'s blocked
+// readiness, SEAM.md §579): the page and its stylesheet, no package.json, so
+// the candidate's tree agrees with the architecture (`static_site`).
+export const STATIC_PAGE_BUILT = Object.freeze({
+  'index.html': PAGE_BUILT['index.html'],
+  'web/app.css': PAGE_BUILT['web/app.css'],
+});
+
 // The page's one phase built to its completion on the kernel lane, from
-// its publication. Returns {ctx, plan}.
-export async function pageBuilt(fx, p) {
+// its publication (`built`: what its Builder writes). Returns {ctx, plan}.
+export async function pageBuilt(fx, p, { built = PAGE_BUILT } = {}) {
   pageScripts(fx);
   const w = stageWork(fx.home, p.id, 1);
   assert.ok(w, 'the published plan has its stage_build work item');
-  fx.scripted.script(w.id, [0, 1, 2].map(() => roleThat(writes(PAGE_BUILT))));
+  fx.scripted.script(w.id, [0, 1, 2].map(() => roleThat(writes(built))));
   const ctx = journeyContext(fx, p, { lane: 'kernel' });
   ctx.answerKinds = [...KERNEL_KINDS];
   const plan = await phaseCompleted(fx, ctx, 1, { max: 160 });

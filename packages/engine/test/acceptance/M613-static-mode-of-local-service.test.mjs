@@ -1,7 +1,7 @@
 // M613, static mode of `local_service` (slice 49; kernel lane, cases (a) to
 // (c); case (d), the real unit, is the sandbox file
 // M613-static-mode-on-a-real-unit). M7 plan §3b M613; D4 §13.1 (the
-// owner's amendment of 2026-10-29), §9.2; SEAM.md §§572, 573.
+// owner's amendment of 2026-10-29), §9.2; SEAM.md §§577, 578.
 //
 // (a) `GET /v1/adapters/local_service` before and after the adapter's
 //     qualification: the runtime path and SHA-256 the engine itself runs,

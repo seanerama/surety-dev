@@ -40,4 +40,4 @@ The start command is still asserted in `instructions`. The file passes run alone
 - **The owner, 2026-10-29**, quoted in D4 §13.3: "Serve a versioned package bound to the completed candidate, with its filename, size, checksum, intended platform and any run instructions or prerequisites."
 - **SHAPES.md §4** (the driver, 2026-10-29): "The package's `platform.kind` and instructions come from the output kind (§5) … For `node_service`: the start command and runtime version."
 - **The Builder's record** (engine A, commit 72e4bb88): "node_service: the start script and the Node.js version an environment pins, or that it is not known".
-- **The Verifier's reading:** `packages/engine/test/acceptance/harness/SEAM.md` §573 (M615).
+- **The Verifier's reading:** `packages/engine/test/acceptance/harness/SEAM.md` §578 (M615).

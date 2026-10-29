@@ -16,6 +16,14 @@
 //       reason naming the invocation; next_step offers only Iterate or
 //       Discard; …/prepare refused 409; raising a limit does not reopen it;
 //       the uncertainty preserved in app_totals.
+//   (f) every served figure classed as measured consumption or estimated
+//       allowance (the owner's ruling of 2026-10-29: "Preserve unknown usage
+//       and conservative allowances. Clearly distinguish estimated allowance
+//       from measured consumption"; SEAM.md §579): accounting_basis, the
+//       committed figure split into measured_tokens and
+//       estimated_allowance_tokens with its rule, usage.totals.rule; an
+//       estimated allowance never presented as consumption; unknown kept
+//       apart from both. Read on the reads (a) to (e) took.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
@@ -56,7 +64,7 @@ const originalRows = (home, inv) => ledgerOfInvocation(home, inv).filter((r) => 
 
 describe('M606 accounting completeness', () => {
   const shared = sharedFixture();
-  const S = {};
+  const S = { reads: {} };
   before(async () => {
     S.fx = await protoEngine(shared.context);
   });
@@ -80,6 +88,7 @@ describe('M606 accounting completeness', () => {
     const [row] = originalRows(fx.home, inv.id);
     assert.deepEqual([row.billable_in, row.cached_in, row.out], [1200, 300, 400], 'the ledger row holds the same');
     assertAccounted(read, 'complete usage');
+    S.reads.complete = read;
   });
 
   test('(b) a pending invocation: completeness.pending 1, total_is lower_bound, the reservation shown; never 0', async () => {
@@ -106,6 +115,7 @@ describe('M606 accounting completeness', () => {
     assert.equal(pending.r.usage.totals.cost.pending_invocations, 1);
     assert.equal(originalRows(fx.home, inv.id).length, 0, 'no ledger row yet: not charged as 0');
     assertAccounted(pending.r, 'while pending');
+    S.reads.pending = pending.r;
   });
 
   test('(c) an invocation cut by cancellation: the unknown allowance charged once and shown', async () => {
@@ -129,6 +139,7 @@ describe('M606 accounting completeness', () => {
     await tick(fx.engine, p);
     assert.equal(originalRows(fx.home, inv.id).length, 1, 'still once after a tick');
     assertAccounted(read, 'after the cancellation');
+    S.reads.cut = read;
     S.cut = { run: run.id, inv: inv.id, allowance: inv.unknown_allowance_tokens };
   });
 
@@ -141,6 +152,7 @@ describe('M606 accounting completeness', () => {
     assert.ok(held, 'the stopped run\'s work is held');
     await ok(fx.engine.post(`/v1/projects/${p}/work/${held.id}/resume`, {}), 200, 'the owner resumes the held work');
     await pump(fx, p, statusIs(fx, p, it, 'limit_reached'), { max: 4, what: 'the spent allowance to stop dispatch' });
+    S.reads.limit = await iterationRead(fx, p, it);
     const raised = await ownerPolicy(fx, p, { prototype_budget_tokens: 3_000_000 }, 'the raised allowance');
     assert.deepEqual([raised.prototype?.reopens, raised.prototype?.status], [true, 'limit_reached'], `the submission says it reopens (${JSON.stringify(raised.prototype)})`);
     await waitFor(async () => ((await iterationRead(fx, p, it)).iteration.status === 'building' ? true : undefined), { what: 'the iteration open again' });
@@ -160,6 +172,7 @@ describe('M606 accounting completeness', () => {
     assert.equal(unknown.controls.resume.available, false, 'no resume is offered');
     assert.equal(unknown.controls.discard.available, true, 'Discard is');
     assertAccounted(unknown, 'after the missing usage');
+    S.reads.unknown = unknown;
     // …/prepare does not bypass it.
     const prep = await fx.engine.post(`/v1/projects/${p}/iterations/${it}/prepare`, {});
     assert.equal(prep.status, 409, `…/prepare is refused (→ ${prep.status} ${prep.text})`);
@@ -236,5 +249,100 @@ describe('M606 accounting completeness', () => {
     assert.ok(done.usage.runs.some((y) => y.id === runId && y.outcome === 'recovered'), 'the recovered run kept, attributed');
     assert.equal(originalRows(fx.home, inv.id).length, 1, 'its allowance still charged once');
     assertAccounted(done, 'at Alpha');
+  });
+
+  // (f): the classes of accounting_basis and the paths each holds, as the
+  // engine serves them; a path may carry a note after a space (" where …",
+  // " (…rule)"), and its first word is the served path.
+  const pathOf = (field) => field.split(' ')[0];
+  const classed = (read) => Object.fromEntries(Object.entries(read.accounting_basis).map(([k, v]) => [k, v.fields.map(pathOf)]));
+
+  test('(f) accounting_basis classes every served figure: measured consumption, estimated allowance, estimated cost, combined; none in two classes', () => {
+    for (const [what, read] of Object.entries(S.reads)) {
+      const basis = read.accounting_basis;
+      assert.ok(basis && typeof basis === 'object', `${what}: accounting_basis served`);
+      assert.deepEqual(Object.keys(basis).sort(), ['combined', 'estimated_allowance', 'estimated_cost', 'measured_consumption'], `${what}: its classes`);
+      for (const [k, v] of Object.entries(basis)) {
+        assert.ok(typeof v.meaning === 'string' && v.meaning.length > 0, `${what}: ${k} says what it means`);
+        assert.ok(Array.isArray(v.fields) && v.fields.length > 0 && v.fields.every((f) => typeof f === 'string'), `${what}: ${k} lists its fields`);
+      }
+      assert.deepEqual(basis, S.reads.complete.accounting_basis, `${what}: the same legend on every read`);
+    }
+    const c = classed(S.reads.complete);
+    const measured = new Set(c.measured_consumption);
+    const allowance = new Set(c.estimated_allowance);
+    for (const f of measured) assert.ok(!allowance.has(f), `${f} is not both measured and an allowance`);
+    for (const f of [...c.combined]) assert.ok(!measured.has(f) && !allowance.has(f), `${f}, a combined figure, is neither consumption alone nor an allowance alone`);
+    // Every figure of remaining.committed, the usage totals and the
+    // invocations' token fields is in a class.
+    const all = new Set(Object.values(c).flat());
+    const committed = Object.keys(S.reads.pending.remaining.committed).filter((k) => k !== 'rule' && k !== 'measured_is').map((k) => `remaining.committed.${k}`);
+    for (const f of [...committed, 'usage.totals.tokens', 'usage.totals.unknown_allowance_tokens', 'app_totals.tokens', 'app_totals.unknown_allowance_tokens', 'usage.runs[].invocations[].usage', 'usage.runs[].invocations[].unknown_allowance_tokens', 'usage.runs[].invocations[].reserved_tokens', 'usage.runs[].invocations[].effective_limit_tokens', 'remaining.tokens', 'remaining.next_run_reservation_tokens', 'remaining.run_limit_tokens']) {
+      assert.ok(all.has(f), `${f} is classed (${JSON.stringify(c)})`);
+    }
+    for (const f of ['remaining.committed.settled_tokens', 'remaining.committed.under_way_observed_tokens', 'remaining.committed.measured_tokens', 'usage.totals.tokens', 'usage.runs[].invocations[].usage']) assert.ok(measured.has(f), `${f}: measured consumption`);
+    for (const f of ['remaining.committed.unknown_allowance_tokens', 'remaining.committed.under_way_reserved_tokens', 'remaining.committed.estimated_allowance_tokens', 'usage.totals.unknown_allowance_tokens', 'usage.runs[].invocations[].unknown_allowance_tokens', 'usage.runs[].invocations[].reserved_tokens']) assert.ok(allowance.has(f), `${f}: estimated allowance`);
+    for (const f of ['remaining.committed.total_tokens', 'remaining.tokens']) assert.ok(c.combined.includes(f), `${f}: combined, with its rule`);
+  });
+
+  test('(f) the committed figure split: measured_tokens = settled + observed under way, estimated_allowance_tokens = unknown allowances + reserved, the total their sum, with its rule; measured_is says a lower bound', () => {
+    for (const [what, read] of Object.entries(S.reads)) {
+      const k = read.remaining.committed;
+      assert.equal(k.measured_tokens, k.settled_tokens + k.under_way_observed_tokens, `${what}: measured = settled + observed under way`);
+      assert.equal(k.estimated_allowance_tokens, k.unknown_allowance_tokens + k.under_way_reserved_tokens, `${what}: allowance = unknown allowances + reserved`);
+      if (k.total_tokens !== null) assert.equal(k.total_tokens, k.measured_tokens + k.estimated_allowance_tokens, `${what}: total = measured + allowance`);
+      assert.ok(['complete', 'lower_bound'].includes(k.measured_is), `${what}: measured_is ${k.measured_is}`);
+      assert.match(k.rule, /total_tokens = measured_tokens \+ estimated_allowance_tokens/, `${what}: the rule names the parts`);
+      assert.match(k.rule, /not consumption/, `${what}: the rule says the total is not consumption`);
+      assert.equal(typeof read.remaining.tokens_rule, 'string');
+      assert.match(read.remaining.tokens_rule, /not the limit less consumption alone/);
+    }
+    assert.equal(S.reads.complete.remaining.committed.measured_is, 'complete', 'complete usage: measured completely');
+    assert.equal(S.reads.complete.remaining.committed.estimated_allowance_tokens, 0, 'nothing estimated');
+    const pend = S.reads.pending.remaining.committed;
+    assert.equal(pend.measured_is, 'lower_bound', 'an invocation under way: a lower bound');
+    assert.ok(pend.under_way_reserved_tokens > 0 && pend.estimated_allowance_tokens >= pend.under_way_reserved_tokens, 'the reservation is an allowance');
+    const cut = S.reads.cut.remaining.committed;
+    assert.equal(cut.measured_is, 'lower_bound', 'an incomplete invocation: a lower bound');
+    assert.ok(cut.unknown_allowance_tokens === S.cut.allowance && cut.estimated_allowance_tokens >= S.cut.allowance, 'the cut run\'s unknown allowance is in the estimated allowance');
+  });
+
+  test('(f) an estimated allowance never presented as consumption: the token totals exclude it, the rules and the limit\'s reason say so', () => {
+    for (const [what, read] of Object.entries(S.reads)) {
+      const t = read.usage.totals.tokens;
+      if (t.total !== null) assert.equal(t.total, t.billable_in + t.cached_in + t.out, `${what}: the token total is the measured categories only`);
+      assert.equal(typeof read.usage.totals.rule, 'string', `${what}: usage.totals.rule served`);
+      assert.match(read.usage.totals.rule, /unknown_allowance_tokens is an estimated allowance, not consumption/, `${what}: usage.totals.rule`);
+      assert.match(read.usage.totals.rule, /never added to the token total/);
+      assert.match(read.app_totals.cumulative_rule, /unknown_allowance_tokens is an estimated allowance/, `${what}: the app's rule`);
+    }
+    // The cut run: its allowance is shown apart and is in no measured figure.
+    const cut = S.reads.cut;
+    const inv = cut.usage.runs.flatMap((r) => r.invocations).find((i) => i.id === S.cut.inv);
+    assert.deepEqual([inv.usage.billable_in, inv.usage.out], [1000, 300], 'its usage: what was measured');
+    assert.ok(inv.unknown_allowance_tokens > 0);
+    const measuredSum = cut.usage.runs.flatMap((r) => r.invocations).reduce((n, i) => n + (i.usage.billable_in ?? 0) + (i.usage.out ?? 0), 0);
+    assert.equal(cut.remaining.committed.measured_tokens, measuredSum, 'measured_tokens is the billable tokens reported (in + out), the allowance not among them');
+    assert.equal(cut.usage.totals.tokens.total, cut.usage.totals.tokens.billable_in + cut.usage.totals.tokens.cached_in + cut.usage.totals.tokens.out, 'the token total excludes the allowance');
+    // The token limit's reason splits what it counted.
+    const k = S.reads.limit.remaining.committed;
+    assert.equal(S.reads.limit.iteration.status, 'limit_reached');
+    const reason = S.reads.limit.outcome.reason;
+    assert.ok(reason.includes(`Of the ${k.measured_tokens + k.estimated_allowance_tokens} committed, ${k.measured_tokens} is measured consumption`), `the reason states the measured part (${reason})`);
+    assert.ok(reason.includes(`${k.estimated_allowance_tokens} is estimated allowance, not consumption`), `and the allowance apart (${reason})`);
+  });
+
+  test('(f) unknown apart from both: a run that reported nothing is in neither the measured figure nor the allowance; the total unknown, never a partial sum', () => {
+    const u = S.reads.unknown;
+    const missing = u.usage.runs.filter((x) => x.work_kind === 'stage_build').at(-1).invocations[0];
+    assert.deepEqual([missing.usage.billable_in, missing.usage.out, missing.unknown_allowance_tokens], [null, null, null], 'no figure, no allowance: unknown');
+    const k = u.remaining.committed;
+    assert.equal(k.total_tokens, null, 'the committed total is unknown, never measured + allowance');
+    assert.equal(u.remaining.tokens, null);
+    assert.equal(k.measured_is, 'lower_bound', 'the measured figure is a lower bound while usage is unknown');
+    assert.equal(k.measured_tokens, k.settled_tokens + k.under_way_observed_tokens, 'measured counts only what was reported');
+    assert.equal(k.estimated_allowance_tokens, k.unknown_allowance_tokens + k.under_way_reserved_tokens, 'the allowance holds nothing for it');
+    assert.ok(u.remaining.tokens_reason.includes(missing.id), 'the unknown is named apart');
+    assert.equal(u.usage.totals.tokens.total_is, 'lower_bound');
   });
 });

@@ -4964,3 +4964,21 @@ Every other Reviewer `fix` in `test/acceptance/` names a check, or is plan-targe
 - the iterate refusal for an in-flight *deploy* (the case holds a teardown; both share one check).
 
 `scripts/run-tests.mjs`'s ROWS does not yet list M601 to M612. That list is the owner's.
+
+## The owner's rulings of 2026-10-29 pinned (M606 (f), M607 (a), M611 (e), M615 (e), M616 (e); objections 222, 224; SEAM §579)
+
+2026-10-29, by the Verifier, on `verify/alpha-preview`, from `integration/alpha-preview` 2d086dfa (main + the rapid prototype + the static preview + the follow-ups).
+
+| Row | File | Added or restated |
+|---|---|---|
+| M606 | `M606-accounting-completeness.test.mjs` | (f) four cases on the reads (a) to (e) took: the classes, the split, never consumption, unknown apart |
+| M607 | `M607-limits-and-the-shared-allowance.test.mjs` | (a) the preset 5,000,000: `limited_by` run, then iteration after an unknown allowance with another run under way |
+| M610 | `M610-iterate-and-the-second-alpha.test.mjs` | (a) restated (objection 224): the historical outcome, `next_step` current guidance |
+| M611 | `M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs` (new, slice 49, kernel) | (e) replacement and the end of an observation, on the scripted target; four cases |
+| M613 | `M613-static-mode-on-a-real-unit.test.mjs` | M616 (e)'s relay `host`/`url`, read on this file's real unit |
+| M615 | `M615-the-downloadable-deliverable.test.mjs` | (e) restated (objection 222 as ruled): the version in `prerequisites` |
+| M616 | `M616-deployment-compatibility-and-readiness.test.mjs` | (e) `blocked` through a static page's serving check and re-run checks, then `ready`; seven cases |
+
+Harness: `harness/scripted/child.mjs` claims a kind's launch ordinal (the cause of M610 (a)'s intermittent "not reached in 60 ticks"); `harness/deploy/static-journey.mjs` `STATIC_PAGE_BUILT` and `pageBuilt`'s `built`. Tables: `prototype.json` (`candidate.alpha_replaced`, `next_steps.alpha_gone`), `static-preview.json` (`readiness_states`). SEAM's static-preview §§572, 573 renumbered §§577, 578.
+
+**Not covered:** a replacement on a real unit (M611 (e)'s kernel file only); a deployment applied and then failing verification (the old candidate withdrawn at finalization); the other-environment exception; the relay read until M613 (d) runs on a qualified host.

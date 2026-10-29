@@ -562,6 +562,7 @@
       "M608-stop-and-a-deliberate-resume.test.mjs",
       "M609-discard-touches-only-its-own-iteration.test.mjs",
       "M610-iterate-and-the-second-alpha.test.mjs",
+      "M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs",
       "M612-the-receipt-and-the-untouched-planned-workflow.test.mjs",
       "M613-static-mode-of-local-service.test.mjs",
       "M614-serving-verification-of-a-static-site.test.mjs",

@@ -1,6 +1,6 @@
 // M613 (d), static mode of `local_service` on a real unit (slice 50;
 // sandbox lane). M7 plan §3b M613 (d); D4 §13.1, §9.2; SEAM.md §§256 to
-// 259 (M307's lane), 572, 573. Cases (a) to (c) are the kernel file
+// 259 (M307's lane), 577, 578. Cases (a) to (c) are the kernel file
 // M613-static-mode-of-local-service.
 //
 // A static site (SITE: an entry, a stylesheet, a module script importing a
@@ -11,10 +11,11 @@
 // the sealed artifact at /surety/app. Through the operator's relay, while
 // the round's checks run: `/` answers the entry's bytes, an asset its
 // bytes, HEAD is answered, POST is 405, a `..` path 404, and the HTML
-// carries no frame and no banner sentence. The round's checks run in real
+// carries no frame and no banner sentence; the environment read names the
+// relay with its host and url while it runs (row M616 (e)). The round's checks run in real
 // check domains, the engine's serving check among them. Then the teardown:
 // no unit of the environment's prefix is left, nothing claims a current
-// deployment (`running` null; M7 plan's `alpha.current`, see SEAM.md §573),
+// deployment (`running` null; M7 plan's `alpha.current`, see SEAM.md §578),
 // and the history is kept.
 //
 // SAFETY (BS4 §4.1; E64; SEAM.md §257). The only unit is the one the engine
@@ -54,6 +55,10 @@ describe('M613 (d) a static configuration on a real unit: served from the sealed
     // Through the operator's relay, while the round's checks run.
     J.relay = await ctx.fx.engine.post(`/v1/projects/${ctx.project}/environments/alpha/relay`, {});
     const port = env.content.port;
+    // Row M616 (e) (the owner's ruling of 2026-10-29; SEAM.md §579): the
+    // environment read's relay with its address while it runs, here because
+    // only a real unit has a relay.
+    J.relayRead = (await ctx.fx.engine.get(`/v1/projects/${ctx.project}/environments/alpha`)).body.environment;
     J.served = {
       root: await hostGet(port, '/'),
       assets: Object.fromEntries(await Promise.all(SITE_ASSETS.map(async (p) => [p, await hostGet(port, `/${p}`)]))),
@@ -64,6 +69,7 @@ describe('M613 (d) a static configuration on a real unit: served from the sealed
       inner: await hostGet(port, '/js/%2e%2e/%2e%2e/%2e%2e/etc/passwd'),
     };
     await ctx.fx.engine.request('DELETE', `/v1/projects/${ctx.project}/environments/alpha/relay`, { body: {} });
+    J.relayClosedRead = (await ctx.fx.engine.get(`/v1/projects/${ctx.project}/environments/alpha`)).body.environment;
     releaseCheck(ctx, J.svc, { get: ['/'], exit: 0 });
     J.verification = await verificationOf(ctx, J.op);
     J.serving = withStore(ctx.fx.home, (db) =>
@@ -97,6 +103,17 @@ describe('M613 (d) a static configuration on a real unit: served from the sealed
     assert.equal(J.request.authorization.status, 'issued');
     assert.equal(J.svc.app.argv[1], STATIC_SERVER, `the application is the engine's static server (${JSON.stringify(J.svc.app.argv)})`);
     assert.deepEqual(J.svc.app.argv.slice(2), ['--static', '--root=.', '--entry=index.html']);
+  });
+
+  test('M616 (e) the environment read\'s relay while it runs: host and url, the address the relay listens on; null once it is closed', () => {
+    const port = J.env.content.port;
+    const r = J.relayRead?.relay;
+    assert.ok(r, `the environment read names the open relay (${JSON.stringify(J.relayRead?.relay)})`);
+    assert.equal(r.port, port);
+    assert.equal(r.host, '127.0.0.1', 'the listener\'s bound interface');
+    assert.equal(r.url, `http://127.0.0.1:${port}/`);
+    assert.equal(J.relay.body?.relay?.url, r.url, `the open answer gives the same url (${J.relay.text})`);
+    assert.equal(J.relayClosedRead.relay, null, 'closed: no relay is named');
   });
 
   test('(d) / answers the entry\'s bytes; an asset its bytes; HEAD answered; POST 405; .. 404', () => {

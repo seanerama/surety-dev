@@ -1,5 +1,5 @@
 // Fixtures and reads for the static-preview rows M613 to M616 (the M7 plan
-// §3b; D4 §13, the owner's amendments of 2026-10-29; SEAM.md §§572, 573).
+// §3b; D4 §13, the owner's amendments of 2026-10-29; SEAM.md §§577, 578).
 // Kernel lane unless a helper says otherwise: the scripted deployment
 // adapter and check boundary stand in where M301's do. Nothing here creates
 // a unit or signals a process but this test's own children (the engine's

@@ -42,7 +42,7 @@ import { tableNames, withStore } from './harness/store.mjs';
 import { LIFECYCLE, WORK, legalEdges } from './harness/transitions.mjs';
 
 const CONTRACT_REFUSED = 8;
-// D4 §13's amendments as the Verifier states them (contract/static-preview.json; SEAM.md §572).
+// D4 §13's amendments as the Verifier states them (contract/static-preview.json; SEAM.md §577).
 const STATIC_PREVIEW = JSON.parse(readFileSync(new URL('./contract/static-preview.json', import.meta.url), 'utf8'));
 const API_DIR = join(REPO_ROOT, 'packages', 'engine', 'api');
 const D1 = join(REPO_ROOT, 'docs', 'design', 'sdlc-design-D1-engine-core.md');
@@ -258,7 +258,7 @@ describe('M73 the executable contract and the generated appendix', () => {
   });
 
   // D4 §13 (the owner's amendments of 2026-10-29; rows M613 to M616): the
-  // Verifier's table contract/static-preview.json, held both ways (SEAM.md §572).
+  // Verifier's table contract/static-preview.json, held both ways (SEAM.md §577).
   test("the contract holds D4 §13's amendments as the Verifier's static-preview table states them: the enumerations exactly, the events owned, the new tables' columns and keys", (t) => {
     const { doc } = fixture(t);
     for (const [name, values] of Object.entries(STATIC_PREVIEW.enums)) {

@@ -3,7 +3,10 @@
 // SEAM.md §575). Kernel lane, the scripted deployment adapter.
 //
 //   (a) …/iterate with change text on an ended iteration: seq + 1 with its
-//       predecessor, the limits snapshotted, the predecessor untouched. On a
+//       predecessor, the limits snapshotted, the predecessor untouched (its
+//       historical outcome, status and reason; its next_step, current
+//       guidance, no longer open_alpha once its Alpha was torn down:
+//       objection 224, the owner's ruling of 2026-10-29). On a
 //       running one: 409, and 409 while a one-shot run or a deployment
 //       operation of the project is in flight.
 //   (b) iteration 2's preparation question: "iteration 2 … continuing from
@@ -99,7 +102,20 @@ describe('M610 Iterate and the second Alpha', () => {
     const list = (await iterationsRead(fx, p)).iterations;
     assert.deepEqual(list.map((i) => [i.seq, i.status, i.predecessor, i.change]), [[1, 'alpha_ready', null, null], [2, 'preparing', one, CHANGE]]);
     const after1 = await iterationRead(fx, p, one);
-    for (const k of ['usage', 'owner_approvals', 'plan', 'brief', 'limitations', 'outcome']) assert.deepEqual(after1[k], S.oneRead[k], `the predecessor's ${k} untouched`);
+    for (const k of ['usage', 'owner_approvals', 'plan', 'brief', 'limitations']) assert.deepEqual(after1[k], S.oneRead[k], `the predecessor's ${k} untouched`);
+    // Objection 224 (the owner's ruling of 2026-10-29; the plan's M611 (e)):
+    // the outcome's status and reason are history and untouched; next_step
+    // is current guidance, and after the finalized teardown it no longer
+    // offers to open an Alpha that is not deployed (SEAM.md §579).
+    assert.equal(S.oneRead.outcome.next_step, 'open_alpha', 'before the teardown: open the Alpha');
+    assert.deepEqual([after1.outcome.status, after1.outcome.reason], [S.oneRead.outcome.status, S.oneRead.outcome.reason], "the predecessor's historical outcome untouched");
+    assert.deepEqual(Object.keys(after1.outcome).sort(), Object.keys(S.oneRead.outcome).sort(), 'the outcome keeps its members');
+    assert.equal(after1.alpha.current_state, 'torn_down', `its Alpha is not currently available: torn down (${after1.alpha.current_reason})`);
+    assert.equal(after1.alpha.current, null, 'no current Alpha claimed');
+    assert.notEqual(after1.outcome.next_step, 'open_alpha', 'next_step no longer offers to open the Alpha');
+    assert.equal(after1.outcome.next_step, PROTO.next_steps.alpha_gone, "next_step: the engine's guidance that the Alpha is no longer deployed");
+    assert.equal(after1.iteration.next_step, after1.outcome.next_step, 'the iteration read serves the same guidance');
+    assert.equal(list.find((i) => i.seq === 1).next_step, after1.outcome.next_step, 'and the list');
     assert.deepEqual([after1.iteration.status, after1.iteration.alpha_at, after1.alpha.candidate, after1.alpha.deployment_request], [S.oneRead.iteration.status, S.oneRead.iteration.alpha_at, S.oneRead.alpha.candidate, S.oneRead.alpha.deployment_request]);
 
     // Running: iteration 2 has not ended; iteration 1 is no longer the current one.

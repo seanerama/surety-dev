@@ -18,6 +18,16 @@
 //       termination; the iteration limit_reached with the reason.
 //   (f) a raise after limit_reached: it reopens; the iteration's limits
 //       updated.
+//   (a) as the owner's ruling of 2026-10-29 pins it (SEAM.md §579): the
+//       preset per-run limit is 5,000,000 tokens, and each run's effective
+//       limit = min(5,000,000, what the iteration has left after its
+//       settled usage, its unknown allowances and the other running runs'
+//       observed + reserved), computed in the claim's transaction (the
+//       receipt's budget snapshot) and served with limited_by: two runs
+//       given the per-run limit (limited_by run); one of them stopped
+//       (charged its unknown allowance) while the other runs on; the
+//       stopped work resumed: its new run given exactly the iteration's
+//       remainder (limited_by iteration).
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
@@ -36,6 +46,7 @@ import {
   builderOwn,
   builderScript,
   confirmed,
+  currentIt,
   eventsFor,
   firstPlanScript,
   holdingBuilder,
@@ -43,8 +54,13 @@ import {
   iterationRead,
   kindNext,
   limitsCommitted,
+  newApp,
+  ok,
+  openDecisionsRead,
   ownerPolicy,
+  policyRead,
   protoEngine,
+  receiptsOfRun,
   pump,
   result,
   runsOfIteration,
@@ -255,5 +271,76 @@ describe('M607 limits and the shared allowance', () => {
     const inv = after.usage.runs.find((x) => x.id === run.id).invocations[0];
     assert.ok(inv.unknown_allowance_tokens > 0, 'the timed-out run is charged its allowance, never 0');
     assertAccounted(after, 'after the deadline');
+  });
+
+  test('(a) the preset per-run limit 5,000,000, capped by the iteration\'s remaining allowance: limited_by run, then, after an unknown allowance and with another run under way, limited_by iteration', async () => {
+    const { fx } = S;
+    const { id: p } = await newApp(fx, { name: 'Tasks preset' });
+    const it = await currentIt(fx, p);
+    const policy = await policyRead(fx, p);
+    assert.equal(policy.effective.budget_run_billable_tokens, 5_000_000, 'the prototype preset\'s per-run limit');
+    // An iteration allowance large enough that the per-run limit binds
+    // first, raised by the owner before the preparation (as toBrief's
+    // policy; a raise is a widening he confirms). The project's day limit on
+    // tokens of unknown cost (D2; the scripted provider reports no cost)
+    // counts running allowances too: raised with it, so that only the
+    // per-run limit and the iteration's allowance bind here.
+    await ownerPolicy(fx, p, { prototype_budget_tokens: 12_000_000, budget_day_unknown_tokens: 50_000_000 }, 'the iteration allowance raised');
+    await tick(fx.engine, p);
+    if (!(await openDecisionsRead(fx, p)).some((d) => d.kind === 'prototype_preparation_approval')) {
+      await ok(fx.engine.post(`/v1/projects/${p}/iterations/${it.id}/prepare`, {}), 201, 'POST …/prepare after the policy change');
+    }
+    await answerOpen(fx, p, 'prototype_preparation_approval');
+    await pump(fx, p, statusIs(fx, p, it.id, 'awaiting_brief_approval'), { what: 'the brief' });
+    assert.equal((await iterationRead(fx, p, it.id)).iteration.limits.prototype_budget_tokens, 12_000_000, 'the iteration\'s allowance');
+    kindNext(fx, 'replan', [firstPlanScript({ stages: INDEPENDENT_STAGES })], firstPlanScript());
+    kindNext(fx, 'stage_build', [holdingBuilder('preset'), holdingBuilder('preset'), holdingBuilder('preset')], builderScript(1));
+    await answerOpen(fx, p, 'spec_approval');
+    await alphaReady(fx, p, { port: 18087 });
+    const r1 = await racing(fx, p, it.id, 2);
+    const two = underWay(r1);
+    for (const run of two) {
+      const inv = run.invocations[0];
+      assert.deepEqual([inv.run_limit_tokens, inv.effective_limit_tokens, inv.limited_by], [5_000_000, 5_000_000, 'run'], `run ${run.id}: min(5,000,000, the iteration's remainder) is the per-run limit`);
+      const [receipt] = receiptsOfRun(fx.home, run.id);
+      assert.equal(receipt.budget_snapshot.budget_run_billable_tokens, 5_000_000, 'fixed at the claim: the receipt\'s budget snapshot');
+    }
+    const c1 = r1.remaining.committed;
+    assert.equal(c1.total_tokens, c1.settled_tokens + 10_000_000, 'both runs\' observed + reserved: their effective limits');
+    assert.equal(r1.remaining.next_run_reservation_tokens, 12_000_000 - c1.total_tokens, 'a run dispatched now would get the remainder');
+    assert.equal(r1.remaining.next_run_limited_by, 'iteration');
+    assertAccounted(r1, 'two runs at the per-run limit');
+    // One stopped while the other runs on: charged its unknown allowance.
+    const [stopped, running] = two;
+    await confirmed(fx, `/v1/projects/${p}/runs/${stopped.id}/stop`);
+    const r2 = await pump(fx, p, async () => {
+      const x = await iterationRead(fx, p, it.id);
+      return x.usage.runs.find((y) => y.id === stopped.id)?.finished_at ? x : undefined;
+    }, { wait: false, max: 40, what: 'the stopped run to end' });
+    const cut = r2.usage.runs.find((y) => y.id === stopped.id).invocations[0];
+    assert.equal(cut.unknown_allowance_tokens, 5_000_000 - 1200, 'charged its effective limit less the billable it observed (1,000 in + 200 out)');
+    assert.ok(underWay(r2).some((y) => y.id === running.id), 'the other run is still under way');
+    // The stopped run's work resumed: its new run is claimed against what is left.
+    const held = workOfProject(fx.home, p).find((w) => w.id === stopped.work_item);
+    assert.equal(held.status, 'held', `the stopped run's work is held (${held.status})`);
+    await ok(fx.engine.post(`/v1/projects/${p}/work/${held.id}/resume`, {}), 200, 'the owner resumes the held work');
+    const r3 = await racing(fx, p, it.id, 2);
+    const fresh = underWay(r3).find((y) => y.id !== running.id);
+    assert.ok(fresh && fresh.work_item === stopped.work_item, 'a new run of the resumed work');
+    const inv = fresh.invocations[0];
+    const other = underWay(r3).find((y) => y.id === running.id).invocations[0];
+    const c3 = r3.remaining.committed;
+    const left = 12_000_000 - c3.settled_tokens - c3.unknown_allowance_tokens - other.effective_limit_tokens;
+    assert.equal(c3.unknown_allowance_tokens, cut.unknown_allowance_tokens, 'the unknown allowance counted once');
+    assert.ok(left > 0 && left < 5_000_000, `the remainder is below the per-run limit (${left})`);
+    assert.deepEqual([inv.run_limit_tokens, inv.effective_limit_tokens, inv.limited_by], [5_000_000, left, 'iteration'], 'min(5,000,000, the allowance less settled usage, the unknown allowance and the other run\'s observed + reserved)');
+    assert.equal(left, 12_000_000 - c3.settled_tokens - (5_000_000 - 1200) - 5_000_000, 'in figures');
+    const [receipt] = receiptsOfRun(fx.home, fresh.id);
+    assert.equal(receipt.budget_snapshot.budget_run_billable_tokens, left, 'fixed at the claim');
+    assert.equal(c3.total_tokens, 12_000_000, 'committed exactly the allowance, never past it');
+    assert.equal(r3.remaining.next_run_reservation_tokens, null, 'nothing left for another run');
+    assertAccounted(r3, 'after the resumed claim');
+    fx.scripted.release('all', 'preset');
+    await idle(fx, p);
   });
 });

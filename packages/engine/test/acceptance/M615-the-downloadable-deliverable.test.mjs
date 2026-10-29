@@ -3,7 +3,7 @@
 // additional owner approval is required to download an already-prepared
 // deliverable through an authenticated request with access to that project.
 // Downloading must not start agents, deploy anything or execute the
-// program"), §3.1; SEAM.md §§572, 573.
+// program"), §3.1; SEAM.md §§577, 578.
 //
 // (a) `GET …/candidates/:c/deliverable` for a `static_site` candidate whose
 //     phase gate is satisfied: ready, the package's identity, platform,
@@ -15,8 +15,9 @@
 //     reader), the second download byte-identical;
 // (d) what the download does not do: no run, work item, operation,
 //     decision or deployment; the only requirement the API token;
-// (e) a `node_service` candidate: hosting required, the start command and
-//     runtime version given (the version as a prerequisite; objection 222).
+// (e) a `node_service` candidate: hosting required, the start command in the
+//     instructions and the runtime version in the prerequisites, clearly
+//     visible there (the owner's ruling of 2026-10-29 on objection 222).
 //
 // The phase gate is satisfied through the engine's own gate route (`POST
 // …/gates/phase` with the published plan, M428 (d)), not by a fixture row.
@@ -197,16 +198,15 @@ describe('M615 (e) the deliverable of a node_service candidate', () => {
     assert.deepEqual(d.verification, { package: VERIFIED, execution: NOT_TESTED });
   });
 
-  // The row says "the start command and runtime version in the
-  // instructions"; the engine serves the version as a prerequisite, which
-  // D4 §13.3 ("its platform, instructions and prerequisites follow the
-  // output kind") also allows. Read as the run guidance the deliverable
-  // gives (instructions and prerequisites); objection 222 asks the owner
-  // which he meant (SEAM.md §573).
-  test('(e) the runtime version given in the run guidance (the version the environment pins, as a prerequisite)', () => {
+  // The owner's ruling of 2026-10-29 on objection 222 (the plan's M615 (e),
+  // main c54152cb): the runtime version belongs in the prerequisites,
+  // clearly visible there, and need not be repeated in the instructions; the
+  // start command stays in the instructions (the case above).
+  test('(e) the runtime version in the prerequisites, clearly visible there (the version the environment pins; objection 222 as ruled)', () => {
     const d = J.read.body.deliverable;
-    const guidance = [...d.instructions, ...d.prerequisites];
-    assert.ok(guidance.some((i) => i.includes(process.version)), `the deliverable gives the runtime version ${process.version}, the one the environment pins (instructions ${JSON.stringify(d.instructions)}; prerequisites ${JSON.stringify(d.prerequisites)})`);
-    assert.ok(d.prerequisites.some((i) => i.includes(`Node.js ${process.version}`)), `as the Node.js prerequisite (${JSON.stringify(d.prerequisites)})`);
+    assert.ok(Array.isArray(d.prerequisites) && d.prerequisites.length > 0, `the deliverable serves its prerequisites (${JSON.stringify(d.prerequisites)})`);
+    const named = d.prerequisites.filter((i) => typeof i === 'string' && i.includes(`Node.js ${process.version}`));
+    assert.equal(named.length, 1, `exactly one prerequisite names the runtime and its version, Node.js ${process.version}, the one the environment pins (prerequisites ${JSON.stringify(d.prerequisites)})`);
+    assert.ok(!d.instructions.some((i) => i.includes('Node.js') && !i.includes(process.version)), `no instruction names another Node.js version (${JSON.stringify(d.instructions)})`);
   });
 });

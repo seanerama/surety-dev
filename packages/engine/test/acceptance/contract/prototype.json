@@ -1,5 +1,5 @@
 {
-  "$comment": "Rapid prototype to Alpha (the owner's draft M7 plan, rows M601 to M612; SEAM.md §575). The names the M7 rows read, fixed from the owner's rulings R1 to R9 and S1 to S5 of 2026-10-28 and the engine's contract (api/schema.json) on build/rapid-prototype 4bb74433, slice E5. M73 holds the contract to `events` both ways: every event here is an EventType declared with an owner, and every `prototype.*` EventType of the contract is here. The other entries are read by the M7 rows only; no M1-M6 table holds them. `preset` is the bootstrap policy's change (revision 1) of a rapid_prototype project (R4, S5: budget_run_billable_tokens 5,000,000). `next_steps` are the iteration's next step after a limit (R4), an unknown committed figure (S2), a Stop (gap 4) and a Discard (R8). `owner_kinds` are the owner's answers of one iteration on the reduced path (R5, M604 (d)).",
+  "$comment": "Rapid prototype to Alpha (the owner's draft M7 plan, rows M601 to M612; SEAM.md §575). The names the M7 rows read, fixed from the owner's rulings R1 to R9 and S1 to S5 of 2026-10-28 and the engine's contract (api/schema.json) on build/rapid-prototype 4bb74433, slice E5. Added 2026-10-29 for the owner's ruling on current availability (SEAM.md §579): `candidate.alpha_replaced` in `events`, and `next_steps.alpha_gone`, the next step an Alpha-ready iteration's read serves once its Alpha is torn down or replaced (objection 224: `next_step` is current guidance). M73 holds the contract to `events` both ways: every event here is an EventType declared with an owner, and every `prototype.*` EventType of the contract is here. The other entries are read by the M7 rows only; no M1-M6 table holds them. `preset` is the bootstrap policy's change (revision 1) of a rapid_prototype project (R4, S5: budget_run_billable_tokens 5,000,000). `next_steps` are the iteration's next step after a limit (R4), an unknown committed figure (S2), a Stop (gap 4) and a Discard (R8). `owner_kinds` are the owner's answers of one iteration on the reduced path (R5, M604 (d)).",
   "modes": ["planned", "rapid_prototype"],
   "iteration_statuses": ["preparing", "awaiting_brief_approval", "building", "awaiting_owner", "alpha_ready", "failed", "stopped", "limit_reached", "discarded"],
   "open_statuses": ["preparing", "awaiting_brief_approval", "building", "awaiting_owner"],
@@ -7,6 +7,7 @@
     "prototype.iteration_created",
     "prototype.iteration_alpha_ready",
     "candidate.alpha_withdrawn",
+    "candidate.alpha_replaced",
     "prototype.iteration_limit_reached",
     "prototype.iteration_stopped",
     "prototype.iteration_discarded",
@@ -45,7 +46,8 @@
     "unknown": "iterate (a new iteration, whose own totals exclude this one's; the app's totals keep this unknown) or discard",
     "stop": "resume (POST …/resume), iterate or discard",
     "discard": "iterate",
-    "alpha": "open_alpha"
+    "alpha": "open_alpha",
+    "alpha_gone": "its Alpha is no longer deployed (torn down or replaced): iterate from the current iteration, or discard"
   },
   "owner_kinds": ["prototype_preparation_approval", "spec_approval", "check_correction_unclassifiable"],
   "routes": {

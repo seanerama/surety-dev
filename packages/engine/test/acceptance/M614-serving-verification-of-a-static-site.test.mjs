@@ -6,7 +6,7 @@
 // local assets. Record this as serving verified, not functional or visual
 // acceptance. Existing application checks and human-review requirements
 // remain unchanged. … no paid Verifier run solely to prove static files are
-// served"), §5.1, §5.4; D3 §4.3; SEAM.md §§572, 573.
+// served"), §5.1, §5.4; D3 §4.3; SEAM.md §§577, 578.
 //
 // (a) a `static_site` project's environment configured in static mode:
 //     exactly one required `post_deploy_serving` check, authored by the

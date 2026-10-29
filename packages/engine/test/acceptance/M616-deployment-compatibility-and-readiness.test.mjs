@@ -4,7 +4,7 @@
 // establish that the selected target can host the intended output—or
 // clearly explain the missing capability. 'Build complete' must distinguish
 // completed implementation from readiness to deploy"); D6 §6.2; SEAM.md
-// §§572, 573.
+// §§577, 578.
 //
 // (a) a plan bundle published for a browser app with an environment
 //     declared by the specification: `deployment.compatibility_evaluated`
@@ -21,7 +21,15 @@
 //     environment; the status's first sentence "The planned build and its
 //     automated gates are complete." followed by the readiness sentence;
 //     `primary_action` `deploy` only when ready, `configure_environment`
-//     when unconfigured, else null.
+//     when unconfigured, else null; and (the owner's ruling of 2026-10-29,
+//     the plan's M616 (e)) `blocked` while the engine would refuse a deploy
+//     now: a static page whose engine serving check is proposed and not yet
+//     applied (the reason naming the proposal and, while its question is
+//     open, the decision, served as `decision`, `primary_action`
+//     `answer_decision`), then the candidate's checks running (the reason
+//     naming them); never `deploy` while blocked; `ready` once they pass.
+//     The relay's `host` and `url` on the environment read need a real unit
+//     (the scripted adapter opens no relay): M613 (d)'s file reads them.
 //
 // Every project is the design journey's reference project in a variant
 // (harness/deploy/static-journey.mjs), reaching its published plan through
@@ -29,16 +37,21 @@
 // phase's completion on the kernel lane. Nothing is deployed.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { after, before, describe, test } from 'node:test';
 
+import { consume, openDecision } from './harness/decisions.mjs';
 import { eventsOfType } from './harness/journal.mjs';
-import { sharedFixture } from './harness/gates.mjs';
-import { scriptedEngine } from './harness/runs.mjs';
+import { proposalsOf, sharedFixture } from './harness/gates.mjs';
+import { recordChecks } from './harness/prototype.mjs';
+import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
 import { configContent, configure } from './harness/deploy/kernel.mjs';
-import { pageBuilt, pagePublished, servicePublished, silentPublished } from './harness/deploy/static-journey.mjs';
+import { STATIC_PAGE_BUILT, pageBuilt, pagePublished, servicePublished, silentPublished } from './harness/deploy/static-journey.mjs';
 
 const BUILD_DONE = 'The planned build and its automated gates are complete.';
+// The readiness states the plan's M616 (e) names (contract/static-preview.json, SEAM.md §579).
+const READINESS = JSON.parse(readFileSync(new URL('./contract/static-preview.json', import.meta.url), 'utf8')).readiness_states;
 const all = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
 
 const compatibilityEvents = (home, project) => eventsOfType(home, 'deployment.compatibility_evaluated').filter((e) => e.subject?.project === project);
@@ -229,5 +242,106 @@ describe('M616 (c) a Node service\'s bundle; silence', () => {
       assert.deepEqual([e.mode, e.state], [mode, 'unknown'], `${mode} mode: ${JSON.stringify(e)}`);
       assert.match(e.reason, /unknown/);
     }
+  });
+});
+
+// The plan's M616 (e) as the owner's ruling of 2026-10-29 amends it
+// (SEAM.md §579): readiness tells the truth while the engine would refuse a
+// deployment request now. A browser app whose Builder writes a static page
+// (STATIC_PAGE_BUILT: the tree agrees, `static_site`), built to its phase's
+// completion, then its environment configured in static mode: the engine
+// proposes its serving check (D4 §13.2), the owner is asked, approves, the
+// version is applied, and the candidate's checks run again.
+describe('M616 (e) a static page\'s readiness while the engine would refuse a deployment: blocked, then ready', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    J.fx = fx;
+    const { p } = await pagePublished(fx, { name: 'pantry-static' });
+    J.p = p;
+    await pageBuilt(fx, p, { built: STATIC_PAGE_BUILT });
+    J.built = await projectRead(fx, p.id);
+    await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18634));
+    J.proposals = proposalsOf(fx.home, p.id).filter((x) => x.proposed_by === 'engine');
+    J.proposed = await projectRead(fx, p.id);
+    const proposal = J.proposals[0];
+    J.decision = await openDecision(fx, p.id, 'check_correction_tightening', proposal.id, { max: 8 });
+    J.asked = await projectRead(fx, p.id);
+    await consume(fx, p.id, J.decision, 'approve');
+    J.approved = await projectRead(fx, p.id);
+    J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
+    await tickUntil(fx.engine, p.id, () => proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id && x.status === 'applied'), { max: 8, what: "the engine's serving check applied" });
+    J.applied = await projectRead(fx, p.id);
+    for (let i = 0; i < 8 && (await projectRead(fx, p.id)).build.deploy_readiness.state !== 'ready'; i++) {
+      await recordChecks(fx, p.id);
+      await tick(fx.engine, p.id);
+    }
+    J.ready = await projectRead(fx, p.id);
+  });
+  after(() => shared.cleanup());
+
+  const BLOCKED = /^The environment alpha can host this output \(static site\) with local_service in static mode, but a deployment would be refused now: /;
+
+  test('(e) every readiness served is one of the plan\'s states, blocked among them', () => {
+    assert.deepEqual([...READINESS].sort(), ['blocked', 'not_complete', 'ready', 'unconfigured', 'unknown', 'unsupported']);
+    for (const [what, read] of Object.entries(J).filter(([, v]) => v?.build?.deploy_readiness)) assert.ok(READINESS.includes(read.build.deploy_readiness.state), `${what}: ${read.build.deploy_readiness.state}`);
+  });
+
+  test('(e) built, a static site, its environment not configured: unconfigured', () => {
+    assert.equal(J.built.build.complete, true);
+    assert.equal(J.built.deployment_compatibility.output_kind, 'static_site', J.built.deployment_compatibility.reason);
+    assert.equal(J.built.build.deploy_readiness.state, 'unconfigured');
+    assert.equal(J.proposals.length, 1, 'configured in static mode, the engine proposed its serving check');
+  });
+
+  test('(e) the serving check proposed, its question not yet raised: blocked naming the proposal, no decision; the status keeps implementation apart and offers no deploy', () => {
+    const r = J.proposed.build.deploy_readiness;
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
+    assert.equal(r.environment, 'alpha');
+    assert.equal(r.decision, null, 'no decision settles it yet');
+    assert.match(r.reason, BLOCKED, r.reason);
+    assert.ok(r.reason.includes(J.proposals[0].id), `the reason names the engine's proposal (${r.reason})`);
+    assert.equal(J.proposed.now.state, 'build_complete', JSON.stringify(J.proposed.now));
+    assert.ok(J.proposed.now.reason.startsWith(`${BUILD_DONE} It cannot be deployed to alpha yet: `), J.proposed.now.reason);
+    assert.equal(J.proposed.now.primary_action, null, 'never deploy while blocked');
+  });
+
+  test('(e) its question open: blocked, the decision served and named, primary_action answer_decision', () => {
+    const r = J.asked.build.deploy_readiness;
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
+    assert.equal(r.decision, J.decision.id, 'the decision that settles it is served');
+    assert.match(r.reason, BLOCKED, r.reason);
+    assert.ok(r.reason.includes(J.proposals[0].id) && r.reason.includes(J.decision.id), `the reason names the proposal and the decision (${r.reason})`);
+    assert.equal(J.asked.now.primary_action, 'answer_decision');
+    assert.equal(J.asked.now.state, 'waiting_on_you', 'a decision waiting comes first in NOW');
+  });
+
+  test('(e) approved and not yet applied: still blocked, no decision, no deploy', () => {
+    assert.notEqual(J.approvedStatus, 'applied', `read before the version is applied (${J.approvedStatus})`);
+    const r = J.approved.build.deploy_readiness;
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
+    assert.equal(r.decision, null);
+    assert.match(r.reason, BLOCKED, r.reason);
+    assert.ok(r.reason.includes(J.proposals[0].id), r.reason);
+    assert.notEqual(J.approved.now.primary_action, 'deploy');
+  });
+
+  test('(e) applied, the candidate\'s checks running again: blocked naming the checks, no deploy', () => {
+    const r = J.applied.build.deploy_readiness;
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
+    assert.equal(r.decision, null);
+    assert.match(r.reason, BLOCKED, r.reason);
+    assert.match(r.reason, /the candidate's automated checks are running \(\d+ of \d+ completed\)/, r.reason);
+    assert.ok(J.applied.checks.queued + J.applied.checks.running > 0, `checks under way (${JSON.stringify(J.applied.checks)})`);
+    assert.notEqual(J.applied.now.primary_action, 'deploy');
+  });
+
+  test('(e) the checks passed: ready, deploy', () => {
+    const r = J.ready.build.deploy_readiness;
+    assert.equal(r.state, 'ready', JSON.stringify(r));
+    assert.equal(J.ready.now.state, 'build_complete');
+    assert.equal(J.ready.now.reason, `${BUILD_DONE} It can be deployed to alpha (static site, local_service static mode).`);
+    assert.equal(J.ready.now.primary_action, 'deploy');
   });
 });
