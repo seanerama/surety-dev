@@ -400,13 +400,18 @@ test('a nomination evaluates with the new candidate\'s tree; the next read serve
 // ---- deploy readiness and NOW -------------------------------------------------------------
 
 const BUILD_DONE = 'The planned build and its automated gates are complete.';
+const UNREAD_SERVING = "what follows a request could not be read (whether the engine's serving check is in place); the preview opens only once a deployment is verified";
+const NOT_PROPOSED =
+  "the engine's serving check has not been proposed yet; its proposal (made when the environment's static configuration is written), its approval, the deployment and its verification follow before the preview opens, and no deployment is made before the check is applied";
+const THEN_VERIFIED = 'the deployment and its verification follow before the preview opens';
 
 test('build.deploy_readiness is not_complete until the build is, whatever the environment', (t) => {
   const db = store(t);
   approve(db, { rep: spec(), map: BROWSER_MAP });
   specEnvironment(db);
   const p = read(db);
-  assert.deepEqual(p.build, { complete: false, deploy_readiness: { state: 'not_complete', reason: 'The planned build is not complete, so there is nothing to deploy yet.', environment: 'alpha' } });
+  assert.deepEqual(p.build, { complete: false, completed_at: null, deploy_readiness: { state: 'not_complete', reason: 'The planned build is not complete, so there is nothing to deploy yet.', environment: 'alpha' } });
+  assert.deepEqual(listProjects(db).projects[0].build, p.build, 'the list serves the same build fact');
   assert.notEqual(p.now.state, 'build_complete');
 });
 
@@ -425,7 +430,7 @@ test('the build complete, its environment not configured: unconfigured, configur
   const { db, site } = builtStaticSite(t);
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   const p = read(db);
-  assert.deepEqual(p.build, { complete: true, deploy_readiness: { state: 'unconfigured', reason: 'The environment alpha is not configured for hosting yet.', environment: 'alpha' } });
+  assert.deepEqual(p.build, { complete: true, completed_at: AT, deploy_readiness: { state: 'unconfigured', reason: 'The environment alpha is not configured for hosting yet.', environment: 'alpha' } });
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: 'configure_environment', reason: `${BUILD_DONE} Its environment alpha is not configured for hosting yet.`, cause: null });
   // The list says the same.
   assert.deepEqual(listProjects(db).projects[0].now, p.now);
@@ -446,13 +451,29 @@ test('the build complete in static mode: ready, deploy; the reason says where th
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   configure(db, 'alpha', STATIC_CONTENT);
   const READY = 'The environment alpha can host this output (static site) with local_service in static mode.';
-  // No protected version: the serving check's state is not read, and said so.
-  assert.deepEqual(read(db).build.deploy_readiness, { state: 'ready', reason: `${READY} Whether the engine's serving check is in place could not be read.`, environment: 'alpha' });
+  // No protected version: the serving check's state is not read, and said so;
+  // what follows a request is then not known (null, never a guess).
+  assert.deepEqual(read(db).build.deploy_readiness, {
+    state: 'ready',
+    reason: `${READY} Whether the engine's serving check is in place could not be read. Ready to request deployment, not verified and not open: ${UNREAD_SERVING}.`,
+    environment: 'alpha',
+    means: 'request_deployment',
+    follows: null,
+  });
   db.prepare(`INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, roots, effective_from) VALUES ('pv_1', ?, 'prj_1', 1, 'f1', 'initial', 'h', 'human', ?, 1, '[]', ?)`).run(AT, AT, AT);
   const p = read(db);
-  assert.deepEqual(p.build.deploy_readiness, { state: 'ready', reason: `${READY} The engine's serving check has not been proposed yet.`, environment: 'alpha' });
-  assert.deepEqual(p.now, { state: 'build_complete', primary_action: 'deploy', reason: `${BUILD_DONE} It can be deployed to alpha (static site, local_service static mode).`, cause: null });
-  assert.doesNotMatch(p.now.reason, /visual|human|production|accept/i);
+  // The owner's ruling of 2026-10-29: not yet proposed, `ready` means ready
+  // to request deployment; the proposal, its approval and the
+  // verification follow, and the text says so.
+  assert.deepEqual(p.build.deploy_readiness, {
+    state: 'ready',
+    reason: `${READY} The engine's serving check has not been proposed yet. Ready to request deployment, not verified and not open: ${NOT_PROPOSED}.`,
+    environment: 'alpha',
+    means: 'request_deployment',
+    follows: ['serving_check_proposal', 'approval', 'deployment', 'verification'],
+  });
+  assert.deepEqual(p.now, { state: 'build_complete', primary_action: 'deploy', reason: `${BUILD_DONE} It is ready to request deployment to alpha (static site, local_service static mode), not verified and not open: ${NOT_PROPOSED}.`, cause: null });
+  assert.doesNotMatch(p.now.reason, /visual|human|production|accept|ready to open/i);
 });
 
 test('the build complete with an unknown output: unknown, no primary action, why said', async (t) => {
@@ -481,10 +502,12 @@ test('several environments: the first hostable is named; with none hostable, the
   configure(db, 'beta', validateConfig({ ...structuredClone(NO_START), targets: ['beta'], mode: 'static' }));
   assert.deepEqual(read(db).build.deploy_readiness, {
     state: 'ready',
-    reason: "The environment beta can host this output (static site) with local_service in static mode. Whether the engine's serving check is in place could not be read.",
+    reason: `The environment beta can host this output (static site) with local_service in static mode. Whether the engine's serving check is in place could not be read. Ready to request deployment, not verified and not open: ${UNREAD_SERVING}.`,
     environment: 'beta',
+    means: 'request_deployment',
+    follows: null,
   });
-  assert.equal(read(db).now.reason, `${BUILD_DONE} It can be deployed to beta (static site, local_service static mode).`);
+  assert.equal(read(db).now.reason, `${BUILD_DONE} It is ready to request deployment to beta (static site, local_service static mode), not verified and not open: ${UNREAD_SERVING}.`);
   configure(db, 'beta', validateConfig({ ...structuredClone(SERVICE_CONTENT), targets: ['beta'] }));
   assert.deepEqual(read(db).build.deploy_readiness.environment, 'alpha', 'none hostable: the first');
 });
@@ -621,6 +644,82 @@ test("E1: the candidate's checks running again: blocked with the counts, no prim
   assert.equal(p.now.state, 'checking');
 });
 
+test("ready means ready to request deployment (the owner's ruling of 2026-10-29): the serving check in place, the deployment and its verification follow; the current candidate deployed there and verified, `verified`; never verified before", async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_s', ?, 'prj_1', 'pv_1', 'surety-static-serving', 'post_deploy_serving', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  const READY = 'The environment alpha can host this output (static site) with local_service in static mode.';
+  const IN_PLACE = " The engine's serving check is in place: after deployment it verifies that the entry page and its assets are served from the artifact (serving verified, not functional or visual acceptance).";
+  let p = read(db);
+  assert.deepEqual(p.build.deploy_readiness, {
+    state: 'ready',
+    reason: `${READY}${IN_PLACE} Ready to request deployment, not verified and not open: ${THEN_VERIFIED}.`,
+    environment: 'alpha',
+    means: 'request_deployment',
+    follows: ['deployment', 'verification'],
+  });
+  assert.equal(p.now.reason, `${BUILD_DONE} It is ready to request deployment to alpha (static site, local_service static mode), not verified and not open: ${THEN_VERIFIED}.`);
+  assert.equal(p.now.primary_action, 'deploy', 'the request is the primary action');
+  // A deployment of the current candidate applied there, not yet verified
+  // (its request pending): still request_deployment, never verified.
+  const env = db.prepare(`SELECT id FROM environments WHERE name = 'alpha' AND prefix IS NOT NULL`).get().id;
+  db.prepare(`INSERT INTO deployment_requests (id, created_at, project, request_key, requested_by, candidate, environment, authorization, outcome) VALUES ('dreq_1', ?, 'prj_1', 'k1', 'human', 'cand_1', ?, 'auth_1', 'pending')`).run(AT, env);
+  db.prepare(
+    `INSERT INTO operations (id, created_at, project, seq, kind, target, subject, idempotency_key, semantic_generation, status, deadline_at, authorization, finalized_at)
+     VALUES ('op_d1', ?, 'prj_1', 1, 'deploy', ?, '{}', 'kd1', 1, 'in_progress', ?, 'auth_1', ?)`,
+  ).run(AT, JSON.stringify({ environment: env }), AT, AT);
+  assert.equal(read(db).build.deploy_readiness.means, 'request_deployment', 'applied, not verified: not verified');
+  // Verified and completed: the request deployed, the candidate alpha_deployed.
+  db.prepare(`UPDATE deployment_requests SET outcome = 'deployed' WHERE id = 'dreq_1'`).run();
+  db.prepare(`UPDATE candidates SET progress = 'alpha_deployed' WHERE id = 'cand_1'`).run();
+  p = read(db);
+  assert.deepEqual([p.build.deploy_readiness.state, p.build.deploy_readiness.means, p.build.deploy_readiness.follows], ['ready', 'verified', ['deployment', 'verification']]);
+  assert.match(p.build.deploy_readiness.reason, /Ready: the current candidate cand_1 is deployed there and its deployment was verified by its automated checks \(serving verified, not functional or visual acceptance\); a request deploys it again, and that deployment is verified in turn\.$/);
+});
+
+test("ready for another output kind: with no deployment-specific post-deploy check, a request asks a Verifier to write it, and its approval, a request again, the deployment and its verification follow; with one, the deployment and its verification", (t) => {
+  const db = store(t);
+  approve(db, { rep: spec({ runtime: '`node server.mjs`' }), map: NODE_MAP });
+  specEnvironment(db);
+  completeBuild(db);
+  configure(db, 'alpha', validateConfig(structuredClone(SERVICE_CONTENT)));
+  effectiveV1(db);
+  const AUTHOR =
+    'the deployment-specific post-deploy check is not in place yet, so a request is refused naming it and asks a Verifier to write it; its approval, a request again, the deployment and its verification follow before the preview opens';
+  let r = read(db).build.deploy_readiness;
+  assert.deepEqual(r, {
+    state: 'ready',
+    reason: `The environment alpha can host this output (Node service) with local_service in service mode. Ready to request deployment, not verified and not open: ${AUTHOR}.`,
+    environment: 'alpha',
+    means: 'request_deployment',
+    follows: ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'],
+  });
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_b', ?, 'prj_1', 'pv_1', 'behaves', 'post_deploy_behavior', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  r = read(db).build.deploy_readiness;
+  assert.deepEqual([r.means, r.follows], ['request_deployment', ['deployment', 'verification']]);
+  assert.match(r.reason, new RegExp(`${THEN_VERIFIED}\\.$`));
+});
+
+test("open approvals first, build complete as its own fact (the owner's ruling of 2026-10-29): with a decision open NOW is waiting_on_you and says the build is complete after the decision sentence; build.complete and completed_at served in the read and the list", async (t) => {
+  const { db, site } = builtStaticSite(t);
+  nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
+  configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  engineProposal(db, 'awaiting_human');
+  decisionRow(db, 'dec_1', 'pp_1');
+  const p = read(db);
+  assert.deepEqual(p.now, { state: 'waiting_on_you', primary_action: 'answer_decision', reason: `One decision is waiting for your answer. ${BUILD_DONE}`, cause: null });
+  assert.deepEqual([p.build.complete, p.build.completed_at, p.build.deploy_readiness.state], [true, AT, 'blocked']);
+  const listed = listProjects(db).projects[0];
+  assert.deepEqual([listed.now, listed.build], [p.now, p.build], 'the list says the same');
+  // Not complete: the decision sentence alone.
+  db.prepare(`UPDATE phase_plans SET completed_at = NULL, status = 'published'`).run();
+  const q = read(db);
+  assert.deepEqual([q.now.state, q.now.reason, q.build.complete, q.build.completed_at], ['waiting_on_you', 'One decision is waiting for your answer.', false, null]);
+});
+
 // An environment configured (service mode), with an installed observation
 // made `ago` ms before now of generation 1, and the store's operation rows.
 function observedEnvironment(db, { ago = 2000 } = {}) {
@@ -731,7 +830,7 @@ test('RECORD-engine item 3: a rapid prototype with its build complete and undepl
   };
   iteration('alpha_ready');
   assert.equal(read(db).now.state, 'build_complete', 'built and not deployed: build_complete with the readiness sentence');
-  assert.ok(read(db).now.reason.startsWith(`${BUILD_DONE} It can be deployed to alpha`), read(db).now.reason);
+  assert.ok(read(db).now.reason.startsWith(`${BUILD_DONE} It is ready to request deployment to alpha`), read(db).now.reason);
   iteration('limit_reached', 'the token limit was reached', 'raise the limit or discard');
   assert.deepEqual(read(db).now, { state: 'idle', primary_action: null, reason: 'Prototype iteration 1 is limit_reached: the token limit was reached. Nothing more of it is dispatched; next: raise the limit or discard.', cause: null });
   iteration('discarded', 'discarded by the owner', 'none');

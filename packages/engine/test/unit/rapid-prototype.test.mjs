@@ -31,7 +31,7 @@ const { observeTrigger } = await import(join(dist, 'store', 'transitions', 'work
 const { readProject, listProjects } = await import(join(dist, 'store', 'projections.js'));
 const { listIterations, readIteration, iterationReceipt, receiptResponse } = await import(join(dist, 'prototype', 'iterations.js'));
 const { recordIterationAlpha, withdrawAlpha, replaceAlpha } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
-const { ALPHA_GONE_NEXT_STEP } = await import(join(dist, 'prototype', 'iterations.js'));
+const { ALPHA_GONE_NEXT_STEP, OUTCOME_NOTE } = await import(join(dist, 'prototype', 'iterations.js'));
 const { validatePolicySubmission, wideningKeys, projectEffectiveDefaults } = await import(join(dist, 'config', 'project-policy.js'));
 const { holdSecret } = await import(join(dist, 'records', 'redact.js'));
 const { chargeInvocation } = await import(join(dist, 'store', 'transitions', 'ledger.js'));
@@ -378,7 +378,9 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
   observe(fresh);
   read = readIteration(db, { project: p.id, iteration: p.iteration });
   assert.deepEqual(read.alpha.current, { observed_at: fresh, healthy: true, condition: 'healthy' });
-  assert.deepEqual(read.outcome, { status: 'alpha_ready', reason: 'alpha_complete', next_step: 'open_alpha' });
+  const alphaReadyAt = db.prepare(`SELECT at FROM events WHERE type = 'prototype.iteration_alpha_ready' ORDER BY seq DESC LIMIT 1`).get().at;
+  const recorded = { status: 'alpha_ready', reason: 'alpha_complete', next_step: 'open_alpha', recorded_at: alphaReadyAt };
+  assert.deepEqual(read.outcome, { status: 'alpha_ready', reason: 'alpha_complete', next_step: 'open_alpha', recorded, note: OUTCOME_NOTE });
 
   const withdrawn = transact(db, ENGINE_ACTOR, (tx) => withdrawAlpha(tx, { project: p.id, environment: 'env_1', operation: 'op_td' }));
   assert.deepEqual(withdrawn, ['cand_1']);
@@ -386,6 +388,11 @@ test('Alpha: recorded on the iteration as history; current only on a fresh obser
   read = readIteration(db, { project: p.id, iteration: p.iteration });
   assert.equal(read.alpha.current, null, 'a torn-down Alpha is not current, however fresh the last observation');
   assert.deepEqual([read.alpha.deployed_at, read.iteration.alpha_at, read.outcome.status], [it.alpha_at, it.alpha_at, 'alpha_ready'], 'the history is kept');
+  // The owner's ruling of 2026-10-29: next_step is current guidance; the
+  // outcome as recorded is served beside it, unchanged.
+  assert.equal(read.outcome.next_step, ALPHA_GONE_NEXT_STEP, 'current guidance');
+  assert.deepEqual(read.outcome.recorded, recorded, 'the recorded outcome verbatim, its next step open_alpha as stored');
+  assert.deepEqual(iterationReceipt(db, { project: p.id, iteration: p.iteration }).outcome, read.outcome, 'the receipt the same');
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'candidate.alpha_withdrawn'`).get().n, 1);
   // Slice E5 (the owner's ruling S3): every mode. A planned project's
   // candidate is set back by its teardown too; its deployment history kept.

@@ -369,6 +369,44 @@ export const ALPHA_GONE_NEXT_STEP = 'its Alpha is no longer deployed (torn down 
 const servedNextStep = (stored: string | null, state: AlphaCurrentState | null): string | null =>
   stored === 'open_alpha' && (state === 'torn_down' || state === 'replaced') ? ALPHA_GONE_NEXT_STEP : stored;
 
+// The event types whose transactions write an iteration's status, outcome
+// reason or next step (prototype.ts and prototype/brief.ts): each such
+// UPDATE emits one of them, about the iteration, in its own transaction.
+// `prototype.iteration_limits_changed` writes them only when it reopens the
+// iteration (payload.reopened).
+const OUTCOME_WRITING_EVENTS = [
+  'prototype.iteration_created',
+  'prototype.iteration_status_changed',
+  'prototype.brief_prepared',
+  'prototype.brief_approved',
+  'prototype.iteration_alpha_ready',
+  'prototype.iteration_limit_reached',
+  'prototype.iteration_stopped',
+  'prototype.iteration_discarded',
+  'prototype.iteration_resumed',
+];
+
+// When the stored outcome was last written: the time of the newest event of
+// a transaction that wrote it; null when none is found (not known, never a
+// guess).
+function outcomeRecordedAt(db: Db, it: IterationRow): string | null {
+  const row = db
+    .prepare(
+      `SELECT "at" FROM "events" WHERE json_extract("subject", '$.iteration') = ?
+         AND ("type" IN (${OUTCOME_WRITING_EVENTS.map(() => '?').join(', ')})
+              OR ("type" = 'prototype.iteration_limits_changed' AND json_extract("payload", '$.reopened') = 1))
+       ORDER BY "seq" DESC LIMIT 1`,
+    )
+    .get(it.id, ...OUTCOME_WRITING_EVENTS) as { at: string } | undefined;
+  return row?.at ?? null;
+}
+
+// The note served with `outcome` (the owner's ruling of 2026-10-29: "next_step
+// means current guidance. Historical outcomes remain preserved separately."):
+// which of its fields is current guidance and which is the record.
+export const OUTCOME_NOTE =
+  'status and reason are the iteration\'s outcome as recorded; next_step is current guidance: what the owner can do now (a recorded open_alpha is served as no longer available once the Alpha was torn down or replaced). recorded is the stored outcome verbatim, history never rewritten by a read: status, reason and next_step as the engine wrote them, and recorded_at, when they were last written (null when that is not known).';
+
 // The note served with `alpha`: which of its fields are history and which
 // is current availability.
 export const ALPHA_HISTORY_NOTE =
@@ -676,7 +714,15 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       statement:
         'Surety records no human acceptance of this prototype. Alpha ready means its automated checks passed and its deployment was verified by them; whether the prototype is acceptable to use or to look at is the owner\'s judgement, not recorded here.',
     },
-    outcome: { status: it.status, reason: it.outcome_reason, next_step: servedNextStep(it.next_step, alphaNowState.state) },
+    outcome: {
+      status: it.status,
+      reason: it.outcome_reason,
+      // Current guidance (the owner's ruling of 2026-10-29).
+      next_step: servedNextStep(it.next_step, alphaNowState.state),
+      // The outcome as stored, beside it: history, never rewritten.
+      recorded: { status: it.status, reason: it.outcome_reason, next_step: it.next_step, recorded_at: outcomeRecordedAt(db, it) },
+      note: OUTCOME_NOTE,
+    },
     // What Stop and Discard would do now (slice E2; R4, R8): the console
     // shows these consequences, the confirmation's preview binds them.
     controls: iterationControls(db, it.id),

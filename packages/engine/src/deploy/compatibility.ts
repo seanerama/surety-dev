@@ -75,6 +75,40 @@ export interface DeployReadiness {
   environment: string | null;
   // `blocked` only: the open decision whose answer unblocks it, or null.
   decision?: string | null;
+  // `ready` only (the owner's ruling of 2026-10-29: "If a serving check has
+  // not yet been proposed, readiness may mean ready to request deployment,
+  // not 'verified' or 'ready to open.' State that approval and verification
+  // follow."): what `ready` means (READY_MEANINGS), and what follows a
+  // request, in order, before the preview opens (REQUEST_STEPS); null when
+  // that cannot be read.
+  means?: ReadyMeaning;
+  follows?: RequestStep[] | null;
+}
+
+// What `ready` means: `request_deployment`, a deployment can be requested
+// now and is neither verified nor open before what `follows` has happened;
+// `verified`, the current candidate is deployed in that environment and its
+// deployment was verified by its automated checks (serving verified for a
+// static site, never functional or visual acceptance), so a request deploys
+// it again.
+export const READY_MEANINGS = ['request_deployment', 'verified'] as const;
+export type ReadyMeaning = (typeof READY_MEANINGS)[number];
+// The steps that can follow a request: the engine's proposal of its
+// serving check (a static site in static mode, D4 §13.2); the
+// deployment-specific post-deploy check written by a Verifier (any other
+// output kind whose effective version has none: a request is refused
+// naming it and asks a Verifier for it, alpha-gap.ts, and is made again
+// once it is applied); the approval of that protected proposal; the
+// deployment; its verification.
+export const REQUEST_STEPS = ['serving_check_proposal', 'deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'] as const;
+export type RequestStep = (typeof REQUEST_STEPS)[number];
+
+// What follows a request, as `readinessOf` serves it with `ready`.
+export interface RequestPath {
+  means: ReadyMeaning;
+  follows: RequestStep[] | null;
+  // One clause for the reason and the sentence (lower case, no final stop).
+  clause: string;
 }
 
 // What would refuse a deployment request now, though the environment can
@@ -368,11 +402,14 @@ export function deploymentEnvironment(compat: Compatibility): EnvironmentCompati
 // a static site is ready in static mode.
 // `block`: what would refuse a request now (AdmissionBlock), asked only
 // when the environment can host the output.
+// `request`: what follows a request now (RequestPath), asked only when
+// ready; without it `ready` is served as before, with no `means`.
 export function readinessOf(
   complete: boolean,
   compat: Compatibility,
   serving?: ReturnType<typeof servingCheckState>,
   block?: () => AdmissionBlock | null,
+  request?: () => RequestPath,
 ): { readiness: DeployReadiness; sentence: string } {
   const env = deploymentEnvironment(compat);
   const environment = env?.name ?? null;
@@ -398,13 +435,21 @@ export function readinessOf(
           sentence: ` It cannot be deployed to ${env.name} yet: ${b.clause}.`,
         };
       }
+      const hosts = `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${compat.output_kind === 'static_site' && serving !== undefined ? SERVING_SENTENCE[serving] : ''}`;
+      const path = request?.() ?? null;
+      if (path === null) {
+        return { readiness: { state: 'ready', reason: hosts, environment }, sentence: ` It can be deployed to ${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode).` };
+      }
+      const where = `${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode)`;
       return {
         readiness: {
           state: 'ready',
-          reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${compat.output_kind === 'static_site' && serving !== undefined ? SERVING_SENTENCE[serving] : ''}`,
+          reason: `${hosts} ${path.means === 'verified' ? 'Ready: ' : 'Ready to request deployment, not verified and not open: '}${path.clause}.`,
           environment,
+          means: path.means,
+          follows: path.follows,
         },
-        sentence: ` It can be deployed to ${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode).`,
+        sentence: path.means === 'verified' ? ` It is deployed to ${where}: ${path.clause}.` : ` It is ready to request deployment to ${where}, not verified and not open: ${path.clause}.`,
       };
     }
     case 'unconfigured':

@@ -389,6 +389,22 @@ export function buildComplete(db: Db, project: string): boolean {
   return phases.every((ph) => db.prepare(`SELECT 1 FROM "phase_plans" WHERE "project" = ? AND "phase_number" = ? AND "completed_at" IS NOT NULL`).get(project, ph.number) !== undefined);
 }
 
+// When the build became complete, as recorded: the newest `completed_at`
+// among the completed plans of the current roadmap's phases (the
+// completion that made every phase complete, or a later one of the same
+// phases). null while the build is not complete.
+export function buildCompletedAt(db: Db, project: string): string | null {
+  if (!buildComplete(db, project)) return null;
+  const road = db.prepare('SELECT "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(project) as { phases: string } | undefined;
+  const numbers = (parseJson<{ number: number }[]>(road?.phases ?? null) ?? []).map((ph) => ph.number);
+  let latest: string | null = null;
+  for (const n of numbers) {
+    const row = db.prepare(`SELECT MAX("completed_at") AS "at" FROM "phase_plans" WHERE "project" = ? AND "phase_number" = ? AND "completed_at" IS NOT NULL`).get(project, n) as { at: string | null };
+    if (row.at !== null && (latest === null || row.at > latest)) latest = row.at;
+  }
+  return latest;
+}
+
 // ---- the `phase` gate's own reasons (D6 §5.8; A.4; K5; B07) ---------------------------------
 
 // PLAN_REQUIREMENT_UNPLANNED on the gate: a requirement the current roadmap

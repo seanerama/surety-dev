@@ -20,11 +20,12 @@ import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { observationEndedBy, readLogs } from './transitions/observe.js';
 import { projectOptions, projectPolicy } from './transitions/settings.js';
-import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentIteration, prototypeBlocker } from './transitions/prototype.js';
+import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
-import { buildComplete } from '../plan/phase.js';
-import { type AdmissionBlock, type Compatibility, deploymentEnvironment, readinessOf, servedCompatibility, servingCheckState, servingPendingBlock, unreadCompatibility } from '../deploy/compatibility.js';
+import { buildComplete, buildCompletedAt } from '../plan/phase.js';
+import { type AdmissionBlock, type Compatibility, type RequestPath, deploymentEnvironment, readinessOf, servedCompatibility, servingCheckState, servingPendingBlock, unreadCompatibility } from '../deploy/compatibility.js';
+import { deploymentRequirementMet } from './transitions/serving.js';
 import type { TreeAnswer } from '../deploy/output-kind.js';
 import type { WorkRow } from './transitions/work.js';
 
@@ -407,6 +408,8 @@ interface ReadinessForNow {
   primary: 'deploy' | 'configure_environment' | 'answer_decision' | null;
 }
 
+const BUILD_COMPLETE_SENTENCE = 'The planned build and its automated gates are complete.';
+
 function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number, checks: ChecksRead, readiness: () => ReadinessForNow) {
   const refusal = refusalOf(db, project, runs);
   let state: NowState;
@@ -421,6 +424,18 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
   } else if (decisions > 0) {
     state = 'waiting_on_you';
     reason = decisions === 1 ? 'One decision is waiting for your answer.' : `${decisions} decisions are waiting for your answer.`;
+    // The owner's ruling of 2026-10-29: "Open approvals take precedence in
+    // the primary status, while 'build complete' remains visible as a
+    // separate fact." Said here after the decision sentence, and served as
+    // `build` beside NOW whatever NOW is. Where completion cannot be read,
+    // nothing is said here; `build.complete` serves null with the reason.
+    let complete = false;
+    try {
+      complete = buildComplete(db, project);
+    } catch {
+      complete = false;
+    }
+    if (complete) reason += ` ${BUILD_COMPLETE_SENTENCE}`;
     primary = 'answer_decision';
   } else if (runs.length > 0) {
     state = 'running';
@@ -463,7 +478,7 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
         // status says more (prototypeOwnStatus) is never hidden by it.
         const r = readiness();
         state = 'build_complete';
-        reason = `The planned build and its automated gates are complete.${r.sentence}`;
+        reason = `${BUILD_COMPLETE_SENTENCE}${r.sentence}`;
         primary = r.primary;
       } else {
         state = 'idle';
@@ -616,7 +631,8 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
     const reason = 'Whether the planned build is complete cannot be read from the store.';
     return { compatibility, complete, readiness: { state: 'unknown', reason, environment: null }, now: { sentence: '', primary: null } };
   }
-  const { readiness, sentence } = readinessOf(complete, compatibility, compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined, () => admissionBlock(db, project, compatibility));
+  const serving = compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined;
+  const { readiness, sentence } = readinessOf(complete, compatibility, serving, () => admissionBlock(db, project, compatibility), () => requestPath(db, project, compatibility, serving));
   return {
     compatibility,
     complete,
@@ -651,6 +667,98 @@ function admissionBlock(db: Db, project: string, compatibility: Compatibility): 
     };
   }
   return null;
+}
+
+// What `ready` means and what follows a request now, before the preview
+// opens (the owner's ruling of 2026-10-29: "If a serving check has not yet
+// been proposed, readiness may mean ready to request deployment, not
+// 'verified' or 'ready to open.' State that approval and verification
+// follow."). Asked only when the environment can host the output and
+// nothing would refuse a request now (admissionBlock):
+// - `verified`: the current candidate is alpha_deployed and the deployment
+//   running in that environment is its own, deployed (verified and
+//   completed);
+// - otherwise `request_deployment`, with what follows a request:
+//   - a static site in static mode, by the engine's serving check: in
+//     place, the deployment and its verification; proposed, its approval
+//     first; not proposed, its proposal (made when the environment's
+//     static configuration is written, deploy/commands.ts) and approval
+//     first; not read, null;
+//   - any other output kind, by the deployment-specific post-deploy check
+//     of the effective protected version's `alpha_complete` scope
+//     (serving.ts deploymentRequirementMet): present, the deployment and
+//     its verification; absent, a request is refused naming it and asks a
+//     Verifier to write it (alpha-gap.ts), its approval, then a request
+//     again, the deployment and its verification; not read, null.
+// Never `verified` before the deployment's verification.
+function requestPath(db: Db, project: string, compatibility: Compatibility, serving: ReturnType<typeof servingCheckState> | undefined): RequestPath {
+  const env = deploymentEnvironment(compatibility);
+  const verifies = 'the deployment and its verification follow before the preview opens';
+  const unread = (why: string): RequestPath => ({ means: 'request_deployment', follows: null, clause: `what follows a request could not be read (${why}); the preview opens only once a deployment is verified` });
+  try {
+    const candidate = currentCandidate(db, project);
+    if (env !== null && candidate !== null) {
+      const progress = (db.prepare('SELECT "progress" FROM "candidates" WHERE "id" = ?').get(candidate) as { progress: string } | undefined)?.progress;
+      const running = currentDeploymentRequest(db, env.environment);
+      const runningCandidate = running === null ? null : ((db.prepare('SELECT "candidate" FROM "deployment_requests" WHERE "id" = ?').get(running) as { candidate: string } | undefined)?.candidate ?? null);
+      if (progress === 'alpha_deployed' && runningCandidate === candidate) {
+        return {
+          means: 'verified',
+          follows: ['deployment', 'verification'],
+          clause: `the current candidate ${candidate} is deployed there and its deployment was verified by its automated checks (${compatibility.output_kind === 'static_site' && env.mode === 'static' ? 'serving verified, ' : ''}not functional or visual acceptance); a request deploys it again, and that deployment is verified in turn`,
+        };
+      }
+    }
+  } catch (err) {
+    return unread(err instanceof Error ? err.message : String(err));
+  }
+  if (compatibility.output_kind === 'static_site' && env?.mode === 'static') {
+    switch (serving) {
+      case 'present':
+        return { means: 'request_deployment', follows: ['deployment', 'verification'], clause: verifies };
+      case 'pending':
+        return { means: 'request_deployment', follows: ['approval', 'deployment', 'verification'], clause: `the engine's serving check is proposed; its approval, the deployment and its verification follow before the preview opens` };
+      case 'none':
+        return {
+          means: 'request_deployment',
+          follows: ['serving_check_proposal', 'approval', 'deployment', 'verification'],
+          clause: `the engine's serving check has not been proposed yet; its proposal (made when the environment's static configuration is written), its approval, the deployment and its verification follow before the preview opens, and no deployment is made before the check is applied`,
+        };
+      default:
+        return unread("whether the engine's serving check is in place");
+    }
+  }
+  let kinds: string[];
+  try {
+    const effective = effectiveVersion(db, project);
+    kinds = effective
+      ? (db.prepare(`SELECT "kind", "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "required" = 1`).all(effective.id) as { kind: string; gate_kinds: string }[])
+          .filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'))
+          .map((c) => c.kind)
+      : [];
+  } catch (err) {
+    return unread(`the effective protected version's checks: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (deploymentRequirementMet(kinds, compatibility.output_kind)) return { means: 'request_deployment', follows: ['deployment', 'verification'], clause: verifies };
+  return {
+    means: 'request_deployment',
+    follows: ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'],
+    clause: `the deployment-specific post-deploy check is not in place yet, so a request is refused naming it and asks a Verifier to write it; its approval, a request again, the deployment and its verification follow before the preview opens`,
+  };
+}
+
+// `build`: `complete` (null when it cannot be read), `completed_at` (when
+// the build became complete; null while it is not, or not read), and
+// `deploy_readiness`. A store failure reading them is said in the
+// readiness, never taken as not complete.
+function buildFact(db: Db, project: string, deploy: () => ReturnType<typeof deployFacts>) {
+  try {
+    const d = deploy();
+    return { complete: d.complete, completed_at: d.complete === true ? buildCompletedAt(db, project) : null, deploy_readiness: d.readiness };
+  } catch (err) {
+    const reason = `Whether the planned build is complete and can be deployed cannot be read from the store (${err instanceof Error ? err.message : String(err)}).`;
+    return { complete: null, completed_at: null, deploy_readiness: { state: 'unknown' as const, reason, environment: null } };
+  }
 }
 
 function projectSummary(db: Db, project: string, trees: TreeAnswer[] = []) {
@@ -692,6 +800,12 @@ function projectRead(db: Db, project: string, trees: TreeAnswer[]) {
       // The execution mode (slice E1): planned or rapid_prototype.
       mode,
       now,
+      // The build's completion as a fact of its own, beside NOW whatever NOW
+      // is (the owner's ruling of 2026-10-29: "Open approvals take precedence
+      // in the primary status, while 'build complete' remains visible as a
+      // separate fact"), with its readiness to deploy apart from it (D4
+      // §13.4); in the list as in the project read.
+      build: buildFact(db, project, deploy),
       checks,
       checks_reason: checksReason,
       execution: { runs },
@@ -727,7 +841,7 @@ export function readProject(db: Db, args: { project: string; trees?: TreeAnswer[
       // static-preview shapes, §5), and the build's completion beside its
       // readiness to deploy: implementation complete is not deployable.
       deployment_compatibility: deploy.compatibility,
-      build: { complete: deploy.complete, deploy_readiness: deploy.readiness },
+      build: read.summary.build,
       name: row.name,
       tier: row.tier,
       paused: row.paused === 1,
