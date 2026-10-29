@@ -8,6 +8,8 @@
 // keep the identities they were written with.
 
 import { limitsChanged } from './prototype.js';
+import { recordCompatibility } from '../../deploy/compatibility.js';
+import type { TreeAnswer } from '../../deploy/output-kind.js';
 import { followUpsDue } from '../../plan/deferral.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { reraiseOnPolicy } from '../../adopt/records.js';
@@ -101,6 +103,9 @@ export interface RefInputs {
   by?: 'engine_cadence' | 'builder_request';
   // the revision's module presence as read before the intent (D3 §4.1)
   module_presence?: { modules: string[]; read_at: string; basis: string };
+  // the revision's tree as read before the intent (the deployment
+  // compatibility, the static-preview shapes §5)
+  output_tree?: TreeAnswer;
   // policy
   revision?: number;
   blob?: string;
@@ -436,6 +441,9 @@ function finalizeNomination(tx: Tx, op: OpDetail, inputs: RefInputs): Record<str
   // The items now verifying are reconciled (D3 §2.10): a failure already
   // recorded at their current candidate is repaired here.
   reconcileRepairs(tx, op.project);
+  // Whether the environments can host the new candidate's output, from its
+  // tree as read before the intent (the static-preview shapes, §5).
+  recordCompatibility(tx, { project: op.project, trigger: 'candidate_nominated', tree: inputs.output_tree ?? null });
   return { candidate, verification: verification.work_item.id };
 }
 

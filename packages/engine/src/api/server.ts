@@ -29,8 +29,12 @@ import { credentialStatus, registerCredential } from '../setup/credentials.js';
 import { policyDefaults } from '../setup/policy-defaults.js';
 import { resolveInstallation } from '../trust/fixture.js';
 import { join } from 'node:path';
+import { treesForRead } from '../deploy/compatibility-eval.js';
+import type { TreeAnswer } from '../deploy/output-kind.js';
 import { prepareConfig, prepareDeployment, prepareRelayClose, prepareRelayOpen, prepareResolveSecrets, settleDeployment, settleRelayOpen } from '../deploy/commands.js';
 import { homePaths } from '../paths.js';
+import { adapterRead } from '../deploy/adapter-read.js';
+import { deliverableDownload, deliverableRead } from '../deploy/deliverable.js';
 import { log } from '../runtime.js';
 import { exportEntries, ustar } from '../design/export.js';
 import { receiptResponse } from '../prototype/iterations.js';
@@ -204,6 +208,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
     if (!state.runtime) throw storeError(new Error('the engine is not running'));
     return state.runtime;
   };
+  // The candidates' trees a read computes the deployment compatibility from
+  // when no current evaluation records them (deploy/compatibility-eval.ts),
+  // read here, on this thread; a read that fails leaves them not read (the
+  // read then says so), never a guess.
+  const readTrees = (project: string | null): Promise<TreeAnswer[]> =>
+    treesForRead({ read: (name, args) => store().call('read', { name, args }), setting: (k) => state.runtime?.setting(k as 'git_deadline') }, project).catch(() => []);
 
   // The engine's own fixture project for a qualification attempt outside the
   // test mode (trust/fixture.ts).
@@ -331,6 +341,12 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         },
       };
     }
+    // SHAPES.md §1: the adapter's capability read.
+    if (s.length === 3 && s[1] === 'adapters' && get) {
+      const adapter = decodeSegment(s[2]!);
+      if (adapter === null) return null;
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await adapterRead(runtime(), adapter) }) };
+    }
     // D6 §8.1 step 1, A.8 (SEAM.md §377): the adoption of an existing repository.
     if (s.length === 3 && s[1] === 'projects' && s[2] === 'adopt' && post) {
       return { kind: 'prepared', name: 'project.adopt', prepare: (b) => prepareAdopt(runtime(), b), settle: (p) => settleAdopt(runtime(), p) };
@@ -339,7 +355,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       return { kind: 'prepared', name: 'project.create', prepare: (b) => prepareBootstrap(runtime(), b) };
     }
     if (s.length === 2 && s[1] === 'projects' && get) {
-      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: {} }) }) };
+      return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'projects.list', args: { trees: await readTrees(null) } }) }) };
     }
     if (s.length === 2 && s[1] === 'events' && method === 'GET') {
       return {
@@ -360,7 +376,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         kind: 'direct',
         handler: async () => ({
           status: 200,
-          body: await withIdeaText(await store().call('read', { name: 'project.read', args: { project } }), () => store().call<{ repo: string } | null>('read', { name: 'project.repo', args: { project } })),
+          body: await withIdeaText(await store().call('read', { name: 'project.read', args: { project, trees: await readTrees(project) } }), () => store().call<{ repo: string } | null>('read', { name: 'project.repo', args: { project } })),
         }),
       };
     }
@@ -382,6 +398,29 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const candidate = decodeSegment(rest[1]!);
         if (candidate === null) return null;
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'candidate.read', args: { project, candidate } }) }) };
+      }
+      // SHAPES.md §4: a candidate's downloadable package, and its bytes. The
+      // owner's ruling of 2026-10-29: "No additional owner approval is
+      // required to download an already-prepared deliverable through an
+      // authenticated request with access to that project. Downloading must
+      // not start agents, deploy anything or execute the program." The API
+      // token, as on every project route, and nothing else: no decision is
+      // raised, nothing is dispatched, deployed or run (deploy/deliverable.ts).
+      if (rest.length === 3 && rest[0] === 'candidates' && rest[2] === 'deliverable' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await deliverableRead(runtime(), project, candidate) }) };
+      }
+      if (rest.length === 4 && rest[0] === 'candidates' && rest[2] === 'deliverable' && rest[3] === 'download' && get) {
+        const candidate = decodeSegment(rest[1]!);
+        if (candidate === null) return null;
+        return {
+          kind: 'direct',
+          handler: async () => {
+            const d = await deliverableDownload(runtime(), project, candidate);
+            return { status: 200, body: null, raw: d.bytes, type: 'application/zip', headers: { ...d.headers, 'content-length': String(d.bytes.length) } };
+          },
+        };
       }
       if (rest.length === 1 && rest[0] === 'work' && get) {
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'work.list', args: { project } }) }) };
@@ -405,7 +444,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
       if (rest.length === 2 && rest[0] === 'environments' && get) {
         const environment = decodeSegment(rest[1]!);
         if (environment === null) return null;
-        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environment.read', args: { project, environment } }) }) };
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environment.read', args: { project, environment, trees: await readTrees(project) } }) }) };
       }
       if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'config' && method === 'PUT') {
         const environment = decodeSegment(rest[1]!);

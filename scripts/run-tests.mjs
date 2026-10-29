@@ -51,11 +51,16 @@ import { fileURLToPath } from 'node:url';
 // docs/acceptance/sdlc-M6-acceptance-plan.md §3 (M501 to M546), and
 // docs/acceptance/sdlc-UI1-acceptance-plan.md §3 (M547: the console's engine
 // prerequisite P1, Sean 2026-10-23; M548 to M561: the assistant account, B2's
-// admission and the policy change's request outcome, slice 48, Sean 2026-10-27), and
+// admission and the policy change's request outcome, slice 48, Sean 2026-10-27),
 // docs/acceptance/sdlc-M7-acceptance-plan.md §3 (M601 to M612: Rapid prototype to
 // Alpha, slices 49 and 50; DRAFT 1 for Sean's review, implemented on the feature
 // branch under his authorization of 2026-10-28, "Draft the acceptance rows now and
-// have the Verifier implement them").
+// have the Verifier implement them"), and
+// docs/acceptance/sdlc-M7-acceptance-plan.md §3b (M613 to M616: static preview,
+// serving verification, the downloadable deliverable and deploy readiness, slices 49
+// and 50; DRAFT 1 for Sean's review under his instructions and rulings of 2026-10-29,
+// recorded in D4 §13). On this branch only; the M7 rows M601 to M612 are on
+// build/rapid-prototype and join at the merge.
 // Adding or removing a row is the owner's decision (build spec §9).
 const ROWS = [
   ...Array.from({ length: 74 }, (_, i) => `M${String(i + 1).padStart(2, '0')}`),
@@ -67,6 +72,7 @@ const ROWS = [
   'M547',
   ...Array.from({ length: 14 }, (_, i) => `M${548 + i}`),
   ...Array.from({ length: 12 }, (_, i) => `M${601 + i}`),
+  ...Array.from({ length: 4 }, (_, i) => `M${613 + i}`),
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 

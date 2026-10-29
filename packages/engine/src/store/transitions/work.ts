@@ -3,6 +3,7 @@
 // Resume. Every status change goes through transitionWork, which checks the
 // table in work-table.ts and writes exactly one work.* event.
 
+import { recordCompatibility } from '../../deploy/compatibility.js';
 import { bindStageScreensTo } from '../../design/stage-screens.js';
 import { recordMetMilestones } from '../../scheduler/milestones.js';
 import { bindConformanceStage } from '../../adopt/conformance.js';
@@ -590,6 +591,10 @@ export function registerPlan(
     // The phase's check authoring (D6 §6.2; K7), registered with the plan.
     if (!inherited) authoring = observeTrigger(tx, { project: args.project, kind: 'check_authoring', trigger_source: 'phase_plan', trigger_id: plan, trigger_generation: 1, subject: { phase_plan: plan }, chain: 0 }, label).work_item.id;
     if (authoring !== null) tx.db.prepare('UPDATE "phase_plans" SET "check_authoring" = ? WHERE "id" = ?').run(authoring, plan);
+    // Whether the environments can host the output, before the build begins
+    // (the static-preview shapes, §5): information, nothing held on it.
+    // A candidate's tree is the one its nomination recorded.
+    recordCompatibility(tx, { project: args.project, trigger: 'plan_published', tree: null });
     tx.emit('plan.published', { project: args.project, phase_plan: plan }, {
       ...label,
       phase,

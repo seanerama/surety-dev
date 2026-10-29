@@ -131,6 +131,8 @@ export const EVENT_OWNERS = {
   'environment.verified': 'store/transitions/deploy.ts',
   'artifact.sealed': 'store/transitions/deploy.ts',
   'artifact.failed': 'store/transitions/deploy.ts',
+  // SHAPES.md §4: a candidate's downloadable package, recorded once.
+  'deliverable.built': 'store/transitions/deliverable.ts',
   'adapter.qualified': 'store/transitions/deploy.ts',
   'adapter.qualification_lapsed': 'store/transitions/deploy.ts',
   'candidate.advanced': 'store/transitions/deploy.ts',
@@ -279,6 +281,9 @@ export const EVENT_OWNERS = {
   // Slice E5 (gap 4): a stopped iteration resumed by the owner's deliberate
   // POST …/iterations/:i/resume.
   'prototype.iteration_resumed': 'store/transitions/prototype.ts',
+  // The owner's instruction of 2026-10-29 (the static-preview shapes, §5):
+  // one per evaluation of whether the environments can host the output.
+  'deployment.compatibility_evaluated': 'deploy/compatibility.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

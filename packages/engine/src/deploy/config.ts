@@ -14,6 +14,7 @@ import { Refusal } from '../refusal.js';
 import { heldSecret } from '../records/redact.js';
 import { ADAPTERS, type ConfigContent } from '../store/transitions/deploy.js';
 import { canonical } from '../store/transitions/common.js';
+import { CONFIG_MODES, STATIC_ENTRY_DEFAULT, STATIC_ROOT_DEFAULT, isPlainRelative } from './static-site.js';
 
 export const SECRET_DIGEST_KEY = 'secret-digest.key';
 
@@ -62,7 +63,7 @@ const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
 const TARGET = /^[a-z][a-z0-9-]{0,31}$/;
 // A deployment reference (SEAM.md §245; N04).
 export const DEPLOY_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
-const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method', 'persistent_state'];
+const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method', 'persistent_state', 'mode', 'static'];
 
 // Only the deployment namespace (D4 §§3.2, 7.1, 7.4; the driver's ruling on
 // review S4): an Alpha environment holds none of the backends' credentials,
@@ -89,7 +90,24 @@ export function validateConfig(body: unknown): ConfigContent {
   if (!isObject(r) || typeof r.path !== 'string' || !r.path.startsWith('/') || typeof r.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(r.sha256) || Object.keys(r).some((k) => k !== 'path' && k !== 'sha256')) {
     throw invalid('runtime', 'must be {"path": <absolute path>, "sha256": <64 lower-case hex>}');
   }
-  if (!Array.isArray(body.start) || body.start.length === 0 || body.start.some((a) => typeof a !== 'string')) throw invalid('start', 'must be a non-empty argument array');
+  // The mode (SHAPES.md §2): absent or `service`, today's rules; `static`,
+  // no start command (the engine runs its own static server) and a static
+  // root and entry, each defaulted, filled in the version's content.
+  if (body.mode !== undefined && !(CONFIG_MODES as readonly unknown[]).includes(body.mode)) throw invalid('mode', `must be ${CONFIG_MODES.map((m) => `"${m}"`).join(' or ')}`);
+  let staticPart: { root: string; entry: string } | null = null;
+  if (body.mode === 'static') {
+    if (body.start !== undefined) throw invalid('start', 'must be absent in static mode: the engine runs its own static file server');
+    const st = body.static ?? {};
+    if (!isObject(st) || Object.keys(st).some((k) => k !== 'root' && k !== 'entry')) throw invalid('static', 'must be {"root": <repository path or ".">, "entry": <path under the root>}');
+    const root = st.root === undefined ? STATIC_ROOT_DEFAULT : st.root;
+    const entry = st.entry === undefined ? STATIC_ENTRY_DEFAULT : st.entry;
+    if (typeof root !== 'string' || (root !== STATIC_ROOT_DEFAULT && !isPlainRelative(root)) || root.length > 256) throw invalid('static.root', 'must be "." or a plain relative path of the repository');
+    if (typeof entry !== 'string' || !isPlainRelative(entry) || entry.length > 256) throw invalid('static.entry', 'must be a plain relative path under the root');
+    staticPart = { root, entry };
+  } else {
+    if (body.static !== undefined) throw invalid('static', 'is a field of a static configuration only (mode "static")');
+    if (!Array.isArray(body.start) || body.start.length === 0 || body.start.some((a) => typeof a !== 'string')) throw invalid('start', 'must be a non-empty argument array');
+  }
   if (!Number.isInteger(body.port) || (body.port as number) < 1024 || (body.port as number) > 65535) throw invalid('port', 'must be an integer from 1024 to 65535');
   if (body.env !== undefined) {
     if (!isObject(body.env)) throw invalid('env', 'must map variable names to strings');
@@ -116,7 +134,7 @@ export function validateConfig(body: unknown): ConfigContent {
     }
   }
   if (body.identity_method !== undefined && body.identity_method !== 'tree_digest') throw invalid('identity_method', 'must be tree_digest');
-  return body as unknown as ConfigContent;
+  return (staticPart === null ? body : { ...body, static: staticPart }) as unknown as ConfigContent;
 }
 
 // The field a reference stands in (for a refusal naming it).

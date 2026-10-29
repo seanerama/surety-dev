@@ -30,6 +30,14 @@
 //
 // Nothing it serves is run here: the files are read and answered as bytes;
 // HTML and scripts run only in the owner's browser. Node's own modules only.
+//
+// Its plain mode (`--static --root=<root> --entry=<entry>`; SHAPES.md §2) is
+// a static configuration's deployment on local_service, an Alpha
+// environment, never a preview: the same file-serving core (GET and HEAD
+// only, the file's bytes with its content type, nothing outside the root by
+// `..`, an encoded `..` or a link), `/` the entry's bytes, every other path
+// its file's bytes as they are; no index, no frame, no banner, no raw path,
+// no table of mockups read.
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import http from 'node:http';
@@ -163,12 +171,124 @@ export const typeOf = (path: string): string => TYPES[(path.split('.').pop() ?? 
 const BASE_HEADERS = { 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-store', 'cross-origin-resource-policy': 'same-origin' };
 const UNKNOWN_SIMULATION: Simulates = { target: 'a target the engine could not determine', layout: 'layout not declared' };
 
-function serve(): void {
+// The plain mode's arguments, or null when the program is the preview's.
+// `--static` with `--root=` and `--entry=`, each once, each a plain relative
+// path (`.` for the root); anything else is refused (exit 2).
+export function staticArgs(argv: readonly string[]): { root: string; entry: string } | null | 'invalid' {
+  if (!argv.includes('--static')) return argv.length === 0 ? null : 'invalid';
+  let root: string | null = null;
+  let entry: string | null = null;
+  const plain = (p: string): boolean => p !== '' && !p.startsWith('/') && !p.includes('\\') && !p.includes('\0') && p.split('/').every((x) => x !== '' && x !== '.' && x !== '..');
+  for (const a of argv) {
+    if (a === '--static') continue;
+    if (a.startsWith('--root=') && root === null) root = a.slice('--root='.length);
+    else if (a.startsWith('--entry=') && entry === null) entry = a.slice('--entry='.length);
+    else return 'invalid';
+  }
+  if (root === null || entry === null || (root !== '.' && !plain(root)) || !plain(entry)) return 'invalid';
+  return { root, entry };
+}
+
+// A path of the tree as a file under the root, or null: no empty, `.` or
+// `..` segment, and its real path (links followed) inside the root.
+function fileUnder(root: string, rel: string): string | null {
+  if (rel === '' || rel.split('/').some((s) => s === '' || s === '.' || s === '..') || rel.includes('\0') || rel.includes('\\')) return null;
+  const full = resolve(root, rel);
+  if (!full.startsWith(`${root}${sep}`)) return null;
+  try {
+    const real = realpathSync(full);
+    if (!real.startsWith(`${root}${sep}`)) return null;
+    return statSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+// The request's path, decoded; null when it does not decode or is not absolute.
+function requestPath(url: string | undefined): string | null {
+  let path = String(url ?? '/');
+  const q = path.search(/[?#]/);
+  if (q >= 0) path = path.slice(0, q);
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    return null;
+  }
+  return path.startsWith('/') ? path : null;
+}
+
+function portOrExit(what: string): number {
   const port = Number(process.env.PORT);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    process.stderr.write('the design preview server needs PORT\n');
+    process.stderr.write(`the ${what} needs PORT\n`);
     process.exit(2);
   }
+  return port;
+}
+
+// The plain mode (SHAPES.md §2): a static site's bytes, nothing added.
+function serveStatic(args: { root: string; entry: string }): void {
+  const port = portOrExit('static site server');
+  const top = realpathSync(process.cwd());
+  let root: string;
+  try {
+    root = args.root === '.' ? top : realpathSync(resolve(top, args.root));
+  } catch {
+    process.stderr.write(`the static root ${args.root} is not a directory of the artifact\n`);
+    process.exit(2);
+  }
+  if (root !== top && !root.startsWith(`${top}${sep}`)) {
+    process.stderr.write(`the static root ${args.root} is outside the artifact\n`);
+    process.exit(2);
+  }
+  http
+    .createServer((req, res) => {
+      const head = req.method === 'HEAD';
+      const answer = (status: number, headers: Record<string, string>, body: Buffer): void => {
+        res.writeHead(status, { ...BASE_HEADERS, ...headers, 'content-length': String(body.length) });
+        res.end(head ? undefined : body);
+      };
+      const text = (status: number, s: string, extra: Record<string, string> = {}) => answer(status, { 'content-type': 'text/plain; charset=utf-8', ...extra }, Buffer.from(`${s}\n`));
+      if (req.method !== 'GET' && !head) {
+        text(405, 'method not allowed: the static site is read-only', { allow: 'GET, HEAD' });
+        req.resume();
+        return;
+      }
+      const path = requestPath(req.url);
+      if (path === null) {
+        text(400, 'bad path');
+        return;
+      }
+      const rel = path === '/' ? args.entry : path.slice(1);
+      const file = fileUnder(root, rel);
+      if (file === null) {
+        text(404, 'not found');
+        return;
+      }
+      let body: Buffer;
+      try {
+        body = readFileSync(file);
+      } catch {
+        text(404, 'not found');
+        return;
+      }
+      const type = typeOf(rel);
+      answer(200, { 'content-type': type, ...(type === 'image/svg+xml' ? { 'content-security-policy': 'sandbox' } : {}) }, body);
+    })
+    .listen(port, '127.0.0.1');
+}
+
+function serve(): void {
+  const mode = staticArgs(process.argv.slice(2));
+  if (mode === 'invalid') {
+    process.stderr.write('usage: server.mjs [--static --root=<root> --entry=<entry>]\n');
+    process.exit(2);
+  }
+  if (mode !== null) {
+    serveStatic(mode);
+    return;
+  }
+  const port = portOrExit('design preview server');
   const root = realpathSync(process.cwd());
   const { mockups, note } = servedMockups(process.env[MOCKUPS_VARIABLE]);
   // Native: only what the engine listed as native. Every other HTML path is framed.
@@ -183,20 +303,7 @@ function serve(): void {
   };
   const index = Buffer.from(indexHtml(mockups, note));
 
-  // A path of the tree as a file under the root, or null: no empty, `.` or
-  // `..` segment, and its real path (links followed) inside the root.
-  const fileOf = (rel: string): string | null => {
-    if (rel === '' || rel.split('/').some((s) => s === '' || s === '.' || s === '..') || rel.includes('\0') || rel.includes('\\')) return null;
-    const full = resolve(root, rel);
-    if (!full.startsWith(`${root}${sep}`)) return null;
-    try {
-      const real = realpathSync(full);
-      if (!real.startsWith(`${root}${sep}`)) return null;
-      return statSync(real).isFile() ? real : null;
-    } catch {
-      return null;
-    }
-  };
+  const fileOf = (rel: string): string | null => fileUnder(root, rel);
 
   http
     .createServer((req, res) => {
@@ -211,16 +318,8 @@ function serve(): void {
         req.resume();
         return;
       }
-      let path = String(req.url ?? '/');
-      const q = path.search(/[?#]/);
-      if (q >= 0) path = path.slice(0, q);
-      try {
-        path = decodeURIComponent(path);
-      } catch {
-        text(400, 'bad path');
-        return;
-      }
-      if (!path.startsWith('/')) {
+      const path = requestPath(req.url);
+      if (path === null) {
         text(400, 'bad path');
         return;
       }

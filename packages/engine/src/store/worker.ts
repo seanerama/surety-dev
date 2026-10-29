@@ -2,6 +2,7 @@
 // connection to store.db and executes one command at a time from the main
 // thread. Every command is short; none waits on git, an adapter or a stream.
 
+import { deliverableFacts, recordDeliverable } from './transitions/deliverable.js';
 import { parentPort, workerData } from 'node:worker_threads';
 
 import Database from 'better-sqlite3';
@@ -12,6 +13,7 @@ import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
 import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
+import { candidateKind, compatibilityTarget, compatibilityTargets, recordCompatibility } from '../deploy/compatibility.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
@@ -124,6 +126,8 @@ import {
   recordReconcile,
   requestDeployment,
   requestFacts,
+  adapterQualificationRead,
+  servingInstallFacts,
   policyRequestDue,
   policyPreparationFailed,
   policyRequestRefused,
@@ -429,6 +433,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'adapter.read': (d, a) => adapterQualificationRead(d, a),
+  'serving.install_facts': (d, a) => servingInstallFacts(d, a),
+  'deliverable.facts': (d, a) => deliverableFacts(d, a),
   'deploy.policy_due': (d, a) => policyRequestDue(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
@@ -444,6 +451,12 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.link_target': (d, a) => linkTarget(d, a),
   'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
+  // The deployment compatibility (the static-preview shapes, §5): what the
+  // main thread reads a candidate's tree for (deploy/compatibility-eval.ts).
+  'deploy.compatibility_target': (d, a) => compatibilityTarget(d, a),
+  'deploy.compatibility_targets': (d) => compatibilityTargets(d),
+  // A candidate's output kind as an evaluation recorded it (the deliverable's).
+  'deploy.compatibility_kind': (d, a) => candidateKind(d, a),
   // The adapter qualification's reads (D4 §2.6; deploy/qualify.ts).
   'qualify.facts': (d, a) => qualificationFacts(d, a),
   'qualify.paths': (d) => qualificationPaths(d),
@@ -485,6 +498,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'integrity.registry': (d, a: { project: string }) => registryFacts(d, a),
   // Whether a nomination is due (projects.nomination_due): the tick's
   // journal step takes the project's integration lease for it only then.
+  // The revision a due nomination will make, and the repository: the main
+  // thread reads its tree before the intent (journal/nominate.ts).
+  'nomination.due_revision': (d, a: { project: string }) => {
+    const row = d.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
+    const due = row?.nomination_due ? (JSON.parse(row.nomination_due) as { revision?: unknown }) : null;
+    return due && typeof due.revision === 'string' ? { revision: due.revision, repo: row!.dev_repo_path } : null;
+  },
   'nomination.due_project': (d, a: { project: string }) => (d.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(a.project) as { nomination_due: string | null } | undefined)?.nomination_due != null,
   'deferral.refs_invalid': (d, a) => deferralRefsInvalidForRun(d, a),
   'checks.profiles_now': (d) => checkProfilesNow(d),
@@ -765,6 +785,9 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.refuse_approval': (tx, a) => refuseSpecApproval(tx, a),
   // D6 §5.5 (slice 34): the authorized finalizer's publication.
   'plan.publish': (tx, a) => publishAuthorizedBundle(tx, a),
+  // The static-preview shapes, §5: one evaluation of the deployment
+  // compatibility, recorded with its event.
+  'deploy.compatibility_record': (tx, a) => recordCompatibility(tx, a),
   'plan.rebind': (tx, a) => rebindBundle(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
@@ -795,6 +818,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The Release Operator's steps (D4 §§4, 5; deploy/release-operator.ts).
   'deploy.secrets_changed': (tx, a) => markSecretsChanged(tx, a),
   'deploy.intend': (tx, a) => intendDeploy(tx, a),
+  'deliverable.record': (tx, a) => recordDeliverable(tx, a),
   'deploy.intend_teardown': (tx, a) => intendTeardown(tx, a),
   'deploy.preconditions': (tx, a) => readPreconditions(tx, a, (t, e) => evaluateGate(t, e as never)),
   'deploy.precondition_failed': (tx, a) => preconditionFailed(tx, a),
