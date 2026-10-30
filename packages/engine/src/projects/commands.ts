@@ -8,7 +8,8 @@ import { rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { nowIso } from '../clock.js';
-import { type Policy, validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
+import { type Policy, projectEffectiveDefaults, validatePolicySubmission, wideningKeys } from '../config/project-policy.js';
+import type { ExecutionMode } from '../config/schema.js';
 import { GOVERNED_FILE, GOVERNED_KEYS, governedText, protectedSetAt } from '../protected/set.js';
 import { protectedVersionAt } from '../checks/discovery.js';
 import { writeWholeRecord } from '../records/files.js';
@@ -70,7 +71,36 @@ export const IDEA_PATH = '.surety/idea.md';
 
 // POST /v1/projects: the body checked, the repository read, and the bootstrap
 // commit prepared. Refusals create nothing.
-export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Record<string, unknown>> {
+// The rapid prototype's preset (slice E1; the director's proposal §3): the
+// bootstrap policy of a `rapid_prototype` project, its initial values, so
+// no widening is asked for. Tier T1 is the new-app route's.
+export const RAPID_PROTOTYPE_PRESET: Policy = {
+  autonomy: 'phase',
+  phase_size: { min: 1, max: 2 },
+  design: 'off',
+  alpha_deploy: 'on_phase_complete',
+  // Slice E5 (the owner's ruling S5 of 2026-10-28: "Set the per-run token
+  // limit to 5,000,000"): each run is given the lower of this and what its
+  // iteration has left (store/transitions/prototype.ts effectiveAllowanceOf),
+  // so the iteration allowance, independently configurable, is never
+  // reserved past and a prototype is never made impossible to start.
+  budget_run_billable_tokens: 5_000_000,
+};
+
+// The bootstrap policy a mode starts with: none for `planned` (the schema
+// defaults are effective until a revision is recorded, as before); for
+// `rapid_prototype`, the defaults with the preset applied, committed as
+// `.surety/policy.json` in the bootstrap commit and recorded as policy
+// revision 1 with the project (store/transitions/project.ts).
+function bootstrapPolicy(mode: ExecutionMode): { change: Policy; effective: Policy; content: string } | null {
+  if (mode !== 'rapid_prototype') return null;
+  const change = validatePolicySubmission(RAPID_PROTOTYPE_PRESET);
+  const effective: Policy = { ...projectEffectiveDefaults(), ...change };
+  const sorted = Object.fromEntries(Object.keys(effective).sort().map((k) => [k, effective[k]!]));
+  return { change, effective: sorted, content: `${JSON.stringify(sorted, null, 2)}\n` };
+}
+
+export async function prepareBootstrap(rt: Runtime, body: unknown, opts: { mode?: ExecutionMode } = {}): Promise<Record<string, unknown>> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw invalid('body', 'must be a JSON object');
   const b = body as Record<string, unknown>;
   for (const key of Object.keys(b)) {
@@ -115,12 +145,29 @@ export async function prepareBootstrap(rt: Runtime, body: unknown): Promise<Reco
   // With `idea`, the brief is the idea record version 1, committed verbatim
   // beside the identity file in the bootstrap's one journaled commit (D6 §1
   // step 1; §3.1).
-  const files: Record<string, string> = { '.surety/project.json': identity, ...(idea === undefined ? {} : { [IDEA_PATH]: idea }) };
+  const mode = opts.mode ?? 'planned';
+  const policy = bootstrapPolicy(mode);
+  const files: Record<string, string> = { '.surety/project.json': identity, ...(idea === undefined ? {} : { [IDEA_PATH]: idea }), ...(policy === null ? {} : { '.surety/policy.json': policy.content }) };
   const commit = await prepareCommit(repo, head.oid, files, message, rt.scratch);
   if (commit === null) throw repoUnreadable(repo);
   const ideaBlob = idea === undefined ? null : await writeBlob(ctx, idea);
   if (idea !== undefined && ideaBlob === null) throw repoUnreadable(repo);
-  return { id, name, tier, repo, branch, head: head.oid, commit, deadlineSeconds: rt.setting('git_deadline'), protectedSet, ...(ideaBlob === null ? {} : { idea: { blob: ideaBlob } }) };
+  const policyBlob = policy === null ? null : await writeBlob(ctx, policy.content);
+  if (policy !== null && policyBlob === null) throw repoUnreadable(repo);
+  return {
+    id,
+    name,
+    tier,
+    repo,
+    branch,
+    head: head.oid,
+    commit,
+    deadlineSeconds: rt.setting('git_deadline'),
+    protectedSet,
+    ...(ideaBlob === null ? {} : { idea: { blob: ideaBlob } }),
+    ...(mode === 'planned' ? {} : { mode }),
+    ...(policy === null || policyBlob === null ? {} : { policy: { blob: policyBlob, change: policy.change, effective: policy.effective } }),
+  };
 }
 
 // POST /v1/projects/:p/policy (SEAM.md §§27, 66, 78): the submission is

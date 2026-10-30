@@ -86,6 +86,8 @@ describe('M307 (f) the deployment journey on a real unit, the adapter qualified 
     releaseCheck(ctx, svc, { get: ['/hello'], exit: 0 });
     J.verification = await verificationOf(ctx, J.op);
     J.completed = await ticksUntil(fx, project, () => (candidateRow(fx.home, ctx.candidate.id).progress === 'alpha_deployed' ? true : undefined), { what: 'the candidate to be alpha_deployed' });
+    // Objection 220 (S3; SEAM.md §576): the candidate as it stands at completion, before the teardown.
+    J.atCompletion = candidateRow(fx.home, ctx.candidate.id);
 
     J.teardown = await teardownOnHost(ctx, env);
     J.afterTeardown = {
@@ -154,9 +156,21 @@ describe('M307 (f) the deployment journey on a real unit, the adapter qualified 
     for (const r of row.identity_reads) assert.deepEqual([r.instance?.pid, r.instance?.start_time], [svc.app.pid, svc.app.start_time], 'with the original application instance');
   });
 
-  test('(f)(d) alpha_deployed', () => {
+  // Objection 220 (the owner's ruling S3 of 2026-10-28; SEAM.md §576): the
+  // historical completion read at completion; current availability after
+  // the teardown, which withdraws it.
+  test('(f)(d) alpha_deployed (at completion, before the teardown)', () => {
     assert.equal(J.completed, true);
-    assert.equal(candidateRow(J.fx.home, J.ctx.candidate.id).progress, 'alpha_deployed');
+    assert.equal(J.atCompletion.progress, 'alpha_deployed');
+    const advanced = eventsOfType(J.fx.home, 'candidate.advanced').filter((e) => e.subject?.candidate === J.ctx.candidate.id);
+    assert.deepEqual(advanced.map((e) => [e.payload?.from, e.payload?.to]), [['developing', 'alpha_deployed']], 'the historical record: candidate.advanced once');
+  });
+
+  test('(f)(d) after the teardown: no claim of current availability; the candidate developing, withdrawn once by the teardown; candidate.advanced kept', () => {
+    assert.equal(candidateRow(J.fx.home, J.ctx.candidate.id).progress, 'developing');
+    const withdrawn = eventsOfType(J.fx.home, 'candidate.alpha_withdrawn').filter((e) => e.subject?.candidate === J.ctx.candidate.id);
+    assert.deepEqual(withdrawn.map((e) => [e.payload?.from, e.payload?.to, e.payload?.environment, e.payload?.operation]), [['alpha_deployed', 'developing', J.env.id, J.teardown.id]], 'one candidate.alpha_withdrawn naming the environment and the teardown operation');
+    assert.equal(eventsOfType(J.fx.home, 'candidate.advanced').filter((e) => e.subject?.candidate === J.ctx.candidate.id).length, 1, 'the historical record kept');
   });
 
   test('(f)(e) teardown applied; afterwards no unit, cgroup, socket or directory of the prefix, read from the host', () => {

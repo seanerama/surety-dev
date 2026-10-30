@@ -2,6 +2,7 @@
 // connection to store.db and executes one command at a time from the main
 // thread. Every command is short; none waits on git, an adapter or a stream.
 
+import { deliverableFacts, recordDeliverable } from './transitions/deliverable.js';
 import { parentPort, workerData } from 'node:worker_threads';
 
 import Database from 'better-sqlite3';
@@ -12,10 +13,12 @@ import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
 import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
+import { candidateKind, compatibilityTarget, compatibilityTargets, recordCompatibility } from '../deploy/compatibility.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
 import { AuditFailed, type AuditInput, recordApiAct } from './transitions/audit.js';
-import { type CommandResult, answerDecision, controlRun, requestTick, runRepresentation } from './transitions/control.js';
+import { type CommandResult, answerDecision, controlIteration, controlRun, requestTick, runRepresentation } from './transitions/control.js';
+import type { Facts } from './transitions/queue.js';
 import { liftToFull, recordBackup, recordIncarnation, recordTick, schedulerStarted } from './transitions/engine.js';
 import { bootstrapProject, policyFacts, policySubmissionOf, rebindProject, setPaused, submitPolicy } from './transitions/project.js';
 import {
@@ -123,6 +126,8 @@ import {
   recordReconcile,
   requestDeployment,
   requestFacts,
+  adapterQualificationRead,
+  servingInstallFacts,
   policyRequestDue,
   policyPreparationFailed,
   policyRequestRefused,
@@ -204,6 +209,10 @@ import {
 import { bundleBaselineFacts, pendingPrerequisites, recordBundle, replanBaseline } from '../plan/bundle.js';
 import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
+import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
+import { briefFacts, requestPreparation } from '../prototype/brief.js';
+import { iterate } from '../prototype/iterate.js';
+import { askOfSession, enforceIterationLimit, resumeIteration, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
 import { approvalFacts as specApprovalFacts, beginApproval as beginSpecApproval, refuseApproval as refuseSpecApproval } from '../spec/approval-effect.js';
 import { authorizedBundles, publishAuthorized as publishAuthorizedBundle, rebindBundle, rebindDue } from '../plan/bundle.js';
@@ -335,6 +344,18 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   'run.abandon': (tx, a: { project: string; run: string; preview_hash: string | undefined; decided: boolean; exited?: boolean }) =>
     controlRun(tx, { project: a.project, run: a.run, kind: 'abandon', previewHash: a.preview_hash, decided: a.decided, exited: a.exited === true }),
   'work.resume': (tx, a: { project: string; work_item: string }) => ok(resumeWork(tx, { project: a.project, workItem: a.work_item })),
+  // Rapid prototype, slice E2 (R4, R8): a prototype iteration's Stop and
+  // Discard, each through its confirmation.
+  'iteration.stop': (tx, a: { project: string; iteration: string; preview_hash: string | undefined; facts: Facts }) =>
+    controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'stop', previewHash: a.preview_hash, facts: a.facts ?? {} }),
+  'iteration.discard': (tx, a: { project: string; iteration: string; preview_hash: string | undefined; facts: Facts }) =>
+    controlIteration(tx, { project: a.project, iteration: a.iteration, action: 'discard', previewHash: a.preview_hash, facts: a.facts ?? {} }),
+  // Slice E3 (R5): the brief's preparation asked for again.
+  'iteration.prepare': (tx, a: { project: string; iteration: string }) => requestPreparation(tx, a),
+  // Slice E4 (R7, R8): Iterate, a new iteration continuing from the current one.
+  'iteration.iterate': (tx, a: { project: string; iteration: string; change: string | null }) => iterate(tx, a),
+  // Slice E5 (gap 4): a stopped iteration resumed, deliberately.
+  'iteration.resume': (tx, a: { project: string; iteration: string }) => resumeIteration(tx, a),
   'decision.answer': (tx, a) => answerDecision(tx, a),
   'trust.qualify': (tx, a) => qualify(tx, a),
   'decision.answer_batch': (tx, a) => answerBatch(tx, a),
@@ -412,6 +433,9 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.observation_plan': (d, a) => observationPlan(d, a),
   'deploy.logs_due': (d, a) => logsDue(d, a),
   'deploy.request_facts': (d, a) => requestFacts(d, a),
+  'adapter.read': (d, a) => adapterQualificationRead(d, a),
+  'serving.install_facts': (d, a) => servingInstallFacts(d, a),
+  'deliverable.facts': (d, a) => deliverableFacts(d, a),
   'deploy.policy_due': (d, a) => policyRequestDue(d, a),
   'deploy.artifact_admission': (d, a) => artifactAdmission(d, a),
   'deploy.artifact_paths': (d) => artifactPaths(d),
@@ -427,6 +451,12 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'deploy.link_target': (d, a) => linkTarget(d, a),
   'deploy.live_executions': (d, a) => liveRoundExecutions(d, a),
   'deploy.capability_check': (d, a) => capabilityCheck(d, a),
+  // The deployment compatibility (the static-preview shapes, §5): what the
+  // main thread reads a candidate's tree for (deploy/compatibility-eval.ts).
+  'deploy.compatibility_target': (d, a) => compatibilityTarget(d, a),
+  'deploy.compatibility_targets': (d) => compatibilityTargets(d),
+  // A candidate's output kind as an evaluation recorded it (the deliverable's).
+  'deploy.compatibility_kind': (d, a) => candidateKind(d, a),
   // The adapter qualification's reads (D4 §2.6; deploy/qualify.ts).
   'qualify.facts': (d, a) => qualificationFacts(d, a),
   'qualify.paths': (d) => qualificationPaths(d),
@@ -468,6 +498,13 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'integrity.registry': (d, a: { project: string }) => registryFacts(d, a),
   // Whether a nomination is due (projects.nomination_due): the tick's
   // journal step takes the project's integration lease for it only then.
+  // The revision a due nomination will make, and the repository: the main
+  // thread reads its tree before the intent (journal/nominate.ts).
+  'nomination.due_revision': (d, a: { project: string }) => {
+    const row = d.prepare('SELECT "nomination_due", "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { nomination_due: string | null; dev_repo_path: string } | undefined;
+    const due = row?.nomination_due ? (JSON.parse(row.nomination_due) as { revision?: unknown }) : null;
+    return due && typeof due.revision === 'string' ? { revision: due.revision, repo: row!.dev_repo_path } : null;
+  },
   'nomination.due_project': (d, a: { project: string }) => (d.prepare('SELECT "nomination_due" FROM "projects" WHERE "id" = ?').get(a.project) as { nomination_due: string | null } | undefined)?.nomination_due != null,
   'deferral.refs_invalid': (d, a) => deferralRefsInvalidForRun(d, a),
   'checks.profiles_now': (d) => checkProfilesNow(d),
@@ -540,6 +577,16 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'decision.intents': (d, a: { decisions: string[]; kind: string }) =>
     a.decisions.flatMap((id) => (d.prepare('SELECT "id" FROM "effect_intents" WHERE "decision" = ? AND "kind" = ?').all(id, a.kind) as { id: string }[]).map((r) => r.id)),
   'pace.view': (d, a) => paceView(d, a),
+  // Rapid prototype, slice E1 (R7, R9): the iteration reads.
+  'iterations.list': (d, a: { project: string }) => listIterations(d, a),
+  'iteration.read': (d, a: { project: string; iteration: string }) => readIteration(d, a),
+  'iteration.receipt': (d, a: { project: string; iteration: string }) => iterationReceipt(d, a),
+  // Slice E3: what the engine serves into a brief, read at its preparation's acceptance.
+  'prototype.brief_facts': (d, a: { project: string; run: string; environments: string[] }) => briefFacts(d, a),
+  // Slice E2: an iteration's runs under way, for the running engine's facts
+  // about each before its Stop or Discard.
+  'iteration.under_way': (d, a: { project: string; iteration: string }) =>
+    (d.prepare('SELECT 1 FROM "prototype_iterations" WHERE "id" = ? AND "project" = ?').get(a.iteration, a.project) ? runsUnderWay(d, a.iteration).map((r) => r.run) : []),
   'plan.view': (d, a) => planView(d, a),
   'project.repo': (d, a: { project: string }) => {
     const row = d.prepare('SELECT "dev_repo_path" FROM "projects" WHERE "id" = ?').get(a.project) as { dev_repo_path: string } | undefined;
@@ -618,6 +665,10 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'engine.tick': (tx, a: { incarnation: string; dispatched: number }) => recordTick(tx, a),
   'engine.backup': (tx, a) => recordBackup(tx, a),
   'dispatch.claim': (tx, a) => claimDispatch(tx, a),
+  // A session refused by a rapid prototype's iteration limit (slice E2):
+  // the limit recorded on the iteration, the verdict taken again.
+  'prototype.session_limit': (tx, a: { project: string; role: string | null }) =>
+    (typeof a.role === 'string' ? enforceIterationLimit(tx, a.project, askOfSession(tx.db, a.project, a.role)) : false),
   // The workspace assistant's turn under way (the assistant design §§1.3, 4).
   'assistant.dispatched': (tx, a: { invocation: string }) => turnDispatched(tx, a),
   'assistant.launched': (tx, a) => turnLaunched(tx, a),
@@ -734,6 +785,9 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'spec.refuse_approval': (tx, a) => refuseSpecApproval(tx, a),
   // D6 §5.5 (slice 34): the authorized finalizer's publication.
   'plan.publish': (tx, a) => publishAuthorizedBundle(tx, a),
+  // The static-preview shapes, §5: one evaluation of the deployment
+  // compatibility, recorded with its event.
+  'deploy.compatibility_record': (tx, a) => recordCompatibility(tx, a),
   'plan.rebind': (tx, a) => rebindBundle(tx, a),
   'oob.stash_facts': (tx, a) => stashFacts(tx, a),
   'oob.begin_stash': (tx, a) => beginStash(tx, a),
@@ -764,6 +818,7 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   // The Release Operator's steps (D4 §§4, 5; deploy/release-operator.ts).
   'deploy.secrets_changed': (tx, a) => markSecretsChanged(tx, a),
   'deploy.intend': (tx, a) => intendDeploy(tx, a),
+  'deliverable.record': (tx, a) => recordDeliverable(tx, a),
   'deploy.intend_teardown': (tx, a) => intendTeardown(tx, a),
   'deploy.preconditions': (tx, a) => readPreconditions(tx, a, (t, e) => evaluateGate(t, e as never)),
   'deploy.precondition_failed': (tx, a) => preconditionFailed(tx, a),

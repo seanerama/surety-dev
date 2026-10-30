@@ -17,6 +17,7 @@ import { integrationRef } from '../store/transitions/repo.js';
 import { policyRevision } from '../store/transitions/settings.js';
 import { saveNotesOf } from './session.js';
 import { retrofitBlockers } from '../adopt/records.js';
+import { briefManifestOf, briefRejected } from '../prototype/brief.js';
 
 type Db = Tx['db'];
 
@@ -102,6 +103,11 @@ function specManifest(db: Db, run: string): Record<string, unknown> {
     // requirement that keeps `approve` blocked.
     blocking: [...specBlockers(row, project === null ? undefined : approvedRepresentation(db, project)), ...retrofitBlockers(db, project, run)],
     policy_revision: project === null ? null : policyRevision(db, project),
+    // A rapid prototype's brief preparation (slice E3; R3): the brief this
+    // approval is the one-screen approval of, its version the spec version
+    // above, and the iteration's current brief (a later preparation moves
+    // it, and the question is invalidated).
+    ...(briefManifestOf(db, run) ?? {}),
   };
 }
 
@@ -119,7 +125,7 @@ export const SPEC_APPROVAL: KindSpec = {
     }
     return {
       manifest,
-      question: `Approve the specification the Spec Writer session ${d.subject_id} saved as version ${String(manifest.spec_version)}?${findings.length > 0 ? ` The engine found ${findings.length} thing(s) it could not read or accept: ${findings.map((f) => `${f.where}: ${f.why}`).join('; ')}.` : ''}`,
+      question: `${manifest.brief_record !== undefined ? `Approve the prototype brief (record ${String(manifest.brief_record)}, brief version ${String(manifest.spec_version)}) and the minimal specification the brief preparation run ${d.subject_id} wrote as version ${String(manifest.spec_version)}? Approving it starts the prototype's build within its limits: the first plan is published without another question when it is within the prototype's bounds (one phase, at most two stages); the check approval still asks you.` : `Approve the specification the Spec Writer session ${d.subject_id} saved as version ${String(manifest.spec_version)}?`}${findings.length > 0 ? ` The engine found ${findings.length} thing(s) it could not read or accept: ${findings.map((f) => `${f.where}: ${f.why}`).join('; ')}.` : ''}`,
       options: [
         {
           key: 'approve',
@@ -137,7 +143,11 @@ export const SPEC_APPROVAL: KindSpec = {
   reraise: false,
   answer(tx, d, option, note) {
     consumeDecision(tx, d, option, note);
-    if (option !== 'approve') return consumed(d);
+    if (option !== 'approve') {
+      // A prototype's brief rejected (slice E3): the iteration is preparing again.
+      briefRejected(tx, d);
+      return consumed(d);
+    }
     // The effect (D6 §3.4; the coordinator's ruling on question 2): TPL §11's
     // change log row committed by the engine through the journal, whose
     // finalizer is the approval (spec/approval-effect.ts). The answer

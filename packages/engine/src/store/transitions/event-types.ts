@@ -59,7 +59,7 @@ export const EVENT_OWNERS = {
   'candidate.superseded': 'store/transitions/finalize.ts',
   'repo.out_of_band': 'store/transitions/repo.ts',
   'repo.reconciled': 'store/transitions/finalize.ts, store/transitions/intents.ts, store/transitions/queue.ts, store/transitions/repo.ts',
-  'policy.changed': 'store/transitions/finalize.ts',
+  'policy.changed': 'store/transitions/finalize.ts, store/transitions/project.ts',
   'git.journal_intended': 'store/transitions/journal.ts',
   'git.journal_applied': 'store/transitions/journal.ts',
   'git.journal_confirmed': 'store/transitions/journal.ts',
@@ -131,6 +131,8 @@ export const EVENT_OWNERS = {
   'environment.verified': 'store/transitions/deploy.ts',
   'artifact.sealed': 'store/transitions/deploy.ts',
   'artifact.failed': 'store/transitions/deploy.ts',
+  // SHAPES.md §4: a candidate's downloadable package, recorded once.
+  'deliverable.built': 'store/transitions/deliverable.ts',
   'adapter.qualified': 'store/transitions/deploy.ts',
   'adapter.qualification_lapsed': 'store/transitions/deploy.ts',
   'candidate.advanced': 'store/transitions/deploy.ts',
@@ -244,6 +246,48 @@ export const EVENT_OWNERS = {
   'design.asset_bound': 'design/approval.ts',
   // H5 (E171 item 5; SEAM.md §553): an unrecorded review's file moved to reviews/refused/.
   'design.review_refused': 'design/review-refused.ts',
+  // Rapid prototype, slice E1 (migration 0044; R7): an iteration created,
+  // its Alpha reached, and a torn-down Alpha's candidate set back.
+  'prototype.iteration_created': 'store/transitions/prototype.ts',
+  'prototype.iteration_alpha_ready': 'store/transitions/prototype.ts',
+  'candidate.alpha_withdrawn': 'store/transitions/prototype.ts',
+  // The owner's ruling of 2026-10-29: a newer deployment replaced the
+  // candidate's in its environment (its claim of current availability
+  // withdrawn, its history kept).
+  'candidate.alpha_replaced': 'store/transitions/prototype.ts',
+  // Slice E2 (R4, R8): an iteration ended by a limit, by the owner's Stop or
+  // Discard, and its limits following a policy change (a raised one
+  // reopening it).
+  'prototype.iteration_limit_reached': 'store/transitions/prototype.ts',
+  'prototype.iteration_stopped': 'store/transitions/prototype.ts',
+  'prototype.iteration_discarded': 'store/transitions/prototype.ts',
+  'prototype.iteration_limits_changed': 'store/transitions/prototype.ts',
+  // Slice E3 (R1, R3, R5): the preparation authorized or declined, its run
+  // failed, the brief prepared (its spec_approval raised), approved or
+  // rejected, the first plan asked for and published by the prototype
+  // policy or routed to the owner, and the iteration's status following the
+  // owner's open questions and the work's failures.
+  'prototype.preparation_authorized': 'prototype/brief.ts',
+  'prototype.preparation_declined': 'prototype/brief.ts',
+  'prototype.preparation_failed': 'prototype/brief.ts',
+  'prototype.brief_prepared': 'prototype/brief.ts',
+  'prototype.brief_approved': 'prototype/brief.ts',
+  'prototype.brief_rejected': 'prototype/brief.ts',
+  'prototype.first_plan_requested': 'prototype/brief.ts',
+  'prototype.plan_policy_authorized': 'prototype/brief.ts',
+  'prototype.plan_routed_to_owner': 'prototype/brief.ts',
+  'prototype.iteration_status_changed': 'prototype/brief.ts',
+  // Slice E4 (R7, R8): an iteration iterated (the new one continuing from
+  // it), and a candidate that is not the open iteration's own refused as its
+  // Alpha (a predecessor's deployment never satisfies it).
+  'prototype.iteration_iterated': 'prototype/iterate.ts',
+  'prototype.alpha_not_attributed': 'store/transitions/prototype.ts',
+  // Slice E5 (gap 4): a stopped iteration resumed by the owner's deliberate
+  // POST …/iterations/:i/resume.
+  'prototype.iteration_resumed': 'store/transitions/prototype.ts',
+  // The owner's instruction of 2026-10-29 (the static-preview shapes, §5):
+  // one per evaluation of whether the environments can host the output.
+  'deployment.compatibility_evaluated': 'deploy/compatibility.ts',
 } as const;
 
 export type EventType = keyof typeof EVENT_OWNERS;

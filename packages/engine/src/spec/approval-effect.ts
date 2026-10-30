@@ -15,6 +15,7 @@ import { integrationRef, projectRepoRow, registryRow } from '../store/transition
 import type { Tx } from '../store/transitions/tx.js';
 import { illegal } from '../store/transitions/common.js';
 import { approveSpec, latestSemantics } from './approval.js';
+import { briefApproved } from '../prototype/brief.js';
 
 export interface ApprovalFacts {
   intent: string;
@@ -126,5 +127,8 @@ export function finalizeApproved(tx: Tx, op: { id: string; project: string }, in
   if (!intent) throw illegal('approving a specification with no intent', { intent: inputs.intent });
   const made = approveSpec(tx, { project: op.project, run: inputs.run, decision: inputs.decision, via: 'session', blob: inputs.blob });
   completeIntent(tx, inputs.intent);
+  // A rapid prototype's brief (slice E3; R1): the iteration building, its
+  // first plan asked of the Architect. Nothing for any other run.
+  briefApproved(tx, { project: op.project, run: inputs.run, decision: inputs.decision, spec_revision: made.spec_revision });
   return { spec_revision: made.spec_revision, version: made.version };
 }

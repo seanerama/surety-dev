@@ -1,0 +1,32 @@
+{
+  "$comment": "D4 §13 (the owner's amendments of 2026-10-29): static mode of local_service (13.1), the serving check post_deploy_serving authored by the engine (13.2), downloadable deliverables (13.3), output kind and deployment compatibility (13.4). Values from D4 §13, the driver's SHAPES.md of 2026-10-29 and, where both are silent (column names, the compatibility triggers recorded), the Builders' records (commits 8a31133d, 72e4bb88, 8da1df83), fixed here as SEAM.md §577 states. Row M73 holds the engine's exported contract to this table both ways: each enumeration exactly, each event declared and owned, each new table with exactly these columns and foreign keys, and the enumerations the existing columns name. The routes (GET /v1/adapters/:a, …/candidates/:c/deliverable and …/deliverable/download) and the configuration's `mode`/`static` are not in the contract document (it has no routes and no environment-configuration keys); rows M613 and M615 pin them over HTTP. `readiness_states` (added 2026-10-29, SEAM.md §579): the states of `build.deploy_readiness` as the plan's M616 (e) names them, `blocked` among them (the owner's ruling of 2026-10-29); the contract document does not enumerate them, so M73 does not hold them and row M616 reads every served readiness against them.",
+  "enums": {
+    "CheckKind": ["acceptance", "smoke", "integration", "security_lint", "property", "failure_recovery", "sensitivity_floor", "post_deploy_identity", "post_deploy_behavior", "post_deploy_serving"],
+    "ProposedBy": ["verifier_run", "human", "engine"],
+    "OutputKind": ["static_site", "node_service", "unknown"],
+    "DeploymentCompatibilityOutputKind": ["static_site", "node_service", "unknown"],
+    "DeploymentCompatibilityTrigger": ["plan_published", "environment_configured", "candidate_nominated"],
+    "DeliverableFormat": ["zip"]
+  },
+  "events": ["deliverable.built", "deployment.compatibility_evaluated"],
+  "readiness_states": ["not_complete", "ready", "blocked", "unconfigured", "unsupported", "unknown"],
+  "tables": {
+    "deliverables": {
+      "columns": ["id", "created_at", "project", "candidate", "revision", "artifact_digest", "format", "version", "filename", "path", "bytes", "sha256", "entries", "manifest", "output_kind", "built_at"],
+      "references": { "project": "projects", "candidate": "candidates" },
+      "enums": { "format": "DeliverableFormat", "output_kind": "OutputKind" }
+    },
+    "deployment_compatibility": {
+      "columns": ["id", "created_at", "project", "trigger", "basis", "candidate", "tree", "output_kind", "evaluation"],
+      "references": { "project": "projects", "candidate": "candidates" },
+      "enums": { "trigger": "DeploymentCompatibilityTrigger", "output_kind": "DeploymentCompatibilityOutputKind" }
+    }
+  },
+  "columns": {
+    "checks.kind": { "enum": "CheckKind" },
+    "protected_proposals.proposed_by": { "enum": "ProposedBy" },
+    "artifacts.output_kind": { "enum": "OutputKind" },
+    "gate_evaluations.serving": {},
+    "deployment_verifications.serving": {}
+  }
+}

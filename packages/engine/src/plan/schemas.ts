@@ -5,7 +5,7 @@
 // naming the file and the field. Nothing a session writes is run (BS5 §4.1
 // rule 14): a plan is parsed and registered, never executed.
 
-import { CHECK_KINDS as KINDS, SENSITIVE_AREAS } from '../checks/schema.js';
+import { AUTHORED_KINDS as KINDS, SENSITIVE_AREAS } from '../checks/schema.js';
 
 export interface SchemaFinding {
   file: string;

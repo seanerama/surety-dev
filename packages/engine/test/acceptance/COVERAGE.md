@@ -4928,3 +4928,70 @@ Every other Reviewer `fix` in `test/acceptance/` names a check, or is plan-targe
 ## S4, a race in the Verifier's own test (E174 item 7)
 
 2026-10-20, by the Verifier, on `verify/s4`, cut from `main` `2428966`. No new row and no engine change. `M433-the-decision-stales-on-each-dependency` case (Q4, the new spec version) and `M432-a-proposal-that-cannot-be-recomputed-and-a-later-phase-change` case S2 each opened a Spec Writer session as soon as the `spec_change` decision was raised, while the one-shot run that raised it could still be live; under load the open was refused 409 `session_busy`, the engine's rule (SEAM §344). Each now waits, with no tick, for every run of the project to end (`waitForIdle`) before `specSaves`, so the decision stands open as raised. The file's other cases and the other M433 files open no session after a one-shot run. **Run** (workstation, `TMPDIR=/tmp/vs4tmp`): M433's file alone five times, 3/3 each; M432's file alone once, 2/2; both together beside `M430-early-replanning-as-a-compare-and-swap` and `M433-old-generation-runs-and-what-resolves-an-obligation` (each its own TMPDIR), all passing (3/3, 2/2, 9/9, 5/5; load average about 3 on 20 cores). A pass under load is evidence, not proof.
+
+## M7, Rapid prototype to Alpha (the owner's draft M7 plan of 2026-10-28, rows M601 to M612; SEAM §§575, 576)
+
+2026-10-28, by the Verifier, on `verify/rapid-prototype`, with `main` 6a0eec94 and the Builder's `build/rapid-prototype` 4bb74433 (slice E5) merged.
+
+- One file per row.
+- Slice 49 (kernel): M601 to M610 and M612.
+- Slice 50 (sandbox): M611, also listed under `sandbox`.
+- Every named case of a row is a test carrying the row's letter.
+- The harness is `harness/prototype.mjs`; the table is `contract/prototype.json`.
+
+| Row | File | Cases |
+|---|---|---|
+| M601 | `M601-the-mode-and-its-preset.test.mjs` | (a) to (d) |
+| M602 | `M602-preparation-is-authorized-before-it-runs.test.mjs` | (a) to (d); (d)'s last assertion fails (objection 221) |
+| M603 | `M603-the-brief.test.mjs` | (a) to (e) |
+| M604 | `M604-one-brief-approval-authorizes-the-build.test.mjs` | (a), (b), (c) twice (three stages; a platform permission), (d), (e) |
+| M605 | `M605-agent-runs-roles-and-model-calls.test.mjs` | (a) to (d) |
+| M606 | `M606-accounting-completeness.test.mjs` | (a) to (e); (d) is a SIGKILL mid-run |
+| M607 | `M607-limits-and-the-shared-allowance.test.mjs` | (a), (b) twice (held; both capped), (c) to (f) |
+| M608 | `M608-stop-and-a-deliberate-resume.test.mjs` | (a) to (d) |
+| M609 | `M609-discard-touches-only-its-own-iteration.test.mjs` | (a) to (c) |
+| M610 | `M610-iterate-and-the-second-alpha.test.mjs` | (a) twice (a teardown in flight; a one-shot run under way), (b) to (d) |
+| M611 | `M611-a-disposable-local-service-alpha.test.mjs` | (a) to (d), on a real unit |
+| M612 | `M612-the-receipt-and-the-untouched-planned-workflow.test.mjs` | (a) to (d) |
+
+**Restated under objection 220** (the owner's ruling S3): M301 (f), M307 (d) and M307 qualified by command (f)(d). In each, the historical completion is read at completion, and current availability after the teardown.
+
+**Not covered:**
+
+- promotion, Edit brief and remote targets (the plan's own exclusions);
+- M612 (d) on the project lane (M401's own files are);
+- a usd threshold reached by estimated cost alone (the threshold case uses a reported cost);
+- the iterate refusal for an in-flight *deploy* (the case holds a teardown; both share one check).
+
+`scripts/run-tests.mjs`'s ROWS does not yet list M601 to M612. That list is the owner's.
+
+## The owner's rulings of 2026-10-29 pinned (M606 (f), M607 (a), M611 (e), M615 (e), M616 (e); objections 222, 224; SEAM §579)
+
+2026-10-29, by the Verifier, on `verify/alpha-preview`, from `integration/alpha-preview` 2d086dfa (main + the rapid prototype + the static preview + the follow-ups).
+
+| Row | File | Added or restated |
+|---|---|---|
+| M606 | `M606-accounting-completeness.test.mjs` | (f) four cases on the reads (a) to (e) took: the classes, the split, never consumption, unknown apart |
+| M607 | `M607-limits-and-the-shared-allowance.test.mjs` | (a) the preset 5,000,000: `limited_by` run, then iteration after an unknown allowance with another run under way |
+| M610 | `M610-iterate-and-the-second-alpha.test.mjs` | (a) restated (objection 224): the historical outcome, `next_step` current guidance |
+| M611 | `M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs` (new, slice 49, kernel) | (e) replacement and the end of an observation, on the scripted target; four cases |
+| M613 | `M613-static-mode-on-a-real-unit.test.mjs` | M616 (e)'s relay `host`/`url`, read on this file's real unit |
+| M615 | `M615-the-downloadable-deliverable.test.mjs` | (e) restated (objection 222 as ruled): the version in `prerequisites` |
+| M616 | `M616-deployment-compatibility-and-readiness.test.mjs` | (e) `blocked` through a static page's serving check and re-run checks, then `ready`; seven cases |
+
+Harness: `harness/scripted/child.mjs` claims a kind's launch ordinal (the cause of M610 (a)'s intermittent "not reached in 60 ticks"); `harness/deploy/static-journey.mjs` `STATIC_PAGE_BUILT` and `pageBuilt`'s `built`. Tables: `prototype.json` (`candidate.alpha_replaced`, `next_steps.alpha_gone`), `static-preview.json` (`readiness_states`). SEAM's static-preview §§572, 573 renumbered §§577, 578.
+
+**Not covered:** a replacement on a real unit (M611 (e)'s kernel file only); a deployment applied and then failing verification (the old candidate withdrawn at finalization); the other-environment exception; the relay read until M613 (d) runs on a qualified host.
+
+## The owner's rulings of 2026-10-29 on the read (M610 (a), M611 (e), M616 (e); objection 226; SEAM §582)
+
+2026-10-29, by the Verifier, on `verify/alpha-preview` at f6807fcd.
+
+| Row | File | Added or restated |
+|---|---|---|
+| M610 | `M610-iterate-and-the-second-alpha.test.mjs` | (a) `outcome.recorded` and `outcome.note` beside the current `next_step` |
+| M611 | `M611-replacement-and-ended-observations-on-the-scripted-target.test.mjs` | (e) the same after a replacement and a teardown |
+| M611 | `M611-a-disposable-local-service-alpha.test.mjs` (sandbox) | (e) a second describe: replacement and teardown observations on a real unit; four cases |
+| M616 | `M616-deployment-compatibility-and-readiness.test.mjs` | (e) two `ready` cases restated (objection 226); build complete beside an open approval on the read and the list; the phase-completion path to a ready deliverable; a serving check not proposed (a third describe) |
+
+**Not covered:** `means: verified` (no M616 case deploys); the real-unit describe has not run on a host H12 admits.

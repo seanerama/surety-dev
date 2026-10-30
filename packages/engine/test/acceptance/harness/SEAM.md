@@ -8445,3 +8445,178 @@ The owner's ruling of 2026-10-27, verbatim: "For policy updates, submitting valu
   - M528 (h): under design off the review is refused `design_review_unavailable` and no session is opened.
 
   No case needed a new revision, so none was changed to submit a different value.
+
+## 572. The prototype limit keys (rows M73, M07, M01; objection 217; the owner's ruling R4 of 2026-10-28; the Builder's `build/rapid-prototype` 38121c19; the Verifier, on `verify/rapid-prototype`)
+
+R4, verbatim: "Accept the proposed values as editable prototype defaults: 1.5 million billable tokens, $15 estimated spend, 45 minutes, two repairs per stage and four per iteration. These are configuration defaults, not authorization for a paid demonstration."
+
+- **`contract/config.json`**, `project`, gains five rows:
+  - `prototype_budget_tokens`: 1,500,000 within 10,000 to 50,000,000, tokens;
+  - `prototype_budget_usd_estimated`: 15 within 0 to 10,000, usd, `integer: false`;
+  - `prototype_runtime_seconds`: 2,700 within 300 to 86,400, s;
+  - `prototype_repairs_per_stage`: 2 within 0 to 10, count;
+  - `prototype_repairs_per_iteration`: 4 within 0 to 40, count.
+
+  These are the engine's `PROJECT_POLICY` values and the generated appendix's. M73's project key list, M07-project-bootstrap-and-policy's effective defaults and M01's committed `.surety/policy.json` read them from the table. Raising any one is a widening, as raising a budget key is. The table states that in its `$comment` only, as it does for the budget keys.
+- **Not pinned here:** the keys' refusals, their widening when raised, and their enforcement (dispatch admission, the runtime deadline, the repair allowance). Those belong to slice E2's rows. The Builder's `test/unit/rapid-prototype.test.mjs` covers the refusals and widening meanwhile.
+
+## 573. The prototype brief's kinds (row M73; objection 218; the owner's rulings R5 and R1 of 2026-10-28; the Builder's `build/rapid-prototype` c24dd523, slice E3; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/work-items.json`** gains `brief_preparation`: dispatched (`m1` true), role `spec_writer`, `replan`'s integrated path. It is the Spec Writer's one bounded preparation run of a prototype iteration's brief, registered by the approve of a `prototype_preparation_approval`. The transition tests generate its cases from the table, as for every kind.
+- **`contract/decisions.json`** gains `prototype_preparation_approval`:
+  - subject a `prototype_iteration`;
+  - options approve and reject;
+  - a manifest binding the role, provider and model, the run's token limit with its estimated cost and basis, whether it is paid, what it authorizes, the idea and the policy revision;
+  - no effect intent.
+- **No Verifier table holds these, so they are not tabled:** the record kind `prototype_brief`, the routing value `policy_authorized` and the `prototype.*` events. No acceptance row yet pins the preparation approval, the brief, or the policy-authorized first plan.
+
+## 574. The preparation approval binds what it continues and the change (row M73; objection 219; the owner's rulings R7 and R8 of 2026-10-28; the Builder's `build/rapid-prototype` 516f9a91, slice E4; the Verifier, on `verify/rapid-prototype`)
+
+- **`contract/decisions.json`**: `prototype_preparation_approval`'s manifest gains `continues` and `change`, after `policy_revision`, as the contract orders them. `continues` is null for a first iteration, else the predecessor and its brief. `change` is null or the owner's change request.
+- **M73's manifest check is one-way.** Each key the table lists must be in the contract, but the check does not catch a contract key the table omits. M73 therefore passed before these two keys were listed and passes now.
+- **Iterate's behaviour is not pinned by an acceptance row yet:** the new iteration, its predecessor, its change text and the events `prototype.iteration_iterated` and `prototype.alpha_not_attributed`.
+
+## 575. The M7 rows: Rapid prototype to Alpha (rows M601 to M612; the owner's draft M7 plan of 2026-10-28; his rulings R1 to R9 and S1 to S5; the Builder's `build/rapid-prototype` 4bb74433, slice E5; the Verifier, on `verify/rapid-prototype`)
+
+### The table and the contract
+
+- **`contract/prototype.json`** (new) holds the names the M7 rows read:
+  - the modes and the iteration statuses;
+  - the `prototype.*` events and `candidate.alpha_withdrawn`;
+  - the bootstrap preset, including S5's `budget_run_billable_tokens` 5,000,000;
+  - the bounds (one phase, two stages) and the objectives (3 to 5);
+  - the policy publisher and routing;
+  - the preparation's kind, role, decision and record kind;
+  - the brief's fields and the engine's fields;
+  - the next steps after a limit, an unknown total, a Stop and a Discard;
+  - the owner's three answers per iteration;
+  - the routes.
+
+  No M1 to M6 table holds any of these.
+- **M73** now holds the contract to the table's events in both directions:
+  - every event in the table is an EventType declared with an owner;
+  - every `prototype.*` EventType of the contract is in the table.
+
+  M73 also compares `ExecutionMode` and `IterationStatus` with the table. Slice E5's only contract change is the event `prototype.iteration_resumed`. Before this section, no table would have caught that event's absence.
+- **Not in the contract.** E5's response keys are not in `api/schema.json`, which holds no response shapes:
+  - on each invocation: `effective_limit_tokens`, `limited_by`, `run_limit_tokens`;
+  - in `remaining`: `next_run_reservation_tokens`, `next_run_limited_by`, `run_limit_tokens`, `tokens_reason`;
+  - `budget_snapshot.prototype_allowance` on a receipt;
+  - `prototype` {iteration, seq, status, raises, reopens, reason} in a policy submission's answer, or in its `subject` when the submission is a widening;
+  - `controls.resume`;
+  - the route `POST …/iterations/:i/resume` and the command `iteration.resume`.
+
+  The rows read these by name over HTTP. The receipt's `budget_snapshot` is read from the store.
+
+### The harness
+
+**`harness/prototype.mjs`** is the kernel lane's prototype. It restates the products of the Builder's developer demonstration (`test/unit/rapid-prototype-demo.test.mjs`) in the harness's own terms:
+
+- the per-kind scripts (§350);
+- a pump that records queued check executions through §190's route and answers only the kinds it is given;
+- the owner's reads and answers over HTTP;
+- the store reads the rows assert.
+
+`kindNext` pads a kind's script array with the default product after the scripts it adds. A launch past the end of a kind's array would otherwise follow the default script, which writes nothing, so a first plan would publish no phase.
+
+`toBrief({policy})` tightens the policy first. If the preparation question bound the earlier policy and no longer stands, it asks for the preparation again.
+
+### How the rows are read
+
+- **M605 (a) "agent_runs 3, roles_used ['builder']"** is read for the Builder's runs: three agent runs of role `builder`, and `builder` once in `roles_used`. Every iteration also has its preparation, plan and check-authoring runs, so its own `agent_runs` is more than 3. The row's point is runs, not roles, and the case asserts that.
+- **M605 (d)** restarts the engine between runs (SIGTERM, then a new engine on the same home). **M606 (d)** kills it while a run executes (SIGKILL), with the gaps' recovery path followed to Alpha.
+- **M607 (b)** has two cases, one for each answer the row allows:
+  - with the preset's per-run limit, the first run is given all the iteration has left, and the other is held `depends_on`;
+  - with a per-run limit of 800,000, both run, and the second is capped at what the first left.
+
+  In both, the reservations sum to the allowance, never more.
+- **M607 (c)** uses the scripted provider's raw `cost_usd`, which is a reported cost, to pass the threshold. **M612 (a)** uses the model `scripted-priced` for an estimated cost with its pricing basis (`scripted-prices-1`, ledger.ts).
+- **M612 (d)** runs on the kernel lane. A planned project goes through M5's steps (idea, Vision, Spec Writer, Architect, both approvals) to `developing` and its check authoring's dispatch, beside a prototype on the same engine. M401's own files remain the project-lane statement of "M401's assertions hold", unchanged.
+- **M611** (sandbox, slice 50) builds on `hostDeployable`:
+  - (d) is its planned project, deployed and torn down on its own unit;
+  - the prototype is made on the same engine, its checks run by the real runner through the M3 program and the target-check program;
+  - the prototype's candidate is deployed by the policy (`on_phase_complete`) on a real unit.
+- **M307 (d)** and **M307 qualified by command (f)(d)** read `candidates.progress` after their teardown, as M301 (f) did. Slice E5's S3 fails them on that read. They are restated under objection 220 (§576): the progress is taken at completion, and a second test reads the withdrawal after the teardown.
+
+## 576. M301 (f): the historical completion and current availability (objection 220; the owner's ruling S3 of 2026-10-28; the Builder's `build/rapid-prototype` 4bb74433, slice E5; the Verifier, on `verify/rapid-prototype`)
+
+S3, verbatim: "Make current Alpha availability consistent across modes. Teardown must remove any claim that the Alpha is currently available. Preserve the historical deployment record. Have the Verifier distinguish those meanings before restating M301."
+
+- **Historical.** The candidate reached `alpha_deployed` when `alpha_complete` was satisfied. A teardown never changes any of the following:
+  - the `candidate.advanced` event (`developing → alpha_deployed`), in the completion's transaction;
+  - the satisfied `alpha_complete` evaluation;
+  - the deployment request and its outcome `deployed`;
+  - the round's verification and `last_verified`;
+  - the observation history, which is only appended to;
+  - for a rapid prototype, the iteration's `alpha_at` and outcome `alpha_ready`.
+- **Current.** `candidates.progress` read now, plus, for a prototype, `alpha.current` in the iteration read. A finalized teardown of the environment withdraws a candidate still `alpha_deployed` there in every mode: progress becomes `developing`, and the finalizer's transaction (`operation.finalized`) writes one `candidate.alpha_withdrawn` {from, to, environment, operation}.
+- **M301 (f)** reads the historical meaning from rows taken at completion, before the teardown. A second (f) test reads the current meaning after the teardown and asserts that the historical rows are unchanged. The objection's answer lists the cases.
+
+## 577. D4 §13's amendments in the contract document: the Verifier's table `contract/static-preview.json` (rows M73, M613 to M616; D4 §13, the owner's amendments of 2026-10-29; the M7 plan §3b DRAFT 1; the Verifier, on `verify/static-preview` from the driver's 0311382c)
+
+- **What M73 now holds both ways.** Run alone on 0311382c before this change, M73 passed 11 of 11: its tables (work kinds, decision kinds, engine and project configuration keys) name nothing D4 §13 adds, so nothing pinned the additions. The new table, read by one new M73 case, holds the engine's exported contract to:
+  - six enumerations exactly (sorted comparison): `CheckKind` (M3's nine and `post_deploy_serving`), `ProposedBy` (`verifier_run`, `human`, `engine`), `OutputKind` and `DeploymentCompatibilityOutputKind` (`static_site`, `node_service`, `unknown`), `DeploymentCompatibilityTrigger` (`plan_published`, `environment_configured`, `candidate_nominated`), `DeliverableFormat` (`zip`);
+  - the events `deliverable.built` and `deployment.compatibility_evaluated`, each an `EventType` declared with an owner and not reserved;
+  - the tables `deliverables` and `deployment_compatibility`: exactly their columns, exactly their foreign keys (`project` → projects, `candidate` → candidates), and the enumerations of their kind columns;
+  - `checks.kind` of `CheckKind`, `protected_proposals.proposed_by` of `ProposedBy`, `artifacts.output_kind` of `OutputKind`, and the `serving` columns of `gate_evaluations` and `deployment_verifications`.
+- **Where the values come from.** The kinds, the event, the triggers and the output kinds are D4 §13's words; `zip` and the deliverable's fields are SHAPES.md §4's. The column names and the event `deliverable.built` are where D4 and SHAPES are silent: fixed here from the Builders' records (commits 8a31133d, 72e4bb88, 8da1df83), so a later change to them is a change this table must be told of.
+- **Not in the contract document.** The routes (`GET /v1/adapters/:a`, `…/candidates/:c/deliverable`, `…/deliverable/download`) and the environment configuration's `mode` and `static` have no place in the document (it has no routes and no environment-configuration keys). Rows M613 and M615 pin them over HTTP.
+- **One trigger D4 names and the engine does not record.** D4 §13.4 says the evaluation is recorded "on first read". The engine computes it for a read and records nothing (D1 §12, row M70: a projection writes nothing; the Builder's record). The table holds the three recorded triggers. No row of §3b pins "on first read"; it is reported to the owner, not tested.
+
+## 578. Rows M613 to M616: what each case reads (the M7 plan §3b DRAFT 1; D4 §13; the Verifier, on `verify/static-preview`)
+
+- **Files and lanes.**
+  - M613 is two files: the kernel cases (a) to (c) in `M613-static-mode-of-local-service` (slice 49), and the real unit (d) in `M613-static-mode-on-a-real-unit` (slice 50, listed under `sandbox` as M307 and M611 are).
+  - M614, M615 and M616 are one kernel file each (slice 49).
+  - Shared fixtures: `harness/deploy/static.mjs` (the site, the static configuration, the serving check as a project declares it, the engine's server and program run as the test's children, a zip reader of the test's own) and `harness/deploy/static-journey.mjs` (M616's projects).
+- **M613.**
+  - (a) "The runtime path and sha256 the engine itself runs" is read from the engine's own process: `/proc/<engine pid>/exe` resolved, and its SHA-256. "The static server's digest" is this test's SHA-256 of `dist/design/preview/server.mjs`. "Another adapter" is `kubernetes` and `scripted`, each 404.
+  - (b) "Today's rules when absent" means two things. A service configuration with no `mode` is accepted with its content unchanged (no `mode` added) and reads `mode: service` with no `static` part. One without a start command is refused 422 naming `start`.
+  - (c) The request seals the artifact before the gate is evaluated (M4's preparation, D4 §4). So "`not_issued` when the gate says so" is read as: 409 `authorization_not_issued` naming `ACCEPTANCE_SCOPE_INCOMPLETE`, `alpha_authorize` `not_satisfied`, no authorization issued, and no deploy work or operation. A sealed artifact row is not a deployment, and is not asserted absent.
+  - (d) `alpha.current` is the prototype's read (row M611, on `build/rapid-prototype`), which this branch does not have. Its meaning here is the environment read's `running`: non-null before the teardown, null after. "History kept" means the deploy operation, the verification row (`verified`), `last_verified` unchanged, and the artifact record. The environment read's `current_generation` names the teardown's generation after it and is not asserted.
+  - (d) also reads what the round's serving execution printed in its real check domain: each path with its served and expected SHA-256 and `match`.
+- **M614.**
+  - (a) "Exactly one required check, authored by the engine" is read after the owner applied the engine's proposal as any tightening (`check_correction_tightening` answered `approve`, D4 §13.2 "classified and approved as any proposal"). The project's own checks list their inputs file by file, as the Builder's record says a project must for the proposal to classify as a tightening. The provenance is the proposal's `proposed_by: engine`, `run` null, and its `protected.proposed` event's `engine_authored: post_deploy_serving`. There is no Verifier run and no `check_authoring` item, at the configuration or after the application.
+  - (b) and (c): the kernel lane has no check domain, so the round's serving execution moves through the scripted check boundary (§190). What the program prints and decides is read by running the engine's own program (`dist/checks/programs/static-serving.mjs`) as the test's child against the engine's static server, over the deployment's sealed artifact on disk (or a changed copy of it), with the variables the engine gives it: the recorded manifest, the execution's digest and the operation's digest. (c)'s verification "not `verified`" is the round of a second deployment whose serving execution was recorded exit 1.
+  - (e) "Every text" is read as every record of serving verification: the deployment verification, the environment record's and the environment read's `last_verified`, the `alpha_complete` evaluation, and the candidate read. Each must carry `serving_verified: true`, the execution, the key and the statement verbatim, with no `accepted` key anywhere.
+  - (e) "No review satisfied" means no sign-off, no review or verification work completed, and no Reviewer or Verifier run. "D4 §5.4 holds" means the serving record names the check result the engine recorded for the execution, and a check of kind `post_deploy_serving`.
+  - The deploy readiness's own sentence for a static site in static mode says "(serving verified, not functional or visual acceptance)", with a comma. It is a description of the check, not a record of a verification, and is not asserted; it is reported to the owner.
+- **M615.**
+  - The phase gate is satisfied through the engine's own route (`POST …/gates/phase` with the published plan, M428 (d)), never by a fixture row.
+  - (d) "The only requirement the API token" means two things: without the token both routes are refused (401 or 403) and serve no package; with it they are served with no decision raised. "Nothing created" is compared before and after the reads and downloads, counting runs, work items, operations, decisions, deployment requests, authorizations, verifications and check executions.
+  - (e) The row says "the start command and runtime version in the instructions". The engine gives the version as a prerequisite ("Node.js <version>, the runtime the project's environment pins."), which D4 §13.3 ("its platform, instructions and prerequisites") also allows. The case reads the run guidance (instructions and prerequisites); objection 222 asks the owner which he meant.
+- **M616.** All four projects are the design journey's reference project (Pantry) in a variant, taken to its published plan through the owner's routes with design off.
+  - **PAGE** is a browser app: one `ui` module on the web under `html_css`, **Targets:** web, and the environment stating "none: static files served from the artifact". It is built to its phase's completion on the kernel lane. Its Builder also writes a package.json whose start script names a server, so (d)'s candidate tree says `node_service` against the architecture's `static_site`.
+  - **A second PAGE** is used for (b).
+  - **SERVICE** is Pantry as M6 has it, with its runtime `node server.mjs`.
+  - **SILENT** is Pantry with no runtime line.
+  - "No decision raised" means two things: no decision is open at the publication, and the project's decisions are exactly the journey's own (`spec_approval`, `architecture_approval`, `plan_approval`).
+  - (e)'s "one of `ready`/`unconfigured`/`unsupported`/`unknown`" is shown three times on the built PAGE, each with the NOW text and primary action. `unconfigured` is the specification's environment before any configuration. `unsupported` is static mode for the Node tree. `ready` is service mode.
+
+## 579. The owner's rulings of 2026-10-29 pinned: current availability, the accounting basis, the 5,000,000 per-run limit, blocked readiness, the relay's address; objections 222 and 224; a kind's launch ordinal claimed (rows M606 (f), M607 (a), M610 (a), M611 (e), M613 (d), M615 (e), M616 (e); the M7 plan as amended on `main` c54152cb and 14b87e91; the Verifier, on `verify/alpha-preview` from `integration/alpha-preview` 2d086dfa)
+
+- **Section numbers.** The merge of the two streams left two §572 and two §573. The static-preview pair is now §577 (its contract table) and §578 (what rows M613 to M616 read); the prototype's §§572 to 576 keep their numbers. Every citation of the static pair was renumbered: M613 (both files), M614, M615, M616, M73 (its `static-preview.json` comments), `contract/README.md`, `contract/static-preview.json`, `harness/deploy/static.mjs`, `harness/deploy/static-journey.mjs` and objection 222. The text of every section is unchanged. (The older duplicate headings §§453 to 458, slice 37's and slice 38's, were on `main` before this merge and are not renumbered here.)
+- **A kind's launch ordinal is claimed** (`harness/scripted/child.mjs`, `claimKindOrdinal`). A launch that follows `scripts/kind-<kind>.json`'s array (§350) counted the kind's launches in the log and took that element. Two launches of one kind started together (two stages dispatched on one tick) both counted before either logged its launch, so both took the same element. M610 (a)'s "one-shot run still under way" case scripts two such launches, one holding and one exiting 3; when both took the holding script, nothing failed and the case ran out of ticks ("the iteration failed with a run still under way: not reached in 60 ticks", seen twice on 2026-10-29). Probed on the workstation with the case repeated: before the claim, both launches of a round took the holding script in 2 of 3 genuine rounds (launches 1 ms apart, `script_source` kind, both `holding`); after it, 8 of 8 rounds reached the failed iteration in 3 or 4 polls (1.7 to 2.7 s). The cause is the harness's assumption, not a late engine: the engine dispatched both runs in time and the run that exited ended at once. Each launch now creates `claims/kind-<kind>-<n>` exclusively from the logged count up and takes the first free `n`; where a claim cannot be made at all the logged count stands, as before. Sequential launches are unchanged.
+- **M610 (a), objection 224 (upheld).** The predecessor's `usage`, `owner_approvals`, `plan`, `brief` and `limitations` are still compared whole. Its `outcome` is history in `status` and `reason`, compared unchanged, and current guidance in `next_step`: `open_alpha` before the teardown, and after the finalized teardown the engine's guidance that the Alpha is no longer deployed (`contract/prototype.json` `next_steps.alpha_gone`), the same on the iteration read and the list, with `alpha.current_state` `torn_down` and `alpha.current` null. The stored column is not read: the row speaks of the reads.
+- **M615 (e), objection 222 (the owner's ruling).** The start command in `instructions` (as before); the runtime version in `prerequisites`, exactly one prerequisite naming `Node.js <the version the environment pins>`; it need not be repeated in the instructions, and no instruction may name another Node.js version.
+- **M606 (f).** Read on the reads cases (a) to (e) took (complete usage, a pending invocation, after the cancellation, the first token `limit_reached`, the unknown usage):
+  - `accounting_basis` has exactly the classes `measured_consumption`, `estimated_allowance`, `estimated_cost` and `combined`, each with its `meaning` and `fields`, the same on every read. A field's served path is its first word (a field may carry a note: " where …", " (…rule)"). No path is in two of measured, allowance and combined. Every member of `remaining.committed` but `rule` and `measured_is`, the token totals, the unknown allowances, the invocations' usage, allowances, reservations and limits, `remaining.tokens`, `next_run_reservation_tokens` and `run_limit_tokens` are classed; settled, observed and measured are measured consumption; unknown allowances, reservations and `estimated_allowance_tokens` are allowances; `total_tokens` and `remaining.tokens` are combined.
+  - `measured_tokens` = settled + observed under way; `estimated_allowance_tokens` = unknown allowances + reserved; a known `total_tokens` is their sum; `measured_is` is `complete` on complete usage and `lower_bound` while an invocation is pending or incomplete; `remaining.committed.rule` names the parts and says the total is not consumption; `remaining.tokens_rule` says it is not the limit less consumption alone.
+  - "Never presented as consumption": the token total is the measured categories only; `usage.totals.rule` and `app_totals.cumulative_rule` say the unknown allowance is an estimated allowance, never added to the token total; after the cancellation `measured_tokens` is exactly the billable tokens the invocations reported (in + out); the token limit's reason states "Of the N committed, M is measured consumption" and "A is estimated allowance, not consumption" with the read's own figures.
+  - "Unknown apart": the run that reported nothing has no figure and no allowance; `total_tokens` and `remaining.tokens` are null, never a partial sum; `measured_is` `lower_bound`; the measured and allowance figures count nothing for it; the reason names its invocation.
+- **M607 (a).** The preset per-run limit is read from the policy (5,000,000). The iteration's allowance is raised to 12,000,000 before the preparation, and with it the project's day limit on tokens of unknown cost (D2's `budget_day_unknown_tokens`, which counts running allowances and would otherwise hold the second dispatch: the scripted provider reports no cost), so that only the two limits of the row bind. Two independent stages dispatched together: each `run_limit_tokens` and `effective_limit_tokens` 5,000,000, `limited_by` `run`, the receipt's `budget_snapshot.budget_run_billable_tokens` 5,000,000 (the claim's transaction); `next_run_reservation_tokens` the remainder, `limited_by` `iteration`. One stopped while the other runs on: charged 5,000,000 − 1,200. Its held work resumed: the new run's effective limit is exactly 12,000,000 − settled − that unknown allowance − the other run's observed + reserved (its effective limit), `limited_by` `iteration`, the same on its receipt; committed then exactly 12,000,000 and nothing left for another run.
+- **M611 (e), the kernel part** (`M611-replacement-and-ended-observations-on-the-scripted-target`, slice 49, kernel; the row's real-unit cases stay in the sandbox file). Iteration 1 at its Alpha and observed current, then iteration 2 to its own Alpha in the same environment with nothing torn down between (`iterateToAlpha`). `candidate.alpha_replaced` once, naming iteration 1's candidate, `alpha_deployed → developing`, the environment's id, iteration 2's finalized deploy operation and iteration 2's candidate as `replaced_by`, in that operation's `operation.finalized` transaction; the progress read at that moment: iteration 1's candidate `developing`, iteration 2's `alpha_deployed`. Iteration 1's read: `current_state` `replaced` (it was `available`), `current` null, `next_step` `alpha_gone`; its history unchanged (outcome status and reason, status, `alpha_at`, candidate, deployment request, `deployed_at`, environment, the request rows, one `candidate.advanced`). The observation made before iteration 2's deployment was finalized, with no newer one made between (asserted: the stored observation unchanged): the environment read's `observed` `condition` `unknown`, `stored_condition` the stored one, `freshness` `expired`, `expires_at` = `ended_by.finalized_at`, `ended_by` `{kind: deployment, operation, finalized_at, reason}` (the reason names the operation); the environments list `state` `unknown` with the same `ended_by`; the stored observation and the observation history unchanged. Then a fresh observation of iteration 2, a finalized teardown: the same reads with `ended_by.kind` `teardown` and the teardown's operation and finalization time; iteration 2 `torn_down`, `next_step` `alpha_gone`, its history kept.
+- **M616 (e), blocked.** A PAGE variant whose Builder writes a static page (`STATIC_PAGE_BUILT`: no package.json, so the tree agrees, `static_site`), built to its phase's completion, then configured in static mode. Read at each step: configured (the engine's serving check proposed, its question not yet raised): `blocked`, `decision` null, the reason "The environment alpha can host this output (static site) with local_service in static mode, but a deployment would be refused now: …" naming the proposal; NOW `build_complete`, "The planned build and its automated gates are complete. It cannot be deployed to alpha yet: …", `primary_action` null. Its question open: `blocked`, `decision` the open decision, the reason naming the proposal and the decision, `primary_action` `answer_decision` (NOW is `waiting_on_you`: a waiting decision comes first in NOW). Approved, not yet applied: `blocked`, no decision, no deploy. Applied, the candidate's checks running again: `blocked`, "the candidate's automated checks are running (C of N completed)", no deploy. The checks passed: `ready`, `deploy`. Every readiness served in the file is one of `contract/static-preview.json` `readiness_states`.
+- **M616 (e), the relay's address.** The scripted adapter opens no relay (409 `relay_unavailable`), so the read is made on M613 (d)'s real unit while its relay is open: `relay` `{port, host 127.0.0.1, url http://127.0.0.1:<port>/}`, the open answer's `relay.url` the same; after the close, `relay` null. It runs in the sandbox lane with that file.
+- **Contract tables.** `prototype.json`: `candidate.alpha_replaced` in `events` (M73 holds it both ways) and `next_steps.alpha_gone`. `static-preview.json`: `readiness_states`, read by M616 only (the contract document does not enumerate them).
+
+## 582. The owner's rulings of 2026-10-29 on the read, pinned: ready to request deployment, build complete beside an open approval, the recorded outcome beside current guidance, the phase-completion path, replacement and teardown observations on a real unit (rows M610 (a), M611 (e), M616 (e); objection 226; the M7 plan as amended on `main` a02ef863; the Builder's 6cbb7fc8 and d22a9da7; the Verifier, on `verify/alpha-preview` at f6807fcd). §§580 and 581 are the kubernetes stream's (`verify/kubernetes-adapter`); this section is numbered after them so the two streams merge without a collision.
+
+- **The rulings, verbatim:** "next_step means current guidance. Historical outcomes remain preserved separately." "Open approvals take precedence in the primary status, while 'build complete' remains visible as a separate fact." "If a serving check has not yet been proposed, readiness may mean ready to request deployment, not 'verified' or 'ready to open.' State that approval and verification follow." "Include replacement/teardown observations on a real unit and the phase-completion path in the remaining validation."
+- **M616 (e), `ready` (objection 226, upheld).** The two cases that pinned "It can be deployed to alpha (…)." now read: `deploy_readiness.means` `request_deployment`; `follows` exactly `deployment_checks_authoring, approval, request_again, deployment, verification` for the Node service with no deployment-specific post-deploy check, and exactly `deployment, verification` for the static page whose serving check is applied; the readiness reason carries "Ready to request deployment, not verified and not open: "; NOW's reason begins "The planned build and its automated gates are complete. It is ready to request deployment to alpha (<kind>, local_service <mode> mode), not verified and not open: ", names the approval (where it follows) and the verification, and says they "follow before the preview opens" (not anchored at the end: the clause may go on, as it does for the not-proposed case); `primary_action` `deploy`. `means: verified` is not reached by any M616 case (nothing is deployed there).
+- **M616 (e), the serving check not proposed.** A third describe: the static page configured in static mode, the owner rejects the engine's proposal (`reject`), so no serving check is in place or pending: `ready`, `means` `request_deployment`, `follows` exactly `serving_check_proposal, approval, deployment, verification`; NOW `build_complete` with the ready-to-request sentence naming the approval and the verification, never "can be deployed", "is verified" or "is open".
+- **M616 (e), an open approval first, build complete apart.** On the static page with its serving-check question open, the project read and the `GET /v1/projects` summary each serve NOW `waiting_on_you` with `answer_decision`, and `build {complete true, completed_at <ISO>, deploy_readiness blocked with the decision}`; the two `build` objects are equal; `completed_at` equals the one served when the build first read complete.
+- **The phase-completion path** (M616 (e), with M615's deliverable read). The static page's phase is completed through the engine by the scripted roles (`pageBuilt`); the serving check's version applied makes the phase evaluation stale; the checks run again; ticks only (the file never calls `…/gates/phase`). Then: at least two phase evaluations of the candidate, an earlier one stale, the newest `satisfied` and not stale, computed after `protected.applied`, its `gate.evaluated` event's `actor_kind` `engine` with no `request_id`; readiness `ready`; `GET …/candidates/:c/deliverable` 200 `ready: true`; the list summary's `build` equal to the project read's.
+- **The recorded outcome.** M610 (a) after the teardown and M611 (e) (kernel) after the replacement and after the teardown: `outcome.recorded` `{status, reason, next_step, recorded_at}` equals the read before (`alpha_ready`, `alpha_complete`, `open_alpha`, an ISO time) while `outcome.next_step` is `alpha_gone`; `outcome.note` names current guidance and the record.
+- **M611 (e) on a real unit** (the sandbox file `M611-a-disposable-local-service-alpha`, a second describe with its own engine): iteration 1's candidate A deployed by the policy on a real unit, verified, observed; iteration 2 built in real domains (its own brief, one phase, the real runner's checks with `accept-r4`), its candidate B deployed on the same environment, held at its post-deploy check. Read there, B finalized and not verified: A `developing`, `candidate.alpha_replaced` once for A naming the environment, B's operation and B, in B's `operation.finalized` transaction; iteration 1 `replaced`, `current` null, `next_step` `alpha_gone`, `outcome.recorded` unchanged. Then B verified, observed, torn down; iteration 2 `torn_down`, its record kept, no unit left.
+  - **The observations on a real unit.** The observer runs on the engine's clock (cadence 30 s), so between a finalization and the read it may install a newer observation. The case (`assertEndedBy`) reads which: when the stored observation predates the finalization, it asserts `unknown`/`expired`, `stored_condition`, `ended_by {kind, operation, finalized_at}`, `expires_at` the finalization, the list `unknown`; when a newer one was installed, it asserts that one is current (no `ended_by`), of B's generation after a replacement and not `healthy` after a teardown, and that the earlier observation is kept in the history. The branch taken is reported with `t.diagnostic`. The observation made before the finalization is always required.

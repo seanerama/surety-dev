@@ -11,6 +11,8 @@ import { journalBlocks } from './journal.js';
 import { type Baseline, addCheckout, blockingObservation, integrationRef, openLineage, projectRepoRow, registerRef } from './repo.js';
 import { policyRevision, projectEffective } from './settings.js';
 import type { Policy } from '../../config/project-policy.js';
+import type { ExecutionMode } from '../../config/schema.js';
+import { createIteration, limitsOf, raiseEffect } from './prototype.js';
 import type { CommandResult } from './control.js';
 import { type ProtectedSet, captureProposal, recordInitialVersion } from './protected.js';
 import { raiseQuestion, widenScope } from './queue.js';
@@ -80,8 +82,24 @@ export interface PreparedCommit {
 // in turn registers the project.
 export function bootstrapProject(
   tx: Tx,
-  args: { id: string; name: string; tier: string; repo: string; branch: string; head: string; commit: PreparedCommit; deadlineSeconds: number; protectedSet: ProtectedSet; idea?: { blob: string }; initiallyPaused?: boolean },
-): { project: { id: string; registration_state: string } } {
+  args: {
+    id: string;
+    name: string;
+    tier: string;
+    repo: string;
+    branch: string;
+    head: string;
+    commit: PreparedCommit;
+    deadlineSeconds: number;
+    protectedSet: ProtectedSet;
+    idea?: { blob: string };
+    initiallyPaused?: boolean;
+    // POST /v1/projects/new's execution mode and its bootstrap policy
+    // (projects/commands.ts prepareBootstrap; slice E1).
+    mode?: ExecutionMode;
+    policy?: { blob: string; change: Policy; effective: Policy };
+  },
+): { project: { id: string; registration_state: string; mode?: ExecutionMode; iteration?: string } } {
   const ref = integrationRef(args.branch);
   createProject(
     tx,
@@ -118,7 +136,26 @@ export function bootstrapProject(
     tx.emit('baseline.idea_recorded', { project: args.id }, { version: 1, blob: args.idea.blob, actor: tx.actor.actor_kind, commit: args.commit.sha });
   }
   if (args.initiallyPaused) setPaused(tx, { project: args.id, paused: true });
-  return { project: { id: args.id, registration_state: 'pending_bootstrap' } };
+  if (args.mode === undefined || args.mode === 'planned') return { project: { id: args.id, registration_state: 'pending_bootstrap' } };
+  // A rapid prototype (slice E1): its mode; its bootstrap policy, committed
+  // in the bootstrap commit, recorded now as revision 1 so that the project
+  // never has a moment under any other policy (its initial values: no
+  // widening is asked for); and its first iteration, `preparing`, so that
+  // every run the project ever dispatches is attributed (R7).
+  tx.db.prepare('UPDATE "projects" SET "mode" = ? WHERE "id" = ?').run(args.mode, args.id);
+  if (!args.policy) throw new Error('a rapid_prototype project is bootstrapped with its preset policy');
+  const policyRevisionId = tx.newId('pol_');
+  tx.db
+    .prepare(
+      `INSERT INTO "policy_revisions" ("id", "created_at", "project", "revision", "git_path", "git_blob", "changed_by", "changed_at", "diff_summary",
+         "widens_authority", "committed", "effective")
+       VALUES (?, ?, ?, 1, '.surety/policy.json', ?, 'human', ?, ?, 0, 1, ?)`,
+    )
+    .run(policyRevisionId, tx.at, args.id, args.policy.blob, tx.at, JSON.stringify(args.policy.change), JSON.stringify(args.policy.effective));
+  tx.db.prepare('UPDATE "projects" SET "policy_revision" = ? WHERE "id" = ?').run(policyRevisionId, args.id);
+  tx.emit('policy.changed', { project: args.id, policy_revision: policyRevisionId }, { revision: 1, change: args.policy.change, commit: args.commit.sha, widens_authority: false, bootstrap: true, mode: args.mode });
+  const iteration = createIteration(tx, { project: args.id, limits: limitsOf(projectEffective(tx.db, args.id)) });
+  return { project: { id: args.id, registration_state: 'pending_bootstrap', mode: args.mode, iteration } };
 }
 // Pause sets the flag the scheduler's select step skips on; resume clears it.
 // Asking for the state the project is already in changes nothing and emits
@@ -322,6 +359,13 @@ export function submitPolicy(
     throw new Refusal(409, 'illegal_transition', 'The submission this repeats is not recorded.', 'Send the change again.', { project: args.project });
   }
   const facts = policyFacts(tx, { project: args.project });
+  // Slice E5 (the owner's ruling S2; gap 4): a submission that raises a
+  // limit of a rapid prototype whose current iteration reached a limit or
+  // was stopped says what the raise will do to it: reopen it, or not, and
+  // why (a Stop is undone only by resume; an unknown total is resolved by
+  // no limit).
+  const effect = raiseEffect(tx.db, args.project, args.ordinary as Record<string, unknown>);
+  const prototype = effect === null ? {} : { prototype: effect };
   let proposal: string | null = null;
   if (args.governed) {
     if (facts.head !== args.governed.head) {
@@ -353,7 +397,7 @@ export function submitPolicy(
       'confirm_required',
       `The change widens what the engine may do unasked (${args.widens.join(', ')}): it needs confirmation through decision ${decision.id}.`,
       'Answer the decision with its preview hash to commit the change.',
-      { decision: decision.id, preview_hash: decision.preview_hash, ...(proposal ? { proposal } : {}) },
+      { decision: decision.id, preview_hash: decision.preview_hash, ...(proposal ? { proposal } : {}), ...prototype },
     );
     recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome: 'refused', revision: null, operation: null, status: 409, answer: refusal.body() });
     return { status: 409, body: refusal.body() };
@@ -379,12 +423,12 @@ export function submitPolicy(
   }
   const commit = revision !== null ? { committed: false, commit: { state: 'pending' } } : { committed: false, commit: null };
   if (proposal !== null) {
-    const body = { outcome: 'accepted', proposal: { id: proposal }, ...(revision !== null ? { revision } : {}), ...commit };
+    const body = { outcome: 'accepted', proposal: { id: proposal }, ...(revision !== null ? { revision } : {}), ...commit, ...prototype };
     recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome: 'accepted', revision, operation, status: 202, answer: body });
     return { status: 202, body, effects: revision !== null ? [{ kind: 'journal', project: args.project }] : [] };
   }
   const outcome = revision !== null ? 'accepted' : 'unchanged';
-  const body = { outcome, revision, ...commit };
+  const body = { outcome, revision, ...commit, ...(revision !== null ? prototype : {}) };
   recordSubmission(tx, { project: args.project, intent_id: intent, fingerprint, outcome, revision, operation, status: 200, answer: body });
   return { status: 200, body, effects: [{ kind: 'journal', project: args.project }] };
 }

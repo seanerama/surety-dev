@@ -15,7 +15,11 @@ export async function answerFacts(rt: Runtime, project: string | null, decision:
   if (project === null) return {};
   // The acceptance content of a candidate is part of some previews.
   await ensureAncestry(rt, project).catch(() => undefined);
-  const subject = await rt.read<{ kind: string; oob: { subject_kind: string; repo: string; ref: string | null; checkout: string | null } | null; run?: string | null } | null>('decision.subject', { project, decision });
+  const subject = await rt.read<{ kind: string; oob: { subject_kind: string; repo: string; ref: string | null; checkout: string | null } | null; run?: string | null; runs?: string[] } | null>('decision.subject', { project, decision });
+  // A Stop or a Discard of a prototype iteration (slice E2): each of its runs
+  // under way whose backend has exited on its own (Q13), and whose end the
+  // running engine has already decided.
+  if (subject && Array.isArray(subject.runs)) return { exited_runs: subject.runs.filter((r) => rt.exitedFirst(r)), decided_runs: subject.runs.filter((r) => rt.endDecided(r)) };
   // A Stop's or an Abandon's run whose backend has exited on its own (Q13).
   if (subject && typeof subject.run === 'string') return rt.exitedFirst(subject.run) ? { exited: true } : {};
   if (!subject?.oob) return {};

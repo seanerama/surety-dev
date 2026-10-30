@@ -41,6 +41,7 @@ import { recordReview } from '../design/review.js';
 import { type DesignFindingInput, recordDesignFindings } from '../design/findings.js';
 import { type OwnerEvidence, openOwnerReview } from '../design/owner-review.js';
 import { alphaSubject } from '../design/review.js';
+import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfSession, iterationForDispatch, prototypeBlocker, sessionTurnAllowance } from '../store/transitions/prototype.js';
 
 export const SESSION_ROLES = ['vision', 'spec_writer', 'architect', 'designer'] as const;
 export type SessionRole = (typeof SESSION_ROLES)[number];
@@ -258,6 +259,17 @@ export function openSession(
     });
   }
   const role = args.role as SessionRole;
+  // A rapid prototype's iteration limits (R4; slice E2), as at a one-shot's
+  // dispatch: the session reserves its run budget. A canary session is its
+  // attempt's. Refused with what the dispatch check says; `final`: the
+  // driver records the iteration limit_reached (this transaction is
+  // refused, so writes nothing).
+  if (!args.attempt) {
+    const proto = prototypeBlocker(tx.db, p.id, askOfSession(tx.db, p.id, role));
+    if (proto !== null) {
+      throw new Refusal(409, 'prototype_limit_reached', `The session cannot open: ${proto}.`, 'Raise the limit, or discard the iteration.', { project: p.id, role, final: proto.startsWith(PROTOTYPE_LIMIT) });
+    }
+  }
   // The backend first (D6 §2.6), then the Architect's approved
   // specification (D6 §3.3, §3.5).
   const attempt = args.attempt ? getAttempt(tx.db, args.attempt) : undefined;
@@ -292,6 +304,9 @@ export function openSession(
        VALUES (?, ?, ?, ?, NULL, ?, 'session', 'claimed', 'allocated', ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
     )
     .run(run, tx.at, p.id, seq, role, resolved.backend, resolved.version, model, head.expected_oid, idle, args.parent ?? null, head.expected_oid, attempt?.id ?? null);
+  // The prototype iteration it is attributed to, fixed now (R7; slice E1).
+  const iteration = iterationForDispatch(tx.db, p.id);
+  if (iteration !== null) tx.db.prepare('UPDATE "runs" SET "iteration" = ? WHERE "id" = ?').run(iteration, run);
   const subject = { project: p.id, run };
   tx.emit('run.created', subject, { seq, role, kind: 'session', backend: resolved.backend, base_revision: head.expected_oid, parent_run: args.parent ?? null });
   tx.emit('run.claimed', subject, {});
@@ -426,6 +441,18 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
       spent,
     });
   }
+  // A rapid prototype's session turn is given its effective allowance (slice
+  // E5, the owner's ruling S5), as a one-shot run is at dispatch: the
+  // session's cumulative bound is what its earlier turns were charged plus
+  // the lower of what it has left of its run budget and what its iteration
+  // has left. None left: the turn is refused.
+  const allowance = canaryOf !== null || sessionBudget.key !== 'budget_run_billable_tokens'
+    ? undefined
+    : sessionTurnAllowance(tx.db, { project: run.project, iteration: (run as SessionRow & { iteration?: string | null }).iteration ?? null }, sessionBudget.limit, spent);
+  if (allowance === null) {
+    const blocker = prototypeBlocker(tx.db, run.project, askOfSession(tx.db, run.project, run.role));
+    throw new Refusal(409, 'prototype_limit_reached', `The turn cannot start: ${blocker ?? `prototype iteration of session ${run.id} has no token allowance left for it`}.`, 'Close the session; raise the limit, iterate or discard the iteration.', { run: run.id, final: blocker?.startsWith(PROTOTYPE_LIMIT) ?? true });
+  }
   const turn = run.turn_count + 1;
   if (dayHeld) {
     // Held: the owner's entry admitted and the session busy with the turn,
@@ -458,7 +485,7 @@ export function admitTurn(tx: Tx, args: TurnArgs): { run: string; turn: number; 
   takeLease(tx, run, args.incarnation);
   // The owner's entry, by the admission (B01).
   appendTranscript(tx, run, { turn, speaker: 'owner', text: args.text, text_ref: args.textRecord });
-  const invocation = startTurn(tx, run, { turn, incarnation: args.incarnation, scope: args.scope ?? null, resolved, canaryOf, turnMax, sessionBudget });
+  const invocation = startTurn(tx, run, { turn, incarnation: args.incarnation, scope: args.scope ?? null, resolved, canaryOf, turnMax, sessionBudget, allowance: allowance ?? null });
   return { run: run.id, turn, session_state: 'turn_running', invocation };
 }
 
@@ -498,7 +525,7 @@ function reservationsOf(db: Tx['db'], project: string): { run: string; role: str
 function startTurn(
   tx: Tx,
   run: SessionRow,
-  args: { turn: number; incarnation: string; scope: string | null; resolved: Resolution; canaryOf: string | null; turnMax: number; sessionBudget: { key: string; limit: number } },
+  args: { turn: number; incarnation: string; scope: string | null; resolved: Resolution; canaryOf: string | null; turnMax: number; sessionBudget: { key: string; limit: number }; allowance?: EffectiveAllowance | null },
 ): string {
   const { turn, resolved, canaryOf, turnMax, sessionBudget } = args;
   tx.db.pragma('defer_foreign_keys = ON');
@@ -507,10 +534,11 @@ function startTurn(
   const domain = tx.newId('dom_');
   const policy = projectPolicy(tx.db, run.project);
   const budget = {
-    budget_run_billable_tokens: policy.budget_run_billable_tokens,
+    budget_run_billable_tokens: args.allowance ? args.allowance.effective_limit_tokens : policy.budget_run_billable_tokens,
     ...(sessionBudget.key === 'designer_session_budget_billable_tokens' ? { designer_session_budget_billable_tokens: sessionBudget.limit } : {}),
     budget_day_verified_usd: policy.budget_day_verified_usd,
     budget_day_unknown_tokens: policy.budget_day_unknown_tokens,
+    ...(args.allowance ? { prototype_allowance: args.allowance } : {}),
   };
   const session = TEMPLATES[run.backend]?.sessionIdOf?.(invocation) ?? null;
   tx.db

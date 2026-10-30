@@ -231,6 +231,9 @@ export const DECISION_KINDS = [
   'design_approval',
   'design_due',
   'design_verdicts',
+  // Rapid prototype, slice E3 (the owner's ruling R5 of 2026-10-28): the
+  // bounded authorization of one brief preparation run.
+  'prototype_preparation_approval',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
@@ -270,6 +273,8 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   design_approval: 172_800,
   design_due: 172_800,
   design_verdicts: 172_800,
+  // R5 (slice E3): as the products' approvals, 2 d.
+  prototype_preparation_approval: 172_800,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). The project
@@ -331,7 +336,41 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   // D7 A.7's "512 MiB per review" (SEAM.md §522 †): every file of one
   // owner-invoked review together.
   design_review_evidence_max_review_bytes: int(536_870_912, 1_048_576, 17_179_869_184),
+  // Rapid prototype to Alpha (the owner's ruling R4 of 2026-10-28): one
+  // prototype iteration's limits, editable defaults, snapshotted on each
+  // iteration when it is created. Raising one is a widening, as raising a
+  // budget key is; setting one at creation is not. Slice E1 records and
+  // serves them (the iteration read's `limits` and `remaining`); dispatch
+  // admission against them (settled usage plus outstanding reservations),
+  // the runtime deadline and the repair allowance are enforced from slice
+  // E2. Each is a dispatch limit or an estimate threshold, never a
+  // guaranteed billing cap (D2 §4.2: no hard maximum is enforceable).
+  //   prototype_budget_tokens          billable tokens (input plus output) of the iteration
+  //   prototype_budget_usd_estimated   reported plus estimated USD of the iteration, a threshold
+  //   prototype_runtime_seconds        approval to Alpha, wall clock
+  //   prototype_repairs_per_stage      automatic repairs of one stage's work
+  //   prototype_repairs_per_iteration  automatic repairs of the whole iteration
+  prototype_budget_tokens: int(1_500_000, 10_000, 50_000_000),
+  prototype_budget_usd_estimated: { default: 15, min: 0, max: 10_000, integer: false },
+  prototype_runtime_seconds: int(2700, 300, 86_400),
+  prototype_repairs_per_stage: int(2, 0, 10),
+  prototype_repairs_per_iteration: int(4, 0, 40),
 };
+
+// The prototype iteration's limit keys (R4), in the order the iteration
+// read serves them.
+export const PROTOTYPE_LIMIT_KEYS = [
+  'prototype_budget_tokens',
+  'prototype_budget_usd_estimated',
+  'prototype_runtime_seconds',
+  'prototype_repairs_per_stage',
+  'prototype_repairs_per_iteration',
+] as const;
+
+// The project's execution mode (migration 0044): chosen at
+// POST /v1/projects/new, `planned` by default.
+export const EXECUTION_MODES = ['planned', 'rapid_prototype'] as const;
+export type ExecutionMode = (typeof EXECUTION_MODES)[number];
 
 // The finer a budget boundary, the earlier in this list (D2 A.2
 // BudgetBoundary; §4.2): a model turn is finer than a user turn, which is
