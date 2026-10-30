@@ -75,47 +75,98 @@ export const EMBEDDED_TOOL_AGENT_FLAGS: readonly string[] = [
 // Codex's command-spawn helper (C2i; the Terra qualification
 // qa_01M66MY95FW5HBXGN0AHRSQ31V, 2026-10-30, whose containment canary failed
 // delegation_unverified on "a second backend process" although every
-// containment action held; the driver's ruling): Codex 0.160.0 starts each
-// command it runs by re-exec'ing its own binary (utils/pty/src/
-// spawn_helper.rs:31 HELPER_ARG, :101-121) as `/proc/self/exe
-// --codex-run-as-process-setup <control fd> <parent pid> pipe|pty
-// <inherited fds> <cwd> <program> <arg0> <args...>`, which sets up the
-// child's process group and pipes in a fresh image and then execs the
-// program (:59 dispatches on argv[1] alone, into spawn_helper_main.rs:17,
-// which never returns to the agent's code). Until that exec, for
-// milliseconds, its /proc/<pid>/exe is the qualified binary; the sampler saw
-// `/proc/self/exe --codex-run-as-process-setup 40 25 pipe /surety/workspace
-// /bin/bash /bin/bash -lc cat /surety/context/prompt.md`. A member running
-// the binary whose argv[1] is exactly CODEX_SPAWN_HELPER_ARG is that helper,
-// not a second agent: it is classed `embedded_tool`, not counted in
-// max_backend, and recorded apart. Unless anything after the helper argument
-// is one of Codex's agent subcommands or flags (CODEX_AGENT_ARGS, alone or as
-// `--flag=value`): then it is a backend in disguise, counted. The program's
-// own arguments are scanned too, so a command that carries one of them is
-// counted; that errs toward the backend. The same reads as the ripgrep rule:
-// an unread command line, or one that fills the bounded read, counts.
+// containment action held): Codex 0.160.0 starts each command it runs by
+// re-exec'ing its own binary as a helper that sets up the child's process
+// group and pipes in a fresh image and then execs the command (utils/pty/
+// src/spawn_helper.rs:31 HELPER_ARG, :35 HELPER_EXE, :59 dispatch on argv[1]
+// alone into spawn_helper_main.rs:17, which never returns to the agent's
+// code). Until that exec, for milliseconds, its /proc/<pid>/exe is the
+// qualified binary; the sampler saw `/proc/self/exe
+// --codex-run-as-process-setup 40 25 pipe /surety/workspace /bin/bash
+// /bin/bash -lc cat /surety/context/prompt.md` (the empty inherited-fds slot
+// dropped by the joined line).
+//
+// The owner's ruling (Sean, 2026-10-30 16:00Z): the pinned helper is an
+// embedded command tool; a genuine additional agent stays detectable; the
+// helper's documented argument structure is parsed, not every argument
+// scanned (C2i's scan counted a command such as `git log -p` or `bash -c …`
+// run through the helper as a second backend). C2j.
+//
+// The grammar, as spawn_helper.rs:101-121 writes it and spawn_helper_main.rs
+// :17-66 reads it, one argv slot each:
+//   [0] `/proc/self/exe` (HELPER_EXE, :35, :101)
+//   [1] `--codex-run-as-process-setup` (:102)
+//   [2] control fd: decimal, > 2 (:103; main :18-21, i32 and fcntl-valid)
+//   [3] parent pid: decimal, > 0 (:104; main :29-33, pid_t)
+//   [4] setup: exactly `pipe` or `pty` (:105-108; main :34-41)
+//   [5] inherited fds: one slot, comma-joined decimals, possibly empty
+//       (:109-116; main :42-53 splits on ',' and drops empty pieces)
+//   [6] cwd, non-empty (:117, `.` when unset; main :54-56)
+//   [7] program (:118; main :57-59, `Command::new(program)`)
+//   [8] arg0 (:119, the program when unset; main :60-62)
+//   [9..] the program's own arguments (:120; main :63), never read here.
+// Decimals are as Rust's to_string writes them (no sign, no leading zero)
+// and within i32. A member running the binary whose argv parses so is the
+// helper. When its program or arg0 is Codex itself (`/proc/self/exe` or any
+// `/proc/<pid|self|thread-self>/exe`, the qualified binary's path, its base
+// name, or the base name `codex`), the helper is launching another Codex: a
+// backend, counted. Otherwise it is the backend's own command tool: classed
+// `embedded_tool`, not counted in max_backend, and recorded apart. An argv
+// whose argv[1] is the helper argument but that does not parse (short, a
+// slot not as above) counts as a backend. The same reads as the ripgrep
+// rule: an unread command line, or one that fills the bounded read, counts.
+// A command the helper launches becomes a member of its own once exec'd, and
+// is classed by its own executable then.
 export const CODEX_SPAWN_HELPER_ARG = '--codex-run-as-process-setup';
-export const CODEX_AGENT_ARGS: readonly string[] = [
-  'exec',
-  'app-server',
-  'mcp-server',
-  'resume',
-  'review',
-  'login',
-  '-m',
-  '--model',
-  '-c',
-  '--config',
-  '--profile',
-  '-p',
-  '--full-auto',
-  '--dangerously-bypass-approvals-and-sandbox',
-  '-a',
-  '--ask-for-approval',
-  '-s',
-  '--sandbox',
-  '--oss',
-];
+export const CODEX_SPAWN_HELPER_EXE = '/proc/self/exe';
+
+export interface CodexSpawnHelperArgv {
+  controlFd: number;
+  parentPid: number;
+  setup: 'pipe' | 'pty';
+  inheritedFds: number[];
+  cwd: string;
+  program: string;
+  arg0: string;
+}
+
+const I32_MAX = 2147483647;
+const decimal = (s: string): number | null => {
+  if (!/^(0|[1-9][0-9]{0,9})$/.test(s)) return null;
+  const n = Number(s);
+  return n <= I32_MAX ? n : null;
+};
+
+// The helper's fixed slots, or null where argv is not the helper's as the
+// pinned source writes it.
+export function parseCodexSpawnHelper(argv: readonly string[]): CodexSpawnHelperArgv | null {
+  if (argv.length < 9) return null;
+  const [exe, arg, fd, pid, setup, fds, cwd, program, arg0] = argv as readonly string[];
+  if (exe !== CODEX_SPAWN_HELPER_EXE || arg !== CODEX_SPAWN_HELPER_ARG) return null;
+  const controlFd = decimal(fd!);
+  const parentPid = decimal(pid!);
+  if (controlFd === null || controlFd <= 2 || parentPid === null || parentPid <= 0) return null;
+  if (setup !== 'pipe' && setup !== 'pty') return null;
+  const inheritedFds: number[] = [];
+  if (fds !== '') {
+    for (const piece of fds!.split(',')) {
+      const n = decimal(piece);
+      if (n === null) return null;
+      inheritedFds.push(n);
+    }
+  }
+  if (cwd === '' || program === '') return null;
+  return { controlFd, parentPid, setup, inheritedFds, cwd: cwd!, program: program!, arg0: arg0! };
+}
+
+// Whether a path names Codex itself: the binary by /proc's link, the
+// qualified binary's path or base name, or the base name `codex`.
+function namesCodex(path: string, binaryPath: string | null): boolean {
+  if (/^\/proc\/(self|thread-self|[0-9]+)\/exe$/.test(path)) return true;
+  const b = basename(path);
+  if (b === 'codex') return true;
+  return binaryPath !== null && binaryPath !== '' && (path === binaryPath || b === basename(binaryPath));
+}
 
 export type MemberClass = 'backend' | 'fork' | 'embedded_tool' | 'other';
 
@@ -124,15 +175,20 @@ const carries = (args: readonly string[], flags: readonly string[]) =>
 
 // A member's argv (read whole, at most CMDLINE_MAX bytes) as an embedded
 // tool (the ripgrep, or Codex's spawn helper) or not: null, unread or
-// possibly cut short, is never one.
-export function isEmbeddedTool(argv: readonly string[] | null): boolean {
+// possibly cut short, is never one. binaryPath is the qualified binary's
+// path, for the helper's program slot.
+export function isEmbeddedTool(argv: readonly string[] | null, binaryPath: string | null = null): boolean {
   if (argv === null || argv.length === 0) return false;
   if (basename(argv[0] ?? '') === EMBEDDED_TOOL_ARGV0) {
     const rest = argv.slice(1);
     if (carries(rest, EMBEDDED_TOOL_AGENT_FLAGS)) return false;
     return !rest.some((a) => /^-[A-Za-z]{2,}$/.test(a) && a.includes('p'));
   }
-  if (argv[1] === CODEX_SPAWN_HELPER_ARG) return !carries(argv.slice(2), CODEX_AGENT_ARGS);
+  if (argv[1] === CODEX_SPAWN_HELPER_ARG) {
+    const h = parseCodexSpawnHelper(argv);
+    if (h === null) return false;
+    return !namesCodex(h.program, binaryPath) && !namesCodex(h.arg0, binaryPath);
+  }
   return false;
 }
 
@@ -271,7 +327,7 @@ function classifyMember(pid: number, target: { dev: number; ino: number }, binar
     if (isCompanion(exe, argv0, companions)) return 'backend';
   }
   if (v !== true) return v === null ? null : 'other';
-  if (isEmbeddedTool(argvOf(pid))) return 'embedded_tool';
+  if (isEmbeddedTool(argvOf(pid), binaryPath)) return 'embedded_tool';
   return forkState(readBounded(`/proc/${pid}/stat`), uptime());
 }
 
