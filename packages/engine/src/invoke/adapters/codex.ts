@@ -292,7 +292,7 @@ export function codexAnswered(s: CodexStreamSummary): boolean {
 
 // What the stream established about the credential's delivery (D2 §§2.5,
 // 4.5; E74 item 3). The engine gives the one held key in the variables the
-// template names (codex-exec-4 and -5: CODEX_API_KEY alone, K3 of 2026-10-28),
+// template names (codex-exec-4, -5 and -6: CODEX_API_KEY alone, K3 of 2026-10-28),
 // writes no credential file, and the volatile CODEX_HOME holds no login
 // (`forced_login_method="api"`, `cli_auth_credentials_store="ephemeral"`).
 // So a turn that completed with an agent message and no failure in the
