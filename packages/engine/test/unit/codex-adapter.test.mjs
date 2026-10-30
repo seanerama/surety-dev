@@ -77,8 +77,8 @@ const GOOD = [
   { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
 ];
 
-test('the template: codex-exec-5, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, the eight hardening disables, the model catalog, no --skip-git-repo-check', () => {
-  assert.equal(T.version, 'codex-exec-5');
+test('the template: codex-exec-6, the prompt on standard input exactly, no prompt argument, every flag in 0.160.0\'s help, the switches off, the eight hardening disables, the model catalog, no --skip-git-repo-check', () => {
+  assert.equal(T.version, 'codex-exec-6');
   assert.equal(T.authMode, 'api_key');
   assert.equal(T.keyRef, 'backend/codex/api_key');
   const args = T.render({ model: 'gpt-5.5-codex', invocation: 'inv_X' });
@@ -392,12 +392,18 @@ test('the fake codex: a positive canary writes its edit and result from canary.j
 // saved verbatim beside the fake.
 const BUNDLED_ENTRY_TEXT = readFileSync(join(here, 'fixtures', 'codex', 'gpt-6.1-sol-0.160.0.json'), 'utf8');
 const BUNDLED_ENTRY = JSON.parse(BUNDLED_ENTRY_TEXT);
+// The gpt-6.1-terra entry of codex-rs/models-manager/models.json at tag
+// rust-v0.166.0 (lines 352-527; identical at rust-v0.165.0; file SHA-256
+// 1384625c...eb10), saved verbatim beside it (C2h, 2026-10-30); 0.160.0's
+// bundled catalog has no Terra.
+const TERRA_ENTRY_TEXT = readFileSync(join(here, 'fixtures', 'codex', 'gpt-6.1-terra-0.166.0.json'), 'utf8');
+const TERRA_ENTRY = JSON.parse(TERRA_ENTRY_TEXT);
 
-test('the catalog: one model, gpt-6.1-sol, tool_mode "direct", every other key the bundled entry\'s, in its order; the text is the catalog and the SHA-256 is the text\'s', () => {
+test('the catalog: gpt-6.1-sol first, tool_mode "direct", every other key the bundled entry\'s, in its order; the text is the catalog and the SHA-256 is the text\'s', () => {
   const { CODEX_MODEL_CATALOG_TEXT: text, CODEX_MODEL_CATALOG_SHA256: sha, CODEX_MODEL_CATALOG_PATH: path } = catalogMod;
   const c = JSON.parse(text);
   assert.deepEqual(Object.keys(c), ['models'], 'ModelsResponse has one field, models');
-  assert.equal(c.models.length, 1);
+  assert.equal(c.models.length, 2, 'Sol and Terra (C2h)');
   const m = c.models[0];
   assert.equal(m.slug, 'gpt-6.1-sol');
   assert.equal(m.tool_mode, 'direct');
@@ -408,10 +414,39 @@ test('the catalog: one model, gpt-6.1-sol, tool_mode "direct", every other key t
   const differs = Object.keys(m).filter((k) => JSON.stringify(m[k]) !== JSON.stringify(BUNDLED_ENTRY[k]));
   assert.deepEqual(differs, ['tool_mode'], 'exactly one change');
   assert.deepEqual({ ...m, tool_mode: BUNDLED_ENTRY.tool_mode }, BUNDLED_ENTRY);
-  assert.equal(text, JSON.stringify({ models: [{ ...BUNDLED_ENTRY, tool_mode: 'direct' }] }), 'the text is the bundled entry, re-serialized, with the one change');
+  assert.equal(text, JSON.stringify({ models: [{ ...BUNDLED_ENTRY, tool_mode: 'direct' }, { ...TERRA_ENTRY, tool_mode: 'direct' }] }), 'the text is the two source entries, re-serialized, each with the one change');
   assert.equal(sha, createHash('sha256').update(text, 'utf8').digest('hex'));
   assert.match(sha, /^[0-9a-f]{64}$/);
   assert.equal(path, '/surety/context/model-catalog.json');
+});
+
+test('the catalog (C2h): gpt-6.1-terra second, its own rust-v0.166.0 entry (not a renamed Sol entry), tool_mode "direct", every other key the source\'s in its order; exactly the two slugs', () => {
+  const c = JSON.parse(catalogMod.CODEX_MODEL_CATALOG_TEXT);
+  assert.deepEqual(c.models.map((x) => x.slug), ['gpt-6.1-sol', 'gpt-6.1-terra'], 'exactly the two slugs, Sol first');
+  for (const x of c.models) assert.equal(x.tool_mode, 'direct', x.slug);
+  const m = c.models[1];
+  assert.equal(TERRA_ENTRY.slug, 'gpt-6.1-terra');
+  assert.equal(TERRA_ENTRY.tool_mode, 'code_mode_only', 'the source entry hides every direct tool');
+  assert.equal(Object.keys(TERRA_ENTRY).length, 50);
+  assert.deepEqual(Object.keys(m), Object.keys(TERRA_ENTRY), 'the same 50 keys in the same order');
+  const differs = Object.keys(m).filter((k) => JSON.stringify(m[k]) !== JSON.stringify(TERRA_ENTRY[k]));
+  assert.deepEqual(differs, ['tool_mode'], 'exactly one change');
+  assert.deepEqual({ ...m, tool_mode: TERRA_ENTRY.tool_mode }, TERRA_ENTRY);
+  // Terra's own metadata, not Sol's renamed: the fields the two releases set differently.
+  assert.equal(m.display_name, 'GPT-6.1 Terra');
+  assert.equal(m.context_window, 500000);
+  assert.notEqual(JSON.stringify({ ...m, slug: null }), JSON.stringify({ ...c.models[0], slug: null }));
+  assert.equal(catalogMod.CODEX_MODEL_CATALOG.models.length, 2);
+  assert.ok(Object.isFrozen(catalogMod.CODEX_MODEL_CATALOG.models));
+  assert.equal(catalogMod.CODEX_MODEL_CATALOG_TEXT, JSON.stringify(catalogMod.CODEX_MODEL_CATALOG));
+  assert.equal(catalogMod.CODEX_MODEL_CATALOG_SHA256, createHash('sha256').update(catalogMod.CODEX_MODEL_CATALOG_TEXT, 'utf8').digest('hex'));
+  assert.ok(T.text.includes(`sha256:${catalogMod.CODEX_MODEL_CATALOG_SHA256})`), 'the template text names the new SHA-256');
+  assert.ok(!T.text.includes('e9c6223b'), 'not version 5\'s catalog');
+  assert.equal(T.version, 'codex-exec-6');
+  assert.equal(templates.CODEX_TEMPLATE_CLI_VERSION, '0.160.0');
+  const args = T.render({ model: 'gpt-6.1-terra', invocation: 'inv_X' });
+  assert.equal(args[args.indexOf('-m') + 1], 'gpt-6.1-terra');
+  assert.ok(args.includes('model_catalog_json=/surety/context/model-catalog.json'));
 });
 
 test('the template names the catalog: its text the path and SHA-256, its files the path and the exact text; a changed catalog would change the text; Claude\'s templates name none', () => {
@@ -453,7 +488,7 @@ test('the domain carries the catalog (writeTemplateFiles, as prepare.ts calls it
 test('the fake codex and the catalog: gpt-6.1-sol with the catalog works directly; without the -c (version 4) it replays MAIN\'s Code Mode refusal and does nothing; with the -c and no file it exits 1 before the prompt', async () => {
   const ok = await runFake({ model: 'gpt-6.1-sol' });
   assert.equal(ok.code, 0);
-  assert.deepEqual(ok.given.model_catalog, { arg: '/surety/context/model-catalog.json', exists: true, parses: true, models: ['gpt-6.1-sol'], tool_mode: 'direct' });
+  assert.deepEqual(ok.given.model_catalog, { arg: '/surety/context/model-catalog.json', exists: true, parses: true, models: ['gpt-6.1-sol', 'gpt-6.1-terra'], tool_mode: 'direct' });
   assert.deepEqual(ok.terminals, ['success']);
   assert.ok(ok.summary.items.some((i) => i.type === 'command_execution'), 'a direct tool ran');
   assert.deepEqual(ok.result, { status: 'completed', summary: 'fake: the role did its work' });

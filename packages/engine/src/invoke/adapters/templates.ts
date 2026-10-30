@@ -30,7 +30,7 @@ export interface Template {
   keyVariable: string;
   // Further variables the same credential is delivered in, where which one
   // the backend reads is not established; the canary records which was
-  // used. No template has one now (Codex's codex-exec-4 and -5 deliver its
+  // used. No template has one now (Codex's codex-exec-4, -5 and -6 deliver its
   // key in CODEX_API_KEY alone, K3 of 2026-10-28).
   keyAliases?: readonly string[];
   // The fixed variables the template sets beside the credential.
@@ -256,6 +256,15 @@ const CLAUDE_SUBSCRIPTION: Template = {
 //     model that sets none, or whose tool_mode string Codex does not read
 //     (protocol/src/openai_models.rs:352-361 reads an unknown one as none).
 // Version 5 differs from version 4 by those two changes alone.
+//
+// Version 6 (C2h of Codex support, 2026-10-30; the owner: "Use
+// gpt-6.1-terra for Codex runs going forward"): the model catalog holds
+// gpt-6.1-terra's own entry beside gpt-6.1-sol's, Terra's taken verbatim
+// from models-manager/models.json at tag rust-v0.166.0 with "tool_mode":
+// "direct" (adapters/codex-catalog.ts; 0.160.0's bundled catalog has no
+// Terra). The catalog's SHA-256, which the text names, changes with it;
+// the arguments, the flags and CODEX_TEMPLATE_CLI_VERSION do not. Version 6
+// differs from version 5 by that alone.
 export const CODEX_DISABLED_FEATURES = [
   'multi_agent',
   'goals',
@@ -332,7 +341,7 @@ const codexArgs = (model: string): string[] => [
 ];
 
 const CODEX_API_KEY: Template = {
-  version: 'codex-exec-5',
+  version: 'codex-exec-6',
   text:
     `codex exec ${codexArgs('<m>').slice(1).join(' ')} ` +
     `(standard input: the fixed prompt) (environment: CODEX_API_KEY=<credential> ${Object.entries(CODEX_ENV).map(([k, v]) => `${k}=${v}`).join(' ')}) ` +

@@ -262,7 +262,7 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
     ['cancellation', true, null],
     ['containment', true, null],
   ]);
-  assert.equal(T.version, 'codex-exec-5', 'the attempt is on template version 5');
+  assert.equal(T.version, 'codex-exec-6', 'the attempt is on template version 6');
   const pos = a.evidence(a.canaries[0]);
   assert.deepEqual(pos.credential_delivery.variables, ['CODEX_API_KEY'], 'K3: the key in CODEX_API_KEY alone');
   assert.equal(pos.credential_delivery.variable, null, 'the stream does not name the variable Codex read');
@@ -969,4 +969,23 @@ test('the model catalog (C2g): gpt-6.1-sol with the domain\'s catalog passes the
   const main = await attempt(t, { model: SOL, modes: { positive: { args: 'v4' } } });
   assert.deepEqual(main.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'tool_action_missing']], 'as on MAIN 2026-10-28 (attempt #2)');
   assert.equal(main.concluded.entry ?? null, null, 'no entry');
+});
+
+test('the model catalog (C2h): gpt-6.1-terra takes its tool_mode from the domain\'s catalog (direct) and passes the three canaries on the fake', async (t) => {
+  const TERRA = 'gpt-6.1-terra';
+  const dir = mkdtempSync(join(tmpdir(), 'cq-terra-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dump = join(dir, 'dump.json');
+  const one = await runCanary(dir, 'att_terra', 'positive', { model: TERRA, dump });
+  assert.deepEqual(one.templateFiles, ['/surety/context/model-catalog.json']);
+  assert.equal(readFileSync(join(one.root, 'surety/context/model-catalog.json'), 'utf8'), CODEX_MODEL_CATALOG_TEXT);
+  const d = JSON.parse(readFileSync(dump, 'utf8'));
+  assert.deepEqual(d.model_catalog.models, ['gpt-6.1-sol', TERRA]);
+  assert.equal(d.model_catalog.tool_mode, 'direct', 'Terra\'s own entry sets direct');
+  assert.equal(one.code, 0);
+  assert.deepEqual(one.summary.errors, [], 'no Code Mode refusal');
+  assert.equal(one.editContent, C.canaryEdit('att_terra').content);
+  const ok = await attempt(t, { model: TERRA });
+  assert.deepEqual(ok.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', true, null], ['cancellation', true, null], ['containment', true, null]]);
+  assert.ok(ok.concluded.entry, 'the entry is written proposed');
 });
