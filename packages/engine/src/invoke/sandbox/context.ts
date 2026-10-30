@@ -159,6 +159,9 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
   }
   if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());
   if (claim.role === 'spec_writer' && claim.work_kind === 'spec_change') return pick('spec_change', { ...specElements({ retrofit }), ...designChangeElements(facts.design_change ?? null) });
+  // A rapid prototype's brief preparation writes the minimal specification
+  // the ordinary parser reads (accept.ts briefOf): the same forms, stated.
+  if (claim.role === 'spec_writer' && claim.work_kind === 'brief_preparation') return pick('brief_preparation', specElements({ retrofit }));
   if (claim.role === 'builder' && facts.builder_stage) return pick('builder', builderElements(facts.builder_stage));
   return { pkg: null, elements: [] };
 }
