@@ -4,7 +4,7 @@
 // --json` JSONL in the shapes OpenAI's non-interactive page documents
 // (`thread.started`, `turn.started`, `item.*`, `turn.completed` with
 // `usage`, `turn.failed`, `error`), reads its prompt from standard input as
-// the `codex-exec-4` and `-5` templates' `-` asks, and acts out a role's run or a
+// the `codex-exec-4`, `-5` and `-6` templates' `-` asks, and acts out a role's run or a
 // qualification canary from <root>/surety/context/canary.json, as the fake
 // claude does (test/acceptance/harness/standin/fake-claude.mjs). Its error
 // texts are modelled on the Codex CLI's "unexpected status 401
