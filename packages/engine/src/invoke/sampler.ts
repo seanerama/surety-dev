@@ -72,18 +72,68 @@ export const EMBEDDED_TOOL_AGENT_FLAGS: readonly string[] = [
   '--verbose',
 ];
 
+// Codex's command-spawn helper (C2i; the Terra qualification
+// qa_01M66MY95FW5HBXGN0AHRSQ31V, 2026-10-30, whose containment canary failed
+// delegation_unverified on "a second backend process" although every
+// containment action held; the driver's ruling): Codex 0.160.0 starts each
+// command it runs by re-exec'ing its own binary (utils/pty/src/
+// spawn_helper.rs:31 HELPER_ARG, :101-121) as `/proc/self/exe
+// --codex-run-as-process-setup <control fd> <parent pid> pipe|pty
+// <inherited fds> <cwd> <program> <arg0> <args...>`, which sets up the
+// child's process group and pipes in a fresh image and then execs the
+// program (:59 dispatches on argv[1] alone, into spawn_helper_main.rs:17,
+// which never returns to the agent's code). Until that exec, for
+// milliseconds, its /proc/<pid>/exe is the qualified binary; the sampler saw
+// `/proc/self/exe --codex-run-as-process-setup 40 25 pipe /surety/workspace
+// /bin/bash /bin/bash -lc cat /surety/context/prompt.md`. A member running
+// the binary whose argv[1] is exactly CODEX_SPAWN_HELPER_ARG is that helper,
+// not a second agent: it is classed `embedded_tool`, not counted in
+// max_backend, and recorded apart. Unless anything after the helper argument
+// is one of Codex's agent subcommands or flags (CODEX_AGENT_ARGS, alone or as
+// `--flag=value`): then it is a backend in disguise, counted. The program's
+// own arguments are scanned too, so a command that carries one of them is
+// counted; that errs toward the backend. The same reads as the ripgrep rule:
+// an unread command line, or one that fills the bounded read, counts.
+export const CODEX_SPAWN_HELPER_ARG = '--codex-run-as-process-setup';
+export const CODEX_AGENT_ARGS: readonly string[] = [
+  'exec',
+  'app-server',
+  'mcp-server',
+  'resume',
+  'review',
+  'login',
+  '-m',
+  '--model',
+  '-c',
+  '--config',
+  '--profile',
+  '-p',
+  '--full-auto',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '-a',
+  '--ask-for-approval',
+  '-s',
+  '--sandbox',
+  '--oss',
+];
+
 export type MemberClass = 'backend' | 'fork' | 'embedded_tool' | 'other';
 
-// A member's argv (read whole, at most CMDLINE_MAX bytes) as the embedded
-// tool or not: null, unread or possibly cut short, is never the tool.
+const carries = (args: readonly string[], flags: readonly string[]) =>
+  args.some((a) => flags.some((f) => a === f || (f.startsWith('--') && a.startsWith(`${f}=`))));
+
+// A member's argv (read whole, at most CMDLINE_MAX bytes) as an embedded
+// tool (the ripgrep, or Codex's spawn helper) or not: null, unread or
+// possibly cut short, is never one.
 export function isEmbeddedTool(argv: readonly string[] | null): boolean {
   if (argv === null || argv.length === 0) return false;
-  if (basename(argv[0] ?? '') !== EMBEDDED_TOOL_ARGV0) return false;
-  for (const a of argv.slice(1)) {
-    if (EMBEDDED_TOOL_AGENT_FLAGS.some((f) => a === f || (f.startsWith('--') && a.startsWith(`${f}=`)))) return false;
-    if (/^-[A-Za-z]{2,}$/.test(a) && a.includes('p')) return false;
+  if (basename(argv[0] ?? '') === EMBEDDED_TOOL_ARGV0) {
+    const rest = argv.slice(1);
+    if (carries(rest, EMBEDDED_TOOL_AGENT_FLAGS)) return false;
+    return !rest.some((a) => /^-[A-Za-z]{2,}$/.test(a) && a.includes('p'));
   }
-  return true;
+  if (argv[1] === CODEX_SPAWN_HELPER_ARG) return !carries(argv.slice(2), CODEX_AGENT_ARGS);
+  return false;
 }
 
 // What the sampler reads; the host's /proc and cgroup by default.

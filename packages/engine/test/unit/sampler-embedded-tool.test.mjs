@@ -17,8 +17,10 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const { startBackendSampler, isEmbeddedTool } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
+const { startBackendSampler, isEmbeddedTool, CODEX_AGENT_ARGS } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
 const { claudeCapabilities } = await import(join(root, 'dist', 'invoke', 'adapters', 'claude.js'));
+const { codexCapabilities } = await import(join(root, 'dist', 'invoke', 'adapters', 'codex.js'));
+const { codexBeyondDomain } = await import(join(root, 'dist', 'trust', 'attempts.js'));
 
 const INIT = 1;
 const RG_LIST = ['rg', '--no-config', '--files', '--hidden', '--no-ignore', '--max-depth', '4', '--glob', '.orphaned_at', '/surety/home/.claude/plugins/cache'];
@@ -117,4 +119,57 @@ test("the host's reads: a copy of bash exec'd as itself, as rg, and as rg with -
   assert.deepEqual(r.embedded_tool_cmdlines, ['rg -c read -r _ --files --hidden']);
   assert.ok(r.backend_cmdlines.some((c) => c.startsWith('rg ') && c.includes('--model')), JSON.stringify(r));
   assert.ok(r.backend_cmdlines.some((c) => c.startsWith(binary)), JSON.stringify(r));
+});
+
+// Codex's command-spawn helper (C2i; the Terra qualification
+// qa_01M66MY95FW5HBXGN0AHRSQ31V, 2026-10-30): Codex 0.160.0 re-execs its own
+// binary with argv[1] `--codex-run-as-process-setup` (utils/pty/src/
+// spawn_helper.rs:31, :101-121) to set up a command's process group and
+// pipes before exec'ing it. The argv as the kernel holds it, with the empty
+// inherited-fds argument the joined command line drops; the observed joined
+// line is the second.
+const HELPER = ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '', '/surety/workspace', '/bin/bash', '/bin/bash', '-lc', 'cat /surety/context/prompt.md'];
+const HELPER_LINE = '/proc/self/exe --codex-run-as-process-setup 40 25 pipe /surety/workspace /bin/bash /bin/bash -lc cat /surety/context/prompt.md';
+const CODEX_LINE = '/surety/backends/codex exec --json --ephemeral --ignore-user-config';
+
+test("the rule on argv: Codex's spawn helper (argv[1] exactly the helper argument) is an embedded tool unless Codex's agent arguments follow", () => {
+  assert.equal(isEmbeddedTool(HELPER), true, 'the observed helper');
+  assert.equal(isEmbeddedTool(['/surety/backends/codex', ...HELPER.slice(1)]), true, 'argv[0] is not what counts');
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup', '41', '25', 'pty', '3,4', '/surety/workspace', '/usr/bin/git', 'git', 'status']), true, 'pty, inherited fds');
+  assert.equal(isEmbeddedTool([...HELPER, 'exec', '--json', '-m', 'gpt-6.1-terra']), false, 'followed by exec and a model');
+  for (const a of CODEX_AGENT_ARGS) assert.equal(isEmbeddedTool([...HELPER.slice(0, 8), a, 'x']), false, `${a} makes it a backend`);
+  for (const a of ['--model=gpt-6.1-terra', '--config=x=1', '--profile=p', '--sandbox=danger-full-access', '--ask-for-approval=never']) assert.equal(isEmbeddedTool([...HELPER, a]), false, `${a}: --flag=value`);
+  assert.equal(isEmbeddedTool(['/surety/backends/codex', 'exec', '--json', '--codex-run-as-process-setup']), false, 'the helper argument not argv[1]: the backend itself');
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setupx', '40']), false, 'not exactly the helper argument');
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup=40']), false);
+  assert.equal(isEmbeddedTool(['/proc/self/exe']), false);
+  assert.equal(isEmbeddedTool([...HELPER, '-lmc']), true, 'a short-flag cluster is not one of the agent arguments');
+  assert.equal(isEmbeddedTool([...HELPER, 'executable', '--models']), true, 'different words');
+  assert.equal(isEmbeddedTool(['rg', '--codex-run-as-process-setup', '--files']), true, 'argv[0] rg: the ripgrep rule');
+  assert.equal(isEmbeddedTool(['rg', '--codex-run-as-process-setup', '--model', 'm']), false, 'argv[0] rg: its agent flags');
+});
+
+test('the Terra canary shape: the codex backend and its spawn helper at once: one backend, the helper recorded apart, the canary not failed on it', () => {
+  const s = scripted();
+  const lines = { 10: CODEX_LINE, 30: HELPER_LINE };
+  s.look([INIT, 10], { 10: 'backend' }, lines);
+  s.look([INIT, 10, 30], { 10: 'backend', 30: 'embedded_tool' }, lines);
+  s.look([INIT, 10], { 10: 'backend' }, lines);
+  const r = s.stop();
+  assert.deepEqual([r.samples, r.max_backend, r.embedded_tool, r.max_members], [3, 1, 1, 3]);
+  assert.deepEqual(r.backend_cmdlines, [CODEX_LINE]);
+  assert.deepEqual(r.embedded_tool_cmdlines, [HELPER_LINE]);
+  assert.deepEqual(codexCapabilities([], r, []).reasons.filter((x) => /second backend|never identified|host sample/.test(x)), []);
+  assert.deepEqual(codexBeyondDomain(null, r), []);
+});
+
+test('a helper carrying Codex agent arguments is classed a backend and fails the canary as before', () => {
+  const s = scripted();
+  const disguised = `${HELPER_LINE} exec --json -m gpt-6.1-terra`;
+  s.look([INIT, 10, 31], { 10: 'backend', 31: 'backend' }, { 10: CODEX_LINE, 31: disguised });
+  const r = s.stop();
+  assert.deepEqual([r.max_backend, r.embedded_tool], [2, 0]);
+  assert.deepEqual(r.backend_cmdlines, [CODEX_LINE, disguised]);
+  assert.ok(codexCapabilities([], r, []).reasons.some((x) => /second backend/.test(x)));
+  assert.ok(codexBeyondDomain(null, r).some((x) => /second backend/.test(x)));
 });
