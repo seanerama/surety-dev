@@ -8,7 +8,7 @@
 import { nowMs } from '../../clock.js';
 import { PROTOTYPE_LIMIT_KEYS } from '../../config/schema.js';
 import type { Policy } from '../../config/project-policy.js';
-import { type LedgerRow, billable, fold, observedSoFar, outstandingReservation, runBudgetOf } from './ledger.js';
+import { type LedgerRow, type ProviderRefusal, billable, fold, observedSoFar, outstandingReservation, providerRefusalOf, runBudgetOf } from './ledger.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
 import { raisePreparation } from '../../prototype/brief.js';
@@ -255,6 +255,10 @@ interface IterationRowLite {
   deployment_request: string | null;
   outcome_reason: string | null;
   next_step: string | null;
+  // C2k (migration 0051): the provider-refusal hold.
+  provider_hold_since?: string | null;
+  provider_hold_run?: string | null;
+  provider_hold_ms?: number;
 }
 
 const iterationById = (db: Db, id: string): IterationRowLite | undefined => db.prepare('SELECT * FROM "prototype_iterations" WHERE "id" = ?').get(id) as IterationRowLite | undefined;
@@ -307,6 +311,13 @@ export interface IterationAccount {
   // incomplete, or settled with unknown billable tokens; while any is, the
   // measured figure is a lower bound of what was consumed.
   partially_measured_invocations: number;
+  // C2k (the owner's ruling B of 2026-10-30): the charged invocations whose
+  // provider refused their turn (cost_status provider_refused), each with
+  // its run, apart from consumption and from allowances: they add nothing
+  // to the committed figure, are not unknown billable tokens that stop
+  // dispatch, and are counted among the partially measured (what they used,
+  // if anything, was not reported: never read as 0).
+  provider_refusals: { invocation: string; run: string; role: string; work_kind: string | null; kind: string; message: string | null }[];
 }
 
 export function iterationAccount(db: Db, project: string, iteration: string): IterationAccount {
@@ -332,12 +343,25 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
     measured_tokens: 0,
     estimated_allowance_tokens: 0,
     partially_measured_invocations: 0,
+    provider_refusals: [],
   };
   for (const { id, run, role, work_kind } of receipts) {
     const rows = db.prepare('SELECT * FROM "ledger_rows" WHERE "invocation" = ? ORDER BY rowid').all(id) as LedgerRow[];
     if (rows.some((r) => r.corrects === null)) {
       const acc = fold(rows);
       const b = billable(acc);
+      if (acc.cost_status === 'provider_refused') {
+        const original = rows.find((r) => r.corrects === null)!;
+        let refusal: { kind?: unknown; message?: unknown } | undefined;
+        try {
+          refusal = (JSON.parse(original.raw_usage) as { provider_refusal?: { kind?: unknown; message?: unknown } }).provider_refusal;
+        } catch {
+          refusal = undefined;
+        }
+        a.provider_refusals.push({ invocation: id, run, role, work_kind, kind: typeof refusal?.kind === 'string' ? refusal.kind : 'usage_limit', message: typeof refusal?.message === 'string' ? refusal.message : null });
+        a.partially_measured_invocations += 1;
+        continue;
+      }
       if (b === null && acc.unknown_allowance_tokens === null) {
         a.unknown_billable_invocations += 1;
         a.unknown_billable.push({ invocation: id, run, role, work_kind });
@@ -508,14 +532,18 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
   // The runtime limit refuses new dispatch only; a run already running is
   // not ended by it (it continues to its own deadline and ends through the
   // existing termination and accounting machinery).
+  // C2k: the time the iteration was held by a provider refusal is not
+  // counted (heldSeconds).
   if (runtime !== null && it.approved_at !== null) {
-    const since = (nowMs() - Date.parse(it.approved_at)) / 1000;
+    const at = nowMs();
+    const held = heldSeconds(it, at);
+    const since = (at - Date.parse(it.approved_at)) / 1000 - held;
     if (Number.isFinite(since) && since > runtime) {
       return {
         kind: 'final',
         limit: 'runtime',
-        reason: `runtime: prototype_runtime_seconds ${runtime} passed (${Math.floor(since)} s since the brief was approved at ${it.approved_at}); no new run is dispatched, and runs already running continue to their own deadlines`,
-        facts: { value: runtime, elapsed_seconds: Math.floor(since), approved_at: it.approved_at },
+        reason: `runtime: prototype_runtime_seconds ${runtime} passed (${Math.floor(since)} s since the brief was approved at ${it.approved_at}${held > 0 ? `, not counting ${Math.floor(held)} s held by a provider refusal` : ''}); no new run is dispatched, and runs already running continue to their own deadlines`,
+        facts: { value: runtime, elapsed_seconds: Math.floor(since), approved_at: it.approved_at, ...(held > 0 ? { provider_hold_seconds: Math.floor(held) } : {}) },
       };
     }
   }
@@ -619,6 +647,11 @@ export function prototypeBlocker(db: Db, project: string, ask: DispatchAsk): str
     return `${PROTOTYPE_LIMIT}: iteration ${it.seq} is ${it.status}${it.outcome_reason ? ` (${it.outcome_reason})` : ''}; next: ${it.next_step ?? 'none'}`;
   }
   if (!ATTRIBUTABLE_STATUSES.includes(it.status)) return null;
+  // C2k: held by a provider refusal, nothing more of the iteration is
+  // dispatched until the owner's retry: a dispatch now would meet the same
+  // refusal. Not a limit (no limit_reached is recorded).
+  const hold = providerHoldOf(db, it);
+  if (hold !== null) return `${PROVIDER_HOLD}: iteration ${it.seq} is held by a provider refusal of run ${hold.run} (${hold.refusal.kind}: "${hold.refusal.message}"); next: ${PROVIDER_REFUSAL_NEXT_STEP}`;
   const v = iterationVerdict(db, it, ask);
   if (v === null) return null;
   return v.kind === 'final' ? `${PROTOTYPE_LIMIT}: ${v.reason}` : `${PROTOTYPE_SETTLING} ${it.seq}: ${v.reason}`;
@@ -767,6 +800,9 @@ export function resumeIteration(tx: Tx, args: { project: string; iteration: stri
   }
   const held = heldByIteration(tx.db, it);
   for (const w of held) resumeWork(tx, { project: it.project, workItem: w });
+  // C2k: a provider-refusal hold the Stop found ends with the resume (its
+  // held work resumed above).
+  if (it.provider_hold_since) endProviderHold(tx, it);
   tx.emit('prototype.iteration_resumed', { project: it.project, iteration: it.id }, { from: 'stopped', to: status, project_unpaused: paused, resumed_work: held });
   return { status: 200, body: { iteration: { id: it.id, seq: it.seq, status, next_step: next }, project_unpaused: paused, resumed_work: held }, effects: [{ kind: 'tick' }] };
 }
@@ -781,6 +817,161 @@ function heldByIteration(db: Db, it: IterationRowLite): string[] {
       )
       .all(it.project, it.id) as { id: string }[]
   ).map((w) => w.id);
+}
+
+// ---- C2k: the provider-refusal hold and its retry (the owner's ruling B of 2026-10-30) ----
+//
+// "Track provider refusal separately from token consumption and internal
+// reservations. Implement a documented recovery path so a quota error
+// doesn't require manually widening multiple limits just to retry."
+//
+// When a run of the iteration ends on a provider refusal (ledger.ts
+// providerRefusalOf: the provider refused the turn, a quota or rate limit,
+// before any of it ran), its work is held (runs.ts workAfterRun) and the
+// iteration is held with it, in the transaction that ends the run:
+// `provider_hold_since` is that transaction's time and `provider_hold_run`
+// the refused run. While held, the iteration is `awaiting_owner` with the
+// refusal as its stop condition (prototype/brief.ts syncIterationStatuses),
+// nothing more of it is dispatched (prototypeBlocker), the refusal adds
+// nothing to its committed tokens (iterationAccount), and its runtime clock
+// does not run (heldSeconds). The hold ends when the owner retries
+// (retryIteration), when the held work is resumed any other way (POST
+// …/work/:w/resume; syncIterationStatuses then ends it), or when the
+// iteration is no longer the project's current open one. Its length is
+// then added to `provider_hold_ms`.
+export const PROVIDER_HOLD = "waits for the owner's retry";
+export const PROVIDER_REFUSAL_NEXT_STEP = "the provider refused the run's turn (quota or rate limit): check the provider account, then retry (POST …/retry)";
+
+// What the runtime limit does not count, in seconds, at `atMs`: the time
+// the iteration was held by a provider refusal after its brief was approved
+// (the runtime limit runs from that approval, D-R4): each ended hold's
+// length as recorded (`provider_hold_ms`, its part after the approval), and
+// the current hold's from its start, or from the approval if later, to
+// `atMs`. Why: the hold is the provider's refusal awaiting the owner's
+// retry; no run of the iteration can run during it, so the runtime it
+// limits (approval to Alpha, the time the iteration's work may take) is not
+// being spent. The time a refused run itself ran (from its dispatch to the
+// refusal) is counted, as any run's is; only the wait after it is not.
+export function heldSeconds(it: Pick<IterationRowLite, 'approved_at' | 'provider_hold_since' | 'provider_hold_ms'>, atMs: number): number {
+  let ms = Math.max(0, it.provider_hold_ms ?? 0);
+  if (it.provider_hold_since && it.approved_at !== null) {
+    const from = Math.max(Date.parse(it.provider_hold_since), Date.parse(it.approved_at));
+    if (Number.isFinite(from) && atMs > from) ms += atMs - from;
+  }
+  return ms / 1000;
+}
+
+// The iteration's current provider-refusal hold, or null: set, and its
+// refused run's work item still held with that run its last.
+export function providerHoldOf(db: Db, it: { id: string }): { run: string; work_item: string | null; since: string; refusal: ProviderRefusal } | null {
+  const row = db.prepare('SELECT "provider_hold_since", "provider_hold_run" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { provider_hold_since: string | null; provider_hold_run: string | null } | undefined;
+  if (!row || row.provider_hold_since === null || row.provider_hold_run === null) return null;
+  const run = db.prepare('SELECT "work_item", "reason_detail" FROM "runs" WHERE "id" = ?').get(row.provider_hold_run) as { work_item: string | null; reason_detail: string | null } | undefined;
+  const refusal = providerRefusalOf(run?.reason_detail);
+  if (!run || refusal === null) return null;
+  if (run.work_item !== null) {
+    const w = db.prepare('SELECT "status" FROM "work_items" WHERE "id" = ?').get(run.work_item) as { status: string } | undefined;
+    const last = (db.prepare('SELECT "id" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(run.work_item) as { id: string } | undefined)?.id;
+    if (w?.status !== 'held' || last !== row.provider_hold_run) return null;
+  }
+  return { run: row.provider_hold_run, work_item: run.work_item, since: row.provider_hold_since, refusal };
+}
+
+// The run's end recorded a provider refusal (runs.ts workAfterRun, in the
+// run's end transaction): the iteration the run is attributed to is held,
+// when it is the project's current one and open (or failed: its retried
+// work), and not already held. Its status and next step are set by the
+// same rule the tick keeps them by (prototype/brief.ts syncIterationStatuses).
+export function holdForProviderRefusal(tx: Tx, run: { id: string; project: string }, refusal: ProviderRefusal): void {
+  const iteration = (tx.db.prepare('SELECT "iteration" FROM "runs" WHERE "id" = ?').get(run.id) as { iteration: string | null } | undefined)?.iteration ?? null;
+  if (iteration === null) return;
+  const it = iterationById(tx.db, iteration);
+  if (!it || currentRow(tx.db, it.project)?.id !== it.id || !ATTRIBUTABLE_STATUSES.includes(it.status)) return;
+  // Before its brief is approved an iteration's only runs are its
+  // preparations, whose end has its own path (prototype/brief.ts
+  // preparationEnded); and its runtime has not started.
+  if (it.approved_at === null || it.provider_hold_since) return;
+  tx.db.prepare('UPDATE "prototype_iterations" SET "provider_hold_since" = ?, "provider_hold_run" = ? WHERE "id" = ?').run(tx.at, run.id, it.id);
+  const reason = providerRefusalReason(run.id, refusal);
+  tx.db.prepare(`UPDATE "prototype_iterations" SET "status" = 'awaiting_owner', "outcome_reason" = ?, "next_step" = ?, "ended_at" = NULL WHERE "id" = ?`).run(reason, PROVIDER_REFUSAL_NEXT_STEP, it.id);
+  tx.emit('prototype.iteration_status_changed', { project: it.project, iteration: it.id }, { from: it.status, to: 'awaiting_owner', next_step: PROVIDER_REFUSAL_NEXT_STEP, reason, provider_refusal: { run: run.id, ...refusal }, provider_hold_since: tx.at });
+}
+
+// The stop condition the iteration shows while held.
+export const providerRefusalReason = (run: string, refusal: ProviderRefusal): string =>
+  `provider_refusal: the provider refused the turn of run ${run} (${refusal.kind}: "${refusal.message}") before any of it ran; it reported no usage and was charged no unknown allowance. Check the provider account, then retry: no limit needs raising`;
+
+// Ends the hold (the owner's retry, or its work resumed otherwise): its
+// length after the approval is added to provider_hold_ms. Returns the
+// milliseconds added.
+export function endProviderHold(tx: Tx, it: { id: string }): number {
+  const row = tx.db.prepare('SELECT "approved_at", "provider_hold_since", "provider_hold_ms" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { approved_at: string | null; provider_hold_since: string | null; provider_hold_ms: number };
+  if (row.provider_hold_since === null) return 0;
+  const at = Date.parse(tx.at);
+  const added = Math.round(heldSeconds({ ...row, provider_hold_ms: 0 }, at) * 1000);
+  tx.db.prepare('UPDATE "prototype_iterations" SET "provider_hold_since" = NULL, "provider_hold_run" = NULL, "provider_hold_ms" = "provider_hold_ms" + ? WHERE "id" = ?').run(added, it.id);
+  return added;
+}
+
+//   POST /v1/projects/:p/iterations/:i/retry
+//
+// The documented recovery path from a provider refusal (C2k, ruling B): one
+// owner act, on the project's current iteration while it is held by a
+// provider refusal (providerHoldOf). It ends the hold (its length is not
+// counted against the runtime limit), resumes the held work of the refused
+// run as POST …/work/:w/resume does (re-dispatched at the next tick, no
+// repair spent), and opens the iteration again (`building`; the tick then
+// keeps its status as its work gives). No limit is raised or needs to be:
+// the refusal charged no allowance and the hold did not run the clock.
+// Refused (409) with what to do when the iteration is not held by a
+// provider refusal, or when a limit would still refuse the next dispatch
+// whatever runs do (then raise that limit first, as for a resume).
+export function retryBlocker(db: Db, it: IterationRowLite): string | null {
+  if (currentRow(db, it.project)?.id !== it.id) return `iteration ${it.seq} is not the project's current iteration`;
+  // A stopped, limit_reached or discarded iteration has its own way back
+  // (resume, a raised limit, iterate): a retry never undoes a Stop or a
+  // limit. A stopped iteration's resume resumes the refused work with it.
+  if (!ATTRIBUTABLE_STATUSES.includes(it.status)) {
+    return `iteration ${it.seq} is ${it.status}: ${it.status === 'stopped' ? `resume it deliberately (POST /v1/projects/${it.project}/iterations/${it.id}/resume), which resumes its held work with it` : `its next step is ${it.next_step ?? 'none'}`}`;
+  }
+  const hold = providerHoldOf(db, it);
+  if (hold === null) {
+    return `iteration ${it.seq} is ${it.status} and not held by a provider refusal: a retry follows only a run the provider refused (quota or rate limit); read the iteration's next step (${it.next_step ?? 'none'})`;
+  }
+  const v = iterationVerdict(db, it, askOfItem(db, { id: '', project: it.project, repair_due: 0, repair_attempts: 0 }));
+  if (v !== null && v.kind === 'final') return `${v.reason}; raise that limit, then retry`;
+  return null;
+}
+
+export function retryIteration(tx: Tx, args: { project: string; iteration: string }): { status: number; body: Record<string, unknown>; effects: { kind: 'tick' }[] } {
+  const it = iterationById(tx.db, args.iteration);
+  if (!it || it.project !== args.project) throw new Refusal(404, 'not_found', `Iteration ${args.iteration} of project ${args.project} does not exist.`, 'Read GET /v1/projects/:p/iterations.', { iteration: args.iteration });
+  const why = retryBlocker(tx.db, it);
+  if (why !== null) throw new Refusal(409, 'illegal_transition', `Iteration ${it.seq} cannot be retried: ${why}.`, 'Read the iteration; its next step and controls say what is possible.', { iteration: it.id, status: it.status });
+  const hold = providerHoldOf(tx.db, it)!;
+  const addedMs = endProviderHold(tx, it);
+  const retried = hold.work_item === null ? [] : [hold.work_item];
+  for (const w of retried) resumeWork(tx, { project: it.project, workItem: w });
+  const status: IterationStatus = it.approved_at !== null ? 'building' : 'preparing';
+  const next = status === 'building' ? 'none: building' : (it.next_step ?? null);
+  tx.db.prepare('UPDATE "prototype_iterations" SET "status" = ?, "outcome_reason" = NULL, "next_step" = ?, "ended_at" = NULL WHERE "id" = ?').run(status, next, it.id);
+  const totalMs = (tx.db.prepare('SELECT "provider_hold_ms" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { provider_hold_ms: number }).provider_hold_ms;
+  tx.emit('prototype.iteration_resumed', { project: it.project, iteration: it.id }, {
+    from: it.status,
+    to: status,
+    cause: 'provider_refusal_retry',
+    refused_run: hold.run,
+    provider_refusal: hold.refusal,
+    retried_work: retried,
+    hold_ms: addedMs,
+    provider_hold_ms: totalMs,
+    limits_raised: [],
+  });
+  return {
+    status: 200,
+    body: { iteration: { id: it.id, seq: it.seq, status, next_step: next }, retried_work: retried, refused_run: hold.run, provider_hold_seconds: totalMs / 1000, limits_raised: [] },
+    effects: [{ kind: 'tick' }],
+  };
 }
 
 // ---- Stop and Discard (R4, R8): what each would do, for the confirmation and the read ----
@@ -893,6 +1084,8 @@ export interface IterationControls {
   discard: { available: boolean; reason: string; tears_down_alpha: boolean; kept_because: string | null };
   // Slice E5 (gap 4): the deliberate way back from a Stop.
   resume: { available: boolean; reason: string };
+  // C2k (ruling B): the way back from a provider refusal.
+  retry: { available: boolean; reason: string };
 }
 
 // What Stop and Discard would do now, for the iteration read and the
@@ -919,7 +1112,11 @@ export function iterationControls(db: Db, iteration: string): IterationControls 
   const resume = resumeWhy === null
     ? { available: true, reason: `unpauses the project, opens the iteration again (${it.approved_at !== null ? 'building' : 'preparing or awaiting its brief\'s approval'}) and resumes the ${heldByIteration(db, it).length} work item(s) its Stop held; checked against its limits at the next dispatch` }
     : { available: false, reason: resumeWhy };
-  return { stop, discard, resume };
+  const retryWhy = retryBlocker(db, it);
+  const retry = retryWhy === null
+    ? { available: true, reason: "ends the provider-refusal hold (its time not counted against the runtime limit) and re-dispatches the refused run's work at the next tick, no repair spent and no limit raised; check the provider account first" }
+    : { available: false, reason: retryWhy };
+  return { stop, discard, resume, retry };
 }
 
 export type IterationAction = 'stop' | 'discard';

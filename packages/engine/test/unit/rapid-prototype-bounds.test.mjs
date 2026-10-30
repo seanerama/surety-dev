@@ -609,6 +609,8 @@ test('the controls object of an open iteration: what Stop and Discard would do n
     stop: { available: true, reason: 'pauses the project so that nothing else is dispatched, and stops 0 running run(s) of the iteration, each keeping its charge and its unknown allowance; nothing of the usage is erased' },
     discard: { available: true, reason: 'stops 0 running run(s) of the iteration and leaves any Alpha in place; receipts, ledger rows, runs and records are kept', tears_down_alpha: false, kept_because: 'this iteration deployed nothing' },
     resume: { available: false, reason: 'iteration 1 is preparing: only a stopped iteration is resumed' },
+    // C2k (ruling B): the retry after a provider refusal.
+    retry: { available: false, reason: "iteration 1 is preparing and not held by a provider refusal: a retry follows only a run the provider refused (quota or rate limit); read the iteration's next step (approve preparation or discard)" },
   });
   assert.equal('enforced_from' in read.remaining, false);
 });

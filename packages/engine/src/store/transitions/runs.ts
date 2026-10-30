@@ -19,7 +19,7 @@ import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy, 
 import { settleOpenTurns } from '../../sessions/session.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
-import { chargeInvocation, exhaustedLimits } from './ledger.js';
+import { chargeInvocation, exhaustedLimits, providerRefusalOf } from './ledger.js';
 import { type Baseline, blockingObservation, integrationRef, projectRepoRow, rebaselineRunCheckout, registryRow } from './repo.js';
 import { type AttemptRow, type Resolution, getAttempt, resolveBackend, revokeDrifted } from './trust.js';
 import { closeLaunch } from './boundary.js';
@@ -30,7 +30,7 @@ import { RUN_OWNING, type WorkStatus } from './work-table.js';
 import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './work.js';
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
-import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfItem, dispatchAllowance, enforceIterationLimit, iterationForDispatch, prototypeBlocker } from './prototype.js';
+import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfItem, dispatchAllowance, enforceIterationLimit, holdForProviderRefusal, iterationForDispatch, prototypeBlocker } from './prototype.js';
 import { preparationEnded } from '../../prototype/brief.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
@@ -1490,6 +1490,19 @@ function workAfterRun(tx: Tx, run: RunRow): void {
       return;
     case 'failed': {
       if ((item.status === 'integrating' && integrationPending) || item.status === 'integrated' || item.status === 'verifying') return;
+      // C2k (the owner's ruling B of 2026-10-30): the provider refused the
+      // run's turn (a quota or rate limit; ledger.ts providerRefusalOf).
+      // Retrying at once would meet the same refusal, and the attempt was
+      // never the role's to repair: the work is held, no repair spent, until
+      // the owner retries it (POST …/iterations/:i/retry for a prototype
+      // iteration, which the refusal also holds; POST …/work/:w/resume for
+      // any work).
+      const refusal = providerRefusalOf(run.reason_detail);
+      if (refusal !== null) {
+        transitionWork(tx, item, 'held', {}, { ...cause, cause: 'provider_refusal', provider_refusal: refusal });
+        holdForProviderRefusal(tx, run, refusal);
+        return;
+      }
       // D6 §8.3 (B10; SEAM.md §383): a retrofit replan whose plan was refused
       // while the requests for criteria its result made are open waits for
       // the owner's decision on them, spending no repair attempt: planning

@@ -972,6 +972,30 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // C2k (the owner's ruling B of 2026-10-30): the documented recovery
+      // path from a provider refusal. After the provider refused a run's turn
+      // (a quota or rate limit: reason_class infra_error, the run's
+      // provider_refusal set), the iteration is held (awaiting_owner, its
+      // runtime clock not running) and the refused work held. This one owner
+      // act ends the hold and re-dispatches that work at the next tick,
+      // without raising any limit and without spending a repair. No body.
+      // 409 illegal_transition, with what to do, when the iteration is not
+      // the project's current one held by a provider refusal, or when a
+      // limit would still refuse the next dispatch (raise it, then retry).
+      // Check the provider account (quota, billing) before retrying: a
+      // retry against an exhausted quota is refused again, and held again.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'retry' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'command',
+          name: 'iteration.retry',
+          args: (b) => {
+            noFields(b);
+            return { project, iteration };
+          },
+        };
+      }
       // Slice E4 (R7, R8): Iterate. A new iteration continuing from this
       // one, with the owner's optional short change request; its
       // preparation's authorization raised; nothing is dispatched.

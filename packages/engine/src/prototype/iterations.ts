@@ -20,9 +20,9 @@ import { nowIso, nowMs } from '../clock.js';
 import { PROTOTYPE_LIMIT_KEYS } from '../config/schema.js';
 import { between } from '../plan/pace.js';
 import { notFound, parseJson } from '../store/transitions/common.js';
-import { type Account, type Amounts, type LedgerRow, billable, fold, observedSoFar, outstandingReservation } from '../store/transitions/ledger.js';
+import { type Account, type Amounts, type LedgerRow, type RequestedEstimate, REQUESTED_ESTIMATE_BASIS, REQUESTED_ESTIMATE_RULE, billable, fold, observedSoFar, outstandingReservation, refusalOfRaw } from '../store/transitions/ledger.js';
 import { projectNotFound } from '../store/transitions/project.js';
-import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, iterationAccount, iterationControls, iterationVerdict, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
+import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, heldSeconds, iterationAccount, iterationControls, iterationVerdict, providerHoldOf, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
 
@@ -56,6 +56,10 @@ interface IterationRow {
   brief_record: string | null;
   brief_json: string | null;
   change_text: string | null;
+  // C2k (migration 0051): the provider-refusal hold.
+  provider_hold_since: string | null;
+  provider_hold_run: string | null;
+  provider_hold_ms: number;
 }
 
 // The providers whose normalized categories are mutually exclusive, so that
@@ -172,7 +176,18 @@ interface InvocationView {
   turn: string | null;
   status: string | null;
   usage: { state: UsageState; billable_in: number | null; cached_in: number | null; out: number | null; normalization_version: string | null; raw_categories: Record<string, unknown> | null; corrections: number };
-  cost: { status: string; usd: number | null; pricing_basis: string | null };
+  // C2k (the owner's ruling A of 2026-10-30): `estimated_from_requested`
+  // beside an unknown cost (ledger.ts requestedModelEstimate), never in
+  // place of status or usd; `provider_refusal` on a provider_refused one
+  // (ruling B).
+  cost: {
+    status: string;
+    usd: number | null;
+    pricing_basis: string | null;
+    estimated_from_requested: RequestedEstimate | null;
+    estimated_from_requested_reason: string | null;
+    provider_refusal: { kind: string; message: string } | null;
+  };
   unknown_allowance_tokens: number | null;
   // What a pending invocation still reserves beyond what it observed (the
   // ledger's outstanding reservation); null once it is charged.
@@ -224,7 +239,14 @@ function invocationOf(db: Db, project: string, receipt: { id: string; turn: stri
         raw_categories: parseJson<Record<string, unknown>>(original.raw_usage),
         corrections: rows.length - 1,
       },
-      cost: { status: a.cost_status, usd: a.cost_usd, pricing_basis: estimated ? (plus >= 0 ? original.normalization_version.slice(plus + 1) : original.normalization_version) : null },
+      cost: {
+        status: a.cost_status,
+        usd: a.cost_usd,
+        pricing_basis: estimated ? (plus >= 0 ? original.normalization_version.slice(plus + 1) : original.normalization_version) : null,
+        estimated_from_requested: a.estimated_from_requested,
+        estimated_from_requested_reason: a.estimated_from_requested_reason,
+        provider_refusal: a.cost_status === 'provider_refused' ? refusalOfRaw(original.raw_usage) : null,
+      },
       unknown_allowance_tokens: a.unknown_allowance_tokens,
       reserved_tokens: null,
       model_observed: rows.at(-1)!.model_observed ?? original.model_observed,
@@ -234,7 +256,7 @@ function invocationOf(db: Db, project: string, receipt: { id: string; turn: stri
     return {
       ...base,
       usage: { state: 'not_launched', billable_in: null, cached_in: null, out: null, normalization_version: null, raw_categories: null, corrections: 0 },
-      cost: { status: 'not_launched', usd: null, pricing_basis: null },
+      cost: { status: 'not_launched', usd: null, pricing_basis: null, estimated_from_requested: null, estimated_from_requested_reason: null, provider_refusal: null },
       unknown_allowance_tokens: null,
       reserved_tokens: null,
       model_observed: null,
@@ -248,7 +270,13 @@ function invocationOf(db: Db, project: string, receipt: { id: string; turn: stri
   return {
     ...base,
     usage: { state: 'pending', billable_in: so.billable_in, cached_in: so.cached_in, out: so.out, normalization_version: raw === 0 ? null : so.normalization_version, raw_categories: null, corrections: 0 },
-    cost: so.cost_status === 'reported' ? { status: 'reported', usd: so.cost_usd, pricing_basis: null } : { status: 'unknown', usd: null, pricing_basis: null },
+    cost: {
+      ...(so.cost_status === 'reported' ? { status: 'reported', usd: so.cost_usd } : { status: 'unknown', usd: null }),
+      pricing_basis: null,
+      estimated_from_requested: null,
+      estimated_from_requested_reason: so.cost_status === 'reported' ? null : 'under way: no estimate before its usage is final',
+      provider_refusal: null,
+    },
     unknown_allowance_tokens: null,
     reserved_tokens: outstandingReservation(db, receipt.id, project, so),
     model_observed: so.model_observed,
@@ -312,12 +340,46 @@ function costTotals(invs: InvocationView[]) {
     if ((i.cost.status === 'reported' || i.cost.status === 'measured_zero') && i.usage.state !== 'pending') reported = addKnown(reported, i.cost.usd);
     if (i.cost.status === 'estimated') estimated = addKnown(estimated, i.cost.usd);
   }
+  // C2k (ruling A): the estimates from the requested model of the
+  // unknown-cost invocations, apart: never in reported_usd or estimated_usd.
+  const unknownSettled = invs.filter((i) => i.usage.state !== 'pending' && i.cost.status === 'unknown');
+  let fromRequested: number | null = null;
+  for (const i of unknownSettled) if (i.cost.estimated_from_requested !== null) fromRequested = addKnown(fromRequested, i.cost.estimated_from_requested.usd);
+  const withEstimate = unknownSettled.filter((i) => i.cost.estimated_from_requested !== null).length;
   return {
     reported_usd: reported === null ? null : money(reported),
     estimated_usd: estimated === null ? null : money(estimated),
-    unknown_invocations: invs.filter((i) => i.usage.state !== 'pending' && i.cost.status === 'unknown').length,
+    unknown_invocations: unknownSettled.length,
     pending_invocations: invs.filter((i) => i.usage.state === 'pending').length,
     pricing_bases: [...new Set(invs.map((i) => i.cost.pricing_basis).filter((b): b is string => b !== null))].sort(),
+    estimated_from_requested: {
+      usd: fromRequested === null ? null : money(fromRequested),
+      invocations: withEstimate,
+      without_estimate: unknownSettled.length - withEstimate,
+      basis: REQUESTED_ESTIMATE_BASIS,
+      price_versions: [...new Set(unknownSettled.map((i) => i.cost.estimated_from_requested?.price_version).filter((v): v is string => typeof v === 'string'))].sort(),
+    },
+    provider_refused_invocations: invs.filter((i) => i.cost.status === 'provider_refused').length,
+  };
+}
+
+// C2k (the owner's ruling B of 2026-10-30): the iteration's provider
+// refusals, in their own line, apart from usage (no counts), from the
+// unknown allowances (none charged) and from the reservations.
+export const PROVIDER_REFUSALS_RULE =
+  "provider_refusals lists the runs whose provider refused their turn (a quota or rate limit) before any of it ran: each invocation reported no usage and was charged no unknown allowance (cost.status provider_refused). They are not consumption and not an allowance: nothing of them is in the token totals, unknown_allowance_tokens or the committed figure, and what they used, if anything, is not reported, so never read as 0 (the measured figure stays a lower bound). While the iteration is held by one (held: true) nothing more is dispatched and its runtime does not run; the owner's retry (POST …/iterations/:i/retry) re-dispatches the refused work without raising a limit.";
+
+function providerRefusalsOf(db: Db, it: IterationRow, runs: { id: string; role: string; work_item: string | null; work_kind: string | null; invocations: InvocationView[] }[]) {
+  const listed = runs.flatMap((r) => r.invocations.filter((i) => i.cost.status === 'provider_refused').map((i) => ({ run: r.id, invocation: i.id, role: r.role, work_item: r.work_item, work_kind: r.work_kind, kind: i.cost.provider_refusal?.kind ?? 'usage_limit', message: i.cost.provider_refusal?.message ?? null })));
+  const hold = providerHoldOf(db, it);
+  return {
+    count: listed.length,
+    runs: listed,
+    held: hold !== null,
+    hold: hold === null ? null : { run: hold.run, work_item: hold.work_item, since: hold.since },
+    // The time held so far, not counted against the runtime limit.
+    held_seconds: heldSeconds(it, Date.parse(it.alpha_at ?? it.ended_at ?? nowIso())),
+    rule: PROVIDER_REFUSALS_RULE,
   };
 }
 
@@ -479,7 +541,14 @@ export const ACCOUNTING_BASIS = {
   },
   estimated_cost: {
     meaning: 'Measured tokens priced at the price table (pricing_basis names it): an estimate of what measured usage cost, neither a reported cost nor an allowance.',
-    fields: ['usage.runs[].invocations[].cost.usd where cost.status is estimated', 'usage.totals.cost.estimated_usd', 'app_totals.cost.estimated_usd'],
+    fields: [
+      'usage.runs[].invocations[].cost.usd where cost.status is estimated',
+      'usage.totals.cost.estimated_usd',
+      'app_totals.cost.estimated_usd',
+      "usage.runs[].invocations[].cost.estimated_from_requested where cost.status is unknown: priced at the requested model's row, Standard tier, the provider having reported no model or tier (configuration, not evidence); never in estimated_usd",
+      'usage.totals.cost.estimated_from_requested (apart from estimated_usd)',
+      'app_totals.cost.estimated_from_requested (apart from estimated_usd)',
+    ],
   },
   combined: {
     meaning: 'Figures that add measured consumption and estimated allowances (or reported and estimated cost), each with the rule that names its parts: conservative, never consumption alone.',
@@ -511,8 +580,10 @@ function appTotals(db: Db, project: string) {
     invocations: all.length,
     tokens: tokenTotals(all),
     completeness,
-    cost: { reported_usd: cost.reported_usd, estimated_usd: cost.estimated_usd, unknown_invocations: cost.unknown_invocations, pending_invocations: cost.pending_invocations, pricing_bases: cost.pricing_bases },
+    cost: { reported_usd: cost.reported_usd, estimated_usd: cost.estimated_usd, unknown_invocations: cost.unknown_invocations, pending_invocations: cost.pending_invocations, pricing_bases: cost.pricing_bases, estimated_from_requested: cost.estimated_from_requested },
     unknown_allowance_tokens: all.reduce<number | null>((s, i) => addKnown(s, i.unknown_allowance_tokens), null),
+    // C2k (ruling B): apart from usage and the allowances.
+    provider_refused_invocations: cost.provider_refused_invocations,
     cumulative_rule: CUMULATIVE_RULE,
   };
 }
@@ -581,7 +652,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
   const spentUsd = money((account.reported_usd ?? 0) + (account.estimated_usd ?? 0));
   const now = nowIso();
   const runtimeEnd = it.alpha_at ?? it.ended_at ?? now;
-  const runtimeUsed = it.approved_at === null ? null : between(it.approved_at, runtimeEnd, ['the brief approved', 'now']);
+  // C2k: the time held by a provider refusal is not counted (prototype.ts
+  // heldSeconds).
+  const runtimeSpan = it.approved_at === null ? null : between(it.approved_at, runtimeEnd, ['the brief approved', 'now']);
+  const runtimeUsed = typeof runtimeSpan === 'number' ? runtimeSpan - heldSeconds(it, Date.parse(runtimeEnd)) : runtimeSpan;
   const limit = (k: (typeof PROTOTYPE_LIMIT_KEYS)[number]) => (typeof limits[k] === 'number' ? limits[k]! : null);
   const tokensLimit = limit('prototype_budget_tokens');
   const usdLimit = limit('prototype_budget_usd_estimated');
@@ -673,7 +747,16 @@ export function readIteration(db: Db, args: { project: string; iteration: string
         invocations: all.length,
         tokens,
         completeness,
-        cost: { reported_usd: cost.reported_usd, estimated_usd: cost.estimated_usd, unknown_invocations: cost.unknown_invocations, pending_invocations: cost.pending_invocations, pricing_bases: cost.pricing_bases },
+        cost: {
+          reported_usd: cost.reported_usd,
+          estimated_usd: cost.estimated_usd,
+          unknown_invocations: cost.unknown_invocations,
+          pending_invocations: cost.pending_invocations,
+          pricing_bases: cost.pricing_bases,
+          estimated_from_requested: cost.estimated_from_requested,
+          // C2k (ruling B): neither unknown cost nor an allowance.
+          provider_refused_invocations: cost.provider_refused_invocations,
+        },
         unknown_allowance_tokens: allowance,
         // Counts of rows: with no preparation run (none exists before slice
         // E3) nothing was spent preparing, which is 0 by count, not an
@@ -681,7 +764,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
         preparation: prepRuns === 0 ? { runs: 0, tokens: 0, usd: 0 } : { runs: prepRuns, tokens: prepTokens.total, usd: prepCost.unknown_invocations > 0 || prepCost.pending_invocations > 0 ? null : money((prepCost.reported_usd ?? 0) + (prepCost.estimated_usd ?? 0)) },
         setup_qualification: { note: 'charged to the qualification fixture, not to this iteration' },
         rule: TOTALS_RULE,
+        estimated_from_requested_rule: REQUESTED_ESTIMATE_RULE,
       },
+      // C2k (ruling B): the provider refusals, in their own line.
+      provider_refusals: providerRefusalsOf(db, it, runs),
     },
     remaining,
     // Slice E4: the whole app's totals, every iteration of the project once.
@@ -698,6 +784,9 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       approval_to_alpha_seconds: interval(it.approved_at, it.alpha_at, ['the brief approved', 'Alpha reached']),
       elapsed_seconds: interval(it.created_at, it.ended_at ?? now, ['the iteration created', 'now']),
       runtime_limit_seconds: runtimeLimit,
+      // C2k: the time a provider refusal held the iteration since its brief
+      // was approved, which the runtime limit does not count.
+      provider_hold_seconds: it.approved_at === null ? 0 : heldSeconds(it, Date.parse(runtimeEnd)),
     },
     // Slice E4 (demonstration 9): the iteration's brief, whole, as prepared
     // (and approved, when approved_at is set); null before one is prepared.

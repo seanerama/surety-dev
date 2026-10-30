@@ -466,7 +466,8 @@
       "reported",
       "estimated",
       "unknown",
-      "measured_zero"
+      "measured_zero",
+      "provider_refused"
     ],
     "CheckoutKind": [
       "integration_worktree",
@@ -5340,6 +5341,16 @@
         },
         "change_text": {
           "required": false
+        },
+        "provider_hold_since": {
+          "required": false
+        },
+        "provider_hold_run": {
+          "required": false,
+          "references": "runs"
+        },
+        "provider_hold_ms": {
+          "required": true
         }
       }
     },

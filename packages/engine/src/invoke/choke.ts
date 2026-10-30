@@ -51,8 +51,8 @@ import { assistantCanaryEvidenceId, canaryEdit } from '../trust/canaries.js';
 import { validateReply } from '../assistant/turn-package.js';
 import { DOMAIN_MARKER, INVOCATION_MARKER } from './processes.js';
 import { type BackendSampling, type ClaudeStreamSummary, ClaudeStream, claudeModelFallback } from './adapters/claude.js';
-import { type AdapterStream, type CodexStreamSummary, CODEX_COMPANION_PROCESSES, CodexStream } from './adapters/codex.js';
-import { exitCause } from './exit-cause.js';
+import { type AdapterStream, type CodexStreamSummary, CODEX_COMPANION_PROCESSES, CodexStream, codexProviderRefusal } from './adapters/codex.js';
+import { bounded, exitCause, scrubText } from './exit-cause.js';
 import { type ContainmentWatch, watchContainment } from './containment.js';
 import { CONTAINMENT_CHECK_MS } from '../trust/canaries.js';
 import { startBackendSampler } from './sampler.js';
@@ -1280,6 +1280,25 @@ export class Launcher {
       // The cause, as far as the engine saw it: the backend's terminal
       // event and the domain's egress refusals.
       const cause = exitCause(claudeSummary(handle), handle.egressEntries, codexSummary(handle));
+      // C2k (the owner's ruling B of 2026-10-30): a provider refusal of the
+      // turn (adapters/codex.ts codexProviderRefusal) is recorded as one:
+      // reason_class infra_error (RunReasonClass unchanged), its reason_text
+      // beginning `provider_refusal:` and its reason_detail carrying
+      // `provider_refusal` {kind, message}, the message scrubbed and bounded.
+      // The ledger then charges no unknown allowance for it, the work item is
+      // held for the owner's retry rather than repaired, and a prototype
+      // iteration is held without its runtime running (store/transitions/
+      // ledger.ts providerRefusalOf; runs.ts workAfterRun; prototype.ts).
+      const refusal = codexProviderRefusal(codexSummary(handle));
+      if (refusal !== null) {
+        const message = bounded(scrubText(refusal.message.split('\n')[0] ?? ''), 240);
+        return {
+          outcome: 'failed',
+          reason: 'infra_error',
+          reasonText: `provider_refusal: the provider refused the run's turn (${refusal.kind}: "${message}") before any of it ran, reporting no usage: check the provider account, then retry; exit class error_exit${cause ? `; ${cause}` : ''}`,
+          detail: { provider_refusal: { kind: refusal.kind, message } },
+        };
+      }
       return { outcome: 'failed', reason: 'infra_error', reasonText: `exit class error_exit: the backend failed without a result${cause ? `; ${cause}` : ''}${fallback ? `; ${fallback.text}` : ''}` };
     }
     await this.publishUnaccepted(handle, c);

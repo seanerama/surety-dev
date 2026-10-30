@@ -5,6 +5,7 @@
 
 import { recordApiTickRequest } from './tick-requests.js';
 import { Refusal } from '../../refusal.js';
+import { providerRefusalOf } from './ledger.js';
 import { illegal, notFound, parseJson } from './common.js';
 import { type DecisionRow, consumeDecision, currentPreview, openDecision, stale } from './decisions.js';
 import { type Facts, KINDS, answerQueued, raiseQuestion, wireControl } from './queue.js';
@@ -360,6 +361,11 @@ export function runRepresentation(db: Tx['db'], args: { project: string; run: st
       // The refusal in its form beside the code (SEAM.md §116): what the
       // engine decided before launch, with its subject.
       refusal: refusalOf(run),
+      // C2k (the owner's ruling B of 2026-10-30): the provider refused the
+      // run's turn (a quota or rate limit) before any of it ran: reason_class
+      // infra_error with this documented sub-reason; its invocation charged
+      // no unknown allowance (ledger.ts providerRefusalOf). null otherwise.
+      provider_refusal: providerRefusalOf((run.reason_detail as string | null) ?? null),
       // What became of each Alpha exception proposal the run's Reviewer made
       // (SEAM.md §119).
       alpha_exception_proposals: parseJson<unknown[]>((run.alpha_exception_outcomes as string | null) ?? null) ?? [],

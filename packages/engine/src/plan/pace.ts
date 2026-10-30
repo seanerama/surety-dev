@@ -11,6 +11,7 @@ import { designHumanCriteria } from '../design/criterion-map.js';
 import type { Database } from 'better-sqlite3';
 
 import { notFound } from '../store/transitions/common.js';
+import { type CostStatus, REQUESTED_ESTIMATE_BASIS, requestedModelEstimate, requestedSum } from '../store/transitions/ledger.js';
 import { effectiveProfileMax, engineSettings, projectOptions } from '../store/transitions/settings.js';
 import { currentHostQualification, resolveBackend } from '../store/transitions/trust.js';
 import { memAvailable } from '../store/transitions/envelope.js';
@@ -229,13 +230,24 @@ export function paceView(db: Database, args: { project: string }) {
       const bound = between(launched.at, terminal.at, ['its launch', 'the observation that ended it']);
       invocationElapsed = { unknown: 'the engine restarted between the launch and the terminal observation', bounded_by: typeof bound === 'number' ? { at_most_seconds: bound } : bound };
     } else invocationElapsed = between(launched.at, terminal.at, ['its launch', 'its terminal observation']);
-    const ledger = db.prepare('SELECT "billable_in", "cached_in", "out", "cost_status", "cost_usd" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid').all(id) as {
+    const ledger = db
+      .prepare('SELECT "billable_in", "cached_in", "out", "cost_status", "cost_usd", "provider", "model_requested", "model_observed", "raw_usage", "usage_complete" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid')
+      .all(id) as {
       billable_in: number | null;
       cached_in: number | null;
       out: number | null;
-      cost_status: string;
+      cost_status: CostStatus;
       cost_usd: number | null;
+      provider: string;
+      model_requested: string;
+      model_observed: string | null;
+      raw_usage: string;
+      usage_complete: number;
     }[];
+    // C2k (the owner's ruling A of 2026-10-30): beside an unknown cost, the
+    // estimate from the requested model (ledger.ts requestedModelEstimate).
+    const requested = ledger.map((l) => ({ cost_status: l.cost_status, ...requestedModelEstimate(l, { ...l, usage_complete: l.usage_complete === 1 }) }));
+    const requestedUsd = requestedSum(requested);
     const tokens = (col: 'billable_in' | 'cached_in' | 'out') =>
       ledger.length === 0 ? unknown('the run has no ledger row') : ledger.some((l) => l[col] === null) ? unknown(`a ledger row of the run has no ${col}`) : sum(ledger.map((l) => l[col] as number));
     const statuses = [...new Set(ledger.map((l) => l.cost_status))];
@@ -262,6 +274,15 @@ export function paceView(db: Database, args: { project: string }) {
       cost: {
         usd: ledger.length === 0 ? unknown('the run has no ledger row') : ledger.some((l) => l.cost_usd === null) ? unknown('a ledger row of the run has no cost') : sum(ledger.map((l) => l.cost_usd as number)),
         status: statuses.length === 1 ? statuses[0]! : statuses.length === 0 ? unknown('the run has no ledger row') : statuses.join(','),
+        // Of the rows whose cost is unknown, the estimate from the requested
+        // model: configuration priced, labelled, never in usd; unknown with
+        // the reason where a row has none.
+        estimated_from_requested:
+          requestedUsd !== null
+            ? { usd: requestedUsd, basis: REQUESTED_ESTIMATE_BASIS, price_versions: [...new Set(requested.map((r) => r.estimated_from_requested?.price_version).filter((v): v is string => typeof v === 'string'))] }
+            : requested.some((r) => r.cost_status === 'unknown')
+              ? unknown(requested.find((r) => r.cost_status === 'unknown' && r.estimated_from_requested === null)?.estimated_from_requested_reason ?? 'no estimate from the requested model')
+              : null,
       },
       // The model the run observed, as its ledger rows recorded it (M542):
       // unknown with its reason, never the requested model in its place.

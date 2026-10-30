@@ -264,6 +264,26 @@ export function codexFailure(s: CodexStreamSummary): { class: CodexFailureClass;
   return s.terminal?.type === 'turn.failed' ? { class: 'provider_error', message: said[0]! } : null;
 }
 
+// A provider refusal (C2k, the owner's ruling B of 2026-10-30): the stream
+// shows the provider refused the turn before any of it ran. All of: the
+// failure the stream names is of the `usage_limit` class (a quota or rate
+// limit, codexFailure); no item of any kind appeared (nothing of the turn
+// ran: no message, no reasoning, no command); and no usage was reported (no
+// terminal usage, or no terminal event at all). The message is the
+// provider's, as the stream said it, unbounded by this function; the caller
+// scrubs and bounds it before it is recorded (invoke/choke.ts). null for any
+// other stream: a quota error after items ran, or one with usage, is not a
+// refusal of the turn, and keeps the ordinary rules (its unknown allowance).
+export function codexProviderRefusal(s: CodexStreamSummary | null): { kind: 'usage_limit'; message: string } | null {
+  if (s === null) return null;
+  const f = codexFailure(s);
+  if (f === null || f.class !== 'usage_limit') return null;
+  if (s.items.length > 0 || s.items_truncated) return null;
+  if (s.usage !== null || s.terminal?.usage_present === true) return null;
+  if (s.terminal !== null && s.terminal.type !== 'turn.failed') return null;
+  return { kind: 'usage_limit', message: f.message };
+}
+
 // The adapter that reads a real backend's stream (D2 §1.1), by backend:
 // Claude Code's or Codex's; the scripted protocol (null) for any other.
 export type AdapterStream = ClaudeStream | CodexStream;

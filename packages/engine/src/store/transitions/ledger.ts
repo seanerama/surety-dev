@@ -16,7 +16,12 @@ import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
 
-export type CostStatus = 'reported' | 'estimated' | 'unknown' | 'measured_zero';
+// `provider_refused` (C2k, the owner's ruling B of 2026-10-30; migration
+// 0051): the original row of an invocation whose provider refused its turn
+// (providerRefusalOf below). Neither measured consumption nor an
+// unknown-usage allowance: its counts and cost are null (unknown, never 0),
+// it carries no allowance, and its raw usage keeps the refusal.
+export type CostStatus = 'reported' | 'estimated' | 'unknown' | 'measured_zero' | 'provider_refused';
 
 // ---- the scripted provider's normalization (SEAM.md §53) ------------------------
 
@@ -214,9 +219,8 @@ const CODEX_CACHE_WRITE_BASIS = {
 function normalizeCodex(raw: Record<string, unknown>): Normalized {
   const input = amount(raw.input_tokens);
   const cached = amount(raw.cached_input_tokens);
-  // Cache writes, inside input (the caching guide): reported or not.
-  const writes = raw.cache_write_input_tokens === undefined ? null : amount(raw.cache_write_input_tokens);
-  const writesBad = raw.cache_write_input_tokens !== undefined && writes === null;
+  // Cache writes, inside input (the caching guide): reported or not, priced
+  // by codexPriced.
   const base = {
     billable_in: input === null || cached === null || cached > input ? null : input - cached,
     cached_in: cached,
@@ -225,14 +229,104 @@ function normalizeCodex(raw: Record<string, unknown>): Normalized {
     normalization_version: CODEX_NORMALIZATION,
   };
   const prices = base.model_observed === null ? undefined : CODEX_PRICE_TABLE.models[base.model_observed];
-  if (prices && raw.usage_final === true && base.billable_in !== null && base.cached_in !== null && base.out !== null && !writesBad && (writes === null || writes <= base.billable_in)) {
-    const plain = base.billable_in - (writes ?? 0);
-    const writeRate = writes === null ? prices.input : prices.input * (prices.cache_write ?? 1);
-    const usd = (plain * prices.input + (writes ?? 0) * writeRate + base.cached_in * prices.cached_in + base.out * prices.out) / 1_000_000;
-    const cacheBasis = writes === null ? CODEX_CACHE_WRITE_BASIS.absent : prices.cache_write === undefined ? CODEX_CACHE_WRITE_BASIS.none_listed : CODEX_CACHE_WRITE_BASIS.rate;
-    return { ...base, cost_status: 'estimated', cost_usd: money(usd), normalization_version: `${CODEX_NORMALIZATION}+${CODEX_PRICE_TABLE.version}+${cacheBasis}+lower-bound` };
-  }
+  const priced = prices && raw.usage_final === true ? codexPriced(prices, raw, base) : null;
+  if (priced !== null) return { ...base, cost_status: 'estimated', cost_usd: priced.usd, normalization_version: `${CODEX_NORMALIZATION}+${priced.basis}` };
   return { ...base, cost_status: 'unknown', cost_usd: null };
+}
+
+// One Codex invocation's amounts priced at a row of CODEX_PRICE_TABLE (the
+// one rule normalizeCodex and requestedModelEstimate share): null where a
+// count it needs is unknown or the cache writes are not a part of the
+// billable input. `basis`: the table's version, how cache writes were
+// priced, and `lower-bound`.
+function codexPriced(prices: CodexPrice, raw: Record<string, unknown>, a: Amounts): { usd: number; basis: string } | null {
+  const writes = raw.cache_write_input_tokens === undefined ? null : amount(raw.cache_write_input_tokens);
+  const writesBad = raw.cache_write_input_tokens !== undefined && writes === null;
+  if (a.billable_in === null || a.cached_in === null || a.out === null || writesBad || (writes !== null && writes > a.billable_in)) return null;
+  const plain = a.billable_in - (writes ?? 0);
+  const writeRate = writes === null ? prices.input : prices.input * (prices.cache_write ?? 1);
+  const usd = (plain * prices.input + (writes ?? 0) * writeRate + a.cached_in * prices.cached_in + a.out * prices.out) / 1_000_000;
+  const cacheBasis = writes === null ? CODEX_CACHE_WRITE_BASIS.absent : prices.cache_write === undefined ? CODEX_CACHE_WRITE_BASIS.none_listed : CODEX_CACHE_WRITE_BASIS.rate;
+  return { usd: money(usd), basis: `${CODEX_PRICE_TABLE.version}+${cacheBasis}+lower-bound` };
+}
+
+// ---- an estimate from the requested model (C2k, the owner's ruling A of 2026-10-30) ----
+//
+// "Show an estimate based on the configured model and tier, labelled
+// 'estimated from requested model; provider did not report model/tier.'
+// Preserve the provider-reported fields as unknown. Don't hide useful
+// estimates or present configuration as observed evidence."
+//
+// Codex's stream names no model (adapters/codex.ts), so a Codex row's
+// `model_observed` is null and its cost `unknown`, its usage complete or
+// not. Beside those, unchanged, a read serves this estimate: the row's
+// final usage priced at CODEX_PRICE_TABLE's row for the model the run
+// requested (the template fixes `-m`), at the Standard tier (the template
+// configures no fast mode, and the table is the Standard tier's), by the
+// same rule as an estimated row (codexPriced), a lower bound for the same
+// reasons. It is computed when read from what the row holds (model_requested,
+// the normalized counts, raw_usage's cache writes), so a row charged before
+// this rule has it too and no row is rewritten; `price_version` names the
+// table it was priced at. It is configuration priced, never evidence: the
+// row's cost_status stays `unknown` and model_observed null, and no total
+// counts it as reported, as estimated or against a limit. Where it cannot
+// be made (the price table has no row for the requested model, the usage is
+// not final and complete, the provider named a model, the provider is not
+// Codex) it is null with the reason, never 0.
+export const REQUESTED_ESTIMATE_BASIS = 'estimated from requested model; provider did not report model/tier';
+
+export interface RequestedEstimate {
+  usd: number;
+  model: string;
+  tier: 'standard';
+  basis: typeof REQUESTED_ESTIMATE_BASIS;
+  price_version: string;
+  pricing_basis: string;
+  bound: 'lower';
+  lower_bound_reasons: string[];
+}
+
+export interface RequestedEstimateView {
+  estimated_from_requested: RequestedEstimate | null;
+  // Why there is none, when the cost is unknown and none is served; null
+  // when one is served or none is wanted (the cost is reported or estimated).
+  estimated_from_requested_reason: string | null;
+}
+
+export function requestedModelEstimate(
+  row: { provider: string; model_requested: string; model_observed: string | null; raw_usage: string },
+  acc: Amounts & { cost_status: CostStatus; usage_complete: boolean },
+): RequestedEstimateView {
+  const none = (reason: string | null): RequestedEstimateView => ({ estimated_from_requested: null, estimated_from_requested_reason: reason });
+  if (acc.cost_status === 'provider_refused') return none('the provider refused the turn: no usage was reported to price');
+  if (acc.cost_status !== 'unknown') return none(null);
+  if (row.provider !== 'codex') return none(`no estimate from the requested model is made for ${row.provider}`);
+  if (row.model_observed !== null) return none(`the provider reported model ${row.model_observed}: the cost is not estimated from the requested model in its place`);
+  let raw: Record<string, unknown> = {};
+  try {
+    const v = JSON.parse(row.raw_usage) as unknown;
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) raw = v as Record<string, unknown>;
+  } catch {
+    raw = {};
+  }
+  if (raw.usage_final !== true || !acc.usage_complete) return none('the usage is not final and complete, so an estimate from it would not be the invocation\'s');
+  const prices = CODEX_PRICE_TABLE.models[row.model_requested];
+  if (!prices) return none(attemptSpendUnavailable('codex', row.model_requested));
+  const priced = codexPriced(prices, raw, acc);
+  if (priced === null) return none('a count the price needs is unknown, or the cache writes are not a part of the billable input');
+  return {
+    estimated_from_requested: {
+      usd: priced.usd,
+      model: row.model_requested,
+      tier: 'standard',
+      basis: REQUESTED_ESTIMATE_BASIS,
+      price_version: CODEX_PRICE_TABLE.version,
+      pricing_basis: priced.basis,
+      bound: 'lower',
+      lower_bound_reasons: [...CODEX_PRICE_TABLE.lower_bound_reasons, 'the model and tier are the requested configuration, not reported by the provider'],
+    },
+    estimated_from_requested_reason: null,
+  };
 }
 
 // The most a qualification attempt's canaries can cost in billable tokens,
@@ -410,9 +504,43 @@ export type LedgerAccount = 'project' | 'workspace_assistant';
 // provider's own 0 is recorded unknown, its report kept.
 export const ASSISTANT_REPORTED_ZERO = 'assistant-reported-zero-is-unknown-1';
 
+// ---- a provider refusal (C2k, the owner's ruling B of 2026-10-30) ----------------------
+//
+// A run whose provider refused its turn before any of it ran: Codex's
+// `usage_limit` class (a quota or rate-limit error: "Quota exceeded. Check
+// your plan and billing details.", a 429), with no item in the stream and
+// no usage reported (adapters/codex.ts codexProviderRefusal). The run ends
+// `failed` with reason_class `infra_error` (RunReasonClass is unchanged) and
+// this refusal as its reason_detail's `provider_refusal`, the documented
+// sub-reason (invoke/choke.ts). Its invocation's original ledger row is then
+// `provider_refused`: no counts, no cost, no unknown allowance, the refusal
+// kept in raw_usage. The usage is not claimed to be 0 (the counts stay null,
+// and the measured figure that includes the invocation stays a lower
+// bound); it is not charged an allowance either, because the provider said
+// why it did nothing: the turn was refused. A run that reports nothing and
+// was not refused so keeps the unknown allowance (unknownAllowance, C4).
+export const PROVIDER_REFUSAL_BASIS = 'provider-refusal-1';
+
+export interface ProviderRefusal {
+  kind: 'usage_limit';
+  message: string;
+}
+
+// The refusal a run's reason_detail records, or null.
+export function providerRefusalOf(detail: string | null | undefined): ProviderRefusal | null {
+  if (typeof detail !== 'string') return null;
+  try {
+    const d = JSON.parse(detail) as { provider_refusal?: { kind?: unknown; message?: unknown } } | null;
+    const r = d?.provider_refusal;
+    return r && r.kind === 'usage_limit' && typeof r.message === 'string' ? { kind: 'usage_limit', message: r.message } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function chargeInvocation(
   tx: Tx,
-  run: { id: string | null; project: string | null; role: string; backend: string; model_requested: string; outcome: string | null },
+  run: { id: string | null; project: string | null; role: string; backend: string; model_requested: string; outcome: string | null; reason_detail?: string | null },
   receipt: { id: string; turn: string | null },
   egress: readonly EgressAccount[] = [],
   account: LedgerAccount = 'project',
@@ -432,7 +560,16 @@ export function chargeInvocation(
     // A real assistant turn's provider said 0: unknown, with what it said kept.
     n = { ...n, cost_status: 'unknown', cost_usd: null, normalization_version: `${n.normalization_version}+${ASSISTANT_REPORTED_ZERO}` };
   }
-  const allowance = complete === 1 ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
+  // A provider refusal (above): provider_refused, no allowance; only where
+  // nothing billable or costed was observed and no egress evidence made the
+  // usage a known zero.
+  const refusal = account === 'project' && !('basis' in zero) ? providerRefusalOf(run.reason_detail) : null;
+  const refused = refusal !== null && complete === 0 && n.billable_in === null && n.out === null && n.cost_usd === null;
+  if (refused) {
+    raw = { ...raw, provider_refusal: refusal };
+    n = { ...n, cost_status: 'provider_refused', cost_usd: null, normalization_version: `${n.normalization_version}+${PROVIDER_REFUSAL_BASIS}` };
+  }
+  const allowance = complete === 1 || refused ? null : unknownAllowance(tx.db, receipt.id, run.project, n, obs.length, ENGINE_ENDED.includes(run.outcome ?? ''));
   const assistant = account === 'workspace_assistant';
   const id = tx.newId('led_');
   tx.db
@@ -467,7 +604,7 @@ export function chargeInvocation(
   tx.emit(
     'ledger.row',
     assistant ? { account, invocation: receipt.id } : { project: run.project, run: run.id, invocation: receipt.id },
-    { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1, unknown_allowance_tokens: allowance },
+    { ledger_row: id, observations: obs.length, cost_status: n.cost_status, usage_complete: complete === 1, unknown_allowance_tokens: allowance, ...(refused ? { provider_refusal: refusal } : {}) },
   );
   if (!assistant && run.id !== null) noteRunModel(tx, run.id, n.model_observed);
 }
@@ -661,6 +798,10 @@ export interface Account extends Amounts {
   // the corrections since, without changing it. 0 once a correction says the
   // usage is complete; never below zero; null where none was charged.
   unknown_allowance_tokens: number | null;
+  // C2k (ruling A): the estimate from the requested model, beside an unknown
+  // cost, never in its place (requestedModelEstimate).
+  estimated_from_requested: RequestedEstimate | null;
+  estimated_from_requested_reason: string | null;
 }
 
 const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
@@ -686,15 +827,15 @@ export function fold(rows: LedgerRow[]): Account {
   if (original.unknown_allowance_tokens !== null && original.unknown_allowance_tokens !== undefined) {
     allowance = sorted.slice(1).some((r) => r.usage_complete === 1) ? 0 : original.unknown_allowance_tokens;
   }
+  const amounts = { ...acc, cost_usd: acc.cost_usd === null ? null : money(acc.cost_usd), cost_status: last.cost_status, usage_complete: last.usage_complete === 1 };
+  const requested = requestedModelEstimate({ ...original, model_observed: last.model_observed ?? original.model_observed }, amounts);
   return {
     invocation: original.invocation,
     role: original.role,
     day: original.day_utc,
-    ...acc,
-    cost_usd: acc.cost_usd === null ? null : money(acc.cost_usd),
-    cost_status: last.cost_status,
-    usage_complete: last.usage_complete === 1,
+    ...amounts,
     unknown_allowance_tokens: allowance,
+    ...requested,
   };
 }
 
@@ -732,6 +873,47 @@ export function totalsOf(accounts: Account[]): Record<string, number | null> {
     unknown_cost_tokens: sum(billable, unknown),
     // C4: the allowances in force (SEAM.md §120); null when none carries one.
     unknown_allowance_tokens: sum((a) => a.unknown_allowance_tokens),
+  };
+}
+
+// C2k (ruling A): of the unknown-cost invocations, those with an estimate
+// from the requested model, and its sum, apart from `totalsOf` (whose
+// reported_usd and estimated_usd never count it, nor any limit); usd null
+// when none has one, never 0.
+export function requestedEstimateTotals(accounts: Account[]): { usd: number | null; invocations: number; unknown_cost_invocations: number; without_estimate: number; basis: string; rule: string } {
+  const unknown = accounts.filter((a) => a.cost_status === 'unknown');
+  const with_ = unknown.filter((a) => a.estimated_from_requested !== null);
+  const usd = with_.reduce<number | null>((s, a) => addKnown(s, a.estimated_from_requested!.usd), null);
+  return {
+    usd: usd === null ? null : money(usd),
+    invocations: with_.length,
+    unknown_cost_invocations: unknown.length,
+    without_estimate: unknown.length - with_.length,
+    basis: REQUESTED_ESTIMATE_BASIS,
+    rule: REQUESTED_ESTIMATE_RULE,
+  };
+}
+
+// The sum of the estimates from the requested model of the unknown-cost
+// rows among `rows`: null when there is no unknown-cost row, or when one of
+// them has no estimate (a partial sum is never served as the whole).
+export function requestedSum(rows: { cost_status?: unknown; estimated_from_requested?: RequestedEstimate | null }[]): number | null {
+  const unknown = rows.filter((r) => r.cost_status === 'unknown');
+  if (unknown.length === 0 || unknown.some((r) => !r.estimated_from_requested)) return null;
+  return money(unknown.reduce((s, r) => s + r.estimated_from_requested!.usd, 0));
+}
+
+// C2k (ruling B): the invocations whose provider refused their turn, apart
+// from consumption, the unknown-cost invocations and the allowances.
+export function providerRefusalTotals(rows: LedgerRow[]): { invocations: number; runs: string[]; refusals: { invocation: string; run: string; role: string; kind: string; message: string | null }[] } {
+  const refused = rows.filter((r) => r.corrects === null && r.cost_status === 'provider_refused');
+  return {
+    invocations: refused.length,
+    runs: [...new Set(refused.map((r) => r.run))],
+    refusals: refused.map((r) => {
+      const f = refusalOfRaw(r.raw_usage);
+      return { invocation: r.invocation, run: r.run, role: r.role, kind: f?.kind ?? 'usage_limit', message: f?.message ?? null };
+    }),
   };
 }
 
@@ -775,8 +957,20 @@ export function ledgerView(db: Db, args: { project: string; day: string | null }
       const out: Record<string, unknown> = {};
       for (const key of ROW_FIELDS) out[key] = r[key];
       out.usage_complete = r.usage_complete === 1;
+      // C2k: an original row's estimate from the requested model (ruling
+      // A) and its provider refusal (ruling B), each beside the row's own
+      // fields, which are unchanged.
+      if (r.corrects === null) {
+        Object.assign(out, requestedModelEstimate(r, { ...r, usage_complete: r.usage_complete === 1 }));
+        out.provider_refusal = r.cost_status === 'provider_refused' ? refusalOfRaw(r.raw_usage) : null;
+      }
       return out;
     }),
+    // C2k: the estimates from the requested model (ruling A) and the
+    // provider refusals (ruling B), each apart from `totals`, which neither
+    // changes.
+    estimated_from_requested: requestedEstimateTotals(accounts),
+    provider_refusals: providerRefusalTotals(rows),
     totals: totalsOf(accounts),
     by_role: byRole,
     budget: { exhausted: exhaustedLimits(db, args.project, { check: false }) },
@@ -786,6 +980,19 @@ export function ledgerView(db: Db, args: { project: string; day: string | null }
     budget_day: budgetDay(db, args.project),
   };
 }
+
+// The refusal a provider_refused row's raw usage keeps, or null.
+export function refusalOfRaw(rawUsage: string): ProviderRefusal | null {
+  try {
+    const r = (JSON.parse(rawUsage) as { provider_refusal?: { kind?: unknown; message?: unknown } } | null)?.provider_refusal;
+    return r && r.kind === 'usage_limit' && typeof r.message === 'string' ? { kind: 'usage_limit', message: r.message } : null;
+  } catch {
+    return null;
+  }
+}
+
+export const REQUESTED_ESTIMATE_RULE =
+  "estimated_from_requested is the usage of an invocation whose cost is unknown because the provider did not report the model (or tier), priced at the price table's row for the model the run requested, Standard tier: 'estimated from requested model; provider did not report model/tier'. It is configuration priced, not evidence: cost_status stays unknown and model_observed null; it is a lower bound; it is never counted in reported_usd or estimated_usd, or against a limit. Null, with estimated_from_requested_reason, where no price is known for the requested model or the usage is not final: never 0.";
 
 // ---- budgets (D1 §13.3; SEAM.md §55) ---------------------------------------------
 
