@@ -56,7 +56,7 @@ import { ensureAncestry } from '../gates/prepare.js';
 import type { RunEnder } from './end.js';
 import { pausePoint, seamSpecBlobFault } from '../testing/seam.js';
 import type { ApplicabilityEntry } from '../spec/change.js';
-import { type BriefFacts, type PreparedBrief, briefShapeProblem, composeBrief, validateModelBrief } from '../prototype/brief.js';
+import { BRIEF_SPEC_PATH, type BriefFacts, type PreparedBrief, briefShapeProblem, composeBrief, validateModelBrief } from '../prototype/brief.js';
 
 const RETRY_FIRST_MS = 500;
 const RETRY_MAX_MS = 10_000;
@@ -478,18 +478,23 @@ export class Acceptor {
   // preparation, the stop conditions) and written as the brief's record.
   private async briefOf(facts: AcceptFacts, sha: string): Promise<{ brief: PreparedBrief } | { refused: string }> {
     const ctx = repoContext(facts.project.repo);
-    const path = '.surety/spec/spec.md';
+    const path = BRIEF_SPEC_PATH;
     const tree = await treeOf(ctx, sha);
     const entries = tree === null ? null : await listTree(ctx, tree);
     if (entries === null) return { refused: "the brief preparation's tree could not be read" };
     const entry = [...entries.values()].find((e) => e.path === path && e.type === 'blob');
-    if (!entry) return { refused: `the brief preparation left no ${path}: the brief is approved with its minimal specification` };
+    if (!entry) {
+      // Where the run did write a specification-like file, name it (the
+      // engine reads only ${path}).
+      const others = [...entries.values()].filter((e) => e.type === 'blob' && e.path !== path && /^\.surety\/.*spec.*\.md$/i.test(e.path)).map((e) => e.path);
+      return { refused: `the brief preparation left no ${path}: the brief is approved with its minimal specification, which the engine reads at exactly that path${others.length > 0 ? ` (the run's tree has ${others.join(', ')}, which the engine does not read)` : ''}` };
+    }
     const text = await catBlob(ctx, sha, path);
     if (text === null) return { refused: `${path} at ${sha} could not be read` };
     const parsed = parseSpecification(text);
-    if (!parsed.readable || parsed.representation === null) return { refused: `the prepared specification is not readable: ${parsed.findings.map((f) => f.why).join('; ')}` };
+    if (!parsed.readable || parsed.representation === null) return { refused: `the prepared specification ${path} at ${sha} is not readable: ${parsed.findings.map((f) => f.why).join('; ')}` };
     const blocking = blockingFindings(parsed.findings);
-    if (blocking.length > 0) return { refused: `spec_semantics_invalid: the prepared specification cannot be approved: ${blocking.map((f) => `${f.where}: ${f.code}: ${f.why}`).join('; ')}` };
+    if (blocking.length > 0) return { refused: `spec_semantics_invalid: the prepared specification ${path} at ${sha} cannot be approved: ${blocking.map((f) => `${f.where}: ${f.code}: ${f.why}`).join('; ')}` };
     const model = validateModelBrief((facts.result?.report as { brief?: unknown } | undefined)?.brief, parsed.representation);
     if ('refused' in model) return { refused: `the brief is refused: ${model.refused}` };
     const served = await this.rt.read<BriefFacts>('prototype.brief_facts', { project: facts.project.id, run: facts.run.id, environments: parsed.representation.environments.map((e) => e.name) });

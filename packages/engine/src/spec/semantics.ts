@@ -213,6 +213,18 @@ const list = (cell: string): string[] =>
     .map((x) => x.trim().replace(/^`|`$/g, ''))
     .filter((x) => x.length > 0);
 
+// What a specification whose sections could not be found has instead, for
+// the refusal: its level-2 headings as written (the first few), each marked
+// read or not read by the section form `## <n>. <title>`.
+const HEADINGS_SHOWN = 12;
+function headingsFound(text: string): string {
+  const all = text.split('\n').filter((l) => /^##\s/.test(l)).map((l) => l.trim());
+  if (all.length === 0) return 'it has no level-2 heading';
+  const read = all.filter((l) => H2.test(l)).length;
+  const shown = all.slice(0, HEADINGS_SHOWN).map((l) => JSON.stringify(l)).join(', ');
+  return `its ${all.length} level-2 heading${all.length === 1 ? ' is' : 's are'} ${shown}${all.length > HEADINGS_SHOWN ? ', …' : ''} (${read === 0 ? 'none' : String(read)} of them in the section form "## <n>. <title>")`;
+}
+
 // Sections by their `## <n>.` heading: number → lines.
 function sections(text: string): Map<number, string[]> {
   const out = new Map<number, string[]>();
@@ -537,11 +549,11 @@ export function parseSpecification(text: string): SemanticResult {
   const secs = sections(text);
   const s4 = secs.get(SPEC_SECTIONS.requirements);
   const s5 = secs.get(SPEC_SECTIONS.index);
-  if (!s4 && !s5) return { readable: false, representation: null, findings: [{ where: 'index', code: 'section_missing', why: 'the specification has neither section 4 (Requirements) nor section 5 (Requirement index)' }], digest: null };
-  if (!s4) findings.push({ where: 'index', code: 'section_missing', why: 'section 4 (Requirements) is missing' });
+  if (!s4 && !s5) return { readable: false, representation: null, findings: [{ where: 'index', code: 'section_missing', why: `the specification has neither section 4 (Requirements) nor section 5 (Requirement index): no heading of the form "## 4. Requirements" or "## 5. Requirement index"; ${headingsFound(text)}` }], digest: null };
+  if (!s4) findings.push({ where: 'index', code: 'section_missing', why: `section 4 (Requirements) is missing: no heading of the form "## 4. Requirements"; ${headingsFound(text)}` });
   const requirements = parseRequirements(s4 ?? [], findings);
   let index: IndexRow[] = [];
-  if (!s5) findings.push({ where: 'index', code: 'index_missing', why: 'section 5 (Requirement index) is missing' });
+  if (!s5) findings.push({ where: 'index', code: 'index_missing', why: `section 5 (Requirement index) is missing: no heading of the form "## 5. Requirement index"; ${headingsFound(text)}` });
   else {
     const table = firstTable(s5);
     if (!table) findings.push({ where: 'index', code: 'index_missing', why: 'section 5 has no index table' });

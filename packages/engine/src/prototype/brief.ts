@@ -44,7 +44,8 @@ import { type DecisionRow, consumeDecision, invalidateDecision } from '../store/
 import type { CommandResult } from '../store/transitions/control.js';
 import { attemptSpendEstimate, attemptSpendUnavailable } from '../store/transitions/ledger.js';
 import { recordSemantics } from '../spec/approval.js';
-import type { SemanticFinding, SpecRepresentation } from '../spec/semantics.js';
+import { SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_SECTIONS, type SemanticFinding, type SpecRepresentation } from '../spec/semantics.js';
+import { INDEX_COLUMNS } from '../checks/requirement-index.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
 import { policyRevision, projectPolicy, roleModel } from '../store/transitions/settings.js';
 import { resolveBackend } from '../store/transitions/trust.js';
@@ -927,16 +928,57 @@ export function briefPreparationFacts(db: Db, item: { id: string; project: strin
 
 export const BRIEF_TASK = "Prepare this rapid prototype's brief: read the idea (.surety/idea.md), write the minimal specification into .surety/spec/spec.md, and report the brief's idea-derived fields in your result's `brief`. You approve nothing: the owner approves the brief.";
 
+// The path the engine reads the prepared specification from (runs/accept.ts
+// briefOf), and the template's sections in the heading form the parser reads
+// (spec/semantics.ts H2: `## <n>. <title>`, the full stop required). The
+// minimal specification is an ordinary one, approved through spec_approval
+// (the rapid prototype proposal's table: "the brief is the minimal spec's
+// plain-language rendering"), so nothing of the template's form is omitted.
+export const BRIEF_SPEC_PATH = '.surety/spec/spec.md';
+export const BRIEF_SPEC_SECTIONS: readonly (readonly [number, string])[] = [
+  [1, 'Purpose'],
+  [2, 'Non-goals'],
+  [3, 'Users and situations'],
+  [SPEC_SECTIONS.requirements, 'Requirements'],
+  [SPEC_SECTIONS.index, 'Requirement index'],
+  [SPEC_SECTIONS.modules, 'Modules and protected paths'],
+  [SPEC_SECTIONS.environments, 'Environments'],
+  [8, 'Constraints'],
+  [9, 'Interfaces and data'],
+  [SPEC_SECTIONS.questions, 'Open questions'],
+  [SPEC_SECTIONS.change_log, 'Change log'],
+];
+const heading = ([n, title]: readonly [number, string]): string => `## ${n}. ${title}`;
+
+// What the prompt states of the specification's form (the first trial's
+// preparation, 2026-10-30, wrote `## 4 Requirements` and `### R1 — <title>`
+// with numbered criteria and no index, and was refused whole: the package
+// had stated no form). The exact forms follow under "What the engine reads".
+export function briefSpecFormText(f: Pick<BriefPreparationFacts, 'objectives'>): string[] {
+  const [VERSION, STATUS, TIER, OWNER] = SPEC_HEADER_FIELDS;
+  const req = BRIEF_SPEC_SECTIONS.find(([n]) => n === SPEC_SECTIONS.requirements)!;
+  const idx = BRIEF_SPEC_SECTIONS.find(([n]) => n === SPEC_SECTIONS.index)!;
+  return [
+    `The specification's form. The engine reads ${BRIEF_SPEC_PATH} (exactly that path) with the same parser as every specification, and refuses the brief whole if the parser cannot read it or finds anything that would block its approval:`,
+    `- The header, one line each after the title: \`**${VERSION}:** 1\` (one more than the current version when continuing, below), \`**${STATUS}:** draft\`, \`**${TIER}:** T1\` (a rapid prototype's tier), \`**${OWNER}:** <a name>\`.`,
+    `- The sections, each heading exactly \`## <n>. <title>\` (the number, a full stop, a space, the title; \`## 4 Requirements\` without the full stop is not read), in this order: ${BRIEF_SPEC_SECTIONS.map((x) => `\`${heading(x)}\``).join(', ')}. A specification without \`${heading(req)}\` and \`${heading(idx)}\` is not a specification to the engine.`,
+    `- Section ${req[0]}: ${f.objectives.min} to ${f.objectives.max} requirements, keyed R1, R2, … in order (when continuing, each key the previous specification gives keeps its requirement), each one subsection headed exactly \`### R<n>. <title>\` (not \`### R<n> — <title>\`); under it the statement as one paragraph, the line \`${SPEC_AREAS_LABEL} none\` (or identifiers of the closed list), then each acceptance criterion as a list item \`- R<n>.<m> <text>\` (not a numbered list), each one someone can check by using the running prototype.`,
+    `- Section ${idx[0]}: one table with the columns ${INDEX_COLUMNS.map((c) => `\`${c}\``).join(', ')}, then the separator row, then one row per requirement of section ${req[0]} (Phase 1; the Criteria cell lists exactly that requirement's criterion keys, comma-separated), agreeing with section ${req[0]} exactly.`,
+  ];
+}
+
 export function briefPreparationText(f: BriefPreparationFacts): string[] {
   return [
     '',
     '## The prototype brief',
     '',
     `Iteration ${f.iteration_seq} of a rapid prototype. The idea is ${f.idea_path} (version ${f.idea_version ?? 'unknown'}) in your workspace, as the owner typed or imported it.`,
-    `1. Write the minimal specification into .surety/spec/spec.md in the template's form (sections 1 to 11): ${f.objectives.min} to ${f.objectives.max} requirements, each an observable objective with acceptance criteria someone can check by using the running prototype; one environment in section 7 (the prototype runs as a local service on this host); open questions: none, or each with its phase hint.`,
-    `2. Report in your result's \`brief\` exactly these fields: ${f.model_fields.join(', ')}. \`app\`, \`for\` and \`experience\` are short sentences; the others are lists of short sentences; \`objectives\` lists one objective per requirement, each naming its requirement key (for example "R1: ..."); \`estimates\` is {runs, tokens, usd, minutes}, each a number or a [low, high] pair, your estimate of the build.`,
+    `1. Write the minimal specification into ${BRIEF_SPEC_PATH} in the template's form (sections 1 to 11, stated below): ${f.objectives.min} to ${f.objectives.max} requirements, each an observable objective with acceptance criteria someone can check by using the running prototype; one environment in section 7 (the prototype runs as a local service on this host); open questions: none, or each with its phase hint.`,
+    `2. Write your result to /surety/out/result.json as /surety/context/result-schema.json states: \`status\`, \`summary\` and \`brief\`. Report in its \`brief\` exactly these fields: ${f.model_fields.join(', ')}. \`app\`, \`for\` and \`experience\` are short sentences; the others are lists of short sentences; \`objectives\` lists one objective per requirement, each naming its requirement key (for example "R1: ..."); \`estimates\` is {runs, tokens, usd, minutes}, each a number or a [low, high] pair, your estimate of the build.`,
     `3. If the idea does not fit ${f.objectives.max} objectives, propose a smaller scope: keep the objectives that show the idea best, and list everything you leave out in \`left_out\`. Never drop a requirement silently; what is mocked goes in \`mocked\`, what you assume in \`assumptions\`, the prototype's known limits in \`limitations\`, and the idea's constraints in \`constraints\`.`,
     `Do not report ${f.engine_fields.join(', ')}: the engine fills them from what it serves (the target and its exposure, the models, the limits, the preparation, the stop conditions). A brief that is not in this form is refused and nothing is approved.`,
+    '',
+    ...briefSpecFormText(f),
     ...(f.previous ? ['', `The iteration's last preparation run (${f.previous.run}) ended ${f.previous.outcome ?? 'unknown'}${f.previous.reason_text ? `: ${f.previous.reason_text}` : ''}.`] : []),
     ...(f.continues ? continuationText(f.continues) : []),
   ];

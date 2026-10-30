@@ -44,6 +44,11 @@ export const PACKAGE_ELEMENTS = Object.freeze({
   // in the same forms.
   // A design batch's change adds what the design proposes (D7 §7.1; M6).
   spec_change: [...SPEC_FORMS, 'spec_writer.change_result', 'spec_writer.design_change'] as const,
+  // The Spec Writer's one-shot brief preparation of a rapid prototype
+  // (slice E3): the minimal specification is an ordinary specification,
+  // read by the same parser and approved through the same spec_approval, so
+  // its package states the same forms and what blocks that approval.
+  brief_preparation: [...SPEC_FORMS, 'spec_writer.approval_blockers'] as const,
   // The Architect's session (and its retrofit variant) and the replan one-shot.
   architect: [...ARCHITECT] as const,
   architect_retrofit: [...ARCHITECT] as const,
