@@ -49,7 +49,7 @@ import { INDEX_COLUMNS } from '../checks/requirement-index.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
 import { policyRevision, projectPolicy, roleModel } from '../store/transitions/settings.js';
 import { resolveBackend } from '../store/transitions/trust.js';
-import { UNKNOWN_NEXT_STEP, effectiveAllowanceOf, unresolvedAccounting } from '../store/transitions/prototype.js';
+import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, endProviderHold, providerHoldOf, providerRefusalReason, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
@@ -115,6 +115,8 @@ interface IterationLite {
   created_at: string;
   predecessor: string | null;
   change_text: string | null;
+  // C2k (migration 0051).
+  provider_hold_since?: string | null;
 }
 
 const iterationById = (db: Db, id: string): IterationLite | undefined => db.prepare('SELECT * FROM "prototype_iterations" WHERE "id" = ?').get(id) as IterationLite | undefined;
@@ -841,6 +843,9 @@ export function syncIterationStatuses(tx: Tx): number {
   let n = 0;
   for (const it of rows) {
     if (currentOf(tx.db, it.project)?.id !== it.id) continue;
+    // C2k: a provider-refusal hold whose work was resumed otherwise (POST
+    // …/work/:w/resume) or is no longer the refused run's ends now.
+    if (it.provider_hold_since && providerHoldOf(tx.db, it) === null) endProviderHold(tx, it);
     // A first plan the owner approved (routed outside the bounds): its
     // publication, once made, is the iteration's plan.
     if (it.plan_bundle !== null && (it as IterationLite & { phase_plan?: string | null }).phase_plan == null) {
@@ -861,6 +866,12 @@ export function syncIterationStatuses(tx: Tx): number {
       const last = tx.db.prepare(`SELECT "id", "outcome", "reason_class", "reason_text" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1`).get(parked.id) as { id: string; outcome: string | null; reason_class: string | null; reason_text: string | null } | undefined;
       const runText = last ? `; its last run ${last.id} ended ${last.outcome ?? 'unknown'}${last.reason_class && last.reason_class !== 'none' ? ` (${last.reason_class})` : ''}${last.reason_text ? `: ${last.reason_text}` : ''}` : '';
       want = { status: 'failed', next: 'retry or cancel the parked work (its blocker), or discard', reason: `${parked.kind} work ${parked.id} parked: ${why}${runText}`, ended: true };
+    } else if (providerHoldOf(tx.db, it) !== null) {
+      // C2k (the owner's ruling B of 2026-10-30): its work held by a
+      // provider refusal: the refusal is the stop condition, and the retry
+      // its next step (store/transitions/prototype.ts retryIteration).
+      const h = providerHoldOf(tx.db, it)!;
+      want = { status: 'awaiting_owner', next: PROVIDER_REFUSAL_NEXT_STEP, reason: providerRefusalReason(h.run, h.refusal), ended: false };
     } else if (heldOf(tx.db, it) !== null) {
       // Slice E5 (gap 2): work of the iteration held after its run ended
       // without completing (an engine restart recovered it, or the owner

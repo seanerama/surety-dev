@@ -18,7 +18,7 @@ import { preparedAgainstFacts } from '../plan/bundle.js';
 import { envelopeHold } from '../store/transitions/envelope.js';
 import { Refusal } from '../refusal.js';
 import { illegal, nextSeq, notFound } from '../store/transitions/common.js';
-import { chargeInvocation, exhaustedLimits, runBudgetOf } from '../store/transitions/ledger.js';
+import { type CostStatus, chargeInvocation, exhaustedLimits, requestedModelEstimate, requestedSum, runBudgetOf } from '../store/transitions/ledger.js';
 import { type Claim, type RunRow, getRun } from '../store/transitions/runs.js';
 import { integrationRef, projectRepoRow, registryRow } from '../store/transitions/repo.js';
 import { attemptProfileMax, effectiveProfileMax, engineSettings, projectEffective, projectPolicy } from '../store/transitions/settings.js';
@@ -1354,7 +1354,14 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
   // The turn held on the day limits now, if any (the driver's decision on
   // objection 156).
   const held = heldTurnOf(db, runId);
-  const ledger = db.prepare('SELECT "id", "invocation", "billable_in", "cached_in", "out", "cost_status", "cost_usd", "usage_complete", "model_observed" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid').all(runId) as Record<string, unknown>[];
+  // C2k (the owner's ruling A of 2026-10-30): each row with its estimate
+  // from the requested model beside an unknown cost (ledger.ts
+  // requestedModelEstimate), never in place of cost_status or cost_usd.
+  const ledger = (
+    db
+      .prepare('SELECT "id", "invocation", "billable_in", "cached_in", "out", "cost_status", "cost_usd", "usage_complete", "model_observed", "provider", "model_requested", "raw_usage" FROM "ledger_rows" WHERE "run" = ? AND "corrects" IS NULL ORDER BY rowid')
+      .all(runId) as (Record<string, unknown> & { provider: string; model_requested: string; model_observed: string | null; raw_usage: string; billable_in: number | null; cached_in: number | null; out: number | null; cost_status: CostStatus; usage_complete: number })[]
+  ).map(({ provider, model_requested, raw_usage, ...l }) => ({ ...l, ...requestedModelEstimate({ provider, model_requested, model_observed: l.model_observed, raw_usage }, { ...l, usage_complete: l.usage_complete === 1 }) })) as Record<string, unknown>[];
   const byInvocation = new Map(ledger.map((l) => [l.invocation as string, l]));
   let notes: { findings?: SaveFinding[] } | null = null;
   try {
@@ -1443,7 +1450,18 @@ export function sessionView(db: Tx['db'], project: string, runId: string): Recor
     // null: the transcript record cannot be read (unknown, never empty).
     transcript: transcriptOf(db, runId)?.map((e) => ({ turn: e.turn, speaker: e.speaker, at: e.at, text: e.text, text_ref: e.text_ref })) ?? null,
     findings: notes?.findings ?? [],
-    spend: { turns: ledger.length, usage: known ? 'recorded' : 'unknown', billable_in: sum('billable_in'), cached_in: sum('cached_in'), out: sum('out'), cost_usd: sum('cost_usd'), rows: ledger },
+    spend: {
+      turns: ledger.length,
+      usage: known ? 'recorded' : 'unknown',
+      billable_in: sum('billable_in'),
+      cached_in: sum('cached_in'),
+      out: sum('out'),
+      cost_usd: sum('cost_usd'),
+      // C2k: the unknown-cost rows' estimates from the requested model,
+      // apart from cost_usd; null unless every unknown-cost row has one.
+      estimated_from_requested_usd: requestedSum(ledger),
+      rows: ledger,
+    },
   };
 }
 
