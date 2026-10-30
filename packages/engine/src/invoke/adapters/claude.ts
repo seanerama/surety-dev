@@ -527,9 +527,10 @@ export interface BackendSampling {
   transient_backend: number;
   // Distinct members seen running the binary as its embedded ripgrep (argv[0]
   // `rg`, none of the agent's flags) or as Codex's command-spawn helper
-  // (argv[1] `--codex-run-as-process-setup`, none of Codex's agent arguments)
-  // and their command lines, distinct, bounded: not backends, not counted in
-  // max_backend (real loop run 2, 2026-10-16; C2i, 2026-10-30; sampler.ts).
+  // (its documented argv, `/proc/self/exe --codex-run-as-process-setup …`,
+  // launching a program that is not Codex) and their command lines, distinct,
+  // bounded: not backends, not counted in max_backend (real loop run 2,
+  // 2026-10-16; C2i and C2j, 2026-10-30; sampler.ts).
   embedded_tool: number;
   embedded_tool_cmdlines: string[];
 }

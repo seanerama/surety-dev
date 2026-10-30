@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const { startBackendSampler, isEmbeddedTool, CODEX_AGENT_ARGS } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
+const { startBackendSampler, isEmbeddedTool, parseCodexSpawnHelper } = await import(join(root, 'dist', 'invoke', 'sampler.js'));
 const { claudeCapabilities } = await import(join(root, 'dist', 'invoke', 'adapters', 'claude.js'));
 const { codexCapabilities } = await import(join(root, 'dist', 'invoke', 'adapters', 'codex.js'));
 const { codexBeyondDomain } = await import(join(root, 'dist', 'trust', 'attempts.js'));
@@ -132,19 +132,77 @@ const HELPER = ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'p
 const HELPER_LINE = '/proc/self/exe --codex-run-as-process-setup 40 25 pipe /surety/workspace /bin/bash /bin/bash -lc cat /surety/context/prompt.md';
 const CODEX_LINE = '/surety/backends/codex exec --json --ephemeral --ignore-user-config';
 
-test("the rule on argv: Codex's spawn helper (argv[1] exactly the helper argument) is an embedded tool unless Codex's agent arguments follow", () => {
+const BIN = '/surety/backends/codex';
+const helper = (program, arg0, ...args) => ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '', '/surety/workspace', program, arg0, ...args];
+
+// C2j (Sean's ruling, 2026-10-30 16:00Z): the helper's documented argv
+// (spawn_helper.rs:101-121, spawn_helper_main.rs:17-66) is parsed; its
+// program and arg0 decide; the program's own arguments are not read.
+test("the rule on argv: Codex's spawn helper parsed by its documented slots; its program decides", () => {
   assert.equal(isEmbeddedTool(HELPER), true, 'the observed helper');
-  assert.equal(isEmbeddedTool(['/surety/backends/codex', ...HELPER.slice(1)]), true, 'argv[0] is not what counts');
-  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup', '41', '25', 'pty', '3,4', '/surety/workspace', '/usr/bin/git', 'git', 'status']), true, 'pty, inherited fds');
-  assert.equal(isEmbeddedTool([...HELPER, 'exec', '--json', '-m', 'gpt-6.1-terra']), false, 'followed by exec and a model');
-  for (const a of CODEX_AGENT_ARGS) assert.equal(isEmbeddedTool([...HELPER.slice(0, 8), a, 'x']), false, `${a} makes it a backend`);
-  for (const a of ['--model=gpt-6.1-terra', '--config=x=1', '--profile=p', '--sandbox=danger-full-access', '--ask-for-approval=never']) assert.equal(isEmbeddedTool([...HELPER, a]), false, `${a}: --flag=value`);
-  assert.equal(isEmbeddedTool(['/surety/backends/codex', 'exec', '--json', '--codex-run-as-process-setup']), false, 'the helper argument not argv[1]: the backend itself');
-  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setupx', '40']), false, 'not exactly the helper argument');
-  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup=40']), false);
-  assert.equal(isEmbeddedTool(['/proc/self/exe']), false);
-  assert.equal(isEmbeddedTool([...HELPER, '-lmc']), true, 'a short-flag cluster is not one of the agent arguments');
-  assert.equal(isEmbeddedTool([...HELPER, 'executable', '--models']), true, 'different words');
+  assert.equal(isEmbeddedTool(HELPER, BIN), true, 'the observed helper, with the binary path');
+  assert.deepEqual(parseCodexSpawnHelper(HELPER), { controlFd: 40, parentPid: 25, setup: 'pipe', inheritedFds: [], cwd: '/surety/workspace', program: '/bin/bash', arg0: '/bin/bash' });
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup', '41', '25', 'pty', '3,4', '/surety/workspace', '/usr/bin/git', 'git', 'status'], BIN), true, 'pty, inherited fds');
+  assert.deepEqual(parseCodexSpawnHelper(['/proc/self/exe', '--codex-run-as-process-setup', '41', '25', 'pty', '3,4', '.', 'git', 'git']).inheritedFds, [3, 4]);
+
+  // Formerly false positives under C2i's scan: the target's own arguments are not read.
+  assert.equal(isEmbeddedTool(helper('/usr/bin/git', 'git', 'log', '-p'), BIN), true, 'git log -p');
+  assert.equal(isEmbeddedTool(helper('/usr/bin/python3', 'python3', '-c', 'print(1)'), BIN), true, "python3 -c 'print(1)'");
+  assert.equal(isEmbeddedTool(helper('/bin/bash', '/bin/bash', '-c', 'codex exec --json -m gpt-6.1-terra'), BIN), true, 'a shell whose string names codex: the codex it starts is a member of its own');
+  assert.equal(isEmbeddedTool([...HELPER, 'exec', '--json', '-m', 'gpt-6.1-terra'], BIN), true, "bash's own arguments, not Codex's");
+  for (const a of ['exec', 'review', 'login', '-m', '--model=x', '-c', '-p', '-s', '-a', '--config=x=1', '--sandbox', '--oss']) {
+    assert.equal(isEmbeddedTool(helper('/usr/bin/git', 'git', a, 'x'), BIN), true, `${a} as the target's argument`);
+  }
+
+  // The helper launching Codex itself: a genuine additional agent, a backend.
+  for (const [program, arg0] of [
+    ['/proc/self/exe', '/proc/self/exe'],
+    ['/proc/self/exe', 'codex'],
+    ['/proc/25/exe', 'x'],
+    ['/proc/thread-self/exe', 'x'],
+    [BIN, BIN],
+    [BIN, 'sh'],
+    ['codex', 'codex'],
+    ['/usr/local/bin/codex', 'codex'],
+    ['/opt/elsewhere/codex', 'x'],
+    ['/tmp/copy', 'codex'],
+    ['/usr/bin/env', '/surety/backends/codex'],
+  ]) {
+    assert.equal(isEmbeddedTool(helper(program, arg0, 'exec', '--json', '-m', 'gpt-6.1-terra'), BIN), false, `program ${program}, arg0 ${arg0}`);
+  }
+  assert.equal(isEmbeddedTool(helper('/opt/x/codex-x86_64-unknown-linux-musl', 'y', 'exec'), '/opt/x/codex-x86_64-unknown-linux-musl'), false, "the qualified binary's own base name");
+  assert.equal(isEmbeddedTool(helper('/elsewhere/codex-x86_64-unknown-linux-musl', 'y'), '/opt/x/codex-x86_64-unknown-linux-musl'), false, 'the base name elsewhere');
+  assert.equal(isEmbeddedTool(helper('/usr/bin/codexx', 'codexx'), BIN), true, 'a different name');
+
+  // Unparseable: fail closed, a backend.
+  for (const [label, argv] of [
+    ['too short', HELPER.slice(0, 8)],
+    ['argv[1] alone', ['/proc/self/exe', '--codex-run-as-process-setup']],
+    ['argv[0] not /proc/self/exe', [BIN, ...HELPER.slice(1)]],
+    ['control fd not numeric', ['/proc/self/exe', '--codex-run-as-process-setup', 'x', '25', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['control fd 2', ['/proc/self/exe', '--codex-run-as-process-setup', '2', '25', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['control fd signed', ['/proc/self/exe', '--codex-run-as-process-setup', '+40', '25', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['control fd leading zero', ['/proc/self/exe', '--codex-run-as-process-setup', '040', '25', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['control fd beyond i32', ['/proc/self/exe', '--codex-run-as-process-setup', '2147483648', '25', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['pid 0', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '0', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['pid negative', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '-1', 'pipe', '', '/w', '/bin/sh', 'sh']],
+    ['unknown setup word', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'exec', '', '/w', '/bin/sh', 'sh']],
+    ['setup word case', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'PIPE', '', '/w', '/bin/sh', 'sh']],
+    ['inherited fds not numeric', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '3,x', '/w', '/bin/sh', 'sh']],
+    ['inherited fds empty piece', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '3,,4', '/w', '/bin/sh', 'sh']],
+    ['inherited fds missing (cwd in its slot)', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '/w', '/bin/sh', 'sh', '-c']],
+    ['empty cwd', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '', '', '/bin/sh', 'sh']],
+    ['empty program', ['/proc/self/exe', '--codex-run-as-process-setup', '40', '25', 'pipe', '', '/w', '', 'sh']],
+  ]) {
+    assert.equal(parseCodexSpawnHelper(argv), null, label);
+    assert.equal(isEmbeddedTool(argv, BIN), false, label);
+  }
+  assert.equal(isEmbeddedTool(['/surety/backends/codex', 'exec', '--json', '--codex-run-as-process-setup'], BIN), false, 'the helper argument not argv[1]: the backend itself');
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setupx', ...HELPER.slice(2)], BIN), false, 'not exactly the helper argument');
+  assert.equal(isEmbeddedTool(['/proc/self/exe', '--codex-run-as-process-setup=40'], BIN), false);
+  assert.equal(isEmbeddedTool(['/proc/self/exe'], BIN), false);
+
+  // The ripgrep rule unchanged.
   assert.equal(isEmbeddedTool(['rg', '--codex-run-as-process-setup', '--files']), true, 'argv[0] rg: the ripgrep rule');
   assert.equal(isEmbeddedTool(['rg', '--codex-run-as-process-setup', '--model', 'm']), false, 'argv[0] rg: its agent flags');
 });
@@ -163,9 +221,9 @@ test('the Terra canary shape: the codex backend and its spawn helper at once: on
   assert.deepEqual(codexBeyondDomain(null, r), []);
 });
 
-test('a helper carrying Codex agent arguments is classed a backend and fails the canary as before', () => {
+test('a helper launching Codex itself is classed a backend and fails the canary as before', () => {
   const s = scripted();
-  const disguised = `${HELPER_LINE} exec --json -m gpt-6.1-terra`;
+  const disguised = '/proc/self/exe --codex-run-as-process-setup 40 25 pipe /surety/workspace /proc/self/exe codex exec --json -m gpt-6.1-terra';
   s.look([INIT, 10, 31], { 10: 'backend', 31: 'backend' }, { 10: CODEX_LINE, 31: disguised });
   const r = s.stop();
   assert.deepEqual([r.max_backend, r.embedded_tool], [2, 0]);
