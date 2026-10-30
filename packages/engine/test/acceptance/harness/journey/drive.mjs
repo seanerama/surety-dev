@@ -327,6 +327,18 @@ export const blockers = (home, project) => ({
 });
 const lastEventSeq = (home) => withStore(home, (db) => db.prepare('SELECT MAX("seq") AS "seq" FROM "events"').get().seq ?? 0);
 
+// An Alpha deployment under way: the project's deploy work claimed or
+// executing. The deploy's work item stays `executing` from its launch
+// through the verification round to its `alpha_complete` evaluation, and
+// leaves it (complete, or awaiting_decision behind a blocker) only once that
+// evaluation is recorded. `eligible` is not counted: the engine claims a
+// requested deploy in the tick that requests it, and an item that stays
+// eligible is not a completion under way.
+export const alphaUnderWay = (home, project) =>
+  rows(home, `SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'deploy' AND "status" IN ('claimed', 'executing') ORDER BY "seq"`, project);
+// The routed answers that change the checks (a new protected version).
+export const CHECK_CHANGE_KINDS = Object.freeze(['check_correction_unclassifiable', 'check_correction_tightening', 'check_correction_loosening']);
+
 // Tick the project until `done` answers, doing on the way what the journey's
 // harness does: in the kernel lane, record every queued check execution's
 // exit (`exits(x)`, 0 by default); answer the routed decisions as the owner
@@ -351,7 +363,7 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
       if (now - started > projectMs) throw new Error(`${what}: not reached within ${Math.round(projectMs / 1000)} s on the project lane (${rounds} ticks; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
       if (now - seen.at > PROJECT_STALL_MS) throw new Error(`${what}: not reached, and the engine made no progress for ${Math.round(PROJECT_STALL_MS / 1000)} s (progress event seq ${seq}, ${rounds} ticks; what holds it: ${JSON.stringify(blockers(fx.home, project))}; human acts so far: ${JSON.stringify(ctx.humanActs)})`);
     } else if (rounds >= max) {
-      throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)})`);
+      throw new Error(`${what}: not reached within ${max} ticks (human acts so far: ${JSON.stringify(ctx.humanActs)}${ctx.deferred ? `; answers deferred while an Alpha deployment was under way: ${JSON.stringify(ctx.deferred)}` : ''})`);
     }
     rounds++;
     if (ctx.lane !== 'project') {
@@ -380,6 +392,30 @@ export async function pump(fx, ctx, done, { max = 80, projectMs = PROJECT_WAIT_M
       // §351), and a journey that says so leaves its question unanswered
       // (objection 105; SEAM.md §451).
       if (!(ctx.answerKinds ?? ROUTED_KINDS).includes(d.kind)) continue;
+      // The owner does not change the checks while an Alpha deployment is
+      // being verified; the question waits until that completion settles
+      // (the Verifier's fix of 2026-10-30, after Builder C2k's finding,
+      // DECISIONS item 35). Without this the pump raced the engine: the
+      // deploy's verification round takes wall time (two identity reads about
+      // 1.15 s apart) that `waitForIdle` does not wait for, as no run is under
+      // way, and the Verifier's phase-2 authoring proposal is raised as a
+      // routed `check_correction_tightening` within that round. When the pump
+      // read the question before the Reviewer's approval under `authoritative`
+      // withdrew it, it approved it at once; the new protected version left
+      // the deploy's verification unbound, `alpha_complete` was refused
+      // (CHECK_NOT_PASSED, DEPLOY_VERIFICATION_MISSING, SIGNOFF_MISSING), the
+      // deploy waited behind a blocker, and no candidate reached
+      // `alpha_deployed` (M441's journey: 1 in 21 runs on main 84049c3a, 7 in
+      // 29 on the C2k branch). Any answered correction makes a new protected
+      // version, so the rule holds for every check-change kind. A deferred
+      // question is kept in `ctx.deferred`; nothing else about it changes.
+      if (CHECK_CHANGE_KINDS.includes(d.kind)) {
+        const deploying = alphaUnderWay(fx.home, project);
+        if (deploying.length > 0) {
+          (ctx.deferred ??= []).push({ kind: d.kind, id: d.id, deploy: deploying.map((w) => `${w.id} ${w.status}`), round: rounds, at: new Date().toISOString() });
+          continue;
+        }
+      }
       const post = async (x) => {
         const option = x.options.some((o) => o.key === answer) ? answer : x.options[0].key;
         const res = await fx.engine.post(`/v1/projects/${project}/decisions/${x.id}/answer`, { option, preview_hash: x.preview_hash });
