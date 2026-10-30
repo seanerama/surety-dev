@@ -39,6 +39,8 @@ const { attemptSpendEstimate, attemptSpendUnavailable, normalizeFor, CODEX_PRICE
 const { buildPlan, homeDirs, planEntries, planFingerprint } = await import(join(dist, 'invoke', 'sandbox', 'mounts.js'));
 const { populateVolatile } = await import(join(dist, 'invoke', 'domain-init.js'));
 const { launchEnv } = await import(join(dist, 'invoke', 'sandbox', 'prepare.js'));
+const { writeTemplateFiles } = await import(join(dist, 'invoke', 'sandbox', 'context.js'));
+const { CODEX_MODEL_CATALOG_TEXT, CODEX_MODEL_CATALOG_SHA256 } = await import(join(dist, 'invoke', 'adapters', 'codex-catalog.js'));
 
 const FAKE = join(here, 'fixtures', 'codex', 'fake-codex.mjs');
 const KEY = 'sk-proj-SYNTHETICCODEXTESTKEY000000000000000000000000';
@@ -69,20 +71,27 @@ function populateDomain(root, plan) {
 
 // One canary's run: the fake given the template's arguments, environment and
 // standard input, in a root of its own holding canary.json and prompt.md,
-// its home populated by the engine's plan (C2f; `home: 'unmade'` as before).
+// its home populated by the engine's plan (C2f; `home: 'unmade'` as before),
+// the template's files written into its context by the engine's
+// writeTemplateFiles, as the domain's preparation writes them (C2g;
+// `catalog: 'absent'`: not written; `args: 'v4'`: the template's arguments
+// without the catalog's -c, as version 4 ran on MAIN).
 async function runCanary(dir, attempt, kind, mode = {}) {
   const root = mkdtempSync(join(dir, `${kind}-`));
-  const { home: homeMode, ...fakeMode } = mode;
+  const { home: homeMode, catalog: catalogMode, args: argsMode, ...fakeMode } = mode;
   mode = fakeMode;
   populateDomain(root, domainPlan(dir, templates.templateEnv(T, null), { unmade: homeMode === 'unmade' }).plan);
   for (const d of ['surety/context', 'surety/out', 'surety/workspace']) mkdirSync(join(root, d), { recursive: true });
+  const templateFiles = catalogMode === 'absent' ? [] : writeTemplateFiles(join(root, 'surety/context'), T.files);
   writeFileSync(join(root, 'surety/context/prompt.md'), '# the prompt\n');
   writeFileSync(join(root, 'surety/context/canary.json'), JSON.stringify(C.canaryInstructions({ attempt, kind, deadlineSeconds: 60 })));
   const modeFile = join(root, 'mode.json');
   writeFileSync(modeFile, JSON.stringify({ root, linger_ms: 50, ...mode }));
   const env = { PATH: process.env.PATH, FAKE_CODEX_MODE: modeFile, ...templates.templateEnv(T, mode.key === undefined ? KEY : mode.key) };
   if (mode.key === null) for (const v of templates.keyVariables('codex')) delete env[v];
-  const child = spawn(process.execPath, [FAKE, ...T.render({ model: MODEL, invocation: 'inv_x' })], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let argv = T.render({ model: mode.model ?? MODEL, invocation: 'inv_x' });
+  if (argsMode === 'v4') argv = argv.filter((a, i) => !a.startsWith('model_catalog_json=') && !(a === '-c' && argv[i + 1]?.startsWith('model_catalog_json=')));
+  const child = spawn(process.execPath, [FAKE, ...argv], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   // A fake that exits before reading its prompt closes the pipe under it.
   child.stdin.on('error', () => {});
   child.stdin.end(T.stdin);
@@ -112,7 +121,7 @@ async function runCanary(dir, attempt, kind, mode = {}) {
   const edit = C.canaryEdit(attempt);
   const editPath = join(root, 'surety/workspace', edit.path);
   const editContent = existsSync(editPath) ? readFileSync(editPath, 'utf8') : null;
-  return { code, stdout, stderr, summary: s.summary(), result, editContent, barrierSeen, termToExitMs };
+  return { code, stdout, stderr, summary: s.summary(), result, editContent, barrierSeen, termToExitMs, templateFiles, root };
 }
 
 // What the choke point would keep of the run (choke.ts recordCanary). The
@@ -231,7 +240,7 @@ async function attempt(t, { modes = {}, sampling = {}, model = MODEL, kinds, fea
   const launcher = {
     dispatch: async (_target, item) => {
       const kind = item.id.replace(/^item_/, '');
-      const r = await runCanary(dir, id, kind, modes[kind] ?? {});
+      const r = await runCanary(dir, id, kind, { model, ...(modes[kind] ?? {}) });
       const run = `run_${kind}`;
       ran.push({ kind, r });
       canaryObservations.set(run, { ...observation(kind, r, sampling[kind] ?? ONE_BACKEND), ...(snapshots[kind] === undefined ? {} : { codexShellSnapshots: snapshots[kind] }) });
@@ -253,7 +262,7 @@ test('a passing attempt: three canaries on the fake codex, the key delivered, no
     ['cancellation', true, null],
     ['containment', true, null],
   ]);
-  assert.equal(T.version, 'codex-exec-4', 'the attempt is on template version 4');
+  assert.equal(T.version, 'codex-exec-5', 'the attempt is on template version 5');
   const pos = a.evidence(a.canaries[0]);
   assert.deepEqual(pos.credential_delivery.variables, ['CODEX_API_KEY'], 'K3: the key in CODEX_API_KEY alone');
   assert.equal(pos.credential_delivery.variable, null, 'the stream does not name the variable Codex read');
@@ -490,7 +499,7 @@ test('usage_limit is a CanaryFailureClass (D2 A.2 addition, K7 of 2026-10-28), l
 // ---- the feature inventory (C2b; D2 §4.6, D2-T13) ----
 
 const REAL_0160 = readFileSync(join(here, 'fixtures', 'codex', 'features-0.160.0.txt'), 'utf8');
-const HARDENING = ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot'];
+const HARDENING = ['unbounded_connection_retries', 'system_proxy_fallback', 'image_generation', 'unified_exec_tty', 'sleep_tool', 'shell_snapshot', 'code_mode', 'code_mode_only'];
 
 test('the classification against the saved 0.160.0 list: no unknown name, every basis stated; the source-grounded classes (C2c, K6 of 2026-10-28)', () => {
   const { features } = CF.parseCodexFeatures(REAL_0160);
@@ -504,7 +513,7 @@ test('the classification against the saved 0.160.0 list: no unknown name, every 
     assert.deepEqual([cls(h).family, cls(h).hardening], [false, true], h);
     assert.ok(templates.CODEX_DISABLED_FEATURES.includes(h), `--disable ${h}`);
   }
-  assert.equal([...CF.CODEX_FEATURE_CLASSES.values()].filter((c) => c.hardening).length, 6);
+  assert.equal([...CF.CODEX_FEATURE_CLASSES.values()].filter((c) => c.hardening).length, 8, 'version 4\'s six and version 5\'s code_mode, code_mode_only');
   // unified_exec: the command tool, not delegation; it cannot be disabled.
   assert.deepEqual([cls('unified_exec').family, cls('unified_exec').hardening], [false, false]);
   assert.match(cls('unified_exec').basis, /cannot be disabled \(core\/src\/config\/managed_features\.rs:157-165\).*D2 §4\.4/);
@@ -543,8 +552,12 @@ test('the inventory\'s arguments are the template\'s own --disables and -c overr
   // Every --disable and -c of the run's arguments is in the inventory's, in the same order.
   const run = T.render({ model: MODEL, invocation: 'inv_x' });
   const pairs = (a) => a.flatMap((x, i) => ((x === '--disable' || x === '-c') && i + 1 < a.length ? [`${x} ${a[i + 1]}`] : []));
-  assert.deepEqual(pairs(ARGS), pairs(run), 'the same feature configuration as the launched run');
-  assert.equal(pairs(ARGS).filter((p) => p.startsWith('--disable ')).length, 28);
+  // The one exception (C2g): the run's model catalog, a file only the
+  // domain carries; the list shows no catalog metadata (codex-features.ts).
+  const CATALOG = '-c model_catalog_json=/surety/context/model-catalog.json';
+  assert.deepEqual(pairs(run).filter((p) => p === CATALOG), [CATALOG]);
+  assert.deepEqual(pairs(ARGS), pairs(run).filter((p) => p !== CATALOG), 'the same feature configuration as the launched run');
+  assert.equal(pairs(ARGS).filter((p) => p.startsWith('--disable ')).length, 30);
   // The two the 0.160.0 binary rejects in front of features list are not passed.
   assert.ok(!ARGS.includes('--ignore-user-config') && !ARGS.includes('--strict-config'));
 });
@@ -580,7 +593,7 @@ test('the feature inventory: the template-flag list as recorded, every name clas
   for (const h of HARDENING) assert.ok(j.disabled_by_template.includes(h) && !j.configured_only.includes(h), `${h} observed off, not configured only`);
   // Configured only: the names an override alone covers (web search, the sub-agent names beside multi_agent).
   assert.deepEqual([...j.configured_only].sort(), ['multi_agent_mode', 'multi_agent_v2', 'standalone_web_search', 'web_search_cached', 'web_search_request']);
-  assert.equal(j.disabled_by_template.length, 33, 'the 28 observed off and the 5 configured only');
+  assert.equal(j.disabled_by_template.length, 35, 'the 30 observed off (version 5 adds code_mode and code_mode_only) and the 5 configured only');
   assert.ok(j.unavailable.includes('agent_message_board'), 'a family feature the list reports off is unavailable');
   assert.ok(j.outside_family_enabled.includes('unified_exec'), 'outside the family: recorded only');
 });
@@ -912,4 +925,48 @@ test('the ledger estimate for gpt-6.1-sol: the documented example usage priced a
   assert.deepEqual([un.cost_status, un.cost_usd], ['unknown', null]);
   assert.equal(attemptSpendEstimate('codex', 'gpt-7-nova', 200_000), null);
   assert.match(attemptSpendUnavailable('codex', 'gpt-7-nova'), /no Codex price for gpt-7-nova: the Codex price table \(openai-pricing-page-2026-10-27\) lists .*gpt-6\.1-sol.* only, so the spend is not estimated \(unknown, never 0\)/);
+});
+
+// ---- the model catalog (C2g of Codex support, 2026-10-28) ----
+
+test('the model catalog (C2g): gpt-6.1-sol with the domain\'s catalog passes the three canaries; without the file the positive canary fails at once; without the -c (version 4) the fake replays MAIN\'s Code Mode refusal and the positive canary fails tool_action_missing', async (t) => {
+  const SOL = 'gpt-6.1-sol';
+  const dir = mkdtempSync(join(tmpdir(), 'cq-cat-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // The canary's domain carries the catalog, exactly, through the engine's writer.
+  const one = await runCanary(dir, 'att_cat', 'positive', { model: SOL });
+  assert.deepEqual(one.templateFiles, ['/surety/context/model-catalog.json']);
+  const written = readFileSync(join(one.root, 'surety/context/model-catalog.json'), 'utf8');
+  assert.equal(written, CODEX_MODEL_CATALOG_TEXT);
+  assert.ok(T.text.includes(CODEX_MODEL_CATALOG_SHA256), 'the template text names the SHA-256 of what the domain carries');
+  assert.equal(one.code, 0);
+  assert.equal(one.editContent, C.canaryEdit('att_cat').content);
+  // With it: the three canaries pass on gpt-6.1-sol.
+  const ok = await attempt(t, { model: SOL });
+  assert.deepEqual(ok.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', true, null], ['cancellation', true, null], ['containment', true, null]]);
+  assert.ok(ok.concluded.entry, 'the entry is written proposed');
+  // Without the file: the configuration does not load, exit 1 before the
+  // prompt, nothing on standard output; the attempt ends at the positive canary.
+  const bare = await runCanary(dir, 'att_nocat', 'positive', { model: SOL, catalog: 'absent' });
+  assert.deepEqual(bare.templateFiles, []);
+  assert.equal(bare.code, 1);
+  assert.equal(bare.stdout, '');
+  assert.equal(bare.stderr, 'Error: failed to load configuration\n\nCaused by:\n    No such file or directory (os error 2)\n');
+  assert.equal(bare.editContent, null);
+  const none = await attempt(t, { model: SOL, modes: { positive: { catalog: 'absent' } } });
+  assert.deepEqual(none.canaries.map((c) => [c.kind, c.passed]), [['positive', false]]);
+  assert.equal(none.canaries[0].failure_class, 'unsupported_flag', 'exit 1 with no stream line, as the C2f home failure');
+  assert.equal(none.concluded.entry ?? null, null, 'no entry');
+  // Version 4's arguments (no -c): the bundled catalog's code_mode_only with
+  // the host disabled, as attempt #2 on MAIN recorded: an error item, no
+  // command, no file change, no result; the positive canary fails
+  // tool_action_missing, as it did there.
+  const v4 = await runCanary(dir, 'att_v4', 'positive', { model: SOL, args: 'v4' });
+  assert.equal(v4.code, 0);
+  assert.deepEqual(v4.summary.errors, ['Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.']);
+  assert.equal(v4.editContent, null);
+  assert.equal(v4.result, null);
+  const main = await attempt(t, { model: SOL, modes: { positive: { args: 'v4' } } });
+  assert.deepEqual(main.canaries.map((c) => [c.kind, c.passed, c.failure_class]), [['positive', false, 'tool_action_missing']], 'as on MAIN 2026-10-28 (attempt #2)');
+  assert.equal(main.concluded.entry ?? null, null, 'no entry');
 });

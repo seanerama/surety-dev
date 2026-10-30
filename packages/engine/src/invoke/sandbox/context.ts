@@ -11,6 +11,12 @@
 // `manifest.json` lists every file with its kind and what it was made from;
 // the package holds exactly those files. The `probe` profile adds the
 // engine's probe program at /surety/context/probe (D2 §§2.8, 7.2).
+// Beside the package, a backend's template may name files the domain must
+// carry for the backend itself (C2g: Codex's model catalog), written by
+// writeTemplateFiles below into the same directory, read-only to the agent
+// like the rest; the manifest does not list them, being the backend's
+// configuration, not the role's context, and the template's text names
+// each one's SHA-256.
 //
 // The package scopes the initial context and hides nothing the role may
 // inspect: the workspace and the repository's objects stay readable.
@@ -927,4 +933,26 @@ export function writeContextPackage(
     files.push({ path: 'probe', kind: 'instructions', source: null, sha256: createHash('sha256').update(readFileSync(join(dir, 'probe'))).digest('hex') });
   }
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify({ work_item: claim.work_item, run: claim.run, role, kind: claim.work_kind, files, ...(reads.pkg ? { package: reads.pkg, reads: readsIds(reads.elements) } : {}) }, null, 2)}\n`);
+}
+
+// A template's files (templates.ts `files`; C2g), written into the domain's
+// context directory, which the sandbox mounts read-only at /surety/context.
+// Each path must be a file strictly under /surety/context with no `.` or
+// `..` component; anything else is refused (thrown), never written
+// elsewhere. The content is written exactly. Returns the paths written.
+export const SURETY_CONTEXT = '/surety/context';
+export function writeTemplateFiles(dir: string, files: readonly { path: string; content: string }[] | undefined): string[] {
+  const written: string[] = [];
+  for (const f of files ?? []) {
+    const rel = f.path.startsWith(`${SURETY_CONTEXT}/`) ? f.path.slice(SURETY_CONTEXT.length + 1) : null;
+    const parts = rel === null ? [] : rel.split('/');
+    if (rel === null || parts.length === 0 || parts.some((p) => p === '' || p === '.' || p === '..') || /[\0\n]/.test(rel)) {
+      throw new Error(`a template file's path must be a file under ${SURETY_CONTEXT}: ${JSON.stringify(f.path)}`);
+    }
+    const at = join(dir, ...parts);
+    mkdirSync(dirname(at), { recursive: true, mode: 0o755 });
+    writeFileSync(at, f.content);
+    written.push(f.path);
+  }
+  return written;
 }
