@@ -17,14 +17,36 @@
 //       stages) published policy_authorized, its own candidate and
 //       deployment, alpha_ready; the predecessor's alpha_at unchanged and
 //       counted nowhere in iteration 2's totals.
+//   (e) iteration 1 ended limit_reached with its phase plan still published
+//       and active and a stage integrated (objection 230; the owner accepted
+//       the plan-closure design on 2026-11-23): …/iterate closes that plan
+//       (the response and prototype.iteration_iterated name it in
+//       closed_plans; the plan replaced and inactive with
+//       replacement.closed_by 'iterated'; its integrated stage keeps its
+//       status with cancelled_at set, its unbuilt one cancelled), and
+//       iteration 2's approved brief leads to its own first plan published
+//       policy_authorized and on to its own Alpha; iteration 1's receipt,
+//       runs, ledger rows and outcome unchanged.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
 import { armBarrier, operationsOf, releaseBarrier, teardown, tickToBarrier } from './harness/deploy/kernel.mjs';
 import { sharedFixture } from './harness/gates.mjs';
+import { withStore } from './harness/store.mjs';
 import {
+  CHECK_FILES,
+  CHECK_FILE_R4,
   CHECK_KINDS,
+  REQ4,
+  REQS,
+  authoringScript,
+  builderOwn,
+  deploymentRequestsOf,
+  json,
+  modelBrief,
+  prepScript,
+  specText,
   INDEPENDENT_STAGES,
   PROTO,
   answerOpen,
@@ -59,6 +81,39 @@ import {
 
 const CHANGE = 'Show the number of open tasks at the top.';
 const iteratePath = (p, it) => `/v1/projects/${p}/iterations/${it}/iterate`;
+
+// (e)'s products. Iteration 1 builds stage 1 and fails stage 2 past its one
+// allowed repair (limit_reached with the plan open). Iteration 2's brief
+// adds the open count to the same single phase (phase 1 is not complete, so
+// its first plan is phase 1 again): spec version 2, roadmap version 2, one
+// stage implementing every requirement of the brief.
+const failing = () => ({ steps: [usage(300, 0, 100), { exit: 3 }] });
+const REQS_E = Object.freeze([...REQS, { ...REQ4, phase: 1 }]);
+const KEYS_E = REQS_E.map((r) => r.key);
+const ROADMAP_E = { version: 2, architecture_version: 1, phases: [{ number: 1, goal: 'the task list and its open count, end to end', modules: ['app'], requirement_ids: KEYS_E, depends_on: [] }] };
+const STAGES_E = [{ number: 1, goal: 'the task list and its open count', tasks: ['the task list and its open count'], modules: ['app'], implements: KEYS_E, adrs: [], depends_on: [], validation: { criteria: KEYS_E.map((k) => `${k}.1`), kinds: ['acceptance', 'smoke'], sensitive_areas: [] }, integration_obligations: [] }];
+const continuingPlanScript = () => ({
+  steps: [
+    usage(1800, 0, 700),
+    write('.surety/roadmap/roadmap.json', json(ROADMAP_E)),
+    write('.surety/roadmap/roadmap.md', '# Roadmap\n\n1. The task list and its open count, end to end (R1, R2, R3, R4).\n'),
+    { write: { path: '.surety/phases/phase-1.json', content: json({ phase: 1, prepared_against: { spec_version: 2, architecture_version: 1, roadmap_version: 2, revision: '__HEAD__' }, stages: STAGES_E, conformance: 'within_baseline' }), substitute_head: true } },
+    write('.surety/phases/phase-1.md', '# Phase 1\n\n- Stage 1: the task list and its open count\n'),
+    result({ summary: "iteration 2's first plan: phase 1 again", plan: 'phase-1', conformance: 'within_baseline' }),
+  ],
+});
+const ledgerOfIteration = (home, it) => withStore(home, (db) => db.prepare('SELECT l.* FROM "ledger_rows" l JOIN "runs" r ON r."id" = l."run" WHERE r."iteration" = ? ORDER BY l.rowid').all(it));
+const plansOf = (home, p) => withStore(home, (db) => db.prepare('SELECT * FROM "phase_plans" WHERE "project" = ? ORDER BY rowid').all(p));
+const stagesOf = (home, plan) => withStore(home, (db) => db.prepare('SELECT * FROM "stages" WHERE "phase_plan" = ? ORDER BY "number"').all(plan));
+// The receipt as its owner keeps it: what is served now (the envelope), the
+// app's sum across iterations and the current controls set apart.
+const receiptKept = async (fx, p, it) => {
+  const res = await fx.engine.get(`/v1/projects/${p}/iterations/${it}/receipt.json`);
+  assert.equal(res.status, 200, `GET …/receipt.json (→ ${res.status} ${res.text.slice(0, 400)})`);
+  const r = JSON.parse(res.text);
+  for (const k of ['generated_at', 'served_at', 'snapshot_seq', 'app_totals', 'controls']) delete r[k];
+  return r;
+};
 
 describe('M610 Iterate and the second Alpha', () => {
   const shared = sharedFixture();
@@ -220,5 +275,100 @@ describe('M610 Iterate and the second Alpha', () => {
     assert.deepEqual(after1.usage, S.oneRead.usage, "iteration 1's usage unchanged");
     assert.equal(read2.app_totals.agent_runs, after1.usage.totals.agent_runs + read2.usage.totals.agent_runs, "the app's totals: both, once");
     assert.deepEqual(Object.keys(read2.owner_approvals.by_kind).sort(), [...PROTO.owner_kinds].sort(), "iteration 2's own three answers");
+  });
+
+  test("(e) iteration 1 ended limit_reached with its phase plan open and a stage integrated: …/iterate closes that plan, and iteration 2's approved brief leads to its own first plan published policy_authorized and its own Alpha; iteration 1's receipt, runs, ledger rows and outcome unchanged", async () => {
+    const { fx } = S;
+    // Iteration 1: stage 1 built and integrated; stage 2 fails, and so does
+    // its one allowed repair; the next repair is refused: limit_reached.
+    const { id: q, it } = await toBrief(fx, { name: 'Tasks open plan', policy: { prototype_repairs_per_stage: 1 } });
+    const one = it.id;
+    kindNext(fx, 'stage_build', [builderScript(1), failing(), failing()], builderScript(1));
+    await answerOpen(fx, q, 'spec_approval');
+    await alphaReady(fx, q, { port: 18086 });
+    await pump(fx, q, statusIs(fx, q, one, 'limit_reached'), { answer: CHECK_KINDS, max: 100, what: 'iteration 1 limit_reached on the repairs of stage 2' });
+    await idle(fx, q);
+
+    // The state of objection 230: the plan published and active, stage 1 integrated, stage 2 not.
+    const open = plansOf(fx.home, q).filter((x) => x.status === 'published' && x.active === 1);
+    assert.equal(open.length, 1, `one open plan (${JSON.stringify(plansOf(fx.home, q).map((x) => [x.id, x.status, x.active]))})`);
+    const plan1 = open[0];
+    assert.deepEqual([plan1.phase_number, plan1.routing, plan1.completed_at], [1, PROTO.routing, null], "iteration 1's phase-1 plan, published under the policy, not completed");
+    const [s1, s2] = stagesOf(fx.home, plan1.id);
+    assert.deepEqual([s1.status, s1.cancelled_at], ['integrated', null], `stage 1 integrated (${JSON.stringify(s1)})`);
+    assert.ok(['planned', 'building'].includes(s2.status) && s2.cancelled_at === null, `stage 2 not built (${s2.status})`);
+    const read1 = await iterationRead(fx, q, one);
+    assert.equal(read1.iteration.status, 'limit_reached');
+    assert.match(read1.outcome.reason, /^repairs_per_stage: /, read1.outcome.reason);
+    assert.equal(read1.iteration.alpha_at, null, 'no Alpha in iteration 1');
+    assert.deepEqual(deploymentRequestsOf(fx.home, q), [], 'nothing of iteration 1 deployed');
+    const runs1 = runsOfIteration(fx.home, one);
+    const ledger1 = ledgerOfIteration(fx.home, one);
+    assert.ok(runs1.length > 0 && ledger1.length > 0, 'iteration 1 has runs and ledger rows to keep');
+    const receipt1 = await receiptKept(fx, q, one);
+
+    // Iterate: the predecessor's open plan closed, and said so.
+    const made = await ok(fx.engine.post(iteratePath(q, one), { change: CHANGE }), 201, 'POST …/iterate on a limit_reached iteration with its plan open');
+    const two = made.iteration.id;
+    assert.deepEqual([made.iteration.seq, made.iteration.status, made.iteration.predecessor], [2, 'preparing', one]);
+    const closed = [{ phase_plan: plan1.id, phase: 1, generation: plan1.generation, cancelled: [s2.id], superseded: [s1.id] }];
+    assert.deepEqual(made.closed_plans, closed, `the response names the closed plan (${JSON.stringify(made.closed_plans)})`);
+    const iterated = eventsFor(fx.home, 'prototype.iteration_iterated', 'iteration', two);
+    assert.equal(iterated.length, 1);
+    assert.deepEqual(iterated[0].payload.closed_plans, closed, 'and so does prototype.iteration_iterated');
+    const closedRow = plansOf(fx.home, q).find((x) => x.id === plan1.id);
+    assert.deepEqual([closedRow.status, closedRow.active, closedRow.replaced_by, closedRow.completed_at], ['replaced', 0, null, null], 'the plan replaced and inactive, by no later generation, not completed');
+    assert.deepEqual(JSON.parse(closedRow.replacement), { closed_by: 'iterated', iteration: one, successor: two, cancelled: [s2.id], superseded: [s1.id] }, 'its replacement record');
+    const [s1After, s2After] = stagesOf(fx.home, plan1.id);
+    assert.deepEqual([s1After.status, s1After.integrated_revision], ['integrated', s1.integrated_revision], 'the integrated stage keeps its status and its integration as history');
+    assert.match(s1After.cancelled_at ?? '', /^\d{4}-\d{2}-\d{2}T/, 'with cancelled_at set');
+    assert.equal(s2After.status, 'cancelled', 'the unbuilt stage cancelled');
+    assert.match(s2After.cancelled_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(plansOf(fx.home, q).filter((x) => x.status === 'published' && x.active === 1).length, 0, 'no plan of the project open');
+
+    // Iteration 2: its brief, approved; its own first plan; its own Alpha.
+    kindNext(fx, 'brief_preparation', [prepScript({ spec: specText({ version: 2, reqs: REQS_E, changeLog: [{ version: 2, change: 'Show the number of open tasks at the top' }] }), brief: modelBrief({ objectives: REQS_E.map((r) => `${r.key}: ${r.statement}`), included: ['adding, listing and finishing tasks', 'the number of open tasks'] }) })], prepScript());
+    kindNext(fx, 'replan', [continuingPlanScript()], firstPlanScript());
+    kindNext(fx, 'check_authoring', [authoringScript({ files: { ...CHECK_FILES, ...CHECK_FILE_R4 } })], authoringScript());
+    kindNext(fx, 'stage_build', [builderOwn('src/count.mjs', 'export const open = (ts) => ts.filter((t) => !t.done).length;\n')], builderScript(1));
+    const since = eventsFor(fx.home, 'prototype.plan_policy_authorized', 'project', q).length;
+    await answerOpen(fx, q, PROTO.preparation.decision);
+    await pump(fx, q, statusIs(fx, q, two, 'awaiting_brief_approval'), { what: "iteration 2's brief" });
+    assert.equal((await iterationRead(fx, q, two)).iteration.brief.version, 2, 'a new specification revision');
+    await answerOpen(fx, q, 'spec_approval');
+    await pump(fx, q, async () => {
+      const refused = eventsFor(fx.home, 'plan.generation_refused', 'project', q);
+      if (refused.length > 0) throw new Error(`iteration 2's first plan was refused (objection 230): ${JSON.stringify(refused.map((e) => e.payload))}`);
+      const routed = eventsFor(fx.home, 'prototype.plan_routed_to_owner', 'iteration', two);
+      if (routed.length > 0) throw new Error(`iteration 2's plan was routed to the owner: ${JSON.stringify(routed[0].payload)}`);
+      return (await iterationRead(fx, q, two)).iteration.status === 'alpha_ready' ? true : undefined;
+    }, { answer: CHECK_KINDS, max: 100, what: "iteration 2's own Alpha after its predecessor's open plan" });
+    const read2 = await iterationRead(fx, q, two);
+    assert.deepEqual([read2.plan.routing, read2.plan.approved_by, read2.plan.bundle_status], [PROTO.routing, PROTO.publisher, 'published'], 'its own first plan published policy_authorized');
+    const authorized = eventsFor(fx.home, 'prototype.plan_policy_authorized', 'iteration', two);
+    assert.equal(authorized.length, 1);
+    assert.deepEqual([authorized[0].payload.plan_phase, authorized[0].payload.expected_phase, authorized[0].payload.phases], [1, 1, 1], 'its own single phase: phase 1, not completed by its predecessor');
+    assert.ok(authorized[0].payload.stages >= 1 && authorized[0].payload.stages <= PROTO.bounds.max_stages, 'at most two stages');
+    assert.equal(eventsFor(fx.home, 'prototype.plan_policy_authorized', 'project', q).length, since + 1);
+    const plan2 = plansOf(fx.home, q).find((x) => x.id !== plan1.id && x.bundle === read2.plan.bundle);
+    assert.ok(plan2, `iteration 2's plan row (${JSON.stringify(plansOf(fx.home, q).map((x) => [x.id, x.phase_number, x.status, x.bundle]))})`);
+    assert.deepEqual([plan2.phase_number, plan2.routing], [1, PROTO.routing]);
+    assert.ok(stagesOf(fx.home, plan2.id).every((x) => x.id !== s1.id && x.id !== s2.id), "none of the predecessor's stages kept in it");
+    assert.equal(plansOf(fx.home, q).find((x) => x.id === plan1.id).status, 'replaced', "the predecessor's plan stays closed");
+    assert.match(read2.alpha.candidate ?? '', /^cand_/, 'its own candidate');
+    assert.ok(read2.alpha.deployment_request, 'its own deployment request');
+    assert.equal(candidatesOfProject(fx.home, q).find((c) => c.id === read2.alpha.candidate).progress, 'alpha_deployed');
+    assert.equal(read2.iteration.status, 'alpha_ready');
+
+    // Iteration 1 as its owner reads it: unchanged.
+    const after1 = await iterationRead(fx, q, one);
+    assert.deepEqual([after1.iteration.status, after1.outcome.status, after1.outcome.reason, after1.iteration.alpha_at], [read1.iteration.status, read1.outcome.status, read1.outcome.reason, null], "iteration 1's outcome unchanged");
+    assert.deepEqual(after1.outcome.recorded, read1.outcome.recorded, 'its recorded outcome unchanged');
+    assert.deepEqual(after1.usage, read1.usage, 'its usage unchanged');
+    assert.deepEqual(runsOfIteration(fx.home, one), runs1, 'its runs unchanged');
+    assert.deepEqual(ledgerOfIteration(fx.home, one), ledger1, 'its ledger rows unchanged');
+    assert.deepEqual(await receiptKept(fx, q, one), receipt1, 'its receipt unchanged');
+    const ids1 = new Set(runs1.map((r) => r.id));
+    assert.ok(read2.usage.runs.length > 0 && read2.usage.runs.every((r) => !ids1.has(r.id)), "no run of iteration 1 in iteration 2's totals");
   });
 });
