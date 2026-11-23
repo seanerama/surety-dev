@@ -27,7 +27,30 @@
 // new iteration. Iterate is refused while a one-shot run of the project is
 // under way or a deployment or teardown of its environments is in flight
 // (wait, or Stop the iteration first).
+//
+// The predecessor's open plan is closed with its work (the defect observed
+// on 2026-11-23: an iteration that ended limit_reached, stopped or failed
+// left its phase plan `published` and active, and the new iteration's first
+// plan, checked and passed, was refused `plan_generation_stale` by D6 §5.2's
+// one-open-plan rule, leaving it `building` with nothing dispatchable). Not
+// through §5.7's early replacement: that swap keeps a predecessor's
+// `integrated` stages, whose work Iterate has just cancelled, so no stage
+// depending on them could ever dispatch (their stage-code milestone needs
+// the work not cancelled, store/transitions/runs.ts), and they would count
+// toward the prototype's two stages (R1, S4) while carrying no work of the
+// new brief. The plan becomes `replaced`, inactive, with no `replaced_by`
+// (no later generation inherits its stages); each active stage of it is
+// ended as the swap ends a superseded one: `planned` or `building` (no run
+// can be under way: Iterate is refused then) `cancelled` with
+// `cancelled_at`, an integrated or verified one keeping its status and its
+// integration as history with `cancelled_at` (its code stays on the branch,
+// and its modules in the phase scope: evidence.ts). Its record is on the
+// plan's `replacement`: {closed_by: 'iterated', iteration, successor,
+// cancelled, superseded}. A completed plan is history already and is not
+// touched. The new iteration's first plan is then the project's next plan,
+// published under the prototype policy as any first plan.
 
+import { activeStages } from '../plan/active.js';
 import { Refusal } from '../refusal.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import type { CommandResult } from '../store/transitions/control.js';
@@ -100,11 +123,12 @@ export function iterate(tx: Tx, args: { project: string; iteration: string; chan
 
   const limits = limitsOf(projectPolicy(tx.db, args.project));
   const id = createIteration(tx, { project: args.project, limits, predecessor: it.id, change: args.change });
+  const closed = closeOpenPlans(tx, { project: args.project, iteration: it.id, successor: id });
   const made = tx.db.prepare('SELECT "seq", "status", "next_step" FROM "prototype_iterations" WHERE "id" = ?').get(id) as { seq: number; status: string; next_step: string | null };
   const decision = tx.db.prepare(`SELECT "id", "kind", "status", "preview_hash" FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(id) as
     | { id: string; kind: string; status: string; preview_hash: string }
     | undefined;
-  tx.emit('prototype.iteration_iterated', { project: args.project, iteration: id }, { predecessor: it.id, predecessor_seq: it.seq, predecessor_status: it.status, seq: made.seq, change: args.change, cancelled_work: cancelled, invalidated_decisions: invalidated, project_paused: project.paused === 1 });
+  tx.emit('prototype.iteration_iterated', { project: args.project, iteration: id }, { predecessor: it.id, predecessor_seq: it.seq, predecessor_status: it.status, seq: made.seq, change: args.change, cancelled_work: cancelled, invalidated_decisions: invalidated, closed_plans: closed, project_paused: project.paused === 1 });
   return {
     status: 201,
     body: {
@@ -112,11 +136,48 @@ export function iterate(tx: Tx, args: { project: string; iteration: string; chan
       predecessor: { id: it.id, seq: it.seq, status: it.status },
       cancelled_work: cancelled,
       invalidated_decisions: invalidated,
+      closed_plans: closed,
       project_paused: project.paused === 1,
       decision: decision ?? null,
     },
     effects: [{ kind: 'tick' }],
   };
+}
+
+// What Iterate closed of the predecessor's open plan (above).
+export interface ClosedPlan {
+  phase_plan: string;
+  phase: number;
+  generation: number;
+  cancelled: string[];
+  superseded: string[];
+}
+
+function closeOpenPlans(tx: Tx, args: { project: string; iteration: string; successor: string }): ClosedPlan[] {
+  const plans = tx.db
+    .prepare(`SELECT "id", "phase_number", "generation" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL ORDER BY rowid`)
+    .all(args.project) as { id: string; phase_number: number; generation: number }[];
+  const out: ClosedPlan[] = [];
+  for (const p of plans) {
+    const stages = activeStages<{ id: string; status: string }>(tx.db, p.id);
+    const cancelled: string[] = [];
+    const superseded: string[] = [];
+    for (const s of stages) {
+      if (s.status === 'planned' || s.status === 'building') {
+        tx.db.prepare(`UPDATE "stages" SET "status" = 'cancelled', "cancelled_at" = ? WHERE "id" = ?`).run(tx.at, s.id);
+        cancelled.push(s.id);
+      } else {
+        tx.db.prepare('UPDATE "stages" SET "cancelled_at" = ? WHERE "id" = ?').run(tx.at, s.id);
+        superseded.push(s.id);
+      }
+    }
+    const record = { closed_by: 'iterated', iteration: args.iteration, successor: args.successor, cancelled, superseded };
+    tx.db
+      .prepare(`UPDATE "phase_plans" SET "active" = 0, "status" = 'replaced', "replacement" = ? WHERE "id" = ? AND "status" = 'published' AND "active" = 1 AND "completed_at" IS NULL`)
+      .run(JSON.stringify(record), p.id);
+    out.push({ phase_plan: p.id, phase: p.phase_number, generation: p.generation, cancelled, superseded });
+  }
+  return out;
 }
 
 // The change text of a request: absent or null is none; otherwise a
