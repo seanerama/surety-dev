@@ -821,7 +821,15 @@ function ownerDecided(db, disposition, { severity = 'medium', linked_issue = nul
   return f;
 }
 const ownerColumns = (f) => [f.status, f.disposition, f.disposition_authority, f.disposition_by, f.disposition_at, f.linked_issue, f.defer_target, f.proposed_disposition];
-const TARGET = '2026-11-08T00:00:00.000Z';
+// A defer target is valid only while it is in the future (the engine compares
+// it with the wall clock), so the fixture's target is derived from the run's
+// date: midnight UTC a year ahead, never a fixed date that expires.
+const TARGET = (() => {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString();
+})();
 
 // The fourth column: whether the entry differs from the owner's and so asks
 // him (Sean's ruling of 2026-10-20, "ask only if it differs").
