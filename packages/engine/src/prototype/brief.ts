@@ -886,7 +886,13 @@ export function syncIterationStatuses(tx: Tx): number {
         // The plan's question keeps the next step its routing named.
         const keep = (open.kind === 'architecture_approval' || open.kind === 'plan_approval') && it.status === 'awaiting_owner' && (it.next_step ?? '').startsWith('approve the plan');
         want = { status: 'awaiting_owner', next: keep ? it.next_step! : OWNER_KINDS[open.kind]!, reason: null, ended: false };
-      } else want = { status: 'building', next: 'none: building', reason: null, ended: false };
+      } else {
+        // A first plan that cannot land (the defect of 2026-11-23): never
+        // "building" with nothing said; what was refused, and the owner's
+        // way on, are its next step.
+        const unpublished = firstPlanUnpublished(tx.db, it);
+        want = { status: 'building', next: unpublished === null ? 'none: building' : firstPlanUnpublishedStep(unpublished), reason: null, ended: false };
+      }
     }
     if (it.status === want.status && it.next_step === want.next && (it.outcome_reason ?? null) === want.reason) continue;
     if (!SYNCED.includes(it.status)) continue;
@@ -895,6 +901,32 @@ export function syncIterationStatuses(tx: Tx): number {
   }
   return n;
 }
+
+// Whether an approved iteration's first plan can no longer be published
+// (the defect observed on 2026-11-23, before Iterate closed the
+// predecessor's open plan): the iteration has no plan, every `replan` its
+// brief's approval raised has ended (complete or cancelled), none of their
+// proposals is published or awaiting the owner, and the latest is `stale`.
+// Returns that proposal and its stale reason; null otherwise, including
+// whenever any of it is not known (no proposal recorded: nothing is claimed).
+export function firstPlanUnpublished(db: Db, it: Pick<IterationLite, 'id' | 'project' | 'approved_at' | 'plan_bundle'> & { phase_plan?: string | null }): { bundle: string; reason: string } | null {
+  if (it.approved_at === null || (it.phase_plan ?? null) !== null) return null;
+  const items = db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "trigger_source" = ? AND "trigger_id" = ? ORDER BY "seq"`).all(it.project, FIRST_PLAN_SOURCE, it.id) as { id: string; status: string }[];
+  if (items.length === 0 || items.some((w) => w.status !== 'complete' && w.status !== 'cancelled')) return null;
+  const bundles = db
+    .prepare(`SELECT b."id", b."status", b."stale_reason" FROM "plan_bundles" b JOIN "runs" r ON r."id" = b."run" WHERE r."work_item" IN (SELECT value FROM json_each(?)) ORDER BY b.rowid DESC`)
+    .all(JSON.stringify(items.map((w) => w.id))) as { id: string; status: string; stale_reason: string | null }[];
+  if (bundles.some((b) => b.status === 'published' || b.status === 'proposed')) return null;
+  const last = bundles[0];
+  if (!last || last.status !== 'stale') return null;
+  return { bundle: last.id, reason: last.stale_reason ?? `its proposal ${last.id} is stale` };
+}
+
+// The next step of an iteration whose first plan cannot land: nothing of it
+// can be dispatched; Stop, then Iterate (which closes the open plan), or
+// Discard.
+export const firstPlanUnpublishedStep = (u: { bundle: string; reason: string }): string =>
+  `none can be dispatched: the first plan (bundle ${u.bundle}) was not published: ${u.reason}; stop this iteration and iterate, or discard`;
 
 // The first held work item whose last run is the iteration's, with that run.
 function heldOf(db: Db, it: IterationLite): { id: string; kind: string; run: string; outcome: string | null } | null {

@@ -24,6 +24,7 @@ import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, cu
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete, buildCompletedAt } from '../plan/phase.js';
+import { firstPlanUnpublished, firstPlanUnpublishedStep } from '../prototype/brief.js';
 import { type AdmissionBlock, type Compatibility, type RequestPath, deploymentEnvironment, readinessOf, servedCompatibility, servingCheckState, servingPendingBlock, unreadCompatibility } from '../deploy/compatibility.js';
 import { deploymentRequirementMet } from './transitions/serving.js';
 import type { TreeAnswer } from '../deploy/output-kind.js';
@@ -519,7 +520,14 @@ function prototypeOwnStatus(db: Db, project: string): string | null {
   const held = prototypeNow(db, project);
   if (held !== null) return held;
   const it = currentIteration(db, project);
-  if (it === null || it.status === 'building' || it.status === 'alpha_ready') return null;
+  if (it === null || it.status === 'alpha_ready') return null;
+  // A building iteration whose first plan cannot land (the defect of
+  // 2026-11-23): said, never "nothing waits for you".
+  if (it.status === 'building') {
+    const b = db.prepare('SELECT "id", "project", "seq", "approved_at", "plan_bundle", "phase_plan" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { id: string; project: string; seq: number; approved_at: string | null; plan_bundle: string | null; phase_plan: string | null };
+    const u = firstPlanUnpublished(db, b);
+    return u === null ? null : `Prototype iteration ${b.seq} is building, but ${firstPlanUnpublishedStep(u)}.`;
+  }
   const row = db.prepare('SELECT "seq", "outcome_reason", "next_step" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { seq: number; outcome_reason: string | null; next_step: string | null };
   return `Prototype iteration ${row.seq} is ${it.status}${row.outcome_reason ? `: ${row.outcome_reason}` : ''}.${row.next_step ? ` Next: ${row.next_step}.` : ''}`;
 }
