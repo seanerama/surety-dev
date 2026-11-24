@@ -113,7 +113,19 @@ describe('M602 preparation is authorized before it runs', () => {
     const it = await currentIt(fx, id);
     await ok(answer(fx, id, S.aQuestion), 200, 'the owner approves');
     const items = workOfProject(fx.home, id);
-    assert.deepEqual(items.map((w) => [w.kind, w.status]), [[PROTO.preparation.work_kind, 'eligible']], 'exactly one brief_preparation work item');
+    // DECISIONS item 49 (the same race as the Builder's demo test (2)): the
+    // approval's commit requests a tick (decision effect `tick`,
+    // afterCommit -> requestTick) in the engine process, whose dispatch claims
+    // the item and creates its run in one transaction and whose launch moves
+    // it on; this read may come before or after any of that (a probe holding
+    // the read 1.5 s after the answer read it complete). Every state of that
+    // forward path is valid here; asserted is the set, and the facts in each.
+    assert.deepEqual(items.map((w) => w.kind), [PROTO.preparation.work_kind], 'exactly one brief_preparation work item');
+    assert.ok(['eligible', 'claimed', 'executing', 'complete'].includes(items[0].status), `a state of its forward path from the answer (${items[0].status})`);
+    const runsNow = runsOfProjectRows(fx.home, id);
+    assert.deepEqual(runsNow.filter((r) => r.work_item !== items[0].id), [], 'no run of anything but this preparation');
+    if (items[0].status === 'eligible') assert.ok(runsNow.length <= 1, `read eligible: no run then, at most one since (${runsNow.length})`);
+    else assert.equal(runsNow.length, 1, `read ${items[0].status}: exactly one run of it`);
     assert.equal(JSON.parse(items[0].subject).decision, S.aQuestion.id, 'it names the approval it came from');
     assert.equal(eventsFor(fx.home, 'prototype.preparation_authorized', 'iteration', it.id).length, 1);
     await pump(fx, id, async () => ((await iterationRead(fx, id, it.id)).iteration.status === 'awaiting_brief_approval' ? true : undefined), { what: 'the brief' });
