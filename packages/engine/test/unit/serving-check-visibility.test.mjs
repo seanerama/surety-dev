@@ -154,9 +154,9 @@ const MISSING =
 
 // ---- the status, every state -------------------------------------------------------------
 
-test('the served names: six states, four blockers', () => {
+test('the served names: six states, five blockers (signoff_pending, DECISIONS item 44)', () => {
   assert.deepEqual([...SERVING_CHECK_STATES], ['present', 'awaiting_decision', 'approved', 'proposed', 'not_proposed', 'unread']);
-  assert.deepEqual([...BLOCKERS], ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread']);
+  assert.deepEqual([...BLOCKERS], ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread', 'signoff_pending']);
 });
 
 test('a service declaring serving: proposed, awaiting_decision, approved, present, each named; holds_deployment false throughout', (t) => {
@@ -352,13 +352,16 @@ test('a service with no behavioural check: blocked, required_check_missing kind:
   const p = read(db);
   const sc = p.environments.find((e) => e.name === 'alpha').serving_check;
   assert.equal(sc.state, 'awaiting_decision');
-  assert.deepEqual(p.build.deploy_readiness, {
+  const { authoring, ...readiness } = p.build.deploy_readiness;
+  assert.deepEqual(readiness, {
     state: 'blocked',
     reason: `The environment alpha can host this output (Node service) with local_service in service mode, but a deployment would be refused now: ${MISSING}. ${sc.reason}`,
     environment: 'alpha',
     decision: null,
     blocker: { what: 'required_check_missing', subject: 'kind:post_deploy_behavior' },
   });
+  // DECISIONS item 43: the owner's request for it offered.
+  assert.deepEqual([authoring.state, authoring.offer?.path], ['none', '/v1/projects/prj_1/environments/alpha/request-checks']);
   assert.equal(p.now.state, 'waiting_on_you', 'the open decision ranks first');
   db.prepare(`UPDATE decisions SET status = 'consumed'`).run();
   const q = read(db);

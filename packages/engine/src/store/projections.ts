@@ -19,14 +19,17 @@ import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
 import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { observationEndedBy, readLogs } from './transitions/observe.js';
-import { projectOptions, projectPolicy } from './transitions/settings.js';
+import { projectOptions, projectPolicy, roleModel } from './transitions/settings.js';
 import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete, buildCompletedAt } from '../plan/phase.js';
-import { firstPlanUnpublished, firstPlanUnpublishedStep } from '../prototype/brief.js';
+import { firstPlanUnpublished, firstPlanUnpublishedStep, roleModelOf } from '../prototype/brief.js';
+import { type GapAuthoring, gapAuthoringApplied, gapAuthoringItem, gapAuthoringOf } from './transitions/alpha-gap.js';
+import { missingSignoffs, reviewWaitOf } from './transitions/alpha-review.js';
 import {
   type AdmissionBlock,
+  type ReadinessAuthoring,
   type Compatibility,
   type RequestPath,
   type ServingCheck,
@@ -418,6 +421,8 @@ type ChecksRead = { progress: CheckProgress | null } | { unreadable: string };
 interface ReadinessForNow {
   sentence: string;
   primary: 'deploy' | 'configure_environment' | 'answer_decision' | null;
+  // What a `blocked` readiness names (absent: not blocked, or not read).
+  blocker?: string | null;
 }
 
 const BUILD_COMPLETE_SENTENCE = 'The planned build and its automated gates are complete.';
@@ -454,6 +459,7 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
     reason = runs.length === 1 ? `Run ${runs[0]!.id} is under way.` : `${runs.length} runs are under way.`;
     const proto = prototypeNow(db, project);
     if (proto !== null) reason = `${reason} ${proto}`;
+    reason += waitingForSignoff(db, project, readiness);
     primary = null;
   } else if ('unreadable' in checks) {
     // Whether checks are under way is not known: neither checking nor any
@@ -482,6 +488,7 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
       if (ready > 0) {
         state = 'ready';
         reason = ready === 1 ? 'One work item is eligible and can be dispatched at the next tick.' : `${ready} work items are eligible and can be dispatched at the next tick.`;
+        reason += waitingForSignoff(db, project, readiness);
         primary = 'tick';
       } else if (buildCompleteAwaitingDeploy(db, project) && prototypeOwnStatus(db, project) === null) {
         // Implementation complete; whether it can be deployed is the
@@ -502,6 +509,21 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
     }
   }
   return { state, primary_action: primary, reason, cause };
+}
+
+// While the engine's review the deployment's sign-off waits on is queued
+// or running (DECISIONS item 44), NOW is `ready` or `running` with it, never
+// `build_complete`: the readiness's sentence is said after it, so NOW names
+// what the deployment waits for. Nothing otherwise, or when it cannot be
+// read (the readiness serves that itself).
+function waitingForSignoff(db: Db, project: string, readiness: () => ReadinessForNow): string {
+  try {
+    if (!buildCompleteAwaitingDeploy(db, project) || prototypeOwnStatus(db, project) !== null) return '';
+    const r = readiness();
+    return r.blocker === 'signoff_pending' ? ` ${BUILD_COMPLETE_SENTENCE}${r.sentence}` : '';
+  } catch {
+    return '';
+  }
 }
 
 // What holds a rapid prototype's dispatch by its iteration (slice E2; R4):
@@ -672,12 +694,22 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
   // one function the environment's entry serves too.
   const target = deploymentEnvironment(compatibility);
   const serving = target === null ? null : servingCheckStatus(db, project, target.environment, compatibility.output_kind);
-  const { readiness, sentence } = readinessOf(complete, compatibility, serving, () => admissionBlock(db, project, compatibility, serving), () => requestPath(db, project, compatibility, serving));
+  const { readiness, sentence } = readinessOf(
+    complete,
+    compatibility,
+    serving,
+    () => withAuthoring(db, project, compatibility, admissionBlock(db, project, compatibility, serving)),
+    () => requestPath(db, project, compatibility, serving),
+  );
   return {
     compatibility,
     complete,
     readiness,
-    now: { sentence, primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : readiness.state === 'blocked' && readiness.decision ? 'answer_decision' : null },
+    now: {
+      sentence,
+      primary: readiness.state === 'ready' ? 'deploy' : readiness.state === 'unconfigured' ? 'configure_environment' : readiness.state === 'blocked' && readiness.decision ? 'answer_decision' : null,
+      blocker: readiness.blocker?.what ?? null,
+    },
   };
 }
 
@@ -734,7 +766,112 @@ function admissionBlock(db: Db, project: string, compatibility: Compatibility, s
       blocker: { what: 'checks_running', subject: null },
     };
   }
-  return null;
+  return signoffBlock(db, project, env?.name ?? null);
+}
+
+// A deployment request refused for the tier's Reviewer sign-off alone
+// (DECISIONS item 44; alpha-review.ts): the candidate's latest
+// alpha_authorize evaluation names SIGNOFF_MISSING and nothing lasting
+// beside it (only what is still settling, *_PENDING), a required sign-off
+// is still missing on its content, and the engine's review of the
+// candidate is queued, under way or waiting for its owner. `blocked`,
+// "Waiting for Reviewer sign-off", naming the review; once signed off, no
+// longer. No decision is served: the review's own question, if it parks,
+// is the owner's attention list's.
+function signoffBlock(db: Db, project: string, environment: string | null): AdmissionBlock | null {
+  const candidate = currentCandidate(db, project);
+  if (candidate === null) return null;
+  const ev = db.prepare(`SELECT "id", "reasons" FROM "gate_evaluations" WHERE "project" = ? AND "candidate" = ? AND "gate_kind" = 'alpha_authorize' ORDER BY rowid DESC LIMIT 1`).get(project, candidate) as
+    | { id: string; reasons: string }
+    | undefined;
+  if (!ev) return null;
+  const codes = (parseJson<{ code: string }[]>(ev.reasons) ?? []).map((r) => r.code);
+  if (!codes.includes('SIGNOFF_MISSING') || !codes.every((c) => c === 'SIGNOFF_MISSING' || (typeof c === 'string' && c.endsWith('_PENDING')))) return null;
+  const m = missingSignoffs(db, ev.id);
+  if (m === null || m.missing.length === 0) return null;
+  const review = reviewWaitOf(db, project, candidate);
+  if (review === null) return null;
+  const doing =
+    review.state === 'running'
+      ? `is under way (run ${review.run})`
+      : review.state === 'awaiting_owner'
+        ? 'waits for your answer'
+        : 'is queued';
+  return {
+    clause:
+      `waiting for Reviewer sign-off: a deployment request${environment === null ? '' : ` to ${environment}`} was refused for the candidate's missing Reviewer sign-off alone (SIGNOFF_MISSING), ` +
+      `and the engine's review of candidate ${candidate} (work item ${review.work_item}) ${doing}; once the Reviewer signs off, the deployment can be requested again`,
+    decision: null,
+    blocker: { what: 'signoff_pending', subject: 'SIGNOFF_MISSING' },
+    review,
+  };
+}
+
+// The Verifier's authoring beside a missing required check (DECISIONS
+// item 43; alpha-gap.ts): the authoring asked for a deployment gap that is
+// under way, its state said in the clause (and so in NOW's sentence); none,
+// the owner's request offered for a check a Verifier writes (never the
+// engine's serving check, which the engine proposes). Beside the
+// candidate's checks running, the authoring whose proposal made the
+// effective version, `applied`. Nothing else changes.
+function withAuthoring(db: Db, project: string, compatibility: Compatibility, b: AdmissionBlock | null): AdmissionBlock | null {
+  if (b === null) return null;
+  if (b.blocker.what === 'checks_running') {
+    const effective = effectiveVersion(db, project);
+    const applied = effective ? gapAuthoringApplied(db, project, effective.id) : null;
+    return applied === null ? b : { ...b, authoring: { ...applied, offer: null } };
+  }
+  if (b.blocker.what !== 'required_check_missing') return b;
+  const env = deploymentEnvironment(compatibility);
+  const item = gapAuthoringItem(db, project);
+  if (item !== null) {
+    const a = gapAuthoringOf(db, item);
+    return { ...b, clause: `${b.clause}; ${authoringClause(a)}`, authoring: { ...a, offer: null } };
+  }
+  const subject = b.blocker.subject;
+  const writable = env !== null && subject !== null && subject.startsWith('kind:') && subject !== 'kind:post_deploy_serving';
+  const authoring: ReadinessAuthoring = {
+    state: 'none',
+    work_item: null,
+    run: null,
+    proposal: null,
+    decision: null,
+    offer: writable
+      ? { method: 'POST', path: `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env.name)}/request-checks`, consequence_text: authoringConsequence(db, project, subject.slice(5)) }
+      : null,
+  };
+  return { ...b, authoring };
+}
+
+// What the authoring under way is doing, for the readiness's clause.
+function authoringClause(a: GapAuthoring): string {
+  const it = `the Verifier's authoring of it (work item ${a.work_item})`;
+  switch (a.state) {
+    case 'running':
+      return `${it} is running (run ${a.run})`;
+    case 'awaiting_review':
+      return a.proposal === null
+        ? `${it} waits for your answer${a.decision === null ? '' : ` on decision ${a.decision}`}`
+        : `${it} proposed the check (proposal ${a.proposal}), which waits for its review${a.decision === null ? '' : `: your answer on decision ${a.decision}`}`;
+    case 'applied':
+      return `${it} proposed the check (proposal ${a.proposal}), which is approved and is being applied; the candidate's checks then run again`;
+    default:
+      return `${it} is queued`;
+  }
+}
+
+// The engine's sentence of what the owner's request does: the Verifier
+// role, the model its run will record as requested, resolved as dispatch
+// resolves it (runs.ts: the project's `model_verifier` first, only when
+// absent the backend's model; objection 232), the backend it resolves to
+// now (prototype/brief.ts roleModelOf) and, refused, why; and that nothing
+// is deployed.
+function authoringConsequence(db: Db, project: string, kind: string): string {
+  const rm = roleModelOf(db, project, 'verifier');
+  const model = roleModel(db, project, 'verifier') ?? rm.model;
+  const on = `the configured model ${model}${rm.provider !== model ? ` (${rm.provider})` : ''}`;
+  const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+  return `Queues a Verifier check-authoring run on ${on}: it writes the missing ${kind} check as a proposal you review; nothing is deployed.${refused}`;
 }
 
 // What `ready` means and what follows a request now, before the preview

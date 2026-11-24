@@ -97,6 +97,31 @@ export function alphaReviewState(db: Db, project: string, evaluation: string): A
   return 'due';
 }
 
+// The engine's review of the candidate a deployment waits on, as the
+// owner's reads and a refused request say it (DECISIONS item 44): the
+// newest review of the candidate under way or waiting for its owner;
+// `queued` with no run live (eligible or claimed), `running` with its
+// Reviewer's run live, `awaiting_owner` parked, held or awaiting a decision
+// (a Reviewer who signed nothing and raised nothing parks it behind a
+// question to the owner, findings.ts recordReport). null when none is.
+export const REVIEW_WAIT_STATES = ['queued', 'running', 'awaiting_owner'] as const;
+export type ReviewWaitState = (typeof REVIEW_WAIT_STATES)[number];
+export interface ReviewWait {
+  state: ReviewWaitState;
+  work_item: string;
+  run: string | null;
+}
+
+export function reviewWaitOf(db: Db, project: string, candidate: string): ReviewWait | null {
+  const r = reviewsOf(db, project, candidate).find((x) => !TERMINAL.includes(x.status));
+  if (!r) return null;
+  const runs = db.prepare('SELECT "id", "state" FROM "runs" WHERE "work_item" = ? ORDER BY rowid DESC').all(r.id) as { id: string; state: string }[];
+  const live = runs.find((x) => x.state !== 'ended') ?? null;
+  if (['parked', 'held', 'awaiting_decision'].includes(r.status)) return { state: 'awaiting_owner', work_item: r.id, run: live?.id ?? runs[0]?.id ?? null };
+  if (live !== null) return { state: 'running', work_item: r.id, run: live.id };
+  return { state: 'queued', work_item: r.id, run: null };
+}
+
 // Did the evaluation's SIGNOFF_MISSING only wait (real visual run 2's
 // re-request)? The sign-off has been given since; or its review is under
 // way, or still to be asked; or the review asked on this very evaluation has
