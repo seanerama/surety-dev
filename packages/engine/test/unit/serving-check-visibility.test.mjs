@@ -26,9 +26,12 @@ import Database from 'better-sqlite3';
 
 import { consume, openDecision } from '../acceptance/harness/decisions.mjs';
 import { proposalsOf, sharedFixture } from '../acceptance/harness/gates.mjs';
-import { scriptedEngine, tickUntil } from '../acceptance/harness/runs.mjs';
-import { DEPLOY_DEFS, deployable } from '../acceptance/harness/deploy/kernel.mjs';
-import { defPath } from '../acceptance/harness/checks/scope.mjs';
+import { requestTick, scriptedEngine, tickUntil } from '../acceptance/harness/runs.mjs';
+import { DEPLOY_DEFS, SERVICE_FILES, armBarrier, atBarrier, configContent, configure as configureOverApi, qualifyByFixture, releaseBarrier } from '../acceptance/harness/deploy/kernel.mjs';
+import { defPath, scopeProject } from '../acceptance/harness/checks/scope.mjs';
+import { buildAndNominate } from '../acceptance/harness/checks/repair.mjs';
+import { recordExit } from '../acceptance/harness/checks/selection.mjs';
+import { permittedEdit, roleThat } from '../acceptance/harness/gitruns.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dist = join(root, 'dist');
@@ -404,25 +407,82 @@ test('the required check missing named before the candidate\'s checks running; w
 const OWN = Object.freeze({ acc: { ...DEPLOY_DEFS.acc, inputs: [defPath('acc')] }, smoke: { ...DEPLOY_DEFS.smoke, inputs: [defPath('smoke')] }, behaves: { ...DEPLOY_DEFS.behaves, inputs: [defPath('behaves')] } });
 const FILES = Object.freeze({ 'public/index.html': '<!doctype html><p>Lap Lab</p>\n' });
 
+// The scheduler held (DECISIONS item 50, as item 47 did for M626 and M616).
+// The proposal's question is raised by a tick's Gates step, and the
+// configuration write and the answer each request a tick at once; under the
+// full suite's load that tick can run between the write (or the answer) and
+// the reads, which then see the next state (seen: `awaiting_decision` with
+// its decision where `proposed` was to be read). So the state a step leaves
+// is read with the scheduler held in a tick at `scheduler.tick_running`
+// (after its Gates step, before select), taken before the step: while it
+// holds, the API answers and no other tick runs. Released after the reads,
+// the next tick takes the state on. Each state is read where it holds.
+const HOLD = 'scheduler.tick_running';
+const APPLY = 'intent.recorded';
+async function held(fx, project, body) {
+  await armBarrier(fx.engine, HOLD, 'pause');
+  await requestTick(fx.engine, project);
+  await atBarrier(fx.engine, HOLD);
+  try {
+    return await body();
+  } finally {
+    await releaseBarrier(fx.engine, HOLD);
+  }
+}
+
+// `deployable` (harness/deploy/kernel.mjs) as this test called it (tier T1,
+// autonomy step, no policy, the qualification fixture), its configuration
+// write and qualification left to the caller, so the write can be made with
+// the scheduler held: the project scoped, built and nominated, its workspace
+// checks passed.
+async function builtUnconfigured(fx, { files, defs }) {
+  const index = [{ key: 'R1', criteria: ['R1.1'] }];
+  const stages = [{ number: 1, goal: 'the first stage', implements: ['R1'] }];
+  const p = await scopeProject(fx, { tier: 'T1', defs, files: { ...SERVICE_FILES, ...files }, index, stages, policy: { autonomy: 'step' } });
+  const workspace = Object.keys(defs).filter((k) => !(defs[k].gate_kinds ?? []).every((g) => g === 'alpha_complete'));
+  const built = await buildAndNominate(fx, p, { scripts: [roleThat([permittedEdit()], { nominate: true })], keys: workspace });
+  for (const key of workspace) await recordExit(fx.engine, built.reg[key].id, 0);
+  return { project: p.id };
+}
+
 describe('the serving check beside a service environment on the kernel lane: proposed, its question open, approved, present', () => {
   const shared = sharedFixture();
   const J = {};
   before(async () => {
     const fx = await scriptedEngine(shared.context);
-    const ctx = await deployable(fx, { files: FILES, defs: OWN, config: { serving: { root: 'public' } }, name: 'alpha' });
+    const ctx = await builtUnconfigured(fx, { files: FILES, defs: OWN });
     const reads = async () => {
       const project = (await fx.engine.get(`/v1/projects/${ctx.project}`)).body.project.environments.find((e) => e.name === 'alpha').serving_check;
       const listed = (await fx.engine.get(`/v1/projects/${ctx.project}/environments`)).body.environments.find((e) => e.name === 'alpha').serving_check;
       const one = (await fx.engine.get(`/v1/projects/${ctx.project}/environments/alpha`)).body.environment.serving_check;
       return { project, listed, one };
     };
-    J.proposal = proposalsOf(fx.home, ctx.project).find((x) => x.proposed_by === 'engine');
-    J.proposed = await reads();
+    const config = configContent({ serving: { root: 'public' } });
+    await held(fx, ctx.project, async () => {
+      await configureOverApi(fx.engine, ctx.project, 'alpha', config);
+      await qualifyByFixture(fx.engine, { adapter_version: config.adapter_version });
+      J.proposal = proposalsOf(fx.home, ctx.project).find((x) => x.proposed_by === 'engine');
+      J.proposed = await reads();
+    });
     J.decision = await openDecision(fx, ctx.project, 'check_correction_tightening', J.proposal.id, { max: 8 });
     J.asked = await reads();
-    await consume(fx, ctx.project, J.decision, 'approve');
-    J.approvedStatus = proposalsOf(fx.home, ctx.project).find((x) => x.id === J.proposal.id).status;
-    J.approved = await reads();
+    // The approval's application is not only a tick's: the answer's own
+    // effect runs it at once (runtime.ts, decisions/effects.ts), off the
+    // scheduler. So the approved state is read with the scheduler held from
+    // before the answer and that effect held at `intent.recorded` (between
+    // the consuming transaction and its revalidation; SEAM.md §76), reached
+    // before the reads; both released after them.
+    await held(fx, ctx.project, async () => {
+      await armBarrier(fx.engine, APPLY, 'pause');
+      await consume(fx, ctx.project, J.decision, 'approve');
+      await atBarrier(fx.engine, APPLY);
+      try {
+        J.approvedStatus = proposalsOf(fx.home, ctx.project).find((x) => x.id === J.proposal.id).status;
+        J.approved = await reads();
+      } finally {
+        await releaseBarrier(fx.engine, APPLY);
+      }
+    });
     await tickUntil(fx.engine, ctx.project, () => proposalsOf(fx.home, ctx.project).find((x) => x.id === J.proposal.id && x.status === 'applied'), { max: 8, what: 'the serving check applied' });
     J.present = await reads();
   });
