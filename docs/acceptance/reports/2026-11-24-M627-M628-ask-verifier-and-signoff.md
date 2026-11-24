@@ -102,6 +102,17 @@ Observed on the final tree (diagnostics):
 - M627 (b): the owner's answer `{state: 'running', reused: true, requested_by: 'policy'}`.
 - M628 (a): NOW after the request `ready`/`tick` (the review eligible, not yet dispatched); while the Reviewer's run holds, `running`/null.
 
+**Gate run 3 (objection 232 resolved: my branch at e0636bdf merged with the Builder's 3a10e290, which follows a9971627; same throwaway pattern, removed after).** 3a10e290 touches `src/store/projections.ts` and two unit files: the consequence text names the model the Verifier's run records (`model_verifier` first, the backend's only when absent; the backend in brackets).
+
+| File | Passed | Failed | Cancelled | Skipped | Todo |
+|---|---|---|---|---|---|
+| M627 | 12 / 12 | 0 | 0 | 0 | 0 |
+| M628 | 7 / 7 | 0 | 0 | 0 | 0 |
+| M626 | 18 / 18 | 0 | 0 | 0 | 0 |
+| M616 | 23 / 23 | 0 | 0 | 0 | 0 |
+
+The consequence text observed: "Queues a Verifier check-authoring run on the configured model sonnet-m627-verifier (scripted): it writes the missing post_deploy_behavior check as a proposal you review; nothing is deployed."; the Verifier's run requested `sonnet-m627-verifier`. M625's kernel file was not run again on this tree (43 / 43 on gate run 2; 3a10e290 changes only the offer's text).
+
 `M625-a-python-service-on-a-real-unit` (sandbox lane, a real unit) was not run. No real-lane or exhaust-lane file was run, and no model was called.
 
 ## Readings
@@ -111,7 +122,7 @@ Observed on the final tree (diagnostics):
 3. **"applied"** in M627 (a) is read on every read after the approval that carries `authoring` (the Builder attaches it from approval on, and beside `checks_running` after application).
 4. **M627 (b), the policy's request** leaves no `deployment_requests` row while the authoring it asked for is under way: such a refusal settles like `*_PENDING` (deploy.ts). The test shows the policy's ask by the `authoring_gap` item existing before any owner act, its evidence the `alpha_authorize` gate's.
 5. **M627 (c) `no_candidate`** is read with the environment configured. An environment never configured answers 404 `not_found` on this route, as on a deployment request; not in the row, not asserted.
-6. **"configured model"** is read as the project's `model_verifier`, the model the Verifier's run records it requests. The Builder reads it as the model the role's backend resolves to (`scripted` in this lane). Objection 232.
+6. **"configured model"** is read as the project's `model_verifier`, the model the Verifier's run records it requests. The Builder first read it as the model the role's backend resolves to (`scripted` in this lane): objection 232. The driver's resolution, for the owner's confirmation, takes the model the run records; the Builder's 3a10e290 does so, and M627 passes 12 / 12 on it.
 7. **M628 "queued" in the first refusal** is the state at the answer; the read after may say `queued` or `running`.
 8. **M628 (b)'s other lasting reason** is the missing behavioural check: an unqualified adapter refuses a request but the readiness does not name it today, so it could not show "the readiness names the other blocker".
 
@@ -123,4 +134,4 @@ Observed on the final tree (diagnostics):
 
 ## Objections
 
-232: M627 (a)'s consequence text names the scripted backend's model, not the model configured for the Verifier.
+232: M627 (a)'s consequence text names the scripted backend's model, not the model configured for the Verifier. Resolved by the driver for the owner's confirmation (the model the run records); fixed in the Builder's 3a10e290; M627 12 / 12 on it.

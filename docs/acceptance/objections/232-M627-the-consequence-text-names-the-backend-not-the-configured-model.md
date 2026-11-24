@@ -30,3 +30,9 @@ Is "its configured model" the project's `model_verifier` (the model the run reco
 - If the latter: the row should say "the model the Verifier's backend resolves to", and the test's assertion changes to that (the kernel lane then cannot distinguish it from a constant, and the real lane is where it would mean something).
 
 The test is not bent meanwhile: that one assertion fails on the gate tree; the rest of M627 passes (11 of 12).
+
+## Resolution (driver, 2026-11-24, for the owner's confirmation)
+
+Reading taken: "its configured model" is the model the Verifier's run records it requests (`model_requested`): the project's `model_verifier` first, the backend's model only when that is absent; the backend is still named, in brackets. The Builder's 3a10e290 (`build/ask-verifier-and-signoff`) does this. The owner's question above stands until Sean confirms it.
+
+Post-fix result (Verifier): throwaway merge of this branch at e0636bdf with 3a10e290 (`/tmp/avb-v/vgate`, removed after), files run one at a time. M627 12 / 12, M628 7 / 7, M626 18 / 18, M616 23 / 23. The consequence text observed: "Queues a Verifier check-authoring run on the configured model sonnet-m627-verifier (scripted): it writes the missing post_deploy_behavior check as a proposal you review; nothing is deployed."; the Verifier's run requested `sonnet-m627-verifier`. The test was not changed.
