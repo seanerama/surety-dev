@@ -258,9 +258,11 @@ export function writeConfigVersion(
     identity: string;
     secretDigests: { ref: string; digest: string }[];
     homeHash: string;
-    // A static configuration's serving check, proposed by the engine
-    // (deploy/serving-install.ts), or why none is.
-    serving?: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null } | null;
+    // The serving check of a static configuration or of a service
+    // configuration declaring `serving` (DECISIONS item 41), proposed by the
+    // engine (deploy/serving-install.ts), or why none is; `declared` false:
+    // a service configuration declaring no serving, never proposed for.
+    serving?: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null; declared?: boolean } | null;
     // The current candidate's tree as the route's preparation read it, for
     // the deployment compatibility (deploy/compatibility.ts).
     tree?: TreeAnswer | null;
@@ -325,15 +327,18 @@ export function writeConfigVersion(
   return done;
 }
 
-// The engine's serving check proposal captured with the configuration, as
-// any proposal is (protected.ts captureProposal), `proposed_by: engine`;
-// only while the integration head is the one it was prepared on and none
-// is present or pending.
+// The engine's serving check proposal captured with the configuration (a
+// static one, or a service's declaring serving), as any proposal is
+// (protected.ts captureProposal), `proposed_by: engine`; only while the
+// integration head is the one it was prepared on and none is present or
+// pending.
 function captureServingProposal(
   tx: Tx,
   project: string,
-  s: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null },
+  s: { proposal: { head: string; tree: string; diffHash: string; rationale: string; changesRequiredSet: boolean } | null; why: string | null; declared?: boolean },
 ): { kind: string; proposal: string | null; state: string; reason: string | null } {
+  // A service configuration declaring no serving: nothing proposed, and why.
+  if (s.declared === false) return { kind: 'post_deploy_serving', proposal: null, state: 'not_proposed', reason: s.why };
   const facts = servingInstallFacts(tx.db, { project });
   if (facts.state === 'present' || facts.state === 'pending') return { kind: 'post_deploy_serving', proposal: null, state: facts.state, reason: null };
   if (s.proposal === null) return { kind: 'post_deploy_serving', proposal: null, state: 'not_proposed', reason: s.why };
