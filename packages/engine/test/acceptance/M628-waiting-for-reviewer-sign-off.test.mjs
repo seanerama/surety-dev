@@ -36,14 +36,24 @@
 //   start the review at its next tick, so the read after reads `queued` or
 //   `running`, and the hold the scripted Reviewer waits at shows `running`
 //   with its run.
-// - `review.state` `awaiting_owner` (DECISIONS item 44) is not exercised: the
-//   scripted Reviewer signs off.
+// - `review.state` `awaiting_owner` (DECISIONS item 44) is exercised by the
+//   amendment's case below, not by (a): (a)'s scripted Reviewer signs off.
+//
+// Row M628 (a), amended 2026-11-24 (DECISIONS item 46; the M7 plan §3g):
+// `deploy_readiness.review` carries `decision`, the open decision's id while
+// `review.state` is `awaiting_owner` and null otherwise. (a) reads it null
+// while the review is queued and running. The amendment's case parks the
+// review behind the owner's decision the way the engine does when its
+// Reviewer signs nothing and raises nothing (findings.ts recordReport: the
+// review work parks, `review_signoff_missing`, behind a `blocker` decision
+// about the work item): the readiness then reads `awaiting_owner` with
+// `decision` the open blocker's id.
 
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
 import { definitionText } from './harness/checks/fixtures.mjs';
-import { consume, openDecision } from './harness/decisions.mjs';
+import { consume, decisionsOn, openDecision } from './harness/decisions.mjs';
 import { KERNEL_KINDS } from './harness/design/check41.mjs';
 import { stageWork } from './harness/design/drive.mjs';
 import { proposalsOf, sharedFixture } from './harness/gates.mjs';
@@ -128,11 +138,11 @@ async function projectBody(fx, project) {
 // The service built, configured declaring serving, and the engine's serving
 // check proposed, approved by the owner and applied, the candidate's checks
 // passed again. Returns the project read after.
-async function servingApplied(fx, p, { authoring }) {
+async function servingApplied(fx, p, { authoring, port }) {
   await builtWith(fx, p, { built: SERVICE_BUILT, authoring });
   await qualifyByFixture(fx.engine);
   await settled(fx, p.id);
-  const res = await putConfig(fx.engine, p.id, 'alpha', SERVICE_CONFIG(authoring === WITH_BEHAVIOUR ? 18681 : 18682));
+  const res = await putConfig(fx.engine, p.id, 'alpha', SERVICE_CONFIG(port ?? (authoring === WITH_BEHAVIOUR ? 18681 : 18682)));
   assert.ok([200, 201].includes(res.status), `PUT …/environments/alpha/config (→ ${res.status} ${res.text})`);
   const [proposal] = engineProposals(fx.home, p.id);
   assert.ok(proposal, 'the engine proposed its serving check');
@@ -242,6 +252,9 @@ describe('M628 (a) a candidate lacking only the Reviewer sign-off: the request q
       assert.ok(Object.hasOwn(d.review, 'run'), `${what}: review.run (${JSON.stringify(d.review)})`);
       if (run !== undefined) assert.equal(d.review.run, run, `${what}: the run named`);
       if (d.review.state === 'queued') assert.equal(d.review.run, null, `${what}: no run while queued`);
+      // Row M628 (a) amended (DECISIONS item 46): decision null while queued or running.
+      assert.ok(Object.hasOwn(d.review, 'decision'), `${what}: review.decision (${JSON.stringify(d.review)})`);
+      assert.equal(d.review.decision, null, `${what}: no decision while ${d.review.state}`);
       assert.ok(d.reason.startsWith('Waiting for Reviewer sign-off'), `${what}: ${d.reason}`);
       // Never deploy: null, or `tick` while the queued review is eligible and
       // not yet dispatched (the driver's companion 8b74035b).
@@ -274,6 +287,75 @@ describe('M628 (a) a candidate lacking only the Reviewer sign-off: the request q
     assert.equal(J.signed.now.primary_action, 'deploy', JSON.stringify(J.signed.now));
     assert.equal(J.issued.status, 201, J.issued.text);
     assert.equal(J.issued.body.authorization?.status, 'issued', J.issued.text);
+  });
+});
+
+// ---- (a) amended: the review awaiting the owner names the open decision --------------------------
+
+// The engine's Reviewer, asked for the sign-off, signs nothing and raises
+// nothing: the review parks behind a question to the owner (findings.ts
+// recordReport, `review_signoff_missing`).
+const UNSIGNED_REVIEW = roleThat([]);
+
+describe("M628 (a) amended: the review parked behind the owner's decision; review.decision names it", () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    J.fx = fx;
+    const { p } = await pagePublished(fx, { name: 'pantry-signoff-o' });
+    J.p = p;
+    J.readyBefore = await servingApplied(fx, p, { authoring: WITH_BEHAVIOUR, port: 18683 });
+    const candidate = J.readyBefore.checks.candidate;
+    fx.scripted.kindScript('review', UNSIGNED_REVIEW);
+    J.first = await requestDeployment(fx.engine, p.id, candidate, 'alpha');
+    J.queued = await projectBody(fx, p.id);
+    const item = alphaReviews(fx.home, p.id, candidate).at(-1)?.id;
+    if (J.first.status !== 409 || !item) return;
+    J.item = item;
+    for (let i = 0; i < 8; i++) {
+      await tick(fx.engine, p.id);
+      await idle(fx, p.id);
+      J.parked = all(fx.home, 'SELECT "status", "blocker" FROM "work_items" WHERE "id" = ?', item)[0];
+      if (J.parked?.status === 'parked') break;
+    }
+    J.runs = runsOf(fx.home, item).map((r) => r.id);
+    J.blockers = decisionsOn(fx.home, 'blocker', item);
+    J.read = await projectBody(fx, p.id);
+  });
+  after(async () => {
+    J.fx?.scripted.release('all');
+    await shared.cleanup();
+  });
+
+  test('(a) amended: before the Reviewer ran, review.decision null', (t) => {
+    t.diagnostic(`first: ${J.first.status} ${J.first.text}`);
+    assert.equal(J.readyBefore.build.deploy_readiness.state, 'ready', JSON.stringify(J.readyBefore.build.deploy_readiness));
+    assert.equal(J.first.status, 409, J.first.text);
+    assert.deepEqual(codesOf(J.first), ['SIGNOFF_MISSING'], J.first.text);
+    const d = J.queued.build.deploy_readiness;
+    t.diagnostic(JSON.stringify(d));
+    assert.deepEqual(d.blocker, SIGNOFF, JSON.stringify(d));
+    assert.ok(['queued', 'running'].includes(d.review?.state), JSON.stringify(d.review));
+    assert.ok(Object.hasOwn(d.review, 'decision'), `review.decision (${JSON.stringify(d.review)})`);
+    assert.equal(d.review.decision, null, JSON.stringify(d.review));
+  });
+
+  test("(a) amended: the Reviewer signed nothing; its review parked behind the owner's decision; review {state: awaiting_owner, decision: that decision's id}", (t) => {
+    t.diagnostic(`review work: ${JSON.stringify(J.parked)}; blockers: ${JSON.stringify((J.blockers ?? []).map((d) => [d.id, d.status]))}`);
+    assert.equal(J.parked?.status, 'parked', `the review parked (${JSON.stringify(J.parked)})`);
+    assert.equal(J.runs.length, 1, 'one run of the review');
+    const open = J.blockers.filter((d) => d.status === 'open');
+    assert.equal(open.length, 1, `one open blocker decision about the review (${JSON.stringify(J.blockers.map((d) => [d.id, d.status]))})`);
+    const d = J.read.build.deploy_readiness;
+    t.diagnostic(JSON.stringify(d));
+    assert.equal(d.state, 'blocked', JSON.stringify(d));
+    assert.deepEqual(d.blocker, SIGNOFF, JSON.stringify(d));
+    assert.equal(d.review?.state, 'awaiting_owner', JSON.stringify(d.review));
+    assert.equal(reviewItem(d.review), J.item, JSON.stringify(d.review));
+    assert.equal(d.review.decision, open[0].id, `review.decision names the open decision (${JSON.stringify(d.review)})`);
+    assert.ok(d.reason.startsWith('Waiting for Reviewer sign-off'), d.reason);
+    assert.notEqual(J.read.now.primary_action, 'deploy', JSON.stringify(J.read.now));
   });
 });
 
