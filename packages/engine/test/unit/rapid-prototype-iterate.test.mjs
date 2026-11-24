@@ -132,7 +132,7 @@ test("the continuing iteration's preparation: the question names iteration N+1 c
   db.prepare(`UPDATE prototype_iterations SET status = 'discarded', approved_at = ?, brief_json = ?, ended_at = ? WHERE id = ?`).run(AT, JSON.stringify(BRIEF), AT, p.iteration);
   const two = run(db, (tx) => iterate(tx, { project: p.id, iteration: p.iteration, change: 'Show the count.' })).body.iteration.id;
   const q2 = db.prepare(`SELECT question, dependency_manifest FROM decisions WHERE kind = 'prototype_preparation_approval' AND subject_id = ? AND status = 'open'`).get(two);
-  assert.match(q2.question, /^Authorize one brief preparation run for prototype iteration 2\? This is iteration 2 of the app, continuing from iteration 1: the change you asked for is "Show the count\."; the preparation starts from the brief approved in iteration 1/);
+  assert.match(q2.question, /^Approve one Spec Writer run to prepare the prototype brief\? \(prototype iteration 2\) Requested model: opus\. Backend: scripted\. This is iteration 2 of the app, continuing from iteration 1: the change you asked for is "Show the count\."; the preparation starts from the brief approved in iteration 1/);
   assert.deepEqual(JSON.parse(q2.dependency_manifest).continues, { iteration: p.iteration, seq: 1, previous_brief_iteration_seq: 1, previous_brief_spec_revision: null });
   db.prepare(`UPDATE prototype_iterations SET status = 'discarded', ended_at = ? WHERE id = ?`).run(AT, two);
   const three = run(db, (tx) => iterate(tx, { project: p.id, iteration: two, change: 'And a dark theme.' })).body.iteration.id;

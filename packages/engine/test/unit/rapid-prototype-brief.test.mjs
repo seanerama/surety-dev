@@ -296,7 +296,7 @@ test('the preparation authorization: raised with the iteration; role, model, per
   // The model the run requests (the spec_writer's policy model, its schema
   // default), the backend apart (DECISIONS item 45).
   assert.deepEqual([m.role, m.provider, m.model, m.run_token_limit, m.estimated_usd, m.paid, m.authorizes], ['spec_writer', 'scripted', 'opus', 1_500_000, null, false, 'exactly one brief_preparation run']);
-  assert.match(d.question, /the Spec Writer \(role spec_writer\) on scripted model opus/);
+  assert.match(d.question, /^Approve one Spec Writer run to prepare the prototype brief\? \(prototype iteration 1\) Requested model: opus\. Backend: scripted\./);
   assert.match(d.question, /Its effective token limit is 1500000 billable tokens: the per-run limit of 5000000, capped at what the iteration has left of its token allowance\. The scripted provider is unpaid: no paid work follows\./);
   assert.match(d.question, /counted in the prototype's totals as its own subtotal/);
   assert.match(d.question, /Approving authorizes exactly one preparation run/);
@@ -332,9 +332,9 @@ test('a paid provider: the question states the provider, model and the estimate 
   transact(db, ENGINE_ACTOR, (tx) => tx.db.prepare(`UPDATE decisions SET status = 'invalidated' WHERE id = ?`).run(old.id));
   transact(db, HUMAN, (tx) => B.requestPreparation(tx, { project: p.id, iteration: p.iteration }));
   const d = decisionsOf(db, p.id, 'prototype_preparation_approval').at(-1);
-  assert.match(d.question, /on claude model claude-sonnet-5-5/);
+  assert.match(d.question, /Requested model: claude-sonnet-5-5\. Backend: claude\./);
   assert.match(d.question, /an estimated \$15\.00 at most .*: an estimate, not a cap\./);
-  assert.match(JSON.parse(d.options).find((o) => o.key === 'approve').consequence_text, /paid by your provider account, up to 1500000 billable tokens \(estimated \$15\.00 at most, not a cap\)/);
+  assert.match(JSON.parse(d.options).find((o) => o.key === 'approve').consequence_text, /dispatched to the backend, requesting the model\. Requested model: claude-sonnet-5-5\. Backend: claude\. It is paid by your provider account, up to 1500000 billable tokens \(estimated \$15\.00 at most, not a cap\)/);
 });
 
 test('the brief: 3 to 5 objectives, one per requirement, each named; engine fields refused from the model; a smaller scope lists what is left out', () => {

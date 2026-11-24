@@ -669,15 +669,42 @@ describe('Rapid prototype to Alpha, demonstrated over HTTP on a disposable engin
     const twice = await fx.post(`/v1/projects/${p}/iterations/${it.id}/prepare`);
     assert.equal(twice.status, 409, `…/prepare while a preparation approval is open (→ ${twice.status} ${twice.text})`);
     assert.deepEqual([twice.body.code, twice.body.reason, twice.body.subject.decision], ['illegal_transition', `Iteration ${it.seq}'s brief preparation is already awaiting your authorization (decision ${asked.decision.id}).`, asked.decision.id]);
-    await fx.answerOpen(p, 'prototype_preparation_approval');
-    const item = (await fx.work(p)).filter((w) => w.kind === 'brief_preparation').at(-1);
-    assert.equal(item.status, 'eligible', 'one more preparation registered');
-    // The changed brief: the same specification, another app sentence and one more limitation.
-    fx.itemScript(item.id, [prepScript({ brief: modelBrief({ app: 'Tasks, changed', limitations: [...LIMITATIONS, 'no undo'] }) })]);
+    // The changed brief: the same specification, another app sentence and
+    // one more limitation, scripted as the next launch of the kind before the
+    // answer (the item may be launched before the test could name it: below).
+    fx.kindNext('brief_preparation', [prepScript({ brief: modelBrief({ app: 'Tasks, changed', limitations: [...LIMITATIONS, 'no undo'] }) })], prepScript());
+    const authorized = await fx.answerOpen(p, 'prototype_preparation_approval');
+    // DECISIONS item 49: which state this read finds is a race, and every
+    // state on the item's forward path is valid here. The answer registers
+    // the item eligible and its commit requests a tick (decision effect
+    // `tick`, runtime.afterCommit -> requestTick); that tick's dispatch
+    // (Launcher.claimThenPrepare -> 'dispatch.claim' -> runs.claimDispatch)
+    // creates the run and moves the item to claimed in one transaction, and
+    // the launch then moves it to executing and, the run ended, complete. The
+    // read below may come before or after any of these. Asserted instead:
+    // exactly one new preparation, the one this answer authorized, in a
+    // state of that path (never held, cancelled or failed); read eligible, at
+    // most one run of it by the later iteration read (it may be claimed in
+    // between); read claimed or later, exactly one run of it; and nothing
+    // but preparations dispatched.
+    const preps = (await fx.work(p)).filter((w) => w.kind === 'brief_preparation');
+    assert.equal(preps.length, 2, `one more preparation registered (${JSON.stringify(preps.map((w) => [w.id, w.status]))})`);
+    const item = preps.at(-1);
+    assert.deepEqual([item.trigger_id, item.subject?.decision], [authorized.id, authorized.id], 'the preparation this answer authorized');
+    assert.ok(['eligible', 'claimed', 'executing', 'complete'].includes(item.status), `a state of its forward path from the answer (${item.status})`);
+    const after = await fx.iteration(p, it.id);
+    const itemRuns = after.usage.runs.filter((r) => r.work_item === item.id);
+    if (item.status === 'eligible') assert.ok(itemRuns.length <= 1, `read eligible: no run then, at most one since (${itemRuns.length})`);
+    else assert.equal(itemRuns.length, 1, `read ${item.status}: exactly one run of it`);
+    for (const r of itemRuns) assert.deepEqual([r.role, r.work_kind], ['spec_writer', 'brief_preparation']);
+    assert.deepEqual([...new Set(after.usage.runs.map((r) => r.work_kind))], ['brief_preparation'], 'nothing but preparations dispatched');
     await pump(fx, p, async () => {
       const r = await fx.iteration(p, it.id);
       return r.iteration.brief.record !== firstRecord && r.iteration.status === 'awaiting_brief_approval' ? r : undefined;
     }, { what: 'the changed brief' });
+    // No preparation is under way now: every later launch of the kind
+    // follows the unchanged script again.
+    fx.kindScript('brief_preparation', prepScript());
     const read = await fx.iteration(p, it.id);
     assert.equal(read.brief.app, 'Tasks, changed', 'the iteration serves the changed brief');
     const stale = await fx.decision(p, first.id);

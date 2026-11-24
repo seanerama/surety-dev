@@ -261,6 +261,13 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
   };
 }
 
+// A role as the owner reads it: spec_writer -> Spec Writer.
+const roleDisplayName = (role: string): string =>
+  role
+    .split('_')
+    .map((w) => (w.length === 0 ? w : w[0]!.toUpperCase() + w.slice(1)))
+    .join(' ');
+
 const usd = (v: unknown): string => (typeof v === 'number' ? `$${v.toFixed(2)}` : 'unknown');
 
 export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
@@ -273,10 +280,12 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     if (it.status !== 'preparing' && it.status !== 'awaiting_brief_approval') return null;
     if (preparationPending(tx.db, it.id) !== null) return null;
     const m = preparationManifest(tx.db, it.id);
-    // The requested model (what the run will record as model_requested)
-    // and the backend, each named as itself (DECISIONS item 45).
-    const who = `the Spec Writer (role ${PREPARATION_ROLE}) on ${String(m.provider)} model ${String(m.model)}`;
-    const named = ` The model it requests, which the run records as its requested model, is ${String(m.model)}; the backend is ${String(m.provider)}.`;
+    // The decision first (DECISIONS item 48): the role as the manifest names
+    // it, then the requested model (what the run will record as
+    // model_requested) and the backend as separately labelled values
+    // (DECISIONS item 45).
+    const role = roleDisplayName(String(m.role));
+    const labelled = ` Requested model: ${String(m.model)}. Backend: ${String(m.provider)}.`;
     // Asked again because an approval given for another model could not
     // authorize the run (DECISIONS item 45 (c)): why, said here.
     const prior = modelChangedApproval(tx.db, it.id, String(m.model));
@@ -305,14 +314,16 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
         : ` This is iteration ${it.seq} of the app, continuing from iteration ${cont.seq}: ${m.change === null ? 'you gave no change request' : `the change you asked for is "${String(m.change)}"`}; the preparation starts from ${cont.previous_brief_iteration_seq === null ? 'the idea (no earlier brief was approved)' : `the brief approved in iteration ${cont.previous_brief_iteration_seq}`}, and its brief, once you approve it, is a new specification revision. Iteration ${cont.seq}'s runs, usage, receipt and Alpha are kept as they are.`;
     return {
       manifest: m,
-      question: `Authorize one brief preparation run for prototype iteration ${it.seq}?${why}${continues} It runs ${who}, reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval.${named} ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.${refused}`,
+      // Composed only when the decision is raised or re-raised: a decision
+      // already open or consumed keeps the question it recorded.
+      question: `Approve one ${role} run to prepare the prototype brief? (prototype iteration ${it.seq})${labelled}${refused}${why}${continues} The run reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.`,
       options: [
         {
           key: 'approve',
           label: 'Authorize one preparation run',
           consequence: m.paid
-            ? `One brief preparation run is dispatched to the backend ${String(m.provider)}, requesting model ${String(m.model)}, paid by your provider account, up to ${String(m.run_token_limit)} billable tokens (estimated ${usd(m.estimated_usd)} at most, not a cap). It writes the brief for your approval; nothing else is authorized.`
-            : `One brief preparation run is dispatched to the scripted provider, requesting model ${String(m.model)}; no paid work follows. It writes the brief for your approval; nothing else is authorized.`,
+            ? `One ${role} run to prepare the brief is dispatched to the backend, requesting the model.${labelled} It is paid by your provider account, up to ${String(m.run_token_limit)} billable tokens (estimated ${usd(m.estimated_usd)} at most, not a cap). It writes the brief for your approval; nothing else is authorized.`
+            : `One ${role} run to prepare the brief is dispatched to the backend, requesting the model.${labelled} The scripted provider is unpaid: no paid work follows. It writes the brief for your approval; nothing else is authorized.`,
           effect: { iteration: it.id, dispatch: PREPARATION_WORK, runs: 1 },
         },
         { key: 'reject', label: 'Do not prepare', consequence: 'Nothing is dispatched; the iteration stays preparing (next: approve preparation or discard).', effect: { iteration: it.id } },
