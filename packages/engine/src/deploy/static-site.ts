@@ -54,6 +54,17 @@ export function staticSpec(content: ModeContent | null | undefined): StaticSpec 
   return { root: typeof s.root === 'string' ? s.root : STATIC_ROOT_DEFAULT, entry: typeof s.entry === 'string' ? s.entry : STATIC_ENTRY_DEFAULT };
 }
 
+// The directory a service-mode configuration declares its service serves
+// (M7 plan §3d M625; DECISIONS item 40): `serving {root, entry}`, its
+// defaults filled, or null when the configuration declares none (a static
+// configuration never does: its `static` is what it serves). The serving
+// check compares what is served against the sealed artifact under it.
+export function servingSpec(content: (ModeContent & { serving?: unknown }) | null | undefined): StaticSpec | null {
+  if (!content || isStaticMode(content) || content.serving === undefined || content.serving === null) return null;
+  const s = (typeof content.serving === 'object' ? content.serving : {}) as Partial<StaticSpec>;
+  return { root: typeof s.root === 'string' ? s.root : STATIC_ROOT_DEFAULT, entry: typeof s.entry === 'string' ? s.entry : STATIC_ENTRY_DEFAULT };
+}
+
 // A plain relative path: no empty, `.` or `..` component, no leading `/`,
 // no backslash or NUL.
 export const isPlainRelative = (p: string): boolean =>
@@ -80,14 +91,17 @@ export function staticServer(): { path: string; sha256: string; digest: string }
 // The configured entry against the projection's paths, before anything is
 // sealed (as checkStart checks a service's entry point): it must be a file
 // of the artifact under the root.
-export function checkStaticEntry(s: StaticSpec, paths: Set<string>): void {
+export function checkStaticEntry(s: StaticSpec, paths: Set<string>, field: 'static.entry' | 'serving.entry' = 'static.entry'): void {
   const entry = entryPathOf(s);
   if (!paths.has(entry)) {
-    throw new Refusal(422, 'config_invalid', `The configuration's static.entry names ${JSON.stringify(entry)}, which is not a file of the sealed artifact.`, 'Write a configuration version that the host can run, then request the deployment again; nothing was authorized.', {
-      field: 'static.entry',
+    throw new Refusal(422, 'config_invalid', `The configuration's ${field} names ${JSON.stringify(entry)}, which is not a file of the sealed artifact.`, 'Write a configuration version that the host can run, then request the deployment again; nothing was authorized.', {
+      field,
     });
   }
 }
+
+// A service's declared serving entry, the same way (M625 (a)).
+export const checkServingEntry = (s: StaticSpec, paths: Set<string>): void => checkStaticEntry(s, paths, 'serving.entry');
 
 // ---- the output kind of a sealed tree (SHAPES.md §§4, 5) ----------------------------------------
 

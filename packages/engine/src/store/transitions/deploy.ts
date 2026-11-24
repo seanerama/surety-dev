@@ -41,7 +41,7 @@ import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
 import { ADAPTER_QUALIFICATION_CASES } from '../../deploy/qualify-cases.js';
-import { type FrozenStatic, modeOf, staticSpec, staticStart } from '../../deploy/static-site.js';
+import { type FrozenStatic, type StaticSpec, modeOf, servingSpec, staticSpec, staticStart } from '../../deploy/static-site.js';
 import { SERVING_KIND, SERVING_STATEMENT, type ServingVerified, candidateOutputKind } from './serving.js';
 import { HOST_MEMBERS, type HostFacts, adapterVersion, engineBuild, hostFactsDrift, hostFactsOf, isUnknownFact, profileFingerprint, unknownHostMember } from '../../deploy/qualification.js';
 import { recordIterationAlpha, replaceAlpha, withdrawAlpha } from './prototype.js';
@@ -106,6 +106,9 @@ export interface ConfigContent {
   // SHAPES.md §2: absent is `service`; `static` names no start command.
   mode?: 'service' | 'static';
   static?: { root: string; entry: string };
+  // M625 (a): in service mode, the directory the service serves (what the
+  // serving check compares against); absent, root "." and entry index.html.
+  serving?: { root: string; entry: string };
   [key: string]: unknown;
 }
 
@@ -176,6 +179,10 @@ export interface FrozenIntent {
   // A static configuration's deployment (SHAPES.md §2): its root, entry, the
   // engine's server it runs and that server's SHA-256.
   static?: FrozenStatic | null;
+  // A service configuration's declared serving root and entry (M625 (b)),
+  // frozen with the deployment: what its serving check compares against,
+  // whatever a later configuration version says. Absent when none.
+  serving?: StaticSpec | null;
 }
 
 export const getEnv = (db: Db, id: string): EnvRow | undefined => db.prepare('SELECT * FROM "environments" WHERE "id" = ?').get(id) as EnvRow | undefined;
@@ -1796,6 +1803,7 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
   const spec = staticSpec(content);
   if (spec !== null && (!args.staticServer || !content?.runtime)) return { skipped: 'the static server is not known' };
   const frozenStatic: FrozenStatic | null = spec !== null ? { ...spec, server: args.staticServer!.path, server_digest: args.staticServer!.digest } : null;
+  const serving = servingSpec(content);
   const mapping = (JSON.parse(auth.source_delivery_mapping) as { mapping?: string }).mapping ?? null;
   const artifact = getArtifact(tx.db, item.project, auth.artifact_digest);
   const deadline = addSeconds(tx.at, projectPolicy(tx.db, item.project).deploy_orchestration_deadline!);
@@ -1823,6 +1831,7 @@ export function intendDeploy(tx: Tx, args: { workItem: string; incarnation: stri
     start: frozenStatic !== null ? staticStart(content!.runtime!.path, frozenStatic.server, frozenStatic) : (content?.start ?? null),
     lease: { id: lease.id, generation: lease.generation },
     ...(frozenStatic !== null ? { static: frozenStatic } : {}),
+    ...(serving !== null ? { serving } : {}),
   };
   const op = insertOperation(tx, {
     project: item.project,
@@ -3907,7 +3916,11 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       // before any).
       mode: config ? modeOf(configContent(config)) : null,
       ...(config && staticSpec(configContent(config)) ? { static: { entry: staticSpec(configContent(config))!.entry, server_digest: latestServerDigest(db, env.id) } } : {}),
-      running,
+      // M625 (a): the serving root and entry a service configuration
+      // declares (null when it declares none, or with no configuration),
+      // and beside the running generation the ones its deployment froze.
+      serving: config ? servingSpec(configContent(config)) : null,
+      running: running ? { ...running, serving: runningServing(db, env.id, running) } : running,
       // The open relay with its bound address (host, port, url), as POST
       // …/relay answers it; null when none is open.
       relay: (() => {
@@ -3929,6 +3942,19 @@ export function readEnvironment(db: Db, args: { project: string; environment: st
       conditions,
     },
   };
+}
+
+// The serving root and entry the running generation's deployment froze
+// (M625 (a), (b)), or null when it froze none.
+function runningServing(db: Db, environment: string, running: Record<string, unknown>): StaticSpec | null {
+  if (!Number.isInteger(running.generation)) return null;
+  const row = db
+    .prepare(
+      `SELECT json_extract(o."finalizer_inputs", '$.serving') AS "s" FROM "operation_attempts" a JOIN "operations" o ON o."id" = a."operation"
+       WHERE o."kind" = 'deploy' AND json_extract(o."target", '$.environment') = ? AND a."deployment_generation" = ? ORDER BY o."seq" DESC LIMIT 1`,
+    )
+    .get(environment, running.generation) as { s: string | null } | undefined;
+  return parseJson<StaticSpec>(row?.s ?? null);
 }
 
 // The server SHA-256 the environment's latest static deployment froze, or null.

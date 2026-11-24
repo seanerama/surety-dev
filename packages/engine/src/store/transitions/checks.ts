@@ -716,7 +716,7 @@ export function admitExecution(
 }
 
 // The serving check's facts, from the execution's deployment (SHAPES.md §3).
-function servingOf(db: Db, project: string, x: Record<string, unknown>): Admission['serving'] {
+export function servingOf(db: Db, project: string, x: Record<string, unknown>): Admission['serving'] {
   if (typeof x.deployment !== 'string') return null;
   let dep: { operation?: string };
   try {
@@ -726,13 +726,16 @@ function servingOf(db: Db, project: string, x: Record<string, unknown>): Admissi
   }
   const op = dep.operation ? (db.prepare('SELECT "finalizer_inputs" FROM "operations" WHERE "id" = ?').get(dep.operation) as { finalizer_inputs: string } | undefined) : undefined;
   if (!op) return null;
-  const frozen = JSON.parse(op.finalizer_inputs) as { artifact_digest?: string | null; static?: { root?: string; entry?: string } | null };
+  const frozen = JSON.parse(op.finalizer_inputs) as { artifact_digest?: string | null; static?: { root?: string; entry?: string } | null; serving?: { root?: string; entry?: string } | null };
   if (typeof frozen.artifact_digest !== 'string') return null;
   const art = db.prepare(`SELECT "manifest" FROM "artifacts" WHERE "project" = ? AND "digest" = ? AND "status" = 'sealed'`).get(project, frozen.artifact_digest) as { manifest: string } | undefined;
   if (!art) return null;
   return {
-    root: frozen.static?.root ?? '.',
-    entry: frozen.static?.entry ?? 'index.html',
+    // A service's declared serving directory (M625 (b)), else a static
+    // configuration's root and entry, else the artifact's root and
+    // index.html: each as the deployment froze it.
+    root: frozen.serving?.root ?? frozen.static?.root ?? '.',
+    entry: frozen.serving?.entry ?? frozen.static?.entry ?? 'index.html',
     deployed_digest: frozen.artifact_digest,
     execution_digest: typeof x.artifact_digest === 'string' ? x.artifact_digest : null,
     manifest: JSON.parse(art.manifest) as unknown[],
