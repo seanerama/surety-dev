@@ -73,7 +73,7 @@ import { stageWork } from './harness/design/drive.mjs';
 import { effectiveVersion, proposalsOf, sharedFixture } from './harness/gates.mjs';
 import { roleThat } from './harness/gitruns.mjs';
 import { journeyContext, phaseCompleted } from './harness/journey/drive.mjs';
-import { recordChecks } from './harness/prototype.mjs';
+import { idle, recordChecks } from './harness/prototype.mjs';
 import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
@@ -157,21 +157,44 @@ async function writeConfig(fx, project, name, content) {
 
 // The project read, `GET …/environments` and `GET …/environments/:e` of
 // environment `name`, taken together: {project, entries: {project, list, single}}.
-async function reads(fx, project, name = 'alpha') {
+// The engine ticks on its own when a run ends or an effect asks for it
+// (runtime.ts), so three reads can straddle a tick: they are taken again
+// until a project read after them states what the one before them did
+// (the environment's serving_check, the readiness and NOW), so the three
+// describe one moment.
+const moment = (project, name) => JSON.stringify([(project.environments ?? []).find((e) => e.name === name)?.serving_check, project.build?.deploy_readiness, project.now?.state, project.now?.primary_action]);
+async function projectBody(fx, project) {
   const p = await fx.engine.get(`/v1/projects/${project}`);
   assert.equal(p.status, 200, `GET /v1/projects/${project} (→ ${p.status} ${p.text})`);
-  const l = await fx.engine.get(`/v1/projects/${project}/environments`);
-  assert.equal(l.status, 200, `GET …/environments (→ ${l.status} ${l.text})`);
-  const s = await fx.engine.get(`/v1/projects/${project}/environments/${name}`);
-  assert.equal(s.status, 200, `GET …/environments/${name} (→ ${s.status} ${s.text})`);
-  return {
-    project: p.body.project,
-    entries: {
-      'the project read': (p.body.project.environments ?? []).find((e) => e.name === name),
-      'GET …/environments': (l.body.environments ?? []).find((e) => e.name === name),
-      'GET …/environments/:e': s.body.environment,
-    },
-  };
+  return p.body.project;
+}
+async function reads(fx, project, name = 'alpha') {
+  for (let attempt = 0; ; attempt++) {
+    const p = await projectBody(fx, project);
+    const l = await fx.engine.get(`/v1/projects/${project}/environments`);
+    assert.equal(l.status, 200, `GET …/environments (→ ${l.status} ${l.text})`);
+    const s = await fx.engine.get(`/v1/projects/${project}/environments/${name}`);
+    assert.equal(s.status, 200, `GET …/environments/${name} (→ ${s.status} ${s.text})`);
+    const again = await projectBody(fx, project);
+    if (moment(p, name) !== moment(again, name) && attempt < 5) continue;
+    return {
+      project: p,
+      entries: {
+        'the project read': (p.environments ?? []).find((e) => e.name === name),
+        'GET …/environments': (l.body.environments ?? []).find((e) => e.name === name),
+        'GET …/environments/:e': s.body.environment,
+      },
+    };
+  }
+}
+
+// The build's runs ended and a tick with nothing left to start, before a
+// configuration is written: its proposal is read before any tick raises
+// its question.
+async function settled(fx, project) {
+  await idle(fx, project);
+  await tick(fx.engine, project);
+  await idle(fx, project);
 }
 
 // `serving_check` of the environment on all three reads: present on each
@@ -210,6 +233,7 @@ describe('M626 (a) a service declaring serving, its behavioural check required: 
     J.p = p;
     await builtWith(fx, p, { built: SERVICE_BUILT, authoring: WITH_BEHAVIOUR });
     J.built = await reads(fx, p.id);
+    await settled(fx, p.id);
     J.config = await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18661, SERVED));
     J.proposal = engineProposals(fx.home, p.id)[0];
     J.proposed = await reads(fx, p.id);
@@ -384,6 +408,7 @@ describe('M626 (b) a service declaring serving with no behavioural check: blocke
     J.p = p;
     await builtWith(fx, p, { built: SERVICE_BUILT });
     await qualifyByFixture(fx.engine);
+    await settled(fx, p.id);
     await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18663, SERVED));
     J.proposal = engineProposals(fx.home, p.id)[0];
     J.proposed = await reads(fx, p.id);
@@ -460,6 +485,7 @@ describe('M626 (c) a static site in static mode, its serving check pending: hold
     J.fx = fx;
     const { p } = await pagePublished(fx, { name: 'pantry-static-c' });
     await builtWith(fx, p, { built: STATIC_PAGE_BUILT });
+    await settled(fx, p.id);
     await writeConfig(fx, p.id, 'alpha', STATIC_CONFIG(18664));
     J.proposal = engineProposals(fx.home, p.id)[0];
     J.proposed = await reads(fx, p.id);
