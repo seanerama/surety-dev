@@ -2,10 +2,14 @@
 // §3, row M602; request §3 last paragraph; rulings R5, S1 of 2026-10-28;
 // SEAM.md §575). Kernel lane, the scripted provider (unpaid).
 //
-//   (a) the prototype_preparation_approval raised at creation: the role, the
-//       model, the effective per-run allowance (S5), the estimated cost
-//       labelled an estimate (the scripted provider: "unpaid"), the
-//       own-subtotal note, "exactly one run"; no run before the answer.
+//   (a) the prototype_preparation_approval raised at creation: the question
+//       leads with the decision ("Approve one Spec Writer run to prepare the
+//       prototype brief?"), then Requested model and Backend as separately
+//       labelled values, the effective per-run allowance (S5), the estimated
+//       cost labelled an estimate (the scripted provider: "unpaid"), the
+//       own-subtotal note, "exactly one run" (amended 2026-11-24, DECISIONS
+//       item 48: facts, not the phrase "on scripted model"; the recorded
+//       question kept); no run before the answer.
 //   (b) approve: exactly one brief_preparation work item, dispatched,
 //       attributed to the iteration, counted under totals.preparation.
 //   (c) reject: status preparing, the next step naming approval or discard,
@@ -65,15 +69,41 @@ describe('M602 preparation is authorized before it runs', () => {
     assert.deepEqual([m.paid, m.estimated_usd], [false, null], 'the scripted provider is unpaid: no estimate is a number, none is 0');
     assert.match(m.estimate_basis, /^scripted provider: unpaid/, 'the basis says so');
     assert.equal(m.authorizes, PROTO.preparation.authorizes);
-    assert.match(d.question, /Spec Writer \(role spec_writer\) on scripted model /, 'the question names the role and the model');
+    // Amended 2026-11-24 (DECISIONS item 48): the question leads with the
+    // decision, then names the requested model and the backend as separately
+    // labelled values, read from the manifest so the question and the manifest
+    // are shown to agree (not a quoted constant).
+    const opening = 'Approve one Spec Writer run to prepare the prototype brief?';
+    assert.ok(d.question.startsWith(opening), `the question leads with the decision: ${JSON.stringify(d.question.slice(0, 120))}`);
+    const modelLabel = `Requested model: ${m.model}`;
+    const backendLabel = `Backend: ${m.provider}`;
+    assert.ok(d.question.includes(modelLabel), `the requested model, labelled (${modelLabel})`);
+    assert.ok(d.question.includes(backendLabel), `the backend, labelled separately (${backendLabel})`);
+    const boundary = d.question.indexOf('Approving authorizes exactly one preparation run');
+    for (const label of [modelLabel, backendLabel]) {
+      const at = d.question.indexOf(label);
+      assert.ok(at >= opening.length && at < boundary, `${label} follows the decision and precedes the authorization boundary`);
+    }
     assert.match(d.question, /Its effective token limit is 1500000 billable tokens: the per-run limit of 5000000, capped at what the iteration has left of its token allowance/, 'the effective allowance, said as such');
     assert.match(d.question, /The scripted provider is unpaid: no paid work follows/, 'the cost: unpaid');
     assert.match(d.question, /counted in the prototype's totals as its own subtotal \(brief preparation\)/, 'the own subtotal');
     assert.match(d.question, /Approving authorizes exactly one preparation run; it approves neither the brief nor the build/, 'exactly one run, nothing more');
     assert.deepEqual(d.options.map((o) => o.key), ['approve', 'reject']);
+    // The approve option names the backend and the requested model, each
+    // labelled, and not by the phrase "on scripted model".
+    const approveOpt = d.options.find((o) => o.key === 'approve');
+    const approveText = `${approveOpt.label} ${approveOpt.consequence_text}`;
+    assert.ok(approveText.includes(modelLabel), `the approve option names the requested model, labelled: ${JSON.stringify(approveText)}`);
+    assert.ok(approveText.includes(backendLabel), `the approve option names the backend, labelled: ${JSON.stringify(approveText)}`);
+    assert.ok(!approveText.includes('on scripted model'), 'the approve option does not use the phrase "on scripted model"');
     await tick(fx.engine, id);
     assert.deepEqual(runsOfProjectRows(fx.home, id), [], 'no run before the answer');
     assert.deepEqual(workOfProject(fx.home, id), [], 'no work item before the answer');
+    // Stored decisions keep their recorded question: the same decision re-read
+    // after a later tick reads the question and options it was raised with.
+    const reread = await decisionRead(fx, id, d.id);
+    assert.equal(reread.question, d.question, 'the recorded question is unchanged');
+    assert.deepEqual(reread.options, d.options, 'the recorded options are unchanged');
     S.aQuestion = d;
   });
 
@@ -83,7 +113,19 @@ describe('M602 preparation is authorized before it runs', () => {
     const it = await currentIt(fx, id);
     await ok(answer(fx, id, S.aQuestion), 200, 'the owner approves');
     const items = workOfProject(fx.home, id);
-    assert.deepEqual(items.map((w) => [w.kind, w.status]), [[PROTO.preparation.work_kind, 'eligible']], 'exactly one brief_preparation work item');
+    // DECISIONS item 49 (the same race as the Builder's demo test (2)): the
+    // approval's commit requests a tick (decision effect `tick`,
+    // afterCommit -> requestTick) in the engine process, whose dispatch claims
+    // the item and creates its run in one transaction and whose launch moves
+    // it on; this read may come before or after any of that (a probe holding
+    // the read 1.5 s after the answer read it complete). Every state of that
+    // forward path is valid here; asserted is the set, and the facts in each.
+    assert.deepEqual(items.map((w) => w.kind), [PROTO.preparation.work_kind], 'exactly one brief_preparation work item');
+    assert.ok(['eligible', 'claimed', 'executing', 'complete'].includes(items[0].status), `a state of its forward path from the answer (${items[0].status})`);
+    const runsNow = runsOfProjectRows(fx.home, id);
+    assert.deepEqual(runsNow.filter((r) => r.work_item !== items[0].id), [], 'no run of anything but this preparation');
+    if (items[0].status === 'eligible') assert.ok(runsNow.length <= 1, `read eligible: no run then, at most one since (${runsNow.length})`);
+    else assert.equal(runsNow.length, 1, `read ${items[0].status}: exactly one run of it`);
     assert.equal(JSON.parse(items[0].subject).decision, S.aQuestion.id, 'it names the approval it came from');
     assert.equal(eventsFor(fx.home, 'prototype.preparation_authorized', 'iteration', it.id).length, 1);
     await pump(fx, id, async () => ((await iterationRead(fx, id, it.id)).iteration.status === 'awaiting_brief_approval' ? true : undefined), { what: 'the brief' });
