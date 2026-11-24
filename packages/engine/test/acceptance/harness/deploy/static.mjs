@@ -116,14 +116,16 @@ export const remove = (dir, path) => unlinkSync(join(dir, path));
 // The engine's serving program run against the server at `port` with the
 // variables the engine gives it (D4 §13.2; the Builder's record): the
 // sealed manifest as the store records it, the execution's and the
-// deployment's digests. Returns {code, lines, rows: [[path, served, expected, status, result]], summary}.
-export function runServingProgram({ port, manifest, executionDigest, deployedDigest, entry = 'index.html' }) {
+// deployment's digests. `root` (row M625: a service's declared serving
+// root) is `.` unless given, as the engine gives it for a static
+// configuration's default. Returns {code, lines, rows: [[path, served, expected, status, result]], summary}.
+export function runServingProgram({ port, manifest, executionDigest, deployedDigest, entry = 'index.html', root = '.' }) {
   const r = spawnSync(process.execPath, [SERVING_PROGRAM], {
     encoding: 'utf8',
     env: {
       PATH: '/usr/bin:/bin',
       SURETY_SERVING_URL: `http://127.0.0.1:${port}`,
-      SURETY_STATIC_ROOT: '.',
+      SURETY_STATIC_ROOT: root,
       SURETY_STATIC_ENTRY: entry,
       SURETY_ARTIFACT_DIGEST: executionDigest,
       SURETY_DEPLOYED_ARTIFACT_DIGEST: deployedDigest,
