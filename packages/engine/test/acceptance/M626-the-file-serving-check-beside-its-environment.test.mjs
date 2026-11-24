@@ -74,7 +74,10 @@ import { effectiveVersion, proposalsOf, sharedFixture } from './harness/gates.mj
 import { roleThat } from './harness/gitruns.mjs';
 import { journeyContext, phaseCompleted } from './harness/journey/drive.mjs';
 import { idle, recordChecks } from './harness/prototype.mjs';
-import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { releaseBarrier } from './harness/engine.mjs';
+import { armBarrier } from './harness/journal.mjs';
+import { requestTick, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { reached } from './harness/session-lane.mjs';
 import { step } from './harness/scripted.mjs';
 import { withStore } from './harness/store.mjs';
 import { configContent, putConfig, qualifyByFixture, requestDeployment } from './harness/deploy/kernel.mjs';
@@ -197,6 +200,30 @@ async function settled(fx, project) {
   await idle(fx, project);
 }
 
+// The scheduler held (DECISIONS item 47). A proposal's question is raised by
+// a tick's Gates step (the proposal classified there, D1 §8.1 steps 5 to 7),
+// and under K1 the configuration write and the answer each request a tick
+// at once; under concurrent load that tick can run between the write (or the
+// answer) and the three reads, and the reads then see the next state
+// (seen: `awaiting_decision` with its decision where `proposed` was to be
+// read). So the state a step leaves is read with the scheduler held in a
+// tick at `scheduler.tick_running` (after its prerequisite and Gates steps,
+// before select; SEAM.md §441), taken before the step: while it holds, the
+// API answers and no other tick runs, so no tick begins between the step and
+// its reads. Released after them, the next tick takes the state on. Nothing
+// read is made weaker: each state is read where it holds, not "either".
+const HOLD = 'scheduler.tick_running';
+async function held(fx, project, body) {
+  await armBarrier(fx.engine, HOLD, 'pause');
+  await requestTick(fx.engine, project);
+  await reached(fx, HOLD, 'a tick held before select');
+  try {
+    return await body();
+  } finally {
+    await releaseBarrier(fx.engine, HOLD);
+  }
+}
+
 // `serving_check` of the environment on all three reads: present on each
 // entry, the same on each; returned.
 function servingCheck(r) {
@@ -234,18 +261,24 @@ describe('M626 (a) a service declaring serving, its behavioural check required: 
     await builtWith(fx, p, { built: SERVICE_BUILT, authoring: WITH_BEHAVIOUR });
     J.built = await reads(fx, p.id);
     await settled(fx, p.id);
-    J.config = await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18661, SERVED));
-    J.proposal = engineProposals(fx.home, p.id)[0];
-    J.proposed = await reads(fx, p.id);
-    J.req = { proposed: await requestDeployment(fx.engine, p.id, J.proposed.project.checks.candidate, 'alpha') };
+    await held(fx, p.id, async () => {
+      J.config = await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18661, SERVED));
+      J.proposal = engineProposals(fx.home, p.id)[0];
+      J.proposed = await reads(fx, p.id);
+      J.req = { proposed: await requestDeployment(fx.engine, p.id, J.proposed.project.checks.candidate, 'alpha') };
+    });
     if (!J.proposal) return;
     J.decision = await openDecision(fx, p.id, 'check_correction_tightening', J.proposal.id, { max: 8 });
     J.asked = await reads(fx, p.id);
     J.req.asked = await requestDeployment(fx.engine, p.id, J.asked.project.checks.candidate, 'alpha');
-    await consume(fx, p.id, J.decision, 'approve');
-    J.approvedStatus = proposalStatus(fx.home, J.proposal.id);
-    J.approved = await reads(fx, p.id);
-    J.req.approved = await requestDeployment(fx.engine, p.id, J.approved.project.checks.candidate, 'alpha');
+    // The approval's application is a tick's (through the journal): the
+    // approved state is read with the scheduler held from before the answer.
+    await held(fx, p.id, async () => {
+      await consume(fx, p.id, J.decision, 'approve');
+      J.approvedStatus = proposalStatus(fx.home, J.proposal.id);
+      J.approved = await reads(fx, p.id);
+      J.req.approved = await requestDeployment(fx.engine, p.id, J.approved.project.checks.candidate, 'alpha');
+    });
     J.pendingOps = all(fx.home, `SELECT o."id", s."journal_kind" AS "kind", s."state" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."id" IN (SELECT value FROM json_each(?))`, JSON.stringify(reasonsOf(J.req.approved).GIT_JOURNAL_PENDING ?? []));
     await tickUntil(fx.engine, p.id, () => (proposalStatus(fx.home, J.proposal.id) === 'applied' ? true : undefined), { max: 8, what: "the engine's serving check applied" });
     J.applied = await reads(fx, p.id);
@@ -409,9 +442,11 @@ describe('M626 (b) a service declaring serving with no behavioural check: blocke
     await builtWith(fx, p, { built: SERVICE_BUILT });
     await qualifyByFixture(fx.engine);
     await settled(fx, p.id);
-    await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18663, SERVED));
-    J.proposal = engineProposals(fx.home, p.id)[0];
-    J.proposed = await reads(fx, p.id);
+    await held(fx, p.id, async () => {
+      await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18663, SERVED));
+      J.proposal = engineProposals(fx.home, p.id)[0];
+      J.proposed = await reads(fx, p.id);
+    });
     if (J.proposal) {
       J.decision = await openDecision(fx, p.id, 'check_correction_tightening', J.proposal.id, { max: 8 });
       J.asked = await reads(fx, p.id);
@@ -486,9 +521,11 @@ describe('M626 (c) a static site in static mode, its serving check pending: hold
     const { p } = await pagePublished(fx, { name: 'pantry-static-c' });
     await builtWith(fx, p, { built: STATIC_PAGE_BUILT });
     await settled(fx, p.id);
-    await writeConfig(fx, p.id, 'alpha', STATIC_CONFIG(18664));
-    J.proposal = engineProposals(fx.home, p.id)[0];
-    J.proposed = await reads(fx, p.id);
+    await held(fx, p.id, async () => {
+      await writeConfig(fx, p.id, 'alpha', STATIC_CONFIG(18664));
+      J.proposal = engineProposals(fx.home, p.id)[0];
+      J.proposed = await reads(fx, p.id);
+    });
     if (J.proposal) {
       J.decision = await openDecision(fx, p.id, 'check_correction_tightening', J.proposal.id, { max: 8 });
       J.asked = await reads(fx, p.id);
