@@ -2,7 +2,7 @@
 
 **Item.** DECISIONS item 47. Sean, 2026-11-24: "Track the M70 and M626(c) concurrent failures as a separate test-reliability item. They reproduced on main under concurrency. Keep that evidence alongside the passing serial results and preserve the assertions when fixing the timing."
 
-**Branch.** `verify/test-reliability-m70-m626c`, cut from engine main 203674cf. The test change is commit 1f86f7c5. The engine is unchanged, and no harness file was changed.
+**Branch.** `verify/test-reliability-m70-m626c`, cut from engine main 203674cf. The test changes are commit 1f86f7c5 (M70, M626) and commit d9913fdd (M616, the extension below). The engine is unchanged, and no harness file was changed.
 
 **Evidence.** All logs and the run status lines are in `~/surety-evidence/batch-2026-11-24/item-47-test-reliability/` (`status.log` plus one `<label>.log` per run). Main's reproductions stay where they were: `~/surety-evidence/batch-2026-11-24/items-43-44/m70-concurrency-main/`.
 
@@ -146,7 +146,75 @@ not ok 8 - (e) complete, configured where it can be hosted, its required behavio
   - M616's fixture writes `alpha` in static mode, then in service mode, and reads after the second write (`M616…test.mjs` lines 116 to 119). Writing the static configuration plausibly captures the engine's serving-check proposal.
   - A tick that ran between the two writes would then have raised its `check_correction_tightening` question. That is M626's mechanism, in a third file.
   - The run's store was removed at teardown, so I cannot name the decision.
-- **Status:** not fixed here, because it is outside item 47's two files. It passed in the other four concurrent runs, and it did not fail in main's two runs. It is a candidate for the same treatment: hold the scheduler from before the static write through the `inService` read. Whether to include it is the driver's call.
+- **Status (as first written):** not fixed here, because it is outside item 47's two files. The coordinator then extended item 47 to M616; the probe confirmed the mechanism and d9913fdd fixes it (see the extension below). It passed in the other four concurrent runs, and it did not fail in main's two runs. It is a candidate for the same treatment: hold the scheduler from before the static write through the `inService` read. Whether to include it is the driver's call.
+
+## Extension: M616 (the coordinator's message, 2026-11-24; the driver extended item 47 to it)
+
+The coordinator ruled that the after-conc-3 failure is the same race and asked for the same treatment in M616. The test change is commit d9913fdd. No assertion line changed: `git diff 1f86f7c5 d9913fdd` touches no `assert`. The engine and the harness are unchanged.
+
+**Cause.** M616's first block, (a), (d), (e) on a browser app, writes `alpha` in static mode, reads (`inStatic`), then writes it in service mode and reads again (`inService`).
+- Both reads expect NOW `build_complete`.
+- The static configuration captures the engine's serving-check proposal, and its write asks for a tick (K1).
+- A tick that runs before either read raises the proposal's question, so NOW reads `waiting_on_you` / `answer_decision`.
+
+The static page's (e) block has the same exposure in two places, though no run caught it:
+- `proposed` after its static configuration, with "its question not yet raised" and NOW `build_complete`;
+- `approved and not yet applied` after the answer.
+
+**Probe (not committed; `probe616-old.log`, `probe616-new.log`).** I injected the same `requestTick` plus a 3 s wait right after the static configuration in the first block, and ran with `--test-name-pattern "M616 \(a\), \(d\), \(e\) a browser app"`.
+
+| Copy | Result |
+|---|---|
+| The file before this change (1f86f7c5) | 8 tests, 6 pass, 2 fail |
+| The fixed file (d9913fdd) | 8 tests, 8 pass, 0 fail |
+
+In the 1f86f7c5 copy, the failures were:
+- `not ok 7` ("configured where it cannot be hosted", `inStatic`);
+- `not ok 8`, the after-conc-3 case, with the identical text `{"state":"waiting_on_you","primary_action":"answer_decision","reason":"One decision is waiting for your answer. The planned build and its automated gates are complete.","cause":null}` / `+ 'waiting_on_you'` `- 'build_complete'`.
+
+This confirms the mechanism, a tick between the static configuration and the reads. I did not read which decision was open; that it is the serving-check question is inferred from the engine's flow.
+
+**Change.** M616 gets the same `held(fx, project, body)` as M626: arm `scheduler.tick_running`, ask for a tick, wait at the barrier, run the step and its reads, release. It is used around:
+- the first block's static configuration, `inStatic`, service configuration and `inService`;
+- the static page's static configuration, the engine proposals and the `proposed` read;
+- the static page's answer `approve`, the `approved` read and `approvedStatus`.
+
+These steps were left unchanged:
+- (b) and (c): they read only compatibility, which is evaluated by the configuration write itself and which no tick moves.
+- The publication, building and completion reads: no tick moves those states without the scripted runs the fixture drives.
+- The `applied` read: the checks wait for `recordChecks`.
+- The "neither present nor proposed" block: it reads after `tickUntil` has settled the rejection.
+
+**Why no assertion is weaker.** Each state is read where it holds:
+- `unsupported` and `blocked required_check_missing` with NOW `build_complete`, before any tick can raise the static configuration's question;
+- `proposed` with no decision;
+- `approved, not applied`.
+
+After the hold is released, `openDecision` / `tickUntil` read the following states as before.
+
+**Runs** (`status.log`; HEAD d9913fdd, clean tree):
+
+| Run | When (UTC) | Tests | Pass | Fail |
+|---|---|---|---|---|
+| trial-M616 (alone, uncommitted edit on ea91b40e) | 16:33:08 | 23 | 23 | 0 |
+| m616fix-M616-alone-1 | 16:34:08 | 23 | 23 | 0 |
+| m616fix-M616-alone-2 | 16:34:37 | 23 | 23 | 0 |
+| m616fix-M616-alone-3 | 16:35:03 | 23 | 23 | 0 |
+| m616fix-conc-1 (six files, concurrency 4) | 16:35:32 to 16:36:22 | 123 | 123 | 0 |
+| m616fix-conc-2 | 16:36:22 to 16:37:09 | 123 | 123 | 0 |
+| m616fix-conc-3 | 16:37:09 to 16:37:55 | 123 | 123 | 0 |
+| m616fix-conc-4 | 16:37:55 to 16:38:42 | 123 | 123 | 0 |
+| m616fix-conc-5 | 16:38:42 to 16:39:29 | 123 | 123 | 0 |
+
+Runs 4 and 5 record `dirty=1`: this report was being edited in the worktree while they ran. Both test files and the engine were at d9913fdd.
+
+**Totals on d9913fdd:**
+- M616 alone: 3 of 3 runs green (23/23 each).
+- The six-file set at concurrency 4: 5 of 5 runs green (123/123 each).
+
+Over all ten concurrent runs after the M70/M626 fix (five on 1f86f7c5, five on d9913fdd), the one failure is after-conc-3's M616 (e), recorded above.
+
+The five earlier concurrent runs on 1f86f7c5, including after-conc-3's M616 (e) failure, stand as recorded above.
 
 ## What is not claimed
 
@@ -157,5 +225,6 @@ not ok 8 - (e) complete, configured where it can be hosted, its required behavio
   - the operations case waits only for the observations.
 - M70's NOW case, the decisions read and the observation-age case were not changed. NOW already holds the scheduler; the other two have no "nothing written" window.
 - Not shown here: a deterministic reproduction of M70's straddle (only the before run and main's run1); M626 (c) failing on this host before the fix, other than by the probe.
-- The M616 (e) failure is reported, not explained beyond the inference above, and not fixed.
+- M616 (e) (after-conc-3): its mechanism is confirmed by the probe, and it is fixed in d9913fdd (the extension above). Which decision was open in after-conc-3 was not read, because the store was removed at teardown.
+- M616 (b), (c) and the rejected-proposal block were not changed, for the reasons given above.
 - No engine or harness seam was missing, so no objection was filed.
