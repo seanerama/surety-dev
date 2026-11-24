@@ -246,7 +246,7 @@ describe('M628 (a) a candidate lacking only the Reviewer sign-off: the request q
       // Never deploy: null, or `tick` while the queued review is eligible and
       // not yet dispatched (the driver's companion 8b74035b).
       assert.ok(read.now.primary_action === null || (read.now.primary_action === 'tick' && d.review.state === 'queued'), `${what}: ${JSON.stringify(read.now)}`);
-      assert.match(read.now.reason, /Waiting for Reviewer sign-off/, `${what}: the NOW sentence names it (${read.now.reason})`);
+      assert.match(read.now.reason, /waiting for Reviewer sign-off/i, `${what}: the NOW sentence names it (${read.now.reason})`);
     }
   });
 

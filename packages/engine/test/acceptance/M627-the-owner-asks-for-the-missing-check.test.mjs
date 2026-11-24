@@ -249,6 +249,7 @@ describe('M627 (a) under manual policy: the owner asks for the missing behaviour
     J.runsQueued = runsOf(fx.home, item).length;
     // The Verifier's run, held.
     J.held = await runToHold(fx, p.id, item);
+    J.runModel = all(fx.home, 'SELECT "model_requested" FROM "runs" WHERE "id" = ?', J.held.run.id)[0]?.model_requested ?? null;
     J.running = await projectBody(fx, p.id);
     J.againRunning = await ask(fx, p.id);
     J.acts.push(J.againRunning.status);
@@ -315,6 +316,11 @@ describe('M627 (a) under manual policy: the owner asks for the missing behaviour
     assert.equal(a.offer.path, ROUTE(J.p.id), JSON.stringify(a.offer));
     assert.equal(typeof a.offer.consequence_text, 'string');
     assert.match(a.offer.consequence_text, /Verifier/, `names the Verifier role (${a.offer.consequence_text})`);
+    // The model configured for the Verifier: the project's model_verifier,
+    // which the Verifier's run records as the model it requests
+    // (runs.ts, model_requested).
+    t.diagnostic(`the Verifier's run requests the model ${J.runModel}`);
+    assert.equal(J.runModel, VERIFIER_MODEL, 'the run records the configured model as the one it requests');
     assert.ok(a.offer.consequence_text.includes(VERIFIER_MODEL), `names the model configured for the Verifier, ${VERIFIER_MODEL} (${a.offer.consequence_text})`);
   });
 
@@ -492,13 +498,16 @@ describe('M627 (c) refusals: no candidate yet; nothing a Verifier could write is
     J.fx = fx;
     const { p } = await published(fx, 'pantry-ask-c');
     J.p = p;
+    // The environment configured before any candidate (an environment the
+    // owner has not configured is none the engine deploys to: the route, as
+    // a deployment request, answers 404 for it).
+    await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18673));
     J.seq0 = maxSeq(fx.home);
     J.workBeforeCandidate = workCount(fx.home, p.id);
     J.noCandidate = await ask(fx, p.id);
     J.workAfterCandidate = workCount(fx.home, p.id);
     await builtWith(fx, p, { built: SERVICE_BUILT, authoring: WITH_BEHAVIOUR });
     await qualifyByFixture(fx.engine);
-    await writeConfig(fx, p.id, 'alpha', SERVICE_CONFIG(18673));
     await settled(fx, p.id);
     J.workBeforeReads = workCount(fx.home, p.id);
     J.read = await everyRead(fx, p.id);
