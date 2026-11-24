@@ -31,3 +31,25 @@
 -- teardown's or deployment's finalization event.
 ALTER TABLE observation_history ADD COLUMN seq INTEGER;
 ALTER TABLE operations ADD COLUMN finalized_seq INTEGER;
+
+-- Finding 1, a refused policy Alpha request reconsidered
+-- (store/transitions/deploy.ts reopenableWait, resultComing,
+-- invalidatedByChange): what a check's executions and results were as at
+-- the candidate's latest `alpha_authorize` evaluation, read by the
+-- evaluation's own gate.evaluated event seq against each fact's position:
+-- registered by then (created_seq < seq), ended at or after it
+-- (finished_seq, else its result's created_seq, >= seq), a result recorded
+-- by then, invalidated after it (invalidated_seq >= seq).
+ALTER TABLE gate_evaluations ADD COLUMN seq INTEGER;
+ALTER TABLE check_executions ADD COLUMN created_seq INTEGER;
+ALTER TABLE check_executions ADD COLUMN finished_seq INTEGER;
+ALTER TABLE check_results ADD COLUMN created_seq INTEGER;
+ALTER TABLE check_results ADD COLUMN invalidated_seq INTEGER;
+-- The latest reconsideration of a policy request recorded `not_issued`,
+-- made again because what refused it only waited (reopenableWait), as
+-- canonical JSON {"evaluation", "order_basis", "at"}: the evaluation read
+-- and whether its comparisons were by store order (`seq`) or, a row
+-- lacking its order, by the recorded timestamps (`timestamp_fallback`).
+-- NULL: never reconsidered on that route.
+ALTER TABLE deployment_requests ADD COLUMN reconsidered TEXT;
+

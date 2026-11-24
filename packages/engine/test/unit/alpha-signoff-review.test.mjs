@@ -275,3 +275,143 @@ test("the owner's own request refused on the sign-off alone queues the review an
   assert.equal(reviews(db).length, 1);
   assert.deepEqual(requests(db).map((r) => [r.requested_by, r.outcome]), [['human', 'not_issued']]);
 });
+
+// ---- DECISIONS item 51, finding 1: a refused policy request reconsidered by store order ----------
+//
+// reopenableWait reads the latest alpha_authorize evaluation "as at" it:
+// whether a check it found not passed was registered before it and ended
+// after it. That was two wall-clock stamps of different transactions; a
+// host clock stepping back between K's registration and the evaluation made
+// K read as registered after it, and the `not_issued` request was never
+// made again. Now the evaluation's gate.evaluated seq against each fact's
+// place in the store order (migration 0052). The controlled clock is the
+// engine's own seam cell (SEAM.md §425), stepped back in-process. Where a
+// column of 0052 is absent (the base) nothing is written to it, so the same
+// tests reproduce the defect there.
+
+const { registerExecutions, recordExecutionResult } = await import(join(dist, 'store', 'transitions', 'checks.js'));
+const { configureWorker } = await import(join(dist, 'testing', 'seam.js'));
+const clockCell = new SharedArrayBuffer(8);
+configureWorker({ harness: false, barriers: [], shared: null, clock: clockCell, scripted: null, probes: {}, hostChecks: { mode: 'unrun', forced: {} } }, () => {});
+const clockOffset = new BigInt64Array(clockCell);
+const stepBack = (seconds) => Atomics.add(clockOffset, 0, BigInt(-seconds * 1000));
+const hasColumn = (db, table, column) => db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(table, column) !== undefined;
+
+// Candidate 1 with a required check K of version 2 beside the others, all
+// of which passed, and the Reviewer's sign-off on that content: K the only
+// thing the gate can lack. K's execution registered now.
+function withCheckK(t) {
+  t.after(() => Atomics.store(clockOffset, 0, 0n));
+  const db = store(t);
+  db.prepare(
+    `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria, requirement_ids, origin)
+     VALUES ('chk_k_pv_2', ?, 'prj_1', 'k', 'pv_2', 'smoke', 1, '["alpha_authorize"]', '.surety/checks/defs/k.json', 'h', 'direct', '[]', '[]', 'acceptance')`,
+  ).run(AT);
+  const cand = db.prepare(`SELECT * FROM candidates WHERE id = 'cand_1'`).get();
+  db.prepare(`INSERT INTO signoffs (id, created_at, project, candidate, revision, role, scope, module, run, acceptance_content_hash, recorded_at) VALUES ('so_1', ?, 'prj_1', 'cand_1', ?, 'reviewer', 'candidate', NULL, 'run_r', ?, ?)`).run(
+    AT,
+    A,
+    contentHash(db, 'prj_1', cand),
+    AT,
+  );
+  const check = db.prepare(`SELECT * FROM checks WHERE id = 'chk_k_pv_2'`).get();
+  const [k] = transact(db, ENGINE_ACTOR, (tx) => registerExecutions(tx, { project: 'prj_1', candidate: cand, checks: [check], trigger: { source: 'operator_request', id: 'req_k', generation: 1 } }));
+  return { db, k: k.id };
+}
+const execution = (db, id) => db.prepare('SELECT * FROM check_executions WHERE id = ?').get(id);
+// K's result: from `quarantined` (its termination not yet observed) or `running`.
+let outputs = 0;
+function result(db, k, exit) {
+  const output = `rec_out_${++outputs}`;
+  db.prepare(`INSERT INTO records (id, created_at, project, kind, path, sha256, bytes, redaction_version, published, post_scan) VALUES (?, ?, 'prj_1', 'check_output', ?, ?, 1, 'r1', 1, 'clean')`).run(output, AT, output, 'a'.repeat(64));
+  return transact(db, ENGINE_ACTOR, (tx) => recordExecutionResult(tx, { execution: k, established: true, exit_status: exit, signaled: false, deadline_hit: false, orphans: false, not_run_reason: null, output, output_dropped_bytes: null }));
+}
+// The request refused on K and recorded `not_issued`: K's execution is held
+// (quarantined, its result not coming now), so the refusal is not settling.
+function refusedOnK(db, k) {
+  db.prepare(`UPDATE check_executions SET status = 'quarantined' WHERE id = ? AND status NOT IN ('recorded', 'interrupted', 'cancelled')`).run(k);
+  const refused = request(db);
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  const ev = latestAuthorize(db);
+  assert.deepEqual(JSON.parse(ev.reasons), [{ code: 'CHECK_NOT_PASSED', subjects: ['chk_k_pv_2'] }], 'K is the only reason');
+  assert.deepEqual(requests(db).map((r) => [r.requested_by, r.outcome]), [['policy', 'not_issued']], 'recorded not_issued under its key');
+  return ev;
+}
+const authorizations = (db) => db.prepare(`SELECT status FROM deployment_authorizations WHERE candidate = 'cand_1' AND status = 'issued'`).all().length;
+
+test('item 51 finding 1 (a, b): K registered, the clock steps back, the policy request refused on K: once K passes the engine reconsiders it once, by store order, and further ticks make no second request', (t) => {
+  const { db, k } = withCheckK(t);
+  stepBack(5);
+  const ev = refusedOnK(db, k);
+  assert.ok(ev.created_at < execution(db, k).created_at, `the clock stepped back: the evaluation (${ev.created_at}) is stamped before K's registration (${execution(db, k).created_at})`);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'while K is held nothing is requested again');
+  result(db, k, 0);
+  const due = policyRequestDue(db, { project: 'prj_1' });
+  assert.equal(due?.candidate, 'cand_1', 'K was registered before the evaluation and passed after it: the refusal only waited, and the request is owed again');
+  const issued = request(db);
+  assert.equal(issued.status, 201, JSON.stringify(issued.body));
+  assert.equal(latestAuthorize(db).outcome, 'satisfied');
+  const rows = requests(db);
+  assert.deepEqual(rows.map((r) => [r.requested_by, r.outcome]), [['policy', 'pending']], 'the one policy row of the key, made again');
+  if (hasColumn(db, 'deployment_requests', 'reconsidered')) {
+    assert.deepEqual(JSON.parse(rows[0].reconsidered), { at: JSON.parse(rows[0].reconsidered).at, evaluation: ev.id, order_basis: 'seq' }, 'the row records the evaluation it reconsidered and the basis');
+  }
+  for (let i = 0; i < 5; i++) {
+    assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, `tick ${i + 1}: nothing more is owed`);
+    request(db);
+  }
+  assert.equal(requests(db).length, 1);
+  assert.equal(authorizations(db), 1, 'one authorization issued, never a second');
+});
+
+test('item 51 finding 1 (c): K outstanding keeps the refusal waiting with no request; K failed makes it lasting, its failure the blocker, no authorization', (t) => {
+  const { db, k } = withCheckK(t);
+  stepBack(5);
+  const first = refusedOnK(db, k);
+  db.prepare(`UPDATE check_executions SET status = 'running' WHERE id = ?`).run(k);
+  for (let i = 0; i < 3; i++) assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'K outstanding: no request');
+  result(db, k, 1);
+  // Made again once: the request evaluates anew and reads K's failure.
+  if (policyRequestDue(db, { project: 'prj_1' }) !== null) request(db);
+  const last = latestAuthorize(db);
+  assert.deepEqual(JSON.parse(last.reasons), [{ code: 'CHECK_NOT_PASSED', subjects: ['chk_k_pv_2'] }], "the owner's read: K's failure is the blocker");
+  assert.equal(requests(db)[0].outcome, 'not_issued');
+  for (let i = 0; i < 5; i++) assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, `tick ${i + 1}: lasting, never a loop`);
+  assert.equal(authorizations(db), 0, 'no authorization issued');
+  assert.ok(db.prepare(`SELECT COUNT(*) AS n FROM gate_evaluations WHERE gate_kind = 'alpha_authorize'`).get().n <= 2, `at most one evaluation after ${first.id}`);
+});
+
+test('item 51 finding 1 (d): stamps of the same millisecond: K failed before the evaluation is lasting, registered before and passed after is reconsidered', (t) => {
+  {
+    const { db, k } = withCheckK(t);
+    db.prepare(`UPDATE check_executions SET status = 'running' WHERE id = ?`).run(k);
+    result(db, k, 1);
+    refusedOnK(db, k);
+    const ev = latestAuthorize(db);
+    // K ended before the evaluation in the store order, stamped the same millisecond.
+    db.prepare('UPDATE check_executions SET finished_at = ?, created_at = ? WHERE id = ?').run(ev.created_at, ev.created_at, k);
+    db.prepare('UPDATE check_results SET created_at = ? WHERE id = (SELECT result FROM check_executions WHERE id = ?)').run(ev.created_at, k);
+    assert.equal(policyRequestDue(db, { project: 'prj_1' }), null, 'K failed before the evaluation: lasting, nothing made again');
+  }
+  {
+    const { db, k } = withCheckK(t);
+    const ev = refusedOnK(db, k);
+    result(db, k, 0);
+    db.prepare('UPDATE check_executions SET created_at = ?, finished_at = ? WHERE id = ?').run(ev.created_at, ev.created_at, k);
+    db.prepare('UPDATE check_results SET created_at = ? WHERE id = (SELECT result FROM check_executions WHERE id = ?)').run(ev.created_at, k);
+    assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'registered before and passed after the evaluation, the same millisecond: reconsidered');
+  }
+});
+
+test('item 51 finding 1 (e): an evaluation recorded before the store order existed is read on its timestamps, and the reconsideration names that fallback', (t) => {
+  const { db, k } = withCheckK(t);
+  const ev = refusedOnK(db, k);
+  result(db, k, 0);
+  if (hasColumn(db, 'gate_evaluations', 'seq')) db.prepare('UPDATE gate_evaluations SET seq = NULL WHERE id = ?').run(ev.id);
+  assert.equal(policyRequestDue(db, { project: 'prj_1' })?.candidate, 'cand_1', 'by the recorded timestamps, K registered before and ended after');
+  assert.equal(request(db).status, 201);
+  if (hasColumn(db, 'deployment_requests', 'reconsidered')) {
+    const r = JSON.parse(requests(db)[0].reconsidered);
+    assert.deepEqual([r.evaluation, r.order_basis], [ev.id, 'timestamp_fallback'], 'the fallback is named on the row, never presented as store order');
+  } else assert.fail('no column records the basis of the reconsideration');
+});

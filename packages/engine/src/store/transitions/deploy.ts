@@ -52,6 +52,7 @@ import {
   environmentChangesRead,
   inventoryOfRead,
   observedRead,
+  type OrderBasis,
   openChanges,
   recordIdentityReads,
   recordInventoryRead,
@@ -906,17 +907,48 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
 // key kept the `not_issued` of the gap's refusal, and nothing read the newer
 // evaluation: a silent stall).
 function reopened(db: Db, row: RequestRow, candidate: string): boolean {
+  return reconsideration(db, row, candidate) !== null;
+}
+
+// Why a policy row `not_issued` is made again, or null: `gap` (alpha-gap.ts
+// reopenableRefusal), or `wait` with the evaluation it read and the basis
+// its comparisons were made on (DECISIONS item 51: recorded on the row as
+// `reconsidered` when the request is made again).
+type Reconsideration = { route: 'gap' } | { route: 'wait'; evaluation: string; order_basis: OrderBasis };
+function reconsideration(db: Db, row: RequestRow, candidate: string): Reconsideration | null {
   const args = { ...(row as RequestRow & { reason: string | null }), candidate };
-  if (reopenableRefusal(db, args, (r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(db, candidate, r)))) return true;
+  if (reopenableRefusal(db, args, (r) => typeof r.code === 'string' && (r.code.endsWith('_PENDING') || settlingAfterChange(db, candidate, r)))) return { route: 'gap' };
   return reopenableWait(db, args);
 }
 
-// The candidate's latest `alpha_authorize` evaluation.
-function latestAuthorize(db: Db, project: string, candidate: string): { id: string; created_at: string; reasons: { code: string; subjects?: string[] }[] } | null {
-  const row = db.prepare(`SELECT "id", "created_at", "reasons" FROM "gate_evaluations" WHERE "project" = ? AND "candidate" = ? AND "gate_kind" = 'alpha_authorize' ORDER BY rowid DESC LIMIT 1`).get(project, candidate) as
-    | { id: string; created_at: string; reasons: string }
+// The candidate's latest `alpha_authorize` evaluation, with its place in the
+// store order (its gate.evaluated event's seq; null when recorded before
+// migration 0052).
+function latestAuthorize(db: Db, project: string, candidate: string): { id: string; created_at: string; seq: number | null; reasons: { code: string; subjects?: string[] }[] } | null {
+  const row = db.prepare(`SELECT "id", "created_at", "seq", "reasons" FROM "gate_evaluations" WHERE "project" = ? AND "candidate" = ? AND "gate_kind" = 'alpha_authorize' ORDER BY rowid DESC LIMIT 1`).get(project, candidate) as
+    | { id: string; created_at: string; seq: number | null; reasons: string }
     | undefined;
   return row ? { ...row, reasons: parseJson<{ code: string; subjects?: string[] }[]>(row.reasons) ?? [] } : null;
+}
+
+// A recorded refusal read again "as at" its evaluation (DECISIONS item 51,
+// finding 1): what was registered, ended, recorded or invalidated before
+// or after it is read by the store order, the evaluation's gate.evaluated
+// seq against each fact's position (migration 0052), never by comparing
+// two wall-clock stamps. A comparison where the evaluation or the fact
+// carries no order (recorded before 0052) is made on the recorded
+// timestamps, as before, and `fallback` records that it was.
+export interface AsAt {
+  at: string;
+  seq: number | null;
+  fallback: boolean;
+}
+
+// Is the fact (`seq` its position, `stamp` its time) before the evaluation?
+function beforeEvaluation(asAt: AsAt, fact: { seq: number | null; stamp: string }, inclusive: boolean): boolean {
+  if (asAt.seq !== null && fact.seq !== null) return fact.seq < asAt.seq;
+  asAt.fallback = true;
+  return inclusive ? fact.stamp <= asAt.at : fact.stamp < asAt.at;
 }
 
 // A policy row `not_issued` (no preparation refusal) whose candidate's
@@ -930,17 +962,30 @@ function latestAuthorize(db: Db, project: string, candidate: string): { id: stri
 // on anything lasting, it records `not_issued` on that evaluation, which then
 // reads as lasting, so the key is never a loop. A row recorded on such an
 // evaluation before this route existed is made again once.
-function reopenableWait(db: Db, args: { project: string; candidate: string; requested_by: string; outcome: string; reason: string | null }): boolean {
-  if (args.requested_by !== 'policy' || args.outcome !== 'not_issued' || args.reason !== null) return false;
+//
+// "As at that evaluation" is the store order (DECISIONS item 51, finding
+// 1; AsAt): a check registered before the evaluation whose result came
+// after it was still to come then, even when the clock stepped back
+// between the two and its registration's stamp is the later one. The
+// evaluation read and the basis (`seq`, or `timestamp_fallback` for rows
+// recorded before migration 0052) are returned, and recorded on the row
+// when the request is made again (`deployment_requests.reconsidered`).
+function reopenableWait(
+  db: Db,
+  args: { project: string; candidate: string; requested_by: string; outcome: string; reason: string | null },
+): { route: 'wait'; evaluation: string; order_basis: OrderBasis } | null {
+  if (args.requested_by !== 'policy' || args.outcome !== 'not_issued' || args.reason !== null) return null;
   const ev = latestAuthorize(db, args.project, args.candidate);
-  if (ev === null || ev.reasons.length === 0) return false;
-  if (ev.reasons.some((r) => gapReason(db, args.project, r))) return false;
-  if (!ev.reasons.some((r) => r.code === 'CHECK_NOT_PASSED' || r.code === 'SIGNOFF_MISSING')) return false;
-  return ev.reasons.every(
+  if (ev === null || ev.reasons.length === 0) return null;
+  if (ev.reasons.some((r) => gapReason(db, args.project, r))) return null;
+  if (!ev.reasons.some((r) => r.code === 'CHECK_NOT_PASSED' || r.code === 'SIGNOFF_MISSING')) return null;
+  const asAt: AsAt = { at: ev.created_at, seq: ev.seq, fallback: false };
+  const waited = ev.reasons.every(
     (r) =>
       typeof r.code === 'string' &&
-      (r.code.endsWith('_PENDING') || settlingAfterChange(db, args.candidate, r, ev.created_at) || (r.code === 'SIGNOFF_MISSING' && signoffWaited(db, args.project, ev.id))),
+      (r.code.endsWith('_PENDING') || settlingAfterChange(db, args.candidate, r, asAt) || (r.code === 'SIGNOFF_MISSING' && signoffWaited(db, args.project, ev.id))),
   );
+  return waited ? { route: 'wait', evaluation: ev.id, order_basis: asAt.fallback ? 'timestamp_fallback' : 'seq' } : null;
 }
 
 // Execution statuses a check's result is still to come from (D3 A.5): not
@@ -952,24 +997,29 @@ const RESULT_COMING = ['queued', 'materializing', 'running', 'collecting'];
 // ended after it or not yet), or, now, the candidate owed its registration
 // (L2; a mark this engine cannot read waits for nothing)? A failed result is
 // not coming: the request reads it as lasting.
-function resultComing(db: Db, candidate: string, check: string, at?: string): boolean {
+function resultComing(db: Db, candidate: string, check: string, at?: AsAt): boolean {
   const rows = db
     .prepare(
-      `SELECT x."created_at", x."status", x."finished_at", r."created_at" AS "result_at" FROM "check_executions" x LEFT JOIN "check_results" r ON r."id" = x."result" WHERE x."candidate" = ? AND x."check" = ?`,
+      `SELECT x."created_at", x."created_seq", x."status", x."finished_at", x."finished_seq", r."created_at" AS "result_at", r."created_seq" AS "result_seq"
+         FROM "check_executions" x LEFT JOIN "check_results" r ON r."id" = x."result" WHERE x."candidate" = ? AND x."check" = ?`,
     )
-    .all(candidate, check) as { created_at: string; status: string; finished_at: string | null; result_at: string | null }[];
+    .all(candidate, check) as { created_at: string; created_seq: number | null; status: string; finished_at: string | null; finished_seq: number | null; result_at: string | null; result_seq: number | null }[];
   if (at === undefined) {
     if (rows.some((x) => RESULT_COMING.includes(x.status))) return true;
     const due = readDue((db.prepare('SELECT "checks_due" FROM "candidates" WHERE "id" = ?').get(candidate) as { checks_due: string | null } | undefined)?.checks_due);
     return due !== null && !due.unknown && due.owed.length > 0;
   }
   return rows.some((x) => {
-    if (x.created_at > at) return false;
+    // Registered after the evaluation: it was not what the evaluation read.
+    if (!beforeEvaluation(at, { seq: x.created_seq, stamp: x.created_at }, true)) return false;
     if (RESULT_COMING.includes(x.status)) return true;
-    // Ended in the evaluation's millisecond: read as after it (made again
-    // once, the newer evaluation then reads the result as it is).
+    // Ended at or after the evaluation (by store order; on the fallback, in
+    // its millisecond too: made again once, the newer evaluation then reads
+    // the result as it is).
     const ended = x.finished_at ?? x.result_at;
-    return ended !== null && ended >= at;
+    if (ended === null) return false;
+    const endedSeq = x.finished_at !== null ? x.finished_seq : x.result_seq;
+    return !beforeEvaluation(at, { seq: endedSeq, stamp: ended }, false);
   });
 }
 
@@ -979,16 +1029,19 @@ function resultComing(db: Db, candidate: string, check: string, at?: string): bo
 // check registered again under it, with no current result of any version
 // (M401's T1 store, 17195cf..42c58ba)? As at `at` when given: the results
 // and invalidations recorded by then.
-function invalidatedByChange(db: Db, candidate: string, check: string, at?: string): boolean {
+function invalidatedByChange(db: Db, candidate: string, check: string, at?: AsAt): boolean {
   const key = (db.prepare('SELECT "key" FROM "checks" WHERE "id" = ?').get(check) as { key: string } | undefined)?.key;
   if (key === undefined) return false;
   const rows = (
     db
-      .prepare(`SELECT x."created_at", x."invalidated_at", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`)
-      .all(candidate, key) as { created_at: string; invalidated_at: string | null; invalidated_reason: string | null }[]
+      .prepare(
+        `SELECT x."created_at", x."created_seq", x."invalidated_at", x."invalidated_seq", x."invalidated_reason" FROM "check_results" x JOIN "checks" c ON c."id" = x."check" WHERE x."candidate" = ? AND c."key" = ?`,
+      )
+      .all(candidate, key) as { created_at: string; created_seq: number | null; invalidated_at: string | null; invalidated_seq: number | null; invalidated_reason: string | null }[]
   )
-    .filter((x) => at === undefined || x.created_at <= at)
-    .map((x) => (at !== undefined && x.invalidated_at !== null && x.invalidated_at > at ? { ...x, invalidated_at: null } : x));
+    // Recorded by the evaluation; an invalidation after it not yet made then.
+    .filter((x) => at === undefined || beforeEvaluation(at, { seq: x.created_seq, stamp: x.created_at }, true))
+    .map((x) => (at !== undefined && x.invalidated_at !== null && !beforeEvaluation(at, { seq: x.invalidated_seq, stamp: x.invalidated_at }, true) ? { ...x, invalidated_at: null } : x));
   return rows.length > 0 && rows.every((x) => x.invalidated_at !== null) && rows.some((x) => x.invalidated_reason === 'spec_changed' || x.invalidated_reason === 'protected_version_superseded');
 }
 
@@ -1000,7 +1053,7 @@ function invalidatedByChange(db: Db, candidate: string, check: string, at?: stri
 // protected version's checks registered on the candidate, before they ran.
 // A failed result never settles. Asked again once they end, like
 // *_PENDING. Judged as at `at` when given (a recorded refusal read again).
-export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }, at?: string): boolean {
+export function settlingAfterChange(db: Db, candidate: string, r: { code: string; subjects?: string[] }, at?: AsAt): boolean {
   if (r.code === 'EVIDENCE_GENERATION_STALE') return true;
   if (r.code !== 'CHECK_NOT_PASSED') return false;
   const subjects = r.subjects ?? [];
@@ -1112,10 +1165,19 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
     const existing = requestOfKey(tx.db, args.project, key);
-    if (existing && !preparing(existing) && !reopened(tx.db, existing, candidate.id)) return { status: 200, body: { request: null, skipped: 'requested' } };
+    const again = existing && !preparing(existing) ? reconsideration(tx.db, existing, candidate.id) : null;
+    if (existing && !preparing(existing) && again === null) return { status: 200, body: { request: null, skipped: 'requested' } };
     // Re-prepared under its key after an unexpected error: one more preparation counted.
     if (existing) tx.db.prepare('UPDATE "deployment_requests" SET "preparation_attempts" = "preparation_attempts" + 1 WHERE "id" = ?').run(existing.id);
     if (pendingRow) return { status: 200, body: { request: null, skipped: 'pending' } };
+    // Made again because what refused it only waited (DECISIONS item 51):
+    // the row records which evaluation was read and on what basis its
+    // order was judged, the store's or the timestamps' fallback.
+    if (existing && again !== null && again.route === 'wait') {
+      tx.db
+        .prepare('UPDATE "deployment_requests" SET "reconsidered" = ? WHERE "id" = ?')
+        .run(canonical({ evaluation: again.evaluation, order_basis: again.order_basis, at: tx.at }), existing.id);
+    }
   }
   const record = (auth: string, outcome: string) =>
     recordRequest(tx, { project: args.project, key, requested_by: requestedBy, candidate: candidate.id, environment: env.id, authorization: auth, work_item: workOf(auth)?.id ?? null, outcome });

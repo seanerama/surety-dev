@@ -1992,6 +1992,12 @@
         },
         "asset_inputs": {
           "required": false
+        },
+        "created_seq": {
+          "required": false
+        },
+        "finished_seq": {
+          "required": false
         }
       }
     },
@@ -2143,6 +2149,12 @@
           "required": false
         },
         "asset_inputs": {
+          "required": false
+        },
+        "created_seq": {
+          "required": false
+        },
+        "invalidated_seq": {
           "required": false
         }
       }
@@ -2547,6 +2559,9 @@
           "required": false
         },
         "preparation_attempts": {
+          "required": false
+        },
+        "reconsidered": {
           "required": false
         }
       }
@@ -3858,6 +3873,9 @@
           "required": false
         },
         "serving": {
+          "required": false
+        },
+        "seq": {
           "required": false
         }
       }

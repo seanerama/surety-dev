@@ -277,8 +277,8 @@ export function recordCheckResult(tx: Tx, args: ResultInput, label: Record<strin
   tx.db
     .prepare(
       `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
-         "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at", "created_seq")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -300,6 +300,7 @@ export function recordCheckResult(tx: Tx, args: ResultInput, label: Record<strin
       args.output ?? null,
       args.started_at ?? null,
       args.finished_at ?? null,
+      tx.storeOrder(),
     );
   tx.emit('check.result', { project: args.project, check: check.id, candidate: candidate.id, check_result: id }, { ...label, execution_seq: n, exit_status: args.exit_status });
   markStale(tx, { candidate: candidate.id });
@@ -392,8 +393,8 @@ export function insertExecutionResult(
     .prepare(
       `INSERT INTO "check_results" ("id", "created_at", "project", "check", "candidate", "source_revision", "protected_version", "runner_class", "runner_id", "environment",
          "artifact_digest", "execution_seq", "execution_established", "signaled", "deadline_hit", "exit_status", "output", "started_at", "finished_at",
-         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification", "deployment")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "execution", "not_run_reason", "orphans", "output_dropped_bytes", "runner_qualification", "deployment", "created_seq")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -421,6 +422,8 @@ export function insertExecutionResult(
       a.output_dropped_bytes,
       a.runner_qualification,
       a.deployment ?? null,
+      // Its place in the store order (DECISIONS item 51).
+      tx.storeOrder(),
     );
   // D7 §6.5 (G14): the slot@version it read, and the obligations a pass resolves.
   recordResultAssets(tx, { result: id, execution: a.execution, project: a.project, exit_status: a.exit_status });
@@ -439,7 +442,7 @@ export function insertExecutionResult(
     )
     .get(a.execution) as { g: number | null; o: number | null } | undefined;
   if (gen && gen.o !== null && (gen.g ?? 0) < gen.o) {
-    tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ? WHERE "id" = ?').run(tx.at, 'spec_changed', id);
+    tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ?, "invalidated_seq" = ? WHERE "id" = ?').run(tx.at, 'spec_changed', tx.storeOrder(), id);
   }
   markStale(tx, { candidate: a.candidate });
   return id;
