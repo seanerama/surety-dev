@@ -400,10 +400,10 @@ test('a nomination evaluates with the new candidate\'s tree; the next read serve
 // ---- deploy readiness and NOW -------------------------------------------------------------
 
 const BUILD_DONE = 'The planned build and its automated gates are complete.';
-const UNREAD_SERVING = "what follows a request could not be read (whether the engine's serving check is in place); the preview opens only once a deployment is verified";
 const NOT_PROPOSED =
-  "the engine's serving check has not been proposed yet; its proposal (made when the environment's static configuration is written), its approval, the deployment and its verification follow before the preview opens, and no deployment is made before the check is applied";
+  "the required serving check (post_deploy_serving, of the alpha_complete scope) is not in the effective protected version and no proposal of the engine's for it is open; the engine proposes it again when the environment's static configuration is written, and its approval and a request again follow";
 const THEN_VERIFIED = 'the deployment and its verification follow before the preview opens';
+const UNREAD_BLOCK = "whether the engine's file-serving check is in place could not be read (the project has no effective protected version); a deployment request is refused until it is in place";
 
 test('build.deploy_readiness is not_complete until the build is, whatever the environment', (t) => {
   const db = store(t);
@@ -446,33 +446,35 @@ test('the build complete in service mode for a static site: unsupported, no prim
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} Its environment alpha cannot host this output: ${missing}.`, cause: null });
 });
 
-test('the build complete in static mode: ready, deploy; the reason says where the engine\'s serving check stands', async (t) => {
+test('the build complete in static mode, its serving check neither present nor proposed: blocked, required_check_missing kind:post_deploy_serving, no primary action', async (t) => {
   const { db, site } = builtStaticSite(t);
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   configure(db, 'alpha', STATIC_CONTENT);
   const READY = 'The environment alpha can host this output (static site) with local_service in static mode.';
-  // No protected version: the serving check's state is not read, and said so;
-  // what follows a request is then not known (null, never a guess).
+  // No protected version: the serving check's state is not read, and said
+  // so; a request would be authorized for nothing the read can tell, so
+  // blocked, never ready (DECISIONS item 42).
   assert.deepEqual(read(db).build.deploy_readiness, {
-    state: 'ready',
-    reason: `${READY} Whether the engine's serving check is in place could not be read. Ready to request deployment, not verified and not open: ${UNREAD_SERVING}.`,
+    state: 'blocked',
+    reason: `The environment alpha can host this output (static site) with local_service in static mode, but a deployment would be refused now: ${UNREAD_BLOCK}.`,
     environment: 'alpha',
-    means: 'request_deployment',
-    follows: null,
+    decision: null,
+    blocker: { what: 'checks_unread', subject: null },
   });
   db.prepare(`INSERT INTO protected_versions (id, created_at, project, seq, fingerprint, change_kind, approved_by, approver_authority, approved_at, authorized, roots, effective_from) VALUES ('pv_1', ?, 'prj_1', 1, 'f1', 'initial', 'h', 'human', ?, 1, '[]', ?)`).run(AT, AT, AT);
   const p = read(db);
-  // The owner's ruling of 2026-10-29: not yet proposed, `ready` means ready
-  // to request deployment; the proposal, its approval and the
-  // verification follow, and the text says so.
+  // Neither present nor proposed (M616 (e) amended, DECISIONS item 42): a
+  // request would be refused, so blocked naming the required serving check
+  // and that it is proposed again with the static configuration; the
+  // `ready` with `serving_check_proposal` of 2026-10-29 no longer occurs.
   assert.deepEqual(p.build.deploy_readiness, {
-    state: 'ready',
-    reason: `${READY} The engine's serving check has not been proposed yet. Ready to request deployment, not verified and not open: ${NOT_PROPOSED}.`,
+    state: 'blocked',
+    reason: `The environment alpha can host this output (static site) with local_service in static mode, but a deployment would be refused now: ${NOT_PROPOSED}.`,
     environment: 'alpha',
-    means: 'request_deployment',
-    follows: ['serving_check_proposal', 'approval', 'deployment', 'verification'],
+    decision: null,
+    blocker: { what: 'required_check_missing', subject: 'kind:post_deploy_serving' },
   });
-  assert.deepEqual(p.now, { state: 'build_complete', primary_action: 'deploy', reason: `${BUILD_DONE} It is ready to request deployment to alpha (static site, local_service static mode), not verified and not open: ${NOT_PROPOSED}.`, cause: null });
+  assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} It cannot be deployed to alpha yet: ${NOT_PROPOSED}.`, cause: null });
   assert.doesNotMatch(p.now.reason, /visual|human|production|accept|ready to open/i);
 });
 
@@ -501,13 +503,17 @@ test('several environments: the first hostable is named; with none hostable, the
   specEnvironment(db, 'beta');
   configure(db, 'beta', validateConfig({ ...structuredClone(NO_START), targets: ['beta'], mode: 'static' }));
   assert.deepEqual(read(db).build.deploy_readiness, {
-    state: 'ready',
-    reason: `The environment beta can host this output (static site) with local_service in static mode. Whether the engine's serving check is in place could not be read. Ready to request deployment, not verified and not open: ${UNREAD_SERVING}.`,
+    state: 'blocked',
+    reason: `The environment beta can host this output (static site) with local_service in static mode, but a deployment would be refused now: ${UNREAD_BLOCK}.`,
     environment: 'beta',
-    means: 'request_deployment',
-    follows: null,
+    decision: null,
+    blocker: { what: 'checks_unread', subject: null },
   });
-  assert.equal(read(db).now.reason, `${BUILD_DONE} It is ready to request deployment to beta (static site, local_service static mode), not verified and not open: ${UNREAD_SERVING}.`);
+  assert.equal(read(db).now.reason, `${BUILD_DONE} It cannot be deployed to beta yet: ${UNREAD_BLOCK}.`);
+  effectiveV1(db);
+  assert.deepEqual(read(db).build.deploy_readiness.blocker, { what: 'required_check_missing', subject: 'kind:post_deploy_serving' });
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_s', ?, 'prj_1', 'pv_1', 'surety-static-serving', 'post_deploy_serving', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
+  assert.deepEqual([read(db).build.deploy_readiness.state, read(db).build.deploy_readiness.environment], ['ready', 'beta']);
   configure(db, 'beta', validateConfig({ ...structuredClone(SERVICE_CONTENT), targets: ['beta'] }));
   assert.deepEqual(read(db).build.deploy_readiness.environment, 'alpha', 'none hostable: the first');
 });
@@ -592,13 +598,14 @@ test("E1: the engine's serving check proposed and not applied: blocked (never re
   const HOST = 'The environment alpha can host this output (static site) with local_service in static mode';
   const WHAT = "the engine's serving check (proposal pp_1), which the deployment needs, is not applied yet";
   let p = read(db);
-  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it waits for your answer on decision dec_1.`, environment: 'alpha', decision: 'dec_1' });
+  const PENDING = { what: 'serving_check_pending', subject: 'kind:post_deploy_serving' };
+  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it waits for your answer on decision dec_1.`, environment: 'alpha', decision: 'dec_1', blocker: PENDING });
   assert.equal(p.now.state, 'waiting_on_you', 'the open decision is NOW');
   // Answered and approved, not yet applied: still blocked, no decision; NOW's second sentence says it.
   db.prepare(`UPDATE decisions SET status = 'answered' WHERE id = 'dec_1'`).run();
   db.prepare(`UPDATE protected_proposals SET status = 'approved' WHERE id = 'pp_1'`).run();
   p = read(db);
-  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it is approved and is being applied.`, environment: 'alpha', decision: null });
+  assert.deepEqual(p.build.deploy_readiness, { state: 'blocked', reason: `${HOST}, but a deployment would be refused now: ${WHAT}: it is approved and is being applied.`, environment: 'alpha', decision: null, blocker: PENDING });
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} It cannot be deployed to alpha yet: ${WHAT}: it is approved and is being applied.`, cause: null });
   // Applied: the check is in the effective version, required in the alpha_complete scope: ready, deploy.
   db.prepare(`UPDATE protected_proposals SET status = 'applied' WHERE id = 'pp_1'`).run();
@@ -640,6 +647,7 @@ test("E1: the candidate's checks running again: blocked with the counts, no prim
     reason: "The environment alpha can host this output (static site) with local_service in static mode, but a deployment would be refused now: the candidate's automated checks are running (0 of 2 completed); it can be requested once they pass.",
     environment: 'alpha',
     decision: null,
+    blocker: { what: 'checks_running', subject: null },
   });
   assert.equal(p.now.state, 'checking');
 });
@@ -679,28 +687,34 @@ test("ready means ready to request deployment (the owner's ruling of 2026-10-29)
   assert.match(p.build.deploy_readiness.reason, /Ready: the current candidate cand_1 is deployed there and its deployment was verified by its automated checks \(serving verified, not functional or visual acceptance\); a request deploys it again, and that deployment is verified in turn\.$/);
 });
 
-test("ready for another output kind: with no deployment-specific post-deploy check, a request asks a Verifier to write it, and its approval, a request again, the deployment and its verification follow; with one, the deployment and its verification", (t) => {
+test("another output kind with no deployment-specific post-deploy check (DECISIONS item 42; M616 (e) amended): blocked, naming the required behavioural check and what writes it, no decision, no primary action; with one, ready, the deployment and its verification follow", (t) => {
   const db = store(t);
   approve(db, { rep: spec({ runtime: '`node server.mjs`' }), map: NODE_MAP });
   specEnvironment(db);
   completeBuild(db);
   configure(db, 'alpha', validateConfig(structuredClone(SERVICE_CONTENT)));
   effectiveV1(db);
-  const AUTHOR =
-    'the deployment-specific post-deploy check is not in place yet, so a request is refused naming it and asks a Verifier to write it; its approval, a request again, the deployment and its verification follow before the preview opens';
-  let r = read(db).build.deploy_readiness;
-  assert.deepEqual(r, {
-    state: 'ready',
-    reason: `The environment alpha can host this output (Node service) with local_service in service mode. Ready to request deployment, not verified and not open: ${AUTHOR}.`,
+  const MISSING =
+    "the required behavioural check (post_deploy_behavior, of the alpha_complete scope) is not in the effective protected version; a Verifier writes it, asked by the engine when a deployment is requested (the policy's request under on_phase_complete, or a request from the operator console), and its approval and a request again follow";
+  let p = read(db);
+  assert.deepEqual(p.build.deploy_readiness, {
+    state: 'blocked',
+    reason: `The environment alpha can host this output (Node service) with local_service in service mode, but a deployment would be refused now: ${MISSING}.`,
     environment: 'alpha',
-    means: 'request_deployment',
-    follows: ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'],
+    decision: null,
+    blocker: { what: 'required_check_missing', subject: 'kind:post_deploy_behavior' },
   });
+  assert.equal(p.now.primary_action, null);
+  // Required but not of the alpha_complete scope: still missing.
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_p', ?, 'prj_1', 'pv_1', 'phase-only', 'post_deploy_behavior', 1, '["phase"]', 'x', 'h', 'direct')`).run(AT);
+  assert.equal(read(db).build.deploy_readiness.blocker.what, 'required_check_missing');
   db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_b', ?, 'prj_1', 'pv_1', 'behaves', 'post_deploy_behavior', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
-  r = read(db).build.deploy_readiness;
-  assert.deepEqual([r.means, r.follows], ['request_deployment', ['deployment', 'verification']]);
+  p = read(db);
+  const r = p.build.deploy_readiness;
+  assert.deepEqual([r.state, r.means, r.follows], ['ready', 'request_deployment', ['deployment', 'verification']]);
   assert.match(r.reason, new RegExp(`${THEN_VERIFIED}\\.$`));
 });
+
 
 test("open approvals first, build complete as its own fact (the owner's ruling of 2026-10-29): with a decision open NOW is waiting_on_you and says the build is complete after the decision sentence; build.complete and completed_at served in the read and the list", async (t) => {
   const { db, site } = builtStaticSite(t);
@@ -836,6 +850,8 @@ test('RECORD-engine item 3: a rapid prototype with its build complete and undepl
   const { db, site } = builtStaticSite(t);
   nominationEvaluation(db, await readTreeKind(site.dir, site.revision));
   configure(db, 'alpha', STATIC_CONTENT);
+  effectiveV1(db);
+  db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_s', ?, 'prj_1', 'pv_1', 'surety-static-serving', 'post_deploy_serving', 1, '["alpha_complete"]', 'x', 'h', 'direct')`).run(AT);
   db.prepare(`UPDATE projects SET mode = 'rapid_prototype'`).run();
   const iteration = (status, reason = null, next = null) => {
     db.prepare('DELETE FROM prototype_iterations').run();

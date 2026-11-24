@@ -436,7 +436,7 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'operations.list', args: { project } }) }) };
       }
       if (rest.length === 1 && rest[0] === 'environments' && get) {
-        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environments.list', args: { project } }) }) };
+        return { kind: 'direct', handler: async () => ({ status: 200, body: await store().call('read', { name: 'environments.list', args: { project, trees: await readTrees(project) } }) }) };
       }
       // D4 §§3.2, 4.1, 4.6, 6.1 (M4 slice 23): an environment's stored read;
       // its configuration, written by the owner; the deployment request;
