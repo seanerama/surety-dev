@@ -65,3 +65,44 @@ The six files: `M70-scoped-reads-and-now`, `M616-deployment-compatibility-and-re
 - No run on mini-hp01 and no full gate; only the probe, the two files alone and the six-file set, on the workstation.
 - Three concurrent runs are a sample; the probe is the deterministic evidence.
 - No engine or harness seam was missing: `intent.recorded` exists (SEAM.md §76).
+
+## Addendum: M70's `quiet()` wait timed out (the coordinator's finding, 2026-11-24)
+
+**The finding.** In the local gate of 83385e88 (main 144a1ac8's tree, 4d56d2da and 01724f2b), M70 run alone read 20/21. The failing test was "the three reads that were left" (2), the operations case: `timed out after 30000 ms waiting for every project's host observation of this incarnation (its first tick done) before the snapshot`, at `quiet(fx)`. The case took 32.8 s, which is the fixture plus the whole 30 s wait: the condition never became true. Log: `~/surety-evidence/batch-2026-11-24/items-48-49/gate-local-83385e88/M70-fail-run1.log`. The two concurrent runs of that gate passed (123/123 each).
+
+**The cause.** `quiet()`'s wait (item 47) named the current incarnation as `SELECT "id" FROM "engine_incarnations" WHERE "ended_at" IS NULL ORDER BY "started_at" DESC, rowid DESC LIMIT 1`.
+- The operations case is the only `quiet()` caller whose engine is restarted. `killedAt` kills the first engine (SIGKILL at `ref_update`/`intent_committed`) and `fx.start()` starts a second. The killed engine never ends its row, so **two** rows have `ended_at` null. In a diagnostic run they started 1.28 s apart (`19:00:07.901`, `19:00:09.180`).
+- This host's wall clock steps back. Measured now against the monotonic clock: **−2.93 s every ~29.3 s** (`19:01:30.839Z` −2930 ms, `19:02:00.183Z` −2934 ms). SEAM.md §23 recorded 0.74 to 0.78 s when it was written. `journalctl` shows `systemd-resolved` "Clock change detected" every ~29 s throughout the gate's window, including 12:57:36 and 12:58:05 CST, the minute in which M70's log was written. I did not pin the exact second the operations case ran.
+- A step between the two starts gives the restart a `started_at` up to ~1.6 s earlier than the killed engine's. The query then names the **killed** incarnation. Project A has an observation there (its `project_start`). Project B, the case's second project, is created after the restart and is observed only in the new incarnation (its `project_start` in the tick that dispatches its run). So the wait asks for an observation that can never be written, and it times out after exactly 30 s. With a 1.3 s gap and a step every 29.3 s, about 1 run in 20 to 25 is exposed. That fits "passed in the two earlier gates and in item 47's runs".
+- **Which project was missing in the gate's run is inferred, not read**: B, by the mechanism above and the probe below. The store was removed at teardown, and the timeout message did not name the project.
+
+**What it is not: the barrier's timing.** Project B is observed in the `decide` step of the tick that dispatches its run. `decide` runs for every project before that tick's select and dispatch (`scheduler/tick.ts`). So B's observation is written before its run exists, and therefore before its integration can reach the held `ref_update`/`intent_committed` barrier. The diagnostic run shows this order: B created at 09.586, observed at 09.644, and its dispatching tick recorded at 09.766. A's observation of the new incarnation is written by the restarted engine's first tick, at 09.531. Holding B's integration costs later ticks up to `tick_step_budget` in B's journal step, but `decide`, and so the observation, still runs in them.
+
+**The change** (commit d09a36a5, `M70-scoped-reads-and-now.test.mjs` only).
+- `quiet()` takes the incarnation the engine itself reports: `GET /v1/engine` `incarnation` (SEAM.md §4: the row's `id` is the lock's `incarnation_id`, and the route reports it).
+- It waits until every project has a `host_observations` row of that incarnation. A fixture check that the route names an incarnation is added before the wait.
+- Nothing else changed: the snapshot, the engine-wide comparison (the same three exclusions), the event check, the launch check, the callers and every `assert` about the engine.
+
+**Probe** (copies outside the repository, deleted after). Right after `await fx.start()` in the operations case, I set the killed incarnation's `started_at` to the restart's plus 2.93 s. That is what a 2.93 s backward step between the two starts produces. I ran `--test-name-pattern "git operations are listed"`:
+
+| Run | Copy | Tests | Pass | Fail |
+|---|---|---|---|---|
+| probe70-main | 60319f5f's M70 | 1 | 0 | 1: `timed out after 30000 ms waiting for every project's host observation of this incarnation (its first tick done) before the snapshot`, word for word the gate's |
+| probe70-fixed | d09a36a5's M70 | 1 | 1 | 0 |
+
+**Runs** at d09a36a5, clean tree (`status.log`):
+
+| Run | When (UTC) | Tests | Pass | Fail |
+|---|---|---|---|---|
+| M70-alone-1 | 19:03:47 | 21 | 21 | 0 |
+| M70-alone-2 | 19:04:07 | 21 | 21 | 0 |
+| M70-alone-3 | 19:04:28 | 21 | 21 | 0 |
+| m70fix-conc-1 (six files, concurrency 4) | 19:04:51 to 19:05:32 | 123 | 123 | 0 |
+| m70fix-conc-2 | 19:05:32 to 19:06:16 | 123 | 123 | 0 |
+| m70fix-conc-3 | 19:06:16 to 19:06:57 | 123 | 123 | 0 |
+
+The probe copies were made from the working tree before the commit; the fixed copy's content is d09a36a5's.
+
+**Not claimed / for Sean.**
+- No run on mini-hp01 and no full gate.
+- The measured step (2.93 s) is larger than the two seconds of slack SEAM.md §23 allows for comparisons with a controlled-clock `now`. Whether other cases that compare wall-clock timestamps are exposed is not examined here. SEAM.md is the owner's document, and this is noted only as an observation.
