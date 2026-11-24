@@ -60,7 +60,9 @@ test("before the request: blocked on the behavioural check, authoring none with 
   assert.equal(r.state, 'blocked', JSON.stringify(r));
   assert.deepEqual(r.blocker, BLOCKED_ON_BEHAVIOUR);
   const rm = roleModelOf(fx.db, 'prj_1', 'verifier');
-  const on = `the configured model ${rm.model}${rm.provider !== rm.model ? ` (${rm.provider})` : ''}`;
+  // The model the Verifier's run records (runs.ts: model_verifier, the
+  // schema's default here), not the backend's (objection 232).
+  const on = `the configured model sonnet${rm.provider !== 'sonnet' ? ` (${rm.provider})` : ''}`;
   const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal}): the run is dispatched only once it resolves.` : '';
   assert.deepEqual(r.authoring, {
     state: 'none',
@@ -77,6 +79,16 @@ test("before the request: blocked on the behavioural check, authoring none with 
   assert.equal(readProject(fx.db, { project: 'prj_1', trees: [fx.tree] }).project.now.primary_action, null, 'never deploy while blocked');
   assert.deepEqual(authorings(fx.db), [], 'a read queues nothing');
   assert.deepEqual(authorizeEvaluations(fx.db), [], 'a read evaluates nothing');
+});
+
+test("objection 232: the consequence names the model the Verifier's run records (the project's model_verifier), the backend and its refusal beside it", async (t) => {
+  const fx = await store(t, { effective: { model_verifier: 'sonnet-avb-verifier' } });
+  const rm = roleModelOf(fx.db, 'prj_1', 'verifier');
+  const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal}): the run is dispatched only once it resolves.` : '';
+  assert.equal(
+    readiness(fx).authoring.offer.consequence_text,
+    `Queues a Verifier check-authoring run on the configured model sonnet-avb-verifier (${rm.provider}): it writes the missing post_deploy_behavior check as a proposal you review; nothing is deployed.${refused}`,
+  );
 });
 
 test("the owner's request: 202 queued, one authoring_gap check_authoring naming the gate, the environment, what is missing and who asked; no deployment; again: reused, the same work", async (t) => {
@@ -331,10 +343,12 @@ describe('the owner asks for the missing check on the kernel lane: offered, queu
     J.itemsAfter = J.items();
     J.actsAfter = J.acts().slice(J.actsBefore);
     J.queued = await read();
+    J.runModel = async () => withStore(fx.home, (db) => db.prepare(`SELECT model_requested FROM runs WHERE work_item = ? ORDER BY rowid LIMIT 1`).get(J.first.body.work_item)?.model_requested ?? null);
     const proposalOfItem = () =>
       withStore(fx.home, (db) => db.prepare(`SELECT p.id, p.status FROM protected_proposals p JOIN runs r ON r.id = p.run WHERE r.work_item = ? ORDER BY p.seq DESC LIMIT 1`).get(J.first.body.work_item));
     await tickUntil(fx.engine, p.id, () => proposalOfItem(), { max: 40, what: "the Verifier's proposal captured" });
     J.proposal = proposalOfItem();
+    J.recordedModel = await J.runModel();
     const decisionOpen = () => withStore(fx.home, (db) => db.prepare(`SELECT id, kind FROM decisions WHERE subject_type = 'protected_proposal' AND subject_id = ? AND status = 'open'`).get(J.proposal.id));
     await tickUntil(fx.engine, p.id, () => decisionOpen() || ['applied', 'approved'].includes(proposalOfItem().status), { max: 40, what: 'its question raised (or approved by its Reviewer)' });
     J.reviewing = await read();
@@ -370,6 +384,11 @@ describe('the owner asks for the missing check on the kernel lane: offered, queu
     assert.equal(r.authoring?.state, 'none', JSON.stringify(r));
     assert.equal(r.authoring.offer.path, `/v1/projects/${J.p.id}/environments/alpha/request-checks`);
     assert.match(r.authoring.offer.consequence_text, /^Queues a Verifier check-authoring run on the configured model .+: it writes the missing post_deploy_behavior check as a proposal you review; nothing is deployed\./);
+  });
+
+  test("objection 232: the offer named the model the Verifier's run then recorded as requested", () => {
+    assert.ok(J.recordedModel, 'the run recorded a model');
+    assert.ok(J.before.build.deploy_readiness.authoring.offer.consequence_text.startsWith(`Queues a Verifier check-authoring run on the configured model ${J.recordedModel} (`), `${J.recordedModel}: ${J.before.build.deploy_readiness.authoring.offer.consequence_text}`);
   });
 
   test('the request 202 queued; again 202 reused with the same work item; one authoring; each an api.act of the route', () => {

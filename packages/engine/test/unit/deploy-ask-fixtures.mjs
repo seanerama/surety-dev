@@ -69,7 +69,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 // the candidate, no behavioural check; environment alpha configured as a
 // local service and its adapter qualified; beta configured in static mode
 // (which cannot host a Node service). `policy`: alpha_deploy.
-export async function store(t, { policy = 'manual', behaves = false } = {}) {
+export async function store(t, { policy = 'manual', behaves = false, effective = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'surety-avb-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, 'repo');
@@ -94,7 +94,7 @@ export async function store(t, { policy = 'manual', behaves = false } = {}) {
     `INSERT INTO policy_revisions (id, created_at, project, revision, git_path, git_blob, changed_by, changed_at, diff_summary, widens_authority, committed, effective) VALUES ('pol_1', ?, 'prj_1', 1, '.surety/policy.json', 'blob', 'human', ?, '', 0, 1, ?)`,
     AT,
     AT,
-    JSON.stringify({ alpha_deploy: policy }),
+    JSON.stringify({ alpha_deploy: policy, ...effective }),
   );
   run(`UPDATE projects SET policy_revision = 'pol_1' WHERE id = 'prj_1'`);
   run(`INSERT INTO spec_semantics (id, created_at, project, git_blob, representation, readable) VALUES ('ss_1', ?, 'prj_1', 'b', ?, 1)`, AT, JSON.stringify(SPEC));
