@@ -130,3 +130,67 @@ Workstation, `TMPDIR=/tmp/ssr-v`, `npm ci --offline`, `npm run build` (exit 0); 
 ## Not done
 
 SEAM.md was not given a section for M625; this report says what each case reads. The real and exhaust lanes were not run.
+
+## 2026-11-24, later: case (f) and the sharpened (a) (branch verify/m625-f-serving-proposal)
+
+The contract is row M625 as the driver's companion f71c81f2 amends it (M7 plan §3d): case (f), DECISIONS item 41, and the sharpened (a), Sean on objection 231. Everything below is in the kernel file `M625-a-service-serving-a-directory.test.mjs` (slice 49). The sandbox file and the harness are unchanged, so the sandbox file was not run.
+
+### The sharpened (a)
+
+Sean, verbatim: "the distinction between configured now and running now matters to an operator. In a focused assertion, check environment.serving and environment.running.serving explicitly so swapping the two values would fail."
+
+- **The environment-read test in the (b)/(c) suite now reads the two paths directly.** Before any deployment, `environment.serving` deep-equals `{root: 'public', entry: 'index.html'}` and `environment.running` is null. After the deployment, both `environment.serving` and `environment.running.serving` deep-equal it. After a later configuration version declaring root `site`, `environment.serving` deep-equals `{root: 'site', entry: 'index.html'}` and `environment.running.serving` deep-equals `{root: 'public', entry: 'index.html'}`, on the same running generation. Swapping the two values fails both assertions.
+- **The first configuration test reads the path too.** `environment.serving` deep-equals the declared spec and `environment.running` is null.
+- **What was replaced.** These replace the search-based assertions (`holdsSpec` over the whole read), which could not tell the two apart. The search-based assertions on the deployment's frozen inputs stay as they were, because the row still does not name where the deployment freezes the spec (objection 231 accepted that indirect evidence).
+
+### Case (f)
+
+Sean, verbatim: "When a service explicitly declares serving: {root, entry}, use the existing engine-authored proposal flow if the serving check is absent. Reuse a present or pending check so repeat configuration creates no duplicate approval. Keep the service's behavioral check required: matching file bytes establishes artifact identity, while the behavioral check establishes what the running service does. Services that omit serving retain today's behavior."
+
+The flow modelled is M614 (a)'s. Every project is the Python fixture (`public/` and `server.py`). Its definitions list their inputs file by file, as in M614 (a), so that the engine's proposal classifies as a tightening.
+
+1. **Proposed, applied, present reused** (one project with acceptance and smoke checks only; the first configuration omits `serving`, the second declares `{root: public, entry: index.html}`):
+   - The second configuration's answer has `serving_check.state` `proposed` and `serving_check.proposal` naming the engine's proposal. Before it, there is no engine proposal.
+   - There is exactly one engine proposal, with `run` null. No Verifier run and no `check_authoring` work item exist, either at configuration or after application. Its `protected.proposed` event carries `proposed_by: engine, engine_authored: post_deploy_serving`.
+   - The owner approves it (`check_correction_tightening`, `approve`) and it is applied. The effective version is the proposal's. It holds exactly one `post_deploy_serving` check: required, `gate_kinds` with `alpha_complete`, `requires` `[artifact_digest, environment]`, command `surety-static-serving`.
+   - Reuse once present: two more service configurations declaring `serving` (environment `beta` with the same spec, and `gamma` with root `site`) are each answered 201 with `serving_check.state` `present` and no proposal named. Writing the same configuration again is answered 200. After three ticks there is still one engine proposal and one approval decision, the one answered.
+   - The behavioural check stays required. A deployment request with only the engine's serving check applied is refused 409 `authorization_not_issued`, naming `ACCEPTANCE_SCOPE_INCOMPLETE` `kind:post_deploy_behavior` and not `kind:post_deploy_serving`.
+2. **Pending reused** (a second project, the same first two configurations):
+   - The first configuration declaring `serving` is answered `proposed`, and its approval question opens.
+   - While that question is unanswered, `beta` (same spec) and `gamma` (root `site`) are each answered 201 with `serving_check.state` `pending` and no proposal named. The same configuration again is answered 200.
+   - After three ticks, there is one engine proposal and exactly one `check_correction_tightening` decision, still open: no duplicate approval.
+3. **The behavioural check stays required, without the proposal flow.** This is M614 (d) on the Python service. One project has the serving check in its own protected set and `serving` declared. The other has no post-deploy check and no `serving`. Both requests name `kind:post_deploy_behavior`, their `ACCEPTANCE_SCOPE_INCOMPLETE` subjects are identical, and neither names `kind:post_deploy_serving`.
+4. **Omitting `serving`** (a service with a behaviour check, both configurations without `serving`): no engine proposal, no approval decision, no Verifier run and no `check_authoring` work item after three ticks. If the answer carries `serving_check`, it must state `not_proposed` with a string reason and no proposal. Today's answer for a service carries none.
+
+### How it was run, and what was observed on the pre-(f) engine
+
+The worktree is at f71c81f2 plus this work (the engine has M625 (a)–(e), but not (f)). With `TMPDIR=/tmp/ssrv2`, `npm run build` ran clean, then:
+
+- **`node --test packages/engine/test/acceptance/M625-a-service-serving-a-directory.test.mjs`: 43 tests (34 before, 9 new), 36 pass, 7 fail, 0 cancelled, 0 skipped; about 22 s.**
+  - **Pass: every (a)–(d) test, including both sharpened environment-read tests.** The merged engine states `environment.serving` and `environment.running.serving` as required.
+  - **Pass: (f) 3 and (f) 4.** These describe today's behaviour.
+  - **Fail: all five tests of (f) 1.** The second configuration's answer has no `serving_check` at all, and the engine proposes nothing for a service:
+    - `serving_check.state (serving_check: undefined; proposals: [])`, `+ undefined - 'proposed'`.
+    - `the engine proposed its serving check with the service configuration declaring serving (proposals: [])`, `0 !== 1`.
+    - `the proposal was applied (proposals: [])`.
+    - The present-reuse test and the behavioural test on the applied check both fail with `the engine's serving check was applied (the case above)`.
+  - **Fail: both tests of (f) 2:**
+    - `serving_check undefined; proposals: []`, `+ undefined - 'proposed'`.
+    - `an engine proposal exists (proposals: [])`.
+- **`node --test packages/engine/test/acceptance/M614-serving-verification-of-a-static-site.test.mjs`: 10 tests, 10 pass.**
+
+**A probe, not part of the deliverable.** It is a scratch file in `/tmp/ssrv2/exp`, never committed. It ran M614 (a)'s static-mode flow on the same Python project, with static root `public`, on this engine, to see the parts of (f) that the pre-(f) engine cannot reach:
+
+- Writing the identical configuration again is answered 200 with no `serving_check`, both while the proposal is pending and once it is present.
+- Another environment is answered 201 with `{"kind":"post_deploy_serving","proposal":null,"state":"pending","reason":null}`, then `"state":"present"`.
+- After application, the deployment request is refused 409 `authorization_not_issued`, with `CHECK_NOT_PASSED` (the re-versioned workspace checks) and `ACCEPTANCE_SCOPE_INCOMPLETE ["kind:post_deploy_behavior"]`.
+
+So the post-application request in (f) 1 has the shape its assertion expects. It also shows that the 200 answer to an identical configuration carries no `serving_check` in static mode either.
+
+### Choices
+
+1. **The identical rewrite.** The row says a present or pending check is reused, with `present`/`pending` and no new proposal or duplicate approval "when the same or another configuration is written again". The engine answers an identical configuration 200 as the current version, writing nothing. Static mode's 200 answer carries no `serving_check` today (the probe). So for the identical rewrite the tests require only no new proposal and no new decision. If the answer does carry `serving_check`, it must say `present`/`pending`. The `present`/`pending` state is required on the 201 answers to the other configurations.
+2. **Omitting `serving`.** The row says only "no proposal (today's behaviour)", and today's answer for a service carries no `serving_check`. The test requires no proposal, decision, run or work item. It accepts either no `serving_check`, or one stating `not_proposed` with a reason. It does not require `not_proposed`, because today's behaviour has none to state.
+3. **The behavioural requirement is asserted twice.** It is checked on the engine's applied check in (f) 1, which fails before (f) because nothing is applied, and on a protected-set serving check in (f) 3, which passes today. The second is the "exactly as before" comparison.
+
+No objection was filed for (f): nothing in it was found wrong or untestable.
