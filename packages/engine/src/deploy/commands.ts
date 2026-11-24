@@ -17,7 +17,7 @@ import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded,
 import { candidateTree } from './compatibility-eval.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
 import { checkServingEntry, checkStaticEntry, servingSpec, staticSpec } from './static-site.js';
-import { prepareServingProposal } from './serving-install.js';
+import { type ServingProposal, prepareServingProposal } from './serving-install.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
 // version's content. Validated, its secret references resolved to digests
@@ -30,14 +30,33 @@ export async function prepareConfig(rt: Runtime, project: string, name: string, 
   if (name === DESIGN_PREVIEW_ENV) throw environmentReserved(project);
   const content: ConfigContent = validateConfig(body);
   const digests = secretDigests(rt.home, content);
-  // A static configuration: the engine's own serving check proposed with it
-  // when the project has none (the owner's ruling of 2026-10-29).
-  const serving = staticSpec(content) !== null ? await prepareServingProposal(rt, project, name) : null;
+  // A static configuration, or a service configuration explicitly declaring
+  // `serving` (DECISIONS item 41; the owner's ruling of 2026-11-24): the
+  // engine's own serving check proposed with it when the project has none
+  // (the owner's ruling of 2026-10-29). validateConfig fills a declared
+  // `serving` whatever its values, so servingSpec is non-null exactly when
+  // the body named the key. A service declaring none: no proposal, and the
+  // answer says why.
+  const serving = await servingProposalOf(rt, project, name, content);
   // The current candidate's tree, for the deployment compatibility the
   // configuration's transaction records (the static-preview shapes, §5);
   // not read is recorded as not read, and the configuration stands.
   const tree = await candidateTree(rt, project).catch(() => null);
   return { project, name, content, identity: configIdentity(content, digests), secretDigests: digests, homeHash: homeHash(rt.home), serving, tree };
+}
+
+// The engine's serving check proposal prepared for a configuration, or why
+// none is (captured by the configuration's transaction, writeConfigVersion).
+async function servingProposalOf(rt: Runtime, project: string, name: string, content: ConfigContent): Promise<{ proposal: ServingProposal | null; why: string | null; declared: boolean }> {
+  const st = staticSpec(content);
+  if (st !== null) return { ...(await prepareServingProposal(rt, project, name, { mode: 'static', ...st })), declared: true };
+  const sv = servingSpec(content);
+  if (sv !== null) return { ...(await prepareServingProposal(rt, project, name, { mode: 'service', ...sv })), declared: true };
+  return {
+    proposal: null,
+    why: `environment ${name}'s service configuration declares no serving root and entry: the engine proposes its serving check only for a static configuration or a service configuration declaring serving {root, entry}`,
+    declared: false,
+  };
 }
 
 // POST /v1/projects/:p/environments/:e/config/resolve-secrets (D4 §3.2;
