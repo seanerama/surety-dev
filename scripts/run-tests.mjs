@@ -80,6 +80,8 @@ const ROWS = [
   // §3f (M627: the owner asks for the missing check; M628: waiting for Reviewer sign-off; DECISIONS items 43 and 44; 2026-11-24).
   'M627',
   'M628',
+  // §3g (M629: the requested model named before approval; DECISIONS item 45; 2026-11-24).
+  'M629',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
