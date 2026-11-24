@@ -23,3 +23,20 @@ The same mechanism in the kernel-lane unit test `serving-check-visibility.test.m
 ## Proposed correction (the Verifier's file; no assertion changes)
 
 Inside the existing `held(...)` around the answer: `armBarrier(fx.engine, 'intent.recorded', 'pause')` before `consume(...)`; wait until the engine waits there; take the reads; release `intent.recorded` (then `held` releases the tick as now). `J.approvedStatus` is then `approved` where it is read, and the `tickUntil(... 'applied')` after the release takes it on as today.
+
+## Resolution (Verifier, 2026-11-24)
+
+Accepted as filed: a timing correction to the Verifier's files, no assertion changed. Branch `verify/m626-m616-intent-barrier` (from engine main 60319f5f), commit 8052cf4c. Report: `docs/acceptance/reports/2026-11-24-objection-233-intent-barrier.md`.
+
+**What changed.** In M626 (a) and M616 (e), inside the existing `held(...)` around the owner's answer: `armBarrier(fx.engine, 'intent.recorded', 'pause')` before `consume(...)`; after it, `reached(fx, 'intent.recorded', …)` (the engine waiting there); then the reads of the `approved` state (M626: `approvedStatus`, the three reads, the request at `approved`; M616: `approved`, `approvedStatus`); then `releaseBarrier(..., 'intent.recorded')` in a `finally`, and `held` releases the tick as before. The approval is recorded on the proposal in the consuming transaction (`approveProposal`, `store/transitions/protected.ts`), before the barrier, so the hold reads `approved` where it holds. The answer's response is not held by this effect (`decisions/answer.ts` `afterAnswer` awaits only `spec_approval_application` intents), so `consume` is awaited before the barrier is reached, as in the Builder's unit test. `git diff 60319f5f 8052cf4c` touches no `assert` line. M627, M628 and M629 were read for the same pattern and not changed: M627's read after its approval accepts either state (`authoring` `applied` for `approved` and `applied` alike), M628 reads nothing between its answer and `applied`, M629's answers are preparation approvals whose reads follow pumps or a paused project.
+
+**Probe** (copies outside the repository, the same injection as above: a 3 s wait, no tick, right after `consume(...)`; deleted after):
+
+| Copy | Pattern | Tests | Pass | Fail |
+|---|---|---|---|---|
+| M626 at 60319f5f | `M626 \(a\)` | 9 | 5 | 4 (the four named above; first: `read while the proposal is approved and not applied (applied)`, `+ 'applied' - 'approved'`) |
+| M626 fixed | `M626 \(a\)` | 9 | 9 | 0 |
+| M616 at 60319f5f | `M616 \(e\) a static page` | 10 | 9 | 1 (`(e) approved and not yet applied …`: `read before the version is applied (applied)`) |
+| M616 fixed | `M616 \(e\) a static page` | 10 | 10 | 0 |
+
+**Runs** at 8052cf4c, clean tree, workstation, `TMPDIR=/tmp/ibv-v`: M626 alone 3 of 3 (18/18 each); M616 alone 3 of 3 (23/23 each); the six-file set (M70, M616, M626, M625 a service serving a directory, M409 adoption records, M614) under `node --test --test-concurrency=4` 3 of 3 (123/123 each). No failure in any run.
