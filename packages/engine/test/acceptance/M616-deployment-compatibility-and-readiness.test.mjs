@@ -28,6 +28,22 @@
 //     open, the decision, served as `decision`, `primary_action`
 //     `answer_decision`), then the candidate's checks running (the reason
 //     naming them); never `deploy` while blocked; `ready` once they pass.
+//     Amended 2026-11-24 (Sean, DECISIONS item 42; supersedes the
+//     `ready`-with-authoring path of objection 226): a hostable environment
+//     whose deployment the gate would refuse because the effective
+//     protected version lacks the `alpha_complete` scope's required check
+//     (the Node service without a `post_deploy_behavior` check) reads
+//     `blocked`, `blocker {what: 'required_check_missing', subject:
+//     'kind:post_deploy_behavior'}`, `decision` null, `primary_action` null;
+//     `ready` only when a request would be authorized for all the read can
+//     tell, its `follows` never listing `deployment_checks_authoring` or
+//     `request_again`; the static site's pending serving check `blocked`
+//     with `blocker {what: 'serving_check_pending', subject:
+//     'kind:post_deploy_serving'}`, its running checks with `{what:
+//     'checks_running', subject: null}`; a static site whose serving check
+//     is neither present nor proposed (the proposal rejected) `blocked` with
+//     `{what: 'required_check_missing', subject: 'kind:post_deploy_serving'}`
+//     (made explicit by the driver's companion 242d6b7f).
 //     The relay's `host` and `url` on the environment read need a real unit
 //     (the scripted adapter opens no relay): M613 (d)'s file reads them.
 //
@@ -72,6 +88,9 @@ async function projectRead(fx, project) {
 const decisionsOf = (home, project) => all(home, 'SELECT "id", "kind", "status", "created_at" FROM "decisions" WHERE "project" = ? ORDER BY rowid', project);
 const STATIC_CONFIG = (port) => configContent({ mode: 'static', start: undefined, port });
 const SERVICE_CONFIG = (port) => configContent({ start: [process.execPath, 'server.mjs'], port });
+// The amended M616 (e) (DECISIONS item 42): what cannot follow a request that would be authorized.
+const NEVER_AFTER_READY = ['deployment_checks_authoring', 'request_again'];
+const SERVING_PENDING = Object.freeze({ what: 'serving_check_pending', subject: 'kind:post_deploy_serving' });
 
 describe('M616 (a), (d), (e) a browser app: its compatibility at publication, its readiness through its build', () => {
   const shared = sharedFixture();
@@ -168,22 +187,21 @@ describe('M616 (a), (d), (e) a browser app: its compatibility at publication, it
     assert.equal(J.inStatic.now.primary_action, null);
   });
 
-  test('(e) complete, configured where it can be hosted: ready, deploy', () => {
+  // Amended 2026-11-24 (DECISIONS item 42): the Node service has no
+  // `post_deploy_behavior` check, so the gate would refuse a request
+  // (ACCEPTANCE_SCOPE_INCOMPLETE kind:post_deploy_behavior): blocked, naming it.
+  test('(e) complete, configured where it can be hosted, its required behavioural check missing: blocked, required_check_missing kind:post_deploy_behavior, no decision, no primary action', () => {
     const r = J.inService.build.deploy_readiness;
-    assert.equal(r.state, 'ready');
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.equal(r.environment, 'alpha');
-    assert.match(r.reason, /^The environment alpha can host this output \(Node service\) with local_service in service mode\./, r.reason);
-    // Objection 226, the owner's ruling of 2026-10-29: ready to request
-    // deployment, not verified and not open; what follows is named.
-    assert.equal(r.means, 'request_deployment');
-    assert.deepEqual(r.follows, ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'], 'no deployment-specific post-deploy check yet: its authoring, its approval, the request again, the deployment and its verification');
-    assert.match(r.reason, /Ready to request deployment, not verified and not open: /, r.reason);
+    assert.deepEqual(r.blocker, { what: 'required_check_missing', subject: 'kind:post_deploy_behavior' }, JSON.stringify(r));
+    assert.equal(r.decision, null, 'no decision settles it');
+    assert.match(r.reason, /^The environment alpha can host this output \(Node service\) with local_service in service mode/, r.reason);
+    assert.match(r.reason, /post_deploy_behavior|behaviou?ral/i, `the reason names the missing check (${r.reason})`);
     assert.equal(J.inService.now.state, 'build_complete', JSON.stringify(J.inService.now));
-    assert.ok(J.inService.now.reason.startsWith(READY_TO_REQUEST('Node service, local_service service mode')), J.inService.now.reason);
-    assert.match(J.inService.now.reason, FOLLOWS_END, J.inService.now.reason);
-    assert.match(J.inService.now.reason, /approval/, 'it says the approval follows');
-    assert.match(J.inService.now.reason, /verification/, 'and the verification');
-    assert.equal(J.inService.now.primary_action, 'deploy');
+    assert.ok(J.inService.now.reason.startsWith(`${BUILD_DONE} `), J.inService.now.reason);
+    assert.match(J.inService.now.reason.slice(BUILD_DONE.length), /post_deploy_behavior|behaviou?ral/i, J.inService.now.reason);
+    assert.equal(J.inService.now.primary_action, null, 'never deploy while blocked');
     assert.doesNotMatch(J.inService.now.reason, /visual|accept|production/i, 'nothing claims acceptance or production readiness');
   });
 });
@@ -313,7 +331,12 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
 
   test('(e) every readiness served is one of the plan\'s states, blocked among them', () => {
     assert.deepEqual([...READINESS].sort(), ['blocked', 'not_complete', 'ready', 'unconfigured', 'unknown', 'unsupported']);
-    for (const [what, read] of Object.entries(J).filter(([, v]) => v?.build?.deploy_readiness)) assert.ok(READINESS.includes(read.build.deploy_readiness.state), `${what}: ${read.build.deploy_readiness.state}`);
+    for (const [what, read] of Object.entries(J).filter(([, v]) => v?.build?.deploy_readiness)) {
+      const r = read.build.deploy_readiness;
+      assert.ok(READINESS.includes(r.state), `${what}: ${r.state}`);
+      // The amended M616 (e): `ready` only when a request would be authorized.
+      if (r.state === 'ready') for (const step of NEVER_AFTER_READY) assert.ok(!(r.follows ?? []).includes(step), `${what}: ${step} cannot follow a request that would be authorized (${JSON.stringify(r.follows)})`);
+    }
   });
 
   test('(e) built, a static site, its environment not configured: unconfigured', () => {
@@ -328,6 +351,7 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.equal(r.environment, 'alpha');
     assert.equal(r.decision, null, 'no decision settles it yet');
+    assert.deepEqual(r.blocker, SERVING_PENDING, JSON.stringify(r));
     assert.match(r.reason, BLOCKED, r.reason);
     assert.ok(r.reason.includes(J.proposals[0].id), `the reason names the engine's proposal (${r.reason})`);
     assert.equal(J.proposed.now.state, 'build_complete', JSON.stringify(J.proposed.now));
@@ -339,6 +363,7 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     const r = J.asked.build.deploy_readiness;
     assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.equal(r.decision, J.decision.id, 'the decision that settles it is served');
+    assert.deepEqual(r.blocker, SERVING_PENDING, JSON.stringify(r));
     assert.match(r.reason, BLOCKED, r.reason);
     assert.ok(r.reason.includes(J.proposals[0].id) && r.reason.includes(J.decision.id), `the reason names the proposal and the decision (${r.reason})`);
     assert.equal(J.asked.now.primary_action, 'answer_decision');
@@ -364,6 +389,7 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     const r = J.approved.build.deploy_readiness;
     assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.equal(r.decision, null);
+    assert.deepEqual(r.blocker, SERVING_PENDING, JSON.stringify(r));
     assert.match(r.reason, BLOCKED, r.reason);
     assert.ok(r.reason.includes(J.proposals[0].id), r.reason);
     assert.notEqual(J.approved.now.primary_action, 'deploy');
@@ -373,6 +399,7 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     const r = J.applied.build.deploy_readiness;
     assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.equal(r.decision, null);
+    assert.deepEqual(r.blocker, { what: 'checks_running', subject: null }, JSON.stringify(r));
     assert.match(r.reason, BLOCKED, r.reason);
     assert.match(r.reason, /the candidate's automated checks are running \(\d+ of \d+ completed\)/, r.reason);
     assert.ok(J.applied.checks.queued + J.applied.checks.running > 0, `checks under way (${JSON.stringify(J.applied.checks)})`);
@@ -408,12 +435,17 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
   });
 });
 
-// The owner's ruling of 2026-10-29 (objection 226): "If a serving check has
-// not yet been proposed, readiness may mean ready to request deployment,
-// not 'verified' or 'ready to open.' State that approval and verification
-// follow." The static page configured in static mode; the owner rejects the
-// engine's proposal, so no serving check is in place or pending.
-describe('M616 (e) a static page whose serving check is not proposed: ready to request deployment; its proposal, approval, the deployment and its verification follow', () => {
+// The owner's ruling of 2026-10-29 (objection 226) allowed `ready` here
+// ("If a serving check has not yet been proposed, readiness may mean ready
+// to request deployment"); the M616 (e) amendment of 2026-11-24 (DECISIONS
+// item 42, made explicit by the driver's companion 242d6b7f) replaces it:
+// a request would be refused for the missing serving check, so the static
+// site whose serving check is neither present nor proposed reads `blocked`,
+// `required_check_missing kind:post_deploy_serving`, the reason saying the
+// check is proposed again when the static configuration is written. The
+// static page configured in static mode; the owner rejects the engine's
+// proposal, so no serving check is in place or pending.
+describe('M616 (e) a static page whose serving check is neither present nor proposed: blocked, required_check_missing kind:post_deploy_serving', () => {
   const shared = sharedFixture();
   const J = {};
   before(async () => {
@@ -432,19 +464,21 @@ describe('M616 (e) a static page whose serving check is not proposed: ready to r
   });
   after(() => shared.cleanup());
 
-  test('(e) ready to request deployment, not verified and not open; the proposal, the approval, the deployment and its verification follow', () => {
+  test('(e) blocked: required_check_missing kind:post_deploy_serving, no decision, the reason saying it is proposed again when the static configuration is written; no deploy', () => {
     assert.notEqual(J.status, 'applied', `the proposal was not applied (${J.status})`);
     const r = J.read.build.deploy_readiness;
-    assert.equal(r.state, 'ready', JSON.stringify(r));
-    assert.equal(r.means, 'request_deployment');
-    assert.deepEqual(r.follows, ['serving_check_proposal', 'approval', 'deployment', 'verification']);
+    assert.equal(r.state, 'blocked', JSON.stringify(r));
     assert.ok(READINESS.includes(r.state));
+    assert.deepEqual(r.blocker, { what: 'required_check_missing', subject: 'kind:post_deploy_serving' }, JSON.stringify(r));
+    assert.equal(r.decision, null, 'no decision settles it');
+    assert.equal(r.environment, 'alpha');
+    assert.match(r.reason, /^The environment alpha can host this output \(static site\) with local_service in static mode/, r.reason);
+    assert.match(r.reason, /serving check/i, r.reason);
+    assert.match(r.reason, /propos/i, `the reason says the check is proposed again (${r.reason})`);
+    assert.match(r.reason, /static configuration/i, `when the static configuration is written (${r.reason})`);
     assert.equal(J.read.now.state, 'build_complete', JSON.stringify(J.read.now));
-    assert.ok(J.read.now.reason.startsWith(READY_TO_REQUEST('static site, local_service static mode')), J.read.now.reason);
-    assert.match(J.read.now.reason, FOLLOWS_END, J.read.now.reason);
-    assert.match(J.read.now.reason, /approval/, 'it states that the approval follows');
-    assert.match(J.read.now.reason, /verification/, 'and the verification');
-    assert.doesNotMatch(J.read.now.reason, /can be deployed|is verified|is open/i, 'never verified or open');
-    assert.equal(J.read.now.primary_action, 'deploy');
+    assert.ok(J.read.now.reason.startsWith(`${BUILD_DONE} It cannot be deployed to alpha yet: `), J.read.now.reason);
+    assert.doesNotMatch(J.read.now.reason, /can be deployed|is verified|preview (?:is )?open/i, 'never verified or open');
+    assert.equal(J.read.now.primary_action, null, 'never deploy while blocked');
   });
 });

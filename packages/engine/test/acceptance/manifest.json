@@ -568,7 +568,8 @@
       "M614-serving-verification-of-a-static-site.test.mjs",
       "M615-the-downloadable-deliverable.test.mjs",
       "M616-deployment-compatibility-and-readiness.test.mjs",
-      "M625-a-service-serving-a-directory.test.mjs"
+      "M625-a-service-serving-a-directory.test.mjs",
+      "M626-the-file-serving-check-beside-its-environment.test.mjs"
     ],
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",
