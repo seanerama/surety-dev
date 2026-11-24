@@ -4401,6 +4401,9 @@
         },
         "stale_reason": {
           "required": false
+        },
+        "seq": {
+          "required": false
         }
       }
     },
@@ -4569,6 +4572,9 @@
         "authorization": {
           "required": false,
           "references": "deployment_authorizations"
+        },
+        "finalized_seq": {
+          "required": false
         }
       }
     },

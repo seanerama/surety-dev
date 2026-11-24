@@ -36,7 +36,7 @@ import { effectivePreviewMax, effectiveProfileMax, engineSettings, projectOption
 import { hostEligibility, observedHostFacts, type HostQualificationRow } from './trust.js';
 import { seamHostChecks } from '../../testing/seam.js';
 import { serviceAdmissionHold } from './envelope.js';
-import type { Tx } from './tx.js';
+import { type Tx, finalizedInOrder } from './tx.js';
 import type { CommandResult } from './control.js';
 import type { Capability, IdentityRead, Instance, InventoryEntry, TargetExpectation } from '../../deploy/adapter.js';
 import { unaccountedUnits } from '../../deploy/reconcile.js';
@@ -3250,7 +3250,7 @@ export function finalizeDeploy(tx: Tx, args: { operation: string; requiredOf: Re
   if (j.state !== 'confirmed') throw illegal(`finalizing a ${j.state} deploy operation`, { operation: op.id });
   journalAppend(tx, op, 'finalized');
   tx.db.prepare('UPDATE "operations" SET "finalized_at" = ? WHERE "id" = ?').run(tx.at, op.id);
-  tx.emit('operation.finalized', { project: op.project, operation: op.id }, { journal_kind: op.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply' });
+  finalizedInOrder(tx, op.id, tx.emit('operation.finalized', { project: op.project, operation: op.id }, { journal_kind: op.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply' }));
   const a = attemptsOf(tx.db, op.id).at(-1)!;
   const frozen = frozenOf(op);
   bumpRevision(tx, frozen.environment);
@@ -4307,7 +4307,7 @@ export function endQualificationOp(tx: Tx, args: { operation: string; detail: Re
   if (j.state === 'confirmed' && a) {
     journalAppend(tx, op, 'finalized');
     tx.db.prepare('UPDATE "operations" SET "finalized_at" = ? WHERE "id" = ?').run(tx.at, op.id);
-    tx.emit('operation.finalized', { project: op.project, operation: op.id }, { journal_kind: op.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply' });
+    finalizedInOrder(tx, op.id, tx.emit('operation.finalized', { project: op.project, operation: op.id }, { journal_kind: op.kind === 'deploy' ? 'deploy_apply' : 'teardown_apply' }));
     bumpRevision(tx, frozen.environment);
     resolveOnReplacement(tx, { environment: frozen.environment, operation: op.id });
     if (op.kind === 'teardown') {

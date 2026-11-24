@@ -445,8 +445,8 @@ function insertHistory(
 ): Record<string, unknown> {
   tx.db
     .prepare(
-      `INSERT INTO "observation_history" ("id", "created_at", "project", "environment", "observed_at", "source", "condition", "detail", "read_interval", "expected_revision", "deployment_generation", "facts", "installed", "stale_reason")
-       VALUES (?, ?, ?, ?, ?, 'observation_job', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "observation_history" ("id", "created_at", "project", "environment", "observed_at", "source", "condition", "detail", "read_interval", "expected_revision", "deployment_generation", "facts", "installed", "stale_reason", "seq")
+       VALUES (?, ?, ?, ?, ?, 'observation_job', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       h.id,
@@ -462,6 +462,9 @@ function insertHistory(
       JSON.stringify(h.facts),
       h.installed ? 1 : 0,
       h.stale_reason ?? null,
+      // Its place in the store order (DECISIONS item 51): what a later
+      // finalization is weighed against (observationEndedBy).
+      tx.storeOrder(),
     );
   return {
     id: h.id,
@@ -653,39 +656,98 @@ export function environmentChangesRead(db: Db, environment: string) {
 // `environment_records.observed` and in `observation_history`; only its
 // reading as current ends. The next observation, made after the
 // finalization, is current as any is.
+//
+// "After" is the store's order (DECISIONS item 51, finding 2; migration
+// 0052), never the two wall-clock stamps: the finalization's event seq
+// (`operations.finalized_seq`) against the observation's place
+// (`observation_history.seq`), so a clock that stepped back between the
+// two, or stamped them the same millisecond, decides nothing. A pair of
+// which either was recorded before that order existed (NULL) is compared
+// by its recorded timestamps, as before, and the read says so:
+// `order_basis` `timestamp_fallback`, never `seq`.
+export type OrderBasis = 'seq' | 'timestamp_fallback';
+
 export interface ObservationEnd {
   kind: 'teardown' | 'deployment';
   operation: string;
   finalized_at: string;
   reason: string;
+  order_basis: OrderBasis;
 }
 
-export function observationEndedBy(db: Db, args: { environment: string; observed_at: string; generation: number | null; name?: string }): ObservationEnd | null {
+// The observation's place in the store order, or null (recorded before
+// migration 0052, or not in the history).
+function observationSeq(db: Db, observation: string | null | undefined): number | null {
+  if (typeof observation !== 'string') return null;
+  const row = db.prepare('SELECT "seq" FROM "observation_history" WHERE "id" = ?').get(observation) as { seq: number | null } | undefined;
+  return row?.seq ?? null;
+}
+
+// The end, if any, and the basis every comparison the answer rests on was
+// made on: `seq` when the observation and every finalization weighed
+// against it carry their store order, `timestamp_fallback` otherwise.
+export function observationEnd(
+  db: Db,
+  args: { environment: string; observed_at: string; generation: number | null; name?: string; observation?: string | null },
+): { end: ObservationEnd | null; order_basis: OrderBasis } {
   const rows = db
     .prepare(
-      `SELECT o."id", o."kind", o."finalized_at",
+      `SELECT o."id", o."kind", o."finalized_at", o."finalized_seq",
               (SELECT a."deployment_generation" FROM "operation_attempts" a WHERE a."operation" = o."id" ORDER BY a.rowid DESC LIMIT 1) AS "generation"
          FROM "operations" o
-        WHERE o."kind" IN ('deploy', 'teardown') AND json_extract(o."target", '$.environment') = ? AND o."finalized_at" IS NOT NULL AND o."finalized_at" > ?
-        ORDER BY o."finalized_at" DESC, o.rowid DESC`,
+        WHERE o."kind" IN ('deploy', 'teardown') AND json_extract(o."target", '$.environment') = ? AND o."finalized_at" IS NOT NULL
+        ORDER BY o.rowid DESC`,
     )
-    .all(args.environment, args.observed_at) as { id: string; kind: string; finalized_at: string; generation: number | null }[];
-  const end = rows.find((r) => r.generation !== null && (args.generation === null || r.generation >= args.generation));
-  if (!end) return null;
+    .all(args.environment) as { id: string; kind: string; finalized_at: string; finalized_seq: number | null; generation: number | null }[];
+  const seq = observationSeq(db, args.observation);
+  const weighed = rows.filter((r) => r.generation !== null && (args.generation === null || r.generation >= args.generation));
+  let basis: OrderBasis = seq === null ? 'timestamp_fallback' : 'seq';
+  const after = weighed.filter((r) => {
+    if (seq !== null && r.finalized_seq !== null) return r.finalized_seq > seq;
+    basis = 'timestamp_fallback';
+    return r.finalized_at > args.observed_at;
+  });
+  // The newest of them: by store order where recorded (every row without
+  // one was finalized before every row with one), else by the stamp.
+  after.sort((a, b) =>
+    a.finalized_seq !== null && b.finalized_seq !== null
+      ? b.finalized_seq - a.finalized_seq
+      : a.finalized_seq !== null
+        ? -1
+        : b.finalized_seq !== null
+          ? 1
+          : b.finalized_at < a.finalized_at
+            ? -1
+            : b.finalized_at > a.finalized_at
+              ? 1
+              : 0,
+  );
+  const end = after[0];
+  if (!end) return { end: null, order_basis: basis };
   const name = args.name ?? args.environment;
-  return end.kind === 'teardown'
-    ? {
-        kind: 'teardown',
-        operation: end.id,
-        finalized_at: end.finalized_at,
-        reason: `Observed at ${args.observed_at}, before the teardown of ${name} (operation ${end.id}) was finalized at ${end.finalized_at}: what it observed no longer runs, so it says nothing about now and nothing deployed is available there until a new deployment.`,
-      }
-    : {
-        kind: 'deployment',
-        operation: end.id,
-        finalized_at: end.finalized_at,
-        reason: `Observed at ${args.observed_at}, before the deployment to ${name} (operation ${end.id}) was finalized at ${end.finalized_at} and replaced what ran: it describes what ran before, not what runs now; the next observation reads the new deployment.`,
-      };
+  return {
+    order_basis: basis,
+    end:
+      end.kind === 'teardown'
+        ? {
+            kind: 'teardown',
+            operation: end.id,
+            finalized_at: end.finalized_at,
+            reason: `Observed at ${args.observed_at}, before the teardown of ${name} (operation ${end.id}) was finalized at ${end.finalized_at}: what it observed no longer runs, so it says nothing about now and nothing deployed is available there until a new deployment.`,
+            order_basis: basis,
+          }
+        : {
+            kind: 'deployment',
+            operation: end.id,
+            finalized_at: end.finalized_at,
+            reason: `Observed at ${args.observed_at}, before the deployment to ${name} (operation ${end.id}) was finalized at ${end.finalized_at} and replaced what ran: it describes what ran before, not what runs now; the next observation reads the new deployment.`,
+            order_basis: basis,
+          },
+  };
+}
+
+export function observationEndedBy(db: Db, args: { environment: string; observed_at: string; generation: number | null; name?: string; observation?: string | null }): ObservationEnd | null {
+  return observationEnd(db, args).end;
 }
 
 // The stored observation with its freshness computed at the read (D4 §6.1;
@@ -701,13 +763,19 @@ export function observedRead(db: Db, args: { project: string; observed: string |
   const bound = projectPolicy(db, args.project).observation_freshness_bound! * 1000;
   const environment = args.environment ?? (typeof stored.environment === 'string' ? stored.environment : null);
   const generation = typeof stored.deployment_generation === 'number' ? stored.deployment_generation : null;
-  const ended = environment === null ? null : observationEndedBy(db, { environment, observed_at: stored.observed_at as string, generation, ...(args.name !== undefined ? { name: args.name } : {}) });
+  const judged =
+    environment === null
+      ? null
+      : observationEnd(db, { environment, observed_at: stored.observed_at as string, generation, observation: typeof stored.id === 'string' ? stored.id : null, ...(args.name !== undefined ? { name: args.name } : {}) });
+  const ended = judged?.end ?? null;
+  // On what the read decided whether it was ended (DECISIONS item 51).
+  const basis = judged === null ? {} : { order_basis: judged.order_basis };
   if (ended !== null) {
-    return { ...stored, condition: 'unknown', stored_condition: stored.condition, freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended };
+    return { ...stored, condition: 'unknown', stored_condition: stored.condition, freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended, ...basis };
   }
   const age = Date.parse(args.now) - at;
   const freshness = age > bound ? 'expired' : age > bound / 2 ? 'stale' : 'fresh';
-  return { ...stored, ...(freshness === 'expired' ? { condition: 'unknown', stored_condition: stored.condition } : {}), freshness, expires_at: new Date(at + bound).toISOString() };
+  return { ...stored, ...(freshness === 'expired' ? { condition: 'unknown', stored_condition: stored.condition } : {}), freshness, expires_at: new Date(at + bound).toISOString(), ...basis };
 }
 
 // ---- logs (D4 §6.1, A.8; SEAM.md §294) ---------------------------------------------------------
