@@ -72,6 +72,9 @@ const ROWS = [
   ...Array.from({ length: 14 }, (_, i) => `M${548 + i}`),
   ...Array.from({ length: 12 }, (_, i) => `M${601 + i}`),
   ...Array.from({ length: 4 }, (_, i) => `M${613 + i}`),
+  // §3d (M625: serving verification of a service that serves a directory; DECISIONS item
+  // 40; the driver's companion under Sean's instruction of 2026-11-24).
+  'M625',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
