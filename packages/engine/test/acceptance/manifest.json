@@ -567,11 +567,13 @@
       "M613-static-mode-of-local-service.test.mjs",
       "M614-serving-verification-of-a-static-site.test.mjs",
       "M615-the-downloadable-deliverable.test.mjs",
-      "M616-deployment-compatibility-and-readiness.test.mjs"
+      "M616-deployment-compatibility-and-readiness.test.mjs",
+      "M625-a-service-serving-a-directory.test.mjs"
     ],
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",
-      "M613-static-mode-on-a-real-unit.test.mjs"
+      "M613-static-mode-on-a-real-unit.test.mjs",
+      "M625-a-python-service-on-a-real-unit.test.mjs"
     ]
   },
   "sandbox": [
@@ -694,7 +696,8 @@
     "M559-the-assistant-turn-answer.test.mjs",
     "M560-qualification-admission-and-not-dispatched.test.mjs",
     "M611-a-disposable-local-service-alpha.test.mjs",
-    "M613-static-mode-on-a-real-unit.test.mjs"
+    "M613-static-mode-on-a-real-unit.test.mjs",
+    "M625-a-python-service-on-a-real-unit.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",
