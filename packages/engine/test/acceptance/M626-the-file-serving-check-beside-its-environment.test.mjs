@@ -47,7 +47,8 @@
 // - `primary_action` `deploy` in (a) is read where no decision is open. While
 //   the proposal's question is open, NOW ranks the open decision first
 //   (`waiting_on_you`, `answer_decision`; M616 (e) unchanged); the readiness
-//   stays `ready` beside it.
+//   stays `ready` beside it. (Both this and the `checks_running` window made
+//   explicit in the row by the driver's companion 0355f858.)
 // - "a deployment request admitted" in (a): until the last step the adapter
 //   is left unqualified, so no deployment is made in the middle of the
 //   sequence; the request is refused, and its reasons are only
