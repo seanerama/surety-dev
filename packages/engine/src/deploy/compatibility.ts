@@ -38,6 +38,7 @@ import { ADAPTER_CAPABILITIES, HOSTING_REQUIRED, KIND_LABEL, modeOfContent, with
 import { type KindAnswer, type OutputKind, type TreeAnswer, architectureKind, combineKinds } from './output-kind.js';
 import type { DeclaredServing } from './serving-install.js';
 import type { GapAuthoring } from '../store/transitions/alpha-gap.js';
+import type { ReviewWait } from '../store/transitions/alpha-review.js';
 import { modeOf, servingSpec, staticSpec } from './static-site.js';
 
 type Db = Database;
@@ -87,6 +88,9 @@ export interface DeployReadiness {
   // it while none is under way; with `checks_running`, only when that
   // authoring's proposal made the effective version (`applied`).
   authoring?: ReadinessAuthoring;
+  // `blocked` with `signoff_pending` (DECISIONS item 44): the engine's
+  // review of the candidate the sign-off waits on.
+  review?: ReviewWait;
   // `ready` only (the owner's ruling of 2026-10-29: "If a serving check has
   // not yet been proposed, readiness may mean ready to request deployment,
   // not 'verified' or 'ready to open.' State that approval and verification
@@ -133,6 +137,7 @@ export interface AdmissionBlock {
   decision: string | null;
   blocker: Blocker;
   authoring?: ReadinessAuthoring;
+  review?: ReviewWait;
 }
 
 // The Verifier's authoring of a missing required check as the readiness
@@ -156,8 +161,11 @@ export interface ReadinessAuthoring extends GapAuthoring {
 // missingDeploymentKind); the engine's serving check of a static site in
 // static mode proposed and not applied (`kind:post_deploy_serving`); the
 // candidate's checks running; or what the gate would read not read
-// (`subject` null for these two).
-export const BLOCKERS = ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread'] as const;
+// (`subject` null for these two); or (DECISIONS item 44) a deployment
+// request refused for the tier's Reviewer sign-off alone while the
+// engine's review of the candidate is queued, under way or waiting for its
+// owner (`subject` `SIGNOFF_MISSING`).
+export const BLOCKERS = ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread', 'signoff_pending'] as const;
 export type BlockerKind = (typeof BLOCKERS)[number];
 export interface Blocker {
   what: BlockerKind;
@@ -651,14 +659,23 @@ export function readinessOf(
     case 'hostable': {
       const b = block?.() ?? null;
       if (b !== null) {
+        const serviceNote = serving?.declared?.mode === 'service' ? ` ${serving.reason}` : '';
+        // Waiting for the Reviewer's sign-off is said first (DECISIONS item
+        // 44: "show 'Waiting for Reviewer sign-off' as soon as the engine
+        // confirms it").
+        const reason =
+          b.blocker.what === 'signoff_pending'
+            ? `${b.clause.charAt(0).toUpperCase()}${b.clause.slice(1)}. The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${serviceNote}`
+            : `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode, but a deployment would be refused now: ${b.clause}.${serviceNote}`;
         return {
           readiness: {
             state: 'blocked',
-            reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode, but a deployment would be refused now: ${b.clause}.${serving?.declared?.mode === 'service' ? ` ${serving.reason}` : ''}`,
+            reason,
             environment,
             decision: b.decision,
             blocker: b.blocker,
             ...(b.authoring ? { authoring: b.authoring } : {}),
+            ...(b.review ? { review: b.review } : {}),
           },
           sentence: ` It cannot be deployed to ${env.name} yet: ${b.clause}.`,
         };

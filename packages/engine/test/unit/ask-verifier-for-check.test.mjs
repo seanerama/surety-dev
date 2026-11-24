@@ -350,7 +350,17 @@ describe('the owner asks for the missing check on the kernel lane: offered, queu
       await tick(fx.engine, p.id);
     }
     J.ready = await read();
-    J.deploy = await requestOverApi(fx.engine, p.id, J.ready.checks?.candidate ?? J.queued.checks?.candidate, 'alpha');
+    J.candidate = J.ready.checks?.candidate ?? J.queued.checks?.candidate;
+    J.deploy = await requestOverApi(fx.engine, p.id, J.candidate, 'alpha');
+    // DECISIONS item 44: refused for the sign-off alone, the review it
+    // queued named; the readiness waits for it; signed, the request again.
+    if (J.deploy.status === 409) {
+      J.waiting = await read();
+      const reviewDone = () => withStore(fx.home, (db) => db.prepare(`SELECT status FROM work_items WHERE id = ?`).get(J.deploy.body.subject.review?.work_item ?? '')?.status === 'complete');
+      await tickUntil(fx.engine, p.id, () => reviewDone() || undefined, { max: 40, what: "the Reviewer's review complete" });
+      J.signed = await read();
+      J.again = await requestOverApi(fx.engine, p.id, J.candidate, 'alpha');
+    }
   });
   after(() => shared.cleanup());
 
@@ -395,7 +405,14 @@ describe('the owner asks for the missing check on the kernel lane: offered, queu
     // The applied version changed the acceptance content: on a tier that
     // requires the Reviewer's sign-off the request is refused for it alone
     // and asks the Reviewer (alpha-review.ts); nothing else stands.
-    if (J.deploy.status === 409) assert.deepEqual(J.deploy.body.subject.reasons.map((r) => r.code), ['SIGNOFF_MISSING'], J.deploy.text);
-    else assert.equal(J.deploy.status, 201, J.deploy.text);
+    if (J.deploy.status === 409) {
+      assert.deepEqual(J.deploy.body.subject.reasons.map((r) => r.code), ['SIGNOFF_MISSING'], J.deploy.text);
+      assert.equal(J.deploy.body.subject.review?.state, 'queued', J.deploy.text);
+      const w = J.waiting.build.deploy_readiness;
+      assert.deepEqual([w.state, w.blocker, w.review?.work_item], ['blocked', { what: 'signoff_pending', subject: 'SIGNOFF_MISSING' }, J.deploy.body.subject.review.work_item], JSON.stringify(w));
+      assert.match(w.reason, /^Waiting for Reviewer sign-off/);
+      assert.equal(J.signed.build.deploy_readiness.state, 'ready', JSON.stringify(J.signed.build.deploy_readiness));
+      assert.equal(J.again.status, 201, J.again.text);
+    } else assert.equal(J.deploy.status, 201, J.deploy.text);
   });
 });

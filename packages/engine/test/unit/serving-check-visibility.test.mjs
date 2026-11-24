@@ -154,9 +154,9 @@ const MISSING =
 
 // ---- the status, every state -------------------------------------------------------------
 
-test('the served names: six states, four blockers', () => {
+test('the served names: six states, five blockers (signoff_pending, DECISIONS item 44)', () => {
   assert.deepEqual([...SERVING_CHECK_STATES], ['present', 'awaiting_decision', 'approved', 'proposed', 'not_proposed', 'unread']);
-  assert.deepEqual([...BLOCKERS], ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread']);
+  assert.deepEqual([...BLOCKERS], ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread', 'signoff_pending']);
 });
 
 test('a service declaring serving: proposed, awaiting_decision, approved, present, each named; holds_deployment false throughout', (t) => {

@@ -1,5 +1,5 @@
 // The scratch store the developer tests of DECISIONS items 43 and 44 share
-// (ask-verifier-for-check.test.mjs):
+// (ask-verifier-for-check.test.mjs, waiting-for-reviewer-signoff.test.mjs):
 // a T2 Node service, its build complete, on the engine's migrations with
 // foreign keys off (as alpha-gap-authoring.test.mjs and
 // serving-check-visibility.test.mjs); the route's transaction and the reads.

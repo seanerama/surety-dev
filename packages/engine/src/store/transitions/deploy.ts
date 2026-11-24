@@ -27,7 +27,7 @@ import { captureProposal, effectiveVersion } from './protected.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { raiseFinding } from './findings.js';
-import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay, signoffWaited } from './alpha-review.js';
+import { type AlphaReviewState, alphaReviewState, queueAlphaReview, reviewUnderWay, reviewWaitOf, signoffWaited } from './alpha-review.js';
 import { type AlphaGapState, gapAuthoringUnderWay, gapReason, queueAlphaGapAuthoring, reopenableRefusal } from './alpha-gap.js';
 import { cancelExecution, readDue, refuseUnsupervised, registerExecutions } from './checks.js';
 import { getWorkItem, observeTrigger, transitionWork } from './work.js';
@@ -1191,6 +1191,13 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
       : reasons.every((r) => r.code === 'SIGNOFF_MISSING')
         ? queueAlphaReview(tx, candidate, evaluation.id)
         : alphaReviewState(tx.db, args.project, evaluation.id);
+    // The sign-off the only lasting reason and the engine's review of it
+    // queued or under way (DECISIONS item 44): the refusal names that
+    // review, so the owner sees at once that the request advanced the
+    // project ("Waiting for Reviewer sign-off"). Beside another lasting
+    // reason, none.
+    const waiting = signoff && review === 'coming' ? reviewWaitOf(tx.db, args.project, candidate.id) : null;
+    const reviewSubject = waiting === null ? {} : { review: { state: waiting.state, work_item: waiting.work_item } };
     const settling =
       reasons.length > 0 &&
       reasons.every((r) => settles(r) || (gapped(r) && gap === 'coming') || (r.code === 'SIGNOFF_MISSING' && (review === 'coming' || review === 'due' || gap === 'coming')));
@@ -1201,7 +1208,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
           code: 'authorization_not_issued',
           reason: `The ${env.name} deployment of candidate ${candidate.id} is not authorized yet: ${reasons.map((r) => r.code).join(', ')}; the policy requests it again at the next tick.`,
           what_to_do: 'Nothing: the policy requests it again once the pending work settles.',
-          subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
+          subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons, ...reviewSubject },
         },
       };
     }
@@ -1217,7 +1224,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
             : review === 'coming'
               ? "The candidate's review, which the missing sign-off needs, is queued: request the deployment again once its Reviewer has signed off."
               : 'Read the reasons, satisfy them, and request the deployment again.',
-        subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons },
+        subject: { authorization: auth.id, evaluation: evaluation.id, reasons: evaluation.reasons, ...reviewSubject },
       },
     };
   }
