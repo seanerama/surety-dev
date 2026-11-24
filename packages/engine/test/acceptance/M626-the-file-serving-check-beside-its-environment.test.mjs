@@ -213,6 +213,9 @@ async function settled(fx, project) {
 // its reads. Released after them, the next tick takes the state on. Nothing
 // read is made weaker: each state is read where it holds, not "either".
 const HOLD = 'scheduler.tick_running';
+// The owner's answer's own effect, held between its consuming transaction
+// and its revalidation (SEAM.md §76; objection 233).
+const APPLY = 'intent.recorded';
 async function held(fx, project, body) {
   await armBarrier(fx.engine, HOLD, 'pause');
   await requestTick(fx.engine, project);
@@ -271,13 +274,24 @@ describe('M626 (a) a service declaring serving, its behavioural check required: 
     J.decision = await openDecision(fx, p.id, 'check_correction_tightening', J.proposal.id, { max: 8 });
     J.asked = await reads(fx, p.id);
     J.req.asked = await requestDeployment(fx.engine, p.id, J.asked.project.checks.candidate, 'alpha');
-    // The approval's application is a tick's (through the journal): the
-    // approved state is read with the scheduler held from before the answer.
+    // The approval's application is not only a tick's: the answer's own
+    // effect runs it at once, off the scheduler (objection 233; runtime.ts,
+    // decisions/effects.ts). So the approved state is read with the scheduler
+    // held from before the answer and that effect held at `intent.recorded`
+    // (after the consuming transaction, which records the approval on the
+    // proposal, and before the revalidation; SEAM.md §76), reached before the
+    // reads; both released after them.
     await held(fx, p.id, async () => {
+      await armBarrier(fx.engine, APPLY, 'pause');
       await consume(fx, p.id, J.decision, 'approve');
-      J.approvedStatus = proposalStatus(fx.home, J.proposal.id);
-      J.approved = await reads(fx, p.id);
-      J.req.approved = await requestDeployment(fx.engine, p.id, J.approved.project.checks.candidate, 'alpha');
+      await reached(fx, APPLY, "the approval's effect held after the answer");
+      try {
+        J.approvedStatus = proposalStatus(fx.home, J.proposal.id);
+        J.approved = await reads(fx, p.id);
+        J.req.approved = await requestDeployment(fx.engine, p.id, J.approved.project.checks.candidate, 'alpha');
+      } finally {
+        await releaseBarrier(fx.engine, APPLY);
+      }
     });
     J.pendingOps = all(fx.home, `SELECT o."id", s."journal_kind" AS "kind", s."state" FROM "operations" o JOIN "git_journal_state" s ON s."operation" = o."id" WHERE o."id" IN (SELECT value FROM json_each(?))`, JSON.stringify(reasonsOf(J.req.approved).GIT_JOURNAL_PENDING ?? []));
     await tickUntil(fx.engine, p.id, () => (proposalStatus(fx.home, J.proposal.id) === 'applied' ? true : undefined), { max: 8, what: "the engine's serving check applied" });

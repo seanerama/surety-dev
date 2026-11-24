@@ -228,3 +228,7 @@ The five earlier concurrent runs on 1f86f7c5, including after-conc-3's M616 (e) 
 - M616 (e) (after-conc-3): its mechanism is confirmed by the probe, and it is fixed in d9913fdd (the extension above). Which decision was open in after-conc-3 was not read, because the store was removed at teardown.
 - M616 (b), (c) and the rejected-proposal block were not changed, for the reasons given above.
 - No engine or harness seam was missing, so no objection was filed.
+
+## Addendum: objection 233 (2026-11-24)
+
+The hold around the owner's answer in M626 (a) and M616 (e) held the tick but not the answer's own effect, which applies the proposal off the scheduler; so "(a)'s `approved` is now read where … no tick can yet have applied it" above was true of ticks only. Objection 233 (Builder) showed it with a probe; the Verifier's fix (commit 8052cf4c) also pauses that effect at `intent.recorded` (SEAM.md §76) for the reads, changing no assertion. Probe and runs: `2026-11-24-objection-233-intent-barrier.md`.

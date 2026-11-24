@@ -107,6 +107,9 @@ const SERVING_PENDING = Object.freeze({ what: 'serving_check_pending', subject: 
 // answers and no other tick runs. Released after the reads, the next tick
 // takes the state on. Each state is read where it holds, not "either".
 const HOLD = 'scheduler.tick_running';
+// The owner's answer's own effect, held between its consuming transaction
+// and its revalidation (SEAM.md §76; objection 233).
+const APPLY = 'intent.recorded';
 async function held(fx, project, body) {
   await armBarrier(fx.engine, HOLD, 'pause');
   await requestTick(fx.engine, project);
@@ -334,10 +337,23 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     J.decision = await openDecision(fx, p.id, 'check_correction_tightening', proposal.id, { max: 8 });
     J.asked = await projectRead(fx, p.id);
     J.askedListed = await listSummary(fx, p.id);
+    // The approval's application is not only a tick's: the answer's own
+    // effect runs it at once, off the scheduler (objection 233). So the
+    // approved state is read with the scheduler held from before the answer
+    // and that effect held at `intent.recorded` (after the consuming
+    // transaction, which records the approval on the proposal, and before the
+    // revalidation; SEAM.md §76), reached before the reads; both released
+    // after them.
     await held(fx, p.id, async () => {
+      await armBarrier(fx.engine, APPLY, 'pause');
       await consume(fx, p.id, J.decision, 'approve');
-      J.approved = await projectRead(fx, p.id);
-      J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
+      await reached(fx, APPLY, "the approval's effect held after the answer");
+      try {
+        J.approved = await projectRead(fx, p.id);
+        J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
+      } finally {
+        await releaseBarrier(fx.engine, APPLY);
+      }
     });
     await tickUntil(fx.engine, p.id, () => proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id && x.status === 'applied'), { max: 8, what: "the engine's serving check applied" });
     J.applied = await projectRead(fx, p.id);

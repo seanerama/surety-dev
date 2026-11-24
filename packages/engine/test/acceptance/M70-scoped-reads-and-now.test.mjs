@@ -314,15 +314,26 @@ describe('M70 the decisions read', () => {
 // (D6 §7.6), read from the store. The comparison stays engine-wide, every
 // table as before, and the scheduler stays live inside the window, so a tick
 // a read caused would still be caught.
-const observedProjects = (home) =>
+//
+// The current incarnation is the one the engine reports (`GET /v1/engine`
+// `incarnation`, SEAM.md §4), not the latest `started_at` of the rows with no
+// `ended_at`: an engine the test killed never ends its row, and this host's
+// wall clock steps back (about 2.9 s every 29 s when measured on 2026-11-24;
+// SEAM.md §23), so a restart's `started_at` can be earlier than the killed
+// engine's, which named the killed incarnation, in which a project created
+// after the restart is never observed (the operations case, seen once: the
+// wait timed out after 30 s).
+const observedProjects = (home, incarnation) =>
   withStore(home, (db) => {
-    const incarnation = db.prepare('SELECT "id" FROM "engine_incarnations" WHERE "ended_at" IS NULL ORDER BY "started_at" DESC, rowid DESC LIMIT 1').get()?.id;
-    const missing = db.prepare('SELECT "id" FROM "projects" WHERE "id" NOT IN (SELECT "project" FROM "host_observations" WHERE "incarnation" = ?) ORDER BY "id"').all(incarnation ?? null);
-    return incarnation !== undefined && missing.length === 0 ? true : undefined;
+    const missing = db.prepare('SELECT "id" FROM "projects" WHERE "id" NOT IN (SELECT "project" FROM "host_observations" WHERE "incarnation" = ?) ORDER BY "id"').all(incarnation);
+    return missing.length === 0 ? true : undefined;
   });
 const quiet = async (fx, { settle } = {}) => {
   if (settle !== undefined) await tick(fx.engine, settle);
-  await waitFor(() => observedProjects(fx.home), { what: "every project's host observation of this incarnation (its first tick done) before the snapshot" });
+  const described = await fx.engine.get('/v1/engine');
+  const incarnation = described.body?.incarnation;
+  assert.ok(described.status === 200 && typeof incarnation === 'string' && incarnation.length > 0, `GET /v1/engine names the engine's incarnation (→ ${described.status} ${described.text})`);
+  await waitFor(() => observedProjects(fx.home, incarnation), { what: `every project's host observation of this incarnation (${incarnation}; its first tick done) before the snapshot` });
   const stored = () => withStore(fx.home, (db) => dumpStore(db, { exclude: ['events', 'engine_incarnations', 'leases'] }));
   const before = { rows: stored(), seq: maxEventSeq(fx.home), launches: fx.scripted.launches().length };
   return (what) => {
