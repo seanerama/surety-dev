@@ -29,12 +29,15 @@
 import type { Database } from 'better-sqlite3';
 
 import { approvedModuleMap, approvedSpec } from '../design/policy.js';
-import { DESIGN_PREVIEW_ENV, servingInstallFacts } from '../store/transitions/deploy.js';
+import { DESIGN_PREVIEW_ENV } from '../store/transitions/deploy.js';
 import { canonical, parseJson } from '../store/transitions/common.js';
 import { effectiveVersion } from '../store/transitions/protected.js';
 import type { Tx } from '../store/transitions/tx.js';
+import { BEHAVIOR_KIND, SERVING_KIND, deploymentRequirementMet, missingDeploymentKind } from '../store/transitions/serving.js';
 import { ADAPTER_CAPABILITIES, HOSTING_REQUIRED, KIND_LABEL, modeOfContent, withArticle } from './capabilities.js';
 import { type KindAnswer, type OutputKind, type TreeAnswer, architectureKind, combineKinds } from './output-kind.js';
+import type { DeclaredServing } from './serving-install.js';
+import { modeOf, servingSpec, staticSpec } from './static-site.js';
 
 type Db = Database;
 
@@ -62,11 +65,12 @@ export interface Compatibility {
   reason: string;
 }
 
-// `blocked` (laplab-validation E1): the environment can host the output but
-// the engine would refuse a deployment request now, for what is named
-// (the engine's serving check not yet applied, the candidate's checks
-// running again); `ready` only when the request would be admitted for
-// all the read can tell.
+// `blocked` (laplab-validation E1; DECISIONS item 42): the environment can
+// host the output but the engine would refuse a deployment request now,
+// for what is named (`blocker`: the required check of the alpha_complete
+// scope missing, the engine's serving check of a static site not yet
+// applied, the candidate's checks running again or not read); `ready` only
+// when the request would be authorized for all the read can tell.
 export const READINESS_STATES = ['ready', 'blocked', 'unconfigured', 'unsupported', 'unknown', 'not_complete'] as const;
 export type ReadinessState = (typeof READINESS_STATES)[number];
 export interface DeployReadiness {
@@ -75,6 +79,8 @@ export interface DeployReadiness {
   environment: string | null;
   // `blocked` only: the open decision whose answer unblocks it, or null.
   decision?: string | null;
+  // `blocked` only (DECISIONS item 42): what would refuse the request.
+  blocker?: Blocker;
   // `ready` only (the owner's ruling of 2026-10-29: "If a serving check has
   // not yet been proposed, readiness may mean ready to request deployment,
   // not 'verified' or 'ready to open.' State that approval and verification
@@ -99,7 +105,9 @@ export type ReadyMeaning = (typeof READY_MEANINGS)[number];
 // output kind whose effective version has none: a request is refused
 // naming it and asks a Verifier for it, alpha-gap.ts, and is made again
 // once it is applied); the approval of that protected proposal; the
-// deployment; its verification.
+// deployment; its verification. Since DECISIONS item 42 a missing
+// required check reads `blocked` (requiredCheckBlock), so `ready` never
+// lists `deployment_checks_authoring` or `request_again`; the names stay.
 export const REQUEST_STEPS = ['serving_check_proposal', 'deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'] as const;
 export type RequestStep = (typeof REQUEST_STEPS)[number];
 
@@ -112,11 +120,27 @@ export interface RequestPath {
 }
 
 // What would refuse a deployment request now, though the environment can
-// host the output: a clause (lower case, no final stop) and the open
-// decision that settles it, if one does.
+// host the output: a clause (lower case, no final stop), the open
+// decision that settles it, if one does, and what it is (`blocker`).
 export interface AdmissionBlock {
   clause: string;
   decision: string | null;
+  blocker: Blocker;
+}
+
+// What a `blocked` readiness names (DECISIONS item 42; M616 (e) amended,
+// M626): the required check of the `alpha_complete` scope missing from the
+// effective protected version (`subject` `kind:post_deploy_behavior`, or
+// `kind:post_deploy_serving` for a static site, serving.ts
+// missingDeploymentKind); the engine's serving check of a static site in
+// static mode proposed and not applied (`kind:post_deploy_serving`); the
+// candidate's checks running; or what the gate would read not read
+// (`subject` null for these two).
+export const BLOCKERS = ['required_check_missing', 'serving_check_pending', 'checks_running', 'checks_unread'] as const;
+export type BlockerKind = (typeof BLOCKERS)[number];
+export interface Blocker {
+  what: BlockerKind;
+  subject: string | null;
 }
 
 const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
@@ -293,50 +317,230 @@ export function candidateKind(db: Db, args: { project: string; candidate: string
   return c ? (recordedTree(db, args.project, c) as { kind: OutputKind } | null)?.kind ?? null : null;
 }
 
-// The engine's serving check for a static site (SHAPES.md §3), as the
-// configuration's answer states it (`serving_check.state`): present,
-// pending (proposed, not yet applied), none, or unread.
-export function servingCheckState(db: Db, project: string): 'present' | 'pending' | 'none' | 'unread' {
-  try {
-    return servingInstallFacts(db, { project }).state;
-  } catch {
-    return 'unread';
-  }
+// ---- the engine's serving check beside an environment (DECISIONS item 42; M626) -----------
+
+// The engine's file-serving check as an environment's entry serves it
+// (`serving_check`): what the environment's current configuration
+// declares is served, and where the engine's check stands for the
+// project:
+// - `present`: the effective protected version has a post_deploy_serving
+//   check (`check` its key);
+// - `awaiting_decision`: the engine's proposal of it has an open decision
+//   (its check_correction_tightening question; `decision` named);
+// - `approved`: the proposal approved, not yet applied;
+// - `proposed`: captured or classified, its question not yet raised;
+// - `not_proposed`: none of these (the reason says why: no serving
+//   declared, the proposal rejected, none captured);
+// - `unread`: the facts could not be read (never taken as none).
+// `holds_deployment`: whether its absence refuses a deployment request to
+// the environment: a static site in static mode whose effective version
+// has no required post_deploy_behavior check of the alpha_complete scope
+// to meet the requirement instead (serving.ts deploymentRequirementMet;
+// M616 (e)); never for a service (a pending proposal alone adds no
+// deployment gate), nor for an environment no request targets (the design
+// preview's, an adapter qualification's). The same facts the readiness
+// reads (servingPendingBlock, readinessOf), so the two cannot differ.
+export const SERVING_CHECK_STATES = ['present', 'awaiting_decision', 'approved', 'proposed', 'not_proposed', 'unread'] as const;
+export type ServingCheckState = (typeof SERVING_CHECK_STATES)[number];
+export interface ServingCheck {
+  kind: typeof SERVING_KIND;
+  declared: DeclaredServing | null;
+  state: ServingCheckState;
+  check: string | null;
+  proposal: string | null;
+  decision: string | null;
+  holds_deployment: boolean;
+  reason: string;
 }
 
-const SERVING_SENTENCE: Record<ReturnType<typeof servingCheckState>, string> = {
+const PENDING_PROPOSAL = ['captured', 'classified', 'awaiting_human', 'approved'];
+const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+// The environment's serving check, or null when the environment has no
+// current configuration. `output`: the output kind the deployment
+// compatibility serves.
+export function servingCheckStatus(db: Db, project: string, environment: string, output: OutputKind): ServingCheck | null {
+  const base = { kind: SERVING_KIND, check: null, proposal: null, decision: null } as const;
+  let env: { name: string; current_config: string | null; qualification_run: string | null } | undefined;
+  try {
+    env = db.prepare('SELECT "name", "current_config", "qualification_run" FROM "environments" WHERE "id" = ? AND "project" = ?').get(environment, project) as typeof env;
+  } catch (err) {
+    return { ...base, declared: null, state: 'unread', holds_deployment: false, reason: `Whether environment ${environment} has a configuration, and so where the engine's file-serving check stands for it, could not be read (${errText(err)}).` };
+  }
+  if (env === undefined || env.current_config === null) return null;
+  let declared: DeclaredServing | null;
+  let mode: 'static' | 'service';
+  try {
+    const row = db.prepare('SELECT "content" FROM "environment_configs" WHERE "id" = ?').get(env.current_config) as { content: string } | undefined;
+    if (!row) throw new Error(`its configuration ${env.current_config} is not in the store`);
+    const content = JSON.parse(row.content) as Record<string, unknown>;
+    const st = staticSpec(content);
+    const sv = st === null ? servingSpec(content) : null;
+    declared = st !== null ? { mode: 'static', ...st } : sv !== null ? { mode: 'service', ...sv } : null;
+    mode = modeOf(content);
+  } catch (err) {
+    return {
+      ...base,
+      declared: null,
+      state: 'unread',
+      holds_deployment: false,
+      reason: `What environment ${env.name}'s configuration declares is served, and so where the engine's file-serving check stands for it, could not be read (${errText(err)}).`,
+    };
+  }
+  const targeted = env.name !== DESIGN_PREVIEW_ENV && env.qualification_run === null;
+  const staticSite = targeted && declared?.mode === 'static' && output === 'static_site';
+  const holdsWhy = (holds: boolean, present: boolean, behavior: boolean | null): string =>
+    holds
+      ? present
+        ? "it meets this static site's deployment requirement"
+        : 'a deployment request is refused until it is in place'
+      : mode === 'service'
+        ? `for a service it does not hold the deployment: the required behavioural check (${BEHAVIOR_KIND}) does`
+        : staticSite && behavior === true
+          ? `it does not hold the deployment: the project's required ${BEHAVIOR_KIND} check meets the requirement`
+          : 'it does not hold the deployment';
+  let facts: { present: string | null; behavior: boolean; proposal: { id: string; status: string } | null; decision: string | null };
+  try {
+    const v = effectiveVersion(db, project);
+    if (!v) throw new Error('the project has no effective protected version');
+    const present = (db.prepare(`SELECT "key" FROM "checks" WHERE "protected_version" = ? AND "kind" = ? ORDER BY rowid LIMIT 1`).get(v.id, SERVING_KIND) as { key: string } | undefined)?.key ?? null;
+    const behavior = (db.prepare(`SELECT "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "kind" = ? AND "required" = 1`).all(v.id, BEHAVIOR_KIND) as { gate_kinds: string }[]).some((c) =>
+      (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'),
+    );
+    const proposal = (db.prepare(`SELECT "id", "status" FROM "protected_proposals" WHERE "project" = ? AND "proposed_by" = 'engine' ORDER BY "seq" DESC LIMIT 1`).get(project) as { id: string; status: string } | undefined) ?? null;
+    const decision =
+      proposal !== null && PENDING_PROPOSAL.includes(proposal.status)
+        ? ((db.prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open' ORDER BY rowid DESC LIMIT 1`).get(proposal.id) as { id: string } | undefined)?.id ?? null)
+        : null;
+    facts = { present, behavior, proposal, decision };
+  } catch (err) {
+    const holds = staticSite;
+    return { ...base, declared, state: 'unread', holds_deployment: holds, reason: `Whether the engine's file-serving check is in place could not be read (${errText(err)}); ${holdsWhy(holds, false, null)}.` };
+  }
+  const holds = staticSite && !facts.behavior;
+  const tail = (present: boolean): string => `; ${holdsWhy(holds, present, facts.behavior)}.`;
+  if (facts.present !== null) {
+    return { ...base, declared, state: 'present', check: facts.present, holds_deployment: holds, reason: `The engine's file-serving check ${facts.present} is in place in the effective protected version${tail(true)}` };
+  }
+  const p = facts.proposal;
+  if (declared === null) {
+    return {
+      ...base,
+      declared,
+      state: 'not_proposed',
+      holds_deployment: holds,
+      reason: `The engine's file-serving check is not proposed for environment ${env.name}: its configuration declares no serving root and entry${tail(false)}`,
+    };
+  }
+  if (p !== null && PENDING_PROPOSAL.includes(p.status)) {
+    const one = { ...base, declared, proposal: p.id, holds_deployment: holds };
+    if (facts.decision !== null) {
+      return { ...one, state: 'awaiting_decision', decision: facts.decision, reason: `The engine's file-serving check is proposed (proposal ${p.id}) and waits for your answer on decision ${facts.decision}${tail(false)}` };
+    }
+    if (p.status === 'approved') return { ...one, state: 'approved', reason: `The engine's file-serving check (proposal ${p.id}) is approved, awaiting application${tail(false)}` };
+    return { ...one, state: 'proposed', reason: `The engine's file-serving check is proposed (proposal ${p.id}); its question is raised at a coming tick${tail(false)}` };
+  }
+  const why =
+    p === null
+      ? 'no proposal of the engine\'s for it was captured (none is captured while the integration branch moves during its preparation, or when the facts it is prepared from cannot be read); a new configuration version declaring serving proposes it'
+      : p.status === 'rejected'
+        ? `the engine's proposal ${p.id} was rejected; a new configuration version declaring serving proposes it again`
+        : `the engine's proposal ${p.id} was ${p.status}, and the effective protected version has no ${SERVING_KIND} check; a new configuration version declaring serving proposes it again`;
+  return { ...base, declared, state: 'not_proposed', proposal: p?.id ?? null, holds_deployment: holds, reason: `The engine's file-serving check is not proposed: ${why}${tail(false)}` };
+}
+
+// The serving check's state in the words the readiness has said of a
+// static site since 2026-10-29: present, pending (proposed, not yet
+// applied), none, or unread.
+export type StaticServing = 'present' | 'pending' | 'none' | 'unread';
+export const staticServing = (s: ServingCheck): StaticServing =>
+  s.state === 'present' ? 'present' : s.state === 'not_proposed' ? 'none' : s.state === 'unread' ? 'unread' : 'pending';
+
+const SERVING_SENTENCE: Record<StaticServing, string> = {
   present: " The engine's serving check is in place: after deployment it verifies that the entry page and its assets are served from the artifact (serving verified, not functional or visual acceptance).",
   pending: " The engine's serving check is proposed and not yet applied.",
   none: " The engine's serving check has not been proposed yet.",
   unread: " Whether the engine's serving check is in place could not be read.",
 };
 
+// What the readiness's reason says of the serving check: a static site's
+// as before; a service declaring serving, the check's own sentence (it
+// does not hold the deployment); nothing otherwise.
+function servingNote(compat: Compatibility, serving: ServingCheck | null | undefined): string {
+  if (!serving) return '';
+  if (compat.output_kind === 'static_site' && serving.declared?.mode === 'static') return SERVING_SENTENCE[staticServing(serving)];
+  if (serving.declared?.mode === 'service') return ` ${serving.reason}`;
+  return '';
+}
+
 // The engine's serving check proposed and not applied while the deployment
-// scope needs it (laplab-validation E1): a static site in static mode whose
-// effective protected version has neither a required post_deploy_serving
-// nor a required post_deploy_behavior check of the alpha_complete scope
-// (serving.ts deploymentRequirementMet), with the engine's proposal still
-// before its application. A request now is refused ACCEPTANCE_SCOPE_INCOMPLETE
-// (kind:post_deploy_serving). null when nothing of that holds.
-export function servingPendingBlock(db: Db, project: string): AdmissionBlock | null {
-  const proposal = db
-    .prepare(`SELECT "id", "status" FROM "protected_proposals" WHERE "project" = ? AND "proposed_by" = 'engine' AND "status" IN ('captured', 'classified', 'awaiting_human', 'approved') ORDER BY "seq" DESC LIMIT 1`)
-    .get(project) as { id: string; status: string } | undefined;
-  if (!proposal) return null;
-  const effective = effectiveVersion(db, project);
-  if (effective) {
-    const kinds = (db.prepare(`SELECT "kind", "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "required" = 1 AND "kind" IN ('post_deploy_behavior', 'post_deploy_serving')`).all(effective.id) as { kind: string; gate_kinds: string }[])
-      .filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'))
-      .map((c) => c.kind);
-    if (kinds.length > 0) return null;
+// scope needs it (laplab-validation E1): the environment's serving check
+// holds the deployment (a static site in static mode whose effective
+// protected version has no required post_deploy_behavior check of the
+// alpha_complete scope) and is proposed, awaiting its decision or
+// approved. A request now is refused ACCEPTANCE_SCOPE_INCOMPLETE
+// (kind:post_deploy_serving). Neither present nor proposed (the proposal
+// rejected, none open): blocked as the required check missing
+// (requiredCheckBlock; M616 (e) amended). Its facts not read: blocked as
+// unread, never ready. null when nothing of that holds.
+export function servingPendingBlock(serving: ServingCheck | null): AdmissionBlock | null {
+  if (serving === null || !serving.holds_deployment) return null;
+  const pending: Blocker = { what: 'serving_check_pending', subject: `kind:${SERVING_KIND}` };
+  const what = `the engine's serving check (proposal ${serving.proposal}), which the deployment needs, is not applied yet`;
+  switch (serving.state) {
+    case 'awaiting_decision':
+      return { clause: `${what}: it waits for your answer on decision ${serving.decision}`, decision: serving.decision, blocker: pending };
+    case 'approved':
+      return { clause: `${what}: it is approved and is being applied`, decision: null, blocker: pending };
+    case 'proposed':
+      return { clause: `${what}: it is proposed and its question is raised at a coming tick`, decision: null, blocker: pending };
+    case 'unread':
+      return { clause: clause(serving.reason), decision: null, blocker: { what: 'checks_unread', subject: null } };
+    case 'not_proposed':
+      return requiredCheckBlock([], 'static_site', true);
+    default:
+      return null;
   }
-  const decision = db
-    .prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open' ORDER BY rowid DESC LIMIT 1`)
-    .get(proposal.id) as { id: string } | undefined;
-  const what = `the engine's serving check (proposal ${proposal.id}), which the deployment needs, is not applied yet`;
-  if (decision) return { clause: `${what}: it waits for your answer on decision ${decision.id}`, decision: decision.id };
-  if (proposal.status === 'approved') return { clause: `${what}: it is approved and is being applied`, decision: null };
-  return { clause: `${what}: it is proposed and its question is raised at a coming tick`, decision: null };
+}
+
+// The deployment-specific post-deploy check of the `alpha_complete` scope
+// missing from the effective protected version (serving.ts
+// deploymentRequirementMet false): a request now is refused
+// ACCEPTANCE_SCOPE_INCOMPLETE naming it (gates.ts), so the readiness is
+// `blocked` naming it and what writes it (DECISIONS item 42; M616 (e)
+// amended). `kinds`: the kinds of the effective version's required checks
+// listing alpha_complete. null when the requirement is met. `staticMode`:
+// the environment is a static site's in static mode, whose serving check is
+// neither present nor proposed (the engine's proposal rejected, none open).
+export function requiredCheckBlock(kinds: readonly string[], output: OutputKind, staticMode = false): AdmissionBlock | null {
+  if (deploymentRequirementMet(kinds, output)) return null;
+  const subject = missingDeploymentKind(output);
+  const blocker: Blocker = { what: 'required_check_missing', subject };
+  if (subject === `kind:${BEHAVIOR_KIND}`) {
+    return {
+      clause:
+        `the required behavioural check (${BEHAVIOR_KIND}, of the alpha_complete scope) is not in the effective protected version; ` +
+        `a Verifier writes it, asked by the engine when a deployment is requested (the policy's request under on_phase_complete, or a request from the operator console), and its approval and a request again follow`,
+      decision: null,
+      blocker,
+    };
+  }
+  if (staticMode) {
+    return {
+      clause:
+        `the required serving check (${SERVING_KIND}, of the alpha_complete scope) is not in the effective protected version and no proposal of the engine's for it is open; ` +
+        `the engine proposes it again when the environment's static configuration is written, and its approval and a request again follow`,
+      decision: null,
+      blocker,
+    };
+  }
+  return {
+    clause:
+      `the required serving check (${SERVING_KIND}, of the alpha_complete scope) is not in the effective protected version; ` +
+      `the engine proposes it when a static configuration, or a service configuration declaring serving, is written (a required ${BEHAVIOR_KIND} check meets the requirement too), and its approval and a request again follow`,
+    decision: null,
+    blocker,
+  };
 }
 
 // What the main thread needs to evaluate: the repository, the current
@@ -398,8 +602,9 @@ export function deploymentEnvironment(compat: Compatibility): EnvironmentCompati
 }
 
 // The readiness, and the sentence NOW's build_complete continues with.
-// `serving`: the engine's serving check's state, said in the reason when
-// a static site is ready in static mode.
+// `serving`: the deployment environment's serving check
+// (servingCheckStatus), said in the reason when a static site is ready in
+// static mode, and for any service configuration declaring serving.
 // `block`: what would refuse a request now (AdmissionBlock), asked only
 // when the environment can host the output.
 // `request`: what follows a request now (RequestPath), asked only when
@@ -407,7 +612,7 @@ export function deploymentEnvironment(compat: Compatibility): EnvironmentCompati
 export function readinessOf(
   complete: boolean,
   compat: Compatibility,
-  serving?: ReturnType<typeof servingCheckState>,
+  serving?: ServingCheck | null,
   block?: () => AdmissionBlock | null,
   request?: () => RequestPath,
 ): { readiness: DeployReadiness; sentence: string } {
@@ -428,14 +633,15 @@ export function readinessOf(
         return {
           readiness: {
             state: 'blocked',
-            reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode, but a deployment would be refused now: ${b.clause}.`,
+            reason: `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode, but a deployment would be refused now: ${b.clause}.${serving?.declared?.mode === 'service' ? ` ${serving.reason}` : ''}`,
             environment,
             decision: b.decision,
+            blocker: b.blocker,
           },
           sentence: ` It cannot be deployed to ${env.name} yet: ${b.clause}.`,
         };
       }
-      const hosts = `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${compat.output_kind === 'static_site' && serving !== undefined ? SERVING_SENTENCE[serving] : ''}`;
+      const hosts = `The environment ${env.name} can host this output (${KIND_LABEL[compat.output_kind]}) with ${env.adapter} in ${env.mode} mode.${servingNote(compat, serving)}`;
       const path = request?.() ?? null;
       if (path === null) {
         return { readiness: { state: 'ready', reason: hosts, environment }, sentence: ` It can be deployed to ${env.name} (${KIND_LABEL[compat.output_kind]}, ${env.adapter} ${env.mode} mode).` };

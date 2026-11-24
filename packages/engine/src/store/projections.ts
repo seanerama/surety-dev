@@ -25,9 +25,20 @@ import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete, buildCompletedAt } from '../plan/phase.js';
 import { firstPlanUnpublished, firstPlanUnpublishedStep } from '../prototype/brief.js';
-import { type AdmissionBlock, type Compatibility, type RequestPath, deploymentEnvironment, readinessOf, servedCompatibility, servingCheckState, servingPendingBlock, unreadCompatibility } from '../deploy/compatibility.js';
-import { deploymentRequirementMet } from './transitions/serving.js';
-import type { TreeAnswer } from '../deploy/output-kind.js';
+import {
+  type AdmissionBlock,
+  type Compatibility,
+  type RequestPath,
+  type ServingCheck,
+  deploymentEnvironment,
+  readinessOf,
+  requiredCheckBlock,
+  servedCompatibility,
+  servingCheckStatus,
+  servingPendingBlock,
+  unreadCompatibility,
+} from '../deploy/compatibility.js';
+import type { OutputKind, TreeAnswer } from '../deploy/output-kind.js';
 import type { WorkRow } from './transitions/work.js';
 
 type Db = Database;
@@ -567,7 +578,25 @@ function spendToday(db: Db, project: string) {
 
 // ---- environments and their current observation (D1 §3.5, D1-28) --------------------
 
-function environmentsOf(db: Db, project: string) {
+// Each environment's entry: its current observation, and beside it the
+// engine's file-serving check (DECISIONS item 42; M626): null with no
+// current configuration. `output`: the output kind the deployment
+// compatibility serves (deploy/compatibility.ts servingCheckStatus).
+function environmentsOf(db: Db, project: string, output: OutputKind) {
+  return environmentRows(db, project).map((e) => ({ ...e, serving_check: servingCheckStatus(db, project, e.id, output) }));
+}
+
+// The output kind a read serves, for the environments' serving checks:
+// `unknown` when the compatibility cannot be read.
+function servedOutputKind(db: Db, project: string, trees: TreeAnswer[] = []): OutputKind {
+  try {
+    return servedCompatibility(db, project, trees, nowIso()).output_kind;
+  } catch {
+    return 'unknown';
+  }
+}
+
+function environmentRows(db: Db, project: string) {
   const bound = projectPolicy(db, project).observation_freshness_bound! * 1000;
   const now = nowMs();
   const rows = db
@@ -639,8 +668,11 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
     const reason = 'Whether the planned build is complete cannot be read from the store.';
     return { compatibility, complete, readiness: { state: 'unknown', reason, environment: null }, now: { sentence: '', primary: null } };
   }
-  const serving = compatibility.output_kind === 'static_site' ? servingCheckState(db, project) : undefined;
-  const { readiness, sentence } = readinessOf(complete, compatibility, serving, () => admissionBlock(db, project, compatibility), () => requestPath(db, project, compatibility, serving));
+  // The deployment environment's serving check (DECISIONS item 42): the
+  // one function the environment's entry serves too.
+  const target = deploymentEnvironment(compatibility);
+  const serving = target === null ? null : servingCheckStatus(db, project, target.environment, compatibility.output_kind);
+  const { readiness, sentence } = readinessOf(complete, compatibility, serving, () => admissionBlock(db, project, compatibility, serving), () => requestPath(db, project, compatibility, serving));
   return {
     compatibility,
     complete,
@@ -650,28 +682,56 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
 }
 
 // What would refuse a deployment request now though the environment can
-// host the output (laplab-validation E1; deploy/compatibility.ts
-// AdmissionBlock): the engine's serving check of a static site in static
-// mode not yet applied (refused ACCEPTANCE_SCOPE_INCOMPLETE
-// kind:post_deploy_serving), or the current candidate's checks still to
-// run or running (refused CHECK_NOT_PASSED until they pass). Unreadable
-// checks are said so, never taken as none.
-function admissionBlock(db: Db, project: string, compatibility: Compatibility): AdmissionBlock | null {
+// host the output (laplab-validation E1; DECISIONS item 42;
+// deploy/compatibility.ts AdmissionBlock), in this order:
+// - the engine's serving check of a static site in static mode not yet
+//   applied (refused ACCEPTANCE_SCOPE_INCOMPLETE kind:post_deploy_serving;
+//   servingPendingBlock, from the environment's serving check);
+// - any other environment, the deployment-specific post-deploy check of
+//   the effective protected version's alpha_complete scope missing
+//   (serving.ts deploymentRequirementMet; for a service the required
+//   post_deploy_behavior check: refused ACCEPTANCE_SCOPE_INCOMPLETE naming
+//   it, requiredCheckBlock); a pending serving proposal for a service adds
+//   nothing here;
+// - the current candidate's checks still to run or running (refused
+//   CHECK_NOT_PASSED until they pass).
+// Unreadable facts are said so (`checks_unread`), never taken as none.
+// A static site in static mode whose serving check is neither present nor
+// proposed reads the required check missing (kind:post_deploy_serving),
+// never `ready` (M616 (e) amended, superseding the `ready` with
+// `serving_check_proposal` of the owner's ruling of 2026-10-29).
+function admissionBlock(db: Db, project: string, compatibility: Compatibility, serving: ServingCheck | null): AdmissionBlock | null {
   const env = deploymentEnvironment(compatibility);
-  if (compatibility.output_kind === 'static_site' && env?.mode === 'static') {
-    const serving = servingPendingBlock(db, project);
-    if (serving !== null) return serving;
+  const staticMode = compatibility.output_kind === 'static_site' && env?.mode === 'static';
+  if (staticMode) {
+    const pending = servingPendingBlock(serving);
+    if (pending !== null) return pending;
+  } else {
+    let kinds: string[];
+    try {
+      const effective = effectiveVersion(db, project);
+      kinds = effective
+        ? (db.prepare(`SELECT "kind", "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "required" = 1`).all(effective.id) as { kind: string; gate_kinds: string }[])
+            .filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'))
+            .map((c) => c.kind)
+        : [];
+    } catch (err) {
+      return { clause: `whether the effective protected version has the required checks of the alpha_complete scope could not be read (${err instanceof Error ? err.message : String(err)})`, decision: null, blocker: { what: 'checks_unread', subject: null } };
+    }
+    const missing = requiredCheckBlock(kinds, compatibility.output_kind);
+    if (missing !== null) return missing;
   }
   let progress: CheckProgress | null;
   try {
     progress = checksOf(db, project);
   } catch (err) {
-    return { clause: `whether the candidate's automated checks have passed could not be read (${err instanceof Error ? err.message : String(err)})`, decision: null };
+    return { clause: `whether the candidate's automated checks have passed could not be read (${err instanceof Error ? err.message : String(err)})`, decision: null, blocker: { what: 'checks_unread', subject: null } };
   }
   if (progress !== null && progress.queued + progress.running > 0) {
     return {
       clause: `the candidate's automated checks are running (${progress.completed} of ${progress.planned} completed); it can be requested once they pass`,
       decision: progress.held?.decision ?? null,
+      blocker: { what: 'checks_running', subject: null },
     };
   }
   return null;
@@ -687,19 +747,16 @@ function admissionBlock(db: Db, project: string, compatibility: Compatibility): 
 //   running in that environment is its own, deployed (verified and
 //   completed);
 // - otherwise `request_deployment`, with what follows a request:
-//   - a static site in static mode, by the engine's serving check: in
-//     place, the deployment and its verification; proposed, its approval
-//     first; not proposed, its proposal (made when the environment's
-//     static configuration is written, deploy/commands.ts) and approval
-//     first; not read, null;
-//   - any other output kind, by the deployment-specific post-deploy check
-//     of the effective protected version's `alpha_complete` scope
-//     (serving.ts deploymentRequirementMet): present, the deployment and
-//     its verification; absent, a request is refused naming it and asks a
-//     Verifier to write it (alpha-gap.ts), its approval, then a request
-//     again, the deployment and its verification; not read, null.
+//   - a static site in static mode: the deployment and its verification
+//     (its serving check in place, or not holding the deployment); any
+//     other state of it reads `blocked` (admissionBlock); not read, null;
+//   - any other environment, the deployment and its verification: its
+//     deployment-specific post-deploy check is in place, or the readiness
+//     is `blocked` naming it (admissionBlock; DECISIONS item 42), so
+//     `deployment_checks_authoring` and `request_again` never follow
+//     `ready`.
 // Never `verified` before the deployment's verification.
-function requestPath(db: Db, project: string, compatibility: Compatibility, serving: ReturnType<typeof servingCheckState> | undefined): RequestPath {
+function requestPath(db: Db, project: string, compatibility: Compatibility, serving: ServingCheck | null): RequestPath {
   const env = deploymentEnvironment(compatibility);
   const verifies = 'the deployment and its verification follow before the preview opens';
   const unread = (why: string): RequestPath => ({ means: 'request_deployment', follows: null, clause: `what follows a request could not be read (${why}); the preview opens only once a deployment is verified` });
@@ -720,39 +777,11 @@ function requestPath(db: Db, project: string, compatibility: Compatibility, serv
   } catch (err) {
     return unread(err instanceof Error ? err.message : String(err));
   }
-  if (compatibility.output_kind === 'static_site' && env?.mode === 'static') {
-    switch (serving) {
-      case 'present':
-        return { means: 'request_deployment', follows: ['deployment', 'verification'], clause: verifies };
-      case 'pending':
-        return { means: 'request_deployment', follows: ['approval', 'deployment', 'verification'], clause: `the engine's serving check is proposed; its approval, the deployment and its verification follow before the preview opens` };
-      case 'none':
-        return {
-          means: 'request_deployment',
-          follows: ['serving_check_proposal', 'approval', 'deployment', 'verification'],
-          clause: `the engine's serving check has not been proposed yet; its proposal (made when the environment's static configuration is written), its approval, the deployment and its verification follow before the preview opens, and no deployment is made before the check is applied`,
-        };
-      default:
-        return unread("whether the engine's serving check is in place");
-    }
-  }
-  let kinds: string[];
-  try {
-    const effective = effectiveVersion(db, project);
-    kinds = effective
-      ? (db.prepare(`SELECT "kind", "gate_kinds" FROM "checks" WHERE "protected_version" = ? AND "required" = 1`).all(effective.id) as { kind: string; gate_kinds: string }[])
-          .filter((c) => (parseJson<string[]>(c.gate_kinds) ?? []).includes('alpha_complete'))
-          .map((c) => c.kind)
-      : [];
-  } catch (err) {
-    return unread(`the effective protected version's checks: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (deploymentRequirementMet(kinds, compatibility.output_kind)) return { means: 'request_deployment', follows: ['deployment', 'verification'], clause: verifies };
-  return {
-    means: 'request_deployment',
-    follows: ['deployment_checks_authoring', 'approval', 'request_again', 'deployment', 'verification'],
-    clause: `the deployment-specific post-deploy check is not in place yet, so a request is refused naming it and asks a Verifier to write it; its approval, a request again, the deployment and its verification follow before the preview opens`,
-  };
+  // A static site in static mode: its serving check in place, or a
+  // required post_deploy_behavior check meeting the requirement (not
+  // held); anything else read `blocked` (admissionBlock). Not read: null.
+  if (compatibility.output_kind === 'static_site' && env?.mode === 'static' && (serving === null || serving.state === 'unread')) return unread("whether the engine's serving check is in place");
+  return { means: 'request_deployment', follows: ['deployment', 'verification'], clause: verifies };
 }
 
 // `build`: `complete` (null when it cannot be read), `completed_at` (when
@@ -860,7 +889,7 @@ export function readProject(db: Db, args: { project: string; trees?: TreeAnswer[
         const it = currentIteration(db, args.project);
         return it === null ? null : { iteration: it.id, status: it.status };
       })(),
-      environments: environmentsOf(db, args.project),
+      environments: environmentsOf(db, args.project, deploy.compatibility.output_kind),
       idea: ideaOf(db, args.project),
       // D6 §8.1 step 1 (SEAM.md §379): A, the signals and the mode; the
       // mode is null, with its reason, while the owner has not chosen it.
@@ -1101,7 +1130,10 @@ export function readOneEnvironment(db: Db, args: { project: string; environment:
     compatibility = unreadCompatibility(err, nowIso());
   }
   const own = compatibility.environments === null ? null : compatibility.environments.filter((e) => e.environment === read.environment.id);
-  return { ...envelope(db), ...read, environment: { ...read.environment, deployment_compatibility: { ...compatibility, environments: own } } };
+  // The engine's file-serving check beside it, as the project read's entry
+  // serves it (DECISIONS item 42; M626).
+  const serving_check = servingCheckStatus(db, args.project, read.environment.id, compatibility.output_kind);
+  return { ...envelope(db), ...read, environment: { ...read.environment, serving_check, deployment_compatibility: { ...compatibility, environments: own } } };
 }
 
 // GET /v1/projects/:p/environments/:e/logs (D4 §6.1, A.8; SEAM.md §294):
@@ -1111,10 +1143,12 @@ export function readEnvironmentLogs(db: Db, args: { project: string; environment
   return { ...envelope(db), ...readLogs(db, args) };
 }
 
-export function readEnvironments(db: Db, args: { project: string }) {
+export function readEnvironments(db: Db, args: { project: string; trees?: TreeAnswer[] }) {
   mustProject(db, args.project);
   const head = envelope(db);
-  return { ...head, environments: environmentsOf(db, args.project) };
+  // The serving check beside each entry as the project read serves it: the
+  // output kind from the trees the main thread read for it, as there.
+  return { ...head, environments: environmentsOf(db, args.project, servedOutputKind(db, args.project, args.trees ?? [])) };
 }
 
 // GET /v1/projects/:p/candidates/:c (D1 §11.3; SEAM.md §95): the candidate,
