@@ -82,6 +82,9 @@ const ROWS = [
   'M628',
   // §3g (M629: the requested model named before approval; DECISIONS item 45; 2026-11-24).
   'M629',
+  'M630',
+  'M631',
+  'M632',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 

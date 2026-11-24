@@ -572,7 +572,10 @@
       "M626-the-file-serving-check-beside-its-environment.test.mjs",
       "M627-the-owner-asks-for-the-missing-check.test.mjs",
       "M628-waiting-for-reviewer-sign-off.test.mjs",
-      "M629-the-requested-model-named-before-approval.test.mjs"
+      "M629-the-requested-model-named-before-approval.test.mjs",
+      "M630-what-ended-an-observation-by-store-order.test.mjs",
+      "M631-a-refused-alpha-request-reconsidered.test.mjs",
+      "M632-a-finding-owed-by-store-order.test.mjs"
     ],
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",
