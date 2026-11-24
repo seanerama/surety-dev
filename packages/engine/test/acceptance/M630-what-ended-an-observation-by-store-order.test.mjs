@@ -26,7 +26,20 @@
 //       LABELLED STORE WRITE of the teardown operation's `finalized_at` (a
 //       wall stamp only; no event, seq or rowid is touched) to the
 //       observation's `observed_at`, the store order left as made;
-//   (d) rows that predate the ordering fact: see the case at the end.
+//   (d) rows that predate the ordering fact. The Builder's ordering fact
+//       (migration 0052, de558275): `observation_history.seq`, the
+//       observation's place in the store order, and `operations.finalized_seq`,
+//       the seq of the operation's `operation.finalized` event; NULL on rows
+//       written before 0052. Its stated fallback: a pair where either row has
+//       none is compared by the recorded timestamps and the read names it,
+//       `order_basis` `timestamp_fallback` (else `seq`), on `observed` and on
+//       `ended_by`. A pre-0052 teardown is ARRANGED BY A LABELLED STORE WRITE
+//       of that operation's `finalized_seq` to NULL (an operations row is
+//       writable; `observation_history` is append-only at the database
+//       level, so an observation without its seq cannot be arranged here: the
+//       Builder's unit test store-order.test.mjs (d) covers that side). The
+//       row: the read names its basis explicitly and never presents a
+//       timestamp comparison as store order.
 //
 // SAFETY: no unit, no systemctl, no host process; the only engine stopped
 // is the test's own (`t.after`).
@@ -180,5 +193,27 @@ describe('M630 what ended an observation, decided by store order', () => {
     assert.equal(equal.finalized_at, seen.observed_at, 'the fixture is live: finalized_at equals observed_at to the millisecond');
     assert.deepEqual(storeOrder(fx.home, env.id, seen.observed_at, op.id), order, 'the store order of the two facts untouched');
     await assertEndedBy(ctx, seen, equal, 'teardown', '(c) equal stamps');
+  });
+
+  test('(d) a finalization recorded before the ordering fact (a labelled store write of its finalized_seq to NULL): the read names its basis, the store order where both facts carry it and the fallback where one does not', async (t) => {
+    const ctx = await running(t);
+    const { fx, env } = ctx;
+    const seen = await healthyCurrent(ctx, '(d)');
+    const op = await tornDown(ctx);
+    const byOrder = await assertEndedBy(ctx, seen, op, 'teardown', '(d) both facts in the store order');
+    assert.equal(byOrder.order_basis, 'seq', `(d) the read names the store order as its basis (${JSON.stringify(byOrder)})`);
+    assert.equal(byOrder.ended_by?.order_basis, 'seq', '(d) and on the end it names');
+    const finalizedSeq = withStore(fx.home, (db) => db.prepare('SELECT "finalized_seq" FROM "operations" WHERE "id" = ?').get(op.id)).finalized_seq;
+    assert.equal(finalizedSeq, storeOrder(fx.home, env.id, seen.observed_at, op.id).finalized, "the ordering fact the Builder records: the finalization's own event seq");
+    // FIXTURE TAMPERING (labelled): the teardown as a row written before migration 0052 (no store order recorded).
+    withStore(fx.home, (db) => db.prepare('UPDATE "operations" SET "finalized_seq" = NULL WHERE "id" = ?').run(op.id), { readonly: false });
+    const read = (await environmentRead(fx.engine, ctx.project, env.name)).observed;
+    assert.equal(read.order_basis, 'timestamp_fallback', `(d) the read names the fallback, never the store order (${JSON.stringify(read)})`);
+    assert.notEqual(read.order_basis, byOrder.order_basis, '(d) a basis other than the store order');
+    // The stamps are in order here (no step): the recorded timestamps end it, and say so.
+    assert.ok(op.finalized_at > seen.observed_at, `the stamps in order (${seen.observed_at} < ${op.finalized_at})`);
+    assert.deepEqual([read.ended_by?.kind, read.ended_by?.operation, read.ended_by?.order_basis], ['teardown', op.id, 'timestamp_fallback'], `(d) ended by the teardown on the fallback, named so (${JSON.stringify(read)})`);
+    const listed = await envListed(ctx);
+    assert.equal(listed.observed?.order_basis, 'timestamp_fallback', `(d) the list names it too (${JSON.stringify(listed.observed)})`);
   });
 });
