@@ -26,6 +26,8 @@ const { REVIEW_WAIT_STATES } = await import(join(dist, 'store', 'transitions', '
 const { recordReport } = await import(join(dist, 'store', 'transitions', 'findings.js'));
 const { contentHash } = await import(join(dist, 'store', 'transitions', 'evidence.js'));
 const { recordCheckResult } = await import(join(dist, 'store', 'transitions', 'baseline.js'));
+const { parkWork } = await import(join(dist, 'store', 'transitions', 'runs.js'));
+const { getWorkItem } = await import(join(dist, 'store', 'transitions', 'work.js'));
 
 const SEALED = { digest: 'sha256:' + 'd'.repeat(64), manifest: [], path: '/nowhere/artifact', bytes: 1, entries: 1, reused: 'new' };
 const request = (fx, requested_by = 'human') =>
@@ -71,7 +73,7 @@ test("the owner's request refused for the sign-off alone names the review it que
   let r = p.build.deploy_readiness;
   assert.equal(r.state, 'blocked', JSON.stringify(r));
   assert.deepEqual(r.blocker, { what: 'signoff_pending', subject: 'SIGNOFF_MISSING' });
-  assert.deepEqual(r.review, { state: 'queued', work_item: review.id, run: null });
+  assert.deepEqual(r.review, { state: 'queued', work_item: review.id, run: null, decision: null });
   assert.equal(r.decision, null);
   assert.match(r.reason, WAITING);
   assert.equal(WAITING.exec(r.reason)[1], review.id);
@@ -88,7 +90,7 @@ test("the owner's request refused for the sign-off alone names the review it que
   fx.db.prepare(`UPDATE work_items SET status = 'executing' WHERE id = ?`).run(review.id);
   runFor(fx.db, 'run_r', review.id, 'executing', 'reviewer');
   r = project(fx).build.deploy_readiness;
-  assert.deepEqual([r.state, r.review], ['blocked', { state: 'running', work_item: review.id, run: 'run_r' }]);
+  assert.deepEqual([r.state, r.review], ['blocked', { state: 'running', work_item: review.id, run: 'run_r', decision: null }]);
   assert.match(r.reason, /is under way \(run run_r\)/);
   assert.deepEqual(request(fx).body.subject.review, { state: 'running', work_item: review.id });
   assert.equal(reviews(fx.db).length, 1);
@@ -109,9 +111,28 @@ test('a review parked behind a question to the owner: awaiting_owner', async (t)
   const [review] = reviews(fx.db);
   fx.db.prepare(`UPDATE work_items SET status = 'parked' WHERE id = ?`).run(review.id);
   const r = project(fx).build.deploy_readiness;
-  assert.deepEqual([r.blocker.what, r.review], ['signoff_pending', { state: 'awaiting_owner', work_item: review.id, run: null }]);
+  assert.deepEqual([r.blocker.what, r.review], ['signoff_pending', { state: 'awaiting_owner', work_item: review.id, run: null, decision: null }]);
   assert.match(r.reason, /waits for your answer/);
   assert.deepEqual(request(fx).body.subject.review, { state: 'awaiting_owner', work_item: review.id });
+});
+
+test('DECISIONS item 46: a review parked behind its blocker question serves review.decision, the open decision; once it is no longer open, null', async (t) => {
+  const fx = await store(t, { behaves: true });
+  request(fx);
+  const [review] = reviews(fx.db);
+  fx.db.prepare(`UPDATE work_items SET status = 'executing' WHERE id = ?`).run(review.id);
+  transact(fx.db, ENGINE_ACTOR, (tx) => parkWork(tx, getWorkItem(tx, review.id), 'review_signoff_missing', {}));
+  const blocker = fx.db.prepare(`SELECT * FROM decisions WHERE kind = 'blocker' AND subject_type = 'work_item' AND subject_id = ? AND status = 'open'`).get(review.id);
+  assert.ok(blocker, 'the parked review raised its blocker question');
+  let r = project(fx).build.deploy_readiness;
+  assert.deepEqual([r.state, r.blocker.what, r.review], ['blocked', 'signoff_pending', { state: 'awaiting_owner', work_item: review.id, run: null, decision: blocker.id }]);
+  assert.equal(r.decision, null, "the readiness's own decision is unchanged");
+  // The refusal's subject.review keeps its shape (M628 (a)).
+  assert.deepEqual(request(fx).body.subject.review, { state: 'awaiting_owner', work_item: review.id });
+  // The question no longer open (answered elsewhere): none named.
+  fx.db.prepare(`UPDATE decisions SET status = 'invalidated' WHERE id = ?`).run(blocker.id);
+  r = project(fx).build.deploy_readiness;
+  assert.deepEqual(r.review, { state: 'awaiting_owner', work_item: review.id, run: null, decision: null });
 });
 
 test("the policy's request (settling on the review) names it too", async (t) => {

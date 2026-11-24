@@ -110,6 +110,26 @@ export interface ReviewWait {
   state: ReviewWaitState;
   work_item: string;
   run: string | null;
+  // The open decision the review waits on while `awaiting_owner` (DECISIONS
+  // item 46: "If the review needs my input, link to that decision"); null
+  // otherwise, and null when none is open (a held review).
+  decision: string | null;
+}
+
+// The open decision a review waiting for its owner waits on: the one its
+// blocker names (a parked item's, runs.ts parkWork), else an open question
+// about the work item, else one that holds it while open
+// (blocked_while_open). null when none is open.
+function openDecisionOf(db: Db, workItem: string): string | null {
+  const row = db.prepare('SELECT "blocker" FROM "work_items" WHERE "id" = ?').get(workItem) as { blocker: string | null } | undefined;
+  const named = parseJson<{ decision?: unknown }>(row?.blocker ?? null)?.decision;
+  if (typeof named === 'string' && db.prepare(`SELECT 1 FROM "decisions" WHERE "id" = ? AND "status" = 'open'`).get(named)) return named;
+  const about = db.prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" DESC LIMIT 1`).get(workItem) as { id: string } | undefined;
+  if (about) return about.id;
+  const holding = db
+    .prepare(`SELECT d."id" FROM "decisions" d, json_each(d."blocked_while_open", '$.work_items') j WHERE d."status" = 'open' AND j."value" = ? ORDER BY d."seq" DESC LIMIT 1`)
+    .get(workItem) as { id: string } | undefined;
+  return holding?.id ?? null;
 }
 
 export function reviewWaitOf(db: Db, project: string, candidate: string): ReviewWait | null {
@@ -117,9 +137,9 @@ export function reviewWaitOf(db: Db, project: string, candidate: string): Review
   if (!r) return null;
   const runs = db.prepare('SELECT "id", "state" FROM "runs" WHERE "work_item" = ? ORDER BY rowid DESC').all(r.id) as { id: string; state: string }[];
   const live = runs.find((x) => x.state !== 'ended') ?? null;
-  if (['parked', 'held', 'awaiting_decision'].includes(r.status)) return { state: 'awaiting_owner', work_item: r.id, run: live?.id ?? runs[0]?.id ?? null };
-  if (live !== null) return { state: 'running', work_item: r.id, run: live.id };
-  return { state: 'queued', work_item: r.id, run: null };
+  if (['parked', 'held', 'awaiting_decision'].includes(r.status)) return { state: 'awaiting_owner', work_item: r.id, run: live?.id ?? runs[0]?.id ?? null, decision: openDecisionOf(db, r.id) };
+  if (live !== null) return { state: 'running', work_item: r.id, run: live.id, decision: null };
+  return { state: 'queued', work_item: r.id, run: null, decision: null };
 }
 
 // Did the evaluation's SIGNOFF_MISSING only wait (real visual run 2's

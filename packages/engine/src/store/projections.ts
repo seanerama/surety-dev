@@ -777,8 +777,9 @@ function admissionBlock(db: Db, project: string, compatibility: Compatibility, s
 // is still missing on its content, and the engine's review of the
 // candidate is queued, under way or waiting for its owner. `blocked`,
 // "Waiting for Reviewer sign-off", naming the review; once signed off, no
-// longer. No decision is served: the review's own question, if it parks,
-// is the owner's attention list's.
+// longer. The readiness's own `decision` stays null; the review's open
+// question, while it waits for its owner, is `review.decision` (DECISIONS
+// item 46).
 function signoffBlock(db: Db, project: string, environment: string | null): AdmissionBlock | null {
   const candidate = currentCandidate(db, project);
   if (candidate === null) return null;
