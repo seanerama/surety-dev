@@ -1992,6 +1992,12 @@
         },
         "asset_inputs": {
           "required": false
+        },
+        "created_seq": {
+          "required": false
+        },
+        "finished_seq": {
+          "required": false
         }
       }
     },
@@ -2143,6 +2149,12 @@
           "required": false
         },
         "asset_inputs": {
+          "required": false
+        },
+        "created_seq": {
+          "required": false
+        },
+        "invalidated_seq": {
           "required": false
         }
       }
@@ -2547,6 +2559,9 @@
           "required": false
         },
         "preparation_attempts": {
+          "required": false
+        },
+        "reconsidered": {
           "required": false
         }
       }
@@ -3785,6 +3800,9 @@
         },
         "remediation": {
           "required": false
+        },
+        "created_seq": {
+          "required": false
         }
       }
     },
@@ -3858,6 +3876,9 @@
           "required": false
         },
         "serving": {
+          "required": false
+        },
+        "seq": {
           "required": false
         }
       }
@@ -4401,6 +4422,9 @@
         },
         "stale_reason": {
           "required": false
+        },
+        "seq": {
+          "required": false
         }
       }
     },
@@ -4569,6 +4593,9 @@
         "authorization": {
           "required": false,
           "references": "deployment_authorizations"
+        },
+        "finalized_seq": {
+          "required": false
         }
       }
     },
@@ -5867,6 +5894,9 @@
         "iteration": {
           "required": false,
           "references": "prototype_iterations"
+        },
+        "finished_seq": {
+          "required": false
         }
       }
     },

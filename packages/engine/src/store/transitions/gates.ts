@@ -958,7 +958,10 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   }
   if (kind === 'stage' && superseded === null) queueReview(tx, candidate, scope, states);
 
-  tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
+  const evaluated = tx.emit('gate.evaluated', { project: args.project, candidate: candidate.id, evaluation: id, scope: scopeId }, { gate_kind: kind, outcome, reasons: reasons.map((r) => r.code) });
+  // The evaluation in the store order (DECISIONS item 51; migration 0052):
+  // its own gate.evaluated event's seq.
+  tx.db.prepare('UPDATE "gate_evaluations" SET "seq" = ? WHERE "id" = ?').run(evaluated.seq, id);
   return { evaluation: { id, gate_kind: kind, outcome, reasons, check_states: states, checks: entries, scope: scopeId, stale: false, missing_verifications: missingVerifications, ...(serving !== null ? { serving } : {}) } };
 }
 

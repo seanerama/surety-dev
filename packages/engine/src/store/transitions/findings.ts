@@ -88,8 +88,8 @@ export function raiseFinding(
   tx.db
     .prepare(
       `INSERT INTO "findings" ("id", "created_at", "project", "seq", "scope", "subject_id", "candidate", "source_run", "source_role", "category", "message", "check",
-         "proposed_severity", "effective_severity", "severity_history", "sensitive_area", "status", "reevaluations", "criterion")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'open', '[]', ?)`,
+         "proposed_severity", "effective_severity", "severity_history", "sensitive_area", "status", "reevaluations", "criterion", "created_seq")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'open', '[]', ?, ?)`,
     )
     .run(
       id,
@@ -108,6 +108,9 @@ export function raiseFinding(
       args.severity,
       args.sensitiveArea ?? null,
       args.criterion ?? null,
+      // Its place in the store order (DECISIONS item 51): what a review's
+      // end is weighed against (askUndispositioned).
+      tx.storeOrder(),
     );
   tx.emit(
     'finding.raised',
@@ -493,13 +496,28 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
 // Builder's objection takes the conflict route instead (repair.ts); a
 // finding the owner has already answered a question about is as the owner
 // left it. Returns the questions raised.
+//
+// "Reported after it was raised" is the store's order (DECISIONS item 51,
+// finding 3; migration 0052), never two wall-clock stamps: the review run's
+// run.ended seq (`runs.finished_seq`) against the finding's place
+// (`findings.created_seq`): a review that ended before the finding was
+// recorded is not after it, whatever its `finished_at`; one that ended
+// after it is, whatever the stamps say, equal milliseconds included. A
+// pair where either carries no order (recorded before 0052) is compared on
+// the recorded timestamps, as before; the question raised then records
+// that basis (decision.raised's `order_basis`: `timestamp_fallback`; `seq`
+// otherwise), never presenting the stamps as the store's order.
+const REVIEW_RUNS = `FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
+           WHERE w."project" = f."project" AND w."kind" = 'review' AND w."trigger_source" = 'verification' AND w."trigger_id" = f."candidate"
+             AND r."state" = 'ended' AND r."outcome" = 'completed' AND r."finished_at" IS NOT NULL`;
 export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: boolean }): number {
   const rows = tx.db
     .prepare(
       `SELECT f.*,
-         EXISTS (SELECT 1 FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item"
-           WHERE w."project" = f."project" AND w."kind" = 'review' AND w."trigger_source" = 'verification' AND w."trigger_id" = f."candidate"
-             AND r."state" = 'ended' AND r."outcome" = 'completed' AND r."finished_at" IS NOT NULL AND r."finished_at" >= f."created_at") AS "reviewed_after"
+         EXISTS (SELECT 1 ${REVIEW_RUNS}
+             AND CASE WHEN r."finished_seq" IS NOT NULL AND f."created_seq" IS NOT NULL THEN r."finished_seq" > f."created_seq" ELSE r."finished_at" >= f."created_at" END) AS "reviewed_after",
+         EXISTS (SELECT 1 ${REVIEW_RUNS}) AS "reviews_weighed",
+         EXISTS (SELECT 1 ${REVIEW_RUNS} AND (r."finished_seq" IS NULL OR f."created_seq" IS NULL)) AS "reviewed_by_stamps"
        FROM "findings" f WHERE f."project" = ? AND f."status" = 'open' AND f."disposition" IS NULL AND f."proposed_disposition" IS NULL
          AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."subject_type" = 'finding' AND d."subject_id" = f."id" AND d."status" = 'open')
          -- The owner has answered a question about it (a rejected proposal,
@@ -507,14 +525,17 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
          AND NOT EXISTS (SELECT 1 FROM "decisions" d WHERE d."kind" = 'finding_disposition' AND d."subject_id" = f."id" AND d."status" = 'consumed')
        ORDER BY f."seq"`,
     )
-    .all(args.project) as (FindingRow & { source_role: string | null; reviewed_after: number })[];
+    .all(args.project) as (FindingRow & { source_role: string | null; reviewed_after: number; reviews_weighed: number; reviewed_by_stamps: number })[];
   let n = 0;
   const version = effectiveVersion(tx.db, args.project)?.id ?? null;
   const reviewed = new Map<string, boolean | null>();
   for (const f of rows) {
     if (isObjection(f)) continue;
     if (!(args.reviewing === true || f.reviewed_after === 1 || noReviewComes(tx.db, f, version, reviewed))) continue;
-    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE })) n++;
+    // Whether a review reported after it, and on what basis that was read
+    // (only where a completed review of its candidate was weighed).
+    const raised = f.reviews_weighed === 1 ? { reviewed_after: f.reviewed_after === 1, order_basis: f.reviewed_by_stamps === 1 ? 'timestamp_fallback' : 'seq' } : undefined;
+    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE, ...(raised ? { raised } : {}) })) n++;
   }
   // Recovery (the driver's ruling 5 on the real M444 run; queue.ts
   // reaskOwed): a finding the human accepted through the earlier owed

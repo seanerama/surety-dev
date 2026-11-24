@@ -18,7 +18,7 @@ import { effectiveVersion } from './transitions/protected.js';
 import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
 import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
-import { observationEndedBy, readLogs } from './transitions/observe.js';
+import { observationEnd, readLogs } from './transitions/observe.js';
 import { projectOptions, projectPolicy } from './transitions/settings.js';
 import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import { resultState } from './transitions/gates.js';
@@ -629,7 +629,7 @@ function environmentRows(db: Db, project: string) {
     )
     .all(project) as { id: string; name: string; observed: string | null }[];
   return rows.map((row) => {
-    const stored = parseJson<{ condition: string; observed_at: string | null; source: string | null; deployment_generation?: number | null }>(row.observed);
+    const stored = parseJson<{ id?: string; condition: string; observed_at: string | null; source: string | null; deployment_generation?: number | null }>(row.observed);
     if (stored === null || stored.observed_at === null) {
       // Never observed: the condition is unknown, and nothing says when.
       return { id: row.id, name: row.name, state: 'unknown', observed: { condition: 'unknown', observed_at: null, source: null, provenance: null, freshness: null, expires_at: null } };
@@ -637,13 +637,21 @@ function environmentRows(db: Db, project: string) {
     // Made before a teardown or deployment of the environment was finalized
     // (the owner's ruling of 2026-10-29; observe.ts observationEndedBy): it
     // expired then, and says nothing about now; the stored one is unchanged.
-    const ended = observationEndedBy(db, { environment: row.id, observed_at: stored.observed_at, generation: typeof stored.deployment_generation === 'number' ? stored.deployment_generation : null, name: row.name });
+    // "Before" by the store's order (DECISIONS item 51), its basis served.
+    const judged = observationEnd(db, {
+      environment: row.id,
+      observed_at: stored.observed_at,
+      generation: typeof stored.deployment_generation === 'number' ? stored.deployment_generation : null,
+      name: row.name,
+      observation: typeof stored.id === 'string' ? stored.id : null,
+    });
+    const ended = judged.end;
     if (ended !== null) {
       return {
         id: row.id,
         name: row.name,
         state: 'unknown',
-        observed: { condition: 'unknown', stored_condition: stored.condition, observed_at: stored.observed_at, source: stored.source, provenance: 'observed', freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended },
+        observed: { condition: 'unknown', stored_condition: stored.condition, observed_at: stored.observed_at, source: stored.source, provenance: 'observed', freshness: 'expired', expires_at: ended.finalized_at, ended_by: ended, order_basis: judged.order_basis },
       };
     }
     const at = Date.parse(stored.observed_at);
@@ -663,6 +671,7 @@ function environmentRows(db: Db, project: string) {
         provenance: 'observed',
         freshness,
         expires_at: Number.isFinite(at) ? new Date(at + bound).toISOString() : null,
+        order_basis: judged.order_basis,
       },
     };
   });

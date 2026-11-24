@@ -47,6 +47,14 @@ export class Tx {
     return newId(prefix);
   }
 
+  // The store order of a fact this transaction writes now (DECISIONS item
+  // 51; migration 0052): the highest event seq so far. The fact follows
+  // every event up to it and precedes every later one, so it is before an
+  // event of seq E exactly when it is < E, whatever the wall clock said.
+  storeOrder(): number {
+    return (this.db.prepare('SELECT COALESCE(MAX("seq"), 0) AS s FROM "events"').get() as { s: number }).s;
+  }
+
   // Append one event in this transaction. seq is store-wide and strictly
   // increasing: the store has one writer connection and the transaction is
   // immediate, so MAX(seq) cannot move underneath it.
@@ -98,4 +106,11 @@ export function transact<T>(db: Database, actor: Actor, fn: (tx: Tx) => T): T {
     .immediate();
   if (requested > 0) addCommittedTickRequests(requested);
   return value;
+}
+
+// An operation's finalization in the store order (DECISIONS item 51;
+// migration 0052): the seq of its `operation.finalized` event, written in
+// the transaction that finalizes it.
+export function finalizedInOrder(tx: Tx, operation: string, event: EventRef): void {
+  tx.db.prepare('UPDATE "operations" SET "finalized_seq" = ? WHERE "id" = ?').run(event.seq, operation);
 }

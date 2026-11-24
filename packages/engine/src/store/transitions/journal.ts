@@ -16,7 +16,7 @@ import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { effectFailed, raiseQuestion } from './queue.js';
 import { markBlockedStale } from './evidence.js';
 import { runFinalizer } from './finalize.js';
-import type { Tx } from './tx.js';
+import { type Tx, finalizedInOrder } from './tx.js';
 
 export type JournalKind = 'ref_update' | 'commit_tree' | 'worktree_add' | 'worktree_remove';
 export type JournalState = 'intended' | 'applied' | 'confirmed' | 'failed' | 'ambiguous' | 'finalized';
@@ -410,7 +410,7 @@ export function finalizeOperation(tx: Tx, args: { operation: string }): Record<s
   tx.db.prepare('UPDATE "operations" SET "finalized_at" = ? WHERE "id" = ?').run(tx.at, op.id);
   closeBlocker(tx, op, 'the operation was finalized');
   refreshStatus(tx, op.id);
-  tx.emit('operation.finalized', { project: op.project, operation: op.id, run: op.payload.run ?? null }, { journal_kind: op.kind });
+  finalizedInOrder(tx, op.id, tx.emit('operation.finalized', { project: op.project, operation: op.id, run: op.payload.run ?? null }, { journal_kind: op.kind }));
   return { finalized: true, ...receipts };
 }
 

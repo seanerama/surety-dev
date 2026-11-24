@@ -412,8 +412,8 @@ export function completeIntent(tx: Tx, intent: string): void {
 export function invalidateResults(tx: Tx, project: string, ids: string[], why: string): void {
   if (ids.length === 0) return;
   // The reason kept with the invalidation (D6 §4.5: `spec_changed`).
-  const update = tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ? WHERE "id" = ? AND "invalidated_at" IS NULL');
-  for (const id of ids) update.run(tx.at, why, id);
+  const update = tx.db.prepare('UPDATE "check_results" SET "invalidated_at" = ?, "invalidated_reason" = ?, "invalidated_seq" = ? WHERE "id" = ? AND "invalidated_at" IS NULL');
+  for (const id of ids) update.run(tx.at, why, tx.storeOrder(), id);
   const resolved = tx.db.prepare(`SELECT "id", "resolution_verification" FROM "findings" WHERE "project" = ? AND "status" = 'resolved'`).all(project) as {
     id: string;
     resolution_verification: string | null;

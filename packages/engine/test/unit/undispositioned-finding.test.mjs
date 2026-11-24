@@ -128,3 +128,133 @@ test("the Reviewer's result schema states the dispositions from the parser's own
   assert.match(d.description, /put to the human owner/);
   assert.match(d.description, /requirement_conflict or contract_conflict/);
 });
+
+// ---- DECISIONS item 51, finding 3: a finding owed to the owner, decided by store order -----------
+//
+// "A review reported after the finding" compared the review run's
+// finished_at with the finding's created_at, two wall-clock stamps of
+// different transactions: a clock stepping back between a review's end and
+// a finding raised next made the earlier review read as after it (the
+// owner asked while another review was still to come), and the reverse
+// postponed the question. Now the run's run.ended seq against the finding's
+// place in the store order (migration 0052). The controlled clock is the
+// engine's own seam cell (SEAM.md §425), stepped back in-process; the
+// finding is raised by raiseFinding and the review run ended by finishRun,
+// the production transitions. Where a column of 0052 is absent (the base)
+// nothing is written to it, so the same tests reproduce the defect there.
+
+const { raiseFinding } = await import(join(dist, 'store', 'transitions', 'findings.js'));
+const { finishRun } = await import(join(dist, 'store', 'transitions', 'runs.js'));
+const { configureWorker } = await import(join(dist, 'testing', 'seam.js'));
+const clockCell = new SharedArrayBuffer(8);
+configureWorker({ harness: false, barriers: [], shared: null, clock: clockCell, scripted: null, probes: {}, hostChecks: { mode: 'unrun', forced: {} } }, () => {});
+const clockOffset = new BigInt64Array(clockCell);
+const stepBack = (seconds) => Atomics.add(clockOffset, 0, BigInt(-seconds * 1000));
+const hasColumn = (db, table, column) => db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(table, column) !== undefined;
+
+function orderStore(t) {
+  t.after(() => Atomics.store(clockOffset, 0, 0n));
+  const s = store(t);
+  s.runOf('run_v', 'verifier', 'ended', AT);
+  let gen = 0;
+  // A review of the candidate queued by the engine (trigger verification),
+  // its run ended now by finishRun, its item complete.
+  const review = (id) => {
+    s.db.prepare(
+      `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, outcome)
+       VALUES (?, ?, 'prj_1', ?, ?, 'reviewer', 'one_shot', 'finalizing', 'scripted', '1', 'm', ?, ?, 0, 'completed')`,
+    ).run(id, AT, 9000 + ++gen, `wi_${id}`, 'a'.repeat(40), AT);
+    s.db.prepare(
+      `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+       VALUES (?, ?, 'prj_1', ?, 'review', '{"candidate":"cand_1"}', 'executing', 'verification', 'cand_1', ?, 0, 0, 0, 0)`,
+    ).run(`wi_${id}`, AT, 9000 + gen, gen);
+    return {
+      end: () => {
+        transact(s.db, ENGINE_ACTOR, (tx) => finishRun(tx, { run: id, invocations: {}, recovery: null }));
+        s.db.prepare(`UPDATE work_items SET status = 'complete' WHERE id = ?`).run(`wi_${id}`);
+        return s.db.prepare('SELECT finished_at FROM runs WHERE id = ?').get(id).finished_at;
+      },
+    };
+  };
+  // A Verifier's finding on the candidate, raised now.
+  const verifierFinding = () =>
+    transact(s.db, ENGINE_ACTOR, (tx) => raiseFinding(tx, { project: 'prj_1', scope: 'candidate', candidate: 'cand_1', run: 'run_v', role: 'verifier', category: 'defect', severity: 'medium', message: 'm' }));
+  const sweep = () => transact(s.db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' }));
+  const raisedFacts = (decision) => JSON.parse(s.db.prepare(`SELECT payload FROM events WHERE type = 'decision.raised' AND json_extract(subject, '$.decision') = ?`).get(decision).payload);
+  return { ...s, review, verifierFinding, sweep, raisedFacts };
+}
+const createdAt = (db, f) => db.prepare('SELECT created_at FROM findings WHERE id = ?').get(f).created_at;
+
+test('item 51 finding 3 (a, b): a review ended, the clock steps back, a Verifier finding raised while a second review is pending: not asked until that review ends, then asked exactly once', (t) => {
+  const s = orderStore(t);
+  const r1 = s.review('run_r1');
+  const r1End = r1.end();
+  const r2 = s.review('run_r2');
+  stepBack(5);
+  const f = s.verifierFinding();
+  assert.ok(r1End >= createdAt(s.db, f), `the clock stepped back: R1's finished_at ${r1End} is not before the finding's created_at ${createdAt(s.db, f)}`);
+  for (let i = 0; i < 3; i++) assert.equal(s.sweep(), 0, `tick ${i + 1}: R1 ended before the finding; R2 is pending: not asked`);
+  assert.deepEqual(owed(s.db, f), []);
+  r2.end();
+  assert.equal(s.sweep(), 1, 'R2 ended after it without dispositioning it: asked');
+  for (let i = 0; i < 3; i++) assert.equal(s.sweep(), 0, `tick ${i + 1}: asked once`);
+  const [d] = owed(s.db, f);
+  assert.equal(d.status, 'open');
+  assert.deepEqual([s.raisedFacts(d.id).reviewed_after, s.raisedFacts(d.id).order_basis], [true, 'seq']);
+});
+
+test('item 51 finding 3 (c): the opposite order: the finding raised, the clock steps back, the qualifying review ends with another pending: asked at once, not postponed', (t) => {
+  const s = orderStore(t);
+  const r = s.review('run_r1');
+  s.review('run_r3');
+  const f = s.verifierFinding();
+  stepBack(5);
+  const end = r.end();
+  assert.ok(end < createdAt(s.db, f), `the clock stepped back: the review's finished_at ${end} is before the finding's created_at ${createdAt(s.db, f)}`);
+  assert.equal(s.sweep(), 1, 'the review ended after the finding: asked');
+  assert.equal(s.sweep(), 0, 'once');
+  assert.equal(owed(s.db, f).length, 1);
+});
+
+// Rows written directly: the review's end and the finding stamped the same
+// millisecond (d), or recorded before the order existed (e).
+function directPair(s, { stamp, runSeq, findingSeq, finding = 'fnd_d', run = 'run_d' }) {
+  s.runOf(run, 'reviewer', 'ended', stamp);
+  s.reviewItem(run, 'verification');
+  if (runSeq !== undefined && hasColumn(s.db, 'runs', 'finished_seq')) s.db.prepare('UPDATE runs SET finished_seq = ? WHERE id = ?').run(runSeq, run);
+  s.finding(finding, 'verifier', 'run_v', 'defect', stamp);
+  if (findingSeq !== undefined && hasColumn(s.db, 'findings', 'created_seq')) s.db.prepare('UPDATE findings SET created_seq = ? WHERE id = ?').run(findingSeq, finding);
+  // A second review of the candidate still to come: only a review after the finding asks.
+  s.db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES (?, ?, 'prj_1', ?, 'review', '{"candidate":"cand_1"}', 'eligible', 'verification', 'cand_1', 99, 0, 0, 0, 0)`,
+  ).run(`wi_pending_${run}`, AT, 8000 + runSeq);
+}
+
+test('item 51 finding 3 (d): the review end and the finding stamped the same millisecond: the store order decides', (t) => {
+  {
+    const s = orderStore(t);
+    directPair(s, { stamp: LATER, runSeq: 100, findingSeq: 150 });
+    assert.equal(s.sweep(), 0, 'the review ended before the finding (seq 100 < 150), the same millisecond: not after it');
+  }
+  {
+    const s = orderStore(t);
+    directPair(s, { stamp: LATER, runSeq: 200, findingSeq: 150 });
+    assert.equal(s.sweep(), 1, 'the review ended after the finding (seq 200 > 150), the same millisecond: asked');
+    assert.equal(s.raisedFacts(owed(s.db, 'fnd_d')[0].id).order_basis, 'seq');
+  }
+});
+
+test('item 51 finding 3 (e): rows recorded before the store order existed are compared on their timestamps, and the question names that fallback', (t) => {
+  const s = orderStore(t);
+  s.runOf('run_e', 'reviewer', 'ended', LATER);
+  s.reviewItem('run_e', 'verification');
+  s.finding('fnd_e', 'verifier', 'run_v', 'defect', AT);
+  s.db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_pending_e', ?, 'prj_1', 8999, 'review', '{"candidate":"cand_1"}', 'eligible', 'verification', 'cand_1', 99, 0, 0, 0, 0)`,
+  ).run(AT);
+  assert.equal(s.sweep(), 1, 'by the recorded stamps the review ended after it');
+  const facts = s.raisedFacts(owed(s.db, 'fnd_e')[0].id);
+  assert.deepEqual([facts.reviewed_after, facts.order_basis], [true, 'timestamp_fallback'], `the basis is named, never seq (${JSON.stringify(facts)})`);
+});

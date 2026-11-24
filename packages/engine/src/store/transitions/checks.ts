@@ -301,8 +301,8 @@ export function registerExecutions(
     tx.db
       .prepare(
         `INSERT INTO "check_executions" ("id", "created_at", "project", "check", "key", "candidate", "source_revision", "protected_version", "runner_class", "execution_seq",
-           "trigger", "trigger_key", "status", "registered_at", "environment", "artifact_digest", "deployment")
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+           "trigger", "trigger_key", "status", "registered_at", "environment", "artifact_digest", "deployment", "created_seq")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -321,6 +321,8 @@ export function registerExecutions(
         args.binding?.environment ?? null,
         args.binding?.artifact_digest ?? null,
         args.binding ? JSON.stringify(args.binding.deployment) : null,
+        // Its registration's place in the store order (DECISIONS item 51).
+        tx.storeOrder(),
       );
     stampGeneration(tx, id, args.project);
     // D7 §6.5 (G14): the effective slot@version a check reading assets is given.
@@ -939,7 +941,7 @@ export function interruptExecution(tx: Tx, args: { execution: string; why: strin
   const x = mustExecution(tx.db, args.execution);
   if (!LIVE.includes(x.status)) return;
   if (cancelledThenSettled(tx, x)) return;
-  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'interrupted', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'interrupted', "finished_at" = ?, "finished_seq" = ? WHERE "id" = ?`).run(tx.at, tx.storeOrder(), x.id);
   releaseCheckLease(tx, x.id);
   tx.emit('check.interrupted', { project: x.project, candidate: x.candidate, check_execution: x.id, domain: x.domain }, { from: x.status, why: args.why });
   markStale(tx, { candidate: x.candidate });
@@ -1114,10 +1116,10 @@ export function registerRecoveryRetry(tx: Tx, execution: string): string | null 
   tx.db
     .prepare(
       `INSERT INTO "check_executions" ("id", "created_at", "project", "check", "key", "candidate", "source_revision", "protected_version", "runner_class", "execution_seq",
-         "trigger", "trigger_key", "retry_of", "infra_retries", "status", "registered_at")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+         "trigger", "trigger_key", "retry_of", "infra_retries", "status", "registered_at", "created_seq")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     )
-    .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at);
+    .run(id, tx.at, x.project, x.check, x.key, x.candidate, x.source_revision, x.protected_version, x.runner_class, seq, JSON.stringify(trigger), tk, x.id, n, tx.at, tx.storeOrder());
   stampGeneration(tx, id, x.project);
   tx.db.prepare('UPDATE "check_executions" SET "asset_inputs" = (SELECT "asset_inputs" FROM "check_executions" WHERE "id" = ?) WHERE "id" = ?').run(x.id, id);
   if (x.deployment !== null) {
@@ -1167,7 +1169,7 @@ export function recordExecutionResult(tx: Tx, args: ResultFields, label: { runne
     deployment: (x.deployment as string | null) ?? null,
     ...args,
   });
-  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, args.execution);
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'recorded', "result" = ?, "not_run_reason" = ?, "finished_at" = ?, "finished_seq" = ? WHERE "id" = ?`).run(id, args.not_run_reason, tx.at, tx.storeOrder(), args.execution);
   releaseCheckLease(tx, args.execution);
   // A failed materialization is registered again (D3 §2.7); no other
   // reason, and no established result, ever is.
@@ -1257,7 +1259,7 @@ export function cancelExecution(tx: Tx, args: { execution: string; why: string; 
   const x = mustExecution(tx.db, args.execution);
   // A quarantined one keeps its quarantine: its termination is not known.
   if (args.live === true ? !['queued', 'materializing', 'running', 'collecting'].includes(x.status) : x.status !== 'queued' && x.status !== 'materializing') return false;
-  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled', "finished_at" = ? WHERE "id" = ?`).run(tx.at, x.id);
+  tx.db.prepare(`UPDATE "check_executions" SET "status" = 'cancelled', "finished_at" = ?, "finished_seq" = ? WHERE "id" = ?`).run(tx.at, tx.storeOrder(), x.id);
   releaseCheckLease(tx, x.id);
   tx.emit('check.cancelled', { project: x.project, candidate: x.candidate, check_execution: x.id }, { from: x.status, why: args.why });
   markStale(tx, { candidate: x.candidate });

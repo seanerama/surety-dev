@@ -2375,7 +2375,7 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
 // the open one with the same preview; null if the question does not stand.
 export function raiseQuestion(
   tx: Tx,
-  args: { project: string | null; kind: DecisionKind; subjectType: string; subjectId: string; scope?: string; options?: string; question?: string; evidence?: DecisionSpec['evidence'] },
+  args: { project: string | null; kind: DecisionKind; subjectType: string; subjectId: string; scope?: string; options?: string; question?: string; evidence?: DecisionSpec['evidence']; raised?: Record<string, unknown> },
 ): DecisionRow | null {
   const seed: Subject = { project: args.project, kind: args.kind, subject_type: args.subjectType, subject_id: args.subjectId, scope: args.scope ?? 'subject', options: args.options ?? '[]' };
   const p = KINDS[args.kind].preview(tx, seed);
@@ -2394,7 +2394,8 @@ export function raiseQuestion(
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
     evidence: args.evidence ?? p.evidence,
-    raised: p.raised,
+    // The caller's facts beside the preview's (decision.raised's payload).
+    raised: args.raised === undefined ? p.raised : { ...(p.raised ?? {}), ...args.raised },
   });
   // A design batch's members keep their batch_key in every generation (D7 §7.4).
   const batch = designBatchKeyOf(tx.db, args.kind, args.subjectId);
