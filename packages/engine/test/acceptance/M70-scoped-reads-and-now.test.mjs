@@ -300,7 +300,29 @@ describe('M70 the decisions read', () => {
 // What a read may not do (SEAM.md §91): change a row, write an event, launch
 // a role. `exclude` is the existing read-purity case's: the log, the engine's
 // bookkeeping, and the leases the engine renews on its own.
-const quiet = (fx) => {
+//
+// The window is opened on a store the engine's own ticks have finished with
+// (DECISIONS item 47; objection 114's mechanism, SEAM.md §461). Under K1 a
+// route requests a tick, and a tick walks every project of the engine; under
+// concurrent load the tick a fixture's last route requested can still be
+// running when the snapshot is taken, and write in the window what it was
+// asked to write before it (seen: a sibling project's first-tick host
+// observation, `project_start`, 0.1 s after the snapshot). So, before the
+// snapshot: with `settle`, two ticks of that project have run, the second
+// begun after every request made so far (`tick`'s rounds); and every project
+// of the store has its host observation of the engine's current incarnation
+// (D6 §7.6), read from the store. The comparison stays engine-wide, every
+// table as before, and the scheduler stays live inside the window, so a tick
+// a read caused would still be caught.
+const observedProjects = (home) =>
+  withStore(home, (db) => {
+    const incarnation = db.prepare('SELECT "id" FROM "engine_incarnations" WHERE "ended_at" IS NULL ORDER BY "started_at" DESC, rowid DESC LIMIT 1').get()?.id;
+    const missing = db.prepare('SELECT "id" FROM "projects" WHERE "id" NOT IN (SELECT "project" FROM "host_observations" WHERE "incarnation" = ?) ORDER BY "id"').all(incarnation ?? null);
+    return incarnation !== undefined && missing.length === 0 ? true : undefined;
+  });
+const quiet = async (fx, { settle } = {}) => {
+  if (settle !== undefined) await tick(fx.engine, settle);
+  await waitFor(() => observedProjects(fx.home), { what: "every project's host observation of this incarnation (its first tick done) before the snapshot" });
   const stored = () => withStore(fx.home, (db) => dumpStore(db, { exclude: ['events', 'engine_incarnations', 'leases'] }));
   const before = { rows: stored(), seq: maxEventSeq(fx.home), launches: fx.scripted.launches().length };
   return (what) => {
@@ -396,7 +418,7 @@ describe('M70 the work read', () => {
     // by its item under K1, is run first, so it cannot land inside the window
     // (objection 114; SEAM §461). The project is paused: it dispatches nothing.
     await tick(engine, other, { rounds: 1 });
-    const unchanged = quiet(fx);
+    const unchanged = await quiet(fx, { settle: other });
     for (let round = 0; round < 3; round++) {
       await listWork(engine, mine);
       await listWork(engine, other);
@@ -462,9 +484,13 @@ describe('M70 the gate read', () => {
     // Scoped to the project: the same candidate through another project's path is not found.
     assertRefused(await engine.get(path(other)), 404, 'not_found', "the gate read through another project's path");
 
-    // Reading evaluates nothing and writes nothing, however often.
+    // Reading evaluates nothing and writes nothing, however often. The
+    // ticks the result and the evaluations requested (and the other
+    // project's first, which records its host observation) are let finish
+    // before the count and the snapshot (DECISIONS item 47): the project is
+    // paused, so they dispatch nothing.
+    const unchanged = await quiet(fx, { settle: project });
     const count = recorded().length;
-    const unchanged = quiet(fx);
     for (let round = 0; round < 3; round++) {
       await readGate(engine, project, candidate, 'stage');
       await engine.get(path(other));
@@ -768,8 +794,9 @@ describe('M70 the three reads that were left', () => {
     assertRefused(await engine.get(`/v1/projects/${other}/decisions/${row.id}`), 404, 'not_found', "the decision through another project's path");
     assertRefused(await engine.get(`/v1/projects/${mine}/decisions/dec_00000000000000000000000000`), 404, 'not_found', 'an unknown decision id');
 
-    // Reading writes nothing.
-    const unchanged = quiet(fx);
+    // Reading writes nothing. The tick the unconfirmed Stop requested is let
+    // finish before the snapshot (DECISIONS item 47).
+    const unchanged = await quiet(fx, { settle: mine });
     for (let round = 0; round < 3; round++) await readDecision(engine, mine, row.id);
     unchanged('after three reads of the decision');
 
@@ -849,7 +876,10 @@ describe('M70 the three reads that were left', () => {
     );
     assert.deepEqual([b[2].intent.ref, b[2].intent.old_oid, b[2].intent.new_oid], [other.repo.ref, other.base, pending[0].payload.new_oid], 'the pending integration shows what it is to do: the ref, and the commits it moves from and to');
 
-    const unchanged = quiet(fx);
+    // No settling tick here: project B's integration is held at its journal
+    // barrier for the reads; the snapshot waits for the first-tick host
+    // observations only (DECISIONS item 47).
+    const unchanged = await quiet(fx);
     for (let round = 0; round < 3; round++) {
       await listOperations(engine, ctx.project.id);
       await listOperations(engine, other.id);
@@ -883,8 +913,10 @@ describe('M70 the three reads that were left', () => {
     assert.deepEqual((await listEnvironments(engine, other)).environments.map((row) => row.id), [theirs], "the other project's one environment, and none of the first project's");
 
     const stored = () => withStore(fx.home, (db) => db.prepare('SELECT "observed" FROM "environment_records" WHERE "environment" = ?').get(alpha)?.observed);
+    // The ticks the two installs requested are let finish (each project's
+    // first records its host observation) before the snapshot (DECISIONS item 47).
+    const unchanged = await quiet(fx, { settle: mine });
     const before = stored();
-    const unchanged = quiet(fx);
     for (let round = 0; round < 3; round++) await listEnvironments(engine, mine);
     unchanged('after three reads of the environments');
     assert.equal(stored(), before, 'reading did not touch the stored observation');
