@@ -19,12 +19,13 @@ import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
 import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { observationEndedBy, readLogs } from './transitions/observe.js';
-import { projectOptions, projectPolicy, roleModel } from './transitions/settings.js';
+import { projectOptions, projectPolicy } from './transitions/settings.js';
 import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, currentIteration, prototypeBlocker } from './transitions/prototype.js';
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete, buildCompletedAt } from '../plan/phase.js';
-import { firstPlanUnpublished, firstPlanUnpublishedStep, roleModelOf } from '../prototype/brief.js';
+import { firstPlanUnpublished, firstPlanUnpublishedStep } from '../prototype/brief.js';
+import { requestedModelOf } from './transitions/requested-model.js';
 import { type GapAuthoring, gapAuthoringApplied, gapAuthoringItem, gapAuthoringOf } from './transitions/alpha-gap.js';
 import { missingSignoffs, reviewWaitOf } from './transitions/alpha-review.js';
 import {
@@ -861,15 +862,14 @@ function authoringClause(a: GapAuthoring): string {
 }
 
 // The engine's sentence of what the owner's request does: the Verifier
-// role, the model its run will record as requested, resolved as dispatch
-// resolves it (runs.ts: the project's `model_verifier` first, only when
-// absent the backend's model; objection 232), the backend it resolves to
-// now (prototype/brief.ts roleModelOf) and, refused, why; and that nothing
-// is deployed.
+// role, the model its run will record as requested and the backend it
+// resolves to now, apart, by dispatch's own function (requested-model.ts:
+// the project's `model_verifier` first, only when absent the backend's
+// model; objection 232, DECISIONS item 45) and, refused, why; and that
+// nothing is deployed.
 function authoringConsequence(db: Db, project: string, kind: string): string {
-  const rm = roleModelOf(db, project, 'verifier');
-  const model = roleModel(db, project, 'verifier') ?? rm.model;
-  const on = `the configured model ${model}${rm.provider !== model ? ` (${rm.provider})` : ''}`;
+  const rm = requestedModelOf(db, project, 'verifier');
+  const on = `the configured model ${rm.model}${rm.provider !== rm.model ? ` (${rm.provider})` : ''}`;
   const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
   return `Queues a Verifier check-authoring run on ${on}: it writes the missing ${kind} check as a proposal you review; nothing is deployed.${refused}`;
 }

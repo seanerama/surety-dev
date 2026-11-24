@@ -25,7 +25,7 @@ export const { nextExecutionSeq } = await import(join(dist, 'store', 'transition
 export const { readProject } = await import(join(dist, 'store', 'projections.js'));
 const { recordCompatibility } = await import(join(dist, 'deploy', 'compatibility.js'));
 const { readTreeKind } = await import(join(dist, 'deploy', 'output-kind.js'));
-export const { roleModelOf } = await import(join(dist, 'prototype', 'brief.js'));
+export const { requestedModelOf } = await import(join(dist, 'store', 'transitions', 'requested-model.js'));
 const { configureGit } = await import(join(dist, 'git', 'exec.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });

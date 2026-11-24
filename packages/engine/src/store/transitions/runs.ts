@@ -15,7 +15,8 @@ import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
-import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy, roleModel } from './settings.js';
+import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy } from './settings.js';
+import { requestedModelOf } from './requested-model.js';
 import { settleOpenTurns } from '../../sessions/session.js';
 import type { Tx } from './tx.js';
 import { journalBlocks } from './journal.js';
@@ -31,7 +32,7 @@ import { type Milestone, type WorkRow, getWorkItem, transitionWork } from './wor
 import { checkOutputsFor, reconcileRepairs, recordObjections, repairUnderway } from './repair.js';
 import { designUnmet } from '../../design/readiness.js';
 import { type EffectiveAllowance, PROTOTYPE_LIMIT, askOfItem, dispatchAllowance, enforceIterationLimit, holdForProviderRefusal, iterationForDispatch, prototypeBlocker } from './prototype.js';
-import { preparationEnded } from '../../prototype/brief.js';
+import { PREPARATION_WORK, preparationEnded, preparationModelMismatch } from '../../prototype/brief.js';
 
 export type RunState = 'created' | 'claimed' | 'executing' | 'validating' | 'proposal_captured' | 'finalizing' | 'ended';
 export type Outcome = 'completed' | 'failed' | 'refused' | 'timed_out' | 'stopped' | 'abandoned' | 'recovered';
@@ -755,6 +756,17 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
       };
     }
   }
+  // The model the run requests (D6 A.7, E139 Q6): its role's `model_<role>`
+  // key, Claude Code's alias, recorded on the run and its ledger row and
+  // passed to a real backend's launch; a canary's is its attempt's. The one
+  // function every owner-facing read of it uses (requested-model.ts;
+  // DECISIONS item 45).
+  const requestedModel = requestedModelOf(tx.db, item.project, role, backend).model;
+  // A brief preparation runs only under an approval of the model it would
+  // request (DECISIONS item 45: "An approval for model A must not authorize
+  // a run requesting model B"): otherwise no run, its work cancelled, and a
+  // new approval naming the model asked (prototype/brief.ts).
+  if (!canary && item.kind === PREPARATION_WORK && preparationModelMismatch(tx, item, requestedModel)) return null;
   // The resource envelope (D2 §3.7): a domain is admitted only within
   // max_concurrent_domains and the host's reserves; otherwise the work stays
   // eligible, nothing is written, and its read shows the hold. A dispatch
@@ -777,10 +789,6 @@ export function claimDispatch(tx: Tx, args: ClaimArgs): Claim | null {
   // The roles of the chain this run belongs to (D1-34; E24 item 1).
   const chain = item.chain + 1;
 
-  // The model the run requests (D6 A.7, E139 Q6): its role's `model_<role>`
-  // key, Claude Code's alias, recorded on the run and its ledger row and
-  // passed to a real backend's launch; a canary's is its attempt's.
-  const requestedModel = backend.kind === 'attempt' ? backend.model : (roleModel(tx.db, item.project, role) ?? backend.model);
   const run = tx.newId('run_');
   const seq = nextSeq(tx, item.project, 'runs');
   const deadlineAt = addSeconds(tx.at, deadlineSeconds);

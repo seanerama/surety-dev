@@ -293,8 +293,10 @@ test('the preparation authorization: raised with the iteration; role, model, per
   for (const k of B.PREPARATION_KEYS) assert.ok(k in m, `the manifest binds ${k}`);
   // Slice E5 (S5): the run's effective allowance, the per-run limit
   // (5,000,000) capped at what the iteration has left (1,500,000).
-  assert.deepEqual([m.role, m.provider, m.model, m.run_token_limit, m.estimated_usd, m.paid, m.authorizes], ['spec_writer', 'scripted', 'scripted', 1_500_000, null, false, 'exactly one brief_preparation run']);
-  assert.match(d.question, /the Spec Writer \(role spec_writer\) on scripted model scripted/);
+  // The model the run requests (the spec_writer's policy model, its schema
+  // default), the backend apart (DECISIONS item 45).
+  assert.deepEqual([m.role, m.provider, m.model, m.run_token_limit, m.estimated_usd, m.paid, m.authorizes], ['spec_writer', 'scripted', 'opus', 1_500_000, null, false, 'exactly one brief_preparation run']);
+  assert.match(d.question, /the Spec Writer \(role spec_writer\) on scripted model opus/);
   assert.match(d.question, /Its effective token limit is 1500000 billable tokens: the per-run limit of 5000000, capped at what the iteration has left of its token allowance\. The scripted provider is unpaid: no paid work follows\./);
   assert.match(d.question, /counted in the prototype's totals as its own subtotal/);
   assert.match(d.question, /Approving authorizes exactly one preparation run/);
@@ -421,7 +423,12 @@ test('demonstration on the scripted backend: idea to alpha_ready through prepara
   assert.equal(b1.brief.target.kind, 'local_service');
   assert.doesNotMatch(`${b1.brief.target.description} ${b1.brief.target.exposure_note}`, /private/i, 'never "private" unless the configuration says loopback only');
   assert.match(b1.brief.target.exposure_note, /has no configuration recorded yet: its port and who can reach it are not known, and the engine has not checked its exposure/);
-  assert.deepEqual(b1.brief.models, [{ provider: 'scripted', model: 'scripted', roles: ['spec_writer', 'architect', 'verifier', 'builder'] }]);
+  // Each role's requested model (its policy model, the schema's defaults
+  // here) with its backend (DECISIONS item 45).
+  assert.deepEqual(b1.brief.models, [
+    { provider: 'scripted', model: 'opus', roles: ['spec_writer', 'architect'] },
+    { provider: 'scripted', model: 'sonnet', roles: ['verifier', 'builder'] },
+  ]);
   assert.deepEqual([b1.brief.limits.prototype_budget_tokens, b1.brief.limits.prototype_runtime_seconds], [1_500_000, 2700]);
   assert.match(b1.brief.limits.reservation_rule, /the lower of the per-run limit \(budget_run_billable_tokens 5000000\) and what the iteration has left/);
   assert.deepEqual([b1.brief.preparation.runs, b1.brief.preparation.tokens, b1.brief.preparation.usd, typeof b1.brief.preparation.authorized_at], [1, null, null, 'string']);

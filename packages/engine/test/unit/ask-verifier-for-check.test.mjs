@@ -38,7 +38,7 @@ import {
   readProject,
   readiness,
   requestDeployment,
-  roleModelOf,
+  requestedModelOf,
   runFor,
   store,
   transact,
@@ -59,7 +59,7 @@ test("before the request: blocked on the behavioural check, authoring none with 
   const r = readiness(fx);
   assert.equal(r.state, 'blocked', JSON.stringify(r));
   assert.deepEqual(r.blocker, BLOCKED_ON_BEHAVIOUR);
-  const rm = roleModelOf(fx.db, 'prj_1', 'verifier');
+  const rm = requestedModelOf(fx.db, 'prj_1', 'verifier');
   // The model the Verifier's run records (runs.ts: model_verifier, the
   // schema's default here), not the backend's (objection 232).
   const on = `the configured model sonnet${rm.provider !== 'sonnet' ? ` (${rm.provider})` : ''}`;
@@ -83,7 +83,7 @@ test("before the request: blocked on the behavioural check, authoring none with 
 
 test("objection 232: the consequence names the model the Verifier's run records (the project's model_verifier), the backend and its refusal beside it", async (t) => {
   const fx = await store(t, { effective: { model_verifier: 'sonnet-avb-verifier' } });
-  const rm = roleModelOf(fx.db, 'prj_1', 'verifier');
+  const rm = requestedModelOf(fx.db, 'prj_1', 'verifier');
   const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal}): the run is dispatched only once it resolves.` : '';
   assert.equal(
     readiness(fx).authoring.offer.consequence_text,

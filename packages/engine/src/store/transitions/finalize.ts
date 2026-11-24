@@ -26,7 +26,7 @@ import { cancelSuperseded, registerAtNomination } from './checks.js';
 import { type ChainOrigin, getWorkItem, observeTrigger, registerPlan, transitionWork } from './work.js';
 import { reconcileRepairs } from './repair.js';
 import { type ReplanPrepared, finalizeReplan, rebindHarmless } from '../../plan/bundle.js';
-import { type PreparedBrief, recordPreparedBrief } from '../../prototype/brief.js';
+import { type PreparedBrief, preparationOnPolicy, recordPreparedBrief } from '../../prototype/brief.js';
 import { supersededWhileRunning } from '../../plan/replace.js';
 import { registerPhaseAtNomination } from '../../plan/phase.js';
 import { type ApprovedInputs, finalizeApproved } from '../../spec/approval-effect.js';
@@ -222,6 +222,10 @@ function finalizeRef(tx: Tx, op: OpDetail, inputs: RefInputs): Record<string, un
       markStale(tx, { project: op.project });
       // And of the adoption's open questions (D6 §8.1; SEAM.md §377).
       reraiseOnPolicy(tx, op.project);
+      // An open prototype preparation question binds the role's requested
+      // model (DECISIONS item 45): asked again against the model now
+      // requested, in this transaction.
+      preparationOnPolicy(tx, op.project);
       // Design turned on (D7 §2): the undispatched UI stages wait on it, and
       // the inventory committed with the policy is recorded.
       designTurnedOn(tx, op.project);

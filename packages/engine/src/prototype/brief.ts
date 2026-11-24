@@ -47,8 +47,8 @@ import { recordSemantics } from '../spec/approval.js';
 import { SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_SECTIONS, type SemanticFinding, type SpecRepresentation } from '../spec/semantics.js';
 import { INDEX_COLUMNS } from '../checks/requirement-index.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
-import { policyRevision, projectPolicy, roleModel } from '../store/transitions/settings.js';
-import { resolveBackend } from '../store/transitions/trust.js';
+import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
+import { requestedModelOf } from '../store/transitions/requested-model.js';
 import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, endProviderHold, providerHoldOf, providerRefusalReason, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
@@ -130,26 +130,6 @@ function setStatus(tx: Tx, it: IterationLite, status: string, nextStep: string |
   if (it.status === status && it.next_step === nextStep && (it.outcome_reason ?? null) === reason) return;
   tx.db.prepare('UPDATE "prototype_iterations" SET "status" = ?, "next_step" = ?, "outcome_reason" = ?, "ended_at" = ? WHERE "id" = ?').run(status, nextStep, reason, extra.ended ? tx.at : null, it.id);
   tx.emit('prototype.iteration_status_changed', { project: it.project, iteration: it.id }, { from: it.status, to: status, next_step: nextStep, reason });
-}
-
-// ---- the role and model a run of a role would use, as the engine resolves it now ----
-
-export interface RoleModel {
-  role: string;
-  provider: string;
-  model: string;
-  // How the engine resolves the role's backend now: a scripted backend, an
-  // active trust entry, or refused (and why).
-  resolution: 'scripted' | 'entry' | 'refused';
-  refusal: string | null;
-}
-
-export function roleModelOf(db: Db, project: string, role: string): RoleModel {
-  const r = resolveBackend(db, { project, role, scripted: 'scripted' });
-  // Refused now (no active entry, unconfigured): the model the role
-  // requests, where its policy names one, is what would run once it resolves.
-  if (r.kind === 'refused') return { role, provider: r.backend, model: roleModel(db, project, role) ?? r.model, resolution: 'refused', refusal: r.reason };
-  return { role, provider: r.backend, model: r.kind === 'entry' ? r.entry.model : r.model, resolution: r.kind, refusal: null };
 }
 
 // ---- 1. the preparation authorization (R5) -------------------------------------------------
@@ -234,7 +214,7 @@ function preparationPending(db: Db, iteration: string): string | null {
 export function preparationManifest(db: Db, iteration: string): Record<string, unknown> {
   const it = iterationById(db, iteration);
   if (!it) return { iteration, iteration_seq: null, iteration_status: null, role: PREPARATION_ROLE, provider: null, model: null, resolution: null, run_token_limit: null, estimated_usd: null, estimate_basis: null, paid: null, authorizes: null, idea_version: null, idea_blob: null, policy_revision: null, continues: null, change: null };
-  const rm = roleModelOf(db, it.project, PREPARATION_ROLE);
+  const rm = requestedModelOf(db, it.project, PREPARATION_ROLE);
   // Slice E5 (S5): the run's effective allowance as it would be given now,
   // the lower of the per-run limit and what the iteration has left; the
   // per-run limit itself when none is positive now (the dispatch is then
@@ -243,7 +223,12 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
   const allowance = effectiveAllowanceOf(db, it as unknown as Parameters<typeof effectiveAllowanceOf>[1], perRun);
   const limit = allowance?.effective_limit_tokens ?? perRun;
   const paid = rm.provider !== 'scripted';
-  const est = paid ? attemptSpendEstimate(rm.provider, rm.model, limit, 1) : null;
+  // Priced at the requested model where the price table has it, else at the
+  // active entry's model it selects (an alias such as `opus` names the
+  // entry's model family): said so in the basis.
+  const pricedAs = paid && attemptSpendEstimate(rm.provider, rm.model, limit, 1) === null && rm.resolution === 'entry' && rm.backend_model !== rm.model ? rm.backend_model : rm.model;
+  const est = paid ? attemptSpendEstimate(rm.provider, pricedAs, limit, 1) : null;
+  const pricedNote = pricedAs === rm.model ? '' : ` (the model the requested ${rm.model} selects on ${rm.provider}'s active entry)`;
   const p = db.prepare('SELECT "idea_version", "idea_blob" FROM "projects" WHERE "id" = ?').get(it.project) as { idea_version: number | null; idea_blob: string | null };
   const cont = continuationOf(db, it.id);
   return {
@@ -251,7 +236,9 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
     iteration_seq: it.seq,
     iteration_status: it.status,
     role: PREPARATION_ROLE,
+    // The backend, labelled apart from the model (DECISIONS item 45).
     provider: rm.provider,
+    // The model the run requests: what dispatch records as model_requested.
     model: rm.model,
     resolution: rm.resolution,
     run_token_limit: limit,
@@ -262,8 +249,8 @@ export function preparationManifest(db: Db, iteration: string): Record<string, u
     estimate_basis: !paid
       ? 'scripted provider: unpaid, no price applies'
       : est === null
-        ? (attemptSpendUnavailable(rm.provider, rm.model) ?? `no price for ${rm.provider} ${rm.model}`)
-        : `${limit} billable tokens at the output rate of ${rm.model} in price table ${est.price_version}${est.bound === 'lower' ? ' (a lower bound)' : ''}: the run's allowance priced, an estimate of the most it may cost, not a measurement of what it will use`,
+        ? (attemptSpendUnavailable(rm.provider, pricedAs) ?? `no price for ${rm.provider} ${pricedAs}`)
+        : `${limit} billable tokens at the output rate of ${pricedAs}${pricedNote} in price table ${est.price_version}${est.bound === 'lower' ? ' (a lower bound)' : ''}: the run's allowance priced, an estimate of the most it may cost, not a measurement of what it will use`,
     paid,
     authorizes: 'exactly one brief_preparation run',
     idea_version: p.idea_version,
@@ -286,8 +273,18 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     if (it.status !== 'preparing' && it.status !== 'awaiting_brief_approval') return null;
     if (preparationPending(tx.db, it.id) !== null) return null;
     const m = preparationManifest(tx.db, it.id);
+    // The requested model (what the run will record as model_requested)
+    // and the backend, each named as itself (DECISIONS item 45).
     const who = `the Spec Writer (role ${PREPARATION_ROLE}) on ${String(m.provider)} model ${String(m.model)}`;
-    const refused = m.resolution === 'refused' ? ` The ${PREPARATION_ROLE} role's backend is refused now (${roleModelOf(tx.db, it.project, PREPARATION_ROLE).refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+    const named = ` The model it requests, which the run records as its requested model, is ${String(m.model)}; the backend is ${String(m.provider)}.`;
+    // Asked again because an approval given for another model could not
+    // authorize the run (DECISIONS item 45 (c)): why, said here.
+    const prior = modelChangedApproval(tx.db, it.id, String(m.model));
+    const why =
+      prior === null
+        ? ''
+        : ` You are asked again: your approval (decision ${prior.decision}) authorized a run requesting model ${prior.model}, but the ${PREPARATION_ROLE} role now requests model ${String(m.model)}, so no run was dispatched under it.`;
+    const refused = m.resolution === 'refused' ? ` The ${PREPARATION_ROLE} role's backend is refused now (${requestedModelOf(tx.db, it.project, PREPARATION_ROLE).refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
     const perRun = projectPolicy(tx.db, it.project).budget_run_billable_tokens!;
     const limitText =
       m.run_token_limit === perRun
@@ -308,14 +305,14 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
         : ` This is iteration ${it.seq} of the app, continuing from iteration ${cont.seq}: ${m.change === null ? 'you gave no change request' : `the change you asked for is "${String(m.change)}"`}; the preparation starts from ${cont.previous_brief_iteration_seq === null ? 'the idea (no earlier brief was approved)' : `the brief approved in iteration ${cont.previous_brief_iteration_seq}`}, and its brief, once you approve it, is a new specification revision. Iteration ${cont.seq}'s runs, usage, receipt and Alpha are kept as they are.`;
     return {
       manifest: m,
-      question: `Authorize one brief preparation run for prototype iteration ${it.seq}?${continues} It runs ${who}, reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.${refused}`,
+      question: `Authorize one brief preparation run for prototype iteration ${it.seq}?${why}${continues} It runs ${who}, reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval.${named} ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.${refused}`,
       options: [
         {
           key: 'approve',
           label: 'Authorize one preparation run',
           consequence: m.paid
-            ? `One brief preparation run is dispatched to ${String(m.provider)} ${String(m.model)}, paid by your provider account, up to ${String(m.run_token_limit)} billable tokens (estimated ${usd(m.estimated_usd)} at most, not a cap). It writes the brief for your approval; nothing else is authorized.`
-            : `One brief preparation run is dispatched to the scripted provider; no paid work follows. It writes the brief for your approval; nothing else is authorized.`,
+            ? `One brief preparation run is dispatched to the backend ${String(m.provider)}, requesting model ${String(m.model)}, paid by your provider account, up to ${String(m.run_token_limit)} billable tokens (estimated ${usd(m.estimated_usd)} at most, not a cap). It writes the brief for your approval; nothing else is authorized.`
+            : `One brief preparation run is dispatched to the scripted provider, requesting model ${String(m.model)}; no paid work follows. It writes the brief for your approval; nothing else is authorized.`,
           effect: { iteration: it.id, dispatch: PREPARATION_WORK, runs: 1 },
         },
         { key: 'reject', label: 'Do not prepare', consequence: 'Nothing is dispatched; the iteration stays preparing (next: approve preparation or discard).', effect: { iteration: it.id } },
@@ -345,6 +342,90 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
 // owner's request). null when it does not stand.
 export function raisePreparation(tx: Tx, args: { project: string; iteration: string }): DecisionRow | null {
   return raiseQuestion(tx, { project: args.project, kind: 'prototype_preparation_approval', subjectType: 'prototype_iteration', subjectId: args.iteration });
+}
+
+// ---- the approval binds the requested model (DECISIONS item 45) ----------------------------
+
+// The model an approved preparation's decision named, read from the
+// decision as recorded (its manifest is never rewritten); null when the
+// work names no decision or the manifest no model.
+function approvedModelOf(db: Db, decision: string): string | null {
+  const row = db.prepare('SELECT "dependency_manifest" FROM "decisions" WHERE "id" = ?').get(decision) as { dependency_manifest: string } | undefined;
+  if (!row) return null;
+  try {
+    const m = JSON.parse(row.dependency_manifest) as { model?: unknown };
+    return typeof m.model === 'string' ? m.model : null;
+  } catch {
+    return null;
+  }
+}
+
+// The iteration's latest approval whose run was never dispatched because the
+// role's requested model was no longer the one it approved (its work item
+// cancelled with no run), when it named another model than `model`: what
+// the question asked again says (preview), from the store alone.
+function modelChangedApproval(db: Db, iteration: string, model: string): { decision: string; model: string } | null {
+  const d = db
+    .prepare(
+      `SELECT "id" FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'consumed'
+         AND json_extract("answer", '$.option') = 'approve' ORDER BY "seq" DESC LIMIT 1`,
+    )
+    .get(iteration) as { id: string } | undefined;
+  if (!d) return null;
+  const w = db
+    .prepare(
+      `SELECT w."id" FROM "work_items" w WHERE w."kind" = 'brief_preparation' AND w."status" = 'cancelled' AND json_extract(w."subject", '$.decision') = ?
+         AND NOT EXISTS (SELECT 1 FROM "runs" r WHERE r."work_item" = w."id") LIMIT 1`,
+    )
+    .get(d.id) as { id: string } | undefined;
+  if (!w) return null;
+  const approved = approvedModelOf(db, d.id);
+  return approved === null || approved === model ? null : { decision: d.id, model: approved };
+}
+
+// At the claim of a brief preparation (runs.ts claimDispatch, in its
+// transaction): the run is dispatched only while the model it would request
+// is the one its approval named ("An approval for model A must not
+// authorize a run requesting model B"). Otherwise no run: the work item is
+// cancelled (the approval was for exactly one run, of that model; it stays
+// consumed as recorded, its manifest naming the model it approved), the
+// iteration says why, and a new prototype_preparation_approval naming the
+// requested model is raised; nothing runs until it is answered. Returns
+// whether the dispatch was refused so.
+export function preparationModelMismatch(tx: Tx, item: WorkRow, requested: string): boolean {
+  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
+  if (decision === null) return false;
+  const approved = approvedModelOf(tx.db, decision);
+  if (approved === null || approved === requested) return false;
+  const it = tx.db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(decision) as IterationLite | undefined;
+  const why = `the ${PREPARATION_ROLE} role now requests model ${requested}, but the approval (decision ${decision}) authorized a run requesting model ${approved}: no run was dispatched under it, and a new approval naming ${requested} is asked`;
+  transitionWork(tx, item, 'cancelled', {}, { cause: 'requested_model_changed', decision, approved_model: approved, requested_model: requested, reason: why });
+  if (!it) return true;
+  if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'approve preparation or discard', { reason: why });
+  raisePreparation(tx, { project: it.project, iteration: it.id });
+  return true;
+}
+
+// A policy revision committed (store/transitions/finalize.ts): an open
+// preparation question binds the role's requested model, so when the model
+// (or the backend) it names is no longer the one the role requests, it is
+// raised in its next generation in the same transaction (D1 §4.6: the open
+// one invalidated, what moved recorded), naming the model now requested;
+// an answer carrying the old preview is refused. Never rewritten in place.
+export function preparationOnPolicy(tx: Tx, project: string): void {
+  const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "project" = ? AND "kind" = 'prototype_preparation_approval' AND "status" = 'open' ORDER BY "seq"`).all(project) as DecisionRow[];
+  if (open.length === 0) return;
+  const now = requestedModelOf(tx.db, project, PREPARATION_ROLE);
+  for (const d of open) {
+    let was: { model?: unknown; provider?: unknown } = {};
+    try {
+      was = JSON.parse(d.dependency_manifest) as typeof was;
+    } catch {
+      was = {};
+    }
+    if (was.model === now.model && was.provider === now.provider) continue;
+    raiseQuestion(tx, { project, kind: 'prototype_preparation_approval', subjectType: d.subject_type, subjectId: d.subject_id, scope: d.scope });
+  }
 }
 
 // POST /v1/projects/:p/iterations/:i/prepare: the preparation asked for
@@ -530,8 +611,11 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
   const policy = projectPolicy(db, args.project);
   const latest = (db.prepare('SELECT "version" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number } | undefined)?.version ?? 0;
   const models: BriefFacts['models'] = [];
+  // Each role's requested model (what its runs record as model_requested)
+  // with its backend (`provider`) beside it, by dispatch's own function
+  // (DECISIONS item 45).
   for (const role of BUILD_ROLES) {
-    const rm = roleModelOf(db, args.project, role);
+    const rm = requestedModelOf(db, args.project, role);
     const at = models.find((m) => m.provider === rm.provider && m.model === rm.model);
     if (at) at.roles.push(role);
     else models.push({ provider: rm.provider, model: rm.model, roles: [role] });
