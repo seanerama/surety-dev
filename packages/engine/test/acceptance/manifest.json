@@ -569,7 +569,9 @@
       "M615-the-downloadable-deliverable.test.mjs",
       "M616-deployment-compatibility-and-readiness.test.mjs",
       "M625-a-service-serving-a-directory.test.mjs",
-      "M626-the-file-serving-check-beside-its-environment.test.mjs"
+      "M626-the-file-serving-check-beside-its-environment.test.mjs",
+      "M627-the-owner-asks-for-the-missing-check.test.mjs",
+      "M628-waiting-for-reviewer-sign-off.test.mjs"
     ],
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",

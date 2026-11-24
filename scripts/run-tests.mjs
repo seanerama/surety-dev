@@ -77,6 +77,9 @@ const ROWS = [
   'M625',
   // §3e (M626: the file-serving check beside its environment; DECISIONS item 42; 2026-11-24).
   'M626',
+  // §3f (M627: the owner asks for the missing check; M628: waiting for Reviewer sign-off; DECISIONS items 43 and 44; 2026-11-24).
+  'M627',
+  'M628',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
