@@ -18,10 +18,14 @@
 //     names `model` = the role's policy model (what dispatch records as
 //     `model_requested`) and `provider` = the backend, as separate fields,
 //     with `resolution`; its question names both; no run before the answer.
-// (b) the role's model changed while that approval is open: the answer
-//     carrying the old `preview_hash` refused `decision_stale`; the re-read
-//     names model B; approving it dispatches exactly one `brief_preparation`
-//     run whose `model_requested` is B.
+// (b) (amended by the driver's companion dab00ab6) the role's model changed
+//     while that approval is open: re-asked as a new generation (the engine's
+//     existing re-raise, as M403/M411): the earlier decision invalidated with
+//     the moved fields recorded, its manifest still naming A; an answer to it
+//     refused `decision_invalidated`; the old hash sent to the new decision
+//     refused `decision_stale`; the new decision's manifest names B;
+//     approving it dispatches exactly one `brief_preparation` run whose
+//     `model_requested` is B.
 // (c) approval given for model A, the role's model changed to B before
 //     dispatch: no run requesting B under the approval given for A; a new
 //     `prototype_preparation_approval` naming B, raised with its reason; the
@@ -45,12 +49,16 @@
 //   differs from the scripted backend's own model (`scripted`). B and C are
 //   names no default carries, so a manifest can name them only by reading
 //   the policy.
-// - "the re-read" in (b): the open `prototype_preparation_approval` read
-//   after the next tick. The kind is not re-raised by the engine's refresh
-//   (reraise false: the refresh invalidates it); when none is open after
-//   the tick, the owner's `POST …/iterations/:i/prepare` (the route M602 (c)
-//   and (d) use, and the harness's `tightened`) asks it again, and that
-//   question is the re-read. Which one happened is reported.
+// - (b), as amended: the new generation is read at once after the policy
+//   change (no tick, no `…/prepare`); "the moved fields recorded" is read as
+//   the earlier decision's `decision.invalidated` event's `changed` paths
+//   (decisions.ts manifestChanges), `.model` among them.
+// - (b) first changes the other build roles' models (so (e) has four
+//   distinct models); that change moves no model of the preparation role, so
+//   the question is then read after a tick and, when none is open (the
+//   kind's refresh invalidates it and raises none), asked again by the
+//   owner's `POST …/iterations/:i/prepare` (the route M602 (c), (d) and the
+//   harness's `tightened` use). Which one happened is reported.
 // - "before dispatch" in (c): the project is paused (POST …/pause; a paused
 //   project's eligible work is not dispatched, runs.ts dispatchBlocker)
 //   before the approval, so the approval's own tick cannot dispatch; the
@@ -74,7 +82,7 @@ import { KERNEL_KINDS } from './harness/design/check41.mjs';
 import { stageWork, toPublished } from './harness/design/drive.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import { roleThat, roleThatHolds, runToHold } from './harness/gitruns.mjs';
-import { changePolicy } from './harness/journal.mjs';
+import { changePolicy, eventsOfType } from './harness/journal.mjs';
 import { journeyContext, phaseCompleted } from './harness/journey/drive.mjs';
 import {
   PROTO,
@@ -183,7 +191,7 @@ describe('M629 the requested model named before the preparation is approved, bou
     assert.deepEqual(workOfProject(fx.home, id), [], 'no work item before the answer');
   });
 
-  test('(b) the role\'s model changed while the approval is open: the old preview answered decision_stale; the re-read names B; approved, exactly one brief_preparation run requesting B; a provider-reported model kept apart', async (t) => {
+  test('(b) the role\'s model changed while the approval is open: re-asked as a new generation naming B; the earlier invalidated (moved fields recorded, still naming A), answered decision_invalidated; the old hash on the new one decision_stale; approved, exactly one brief_preparation run requesting B; a provider-reported model kept apart', async (t) => {
     const { fx } = S;
     const id = S.p;
     // The other build roles' models first, so that the brief's role list (e)
@@ -193,20 +201,39 @@ describe('M629 the requested model named before the preparation is approved, bou
     t.diagnostic(`after the other roles' models: ${before.how}; ${before.decision.id}`);
     S.old = before.decision;
     assert.equal(S.old.dependency_manifest.model, S.A, "the spec_writer's model unchanged: the question still names A");
-    // The change of the preparation role's model, with the question open.
+    // The change of the preparation role's model, with the question open:
+    // re-asked as a new generation in the same transaction (the amended row).
     await changePolicy(fx.engine, id, { model_spec_writer: MODEL_B });
+    const oldRow = decisionRow(fx.home, S.old.id);
+    const invalidated = eventsOfType(fx.home, 'decision.invalidated').filter((e) => e.subject?.decision === S.old.id);
+    t.diagnostic(`the earlier decision: ${oldRow.status} (${oldRow.invalidated_reason}); decision.invalidated: ${JSON.stringify(invalidated.map((e) => e.payload))}`);
+    assert.equal(oldRow.status, 'invalidated', 'the earlier decision invalidated');
+    assert.equal(invalidated.length, 1, 'one decision.invalidated event for it');
+    const moved = invalidated[0].payload?.changed ?? [];
+    assert.ok(moved.includes('.model'), `the moved fields recorded, the model among them (${JSON.stringify(moved)})`);
+    assert.equal(oldRow.dependency_manifest.model, S.A, 'its manifest still naming A');
     const res = await answer(fx, id, S.old);
-    t.diagnostic(`the old answer: ${res.status} ${res.text}`);
-    assert.equal(res.status, 409, `the answer carrying the old preview (→ ${res.status} ${res.text})`);
-    assert.equal(res.body?.code, 'decision_stale', res.text);
-    assert.deepEqual(runsOfProjectRows(fx.home, id), [], 'nothing run on the refused answer');
-    assert.deepEqual(workOfProject(fx.home, id), [], 'no work item on the refused answer');
-    const now = await reRead(fx, id, S.it);
-    t.diagnostic(`the re-read: ${now.how}; ${now.decision.id} ${JSON.stringify({ model: now.decision.dependency_manifest.model, provider: now.decision.dependency_manifest.provider })}`);
-    S.reread = now;
-    const d = now.decision;
+    t.diagnostic(`the answer to the earlier decision: ${res.status} ${res.text}`);
+    assert.equal(res.status, 409, `the answer to the earlier decision (→ ${res.status} ${res.text})`);
+    assert.equal(res.body?.code, 'decision_invalidated', res.text);
+    // The new generation, open without a tick or a …/prepare.
+    const open = await openPreparations(fx, id);
+    assert.equal(open.length, 1, `the new generation open (${JSON.stringify(open.map((d) => d.id))})`);
+    const d = await decisionRead(fx, id, open[0].id);
+    const newRow = decisionRow(fx.home, d.id);
+    t.diagnostic(`the new generation: ${d.id} g${newRow.semantic_generation} ${JSON.stringify({ model: d.dependency_manifest.model, provider: d.dependency_manifest.provider })}`);
+    assert.notEqual(d.id, S.old.id, 'a new decision');
+    assert.equal(newRow.semantic_generation, oldRow.semantic_generation + 1, 'its next generation');
+    assert.deepEqual([newRow.kind, newRow.subject_id], [oldRow.kind, oldRow.subject_id], 'the same question about the same iteration');
     assert.notEqual(d.preview_hash, S.old.preview_hash, 'the preview changed');
-    assert.equal(d.dependency_manifest.model, MODEL_B, `the re-read names model B (${JSON.stringify(d.dependency_manifest)})`);
+    const staleRes = await answer(fx, id, { id: d.id, preview_hash: S.old.preview_hash });
+    t.diagnostic(`the old hash on the new decision: ${staleRes.status} ${staleRes.text}`);
+    assert.equal(staleRes.status, 409, `the old hash sent to the new decision (→ ${staleRes.status} ${staleRes.text})`);
+    assert.equal(staleRes.body?.code, 'decision_stale', staleRes.text);
+    assert.deepEqual(runsOfProjectRows(fx.home, id), [], 'nothing run on the refused answers');
+    assert.deepEqual(workOfProject(fx.home, id), [], 'no work item on the refused answers');
+    S.reread = { decision: d };
+    assert.equal(d.dependency_manifest.model, MODEL_B, `the new decision names model B (${JSON.stringify(d.dependency_manifest)})`);
     assert.equal(d.dependency_manifest.provider, BACKEND);
     assert.ok(d.question.includes(MODEL_B), `its question names B (${d.question})`);
     // Approve it; the provider reports a model of its own.
