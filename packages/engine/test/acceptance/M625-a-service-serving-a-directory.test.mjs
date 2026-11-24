@@ -1,5 +1,5 @@
 // M625, serving verification of a service that serves a directory (slice
-// 49; kernel lane, cases (a) to (d); case (e), the real unit, is the
+// 49; kernel lane, cases (a) to (d) and (f); case (e), the real unit, is the
 // sandbox file M625-a-python-service-on-a-real-unit). M7 plan §3d M625;
 // DECISIONS item 40, Sean 2026-11-24, verbatim: "The acceptance case is the
 // one we just hit: a Python service serves public/ from a sealed
@@ -31,6 +31,17 @@
 //     `not_in_artifact`, exit 1; the round's verification not `verified`,
 //     `alpha_complete` not satisfied, the blocker raised as today.
 // (d) no `serving`: root `.` and entry `index.html`, today's behaviour.
+// (f) (added 2026-11-24, DECISIONS item 41) a service configuration
+//     declaring `serving` while the project has no serving check: the
+//     engine proposes its own serving check through M614 (a)'s flow (the
+//     answer's `serving_check` `proposed` naming it; provenance engine; no
+//     Verifier run, no check_authoring work item), applied by the owner as a
+//     tightening; a present or pending check reused (`present`/`pending`, no
+//     new proposal, no second approval); the behavioural check still
+//     required (`ACCEPTANCE_SCOPE_INCOMPLETE kind:post_deploy_behavior`); a
+//     service omitting `serving` proposes nothing.
+// (a), sharpened the same day (Sean, on objection 231): the environment
+//     read's `serving` and `running.serving` asserted by those two paths.
 //
 // The kernel lane has no check domain: the round's serving execution moves
 // through the scripted check boundary (SEAM.md §190), as in M614. What the
@@ -47,8 +58,10 @@ import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 import { assertRefused } from './harness/fixtures.mjs';
-import { decisionsOn } from './harness/decisions.mjs';
-import { evaluationsOf, sharedFixture } from './harness/gates.mjs';
+import { consume, decisionsOfKind, decisionsOn, openDecision } from './harness/decisions.mjs';
+import { effectiveVersion, evaluationsOf, proposalsOf, sharedFixture } from './harness/gates.mjs';
+import { eventsOfType } from './harness/journal.mjs';
+import { defPath } from './harness/checks/scope.mjs';
 import { recordExit } from './harness/checks/selection.mjs';
 import { scriptedEngine, tickUntil } from './harness/runs.mjs';
 import { withStore } from './harness/store.mjs';
@@ -70,6 +83,7 @@ import {
   requestDeployment,
   roundsOf,
   scriptCall,
+  tickSome,
   verificationsOf,
 } from './harness/deploy/kernel.mjs';
 import { SERVE, SERVING_DESCRIPTION, SERVING_STATEMENT, SITE, SITE_ASSETS, STATIC, changedCopy, overwrite, readJson, runServingProgram, sha256 } from './harness/deploy/static.mjs';
@@ -132,7 +146,8 @@ describe('M625 (a) a service-mode configuration declaring the directory its serv
     const read = await environmentRead(fx, base.project, 'beta');
     assert.equal(read.mode, 'service');
     assert.equal('static' in read, false, 'the read has no static part in service mode');
-    assert.ok(holdsSpec(read, SERVING), `the environment read states the serving root and entry of the current configuration (specs found: ${JSON.stringify(servingSpecsIn(read))})`);
+    assert.deepEqual(read.serving, SERVING, 'environment.serving states the current configuration\'s serving root and entry');
+    assert.equal(read.running, null, 'nothing runs in beta: no running generation, so no running serving');
   });
 
   test('(a) the defaults, as static mode\'s: entry index.html when only the root is given; root "." and entry index.html for an empty serving', async () => {
@@ -301,13 +316,18 @@ describe('M625 (b), (c) the serving check against a deployment whose Python serv
   });
 
   test('(a) the environment read states the serving root and entry of the current configuration and of the running generation', () => {
-    assert.ok(holdsSpec(P.readConfigured, SERVING), `configured, before any deployment (${JSON.stringify(servingSpecsIn(P.readConfigured))})`);
+    // Focused (Sean, 2026-11-24, on objection 231): environment.serving and
+    // environment.running.serving read by those two paths, so that a read
+    // stating the two values the other way round fails.
+    assert.deepEqual(P.readConfigured.serving, SERVING, 'configured, before any deployment: environment.serving');
+    assert.equal(P.readConfigured.running, null, 'before any deployment: no running generation');
     assert.ok(P.readDeployed.running, 'the deployment runs');
-    assert.ok(holdsSpec(P.readDeployed, SERVING), `deployed (${JSON.stringify(servingSpecsIn(P.readDeployed))})`);
-    const specs = servingSpecsIn(P.readLater);
-    assert.ok(holdsSpec(P.readLater, { root: 'site', entry: 'index.html' }), `after the later version, the current configuration's root site is stated (${JSON.stringify(specs)})`);
-    assert.ok(holdsSpec(P.readLater, SERVING), `and the running generation's root public still is (${JSON.stringify(specs)})`);
+    assert.deepEqual(P.readDeployed.serving, SERVING, 'deployed: environment.serving (the configuration deployed)');
+    assert.deepEqual(P.readDeployed.running.serving, SERVING, 'deployed: environment.running.serving (what the deployment froze)');
     assert.equal(P.readLater.mode, 'service');
+    assert.deepEqual(P.readLater.serving, { root: 'site', entry: 'index.html' }, 'after a later configuration version declaring root site: environment.serving is the current configuration\'s');
+    assert.deepEqual(P.readLater.running.serving, SERVING, 'and environment.running.serving is still the running generation\'s, root public');
+    assert.equal(P.readLater.running.generation, P.readDeployed.running.generation, 'the same running generation');
   });
 
   test('(b) the engine\'s program with the declared root against server.py over public/ of the sealed artifact: passed, each path listed relative to the root with served and expected digests', (t) => serveAndRun(t, P, null, { root: SERVED_ROOT }, (r) => {
@@ -424,4 +444,222 @@ describe('M625 (d) a service configuration declaring no directory: root "." and 
     assert.equal(r.code, 0, r.lines.join('\n'));
     for (const p of ['index.html', ...SITE_ASSETS]) assert.equal(r.rows.find((row) => row[0] === p)?.[4], 'match', `${p} (${JSON.stringify(r.rows)})`);
   }));
+});
+
+// ---- (f) the serving-check proposal for a service that declares serving -----------------
+//
+// DECISIONS item 41; Sean 2026-11-24, verbatim: "When a service explicitly
+// declares serving: {root, entry}, use the existing engine-authored proposal
+// flow if the serving check is absent. Reuse a present or pending check so
+// repeat configuration creates no duplicate approval. Keep the service's
+// behavioral check required: matching file bytes establishes artifact
+// identity, while the behavioral check establishes what the running service
+// does. Services that omit serving retain today's behavior." The flow is
+// M614 (a)'s (the static configuration's): provenance engine, no Verifier
+// run, no check_authoring work item, the owner applying it as a tightening.
+
+const runsOfRole = (home, project, role) => all(home, 'SELECT * FROM "runs" WHERE "project" = ? AND "role" = ?', project, role);
+const authoringWork = (home, project) => all(home, `SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring'`, project);
+const engineProposals = (home, project) => proposalsOf(home, project).filter((p) => p.proposed_by === 'engine');
+const tighteningDecisions = (home, project) => decisionsOfKind(home, project, 'check_correction_tightening');
+const proposalSummary = (home, project) => JSON.stringify(proposalsOf(home, project).map((p) => [p.id, p.proposed_by, p.status]));
+
+// The project's own checks list their inputs file by file, so a definition
+// added beside them changes none of them (as M614 (a): the engine's
+// proposal then classifies as a tightening).
+const listed = (...keys) => Object.fromEntries(keys.map((k) => [k, { ...DEPLOY_DEFS[k], inputs: [defPath(k)] }]));
+
+// The deployment-specific requirement as the request's refusal names it (M614 (d)).
+async function refusedSubjects(fx, ctx) {
+  const res = await requestDeployment(fx.engine, ctx.project, ctx.candidate.id, 'alpha');
+  assertRefused(res, 409, 'authorization_not_issued', 'the request');
+  return res.body.subject.reasons.filter((r) => r.code === 'ACCEPTANCE_SCOPE_INCOMPLETE').flatMap((r) => r.subjects);
+}
+
+describe('M625 (f) a service declaring serving with no serving check: the engine proposes its serving check, the owner applies it, a present check is reused', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    const py = requirePython(PY);
+    // A service with no post-deploy check of its own (acceptance and smoke
+    // only), configured first without serving: nothing to propose.
+    const ctx = await pythonDeployable(fx, { serving: null }, { defs: listed('acc', 'smoke') });
+    Object.assign(J, { fx, ctx });
+    J.beforeServing = proposalsOf(fx.home, ctx.project);
+    // The configuration declaring serving {root: public, entry: index.html}.
+    J.res = await putConfig(fx.engine, ctx.project, 'alpha', configContent(pythonService(py)));
+    J.proposals = proposalsOf(fx.home, ctx.project);
+    J.atConfig = { verifierRuns: runsOfRole(fx.home, ctx.project, 'verifier').length, authoring: authoringWork(fx.home, ctx.project).length };
+    const proposal = J.proposals.find((p) => p.proposed_by === 'engine');
+    J.proposal = proposal;
+    if (proposal) {
+      J.decision = await openDecision(fx, ctx.project, 'check_correction_tightening', proposal.id, { max: 8 });
+      await consume(fx, ctx.project, J.decision, 'approve');
+      J.applied = await tickUntil(fx.engine, ctx.project, () => proposalsOf(fx.home, ctx.project).find((p) => p.id === proposal.id && p.status === 'applied'), { max: 8, what: "the engine's proposal applied" });
+      J.version = effectiveVersion(fx.home, ctx.project);
+      J.checks = all(fx.home, 'SELECT * FROM "checks" WHERE "project" = ? AND "protected_version" = ?', ctx.project, J.version.id);
+    }
+    J.atEnd = { verifierRuns: runsOfRole(fx.home, ctx.project, 'verifier').length, authoring: authoringWork(fx.home, ctx.project).length };
+    // Reuse of the present check: the same configuration written again, and
+    // other service configurations declaring serving (another environment
+    // with the same serving; another with another root).
+    J.same = await putConfig(fx.engine, ctx.project, 'alpha', configContent(pythonService(py)));
+    J.another = await putConfig(fx.engine, ctx.project, 'beta', configContent(pythonService(py)));
+    J.otherRoot = await putConfig(fx.engine, ctx.project, 'gamma', configContent(pythonService(py, { serving: { root: 'site', entry: 'index.html' } })));
+    await tickSome(fx, ctx.project, 3);
+    J.reuse = { proposals: proposalsOf(fx.home, ctx.project), decisions: tighteningDecisions(fx.home, ctx.project) };
+    // The behavioural requirement with only the engine's serving check in place.
+    J.subjects = J.applied ? await refusedSubjects(fx, ctx) : null;
+  });
+  after(() => shared.cleanup());
+
+  test('(f) the configuration response states serving_check proposed, naming the engine\'s proposal', () => {
+    assert.deepEqual(J.beforeServing.filter((p) => p.proposed_by === 'engine'), [], 'nothing proposed while the service declared no serving');
+    assert.equal(J.res.status, 201, `PUT …/environments/alpha/config with serving (→ ${J.res.status} ${J.res.text})`);
+    const sc = J.res.body.serving_check;
+    assert.equal(sc?.state, 'proposed', `serving_check.state (serving_check: ${JSON.stringify(sc)}; proposals: ${proposalSummary(J.fx.home, J.ctx.project)})`);
+    assert.ok(J.proposal, 'an engine proposal exists');
+    assert.equal(sc.proposal, J.proposal.id, 'serving_check names the engine\'s proposal');
+  });
+
+  test('(f) one proposal, proposed by the engine: no run, no Verifier run, no check_authoring work item', () => {
+    const engine = J.proposals.filter((p) => p.proposed_by === 'engine');
+    assert.equal(engine.length, 1, `the engine proposed its serving check with the service configuration declaring serving (proposals: ${JSON.stringify(J.proposals.map((p) => [p.proposed_by, p.status]))})`);
+    assert.equal(engine[0].run, null, 'no run proposed it');
+    assert.deepEqual(J.atConfig, { verifierRuns: 0, authoring: 0 });
+    assert.deepEqual(J.atEnd, { verifierRuns: 0, authoring: 0 }, 'nor after it was applied');
+    const event = eventsOfType(J.fx.home, 'protected.proposed').find((e) => e.subject?.proposal === engine[0].id);
+    assert.deepEqual([event?.payload?.proposed_by, event?.payload?.engine_authored], ['engine', 'post_deploy_serving'], 'its event says the engine authored it');
+  });
+
+  test('(f) applied as any tightening by the owner: exactly one required post_deploy_serving check, alpha_complete, requiring the environment and the artifact digest', () => {
+    assert.ok(J.applied, `the proposal was applied (proposals: ${proposalSummary(J.fx.home, J.ctx.project)})`);
+    assert.equal(J.version.proposal, J.proposal.id, 'the effective protected version is the engine\'s proposal\'s');
+    const serving = J.checks.filter((c) => c.kind === 'post_deploy_serving');
+    assert.equal(serving.length, 1, `exactly one serving check in the effective version (${JSON.stringify(J.checks.map((c) => [c.key, c.kind]))})`);
+    const [c] = serving;
+    assert.equal(c.required, 1, 'required');
+    assert.ok(readJson(c.gate_kinds).includes('alpha_complete'), `gate_kinds ${c.gate_kinds}`);
+    assert.deepEqual(readJson(c.requires).sort(), ['artifact_digest', 'environment']);
+    assert.deepEqual(readJson(c.definition).command, ['surety-static-serving'], "its command is the engine's own program");
+  });
+
+  test('(f) a present serving check is reused: another service configuration declaring serving states present; no new proposal, no second approval', () => {
+    assert.ok(J.applied, 'the engine\'s serving check was applied (the case above)');
+    for (const [what, res] of [['beta, the same serving', J.another], ['gamma, another root', J.otherRoot]]) {
+      assert.equal(res.status, 201, `${what} (→ ${res.status} ${res.text})`);
+      assert.equal(res.body.serving_check?.state, 'present', `${what}: serving_check ${JSON.stringify(res.body.serving_check)}`);
+      assert.equal(res.body.serving_check.proposal ?? null, null, `${what}: no proposal named`);
+    }
+    // The same content again is the current version (200, nothing written):
+    // whatever its answer says of the serving check, it proposes nothing.
+    assert.equal(J.same.status, 200, `the same configuration again (→ ${J.same.status} ${J.same.text})`);
+    if (J.same.body.serving_check !== undefined) assert.equal(J.same.body.serving_check.state, 'present', JSON.stringify(J.same.body.serving_check));
+    assert.deepEqual(J.reuse.proposals.filter((p) => p.proposed_by === 'engine').map((p) => p.id), [J.proposal.id], `one engine proposal still (${JSON.stringify(J.reuse.proposals.map((p) => [p.id, p.proposed_by, p.status]))})`);
+    assert.deepEqual(J.reuse.decisions.map((d) => d.subject_id), [J.proposal.id], 'one approval decision, the one answered');
+  });
+
+  test('(f) the behavioural check stays required: with only the engine\'s serving check, the request names ACCEPTANCE_SCOPE_INCOMPLETE kind:post_deploy_behavior', () => {
+    assert.ok(J.applied, 'the engine\'s serving check was applied (the case above)');
+    assert.ok(J.subjects.includes('kind:post_deploy_behavior'), JSON.stringify(J.subjects));
+    assert.equal(J.subjects.includes('kind:post_deploy_serving'), false, JSON.stringify(J.subjects));
+  });
+});
+
+describe('M625 (f) a pending serving-check proposal is reused: no second proposal, no duplicate approval', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    const py = requirePython(PY);
+    const ctx = await pythonDeployable(fx, { serving: null }, { defs: listed('acc', 'smoke') });
+    Object.assign(J, { fx, ctx });
+    J.first = await putConfig(fx.engine, ctx.project, 'alpha', configContent(pythonService(py)));
+    J.proposal = engineProposals(fx.home, ctx.project)[0];
+    // Its question raised and not answered: the proposal pending.
+    if (J.proposal) J.decision = await openDecision(fx, ctx.project, 'check_correction_tightening', J.proposal.id, { max: 8 });
+    J.same = await putConfig(fx.engine, ctx.project, 'alpha', configContent(pythonService(py)));
+    J.another = await putConfig(fx.engine, ctx.project, 'beta', configContent(pythonService(py)));
+    J.otherRoot = await putConfig(fx.engine, ctx.project, 'gamma', configContent(pythonService(py, { serving: { root: 'site', entry: 'index.html' } })));
+    await tickSome(fx, ctx.project, 3);
+    J.proposals = proposalsOf(fx.home, ctx.project);
+    J.decisions = tighteningDecisions(fx.home, ctx.project);
+  });
+  after(() => shared.cleanup());
+
+  test('(f) the first service configuration declaring serving: proposed', () => {
+    assert.equal(J.first.status, 201, J.first.text);
+    assert.equal(J.first.body.serving_check?.state, 'proposed', `serving_check ${JSON.stringify(J.first.body.serving_check)}; proposals: ${proposalSummary(J.fx.home, J.ctx.project)}`);
+    assert.ok(J.proposal, 'an engine proposal exists');
+    assert.equal(J.first.body.serving_check.proposal, J.proposal.id);
+    assert.ok(J.decision, 'its approval question is open');
+  });
+
+  test('(f) written again while it is pending: another service configuration declaring serving states pending; one engine proposal, one approval decision', () => {
+    assert.ok(J.proposal, `an engine proposal exists (proposals: ${proposalSummary(J.fx.home, J.ctx.project)})`);
+    for (const [what, res] of [['beta, the same serving', J.another], ['gamma, another root', J.otherRoot]]) {
+      assert.equal(res.status, 201, `${what} (→ ${res.status} ${res.text})`);
+      assert.equal(res.body.serving_check?.state, 'pending', `${what}: serving_check ${JSON.stringify(res.body.serving_check)}`);
+      assert.equal(res.body.serving_check.proposal ?? null, null, `${what}: no new proposal named`);
+    }
+    assert.equal(J.same.status, 200, `the same configuration again (→ ${J.same.status} ${J.same.text})`);
+    if (J.same.body.serving_check !== undefined) assert.equal(J.same.body.serving_check.state, 'pending', JSON.stringify(J.same.body.serving_check));
+    assert.deepEqual(J.proposals.filter((p) => p.proposed_by === 'engine').map((p) => p.id), [J.proposal.id], `one engine proposal (${JSON.stringify(J.proposals.map((p) => [p.id, p.proposed_by, p.status]))})`);
+    assert.deepEqual(J.decisions.map((d) => [d.subject_id, d.status]), [[J.proposal.id, 'open']], 'one approval decision, still open: no duplicate');
+  });
+});
+
+describe('M625 (f) the behavioural check stays required for a service whose only post-deploy check is the serving check', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    J.fx = fx;
+    // The serving check in the project's own protected set, serving declared.
+    J.servingOnly = await refusedSubjects(fx, await pythonDeployable(fx, {}, { defs: { acc: DEPLOY_DEFS.acc, smoke: DEPLOY_DEFS.smoke, serve: SERVE } }));
+    // No post-deploy check, no serving declared (nothing proposed).
+    J.none = await refusedSubjects(fx, await pythonDeployable(fx, { serving: null }, { defs: { acc: DEPLOY_DEFS.acc, smoke: DEPLOY_DEFS.smoke } }));
+  });
+  after(() => shared.cleanup());
+
+  test('(f) ACCEPTANCE_SCOPE_INCOMPLETE kind:post_deploy_behavior, exactly as with no post-deploy check at all (M614 (d))', () => {
+    assert.ok(J.servingOnly.includes('kind:post_deploy_behavior'), JSON.stringify(J.servingOnly));
+    assert.ok(J.none.includes('kind:post_deploy_behavior'), JSON.stringify(J.none));
+    assert.deepEqual(J.servingOnly, J.none, 'the serving check changes nothing for a service');
+    assert.equal(J.servingOnly.includes('kind:post_deploy_serving'), false);
+  });
+});
+
+describe('M625 (f) a service configuration omitting serving: no proposal, today\'s behaviour', () => {
+  const shared = sharedFixture();
+  const J = {};
+  before(async () => {
+    const fx = await scriptedEngine(shared.context);
+    const py = requirePython(PY);
+    // No serving check, a behaviour check; serving omitted from every configuration.
+    const ctx = await pythonDeployable(fx, { serving: null }, { defs: listed('acc', 'smoke', 'behaves') });
+    Object.assign(J, { fx, ctx });
+    J.res = await putConfig(fx.engine, ctx.project, 'beta', configContent(pythonService(py, { serving: null })));
+    await tickSome(fx, ctx.project, 3);
+    J.proposals = proposalsOf(fx.home, ctx.project);
+    J.decisions = tighteningDecisions(fx.home, ctx.project);
+    J.work = { verifierRuns: runsOfRole(fx.home, ctx.project, 'verifier').length, authoring: authoringWork(fx.home, ctx.project).length };
+  });
+  after(() => shared.cleanup());
+
+  test('(f) nothing proposed: no engine proposal, no approval decision, no Verifier run, no check_authoring work item', () => {
+    assert.equal(J.res.status, 201, J.res.text);
+    assert.deepEqual(J.proposals.filter((p) => p.proposed_by === 'engine'), [], `no engine proposal (${JSON.stringify(J.proposals.map((p) => [p.id, p.proposed_by, p.status]))})`);
+    assert.deepEqual(J.decisions, [], 'no approval decision');
+    assert.deepEqual(J.work, { verifierRuns: 0, authoring: 0 });
+    // The answer proposes nothing: no serving_check (today's answer for a
+    // service) or one stating not_proposed with its reason.
+    const sc = J.res.body.serving_check;
+    if (sc !== undefined) {
+      assert.equal(sc.state, 'not_proposed', JSON.stringify(sc));
+      assert.equal(sc.proposal ?? null, null, JSON.stringify(sc));
+      assert.equal(typeof sc.reason, 'string', `with its reason (${JSON.stringify(sc)})`);
+    }
+  });
 });
