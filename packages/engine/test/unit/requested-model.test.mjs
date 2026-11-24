@@ -154,12 +154,38 @@ test("the preparation approval names the requested model (the role's) and the ba
   const m = manifestOf(d);
   for (const k of B.PREPARATION_KEYS) assert.ok(k in m, `the manifest binds ${k}`);
   assert.deepEqual([m.role, m.provider, m.model, m.resolution, m.paid], ['spec_writer', 'scripted', 'sonnet-rqm-a', 'scripted', false]);
-  assert.match(d.question, /the Spec Writer \(role spec_writer\) on scripted model sonnet-rqm-a/);
-  assert.match(d.question, /The model it requests, which the run records as its requested model, is sonnet-rqm-a; the backend is scripted\./);
+  assert.match(d.question, /Requested model: sonnet-rqm-a\. Backend: scripted\./);
   assert.match(d.question, /Approving authorizes exactly one preparation run; it approves neither the brief nor the build/);
   const approve = JSON.parse(d.options).find((o) => o.key === 'approve');
-  assert.match(approve.consequence_text, /dispatched to the scripted provider, requesting model sonnet-rqm-a; no paid work follows/);
+  assert.match(approve.consequence_text, /dispatched to the backend, requesting the model\. Requested model: sonnet-rqm-a\. Backend: scripted\. The scripted provider is unpaid: no paid work follows\./);
   assert.deepEqual(runsOf(db, p.id), []);
+});
+
+// DECISIONS item 48: the question leads with the decision, then the
+// requested model and the backend as separately labelled values, then the
+// consequence, the allowance, the own subtotal and the authorization
+// boundary; a decision already raised keeps the question it recorded.
+test('the preparation question leads with the decision; Requested model and Backend labelled apart; the boundary; a recorded question is kept', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create({ model_spec_writer: 'sonnet-rqm-a' });
+  const [d] = openPreparation(db, p.id);
+  assert.ok(d.question.startsWith('Approve one Spec Writer run to prepare the prototype brief? (prototype iteration 1) Requested model: sonnet-rqm-a. Backend: scripted. '), d.question);
+  assert.doesNotMatch(d.question, /on scripted model|role spec_writer\)/, 'the old phrase is gone');
+  assert.match(d.question, /The run reads the idea \(\.surety\/idea\.md, version \d+\) and writes the brief and the minimal specification for your approval\./);
+  assert.match(d.question, /billable tokens.*The scripted provider is unpaid: no paid work follows\./);
+  assert.match(d.question, /This limit is an estimated allowance, the most the run may use, not a measurement/);
+  assert.match(d.question, /Its usage is counted in the prototype's totals as its own subtotal \(brief preparation\)\./);
+  assert.ok(d.question.endsWith('Approving authorizes exactly one preparation run; it approves neither the brief nor the build.'), d.question);
+  const approve = JSON.parse(d.options).find((o) => o.key === 'approve');
+  assert.doesNotMatch(approve.consequence_text, /on scripted model/);
+  // A decision recorded with an earlier wording keeps it: raised again with
+  // the same preview, the open decision is returned as stored.
+  const recorded = 'Authorize one brief preparation run for prototype iteration 1? (as recorded)';
+  db.prepare('UPDATE decisions SET question = ? WHERE id = ?').run(recorded, d.id);
+  const again = transact(db, ENGINE_ACTOR, (tx) => B.raisePreparation(tx, { project: p.id, iteration: p.iteration }));
+  assert.equal(again.id, d.id, 'the same open decision');
+  assert.equal(db.prepare('SELECT question FROM decisions WHERE id = ?').get(d.id).question, recorded, 'its question as recorded');
+  assert.equal(openPreparation(db, p.id).length, 1);
 });
 
 test('the role model changed while the approval is open: asked again naming the new model; the old preview refused; the new one approved dispatches one run requesting it', async (t) => {
@@ -174,7 +200,7 @@ test('the role model changed while the approval is open: asked again naming the 
   assert.notEqual(d2.preview_hash, d1.preview_hash, 'the preview changed with the role model');
   assert.equal(d2.semantic_generation, d1.semantic_generation + 1);
   assert.deepEqual([manifestOf(d2).model, manifestOf(d2).provider], ['sonnet-rqm-b', 'scripted'], 'the re-read names the new model');
-  assert.match(d2.question, /on scripted model sonnet-rqm-b/);
+  assert.match(d2.question, /Requested model: sonnet-rqm-b\. Backend: scripted\./);
   // The old answer: refused (the decision it names was invalidated); the
   // old hash on the new generation: stale. Nothing done either way.
   assert.equal(refusalCode(() => answer(db, p.id, d1)), 'decision_invalidated');
