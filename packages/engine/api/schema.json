@@ -3800,6 +3800,9 @@
         },
         "remediation": {
           "required": false
+        },
+        "created_seq": {
+          "required": false
         }
       }
     },
@@ -5891,6 +5894,9 @@
         "iteration": {
           "required": false,
           "references": "prototype_iterations"
+        },
+        "finished_seq": {
+          "required": false
         }
       }
     },

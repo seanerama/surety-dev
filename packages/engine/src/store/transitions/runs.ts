@@ -1391,7 +1391,10 @@ export function finishRun(
   setRunState(tx, run, 'ended', { finished_at: tx.at, quarantined: 0, ...(transcript ? { transcript: transcript.id } : {}) });
   const payload: Record<string, unknown> = { outcome: run.outcome, reason_class: run.reason_class };
   if (args.recovery !== null) payload.recovery = { incarnation: args.recovery };
-  tx.emit('run.ended', runSubject(run), payload);
+  const ended = tx.emit('run.ended', runSubject(run), payload);
+  // The run's end in the store order (DECISIONS item 51; migration 0052):
+  // its own run.ended event's seq.
+  tx.db.prepare('UPDATE "runs" SET "finished_seq" = ? WHERE "id" = ?').run(ended.seq, run.id);
 
   // The decisions a session's close raised about its product stay open: they
   // are answered from the queue after the run has ended (D6 §3.4).

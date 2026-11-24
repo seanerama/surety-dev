@@ -53,3 +53,9 @@ ALTER TABLE check_results ADD COLUMN invalidated_seq INTEGER;
 -- NULL: never reconsidered on that route.
 ALTER TABLE deployment_requests ADD COLUMN reconsidered TEXT;
 
+-- Finding 3, a finding owed to the owner (store/transitions/findings.ts
+-- askUndispositioned): a completed review of the finding's candidate
+-- reported after the finding exactly when the review run's run.ended seq
+-- is greater than the finding's position.
+ALTER TABLE runs ADD COLUMN finished_seq INTEGER;
+ALTER TABLE findings ADD COLUMN created_seq INTEGER;
