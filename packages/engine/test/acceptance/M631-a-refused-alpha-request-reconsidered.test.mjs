@@ -52,7 +52,19 @@
 //       two writes in one millisecond, so the equality is ARRANGED BY A
 //       LABELLED STORE WRITE of K's execution `created_at` (a wall stamp
 //       only) to the evaluation's `created_at`, with no clock step; then as (a);
-//   (e) rows that predate the ordering fact: see the case at the end.
+//   (e) rows that predate the ordering fact. The Builder's ordering fact
+//       (migration 0052, 8eb66780): `gate_evaluations.seq` (the evaluation's
+//       gate.evaluated seq) against each fact's position
+//       (`check_executions.created_seq`, `finished_seq`,
+//       `check_results.created_seq`, `invalidated_seq`; the highest event
+//       seq when the row was written); NULL on rows written before 0052. Its
+//       stated fallback: a comparison where either side has none is made on
+//       the recorded timestamps as before, and the request made again records
+//       its basis, `deployment_requests.reconsidered` {at, evaluation,
+//       order_basis} with `order_basis` `seq` or `timestamp_fallback`. A
+//       pre-0052 registration is ARRANGED BY A LABELLED STORE WRITE of K's
+//       `created_seq` to NULL, the stamps in order (no step): the request is
+//       reconsidered and its record names the fallback.
 //
 // SAFETY: no unit, no systemctl, no host process; the only engine stopped
 // is the test's own (`t.after`).
@@ -203,6 +215,13 @@ async function assertReconsideredOnce(fx, p, J, what) {
   assert.equal(deployItems(fx.home, p).length, 1, `${what}: one deploy work item`);
 }
 
+// The record of the reconsideration on the key's row (8eb66780's additive shape).
+function reconsideredOf(fx, p, J) {
+  const [r] = policyRequests(fx.home, p).filter((x) => x.candidate === J.k.candidate);
+  assert.ok(r?.reconsidered, `the row records its reconsideration (${JSON.stringify(r)})`);
+  return JSON.parse(r.reconsidered);
+}
+
 describe('M631 a refused policy Alpha request reconsidered by store order', () => {
   test('(L) the literal path: K registered before the evaluation, stamped after it; no outcome recorded while K runs; K passes: one policy request, issued', async (t) => {
     const J = await evaluatedOnK(t, { port: 18631, step: true, refusedRow: false });
@@ -226,6 +245,8 @@ describe('M631 a refused policy Alpha request reconsidered by store order', () =
     assert.equal(policyRequests(fx.home, p)[0]?.outcome, 'not_issued', 'the key stays not_issued while K runs');
     await move(fx, k.id, ['collecting', 'recorded'], 0);
     await assertReconsideredOnce(fx, p, J, '(a)');
+    const rec = reconsideredOf(fx, p, J);
+    assert.deepEqual([rec.evaluation, rec.order_basis], [J.ev.id, 'seq'], `(a) it read the evaluation by store order (${JSON.stringify(rec)})`);
     // (b) repeated ticks: never a second.
     await tick(fx.engine, p, { rounds: 6 });
     await idle(fx, p);
@@ -276,8 +297,28 @@ describe('M631 a refused policy Alpha request reconsidered by store order', () =
     assert.ok(before[0] < before[1], 'K registered before the evaluation, by seq');
     await move(fx, k.id, ['collecting', 'recorded'], 0);
     await assertReconsideredOnce(fx, p, J, '(d)');
+    const rec = reconsideredOf(fx, p, J);
+    assert.deepEqual([rec.evaluation, rec.order_basis], [ev.id, 'seq'], `(d) by store order, equal stamps notwithstanding (${JSON.stringify(rec)})`);
     await tick(fx.engine, p, { rounds: 6 });
     assert.equal(issued(fx.home, k.candidate).length, 1, '(d) no second authorization across further ticks');
     assert.equal(policyRequests(fx.home, p).length, 1, '(d) no second request row');
+  });
+
+  test('(e) K registered before the ordering fact existed (a labelled store write of its created_seq to NULL): the request reconsidered on the timestamp fallback, and the record names it', async (t) => {
+    const J = await evaluatedOnK(t, { port: 18635, step: false, refusedRow: true });
+    const { fx, p, k, ev } = J;
+    const facts = () => withStore(fx.home, (db) => [db.prepare('SELECT "created_seq" FROM "check_executions" WHERE "id" = ?').get(k.id).created_seq, db.prepare('SELECT "seq" FROM "gate_evaluations" WHERE "id" = ?').get(ev.id).seq]);
+    const [createdSeq, evSeq] = facts();
+    assert.ok(Number.isInteger(createdSeq) && Number.isInteger(evSeq) && createdSeq < evSeq, `the ordering fact the Builder records: K's position ${createdSeq} before the evaluation's seq ${evSeq}`);
+    // FIXTURE TAMPERING (labelled): K's execution as a row written before migration 0052 (no store order recorded).
+    withStore(fx.home, (db) => db.prepare('UPDATE "check_executions" SET "created_seq" = NULL WHERE "id" = ?').run(k.id), { readonly: false });
+    assert.equal(facts()[0], null, 'the fixture is live: K carries no store order');
+    await move(fx, k.id, ['collecting', 'recorded'], 0);
+    await assertReconsideredOnce(fx, p, J, '(e)');
+    const rec = reconsideredOf(fx, p, J);
+    assert.equal(rec.evaluation, ev.id, `(e) the evaluation it reconsidered (${JSON.stringify(rec)})`);
+    assert.equal(rec.order_basis, 'timestamp_fallback', `(e) the record names the fallback, never the store order (${JSON.stringify(rec)})`);
+    await tick(fx.engine, p, { rounds: 4 });
+    assert.equal(issued(fx.home, k.candidate).length, 1, '(e) no second authorization across further ticks');
   });
 });
