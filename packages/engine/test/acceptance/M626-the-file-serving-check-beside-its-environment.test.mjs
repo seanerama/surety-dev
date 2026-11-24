@@ -320,7 +320,7 @@ describe('M626 (a) a service declaring serving, its behavioural check required: 
     if (running.state !== 'ready') {
       assert.equal(running.state, 'blocked', JSON.stringify(running));
       assert.deepEqual(running.blocker, { what: 'checks_running', subject: null }, JSON.stringify(running));
-      assert.doesNotMatch(running.reason, /proposal|serving check/i, running.reason);
+      assert.match(running.reason, /automated checks are running/, `blocked for the checks (${running.reason})`);
     }
   });
 
@@ -519,7 +519,10 @@ describe('M626 (d), (e) a service configuration declaring no serving; an environ
       for (const [where, entry] of Object.entries(r.entries)) {
         assert.equal(entry.name, 'alpha', `${what}, ${where}`);
         assert.match(entry.id, /^env_/, `${what}, ${where}`);
-        assert.ok('state' in entry && 'observed' in entry, `${what}, ${where}: the entry as today (${Object.keys(entry).join(', ')})`);
+        // The list entries carry the observed state (D1 §3.5); the
+        // environment read its stored read (SEAM.md §255), `observed` among it.
+        const today = where === 'GET …/environments/:e' ? ['observed', 'conditions', 'supervision'] : ['state', 'observed'];
+        for (const k of today) assert.ok(k in entry, `${what}, ${where}: ${k}, the entry as today (${Object.keys(entry).join(', ')})`);
       }
     }
     assert.equal(J.built.project.build.deploy_readiness.state, 'unconfigured');

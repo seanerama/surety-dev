@@ -477,8 +477,8 @@ describe('M616 (e) a static page whose serving check is neither present nor prop
     assert.match(r.reason, /propos/i, `the reason says the check is proposed again (${r.reason})`);
     assert.match(r.reason, /static configuration/i, `when the static configuration is written (${r.reason})`);
     assert.equal(J.read.now.state, 'build_complete', JSON.stringify(J.read.now));
-    assert.ok(J.read.now.reason.startsWith(`${BUILD_DONE} `), J.read.now.reason);
-    assert.doesNotMatch(J.read.now.reason, /can be deployed|is verified|is open/i, 'never verified or open');
+    assert.ok(J.read.now.reason.startsWith(`${BUILD_DONE} It cannot be deployed to alpha yet: `), J.read.now.reason);
+    assert.doesNotMatch(J.read.now.reason, /can be deployed|is verified|preview (?:is )?open/i, 'never verified or open');
     assert.equal(J.read.now.primary_action, null, 'never deploy while blocked');
   });
 });
