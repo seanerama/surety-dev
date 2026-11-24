@@ -47,7 +47,8 @@
 // - The applied check changes the acceptance content the candidate's Reviewer
 //   sign-off binds (M626's reading 4): the first request after `ready` may be
 //   refused SIGNOFF_MISSING alone (row M628); it is then made again once the
-//   engine's Reviewer has signed off, and must be issued.
+//   engine's Reviewer has signed off, and must be issued (the row as amended
+//   by the driver's companion 8b74035b).
 //
 // The projects are M626's Node service (M616's browser-app variant of the
 // design journey's reference project, its Builder's tree a `node_service`
@@ -390,7 +391,7 @@ describe('M627 (a) under manual policy: the owner asks for the missing behaviour
     assert.equal(J.appliedStatus, 'applied', 'the Verifier\'s proposal applied');
     assert.equal(J.keys.length, 1, `the effective version has the behavioural check (${JSON.stringify(J.keys)})`);
     for (const d of [J.approvedRead.build.deploy_readiness, ...J.after]) {
-      if (d.authoring) assert.ok(['awaiting_review', 'applied'].includes(d.authoring.state), `after the approval, authoring is applied (or the approval not yet applied) (${JSON.stringify(d.authoring)})`);
+      if (d.authoring) assert.equal(d.authoring.state, 'applied', `after the approval, authoring reads applied (${JSON.stringify(d.authoring)})`);
       if (d.state === 'blocked') assert.ok(['required_check_missing', 'checks_running'].includes(d.blocker?.what), JSON.stringify(d));
     }
     assert.ok(
@@ -405,6 +406,7 @@ describe('M627 (a) under manual policy: the owner asks for the missing behaviour
     const [first] = J.deploy;
     if (first.status === 409) {
       assert.deepEqual((first.body.subject?.reasons ?? []).map((x) => x.code), ['SIGNOFF_MISSING'], `issued, or refused only for the sign-off the applied version renews (${first.text})`);
+      assert.ok(['queued', 'running'].includes(first.body.subject?.review?.state), `the Reviewer's review queued, said in the refusal (M628) (${first.text})`);
     }
     const last = J.deploy.at(-1);
     assert.equal(last.status, 201, `issued (→ ${last.status} ${last.text})`);

@@ -13,7 +13,9 @@
 //     alpha-review.ts); `deploy_readiness` `blocked`, `blocker {what:
 //     'signoff_pending', subject: 'SIGNOFF_MISSING'}`, `review {state,
 //     work_item, run}`, the reason beginning "Waiting for Reviewer sign-off";
-//     `primary_action` null; the NOW sentence names it. The request made again
+//     `primary_action` never `deploy` (null, or `tick` while the queued review
+//     is eligible and not yet dispatched; the driver's companion 8b74035b);
+//     the NOW sentence names it. The request made again
 //     while the review is under way: 409 with `subject.review` `queued` or
 //     `running`, no second review. The Reviewer signs off (scripted): `ready`;
 //     the request again issued (201).
@@ -224,7 +226,7 @@ describe('M628 (a) a candidate lacking only the Reviewer sign-off: the request q
     assert.equal(reviewItem(r), J.reviewsFirst[0].id, JSON.stringify(r));
   });
 
-  test('(a) the readiness: blocked signoff_pending, review {state, work_item, run}, the reason beginning "Waiting for Reviewer sign-off"; primary_action null; the NOW sentence names it', (t) => {
+  test('(a) the readiness: blocked signoff_pending, review {state, work_item, run}, the reason beginning "Waiting for Reviewer sign-off"; primary_action never deploy; the NOW sentence names it', (t) => {
     for (const [what, read, states, run] of [
       ['after the request', J.queued, ['queued', 'running'], undefined],
       ['the review running', J.running, ['running'], J.held?.run.id],
@@ -241,7 +243,9 @@ describe('M628 (a) a candidate lacking only the Reviewer sign-off: the request q
       if (run !== undefined) assert.equal(d.review.run, run, `${what}: the run named`);
       if (d.review.state === 'queued') assert.equal(d.review.run, null, `${what}: no run while queued`);
       assert.ok(d.reason.startsWith('Waiting for Reviewer sign-off'), `${what}: ${d.reason}`);
-      assert.equal(read.now.primary_action, null, `${what}: ${JSON.stringify(read.now)}`);
+      // Never deploy: null, or `tick` while the queued review is eligible and
+      // not yet dispatched (the driver's companion 8b74035b).
+      assert.ok(read.now.primary_action === null || (read.now.primary_action === 'tick' && d.review.state === 'queued'), `${what}: ${JSON.stringify(read.now)}`);
       assert.match(read.now.reason, /Waiting for Reviewer sign-off/, `${what}: the NOW sentence names it (${read.now.reason})`);
     }
   });
