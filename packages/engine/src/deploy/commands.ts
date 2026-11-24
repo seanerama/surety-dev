@@ -16,7 +16,7 @@ import { seamArtifactFreeBytes } from '../testing/seam.js';
 import { ArtifactRefused, BUILDER, type Sealed, homeFreeBytes, removeUnrecorded, sealArtifact } from './artifact.js';
 import { candidateTree } from './compatibility-eval.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
-import { checkStaticEntry, staticSpec } from './static-site.js';
+import { checkServingEntry, checkStaticEntry, servingSpec, staticSpec } from './static-site.js';
 import { prepareServingProposal } from './serving-install.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
@@ -257,7 +257,12 @@ export async function prepareDeployment(rt: Runtime, project: string, body: unkn
           inspect: (paths) => {
             const spec = staticSpec(facts.config.content);
             if (spec !== null) checkStaticEntry(spec, paths);
-            else checkStart(facts.config.content.start ?? [], paths);
+            else {
+              checkStart(facts.config.content.start ?? [], paths);
+              // A service's declared serving entry (M625 (a)).
+              const serving = servingSpec(facts.config.content);
+              if (serving !== null) checkServingEntry(serving, paths);
+            }
           },
         },
       });

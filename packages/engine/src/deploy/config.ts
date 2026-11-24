@@ -63,7 +63,7 @@ const VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
 const TARGET = /^[a-z][a-z0-9-]{0,31}$/;
 // A deployment reference (SEAM.md §245; N04).
 export const DEPLOY_REFERENCE = /^deploy\/[a-z][a-z0-9_]{0,62}$/;
-const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method', 'persistent_state', 'mode', 'static'];
+const FIELDS = ['adapter', 'adapter_version', 'targets', 'runtime', 'start', 'port', 'env', 'secrets', 'check_secrets', 'egress', 'artifact', 'identity_method', 'persistent_state', 'mode', 'static', 'serving'];
 
 // Only the deployment namespace (D4 §§3.2, 7.1, 7.4; the driver's ruling on
 // review S4): an Alpha environment holds none of the backends' credentials,
@@ -95,18 +95,19 @@ export function validateConfig(body: unknown): ConfigContent {
   // root and entry, each defaulted, filled in the version's content.
   if (body.mode !== undefined && !(CONFIG_MODES as readonly unknown[]).includes(body.mode)) throw invalid('mode', `must be ${CONFIG_MODES.map((m) => `"${m}"`).join(' or ')}`);
   let staticPart: { root: string; entry: string } | null = null;
+  let servingPart: { root: string; entry: string } | null = null;
   if (body.mode === 'static') {
     if (body.start !== undefined) throw invalid('start', 'must be absent in static mode: the engine runs its own static file server');
-    const st = body.static ?? {};
-    if (!isObject(st) || Object.keys(st).some((k) => k !== 'root' && k !== 'entry')) throw invalid('static', 'must be {"root": <repository path or ".">, "entry": <path under the root>}');
-    const root = st.root === undefined ? STATIC_ROOT_DEFAULT : st.root;
-    const entry = st.entry === undefined ? STATIC_ENTRY_DEFAULT : st.entry;
-    if (typeof root !== 'string' || (root !== STATIC_ROOT_DEFAULT && !isPlainRelative(root)) || root.length > 256) throw invalid('static.root', 'must be "." or a plain relative path of the repository');
-    if (typeof entry !== 'string' || !isPlainRelative(entry) || entry.length > 256) throw invalid('static.entry', 'must be a plain relative path under the root');
-    staticPart = { root, entry };
+    // What a static configuration serves is its `static` (M625 (a)).
+    if (body.serving !== undefined) throw invalid('serving', 'is a field of a service configuration only (mode absent or "service"): a static configuration serves its "static" root');
+    staticPart = rootAndEntry(body.static, 'static');
   } else {
     if (body.static !== undefined) throw invalid('static', 'is a field of a static configuration only (mode "static")');
     if (!Array.isArray(body.start) || body.start.length === 0 || body.start.some((a) => typeof a !== 'string')) throw invalid('start', 'must be a non-empty argument array');
+    // The directory the service serves (M625 (a); DECISIONS item 40): what
+    // the serving check compares the served bytes against, validated as a
+    // static root and entry are, its defaults filled.
+    if (body.serving !== undefined) servingPart = rootAndEntry(body.serving, 'serving');
   }
   if (!Number.isInteger(body.port) || (body.port as number) < 1024 || (body.port as number) > 65535) throw invalid('port', 'must be an integer from 1024 to 65535');
   if (body.env !== undefined) {
@@ -134,7 +135,20 @@ export function validateConfig(body: unknown): ConfigContent {
     }
   }
   if (body.identity_method !== undefined && body.identity_method !== 'tree_digest') throw invalid('identity_method', 'must be tree_digest');
-  return (staticPart === null ? body : { ...body, static: staticPart }) as unknown as ConfigContent;
+  return { ...body, ...(staticPart !== null ? { static: staticPart } : {}), ...(servingPart !== null ? { serving: servingPart } : {}) } as unknown as ConfigContent;
+}
+
+// A root and an entry under it (`static` in static mode, `serving` in
+// service mode), each defaulted: the root "." or a plain relative path of
+// the repository, the entry a plain relative path under it.
+function rootAndEntry(value: unknown, field: 'static' | 'serving'): { root: string; entry: string } {
+  const st = value ?? {};
+  if (!isObject(st) || Object.keys(st).some((k) => k !== 'root' && k !== 'entry')) throw invalid(field, 'must be {"root": <repository path or ".">, "entry": <path under the root>}');
+  const root = st.root === undefined ? STATIC_ROOT_DEFAULT : st.root;
+  const entry = st.entry === undefined ? STATIC_ENTRY_DEFAULT : st.entry;
+  if (typeof root !== 'string' || (root !== STATIC_ROOT_DEFAULT && !isPlainRelative(root)) || root.length > 256) throw invalid(`${field}.root`, 'must be "." or a plain relative path of the repository');
+  if (typeof entry !== 'string' || !isPlainRelative(entry) || entry.length > 256) throw invalid(`${field}.entry`, 'must be a plain relative path under the root');
+  return { root, entry };
 }
 
 // The field a reference stands in (for a refusal naming it).
