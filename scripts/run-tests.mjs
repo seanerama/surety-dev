@@ -75,6 +75,8 @@ const ROWS = [
   // §3d (M625: serving verification of a service that serves a directory; DECISIONS item
   // 40; the driver's companion under Sean's instruction of 2026-11-24).
   'M625',
+  // §3e (M626: the file-serving check beside its environment; DECISIONS item 42; 2026-11-24).
+  'M626',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
