@@ -24,9 +24,11 @@ import { HOLDING_STATUSES, OPEN_ITERATION_STATUSES, currentDeploymentRequest, cu
 import { resultState } from './transitions/gates.js';
 import { runnerProfileHold } from './transitions/checks.js';
 import { buildComplete, buildCompletedAt } from '../plan/phase.js';
-import { firstPlanUnpublished, firstPlanUnpublishedStep } from '../prototype/brief.js';
+import { firstPlanUnpublished, firstPlanUnpublishedStep, roleModelOf } from '../prototype/brief.js';
+import { type GapAuthoring, gapAuthoringApplied, gapAuthoringItem, gapAuthoringOf } from './transitions/alpha-gap.js';
 import {
   type AdmissionBlock,
+  type ReadinessAuthoring,
   type Compatibility,
   type RequestPath,
   type ServingCheck,
@@ -672,7 +674,13 @@ function deployFacts(db: Db, project: string, trees: TreeAnswer[]): { compatibil
   // one function the environment's entry serves too.
   const target = deploymentEnvironment(compatibility);
   const serving = target === null ? null : servingCheckStatus(db, project, target.environment, compatibility.output_kind);
-  const { readiness, sentence } = readinessOf(complete, compatibility, serving, () => admissionBlock(db, project, compatibility, serving), () => requestPath(db, project, compatibility, serving));
+  const { readiness, sentence } = readinessOf(
+    complete,
+    compatibility,
+    serving,
+    () => withAuthoring(db, project, compatibility, admissionBlock(db, project, compatibility, serving)),
+    () => requestPath(db, project, compatibility, serving),
+  );
   return {
     compatibility,
     complete,
@@ -735,6 +743,72 @@ function admissionBlock(db: Db, project: string, compatibility: Compatibility, s
     };
   }
   return null;
+}
+
+
+// The Verifier's authoring beside a missing required check (DECISIONS
+// item 43; alpha-gap.ts): the authoring asked for a deployment gap that is
+// under way, its state said in the clause (and so in NOW's sentence); none,
+// the owner's request offered for a check a Verifier writes (never the
+// engine's serving check, which the engine proposes). Beside the
+// candidate's checks running, the authoring whose proposal made the
+// effective version, `applied`. Nothing else changes.
+function withAuthoring(db: Db, project: string, compatibility: Compatibility, b: AdmissionBlock | null): AdmissionBlock | null {
+  if (b === null) return null;
+  if (b.blocker.what === 'checks_running') {
+    const effective = effectiveVersion(db, project);
+    const applied = effective ? gapAuthoringApplied(db, project, effective.id) : null;
+    return applied === null ? b : { ...b, authoring: { ...applied, offer: null } };
+  }
+  if (b.blocker.what !== 'required_check_missing') return b;
+  const env = deploymentEnvironment(compatibility);
+  const item = gapAuthoringItem(db, project);
+  if (item !== null) {
+    const a = gapAuthoringOf(db, item);
+    return { ...b, clause: `${b.clause}; ${authoringClause(a)}`, authoring: { ...a, offer: null } };
+  }
+  const subject = b.blocker.subject;
+  const writable = env !== null && subject !== null && subject.startsWith('kind:') && subject !== 'kind:post_deploy_serving';
+  const authoring: ReadinessAuthoring = {
+    state: 'none',
+    work_item: null,
+    run: null,
+    proposal: null,
+    decision: null,
+    offer: writable
+      ? { method: 'POST', path: `/v1/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(env.name)}/request-checks`, consequence_text: authoringConsequence(db, project, subject.slice(5)) }
+      : null,
+  };
+  return { ...b, authoring };
+}
+
+// What the authoring under way is doing, for the readiness's clause.
+function authoringClause(a: GapAuthoring): string {
+  const it = `the Verifier's authoring of it (work item ${a.work_item})`;
+  switch (a.state) {
+    case 'running':
+      return `${it} is running (run ${a.run})`;
+    case 'awaiting_review':
+      return a.proposal === null
+        ? `${it} waits for your answer${a.decision === null ? '' : ` on decision ${a.decision}`}`
+        : `${it} proposed the check (proposal ${a.proposal}), which waits for its review${a.decision === null ? '' : `: your answer on decision ${a.decision}`}`;
+    case 'applied':
+      return `${it} proposed the check (proposal ${a.proposal}), which is approved and is being applied; the candidate's checks then run again`;
+    default:
+      return `${it} is queued`;
+  }
+}
+
+// The engine's sentence of what the owner's request does: the Verifier
+// role, and the model the engine resolves for it now (prototype/brief.ts
+// roleModelOf: the active trust entry's model, the scripted backend's, or,
+// refused, the model the role's policy key names), and that nothing is
+// deployed.
+function authoringConsequence(db: Db, project: string, kind: string): string {
+  const rm = roleModelOf(db, project, 'verifier');
+  const on = `the configured model ${rm.model}${rm.provider !== rm.model ? ` (${rm.provider})` : ''}`;
+  const refused = rm.resolution === 'refused' ? ` The Verifier role's backend is refused now (${rm.refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+  return `Queues a Verifier check-authoring run on ${on}: it writes the missing ${kind} check as a proposal you review; nothing is deployed.${refused}`;
 }
 
 // What `ready` means and what follows a request now, before the preview

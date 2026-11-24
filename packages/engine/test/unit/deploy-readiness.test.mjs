@@ -473,6 +473,9 @@ test('the build complete in static mode, its serving check neither present nor p
     environment: 'alpha',
     decision: null,
     blocker: { what: 'required_check_missing', subject: 'kind:post_deploy_serving' },
+    // DECISIONS item 43: the engine's serving check is the engine's to
+    // propose, never a Verifier's to write: no request offered.
+    authoring: { state: 'none', work_item: null, run: null, proposal: null, decision: null, offer: null },
   });
   assert.deepEqual(p.now, { state: 'build_complete', primary_action: null, reason: `${BUILD_DONE} It cannot be deployed to alpha yet: ${NOT_PROPOSED}.`, cause: null });
   assert.doesNotMatch(p.now.reason, /visual|human|production|accept|ready to open/i);
@@ -697,13 +700,17 @@ test("another output kind with no deployment-specific post-deploy check (DECISIO
   const MISSING =
     "the required behavioural check (post_deploy_behavior, of the alpha_complete scope) is not in the effective protected version; a Verifier writes it, asked by the engine when a deployment is requested (the policy's request under on_phase_complete, or a request from the operator console), and its approval and a request again follow";
   let p = read(db);
-  assert.deepEqual(p.build.deploy_readiness, {
+  const { authoring, ...readiness } = p.build.deploy_readiness;
+  assert.deepEqual(readiness, {
     state: 'blocked',
     reason: `The environment alpha can host this output (Node service) with local_service in service mode, but a deployment would be refused now: ${MISSING}.`,
     environment: 'alpha',
     decision: null,
     blocker: { what: 'required_check_missing', subject: 'kind:post_deploy_behavior' },
   });
+  // DECISIONS item 43: none under way; the owner's request offered.
+  assert.deepEqual([authoring.state, authoring.work_item, authoring.offer?.method, authoring.offer?.path], ['none', null, 'POST', '/v1/projects/prj_1/environments/alpha/request-checks']);
+  assert.match(authoring.offer.consequence_text, /^Queues a Verifier check-authoring run on the configured model .+: it writes the missing post_deploy_behavior check as a proposal you review; nothing is deployed\./);
   assert.equal(p.now.primary_action, null);
   // Required but not of the alpha_complete scope: still missing.
   db.prepare(`INSERT INTO checks (id, created_at, project, protected_version, key, kind, required, gate_kinds, definition_path, definition_hash, runner_class) VALUES ('chk_p', ?, 'prj_1', 'pv_1', 'phase-only', 'post_deploy_behavior', 1, '["phase"]', 'x', 'h', 'direct')`).run(AT);

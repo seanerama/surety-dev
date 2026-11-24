@@ -13,6 +13,7 @@ import { Refusal, storeError } from '../refusal.js';
 import { type SeamInit, configureWorker, seamStoreOp } from '../testing/seam.js';
 import { migrate } from './migrate.js';
 import { DESIGN_COMMANDS, DESIGN_ENGINE_OPS, DESIGN_READS } from '../design/ops.js';
+import { requestEnvironmentChecks } from './transitions/request-checks.js';
 import { candidateKind, compatibilityTarget, compatibilityTargets, recordCompatibility } from '../deploy/compatibility.js';
 import { engineDecisions, listProjects, openDecisions, readCandidate, readDecision, readEnvironmentLogs, readEnvironments, readGate, readOneEnvironment, readOperations, readProject, readWork, runTail } from './projections.js';
 import { dispatchCandidates, projectIds, projectPolicy, projectPolicyView, quarantinedRuns } from './reads.js';
@@ -371,6 +372,9 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // cancelled correction again.
   'spec.correct': (tx, a: { project: string; request: string }) => correctRequestAgain(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
+  // DECISIONS item 43 (M627): the owner asks for the checks the deployment
+  // gate lacks that a Verifier writes; nothing is deployed.
+  'environment.request_checks': (tx, a) => ({ ...requestEnvironmentChecks(tx, a), effects: [{ kind: 'tick' }] }),
   'environment.teardown': (tx, a) => requestTeardown(tx, a),
   // D4 §2.6, A.8 (SEAM.md §322): the qualification's answer, once its run
   // has ended (deploy/qualify.ts).

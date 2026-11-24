@@ -37,6 +37,7 @@ import { BEHAVIOR_KIND, SERVING_KIND, deploymentRequirementMet, missingDeploymen
 import { ADAPTER_CAPABILITIES, HOSTING_REQUIRED, KIND_LABEL, modeOfContent, withArticle } from './capabilities.js';
 import { type KindAnswer, type OutputKind, type TreeAnswer, architectureKind, combineKinds } from './output-kind.js';
 import type { DeclaredServing } from './serving-install.js';
+import type { GapAuthoring } from '../store/transitions/alpha-gap.js';
 import { modeOf, servingSpec, staticSpec } from './static-site.js';
 
 type Db = Database;
@@ -81,6 +82,11 @@ export interface DeployReadiness {
   decision?: string | null;
   // `blocked` only (DECISIONS item 42): what would refuse the request.
   blocker?: Blocker;
+  // `blocked` with `required_check_missing` (DECISIONS item 43): the
+  // Verifier's authoring of the missing check, and the owner's request for
+  // it while none is under way; with `checks_running`, only when that
+  // authoring's proposal made the effective version (`applied`).
+  authoring?: ReadinessAuthoring;
   // `ready` only (the owner's ruling of 2026-10-29: "If a serving check has
   // not yet been proposed, readiness may mean ready to request deployment,
   // not 'verified' or 'ready to open.' State that approval and verification
@@ -126,6 +132,21 @@ export interface AdmissionBlock {
   clause: string;
   decision: string | null;
   blocker: Blocker;
+  authoring?: ReadinessAuthoring;
+}
+
+// The Verifier's authoring of a missing required check as the readiness
+// serves it (DECISIONS item 43; alpha-gap.ts gapAuthoringOf): its state,
+// work item, run, proposal and open decision, and `offer`, the owner's
+// request that would queue it (state `none` and a check a Verifier writes;
+// null otherwise), with the engine's sentence of what it does.
+export interface AuthoringOffer {
+  method: 'POST';
+  path: string;
+  consequence_text: string;
+}
+export interface ReadinessAuthoring extends GapAuthoring {
+  offer: AuthoringOffer | null;
 }
 
 // What a `blocked` readiness names (DECISIONS item 42; M616 (e) amended,
@@ -637,6 +658,7 @@ export function readinessOf(
             environment,
             decision: b.decision,
             blocker: b.blocker,
+            ...(b.authoring ? { authoring: b.authoring } : {}),
           },
           sentence: ` It cannot be deployed to ${env.name} yet: ${b.clause}.`,
         };

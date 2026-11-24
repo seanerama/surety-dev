@@ -508,6 +508,26 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // DECISIONS item 43 (M627): the owner asks for the checks the
+      // deployment gate lacks that a Verifier writes, for the current
+      // candidate and this environment (store/transitions/request-checks.ts).
+      // The gate's facts are read here, as a deployment request's are;
+      // nothing is sealed, authorized or deployed.
+      if (rest.length === 3 && rest[0] === 'environments' && rest[2] === 'request-checks' && post) {
+        const environment = decodeSegment(rest[1]!);
+        if (environment === null) return null;
+        return {
+          kind: 'prepared',
+          name: 'environment.request_checks',
+          prepare: async (b) => {
+            noFields(b);
+            const target = await store().call<{ candidate: { id: string } | null }>('read', { name: 'deploy.compatibility_target', args: { project } });
+            const candidate = target.candidate?.id ?? null;
+            const facts = candidate === null ? null : await gateFacts(runtime(), project, candidate);
+            return { project, environment, candidate, facts, trees: await readTrees(project) };
+          },
+        };
+      }
       if (rest.length === 1 && rest[0] === 'deployments' && post) {
         return { kind: 'prepared', name: 'deployment.request', prepare: async (b) => prepareDeployment(runtime(), project, b), settle: (prepared) => settleDeployment(runtime(), prepared) };
       }

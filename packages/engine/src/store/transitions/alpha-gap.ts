@@ -47,6 +47,11 @@ export interface DeploymentGapEvidence {
   environment: string;
   targets: { name: string; variable: string }[] | null;
   missing: DeploymentGap;
+  // Who asked (DECISIONS item 43): the deployment request's requester (the
+  // policy's tick, or the owner's request from the operator console), or
+  // the owner through POST …/environments/:e/request-checks. Absent on an
+  // authoring asked before it was recorded (requesterOf reads it then).
+  requested_by?: 'human' | 'policy';
 }
 
 // 'coming': an authoring of the project's checks is under way, or awaits
@@ -168,9 +173,29 @@ export function alphaGapState(db: Db, project: string, evaluation: string): Alph
 // its evidence naming the gate, the evaluation, the environment with its
 // targets' variables, and what is missing. Returns the state after: 'coming'
 // once queued.
-export function queueAlphaGapAuthoring(tx: Tx, candidate: CandidateRow, evaluation: string, env: { name: string; targets: string[] | null }): AlphaGapState {
+export function queueAlphaGapAuthoring(tx: Tx, candidate: CandidateRow, evaluation: string, env: { name: string; targets: string[] | null }, requestedBy: 'human' | 'policy' = 'policy'): AlphaGapState {
   const state = alphaGapState(tx.db, candidate.project, evaluation);
   if (state !== 'due') return state;
+  registerGapAuthoring(tx, candidate, evaluation, env, requestedBy);
+  return 'coming';
+}
+
+// The owner's request for the checks (DECISIONS item 43; POST
+// …/environments/:e/request-checks): his instruction to start the
+// authoring. Asked whenever the evaluation names a gap a Verifier could
+// write and no authoring asked for a deployment gap is under way (the
+// caller answers with that one, reused): beside another authoring of the
+// project's checks (it is dispatched after it, one protected writer at a
+// time, runs.ts), and after an earlier authoring of the same gap ended
+// leaving it (a rejected proposal; the policy asks once per gap and plan,
+// the owner may ask again). The work item, or null when the evaluation
+// names no such gap or the project has no plan to bind it to.
+export function askAlphaGapAuthoring(tx: Tx, candidate: CandidateRow, evaluation: string, env: { name: string; targets: string[] | null }): string | null {
+  if (gapOfEvaluation(tx.db, evaluation) === null || planFor(tx.db, candidate.project, candidate.id) === null) return null;
+  return registerGapAuthoring(tx, candidate, evaluation, env, 'human');
+}
+
+function registerGapAuthoring(tx: Tx, candidate: CandidateRow, evaluation: string, env: { name: string; targets: string[] | null }, requestedBy: 'human' | 'policy'): string {
   const gap = gapOfEvaluation(tx.db, evaluation)!;
   const plan = planFor(tx.db, candidate.project, candidate.id)!;
   const latest = gapItems(tx.db, candidate.project, plan)[0];
@@ -181,10 +206,11 @@ export function queueAlphaGapAuthoring(tx: Tx, candidate: CandidateRow, evaluati
     environment: env.name,
     targets: env.targets === null ? null : env.targets.map((t) => ({ name: t, variable: targetVariable(t) })),
     missing: gap,
+    requested_by: requestedBy,
   };
   // Its work.created names the gate and what is missing (the label): the
   // event set is closed (D1 §12.1, A.6), so no event of its own.
-  observeTrigger(
+  const made = observeTrigger(
     tx,
     {
       project: candidate.project,
@@ -198,7 +224,93 @@ export function queueAlphaGapAuthoring(tx: Tx, candidate: CandidateRow, evaluati
     },
     { gate: 'alpha_authorize', evaluation, environment: env.name, missing: gap },
   );
-  return 'coming';
+  return made.work_item.id;
+}
+
+// ---- the authoring as the owner's reads serve it (DECISIONS item 43) ----------------------------
+
+// `none`: no authoring asked for a deployment gap is under way; `queued`:
+// one is, with no run live (eligible, claimed, or held); `running`: its
+// Verifier's run is live; `awaiting_review`: its proposal is captured and
+// waits for its classification, its review or the owner's decision (or
+// the authoring is parked behind a question to the owner); `applied`: its
+// proposal is approved (being applied) or applied.
+export const GAP_AUTHORING_STATES = ['none', 'queued', 'running', 'awaiting_review', 'applied'] as const;
+export type GapAuthoringState = (typeof GAP_AUTHORING_STATES)[number];
+export interface GapAuthoring {
+  state: GapAuthoringState;
+  work_item: string | null;
+  run: string | null;
+  proposal: string | null;
+  decision: string | null;
+}
+
+interface GapRow {
+  id: string;
+  status: string;
+  trigger_evidence: string | null;
+}
+
+// The project's authorings asked for a deployment gap, newest first.
+function gapRows(db: Db, project: string): GapRow[] {
+  return (
+    db
+      .prepare(`SELECT "id", "status", "trigger_evidence" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' ORDER BY rowid DESC`)
+      .all(project) as GapRow[]
+  ).filter((r) => deploymentEvidenceOf(r.trigger_evidence) !== null);
+}
+
+// The authoring asked for a deployment gap that is under way, or awaits its
+// proposal's decision (the one gapAuthoringUnderWay finds); null if none.
+export function gapAuthoringItem(db: Db, project: string): string | null {
+  return gapRows(db, project).find((r) => !TERMINAL.includes(r.status))?.id ?? null;
+}
+
+// Who asked for it: as its evidence records, else (asked before that was
+// recorded) the owner when his deployment request recorded the refusal
+// whose evaluation it names (an owner's request always records its
+// outcome), the policy otherwise.
+export function requesterOf(db: Db, item: string): 'human' | 'policy' {
+  const e = deploymentEvidenceOf((db.prepare('SELECT "trigger_evidence" FROM "work_items" WHERE "id" = ?').get(item) as { trigger_evidence: string | null } | undefined)?.trigger_evidence ?? null);
+  if (e === null) return 'policy';
+  if (e.requested_by === 'human' || e.requested_by === 'policy') return e.requested_by;
+  const human = db
+    .prepare(`SELECT 1 FROM "deployment_requests" r JOIN "gate_evaluations" g ON g."authorization" = r."authorization" WHERE g."id" = ? AND r."requested_by" = 'human' LIMIT 1`)
+    .get(e.evaluation);
+  return human !== undefined ? 'human' : 'policy';
+}
+
+// The authoring's state as its work item, its runs and its proposal stand.
+export function gapAuthoringOf(db: Db, item: string): GapAuthoring {
+  const row = db.prepare('SELECT "id", "status" FROM "work_items" WHERE "id" = ?').get(item) as { id: string; status: string };
+  const runs = db.prepare('SELECT "id", "state" FROM "runs" WHERE "work_item" = ? ORDER BY rowid DESC').all(item) as { id: string; state: string }[];
+  const live = runs.find((r) => r.state !== 'ended') ?? null;
+  const proposal =
+    (db.prepare(`SELECT p."id", p."status" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."work_item" = ? ORDER BY p."seq" DESC, p.rowid DESC LIMIT 1`).get(item) as
+      | { id: string; status: string }
+      | undefined) ?? null;
+  const openOn = (type: string, id: string): string | null =>
+    (db.prepare(`SELECT "id" FROM "decisions" WHERE "subject_type" = ? AND "subject_id" = ? AND "status" = 'open' ORDER BY rowid DESC LIMIT 1`).get(type, id) as { id: string } | undefined)?.id ?? null;
+  const run = live?.id ?? runs[0]?.id ?? null;
+  const base = { work_item: row.id, run, proposal: null, decision: null };
+  if (proposal !== null && (proposal.status === 'approved' || proposal.status === 'applied')) return { ...base, state: 'applied', proposal: proposal.id };
+  if (live !== null) return { ...base, state: 'running', run: live.id, proposal: proposal !== null && proposal.status !== 'rejected' ? proposal.id : null };
+  if (proposal !== null && ['captured', 'classified', 'awaiting_human'].includes(proposal.status)) return { ...base, state: 'awaiting_review', proposal: proposal.id, decision: openOn('protected_proposal', proposal.id) };
+  if (row.status === 'parked' || row.status === 'awaiting_decision') return { ...base, state: 'awaiting_review', proposal: proposal?.id ?? null, decision: openOn('work_item', row.id) };
+  return { ...base, state: 'queued', run: null };
+}
+
+// The newest authoring asked for a deployment gap whose proposal made the
+// effective protected version (the candidate's checks then run again under
+// it): `applied`, or null.
+export function gapAuthoringApplied(db: Db, project: string, effective: string): GapAuthoring | null {
+  for (const r of gapRows(db, project)) {
+    const p = db.prepare(`SELECT p."id" FROM "protected_proposals" p JOIN "runs" x ON x."id" = p."run" WHERE x."work_item" = ? AND p."status" = 'applied' AND p."resulting_version" = ? LIMIT 1`).get(r.id, effective) as
+      | { id: string }
+      | undefined;
+    if (p) return { ...gapAuthoringOf(db, r.id), state: 'applied', proposal: p.id, decision: null };
+  }
+  return null;
 }
 
 // A policy request recorded `not_issued` on a refusal whose only lasting

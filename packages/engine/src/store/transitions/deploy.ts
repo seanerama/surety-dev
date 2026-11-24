@@ -211,7 +211,7 @@ export function currentConfigContent(db: Db, args: { project: string; name: stri
   const c = env ? currentConfig(db, env) : undefined;
   return c ? configContent(c) : null;
 }
-const targetsOf = (c: ConfigRow): string[] => [...configContent(c).targets].sort();
+export const targetsOf = (c: ConfigRow): string[] => [...configContent(c).targets].sort();
 
 // The identity method an environment declares (J4): its configuration's.
 export function identityMethodOf(db: Db, env: EnvRow): string | null {
@@ -1183,7 +1183,7 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     const gapped = (r: { code: string; subjects?: string[] }): boolean => gapReason(tx.db, args.project, r);
     const gap: AlphaGapState =
       reasons.some(gapped) && reasons.every((r) => gapped(r) || r.code === 'SIGNOFF_MISSING' || settles(r))
-        ? queueAlphaGapAuthoring(tx, candidate, evaluation.id, { name: env.name, targets: targetsOf(config) })
+        ? queueAlphaGapAuthoring(tx, candidate, evaluation.id, { name: env.name, targets: targetsOf(config) }, requestedBy)
         : 'none';
     const signoff = reasons.some((r) => r.code === 'SIGNOFF_MISSING') && reasons.every((r) => r.code === 'SIGNOFF_MISSING' || settles(r));
     const review: AlphaReviewState = !signoff

@@ -364,6 +364,12 @@ export interface EvaluateArgs {
   operation?: unknown;
   // `phase` (D6 §5.8): the phase plan whose gate it is.
   phase_plan?: unknown;
+  // `alpha_authorize` with no authorization (DECISIONS item 43): the owner
+  // asks for the checks the gate lacks for this environment (its id), and
+  // no deployment is requested. Set only by that route's transaction
+  // (request-checks.ts), never from a request body: the evaluation is
+  // recorded with no authorization, and issues none.
+  checks_environment?: string;
   // The protected fingerprint of the integration branch's head, under the
   // effective roots, as the main thread read it; null if not read.
   headFingerprint?: string | null;
@@ -439,7 +445,7 @@ interface AuthorizationRow {
 export function evaluationTarget(
   db: Db,
   args: EvaluateArgs,
-): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null; phasePlan?: string } {
+): { candidate: CandidateRow; kind: GateKind; stage: string | null; authorization: AuthorizationRow | null; operation: { id: string; environment: string; artifact: string } | null; phasePlan?: string; environment?: string } {
   // The `phase` gate is the engine's own (plan/phase.ts names the plan).
   if (args.kind === 'phase') {
     const candidate = getCandidate(db, args.candidate);
@@ -477,6 +483,11 @@ export function evaluationTarget(
     if (!op || op.project !== args.project || op.kind !== 'deploy' || frozen?.candidate !== candidate.id) throw notFound('operation', args.operation);
     return { candidate, kind, stage: null, authorization: null, operation: { id: op.id, environment: frozen.environment!.id, artifact: frozen.artifact?.digest ?? '' } };
   }
+  if (args.authorization === undefined && typeof args.checks_environment === 'string') {
+    const env = db.prepare('SELECT "id", "project" FROM "environments" WHERE "id" = ?').get(args.checks_environment) as { id: string; project: string } | undefined;
+    if (!env || env.project !== args.project) throw notFound('environment', args.checks_environment);
+    return { candidate, kind, stage: null, authorization: null, operation: null, environment: env.id };
+  }
   if (typeof args.authorization !== 'string') {
     throw new Refusal(400, 'invalid_value', '"authorization" must name a proposed authorization of the candidate.', 'Send {"authorization": "dauth_<id>"}.', { field: 'authorization' });
   }
@@ -500,7 +511,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     kind,
     stage: target.stage,
     phasePlan: target.phasePlan ?? null,
-    environment: target.authorization?.environment ?? target.operation?.environment ?? null,
+    environment: target.authorization?.environment ?? target.operation?.environment ?? target.environment ?? null,
     artifact: target.authorization?.artifact_digest ?? target.operation?.artifact ?? null,
   });
   const reasons: Reason[] = [];
@@ -682,7 +693,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
   // environment's adapter, an identity method declared, and a required
   // `post_deploy_behavior` check in the `alpha_complete` scope.
   if (kind === 'alpha_authorize') {
-    const envId = target.authorization!.environment;
+    const envId = target.authorization?.environment ?? target.environment!;
     const env = getEnv(db, envId);
     if (!env || qualificationFor(db, env) === undefined) add('ADAPTER_UNQUALIFIED', [envId]);
     if (!env || identityMethodOf(db, env) === null) add('IDENTITY_METHOD_MISSING', [envId]);
@@ -941,7 +952,7 @@ export function evaluateGate(tx: Tx, args: EvaluateArgs): { evaluation: Evaluati
     const blockedBy = reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED' || r.code === 'FINDING_BLOCKING' || r.code === 'FINDING_UNSATISFIED') || failed;
     conformanceAfterEvaluation(tx, { stage: target.stage!, satisfied: outcome === 'satisfied' && !refUnread, blocked: blockedBy, evaluation: id, sourceMoved: reasons.some((r) => r.code === 'CONFORMANCE_SOURCE_MOVED') });
   }
-  if (outcome === 'satisfied' && kind === 'alpha_authorize') issueAuthorization(tx, target.authorization!, id);
+  if (outcome === 'satisfied' && kind === 'alpha_authorize' && target.authorization !== null) issueAuthorization(tx, target.authorization, id);
   if (kind === 'alpha_complete') {
     afterCompletion(tx, { operation: target.operation!.id, candidate: candidate.id, satisfied: outcome === 'satisfied' && !refUnread, evaluation: id, reasons: reasons.map((r) => r.code) });
   }
