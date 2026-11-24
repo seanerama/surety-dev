@@ -57,10 +57,12 @@ import { readFileSync } from 'node:fs';
 import { after, before, describe, test } from 'node:test';
 
 import { consume, openDecision, reject } from './harness/decisions.mjs';
-import { eventsOfType } from './harness/journal.mjs';
+import { releaseBarrier } from './harness/engine.mjs';
+import { armBarrier, eventsOfType } from './harness/journal.mjs';
 import { proposalsOf, sharedFixture } from './harness/gates.mjs';
 import { recordChecks } from './harness/prototype.mjs';
-import { scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { requestTick, scriptedEngine, tick, tickUntil } from './harness/runs.mjs';
+import { reached } from './harness/session-lane.mjs';
 import { withStore } from './harness/store.mjs';
 import { configContent, configure } from './harness/deploy/kernel.mjs';
 import { STATIC_PAGE_BUILT, pageBuilt, pagePublished, servicePublished, silentPublished } from './harness/deploy/static-journey.mjs';
@@ -92,6 +94,30 @@ const SERVICE_CONFIG = (port) => configContent({ start: [process.execPath, 'serv
 const NEVER_AFTER_READY = ['deployment_checks_authoring', 'request_again'];
 const SERVING_PENDING = Object.freeze({ what: 'serving_check_pending', subject: 'kind:post_deploy_serving' });
 
+// The scheduler held (DECISIONS item 47, as M626's). A static configuration
+// captures the engine's serving-check proposal, whose question a tick's
+// Gates step raises (`classifyDue`); an answer's approval is applied by a
+// tick. Under K1 the configuration write and the answer each request a tick
+// at once, and under concurrent load that tick can run between the step and
+// its reads (seen: NOW `waiting_on_you` where `build_complete` was to be
+// read after the static configuration and then the service configuration).
+// So the state a step leaves is read with the scheduler held in a tick at
+// `scheduler.tick_running` (after its prerequisite and Gates steps, before
+// select; SEAM.md §441), taken before the step: while it holds, the API
+// answers and no other tick runs. Released after the reads, the next tick
+// takes the state on. Each state is read where it holds, not "either".
+const HOLD = 'scheduler.tick_running';
+async function held(fx, project, body) {
+  await armBarrier(fx.engine, HOLD, 'pause');
+  await requestTick(fx.engine, project);
+  await reached(fx, HOLD, 'a tick held before select');
+  try {
+    return await body();
+  } finally {
+    await releaseBarrier(fx.engine, HOLD);
+  }
+}
+
 describe('M616 (a), (d), (e) a browser app: its compatibility at publication, its readiness through its build', () => {
   const shared = sharedFixture();
   const J = {};
@@ -113,10 +139,12 @@ describe('M616 (a), (d), (e) a browser app: its compatibility at publication, it
     J.complete = await projectRead(fx, p.id);
     J.candidates = all(fx.home, 'SELECT "id", "revision" FROM "candidates" WHERE "project" = ? ORDER BY "seq"', p.id);
     J.eventsAtComplete = compatibilityEvents(fx.home, p.id);
-    await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18631));
-    J.inStatic = await projectRead(fx, p.id);
-    await configure(fx.engine, p.id, 'alpha', SERVICE_CONFIG(18631));
-    J.inService = await projectRead(fx, p.id);
+    await held(fx, p.id, async () => {
+      await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18631));
+      J.inStatic = await projectRead(fx, p.id);
+      await configure(fx.engine, p.id, 'alpha', SERVICE_CONFIG(18631));
+      J.inService = await projectRead(fx, p.id);
+    });
   });
   after(() => shared.cleanup());
 
@@ -297,16 +325,20 @@ describe('M616 (e) a static page\'s readiness while the engine would refuse a de
     J.p = p;
     await pageBuilt(fx, p, { built: STATIC_PAGE_BUILT });
     J.built = await projectRead(fx, p.id);
-    await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18634));
-    J.proposals = proposalsOf(fx.home, p.id).filter((x) => x.proposed_by === 'engine');
-    J.proposed = await projectRead(fx, p.id);
+    await held(fx, p.id, async () => {
+      await configure(fx.engine, p.id, 'alpha', STATIC_CONFIG(18634));
+      J.proposals = proposalsOf(fx.home, p.id).filter((x) => x.proposed_by === 'engine');
+      J.proposed = await projectRead(fx, p.id);
+    });
     const proposal = J.proposals[0];
     J.decision = await openDecision(fx, p.id, 'check_correction_tightening', proposal.id, { max: 8 });
     J.asked = await projectRead(fx, p.id);
     J.askedListed = await listSummary(fx, p.id);
-    await consume(fx, p.id, J.decision, 'approve');
-    J.approved = await projectRead(fx, p.id);
-    J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
+    await held(fx, p.id, async () => {
+      await consume(fx, p.id, J.decision, 'approve');
+      J.approved = await projectRead(fx, p.id);
+      J.approvedStatus = proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id).status;
+    });
     await tickUntil(fx.engine, p.id, () => proposalsOf(fx.home, p.id).find((x) => x.id === proposal.id && x.status === 'applied'), { max: 8, what: "the engine's serving check applied" });
     J.applied = await projectRead(fx, p.id);
     for (let i = 0; i < 8 && (await projectRead(fx, p.id)).build.deploy_readiness.state !== 'ready'; i++) {
