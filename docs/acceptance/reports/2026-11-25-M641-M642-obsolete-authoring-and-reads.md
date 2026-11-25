@@ -22,7 +22,15 @@ Files:
 - **M642 (b).** M634's fixture: a Low finding is owed to the owner as `finding_disposition`, and the phase gate is not satisfied. Answering `fix` makes the phase follow c2 (followed_*), and the phase then completes.
 - **M642 (c) replacement_pending.** M430 R1's fixture. On the base the latest phase evaluation is satisfied and completion is held by the replacement.
 
-Readings: the `reason` is G's work.cancelled `payload.reason`. "Held" is the work read's `held`. `text` is any non-empty string. `evaluated_at` is the evaluation's computed_at or created_at. "Nothing on other items" means `authoring` is absent or null. "Names those items" means each eligible item's id or kind. "Unpaused, no primary_action" means `primary_action` is not `resume`.
+Readings:
+
+- The recorded reason is G's work.cancelled `payload.reason`.
+- "Held" is the work read's `held` on G.
+- `text` is any non-empty string.
+- `evaluated_at` is the evaluation's computed_at or created_at.
+- "Nothing on other items" means `authoring` is absent or null.
+- "Unpaused, no primary_action" means `primary_action` is not `resume`.
+- "Names those items" (M642 (e)), as corrected at 92ee9841 (see below): the reason names, by id, the item that waits only for the pause (the replan). It does not name the gap authoring, which is eligible but is also held by the unfinished replan (M641 (b)).
 
 ## Results on the base (459951d5), each file run twice alone, identical
 
@@ -50,6 +58,32 @@ M642: 1/7.
 
 No fixture store writes. No objection.
 
+## Correction to M642 (e) (Verifier, 92ee9841)
+
+On base + Builder ceae5db7, M642 (e) first failed. The assertion was `the reason names wi_… (check_authoring)` and the engine's reason was "The project is paused: work item wi_… (replan) is eligible and waits only for the pause. Resume the project to dispatch it."
+
+The engine is right and the test was wrong. The test had read every eligible item as waiting only for the pause. The gap authoring also waits for the plan under way, which is what M641 (b) requires.
+
+The test now requires the reason to name the replan and not to name the gap authoring. It still fails on the base, at `primary_action resume`.
+
 ## Results on the fix
 
-Pending the Builder's sha.
+The tree is tmp/m641-on-fix: bb18497b = verify/m641-m642 (test commits 1b7f9492, 92ee9841) + Builder ceae5db7, rebuilt. Each file ran alone on the workstation with TMPDIR set to a private directory.
+
+| File | Result |
+|---|---|
+| M641 | 5/5, twice |
+| M642 | 6/7 before the correction (only (e), as above); 7/7 twice after it |
+| M545-a-superseded-phase-verification-retired | 4/4 |
+| M627-the-owner-asks-for-the-missing-check | 12/12, twice |
+| M610-iterate-and-the-second-alpha | 6/6 |
+| M633-a-later-iterations-replan-names-the-allocated-versions | 6/6 |
+| M634-a-t1-phase-follows-the-candidate-that-superseded-its-nomination | 5/5 |
+| M448-the-prospective-bundle | 8/8 |
+| M424-the-replan-one-shot-and-its-repairs | 2/2 |
+| M612-the-receipt-and-the-untouched-planned-workflow | 4/4 |
+| M608-stop-and-a-deliberate-resume | 4/4 |
+
+Related files: 63/63. No fixture store writes, no objection. No other test was edited.
+
+Not run: the full slice-50 suite; that is the driver's run.
