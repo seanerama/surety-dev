@@ -15,6 +15,7 @@ import { assertEdge } from './lifecycle.js';
 import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { raiseQuestion } from './queue.js';
 import { contentHash, getCandidate } from './evidence.js';
+import { deploymentEvidenceOf, gapCriteriaOwedByPlan, gapSupersededReason } from './alpha-gap.js';
 import { attemptProfileMax, effectiveProfileMax, engineSettings, projectPolicy } from './settings.js';
 import { requestedModelOf } from './requested-model.js';
 import { settleOpenTurns } from '../../sessions/session.js';
@@ -301,12 +302,14 @@ export function replanPendingPrerequisites(db: Tx['db'], item: Pick<WorkRow, 'id
   return pending.length > 0 ? pending : null;
 }
 
-export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean } = {}): string | null {
+// `ignorePause`: what would hold the item were the project not paused
+// (NOW's `resume`, store/projections.ts); the pause itself is not read.
+export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean; ignorePause?: boolean } = {}): string | null {
   // A canary's item is run only by its attempt's own dispatch (K10).
   if ((item as WorkRow & { qualification_attempt?: string | null }).qualification_attempt && !opts.canary) return 'qualification canary';
   const project = db.prepare('SELECT "paused", "registration_state" FROM "projects" WHERE "id" = ?').get(item.project) as { paused: number; registration_state: string } | undefined;
   if (!project) return 'project missing';
-  if (project.paused === 1) return 'project paused';
+  if (project.paused === 1 && opts.ignorePause !== true) return 'project paused';
   if (project.registration_state !== 'registered') return 'project not registered';
   // Nothing of a project is dispatched while its integration branch or its
   // repository has an unreconciled observation (SEAM.md §32), or its journal
@@ -373,6 +376,41 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     }
     const c = typeof candidate === 'string' ? (db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ?').get(candidate) as { superseded_by: string | null } | undefined) : undefined;
     if (c && c.superseded_by !== null) return `candidate ${String(candidate)} was superseded by candidate ${c.superseded_by}`;
+  }
+  // A deployment-gap authoring naming criteria (DECISIONS item 57; M641):
+  // while a plan of the project is under way (a replan not ended, parked
+  // included, or a bundle awaiting its approval) those criteria may become
+  // the plan's own, and it waits; once a published plan owes some of them it
+  // is never run, and the phase step retires it (plan/phase.ts
+  // retireObsoleteGapAuthorings; a publication the tick makes after its
+  // phase step is covered here).
+  if (item.kind === 'check_authoring' && item.trigger_source === 'authoring_gap') {
+    const evidence = (item as WorkRow & { trigger_evidence?: string | null }).trigger_evidence ?? null;
+    let ev: ReturnType<typeof deploymentEvidenceOf> = null;
+    try {
+      ev = deploymentEvidenceOf(evidence);
+    } catch {
+      // Unreadable evidence names no criterion this hold could read.
+      ev = null;
+    }
+    if (ev !== null && Array.isArray(ev.missing.criteria) && ev.missing.criteria.length > 0) {
+      const owed = gapCriteriaOwedByPlan(db, { project: item.project, kind: item.kind, trigger_source: item.trigger_source, trigger_evidence: evidence });
+      if (owed !== null && owed.moved.length > 0) return gapSupersededReason(owed);
+      const replan = db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" LIMIT 1`).get(item.project) as
+        | { id: string; status: string }
+        | undefined;
+      const bundle = replan
+        ? undefined
+        : (db
+            .prepare(
+              `SELECT b."id" FROM "plan_bundles" b WHERE b."project" = ? AND b."status" = 'proposed' AND b."phase_number" IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM "decisions" d WHERE d."scope" = b."id" AND d."kind" IN ('architecture_approval', 'plan_approval') AND d."status" = 'open') ORDER BY b.rowid LIMIT 1`,
+            )
+            .get(item.project) as { id: string } | undefined);
+      if (replan || bundle) {
+        return `depends on the plan under way: ${replan ? `replan ${replan.id} is ${replan.status}` : `bundle ${bundle!.id} awaits its approval`}; ${ev.missing.criteria.join(', ')} may be its own`;
+      }
+    }
   }
   const live = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...p) as { n: number }).n;
   // D6 §2.7 (D6-S08): one session per project, and no one-shot beside it.

@@ -35,8 +35,9 @@ import { effectiveVersion } from '../store/transitions/protected.js';
 import { correctionOpen } from '../store/transitions/repair.js';
 import { integrationRef, registryRow, projectRepoRow } from '../store/transitions/repo.js';
 import type { Tx } from '../store/transitions/tx.js';
-import { getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
+import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
+import { gapCriteriaOwedByPlan, gapSupersededReason } from '../store/transitions/alpha-gap.js';
 
 type Db = Tx['db'];
 
@@ -142,6 +143,9 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   settleReplacements(tx, args.project);
   // A phase verification of a candidate a later one superseded (M545).
   retireSupersededVerifications(tx, args.project);
+  // A deployment-gap authoring whose criteria a published plan now owes
+  // (DECISIONS item 57; M641).
+  retireObsoleteGapAuthorings(tx, args.project);
   const plan = openPlan(tx.db, args.project);
   if (!plan) return completedPhaseGateDue(tx, args.project) ?? NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
@@ -337,6 +341,59 @@ export function retireSupersededVerifications(tx: Tx, project: string): string[]
     const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
     for (const d of open) invalidateDecision(tx, d, `superseded: candidate ${c.id} was superseded by candidate ${by}, whose phase verification ${w.status === 'eligible' ? 'is its own' : 'is complete'}`, { superseded_by: by });
     retired.push(w.id);
+  }
+  return retired;
+}
+
+// An obsolete deployment-gap authoring retired (DECISIONS item 57; M641;
+// M545's pattern; D6 §5.7): Workshop Cut Planner iteration 2's refused
+// redeploy of the previous Alpha asked a Verifier for criteria the approved
+// brief had just added to delivered requirements; it ran on the old
+// candidate before the replan published the phase whose stages implement
+// them, and its findings were the owner's to disposition. From durable
+// state at every phase step, so a restart revives nothing: an `eligible` or
+// `held` check_authoring of trigger authoring_gap, asked for a deployment's
+// criteria and never run, whose criteria a published plan now owes
+// (alpha-gap.ts gapCriteriaOwedByPlan), is cancelled `superseded`, naming
+// the plan, that plan's own check authoring, the requirements and the
+// candidate; its open decisions are invalidated. What is still owed (a
+// criterion the candidate still delivers, every kind and area) is asked
+// again as the trigger's next generation, narrowed to it. Kinds and areas
+// alone (M627's post_deploy_behavior) are never retired.
+export function retireObsoleteGapAuthorings(tx: Tx, project: string): string[] {
+  const items = tx.db
+    .prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "status" IN ('eligible', 'held') ORDER BY "seq"`)
+    .all(project) as (WorkRow & { trigger_evidence: string | null })[];
+  const retired: string[] = [];
+  for (const w of items) {
+    if (tx.db.prepare(`SELECT 1 FROM "runs" WHERE "work_item" = ? LIMIT 1`).get(w.id)) continue;
+    const s = gapCriteriaOwedByPlan(tx.db, w);
+    if (s === null || s.moved.length === 0) continue;
+    const reason = gapSupersededReason(s);
+    const first = s.moved[0]!.plan;
+    transitionWork(tx, w, 'cancelled', { blocker: null }, {
+      cause: 'superseded',
+      reason,
+      superseded_by: first.check_authoring,
+      kept: s.kept,
+      candidate: s.candidate,
+      evaluation: s.evidence.evaluation,
+      criteria: s.moved.flatMap((m) => m.criteria),
+      phase_plan: first.id,
+    });
+    tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(w.id);
+    const open = tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[];
+    for (const d of open) invalidateDecision(tx, d, reason, { superseded_by: first.check_authoring });
+    retired.push(w.id);
+    const missing = { kinds: s.evidence.missing.kinds, criteria: s.kept, areas: s.evidence.missing.areas };
+    if (missing.kinds.length + missing.criteria.length + missing.areas.length === 0) continue;
+    const latest = (tx.db.prepare(`SELECT MAX("trigger_generation") AS "g" FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "trigger_id" = ?`).get(project, w.trigger_id) as { g: number | null }).g ?? w.trigger_generation;
+    const deployment = { ...s.evidence, missing, narrowed_from: w.id };
+    observeTrigger(
+      tx,
+      { project, kind: 'check_authoring', trigger_source: 'authoring_gap', trigger_id: w.trigger_id, trigger_generation: latest + 1, subject: { phase_plan: w.trigger_id }, chain: 0, trigger_evidence: { deployment } as unknown as Record<string, unknown> },
+      { gate: 'alpha_authorize', evaluation: s.evidence.evaluation, environment: s.evidence.environment, missing, narrowed_from: w.id },
+    );
   }
   return retired;
 }

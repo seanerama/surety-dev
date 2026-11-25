@@ -20,8 +20,9 @@
 
 import { CRITERION } from '../../checks/schema.js';
 import { targetVariable } from '../../checks/variables.js';
+import { activeStages } from '../../plan/active.js';
 import { parseJson } from './common.js';
-import type { CandidateRow } from './evidence.js';
+import { type CandidateRow, deliveryOf, getCandidate, isAncestorRecorded } from './evidence.js';
 import type { Tx } from './tx.js';
 import { observeTrigger } from './work.js';
 
@@ -52,6 +53,10 @@ export interface DeploymentGapEvidence {
   // the owner through POST …/environments/:e/request-checks. Absent on an
   // authoring asked before it was recorded (requesterOf reads it then).
   requested_by?: 'human' | 'policy';
+  // The authoring this one narrows (DECISIONS item 57; plan/phase.ts
+  // retireObsoleteGapAuthorings): its criteria a published plan now owes
+  // are left out; absent on one asked by a deployment refusal.
+  narrowed_from?: string;
 }
 
 // 'coming': an authoring of the project's checks is under way, or awaits
@@ -333,4 +338,88 @@ export function reopenableRefusal(db: Db, args: { project: string; candidate: st
   if (state !== 'asked') return false;
   const asked = askedFor(db, args.project, ev.candidate, gapOfEvaluation(db, latest)!);
   return asked !== null && TERMINAL.includes(asked.status) && deploymentEvidenceOf(asked.trigger_evidence)?.evaluation === latest;
+}
+
+// ---- a gap a published plan now owes (DECISIONS item 57; M641) -----------------------------------
+
+// What of an idle deployment-gap authoring's criteria a published plan owes
+// now (Workshop Cut Planner iteration 2: a refused redeploy of the previous
+// Alpha asked a Verifier for criteria the approved brief had just added to
+// delivered requirements; the replan then published the phase whose stages
+// implement them). A criterion stays owed while the evidence's candidate
+// still delivers its requirement; it has moved to a plan when an active
+// stage of an active published plan, not integrated in that candidate,
+// implements its requirement (the candidate then delivers the requirement
+// partly, and its deployment scope no longer names the criterion). Kinds
+// and areas never move. null when the item is not such an authoring, names
+// no criterion, or its candidate is not recorded (unknown: nothing moves).
+export interface GapMoved {
+  plan: { id: string; phase_number: number; check_authoring: string | null };
+  criteria: string[];
+  requirements: string[];
+}
+export interface GapSupersession {
+  candidate: string;
+  evidence: DeploymentGapEvidence;
+  moved: GapMoved[];
+  kept: string[];
+}
+
+export function gapCriteriaOwedByPlan(db: Db, item: { project: string; kind: string; trigger_source: string; trigger_evidence?: string | null }): GapSupersession | null {
+  if (item.kind !== 'check_authoring' || item.trigger_source !== 'authoring_gap') return null;
+  // Evidence that cannot be read moves nothing (and fails no phase step).
+  let ev: DeploymentGapEvidence | null;
+  try {
+    ev = deploymentEvidenceOf(item.trigger_evidence ?? null);
+  } catch {
+    return null;
+  }
+  if (ev === null || !Array.isArray(ev.missing.criteria) || ev.missing.criteria.length === 0) return null;
+  const candidate = getCandidate(db, ev.candidate);
+  if (!candidate || candidate.project !== item.project) return null;
+  const delivered = new Set(deliveryOf(db, item.project, candidate).delivered);
+  const plans = db
+    .prepare(`SELECT "id", "phase_number", "check_authoring" FROM "phase_plans" WHERE "project" = ? AND "status" = 'published' AND "active" = 1 ORDER BY "phase_number" DESC, rowid DESC`)
+    .all(item.project) as { id: string; phase_number: number; check_authoring: string | null }[];
+  // Each plan's active stages not integrated in the candidate, with what they implement.
+  const pending = plans.map((p) => ({
+    plan: p,
+    implements: new Set(
+      activeStages<{ implements: string; integrated_revision: string | null }>(db, p.id)
+        .filter((s) => s.integrated_revision === null || !isAncestorRecorded(db, item.project, s.integrated_revision, candidate.revision))
+        .flatMap((s) => parseJson<string[]>(s.implements) ?? []),
+    ),
+  }));
+  const moved = new Map<string, GapMoved>();
+  const kept: string[] = [];
+  for (const k of ev.missing.criteria) {
+    const key = k.slice(0, k.indexOf('.'));
+    const req = db.prepare(`SELECT "id", "key" FROM "requirements" WHERE "project" = ? AND "key" = ? AND "withdrawn_at" IS NULL`).get(item.project, key) as { id: string; key: string } | undefined;
+    const owner = req === undefined || delivered.has(req.id) ? undefined : pending.find((p) => p.implements.has(req.id) || p.implements.has(req.key));
+    if (owner === undefined) {
+      kept.push(k);
+      continue;
+    }
+    const m = moved.get(owner.plan.id) ?? { plan: owner.plan, criteria: [], requirements: [] };
+    m.criteria.push(k);
+    if (!m.requirements.includes(req!.key)) m.requirements.push(req!.key);
+    moved.set(owner.plan.id, m);
+  }
+  return { candidate: candidate.id, evidence: ev, moved: [...moved.values()], kept };
+}
+
+// The engine's sentence for such a gap (the work.cancelled reason; the
+// dispatch blocker until the phase step retires it).
+export function gapSupersededReason(s: GapSupersession): string {
+  const moved = s.moved.flatMap((m) => m.criteria);
+  const still = [...s.kept, ...s.evidence.missing.kinds.map((k) => `kind:${k}`), ...s.evidence.missing.areas.map((a) => `area:${a}`)];
+  const owners = s.moved
+    .map(
+      (m) =>
+        `${m.criteria.join(', ')} ${m.criteria.length === 1 ? 'is' : 'are'} owed by phase ${m.plan.phase_number}'s plan ${m.plan.id}, whose stages implement ${m.requirements.join(', ')} and are not integrated in candidate ${s.candidate}; ${
+          m.plan.check_authoring !== null ? `that plan's own check authoring ${m.plan.check_authoring} writes their checks` : 'that plan was ready as published, with no check authoring of its own'
+        }`,
+    )
+    .join('; ');
+  return `Superseded: criteria ${owners}. Candidate ${s.candidate}'s deployment scope no longer lacks ${moved.length === 1 ? 'it' : 'them'}, so this authoring for its deployment gap is not run${still.length > 0 ? `; ${still.join(', ')} ${still.length === 1 ? 'is' : 'are'} still owed and asked again` : ''}.`;
 }

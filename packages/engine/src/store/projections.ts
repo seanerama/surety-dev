@@ -462,6 +462,13 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
     if (proto !== null) reason = `${reason} ${proto}`;
     reason += waitingForSignoff(db, project, readiness);
     primary = null;
+  } else if (pausedWaiting(db, project).length > 0) {
+    // A paused project with work that waits only for the pause (DECISIONS
+    // item 57; M642; the console's U56): the items, and the owner's resume.
+    const waiting = pausedWaiting(db, project);
+    state = 'idle';
+    reason = `The project is paused: ${waiting.length === 1 ? 'work item' : 'work items'} ${waiting.map((w) => `${w.id} (${w.kind})`).join(', ')} ${waiting.length === 1 ? 'is' : 'are'} eligible and ${waiting.length === 1 ? 'waits' : 'wait'} only for the pause. Resume the project to dispatch ${waiting.length === 1 ? 'it' : 'them'}.`;
+    primary = 'resume';
   } else if ('unreadable' in checks) {
     // Whether checks are under way is not known: neither checking nor any
     // state after it is established.
@@ -1416,8 +1423,51 @@ export function readWork(db: Db, args: { project: string }) {
       // Why an eligible item waits now (N01), with what it waits on where
       // its hold names it (M543: a replan's prerequisite results).
       held: heldOf(w),
+      // What a gap authoring asks for (DECISIONS item 57; M642; the
+      // console's U57): its plan and the criteria and kinds its recorded
+      // trigger evidence names; on no other item.
+      ...(w.kind === 'check_authoring' && w.trigger_source === 'authoring_gap' ? { authoring: gapAuthoringAsked(db, w) } : {}),
     })),
   };
+}
+
+// A gap authoring's plan, criteria and kinds, from its trigger evidence:
+// a deployment's gap (store/transitions/alpha-gap.ts) or a stage scope's
+// (plan/phase.ts registerGapAuthoring). Evidence that cannot be read is
+// served as unknown, never as no criteria.
+function gapAuthoringAsked(db: Db, w: WorkRow) {
+  const subject = ((): { phase_plan?: unknown } | null => {
+    try {
+      return parseJson<{ phase_plan?: unknown }>(w.subject);
+    } catch {
+      return null;
+    }
+  })();
+  const planId = typeof subject?.phase_plan === 'string' ? subject.phase_plan : w.trigger_id;
+  const plan = db.prepare('SELECT "id", "phase_number" FROM "phase_plans" WHERE "id" = ?').get(planId) as { id: string; phase_number: number } | undefined;
+  const raw = (w as WorkRow & { trigger_evidence?: string | null }).trigger_evidence ?? null;
+  type Evidence = { deployment?: { missing?: { criteria?: unknown; kinds?: unknown } }; gaps?: { criteria?: unknown; kinds?: unknown }[] };
+  const evidence = ((): Evidence | null => {
+    try {
+      return parseJson<Evidence>(raw);
+    } catch {
+      return null;
+    }
+  })();
+  const strings = (v: unknown): string[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null);
+  let criteria: string[] | null = null;
+  let kinds: string[] | null = null;
+  if (evidence?.deployment?.missing) {
+    criteria = strings(evidence.deployment.missing.criteria);
+    kinds = strings(evidence.deployment.missing.kinds);
+  } else if (Array.isArray(evidence?.gaps)) {
+    const c = evidence.gaps.map((g) => strings(g?.criteria));
+    const k = evidence.gaps.map((g) => strings(g?.kinds));
+    criteria = c.every((x) => x !== null) ? [...new Set(c.flat() as string[])].sort() : null;
+    kinds = k.every((x) => x !== null) ? [...new Set(k.flat() as string[])].sort() : null;
+  }
+  const unknown = { unknown: "the authoring's recorded trigger evidence could not be read" };
+  return { phase_plan: planId, phase_number: plan?.phase_number ?? null, criteria: criteria ?? unknown, kinds: kinds ?? unknown };
 }
 
 // An item's hold as it stands (work.ts setHold): its reason, since when,
@@ -1428,6 +1478,21 @@ function heldOf(w: WorkRow): { reason: string; since: string | null; pending?: u
   const intervals = parseJson<{ from: string; to?: string; reason: string; pending?: unknown[] }[]>(row.held_intervals ?? null) ?? [];
   const open = intervals.length > 0 && intervals[intervals.length - 1]!.to === undefined ? intervals[intervals.length - 1]! : null;
   return { reason: row.held, since: open?.from ?? null, ...(open?.pending ? { pending: open.pending } : {}) };
+}
+
+// The eligible work of a paused project that nothing but the pause holds
+// (dispatchBlocker with the pause not read); none when it is not paused.
+function pausedWaiting(db: Db, project: string): { id: string; kind: string }[] {
+  const p = db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(project) as { paused: number } | undefined;
+  if (p?.paused !== 1) return [];
+  const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "status" = 'eligible' ORDER BY "seq"`).all(project) as WorkRow[];
+  return items.filter((item) => {
+    try {
+      return dispatchBlocker(db, item, { check: false, ignorePause: true }) === null;
+    } catch {
+      return false;
+    }
+  }).map((w) => ({ id: w.id, kind: w.kind }));
 }
 
 // The project's work held now (M543 (f)): each held item with its reason
