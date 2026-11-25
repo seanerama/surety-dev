@@ -330,15 +330,31 @@ describe('M633 a later iteration\'s replan names the versions its publication al
     assert.equal(S.stated.revision, runs[0].base_revision ?? S.stated.revision, "the revision is the run's base");
     assert.deepEqual(versionsOnly(S.stated), want, `phase 2 added, the architecture unchanged: the versions stated equal those the check accepts (stated ${JSON.stringify(S.stated)}; element ${JSON.stringify(el)})`);
     assert.deepEqual(versionsOnly(S.statedArch), wantArch, `phase 2 added and the architecture changed: the versions stated equal those the check accepts (stated ${JSON.stringify(S.statedArch)}; element ${JSON.stringify(el)})`);
-    // The rule and the PLAN_STALE_BASELINE gloss say what the check compares.
-    assert.match(el.rule ?? '', /allocat|publication|publish|next/i, `the rule says the check compares with the versions the publication allocates (${el.rule})`);
+    // The rule and the PLAN_STALE_BASELINE gloss say what the check compares:
+    // the approved versions, or the next where the plan changes them, the
+    // roadmap's on a roadmap.json change and the architecture's on an
+    // architecture.md, modules.json or ADR change.
+    const rule = el.rule ?? '';
+    assert.match(rule, /roadmap\.json/, `the rule names roadmap.json (${rule})`);
+    assert.match(rule, /architecture\.md|modules\.json|ADR/, `the rule names what changes the architecture (${rule})`);
+    for (const k of ['roadmap_version_if_changed', 'architecture_version_if_changed']) {
+      if (k in el || k in el.facts) assert.ok(rule.includes(k), `the rule says what ${k}, which the element carries, is for (${rule})`);
+    }
+    assert.match(rule, /allocat|next|_if_changed/i, `the rule says a changed file is named with the next version (${rule})`);
     const stale = (blocks['architect.plan_reasons']?.reasons ?? []).find((x) => x.code === 'PLAN_STALE_BASELINE');
     assert.ok(stale, 'the plan reasons list PLAN_STALE_BASELINE');
-    assert.match(stale.rule, /allocat|publication|publish|next/i, `its gloss says what the check compares (${stale.rule})`);
-    // The next versions are text in the prose, not only in the element.
+    assert.match(stale.rule, /allocat|next/i, `its gloss says the check compares with the next version where the plan changes it (${stale.rule})`);
+    assert.match(stale.rule, /roadmap/i, `its gloss covers roadmap.json (${stale.rule})`);
+    assert.match(stale.rule, /architecture/i, `its gloss covers the architecture (${stale.rule})`);
+    // The next versions are text in the prose, not only in the element: the
+    // roadmap version the added phase allocates, the architecture version
+    // when unchanged and, within the same clause (the form "architecture
+    // version 1 (2 if you change …)"), when changed; and what the check is.
     const prose = proseOf(prompt);
-    assert.match(prose, new RegExp(`roadmap[ _]version\\D{0,40}\\b${want.roadmap_version}\\b`, 'i'), "the prose names the roadmap version the added phase allocates");
-    assert.match(prose, new RegExp(`architecture[ _]version\\D{0,40}\\b${wantArch.architecture_version}\\b`, 'i'), 'the prose names the architecture version a change allocates');
+    assert.match(prose, new RegExp(`roadmap version\\s+${want.roadmap_version}\\b`, 'i'), 'the prose names the roadmap version the added phase allocates');
+    assert.match(prose, new RegExp(`architecture version\\s+${want.architecture_version}\\b`, 'i'), 'the prose names the architecture version when it is unchanged');
+    assert.match(prose, new RegExp(`architecture[ _]version[^.]{0,80}?\\b${wantArch.architecture_version}\\b`, 'i'), 'the prose names the architecture version a change allocates');
+    assert.match(prose, /PLAN_STALE_BASELINE/, 'the prose names the refusal the check gives');
   });
 
   test('(b) a scripted Architect that writes what (a) states, phase 2 added, the architecture unchanged: published, roadmap_revisions 2 naming architecture 1, no new architecture revision', async () => {
