@@ -582,7 +582,9 @@
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",
       "M613-static-mode-on-a-real-unit.test.mjs",
-      "M625-a-python-service-on-a-real-unit.test.mjs"
+      "M625-a-python-service-on-a-real-unit.test.mjs",
+      "M641-an-obsolete-gap-authoring-is-retired-with-a-recorded-reason.test.mjs",
+      "M642-the-reads-name-a-held-phase-and-an-authorings-criteria.test.mjs"
     ]
   },
   "sandbox": [
