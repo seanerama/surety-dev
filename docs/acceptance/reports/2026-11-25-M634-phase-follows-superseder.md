@@ -1,6 +1,6 @@
 # M634: a T1 phase follows the candidate that superseded its nomination
 
-**Status:** DRAFT. The base results are recorded below. The on-fix results are pending until the driver passes on the Builder's commit.
+**Status:** final. Base and on-fix results are recorded below.
 **Row:** M7 plan §3i M634 (DECISIONS item 55), kernel lane, slice 49.
 **Test:** `packages/engine/test/acceptance/M634-a-t1-phase-follows-the-candidate-that-superseded-its-nomination.test.mjs`, commit `17cadef9` on `verify/m634-phase-follows-superseder`.
 **Base:** `1f8ae2de` (engine main `de1334cf` + row M634), built.
@@ -32,8 +32,44 @@ So the base reproduces the defect: (a), (b), (c) and the completion half of (d) 
 
 ## Results on the fix
 
-Pending (the Builder's `build/phase-follows-superseding-candidate`).
+**Tree:** throwaway branch `tmp/m634-on-fix` (not pushed), which is `423a1e9b` + `git merge --no-edit ebc04791` (the Builder's `build/phase-follows-superseding-candidate`) = merge `a44905f3`, rebuilt with `npm run build` (exit 0).
+
+**How the files were run:** `node --test <file>` from `packages/engine`, one file at a time, with TMPDIR=/tmp/i55v. Every file below is kernel or sandbox lane; none is listed under `real` or `exhaust`.
+
+| File | Tests | Pass | Fail | Time |
+|---|---|---|---|---|
+| M634-a-t1-phase-follows-the-candidate-that-superseded-its-nomination | 5 | 5 | 0 | 30 s |
+| M428-the-phase-gate-and-t1-nomination | 5 | 5 | 0 | 57 s |
+| M406-phase-completions-effects-once-per-binding | 6 | 6 | 0 | 33 s |
+| M406-a-phase-sign-off-before-a-new-protected-version | 1 | 1 | 0 | 11 s |
+| M429-a-phase-sign-off-on-a-superseded-candidate | 1 | 1 | 0 | 14 s |
+| M429-a-replacement-at-phase-verification | 1 | 1 | 0 | 10 s |
+| M429-phase-verification-and-its-sign-off | 4 | 4 | 0 | 40 s |
+| M401-the-journey-from-an-idea-to-phase-two | 7 | 7 | 0 | 168 s |
+| M401-the-journey-from-phase-two-to-alpha | 5 | 5 | 0 | 245 s |
+| M401-the-t1-variant-on-the-scripted-backend | 3 | 3 | 0 | 19 s |
+| M27-nomination-identity-and-cadence | 9 | 9 | 0 | 18 s |
+
+All 47 tests across the 11 files pass. The T1 variant of M401 was not in the brief; I added it because it is the other T1 journey.
+
+M634 on the fix:
+- (a), (b), (c) and both halves of (d) pass.
+- The recorded nomination keeps `nominated_revision` equal to the first revision and names the followed candidate. The Builder records it as `followed_candidate`/`followed_revision`/`followed_at`; the test asserts only that the id is present, since the row names no field.
+- The superseded candidate has no phase evaluation after the superseder's nomination.
+- In (c), the intermediate candidate has no phase evaluation.
+- The phase-only check `phase-r1` is registered exactly once on the nominated candidate and once on the followed candidate.
+
+A first attempt at this run was stopped by me during its first file (M634), after about a minute: it had been started under a monitor whose 30-minute limit would have cut it short. I then checked: no process of that run was left (process scan by cmdline, cwd and environment), and no home was left under /tmp/i55v. The full run above was started afterwards and ran to its end.
 
 ## Boundary check
 
-Pending.
+Against `main`, the check names the two owner paths of the driver's companion `1f8ae2de` (this branch's base). Against that base, the Verifier's commits are inside the role's paths:
+
+```
+$ node scripts/check-role-boundary.mjs verifier main verify/m634-phase-follows-superseder
+verifier boundary: 2 of 5 changed path(s) on verify/m634-phase-follows-superseder are outside the role's paths
+  docs/acceptance/sdlc-M7-acceptance-plan.md
+  scripts/run-tests.mjs
+$ node scripts/check-role-boundary.mjs verifier 1f8ae2de verify/m634-phase-follows-superseder
+verifier boundary: 2 changed path(s) on verify/m634-phase-follows-superseder, all inside the role's paths
+```
