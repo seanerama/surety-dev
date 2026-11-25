@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import type { Claim } from '../../store/transitions/runs.js';
 import { type CheckWritingFacts, type PhaseAuthoringFacts, checkWritingText, phaseAuthoringText } from '../../checks/guide.js';
 import { canaryPromptText } from '../../trust/canaries.js';
-import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText } from '../../plan/replan-package.js';
+import { REPLAN_RESULT_FIELDS, type ReplanFacts, type ReplanFileKind, replanFiles, replanPromptText, replanVersions } from '../../plan/replan-package.js';
 import type { PhaseVerificationFacts } from '../../plan/phase.js';
 import { type DesignCatalogueFacts, type DesignChangeFacts, designChangeElements, verifierDesignElements } from '../../packages/design-reads.js';
 import { type BuilderStageFacts, type PackageName, type ReadsElement, architectElements, builderElements, phaseElements, readsIds, readsResultFields, readsText, specElements, statedElements, verifierElements } from '../../packages/reads.js';
@@ -151,10 +151,16 @@ export function contextReads(claim: Pick<Claim, 'role' | 'work_kind' | 'attempt'
   }
   if (claim.role === 'verifier' && claim.work_kind === 'check_correction' && facts.check_writing) return pick('verifier_correction', { ...verifierElements(facts.check_writing, { authoring: false, retrofit }), ...verifierDesignElements(designCatalogue(facts)) });
   if (claim.role === 'architect' && facts.replan) {
-    // A replan's plan names the approved versions and the head it started
-    // from (plan/bundle.ts replanBaseline): from its package's generation.
-    const g = facts.replan.generation;
-    const prepared = g.spec_revision && g.architecture_revision && g.roadmap_revision ? { spec_version: g.spec_revision.version, architecture_version: g.architecture_revision.version, roadmap_version: g.roadmap_revision.version, revision: claim.base_revision } : null;
+    // A replan's plan names the approved versions, or the next of each it
+    // changes, and the head it started from: from its package's generation
+    // (plan/replan-package.ts replanVersions, whose approved versions are
+    // plan/bundle.ts replanBaseline's, the ones runs/accept.ts allocates
+    // the next from; DECISIONS item 52). The prompt's prose is from the
+    // same function.
+    const v = replanVersions(facts.replan.generation);
+    const prepared = v
+      ? { spec_version: v.spec_version, architecture_version: v.architecture_version, roadmap_version: v.roadmap_version, revision: claim.base_revision, architecture_version_if_changed: v.architecture_version_if_changed, roadmap_version_if_changed: v.roadmap_version_if_changed }
+      : null;
     return pick(retrofit ? 'replan_retrofit' : 'replan', architectElements({ retrofit, prepared_against: prepared, kind: 'replan' }));
   }
   if (claim.role === 'verifier' && claim.work_kind === 'phase_verification' && facts.phase) return pick('phase_verification', phaseElements());

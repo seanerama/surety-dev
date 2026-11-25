@@ -98,6 +98,49 @@ const json = (text: unknown): unknown => {
   }
 };
 
+// The versions a replan's plan names (D6 §5.3 clause 2; M448 (a); DECISIONS
+// item 52): the approved one of each where the plan leaves it unchanged, the
+// next where it changes it. runs/accept.ts checks a replan against the
+// versions its publication allocates: the roadmap version approved + 1 when
+// roadmap.json changes, the architecture version approved + 1 when
+// architecture.md, modules.json or an ADR changes, and a changed roadmap.json
+// carries that architecture version. Its approved versions are
+// plan/bundle.ts replanBaseline's, the newest architecture_revisions and
+// roadmap_revisions row of the project; replanFacts reads the generation by
+// the same two queries in the same store read, so the approved versions
+// here are the ones accept.ts adds one to. Null when the generation lacks
+// an approved specification, architecture or roadmap: unknown, never 0.
+export interface ReplanVersions {
+  spec_version: number;
+  architecture_version: number;
+  roadmap_version: number;
+  architecture_version_if_changed: number;
+  roadmap_version_if_changed: number;
+}
+export function replanVersions(g: ReplanFacts['generation']): ReplanVersions | null {
+  if (!g.spec_revision || !g.architecture_revision || !g.roadmap_revision) return null;
+  return {
+    spec_version: g.spec_revision.version,
+    architecture_version: g.architecture_revision.version,
+    roadmap_version: g.roadmap_revision.version,
+    architecture_version_if_changed: g.architecture_revision.version + 1,
+    roadmap_version_if_changed: g.roadmap_revision.version + 1,
+  };
+}
+
+// What a replan's plan names, in the prompt's words (DECISIONS item 52):
+// `roadmap` says whether the plan changes roadmap.json (adding a phase
+// does), or that it may.
+const ARCH_FILES = '.surety/architecture/architecture.md, .surety/architecture/modules.json or an ADR';
+export function replanVersionsText(v: ReplanVersions | null, roadmap: 'changes' | 'may_change', why = 'Adding the phase'): string {
+  if (v === null)
+    return `The approved versions could not all be read (/surety/context/generation.json): your plan's prepared_against names the approved specification's version, the approved architecture version (the next if you change ${ARCH_FILES}), the approved roadmap version (the next if you change .surety/roadmap/roadmap.json), and the revision you start from; a changed roadmap.json names that roadmap version and that architecture version.`;
+  const arch = `architecture version ${v.architecture_version} (${v.architecture_version_if_changed} if you change ${ARCH_FILES})`;
+  return roadmap === 'changes'
+    ? `${why} changes .surety/roadmap/roadmap.json, so this plan is published with roadmap version ${v.roadmap_version_if_changed} (the approved roadmap is version ${v.roadmap_version}, in /surety/context/generation.json): your plan's prepared_against names spec version ${v.spec_version}, ${arch}, roadmap version ${v.roadmap_version_if_changed}, and the revision you start from; roadmap.json names version ${v.roadmap_version_if_changed} and the same architecture version (${v.architecture_version}, or ${v.architecture_version_if_changed} with such a change). The plan check compares exactly these (PLAN_STALE_BASELINE).`
+    : `Your plan's prepared_against names spec version ${v.spec_version}, ${arch}, roadmap version ${v.roadmap_version} if you leave .surety/roadmap/roadmap.json unchanged (${v.roadmap_version_if_changed} if you change it), and the revision you start from (the approved versions are in /surety/context/generation.json). A changed roadmap.json names version ${v.roadmap_version_if_changed} and the same architecture version (${v.architecture_version}, or ${v.architecture_version_if_changed} with such a change); an unchanged one is left as it is. The plan check compares exactly these (PLAN_STALE_BASELINE).`;
+}
+
 function planOf(db: Db, project: string, id: string | null | undefined): ReplanPlan | null {
   if (!id) return null;
   const p = db.prepare('SELECT "id", "phase_number", "generation", "status", "published_at", "completed_at", "completion_binding" FROM "phase_plans" WHERE "id" = ? AND "project" = ?').get(id, project) as
@@ -277,7 +320,10 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
   const j = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
   const out: { path: string; kind: ReplanFileKind; source: string | null; content: string }[] = [];
   const spec = r.generation.spec_revision;
-  out.push({ path: 'generation.json', kind: 'generation', source: spec?.id ?? null, content: j(r.generation) });
+  // The generation, and the versions a plan names when it changes the
+  // architecture or the roadmap (replanVersions; DECISIONS item 52).
+  const v = replanVersions(r.generation);
+  out.push({ path: 'generation.json', kind: 'generation', source: spec?.id ?? null, content: j({ ...r.generation, if_changed: v ? { architecture_version: v.architecture_version_if_changed, roadmap_version: v.roadmap_version_if_changed } : null }) });
   out.push(
     r.spec_text === null || r.spec_text === undefined
       ? { path: 'spec.json', kind: 'spec', source: spec?.id ?? null, content: j({ spec_revision: spec, readable: false, why: spec ? `the approved specification's blob ${spec.git_blob} could not be read` : 'no specification is approved' }) }
@@ -300,7 +346,7 @@ export function replanFiles(r: ReplanFacts): { path: string; kind: ReplanFileKin
 
 // A rapid prototype's first plan (slice E3; R1): what the Architect is
 // asked, and the bounds the prototype policy publishes within.
-export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phase = 1, approved = false): string[] {
+export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phase = 1, approved = false, versions: ReplanVersions | null = null, roadmap: 'changes' | 'may_change' = 'changes', unassigned: string[] = []): string[] {
   // A later iteration planning phase 1 again (its predecessor ended with
   // phase 1 open, and Iterate closed that plan; prototype/iterate.ts): the
   // architecture, module map and roadmap the predecessor published are
@@ -311,7 +357,9 @@ export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phas
       '## A rapid prototype iteration\'s plan',
       '',
       `This project is a rapid prototype; this iteration continues an earlier one that ended before its phase 1 was complete. That plan was closed when this iteration began: none of its stages is kept, and the code it integrated is on the revision you start from. This iteration's brief and specification are approved (/surety/context/spec.md; the brief in /surety/context/prototype-brief.json), and the architecture, module map and roadmap the earlier iteration published are approved (in this package). Plan phase 1 again for this brief: write .surety/phases/phase-1.json with at most ${p.bounds.max_stages} stages that together implement every requirement of the specification, building on the code already there; keep the roadmap's ${p.bounds.phases} phase, and change the architecture or module map only as this brief needs.`,
-      'Your plan\'s prepared_against names the generation in /surety/context/generation.json and the revision you start from; a changed roadmap.json names the architecture version it is published with.',
+      // A requirement this brief adds is not in the approved roadmap:
+      // assigning it to phase 1 changes roadmap.json (DECISIONS item 52).
+      unassigned.length > 0 ? replanVersionsText(versions, 'changes', `Assigning ${unassigned.join(', ')} to phase 1`) : replanVersionsText(versions, 'may_change'),
       'Make the ordinary implementation choices yourself, consistent with the brief: modules, interfaces, the structure of the code. Stay within its scope, constraints, models and permissions: add no environment, platform permission, asset or tier override, and leave nothing it includes to a later phase.',
       `Within these bounds the plan is published by the prototype policy without asking the owner (recorded as policy-authorized). A plan outside them (more than ${p.bounds.phases} phase, more than ${p.bounds.max_stages} stages, a requirement left unplanned, or anything beyond the brief) goes to the owner for approval.`,
     ];
@@ -324,7 +372,7 @@ export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phas
       '## A rapid prototype iteration\'s plan',
       '',
       `This project is a rapid prototype; this iteration's brief and specification are approved (/surety/context/spec.md; the brief in /surety/context/prototype-brief.json), and phases 1 to ${phase - 1} are complete on the approved architecture and roadmap in this package. Plan this iteration's one phase, phase ${phase}: add it as the last phase of .surety/roadmap/roadmap.json (no phase after it), write .surety/phases/phase-${phase}.json with at most ${p.bounds.max_stages} stages that together implement every requirement of the specification the completed phases did not, and change the architecture or module map only as this phase needs.`,
-      'Your plan\'s prepared_against names the generation in /surety/context/generation.json and the revision you start from; a changed roadmap.json names the architecture version it is published with.',
+      replanVersionsText(versions, roadmap),
       'Make the ordinary implementation choices yourself, consistent with the brief: modules, interfaces, the structure of the code. Stay within its scope, constraints, models and permissions: add no environment, platform permission, asset or tier override, and leave nothing it includes to a later phase.',
       `Within these bounds the plan is published by the prototype policy without asking the owner (recorded as policy-authorized). A plan outside them (a phase other than ${phase}, a phase after it, more than ${p.bounds.max_stages} stages, a requirement left unplanned, or anything beyond the brief) goes to the owner for approval.`,
     ];
@@ -343,19 +391,29 @@ export function prototypePlanText(p: NonNullable<ReplanFacts['prototype']>, phas
 export function replanPromptText(r: ReplanFacts): string[] {
   const next = (r.completed_plan?.phase_number ?? 0) + 1;
   const reasons = (r.refusal?.plan_check?.reasons as { code: string; subjects: string[] }[] | null | undefined) ?? null;
+  const versions = replanVersions(r.generation);
+  // A later iteration's phase is added to the roadmap, which changes it,
+  // unless the approved roadmap holds that phase already (an earlier
+  // iteration published it and ended with its plan open).
+  const approvedPhases = Array.isArray(r.roadmap?.phases) ? (r.roadmap.phases as { number?: unknown }[]) : null;
+  const roadmapMode = approvedPhases !== null && !approvedPhases.some((ph) => ph?.number === next) ? 'changes' : 'may_change';
+  // The specification's requirements the approved roadmap assigns to no
+  // phase: the plan must assign them, which changes roadmap.json.
+  const assigned = new Set((approvedPhases ?? []).flatMap((ph) => (Array.isArray((ph as { requirement_ids?: unknown }).requirement_ids) ? ((ph as { requirement_ids: unknown[] }).requirement_ids as unknown[]) : [])));
+  const unassigned = approvedPhases === null ? [] : (r.index ?? []).filter((q) => !q.withdrawn && !assigned.has(q.key)).map((q) => q.key);
   const lead = r.prototype
-    ? [...prototypePlanText(r.prototype, next, r.generation.architecture_revision !== null), `Your result names the plan (\`plan\`: "phase-${next}") and declares \`conformance\` (within_baseline or uncertain).`]
+    ? [...prototypePlanText(r.prototype, next, r.generation.architecture_revision !== null, versions, roadmapMode, unassigned), `Your result names the plan (\`plan\`: "phase-${next}") and declares \`conformance\` (within_baseline or uncertain).`]
     : [
     '',
     '## The replan',
     '',
     `Plan the next phase (${r.open_plan ? `the open phase ${r.open_plan.phase_number}, replacing its plan` : `phase ${next}`}) from the approved baseline in this package; nothing else is approved.`,
-    `It is generation spec version ${r.generation.spec_revision?.version ?? 'none'}, architecture version ${r.generation.architecture_revision?.version ?? 'none'}, roadmap version ${r.generation.roadmap_revision?.version ?? 'none'} (/surety/context/generation.json): your plan's prepared_against names these and the revision you start from (your workspace's HEAD).`,
+    `It is generation spec version ${r.generation.spec_revision?.version ?? 'none'}, architecture version ${r.generation.architecture_revision?.version ?? 'none'}, roadmap version ${r.generation.roadmap_revision?.version ?? 'none'} (/surety/context/generation.json). ${replanVersionsText(versions, 'may_change').replace('the revision you start from', "the revision you start from (your workspace's HEAD)")}`,
     '- /surety/context/spec.md: the approved specification; /surety/context/index.json: its requirements with their criteria, areas and phases.',
     '- /surety/context/adrs/: every approved ADR; /surety/context/roadmap.json and /surety/context/module_map.json: the approved roadmap and module map.',
     '- /surety/context/plan.json: the completed phase with each stage and its integrated revision; /surety/context/evaluation.json: its phase gate evaluation with each check\'s state.',
     '- /surety/context/findings.json, deferrals.json, objections.json: the phase\'s findings with their dispositions, what is deferred and the open objections.',
-    'Write the next phase\'s plan in the form the engine reads (below), and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner.',
+    'Write the next phase\'s plan in the form the engine reads (below), and only the architecture, ADR or roadmap files you mean to change; any change of them goes to the owner, and is named with the next version as above.',
     'Your result names the plan (`plan`: "phase-<n>") and declares `conformance` (within_baseline or uncertain).',
   ];
   return [

@@ -320,7 +320,8 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
   PLAN_UNKNOWN_STAGE: 'a stage depends on a stage number the plan does not have',
   PLAN_DUPLICATE_STAGE: 'two stages share a number, or a kept stage of the plan a replan replaces is listed with inputs other than it was built with',
   PLAN_QUESTION_OPEN: 'a stage implements a requirement an open question blocks',
-  PLAN_STALE_BASELINE: 'prepared_against does not name the approved versions this plan is checked against',
+  PLAN_STALE_BASELINE:
+    "prepared_against, or roadmap.json's version or architecture_version, does not name the versions this plan is checked against: the approved ones, or the next where the plan changes them (the roadmap version when roadmap.json changes; the architecture version when architecture.md, modules.json or an ADR changes)",
   PLAN_CYCLE: 'the stages depend on each other in a cycle',
   PLAN_MODULE_OUTSIDE_PHASE: "a stage touches a module the roadmap's phase does not list",
   PLAN_REQUIREMENT_UNPLANNED: 'a requirement the roadmap assigns to this phase is implemented by no stage',
@@ -344,7 +345,12 @@ const PLAN_REASON_RULES: Record<(typeof PLAN_REASONS)[number], string> = {
 };
 const RETROFIT_REASONS: readonly string[] = ['PLAN_DESCRIPTIVE_MODULE_TOUCHED', 'PLAN_CONFORMANCE_MISPLACED'];
 
-export function architectElements(opts: { retrofit: boolean; prepared_against?: PreparedAgainstFacts | Omit<PreparedAgainstFacts, 'roadmap_version_if_changed'> | null; kind?: 'session' | 'replan' }): Built {
+// A replan's prepared_against facts (invoke/sandbox/context.ts, from
+// plan/replan-package.ts replanVersions): the approved versions, and the
+// next of each that a plan changing it names (DECISIONS item 52).
+export type ReplanPreparedFacts = Omit<PreparedAgainstFacts, 'roadmap_version_if_changed'> & { roadmap_version_if_changed?: number; architecture_version_if_changed?: number };
+
+export function architectElements(opts: { retrofit: boolean; prepared_against?: PreparedAgainstFacts | ReplanPreparedFacts | null; kind?: 'session' | 'replan' }): Built {
   return {
     'architect.schema.modules': { id: 'architect.schema.modules', gloss: 'The module map: JSON in exactly this schema; an unknown field is refused by name.', data: { file: MODULES_FILE, schema: MODULE_MAP_SCHEMA } },
     'architect.schema.roadmap': { id: 'architect.schema.roadmap', gloss: 'The roadmap: every approved requirement in exactly one phase.', data: { file: ROADMAP_FILE, schema: ROADMAP_SCHEMA } },
@@ -382,17 +388,18 @@ export function architectElements(opts: { retrofit: boolean; prepared_against?: 
         ? null
         : {
             id: 'architect.prepared_against',
-            gloss: "The plan check compares the plan's prepared_against, and roadmap.json's version and architecture_version, with these; any difference refuses the plan (PLAN_STALE_BASELINE).",
+            gloss: "The plan check compares the plan's prepared_against, and roadmap.json's version and architecture_version, with the versions the rule names from these facts; any difference refuses the plan (PLAN_STALE_BASELINE).",
             data: {
               rule:
                 (opts.kind ?? 'session') === 'replan'
-                  ? "A replan's plan names the approved specification's version, the approved architecture and roadmap versions, and revision, the commit your workspace started from; roadmap.json keeps the approved version unless you revise it, which goes to the owner."
+                  ? "A replan's plan names the approved specification's version; the architecture version (the approved one, or architecture_version_if_changed if you change architecture.md, modules.json or an ADR); the roadmap version (the approved one, or roadmap_version_if_changed if you change roadmap.json, as adding a phase or assigning a requirement to a phase does); and revision, the commit your workspace started from. A changed roadmap.json carries that roadmap version and that architecture version; an unchanged one is left as it is. The check compares these with the versions the plan's publication allocates."
                   : "A session's plan names the approved specification's version; the architecture version this bundle allocates; the roadmap version (the approved one, or the next if you change roadmap.json, which then carries that version and this architecture version); and revision, the commit your session started from.",
               facts:
                 opts.prepared_against === null
                   ? null
                   : { spec_version: opts.prepared_against.spec_version, architecture_version: opts.prepared_against.architecture_version, roadmap_version: opts.prepared_against.roadmap_version, revision: opts.prepared_against.revision },
-              ...(opts.prepared_against && 'roadmap_version_if_changed' in opts.prepared_against ? { roadmap_version_if_changed: opts.prepared_against.roadmap_version_if_changed } : {}),
+              ...(opts.prepared_against && 'roadmap_version_if_changed' in opts.prepared_against && opts.prepared_against.roadmap_version_if_changed !== undefined ? { roadmap_version_if_changed: opts.prepared_against.roadmap_version_if_changed } : {}),
+              ...(opts.prepared_against && 'architecture_version_if_changed' in opts.prepared_against && opts.prepared_against.architecture_version_if_changed !== undefined ? { architecture_version_if_changed: opts.prepared_against.architecture_version_if_changed } : {}),
             },
           },
     'architect.routing': {
