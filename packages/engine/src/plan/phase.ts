@@ -5,7 +5,8 @@
 // - At T1, with every stage `integrated`, the engine nominates the
 //   integration head once (`engine_cadence`); at T2 and T3 the stages
 //   nominate per integration and the phase waits for every stage `verified`.
-// - On the phase's candidate (T1: the one it nominated; T2, T3: the newest),
+// - On the phase's candidate (T1: the one it nominated, or the newest
+//   superseding it; T2, T3: the newest),
 //   the phase scope's checks are registered (the phase-only checks and the
 //   regression set; trigger (`phase`, <plan>, <generation>)) and run.
 // - With them recorded, the `phase` gate is evaluated (the main thread reads
@@ -64,8 +65,9 @@ function openPlan(db: Db, project: string): PlanRow | undefined {
 }
 
 // The candidate the phase is verified on: at T1 the one its own nomination
-// made (once every stage is integrated); at T2 and T3 the newest, once every
-// stage is verified. null while the phase is not there yet.
+// made (once every stage is integrated), or the newest superseding it
+// (t1Candidate); at T2 and T3 the newest, once every stage is verified.
+// null while the phase is not there yet.
 function phaseCandidate(tx: Tx, plan: PlanRow, tier: string): CandidateRow | null {
   const stages = activeStages<{ status: string }>(tx.db, plan.id);
   if (stages.length === 0) return null;
@@ -89,12 +91,45 @@ function phaseCandidate(tx: Tx, plan: PlanRow, tier: string): CandidateRow | nul
       tx.db.prepare('UPDATE "phase_plans" SET "verification" = ? WHERE "id" = ?').run(JSON.stringify({ nominated_revision: head, at: tx.at }), plan.id);
       return null;
     }
-    const c = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "revision" = ? ORDER BY "seq" DESC LIMIT 1').get(plan.project, v.nominated_revision) as { id: string } | undefined;
-    return c ? (getCandidate(tx.db, c.id) ?? null) : null;
+    const at = t1Candidate(tx.db, plan.project, v.nominated_revision);
+    if (!at) return null;
+    if (at.followed !== at.nominated) recordFollow(tx, plan.id, at.followed);
+    return getCandidate(tx.db, at.followed) ?? null;
   }
   if (!stages.every((s) => s.status === 'verified')) return null;
   const c = tx.db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "superseded_by" IS NULL ORDER BY "seq" DESC LIMIT 1').get(plan.project) as { id: string } | undefined;
   return c ? (getCandidate(tx.db, c.id) ?? null) : null;
+}
+
+// The T1 phase's candidate from its one nomination (DECISIONS item 55; M634):
+// the candidate of the nominated revision, or, once a later nomination
+// superseded it (a fix integrated after the phase's nomination is a cadence
+// point), the newest reached by following `superseded_by` from it. The
+// nomination itself is never made again; the superseded candidate's gate
+// names its successor (CANDIDATE_SUPERSEDED) and can never be satisfied.
+function t1Candidate(db: Db, project: string, revision: string): { nominated: string; followed: string } | null {
+  const c = db.prepare('SELECT "id" FROM "candidates" WHERE "project" = ? AND "revision" = ? ORDER BY "seq" DESC LIMIT 1').get(project, revision) as { id: string } | undefined;
+  if (!c) return null;
+  let followed = c.id;
+  const seen = new Set<string>([followed]);
+  for (;;) {
+    const next = (db.prepare('SELECT "superseded_by" FROM "candidates" WHERE "id" = ? AND "project" = ?').get(followed, project) as { superseded_by: string | null } | undefined)?.superseded_by ?? null;
+    if (next === null || seen.has(next)) break;
+    seen.add(next);
+    followed = next;
+  }
+  return { nominated: c.id, followed };
+}
+
+// The follow recorded beside the nomination, which keeps its revision: once
+// per followed candidate (no event; the nomination's record is the plan's
+// verification too).
+function recordFollow(tx: Tx, plan: string, followed: string): void {
+  const row = tx.db.prepare('SELECT "verification" FROM "phase_plans" WHERE "id" = ?').get(plan) as { verification: string | null } | undefined;
+  const v = parseJson<Record<string, unknown>>(row?.verification ?? null) ?? {};
+  if (v.followed_candidate === followed) return;
+  const revision = (tx.db.prepare('SELECT "revision" FROM "candidates" WHERE "id" = ?').get(followed) as { revision: string } | undefined)?.revision ?? null;
+  tx.db.prepare('UPDATE "phase_plans" SET "verification" = ? WHERE "id" = ?').run(JSON.stringify({ ...v, followed_candidate: followed, followed_revision: revision, followed_at: tx.at }), plan);
 }
 
 export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
@@ -638,7 +673,13 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   const plan = openPlan(tx.db, args.project);
   const candidate = getCandidate(tx.db, args.candidate);
   if (!plan || !candidate) return;
-  if (parseJson<{ nominated_revision?: string }>(plan.verification)?.nominated_revision !== candidate.revision) return;
+  // The phase's own nomination, or a later one superseding its candidate
+  // (DECISIONS item 55): the phase is verified on the candidate followed.
+  const nominated = parseJson<{ nominated_revision?: string }>(plan.verification)?.nominated_revision;
+  if (!nominated) return;
+  const at = t1Candidate(tx.db, args.project, nominated);
+  if (!at || at.followed !== candidate.id) return;
+  if (at.followed !== at.nominated) recordFollow(tx, plan.id, at.followed);
   const effective = effectiveVersion(tx.db, args.project);
   if (!effective) return;
   const set = requiredSet(tx.db, { project: args.project, candidate, kind: 'phase', stage: null, version: effective.id, phasePlan: plan.id });
@@ -648,7 +689,10 @@ export function registerPhaseAtNomination(tx: Tx, args: { project: string; candi
   const conformance = activeStages<{ conformance: number }>(tx.db, plan.id).some((st) => st.conformance === 1);
   const checks = conformance ? set.required.filter((c) => !(parseJson<string[]>(c.gate_kinds) ?? []).includes('stage')) : set.required;
   registerExecutions(tx, { project: args.project, candidate, checks: onceOn(tx.db, candidate.id, checks), trigger: { source: 'phase', id: plan.id, generation: plan.generation } });
-  if (!conformance) tx.db.prepare('UPDATE "phase_plans" SET "verification" = ? WHERE "id" = ?').run(JSON.stringify({ ...(parseJson<Record<string, unknown>>(plan.verification) ?? {}), registered_at_nomination: candidate.id }), plan.id);
+  if (!conformance) {
+    const now = (tx.db.prepare('SELECT "verification" FROM "phase_plans" WHERE "id" = ?').get(plan.id) as { verification: string | null }).verification;
+    tx.db.prepare('UPDATE "phase_plans" SET "verification" = ? WHERE "id" = ?').run(JSON.stringify({ ...(parseJson<Record<string, unknown>>(now) ?? {}), registered_at_nomination: candidate.id }), plan.id);
+  }
 }
 
 // A protected application re-registers what the new version requires (D3
