@@ -192,6 +192,41 @@ function changeRequestsOwing(db: Database, project: string) {
     });
 }
 
+// The open plan held by its phase gate (DECISIONS item 57; M642; the
+// console's U58): its latest phase evaluation of this generation, fresh
+// and not satisfied. `owner_act` names an open decision of the owner that
+// clears a reason (a finding's the gate names; the plan's authoring's when
+// AUTHORING_INCOMPLETE), null when none is open; the text is the engine's.
+// null when there is no such evaluation, or it is satisfied or stale.
+function phaseGateHold(db: Database, project: string, plan: { id: string; phase_number: number; generation: number; check_authoring: string | null }) {
+  const e = db
+    .prepare(`SELECT "id", "candidate", "outcome", "reasons", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "phase_plan" = ? AND "plan_generation" = ? ORDER BY rowid DESC LIMIT 1`)
+    .get(project, plan.id, plan.generation) as { id: string; candidate: string; outcome: string; reasons: string; computed_at: string; stale: number } | undefined;
+  if (!e || e.stale === 1 || e.outcome === 'satisfied') return null;
+  const reasons = json<{ code: string; subjects?: string[] }[]>(e.reasons, []);
+  const findings = reasons.filter((r) => r.code.startsWith('FINDING_')).flatMap((r) => r.subjects ?? []);
+  const open = (type: string, id: string): string | null =>
+    (db.prepare(`SELECT "id" FROM "decisions" WHERE "project" = ? AND "subject_type" = ? AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`).get(project, type, id) as { id: string } | undefined)?.id ?? null;
+  let decision: string | null = null;
+  for (const f of findings) if (decision === null) decision = open('finding', f);
+  if (decision === null && plan.check_authoring !== null && reasons.some((r) => r.code === 'AUTHORING_INCOMPLETE')) decision = open('work_item', plan.check_authoring);
+  const superseder = reasons.find((r) => r.code === 'CANDIDATE_SUPERSEDED')?.subjects?.[0] ?? null;
+  const codes = [...new Set(reasons.map((r) => r.code))];
+  const text = `Phase ${plan.phase_number} is held: its gate was evaluated on candidate ${e.candidate}${superseder !== null ? `, which candidate ${superseder} superseded,` : ''} and is not satisfied (${codes.join(', ') || 'no reason recorded'}); ${
+    decision !== null ? `decision ${decision} is the owner's act that clears it.` : 'no act of the owner clears it.'
+  }`;
+  return {
+    reason: 'phase_gate_not_satisfied',
+    evaluation: e.id,
+    candidate: e.candidate,
+    evaluated_at: e.computed_at,
+    stale: false,
+    reasons,
+    owner_act: decision !== null ? { decision } : null,
+    text,
+  };
+}
+
 export function planView(db: Database, args: { project: string }) {
   mustProject(db, args.project);
   const road = db.prepare('SELECT "version", "phases" FROM "roadmap_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(args.project) as { version: number; phases: string } | undefined;
@@ -240,13 +275,21 @@ export function planView(db: Database, args: { project: string }) {
       // What holds the open generation's completion (plan/phase.ts): a
       // replacement of it still pending, with its work, trigger, proposal
       // and the open question that accounts for it; null when none does.
+      // Or (DECISIONS item 57; M642) its latest phase gate evaluation,
+      // fresh and not satisfied: named with its candidate, its reasons, the
+      // owner's act that clears it if one is open, and the engine's sentence.
       completion_held_by:
         p.completed_at === null && p.status === 'published'
           ? (() => {
               const r = pendingReplacement(db, args.project, { id: p.id as string, generation: p.generation as number });
-              return r === null ? null : { reason: 'replacement_pending', ...r };
+              if (r !== null) return { reason: 'replacement_pending', ...r };
+              return phaseGateHold(db, args.project, { id: p.id as string, phase_number: p.phase_number as number, generation: p.generation as number, check_authoring: (p.check_authoring as string | null) ?? null });
             })()
           : null,
+      // The phase's verification as recorded (plan/phase.ts): its T1
+      // nomination's revision and when, the candidate its scope was
+      // registered on at the nomination, and the candidate it follows.
+      verification: json<unknown>(p.verification, null),
       bundle: p.bundle,
       stages,
     };
