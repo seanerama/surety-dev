@@ -46,8 +46,10 @@
 // - `text` is read as a non-empty string; its wording is the engine's.
 // - `evaluated_at` is read as the evaluation's computed_at or created_at.
 // - "nothing on other items" is read as `authoring` absent or null.
-// - "names those items" is read as each eligible item's id or kind in the
-//   reason; "unpaused, no primary_action" as no `resume`.
+// - "names those items" is read as the reason naming each item that waits
+//   only for the pause by its id (the replan), and not naming an eligible
+//   item something else also holds (M641 (b)'s gap authoring, held while the
+//   replan is unfinished); "unpaused, no primary_action" as no `resume`.
 //
 // SAFETY (BS6 §4.1; E64): the kernel lane; the scripted role program in the
 // test's own home; nothing signalled but the test's own engine.
@@ -256,15 +258,18 @@ describe('M642 (d), (e) the work read names an authoring\'s criteria; NOW names 
   });
 
   test("(e) paused with work eligible but for the pause: NOW names those items and serves primary_action 'resume'; unpaused, not", async () => {
-    const { fx, p } = J;
+    const { fx, p, R, G } = J;
     const project = (await ok(fx.engine.get(`/v1/projects/${p}`), 200, 'GET …/projects/:p')).project;
     assert.equal(project.paused, true, 'the fixture is live: paused');
     const eligible = (await ok(fx.engine.get(`/v1/projects/${p}/work`), 200, 'GET …/work')).work_items.filter((w) => w.status === 'eligible');
-    assert.ok(eligible.length >= 2, `the fixture is live: the replan and the gap authoring eligible (${show(eligible.map((w) => [w.id, w.kind]))})`);
+    assert.ok([R, G].every((id) => eligible.some((w) => w.id === id)), `the fixture is live: the replan and the gap authoring eligible (${show(eligible.map((w) => [w.id, w.kind]))})`);
     assert.deepEqual(openDecisions(fx.home, p), [], 'the fixture is live: no open decision');
     const now = project.now;
     assert.equal(now?.primary_action, 'resume', `primary_action resume (${show(now)})`);
-    for (const w of eligible) assert.ok(now.reason.includes(w.id) || now.reason.includes(w.kind), `the reason names ${w.id} (${w.kind}): ${now.reason}`);
+    // The replan waits only for the pause; the gap authoring also waits for
+    // the plan under way (M641 (b)), so it is not work eligible but for the pause.
+    assert.ok(now.reason.includes(R), `the reason names the replan ${R}, eligible but for the pause: ${now.reason}`);
+    assert.ok(!now.reason.includes(G), `and not the gap authoring ${G}, which the replan under way also holds: ${now.reason}`);
     await resumeProject(fx.engine, p);
     const after = (await ok(fx.engine.get(`/v1/projects/${p}`), 200, 'GET …/projects/:p')).project;
     assert.equal(after.paused, false, 'resumed');
