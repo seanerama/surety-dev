@@ -576,7 +576,8 @@
       "M630-what-ended-an-observation-by-store-order.test.mjs",
       "M631-a-refused-alpha-request-reconsidered.test.mjs",
       "M632-a-finding-owed-by-store-order.test.mjs",
-      "M633-a-later-iterations-replan-names-the-allocated-versions.test.mjs"
+      "M633-a-later-iterations-replan-names-the-allocated-versions.test.mjs",
+      "M634-a-t1-phase-follows-the-candidate-that-superseded-its-nomination.test.mjs"
     ],
     "50": [
       "M611-a-disposable-local-service-alpha.test.mjs",
