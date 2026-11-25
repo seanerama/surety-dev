@@ -85,6 +85,7 @@ const ROWS = [
   'M630',
   'M631',
   'M632',
+  'M633',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
