@@ -61,7 +61,8 @@ function scratch(t) {
     const made = transact(db, HUMAN, (tx) => bootstrapProject(tx, prepared));
     db.prepare(`UPDATE projects SET registration_state = 'registered', paused = 0 WHERE id = ?`).run(made.project.id);
     const row = db.prepare('SELECT limits_json FROM prototype_iterations WHERE id = ?').get(made.project.iteration);
-    db.prepare(`UPDATE prototype_iterations SET limits_json = ?, status = 'building', approved_at = ?, next_step = 'none: building' WHERE id = ?`).run(
+    // clock_basis as createIteration writes it (Builder A's half of D5).
+    db.prepare(`UPDATE prototype_iterations SET limits_json = ?, status = 'building', approved_at = ?, next_step = 'none: building', clock_basis = 'recorded' WHERE id = ?`).run(
       JSON.stringify({ ...JSON.parse(row.limits_json), prototype_runtime_seconds: runtime }),
       ago(approvedAgoMs),
       made.project.iteration,
@@ -153,17 +154,18 @@ test('(a) a parked work item opens parked_on_blocker from its blocker; its retry
   assert.ok(Math.abs(row.seconds - 3 * 3600) < 5);
 });
 
-test('(f) an iteration recorded before migration 0053 serves basis not_recorded_before_0053 with excluded_seconds null, never 0', async (t) => {
+test('(f) an iteration whose clock_basis is not recorded (a row written before 0053) serves basis not_recorded_before_0053 with excluded_seconds null, never 0; recorded intervals of it are listed', async (t) => {
   const { db, create } = scratch(t);
-  const p = await create(4 * 3600, 1 * H);
-  const applied = db.prepare('SELECT applied_at FROM schema_migrations WHERE seq = 53').get().applied_at;
-  db.prepare('UPDATE prototype_iterations SET created_at = ?, clock_basis = NULL WHERE id = ?').run(new Date(Date.parse(applied) - 86_400_000).toISOString(), p.iteration);
+  const p = await create(4 * 3600, 3 * H);
+  db.prepare('UPDATE prototype_iterations SET clock_basis = NULL WHERE id = ?').run(p.iteration);
+  interval(db, p.id, p.iteration, 'paused', 2 * H, 1 * H);
   const read = readIteration(db, { project: p.id, iteration: p.iteration });
   const clock = read.time.clock;
   assert.equal(clock.basis, 'not_recorded_before_0053');
   assert.equal(clock.excluded_seconds, null);
   assert.ok(typeof clock.wall_seconds === 'number');
-  // Recorded as such it is `recorded` whatever its age.
+  assert.deepEqual(clock.excluded.map((e) => e.reason), ['paused']);
+  assert.equal(C.clockBasisOf(db, { id: p.iteration }), 'not_recorded_before_0053', 'whatever its age: the column decides');
   db.prepare(`UPDATE prototype_iterations SET clock_basis = 'recorded' WHERE id = ?`).run(p.iteration);
   assert.equal(C.clockBasisOf(db, { id: p.iteration }), 'recorded');
 });

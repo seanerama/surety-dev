@@ -24,8 +24,9 @@
 // Overlapping intervals are excluded once (their union). An ordinary owner
 // question waiting unanswered on an unpaused project is never excluded.
 //
-// An iteration recorded before migration 0053 has no recorded intervals
-// (`clock_basis` NULL): its clock is served with basis
+// An iteration whose intervals are not recorded (`clock_basis` NULL: a row
+// written before migration 0053, or before createIteration writes the
+// column): its clock is served with basis
 // `not_recorded_before_0053` and `excluded_seconds` null, never 0; the
 // limit check keeps charging it as before (the provider hold's recorded
 // length only), plus whatever intervals were recorded for it since.
@@ -38,7 +39,6 @@ type Db = Tx['db'];
 
 export type ClockExclusionReason = 'parked_on_blocker' | 'paused' | 'engine_stall' | 'provider_refusal';
 export type ClockBasis = 'recorded' | 'not_recorded_before_0053';
-const BASIS_TOLERANCE_MS = 5000;
 
 export interface ClockIteration {
   id: string;
@@ -61,25 +61,16 @@ interface ExclusionRow {
   to_at: string | null;
 }
 
-// Whether the iteration's intervals are recorded: `clock_basis` as stored,
-// or, for an iteration created once migration 0053 was applied (the column
-// is not yet written at creation), recorded too. An iteration that existed
-// before the migration is never `recorded`.
-export function clockBasisOf(db: Db, it: Pick<ClockIteration, 'id'> & { created_at?: string; clock_basis?: string | null }): ClockBasis {
-  const row = it.created_at === undefined || it.clock_basis === undefined
-    ? (db.prepare('SELECT "created_at", "clock_basis" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { created_at: string; clock_basis: string | null } | undefined)
-    : { created_at: it.created_at, clock_basis: it.clock_basis };
-  if (!row) return 'not_recorded_before_0053';
-  if (row.clock_basis === 'recorded') return 'recorded';
-  const applied = (db.prepare('SELECT "applied_at" FROM "schema_migrations" WHERE "seq" = 53').get() as { applied_at: string } | undefined)?.applied_at;
-  if (applied === undefined) return 'not_recorded_before_0053';
-  // Within a few seconds of the migration counts as after it: the two stamps
-  // come from the wall clock, which a host's time correction can step back
-  // (observed once in the unit suite on the workstation). An iteration
-  // created that close before the migration cannot have had an interval to
-  // record. clock_basis written at creation (createIteration, Builder A's)
-  // makes this moot.
-  return Date.parse(row.created_at) >= Date.parse(applied) - BASIS_TOLERANCE_MS ? 'recorded' : 'not_recorded_before_0053';
+// Whether the iteration's intervals are recorded: `clock_basis` as stored
+// (written `recorded` when the iteration is created, prototype.ts
+// createIteration). A NULL column is a row that predates that write: its
+// intervals are not recorded, served as such (excluded_seconds null, never
+// 0). Read from the recorded fact only, never by comparing wall-clock
+// stamps (the owner's ruling on DECISIONS item 51).
+export function clockBasisOf(db: Db, it: Pick<ClockIteration, 'id'> & { clock_basis?: string | null }): ClockBasis {
+  const basis =
+    it.clock_basis !== undefined ? it.clock_basis : ((db.prepare('SELECT "clock_basis" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { clock_basis: string | null } | undefined)?.clock_basis ?? null);
+  return basis === 'recorded' ? 'recorded' : 'not_recorded_before_0053';
 }
 
 // ---- recording -----------------------------------------------------------------------------
