@@ -32,7 +32,18 @@
 //       `delegated_actions` lists (b), `owner_approvals` kept as before;
 //   (e) a historical row (pre-0053: its delegation not recorded) served as
 //       written: `delegation: null` with `basis: 'not_recorded'`, never
-//       inferred as owner or agent.
+//       inferred as owner or agent. Amended 2026-11-26 (Sean, DECISIONS
+//       item 62: "Make the decision read and receipt agree on pre-0053
+//       answers: preserve the recorded answer, timestamp, and any actor
+//       information actually stored. Where delegation was never recorded,
+//       show 'Delegation not recorded' and avoid inferring that I personally
+//       clicked. Verify this with a legacy decision"): the single decision
+//       read serves the legacy answer with its recorded option, note, actor
+//       kind and timestamp as stored and `delegation: null, basis:
+//       'not_recorded'` added; a post-0053 plain answer `{performed_by:
+//       'owner'}` and the delegated answer its delegation, each with `basis:
+//       'recorded'`; the decisions list and the receipt's owner_answers agree
+//       with the decision read in shape and words.
 //
 // Readings this file makes (the report says them):
 // - "the receipt" is the iteration read (GET …/iterations/:i), where
@@ -40,14 +51,22 @@
 //   `delegated_actions` are read beside it.
 // - "the plan bounds" is any key of the brief naming bounds, holding the
 //   phase (1) and the stage bound (2).
-// - (e) has no route to a pre-0053 row on this engine: the engine is
-//   stopped and the preparation answer is made as an earlier row is (what
-//   migration 0053 leaves on every earlier row): its `approvals.delegation`
-//   set to NULL and `delegation` removed from its `decisions.answer`; then
-//   started again. This is the file's only store write, labelled. The
-//   receipt must serve it `delegation: null`, `basis: 'not_recorded'`; the
-//   decision read (which serves the answer as written) must not infer an
-//   owner or an agent for it.
+// - (e) the legacy decision: no store written by a pre-0053 engine is among
+//   this tree's fixtures, so the row's second method is used. The
+//   preparation answer (plain, with a note) is recorded by this engine; the
+//   engine is stopped; through better-sqlite3 `delegation` is removed from
+//   that one `decisions.answer` and that one `approvals.delegation` set to
+//   NULL (what migration 0053 leaves on every earlier row); both rows are
+//   read before and after and are otherwise unchanged; the engine is started
+//   again. This is the file's only store write, labelled.
+// - "added" (the row's word) is read as: `delegation` and `basis` are keys of
+//   the served `answer` beside its option, note, actor and at, as they are
+//   keys of a receipt entry beside its option.
+// - "the decisions list" is GET …/decisions, which lists the project's open
+//   decisions; whatever it serves of an answered decision must agree with
+//   the decision read and infer no owner click (it serves none at 48bec481).
+// - "timestamp" is the answer's `at` and the decision's `consumed_at` (the
+//   receipt serves the latter).
 //
 // SAFETY (BS6 §4.1; E64): kernel lane; the scripted role program and the
 // scripted deployment adapter in the test's own home; nothing signalled but
@@ -56,7 +75,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 
-import { entries, holds, one, rows, show, valuesOfKey } from './harness/brief57.mjs';
+import { J, entries, holds, one, rows, show, valuesOfKey } from './harness/brief57.mjs';
 import { sharedFixture } from './harness/gates.mjs';
 import {
   CHECK_KINDS,
@@ -72,6 +91,7 @@ import {
 } from './harness/prototype.mjs';
 import { withStore } from './harness/store.mjs';
 
+const LEGACY_NOTE = 'Prepare the brief; recorded with a note so the legacy row keeps one.';
 const DELEGATION = Object.freeze({ performed_by: 'agent', agent: 'driver', instruction: 'Approve the brief as prepared; it matches what I asked for.' });
 
 const eventsMentioning = (home, id) => rows(home, `SELECT * FROM "events" WHERE "subject" LIKE '%' || ? || '%' OR "payload" LIKE '%' || ? || '%' ORDER BY "seq"`, id, id);
@@ -94,7 +114,7 @@ describe('M640 the brief, the receipt and the delegation record', () => {
     S.it = it.id;
     const prep = (await openDecisionsRead(fx, p)).find((d) => d.kind === 'prototype_preparation_approval');
     S.prep = prep.id;
-    await ok(fx.engine.post(`/v1/projects/${p}/decisions/${prep.id}/answer`, { option: 'approve', preview_hash: prep.preview_hash }), 200, 'the plain answer to the preparation question');
+    await ok(fx.engine.post(`/v1/projects/${p}/decisions/${prep.id}/answer`, { option: 'approve', preview_hash: prep.preview_hash, note: LEGACY_NOTE }), 200, 'the plain answer to the preparation question (with a note)');
     await pump(fx, p, statusIs(fx, p, it.id, 'awaiting_brief_approval'), { what: 'the brief' });
     S.atQuestion = await iterationRead(fx, p, it.id);
     S.spec = (await openDecisionsRead(fx, p)).find((d) => d.kind === 'spec_approval');
@@ -190,29 +210,114 @@ describe('M640 the brief, the receipt and the delegation record', () => {
     assert.equal(oa.count, human.length, `owner_approvals counted as before (${show(oa)})`);
   });
 
-  test('(e) a historical row (pre-0053) served as written: delegation null with basis not_recorded, never inferred as owner or agent', { timeout: 600_000 }, async () => {
+  // (e) as amended 2026-11-26 (Sean, DECISIONS item 62). The legacy row:
+  // there is no store written by a pre-0053 engine among this tree's
+  // fixtures (the contract fixtures of migration 0053, objection 234, are
+  // JSON contract files, not stores), so the row's stated second method is
+  // used: the preparation answer (a plain answer with a note) is recorded by
+  // this engine; the engine is stopped; `delegation` is removed from that
+  // one `decisions.answer` and that one `approvals.delegation` is set to
+  // NULL (what migration 0053 leaves on every earlier row), through
+  // better-sqlite3, the engine's dependency; every other column of both rows
+  // is read before and after and must be unchanged; the engine is started
+  // again. This is the file's only store write.
+  test('(e) a legacy answer (no delegation key, pre-0053) in the single decision read: its recorded option, note, actor kind and timestamp as stored, delegation null with basis not_recorded, no owner click inferred', { timeout: 600_000 }, async () => {
     const { fx, p } = S;
     assert.ok(S.read, 'the fixture of (c) reached the Alpha');
+    const rowsOf = () => ({
+      decision: one(fx.home, 'SELECT * FROM "decisions" WHERE "id" = ?', S.prep),
+      approvals: rows(fx.home, 'SELECT * FROM "approvals" WHERE "decision" = ?', S.prep),
+    });
     await fx.engine.stop();
     let wrote;
+    let before;
+    let after;
     try {
+      before = rowsOf();
       // The file's one store write (labelled above): what migration 0053 leaves on an earlier row.
       wrote = withStore(
         fx.home,
         (db) => db.prepare('UPDATE "approvals" SET "delegation" = NULL WHERE "decision" = ?').run(S.prep).changes * db.prepare(`UPDATE "decisions" SET "answer" = json_remove("answer", '$.delegation') WHERE "id" = ?`).run(S.prep).changes,
         { readonly: false },
       );
+      after = rowsOf();
     } catch (e) {
       wrote = `refused: ${e.message}`;
     }
     await fx.start();
     assert.equal(wrote, 1, `the fixture is live: the preparation answer made as a pre-0053 row: one approvals row, one decision (${wrote})`);
-        const d = await decisionRead(fx, p, S.prep);
-    assert.ok(!performedBy(d).some((v) => v === 'owner' || /^agent:/.test(String(v))), `never inferred as owner or agent in the decision read (${show(valuesOfKey(d, /delegation|basis|performed_by/))})`);
+    // Otherwise untouched: every other column of the decision and its approval as before.
+    const wasAnswer = J(before.decision.answer);
+    const stored = J(after.decision.answer);
+    assert.deepEqual({ ...after.decision, answer: null }, { ...before.decision, answer: null }, 'the decision row is otherwise untouched');
+    assert.deepEqual(after.approvals.map((a) => ({ ...a, delegation: null })), before.approvals.map((a) => ({ ...a, delegation: null })), 'the approvals row is otherwise untouched');
+    const { delegation: _was, ...rest } = wasAnswer;
+    assert.deepEqual(stored, rest, 'the stored answer is the answer as recorded less its delegation key');
+    assert.deepEqual(Object.keys(stored).sort(), ['actor', 'at', 'note', 'option'], `the legacy answer has no delegation key, as every answer before 0053 (${show(stored)})`);
+    assert.deepEqual([stored.option, stored.note, stored.actor], ['approve', LEGACY_NOTE, 'human'], `the fixture is live: the recorded option, note and actor kind (${show(stored)})`);
+    assert.equal(after.approvals[0]?.delegation, null, 'its approval records no delegation');
+    S.legacy = { stored, consumed_at: after.decision.consumed_at };
+    // The single decision read.
+    const d = await decisionRead(fx, p, S.prep);
+    S.legacyRead = d;
+    const a = d.answer;
+    assert.ok(a && typeof a === 'object', `the decision read serves the answer (${show(d)})`);
+    assert.deepEqual([a.option, a.note, a.actor, a.at], [stored.option, stored.note, stored.actor, stored.at], `the recorded option, note, actor kind and timestamp exactly as stored (${show(a)})`);
+    assert.equal(d.consumed_at, S.legacy.consumed_at, 'the consumed timestamp as stored');
+    assert.ok('delegation' in a && a.delegation === null && a.basis === 'not_recorded', `delegation null with basis not_recorded added to the answer (${show(a)})`);
+    assert.ok(!performedBy(d).some((v) => v === 'owner' || /^agent:/.test(String(v))) && !hasAgent(d), `never inferred as the owner's click or an agent's in the decision read (${show(valuesOfKey(d, /delegation|basis|performed_by/))})`);
+  });
+
+  test('(e) the legacy answer in the decisions list and the receipt: the same answer, delegation null with basis not_recorded, the same shape and words as the decision read, no owner click inferred', { timeout: 600_000 }, async () => {
+    const { fx, p } = S;
+    assert.ok(S.legacy && S.legacyRead, 'the fixture of the legacy row is live');
+    const { stored } = S.legacy;
+    const fromRead = { delegation: S.legacyRead.answer?.delegation, basis: S.legacyRead.answer?.basis };
+    // The decisions list: whatever it serves of this decision agrees (it lists the project's open decisions).
+    const listed = (await openDecisionsRead(fx, p)).filter((x) => x.id === S.prep);
+    for (const x of listed) {
+      assert.ok(!performedBy(x).some((v) => v === 'owner' || /^agent:/.test(String(v))), `the list infers no owner click for it (${show(x)})`);
+      if (x.answer !== undefined) {
+        assert.deepEqual([x.answer?.option, x.answer?.note, x.answer?.actor, x.answer?.at], [stored.option, stored.note, stored.actor, stored.at], `the list serves the answer as stored (${show(x.answer)})`);
+        assert.deepEqual({ delegation: x.answer?.delegation, basis: x.answer?.basis }, fromRead, `the list agrees with the decision read (${show(x.answer)})`);
+      }
+    }
+    // The receipt.
     const read = await iterationRead(fx, p, S.it);
-    const [e] = answerEntry(read.owner_answers, S.prep);
-    assert.ok(e, `the receipt still lists the historical answer (${show(read.owner_answers)})`);
-    assert.ok(e.delegation === null && e.basis === 'not_recorded', `the receipt serves it delegation null, basis not_recorded (${show(e)})`);
-    assert.ok(!performedBy(e).some((v) => v === 'owner' || /^agent:/.test(String(v))), `never inferred as owner or agent (${show(e)})`);
+    const found = answerEntry(read.owner_answers, S.prep);
+    assert.equal(found.length, 1, `the receipt still lists the legacy answer once (${show(read.owner_answers)})`);
+    const [e] = found;
+    assert.deepEqual([e.option, e.consumed_at], [stored.option, S.legacy.consumed_at], `the receipt serves its recorded option and timestamp (${show(e)})`);
+    assert.ok('delegation' in e && e.delegation === null && e.basis === 'not_recorded', `the receipt serves it delegation null, basis not_recorded (${show(e)})`);
+    assert.ok(!performedBy(e).some((v) => v === 'owner' || /^agent:/.test(String(v))), `never inferred as owner or agent in the receipt (${show(e)})`);
+    assert.deepEqual({ delegation: e.delegation, basis: e.basis }, fromRead, `the decision read and the receipt agree in shape and words (read ${show(fromRead)}, receipt ${show(e)})`);
+  });
+
+  test('(e) post-0053 answers carry their recorded delegation with basis recorded: the plain answer {performed_by: owner}, the delegated answer its delegation; the decision read and the receipt agree', { timeout: 600_000 }, async () => {
+    const { fx, p } = S;
+    assert.ok(S.legacy, 'the fixture of the legacy row is live');
+    const read = await iterationRead(fx, p, S.it);
+    const human = rows(fx.home, `SELECT a."decision", a."delegation", d."kind", d."answer", d."consumed_at" FROM "approvals" a JOIN "decisions" d ON d."id" = a."decision" WHERE d."project" = ? AND a."actor" = 'human' ORDER BY a.rowid`, p);
+    const plain = human.find((h) => h.decision !== S.prep && h.decision !== S.spec.id && J(h.answer)?.delegation?.performed_by === 'owner');
+    const delegated = human.find((h) => h.decision === S.spec.id);
+    assert.ok(plain, `the fixture is live: a post-0053 plain answer (the check correction) (${show(human.map((h) => [h.kind, J(h.answer)?.delegation]))})`);
+    assert.ok(delegated && J(delegated.answer)?.delegation?.performed_by === 'agent:driver', `the fixture is live: the delegated answer (${show(delegated)})`);
+    for (const [what, h, expected] of [
+      ['the plain answer', plain, { performed_by: 'owner' }],
+      ['the delegated answer', delegated, J(delegated.answer).delegation],
+    ]) {
+      const stored = J(h.answer);
+      const d = await decisionRead(fx, p, h.decision);
+      const a = d.answer;
+      assert.deepEqual([a?.option, a?.note, a?.actor, a?.at, d.consumed_at], [stored.option, stored.note, stored.actor, stored.at, h.consumed_at], `${what}: the decision read serves the recorded option, note, actor kind and timestamp (${show(a)})`);
+      assert.deepEqual({ delegation: a?.delegation, basis: a?.basis }, { delegation: expected, basis: 'recorded' }, `${what}: the decision read serves its recorded delegation with basis recorded (${show(a)})`);
+      const found = answerEntry(read.owner_answers, h.decision);
+      assert.equal(found.length, 1, `${what}: the receipt lists it once (${show(read.owner_answers)})`);
+      assert.deepEqual({ delegation: found[0].delegation, basis: found[0].basis }, { delegation: expected, basis: 'recorded' }, `${what}: the receipt serves its recorded delegation with basis recorded (${show(found[0])})`);
+      assert.deepEqual([found[0].option, found[0].consumed_at], [stored.option, h.consumed_at], `${what}: the receipt serves its recorded option and timestamp (${show(found[0])})`);
+    }
+    // Only the legacy row is not_recorded; nothing else in the receipt's answers is.
+    const notRecorded = (read.owner_answers ?? []).filter((x) => x.basis === 'not_recorded').map((x) => x.decision);
+    assert.deepEqual(notRecorded, [S.prep], `only the legacy answer is served not_recorded (${show(read.owner_answers)})`);
   });
 });
