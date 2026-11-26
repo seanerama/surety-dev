@@ -20,7 +20,11 @@ export type Policy = Record<string, PolicyValue>;
 export function projectOptionSpecs(): Record<string, OptionSpec> {
   if (!seamScriptedBackendOffered()) return PROJECT_OPTIONS;
   const keys = new Set(Object.values(BACKEND_ROLE_KEYS));
-  return Object.fromEntries(Object.entries(PROJECT_OPTIONS).map(([key, spec]) => [key, keys.has(key) ? { ...spec, values: BACKEND_NAMES, default: 'scripted' } : spec]));
+  // D8: the preparation allowance's model may name the scripted backend in
+  // the test mode, with no default.
+  return Object.fromEntries(
+    Object.entries(PROJECT_OPTIONS).map(([key, spec]) => [key, keys.has(key) ? { ...spec, values: BACKEND_NAMES, default: 'scripted' } : spec.type === 'provider_model' ? { ...spec, values: BACKEND_NAMES } : spec]),
+  );
 }
 
 // The `backend_<role>` keys of the effective policy that name no backend:
@@ -40,7 +44,14 @@ export function projectPolicyDefaults(): Record<string, number> {
 // unconfigured, and nothing stands in for it.
 export function projectEffectiveDefaults(): Policy {
   const out: Policy = { ...projectPolicyDefaults() };
-  for (const [key, spec] of Object.entries(projectOptionSpecs())) if (spec.default !== null) out[key] = structuredClone(spec.default) as PolicyValue;
+  for (const [key, spec] of Object.entries(projectOptionSpecs())) {
+    if (spec.default !== null) out[key] = structuredClone(spec.default) as PolicyValue;
+    // D8 (DECISIONS item 57; objection 234's resolution): the preparation
+    // allowance's model is served as an explicit null while the owner has
+    // named none (no run is authorized under the allowance until one is),
+    // never filled in.
+    else if (spec.type === 'provider_model') out[key] = null as unknown as PolicyValue;
+  }
   return out;
 }
 
@@ -84,6 +95,15 @@ function validateOption(key: string, spec: OptionSpec, value: unknown): PolicyVa
       // never an option, no whitespace or control character.
       if (!isModelName(value)) throw invalidValue(key, 'a model name');
       return value;
+    case 'provider_model': {
+      // D8: `<provider>/<model>`, the provider one this engine offers and the
+      // model a model name as the backend's command line takes it.
+      const at = typeof value === 'string' ? value.indexOf('/') : -1;
+      if (typeof value !== 'string' || at <= 0 || !spec.values!.includes(value.slice(0, at)) || !isModelName(value.slice(at + 1))) {
+        throw invalidValue(key, `"<provider>/<model>", the provider one of ${spec.values!.join(', ')} and the model a model name`);
+      }
+      return value;
+    }
     case 'size_range': {
       const r = spec.range!;
       const ok = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= r.min && (n as number) <= r.max;
@@ -218,6 +238,9 @@ const WIDENING_KEYS = new Set([
   'prototype_runtime_seconds',
   'prototype_repairs_per_stage',
   'prototype_repairs_per_iteration',
+  // D8: the preparation allowance's limits widen as the budget keys do.
+  'prototype_preparation_run_tokens',
+  'prototype_preparation_usd_estimated',
 ]);
 
 // The keys of a change that widen authority against the effective policy.
@@ -237,6 +260,12 @@ export function wideningKeys(effective: Policy, change: Policy): string[] {
         if (option.widening === 'later') {
           const values = (option.values ?? []) as readonly unknown[];
           return values.indexOf(value) > values.indexOf(effective[key] ?? option.default);
+        }
+        // D8: any change of the value while the preparation allowance is
+        // granted, or granted by the same change.
+        if (option.widening === 'changed_while_allowed') {
+          const allowed = (change.prototype_preparation_allowance ?? effective.prototype_preparation_allowance ?? 'off') === 'per_iteration';
+          return allowed && value !== (effective[key] ?? option.default);
         }
         if (option.widening === 'coarser') {
           const rank = (b: unknown) => (BUDGET_BOUNDARIES as readonly unknown[]).indexOf(b);

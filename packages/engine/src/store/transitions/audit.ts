@@ -1,7 +1,7 @@
 // The audit record of a mutating API request (D1 §11.1, SEAM.md §6). The
 // payload names the request, never its token.
 
-import type { Tx } from './tx.js';
+import { type Tx, delegationOf } from './tx.js';
 
 export interface AuditInput {
   method: string;
@@ -17,7 +17,9 @@ export class AuditFailed extends Error {
 
 export function recordApiAct(tx: Tx, input: AuditInput): void {
   try {
-    tx.emit('api.act', {}, { method: input.method, path: input.path, status: input.status });
+    // D7 (DECISIONS item 57): who performed an owner's request, the owner
+    // or an agent on the owner's instruction, as the request stated it.
+    tx.emit('api.act', {}, { method: input.method, path: input.path, status: input.status, ...(tx.actor.actor_kind === 'human' ? { delegation: delegationOf(tx.actor) } : {}) });
   } catch (err) {
     throw new AuditFailed(err);
   }

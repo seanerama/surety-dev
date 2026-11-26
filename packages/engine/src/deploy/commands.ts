@@ -18,6 +18,7 @@ import { candidateTree } from './compatibility-eval.js';
 import { configIdentity, homeHash, secretDigests, validateConfig } from './config.js';
 import { checkServingEntry, checkStaticEntry, servingSpec, staticSpec } from './static-site.js';
 import { type ServingProposal, prepareServingProposal } from './serving-install.js';
+import { confirmRequired } from '../store/transitions/deploy-target.js';
 
 // PUT /v1/projects/:p/environments/:e/config (D4 §3.2; Q5): the body is the
 // version's content. Validated, its secret references resolved to digests
@@ -226,7 +227,7 @@ const pendingCleanup = new WeakMap<object, { release: () => void; sealed: Sealed
 export async function prepareDeployment(rt: Runtime, project: string, body: unknown): Promise<Prepared> {
   if (!isObject(body)) throw new Refusal(400, 'invalid_value', 'The body must be a JSON object.', 'Send {"candidate", "environment"}.', { field: null });
   for (const key of Object.keys(body)) {
-    if (key !== 'candidate' && key !== 'environment') {
+    if (key !== 'candidate' && key !== 'environment' && key !== 'preview_hash') {
       throw new Refusal(400, 'unknown_field', `"${key}" is not a field of a deployment request: the engine derives the authorization's binding itself.`, 'Send only candidate and environment.', { field: key });
     }
   }
@@ -242,8 +243,13 @@ export async function prepareDeployment(rt: Runtime, project: string, body: unkn
       candidate: body.candidate,
       environment: body.environment,
     });
+    // D4 (DECISIONS item 57): outside the approved brief's target, the
+    // owner's decision first (raised now, committed); the request sent again
+    // with its preview_hash confirms it. Nothing is sealed before.
+    const target = await rt.engine<{ required: boolean; decision?: string; preview_hash?: string; confirmed?: boolean; origin?: string }>('deploy.target_confirm', { project, candidate: facts.candidate, environment: body.environment, preview_hash: body.preview_hash });
+    if (target.required && target.confirmed !== true) throw confirmRequired({ environment: facts.name, decision: target.decision!, preview_hash: target.preview_hash!, origin: target.origin! });
     const gate = await gateFacts(rt, project, facts.candidate);
-    const base = { project, candidate: facts.candidate, environment: body.environment, builder: BUILDER, facts: gate };
+    const base = { project, candidate: facts.candidate, environment: body.environment, builder: BUILDER, facts: gate, ...(typeof body.preview_hash === 'string' ? { preview_hash: body.preview_hash } : {}) };
     if (facts.pending) {
       const prepared: Prepared = { ...base, sealed: null, specFingerprint: '' };
       pendingCleanup.set(prepared, { release, sealed: null });

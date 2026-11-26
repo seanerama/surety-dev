@@ -60,6 +60,9 @@ import {
 } from './observe.js';
 import { recordCompatibility } from '../../deploy/compatibility.js';
 import type { TreeAnswer } from '../../deploy/output-kind.js';
+import { bindTarget, confirmRequired, consumeConfirmation, outsideTarget, targetAnswer, targetBindingOf } from './deploy-target.js';
+import { recordDelegatedAction } from './delegation.js';
+import { recordRestoreEvaluation, restoreFacts, restoreOfAuthorization } from './restore.js';
 
 type Db = Tx['db'];
 
@@ -746,6 +749,12 @@ export interface RequestArgs {
   // Who requests (D6 §6.8, A.3): the owner's command, or the engine under
   // `alpha_deploy: on_phase_complete`.
   requested_by?: 'human' | 'policy';
+  // D4: the preview hash of the deployment_target_approval the owner's
+  // request confirms.
+  preview_hash?: unknown;
+  // WO1 Q1 (store/transitions/restore.ts): the owner's restore of this
+  // iteration's Alpha, authorized against the scope that qualified it.
+  restore?: { iteration: string };
 }
 
 // ---- the deployment request and its key (D6 §6.8, A.3; K9; B14; SEAM.md §354) ----------------
@@ -855,7 +864,7 @@ function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_
 // adapter is qualified, under a key no request has had. Nothing while a
 // deployment of the candidate and environment is pending: the policy never
 // joins another request.
-export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
+export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string; ask?: true } | null {
   if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
   // The policy waits for a specification change to settle (the driver's
   // ruling 1 on M401's T1 runs, slice 37): no request while a change of the
@@ -891,9 +900,31 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     if (existing && !preparing(existing) && !reopened(db, existing, candidate)) continue;
     const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
     if (all.some((a) => pending(db, a))) continue;
+    // D4 (DECISIONS item 57): outside the approved brief's target, the
+    // policy requests nothing before the owner's decision: asked once (the
+    // tick raises it), then skipped while open or rejected, requested once
+    // approved.
+    if (outsideTarget(db, args.project, env, config) !== null) {
+      const answered = targetAnswer(db, candidate, config.id);
+      if (answered === null) return { candidate, environment: env.name, key, ask: true };
+      if (answered.state !== 'approve') continue;
+    }
     return { candidate, environment: env.name, key };
   }
   return null;
+}
+
+// D4: the owner rejected a deployment outside the approved brief's target:
+// the policy's request recorded `not_issued` `owner_rejected` under its key,
+// never made again for that configuration.
+export function recordTargetRejected(tx: Tx, args: { project: string; candidate: string; environment: string; config: string }): void {
+  const key = requestKey(tx.db, { project: args.project, candidate: args.candidate, config: args.config });
+  const existing = requestOfKey(tx.db, args.project, key);
+  if (existing && existing.requested_by === 'policy') {
+    tx.db.prepare(`UPDATE "deployment_requests" SET "outcome" = 'not_issued', "reason" = 'owner_rejected' WHERE "id" = ? AND "outcome" <> 'deployed'`).run(existing.id);
+    return;
+  }
+  recordRequest(tx, { project: args.project, key, requested_by: 'policy', candidate: args.candidate, environment: args.environment, authorization: null, work_item: null, outcome: 'not_issued', refusal: { code: 'owner_rejected', reason: 'the owner rejected the deployment outside the approved brief\'s target' } });
 }
 
 // A policy request recorded `not_issued` is made again under its key when
@@ -1160,7 +1191,29 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   // pending, a request is answered with it and creates nothing.
   const pendingRow = all.find((a) => pending(tx.db, a));
   const requestedBy = args.requested_by ?? 'human';
-  const key = requestKey(tx.db, { project: args.project, candidate: candidate.id, config: config.id });
+  // WO1 Q1: a restore is checked again here (each refusal names why, and
+  // nothing is recorded), and has a key of its own.
+  const restore = args.restore ? restoreFacts(tx.db, { project: args.project, iteration: args.restore.iteration, environment: env.name }).source : null;
+  if (restore !== null && restore.candidate.id !== candidate.id) throw new Refusal(409, 'illegal_transition', `Candidate ${candidate.id} is not iteration ${restore.iteration.seq}'s Alpha candidate (${restore.candidate.id}).`, 'Restore the iteration again.', { candidate: candidate.id });
+  const key = restore === null ? requestKey(tx.db, { project: args.project, candidate: candidate.id, config: config.id }) : canonical({ project: args.project, restore: restore.iteration.id, candidate: candidate.id, environment_configuration: config.id });
+  // D4 (DECISIONS item 57): a deployment outside the approved brief's
+  // target needs the owner's decision before anything of it is authorized:
+  // the owner's request confirms it with the decision's preview hash (409
+  // confirm_required otherwise, the decision committed); the policy's
+  // requests it only once approved.
+  if (requestedBy === 'human') {
+    const c = consumeConfirmation(tx, { project: args.project, candidate: candidate.id, env, config, preview_hash: args.preview_hash });
+    if (!c.confirmed) {
+      const r = confirmRequired({ environment: env.name, decision: c.decision?.id ?? '', preview_hash: c.decision?.preview_hash ?? '', origin: c.origin });
+      return { status: r.status, body: r.body() };
+    }
+  } else if (outsideTarget(tx.db, args.project, env, config) !== null && targetAnswer(tx.db, candidate.id, config.id)?.state !== 'approve') {
+    return { status: 200, body: { request: null, skipped: 'outside_approved_target' } };
+  }
+  // An environment the brief named but that was not configured when it was
+  // approved is bound to the identity it is first requested under.
+  const bound = targetBindingOf(tx.db, args.project);
+  if (bound !== null && bound.config_identity === null && (env.name === bound.name || env.id === bound.environment)) bindTarget(tx, { iteration: bound.iteration });
   if (requestedBy === 'policy') {
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
@@ -1218,7 +1271,10 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   const bkey = bindingKey(binding);
   const proposed = all.find((a) => a.status === 'proposed' && bindingKey(bindingOf(a)) === bkey);
   const auth = proposed ?? insertAuthorization(tx, { project: args.project, candidate, binding, generation: (all.at(-1)?.generation ?? 0) + 1 });
-  const { evaluation } = evaluate(tx, { ...args.facts, project: args.project, candidate: candidate.id, kind: 'alpha_authorize', authorization: auth.id });
+  const { evaluation } =
+    restore !== null
+      ? { evaluation: recordRestoreEvaluation(tx, { source: restore, authorization: { ...auth, project: args.project }, environment: env.id, artifact: artifact.digest }) }
+      : evaluate(tx, { ...args.facts, project: args.project, candidate: candidate.id, kind: 'alpha_authorize', authorization: auth.id });
   const now = tx.db.prepare('SELECT * FROM "deployment_authorizations" WHERE "id" = ?').get(auth.id) as AuthRow;
   if (now.status !== 'issued') {
     // The refused request keeps its evaluation on the proposed row (A.3:
@@ -1303,7 +1359,42 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     },
     {},
   );
-  record(auth.id, 'pending');
+  const made = record(auth.id, 'pending');
+  if (restore !== null) {
+    const spec = restore.scope.spec_revision === null ? undefined : (tx.db.prepare('SELECT "version" FROM "spec_revisions" WHERE "id" = ?').get(restore.scope.spec_revision) as { version: number } | undefined);
+    const what = {
+      iteration: restore.iteration.seq,
+      iteration_id: restore.iteration.id,
+      candidate: candidate.id,
+      spec_revision: restore.scope.spec_revision,
+      spec_version: spec?.version ?? null,
+      protected_version: restore.scope.effective_protected_version,
+      qualified_by: restore.evaluation,
+      qualified_scope: restore.scope.id,
+    };
+    tx.db.prepare('UPDATE "deployment_requests" SET "restore" = ? WHERE "id" = ?').run(canonical(what), made.id);
+    tx.emit('prototype.alpha_not_attributed', { project: args.project, iteration: restore.iteration.id }, { candidate: candidate.id, deployment_request: made.id, operation: null, reason: `a restore of iteration ${restore.iteration.seq}'s Alpha: authorized against the scope that qualified it, attributed to no current iteration`, restore: what });
+  }
+  // D4, D7: the policy's request of the approved brief's deployment is an act
+  // performed under the brief.
+  if (requestedBy === 'policy') {
+    const b = targetBindingOf(tx.db, args.project);
+    if (b !== null) {
+      const brief = (tx.db.prepare('SELECT "brief_decision" FROM "prototype_iterations" WHERE "id" = ?').get(b.iteration) as { brief_decision: string | null } | undefined)?.brief_decision ?? null;
+      recordDelegatedAction(tx, {
+        project: args.project,
+        iteration: b.iteration,
+        kind: 'deployment_requested',
+        subject_type: 'deployment_request',
+        subject_id: made.id,
+        authorized_by_kind: 'decision',
+        authorized_by: targetAnswer(tx.db, candidate.id, config.id)?.decision.id ?? brief,
+        performed_by: 'policy:alpha_deploy',
+        scope: { candidate: candidate.id, environment: env.name, config: config.id, config_identity: config.config_identity, brief_target: b },
+        basis: { authorization: auth.id, evaluation: evaluation.id },
+      });
+    }
+  }
   return answer(201, now, evaluation);
 }
 
@@ -2184,6 +2275,18 @@ export type Verdict = { verdict: 'hold'; facts: Fact[] } | { verdict: 'wait'; fa
 // rolled back. It neither issues nor consumes; the operation's own
 // consumption of its authorization is not a change.
 function eligible(tx: Tx, op: OpRow, frozen: FrozenIntent, gate: Record<string, unknown>, evaluate: Evaluate): { ok: boolean; reasons: unknown[] } {
+  // WO1 Q1: a restore's deployment is eligible on the scope that qualified
+  // the restored Alpha and the current environment authorization, read
+  // again now (restore.ts restoreFacts), never on the current specification.
+  const restoring = frozen.authorization === null ? null : restoreOfAuthorization(tx.db, frozen.authorization);
+  if (restoring !== null) {
+    try {
+      restoreFacts(tx.db, { project: op.project, iteration: restoring, environment: frozen.environment });
+      return { ok: true, reasons: [] };
+    } catch (err) {
+      return { ok: false, reasons: [{ code: err instanceof Refusal ? err.code : 'EVALUATION_FAILED', subjects: [err instanceof Refusal ? err.reason : (err as Error).message] }] };
+    }
+  }
   const events = tx.events.length;
   tx.db.exec('SAVEPOINT deploy_eligibility');
   try {
@@ -3841,8 +3944,9 @@ export function afterCompletion(tx: Tx, args: { operation: string; candidate: st
       tx.emit('candidate.advanced', { project: c.project, candidate: c.id }, { from: 'developing', to: 'alpha_deployed', evaluation: args.evaluation, operation: op.id });
       // A rapid prototype's open iteration records its Alpha (R7; slice E1),
       // with the deployment request this operation served.
-      const request = op.authorization === null ? undefined : (tx.db.prepare('SELECT "id" FROM "deployment_requests" WHERE "authorization" = ? ORDER BY rowid DESC LIMIT 1').get(op.authorization) as { id: string } | undefined);
-      recordIterationAlpha(tx, { project: c.project, candidate: c.id, request: request?.id ?? null, operation: op.id });
+      const request = op.authorization === null ? undefined : (tx.db.prepare('SELECT "id", "restore" FROM "deployment_requests" WHERE "authorization" = ? ORDER BY rowid DESC LIMIT 1').get(op.authorization) as { id: string; restore: string | null } | undefined);
+      // WO1 Q1: a restored Alpha is no current iteration's.
+      if (!request?.restore) recordIterationAlpha(tx, { project: c.project, candidate: c.id, request: request?.id ?? null, operation: op.id });
     }
     endOperation(tx, op, 'complete', 'alpha_complete');
     return;

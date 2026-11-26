@@ -46,13 +46,16 @@ import { attemptSpendEstimate, attemptSpendUnavailable } from '../store/transiti
 import { recordSemantics } from '../spec/approval.js';
 import { SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_SECTIONS, type SemanticFinding, type SpecRepresentation } from '../spec/semantics.js';
 import { INDEX_COLUMNS } from '../checks/requirement-index.js';
+import { KIND_INVENTORY } from '../checks/scope.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
-import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
+import { policyRevision, projectEffective, projectPolicy } from '../store/transitions/settings.js';
 import { requestedModelOf } from '../store/transitions/requested-model.js';
 import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, endProviderHold, providerHoldOf, providerRefusalReason, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
+import { recordDelegatedAction } from '../store/transitions/delegation.js';
+import { bindTarget } from '../store/transitions/deploy-target.js';
 import type { PlanCheckResult } from '../plan/check.js';
 
 type Db = Tx['db'];
@@ -71,13 +74,26 @@ export const POLICY_ROUTING = 'policy_authorized';
 
 // The brief, exactly the shape the console renders (console C1,
 // ws-prototype.js BRIEF_SHAPE), in its order.
-export const BRIEF_FIELDS = ['version', 'prepared_at', 'app', 'for', 'experience', 'included', 'objectives', 'mocked', 'left_out', 'assumptions', 'limitations', 'constraints', 'target', 'models', 'estimates', 'preparation', 'limits', 'stop_conditions'] as const;
+// DECISIONS item 57 (S7; the owner's rulings D1 to D4 and D8 of 2026-11-26):
+// what one approval of the brief authorizes, stated in it: `required_checks`
+// (the checks the build must pass, and the tightenings the brief itself
+// authorizes), `repairs` (the repair allowance and what it is spent on),
+// `plan_bounds` (the plan the policy publishes without asking) beside the
+// `target` (with its configuration identity and adapter) and the
+// `preparation` (already spent, not authorized by this approval). A brief
+// prepared before them lacks them; the reads serve them as null with the
+// basis `not_in_brief_version`.
+export const BRIEF_FIELDS = ['version', 'prepared_at', 'app', 'for', 'experience', 'included', 'objectives', 'mocked', 'left_out', 'assumptions', 'limitations', 'constraints', 'target', 'models', 'estimates', 'preparation', 'limits', 'required_checks', 'repairs', 'plan_bounds', 'stop_conditions'] as const;
+// The fields a brief prepared before DECISIONS item 57 has (the brief's
+// first version of its shape).
+export const BRIEF_FIELDS_BEFORE_0053 = ['version', 'prepared_at', 'app', 'for', 'experience', 'included', 'objectives', 'mocked', 'left_out', 'assumptions', 'limitations', 'constraints', 'target', 'models', 'estimates', 'preparation', 'limits', 'stop_conditions'] as const;
+export const NOT_IN_BRIEF_VERSION = 'not_in_brief_version';
 // What the Spec Writer's result gives (`brief` in its report): the
 // idea-derived fields. The rest are the engine's, from what it serves.
 export const MODEL_TEXT_FIELDS = ['app', 'for', 'experience'] as const;
 export const MODEL_LIST_FIELDS = ['included', 'objectives', 'mocked', 'left_out', 'assumptions', 'limitations', 'constraints'] as const;
 export const MODEL_FIELDS = [...MODEL_TEXT_FIELDS, ...MODEL_LIST_FIELDS, 'estimates'] as const;
-export const ENGINE_FIELDS = ['version', 'prepared_at', 'target', 'models', 'preparation', 'limits', 'stop_conditions'] as const;
+export const ENGINE_FIELDS = ['version', 'prepared_at', 'target', 'models', 'preparation', 'limits', 'required_checks', 'repairs', 'plan_bounds', 'stop_conditions'] as const;
 const ESTIMATE_KEYS = ['runs', 'tokens', 'usd', 'minutes'] as const;
 
 // The roles a T1 prototype's build runs (no Reviewer at T1, F §5.7).
@@ -88,7 +104,7 @@ const BUILD_ROLES = ['spec_writer', 'architect', 'verifier', 'builder'] as const
 export const STOP_CONDITIONS = [
   'a limit is reached (token allowance, estimated spend, runtime, or automatic repairs): no new run starts; runs already running end at their own limits',
   'a change to the automated checks or their toolchain needs your review (check approval)',
-  'the first plan is outside the prototype bounds (more than one phase or two stages, or beyond the brief): you approve it as an ordinary plan',
+  'the plan is outside the prototype bounds (more than one phase or two stages, a permission, asset or tier override outside the brief, or the engine cannot establish that it fits): you approve it as an ordinary plan',
   'work fails after its automatic repairs, or a gate refuses: you retry, cancel or discard',
   'a check change the engine cannot classify, a finding you must disposition, or an out-of-band change to the repository or the environment',
   "the Alpha environment is not configured, its adapter is not qualified, or its deployment's verification fails",
@@ -205,10 +221,180 @@ function preparationPending(db: Db, iteration: string): string | null {
   const row = db
     .prepare(
       `SELECT w."id" FROM "work_items" w WHERE w."kind" = 'brief_preparation' AND w."status" NOT IN ('complete', 'cancelled', 'parked')
-         AND json_extract(w."subject", '$.decision') IN (SELECT d."id" FROM "decisions" d WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ?) LIMIT 1`,
+         AND (json_extract(w."subject", '$.decision') IN (SELECT d."id" FROM "decisions" d WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ?)
+           OR (w."trigger_source" = 'prototype_preparation' AND w."trigger_id" = 'allowance:' || ?)) LIMIT 1`,
     )
-    .get(iteration) as { id: string } | undefined;
+    .get(iteration, iteration) as { id: string } | undefined;
   return row?.id ?? null;
+}
+
+// D8: the trigger of a preparation the allowance authorized names its
+// iteration (`allowance:<iteration>`; a work item's subject keys are D1
+// A.3's closed list, so the subject says only its cause).
+export const ALLOWANCE_CAUSE = 'preparation_allowance';
+const ALLOWANCE_TRIGGER = 'allowance:';
+export function allowanceIterationOf(db: Db, workItem: string): string | null {
+  const w = db.prepare('SELECT "trigger_source", "trigger_id" FROM "work_items" WHERE "id" = ?').get(workItem) as { trigger_source: string; trigger_id: string } | undefined;
+  return w && w.trigger_source === PREPARATION_SOURCE && w.trigger_id.startsWith(ALLOWANCE_TRIGGER) ? w.trigger_id.slice(ALLOWANCE_TRIGGER.length) : null;
+}
+
+// The iteration a brief preparation's work item prepares: by the decision
+// that authorized it, or (D8) by the allowance's trigger.
+function preparationIterationOf(db: Db, item: { id: string; subject: string }): IterationLite | undefined {
+  const byAllowance = allowanceIterationOf(db, item.id);
+  if (byAllowance !== null) return iterationById(db, byAllowance);
+  const s = JSON.parse(item.subject) as { decision?: string };
+  if (typeof s.decision !== 'string') return undefined;
+  return db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(s.decision) as IterationLite | undefined;
+}
+
+// ---- D8: the preparation allowance (DECISIONS item 57) -------------------------------------
+
+// The owner's ruling D8 of 2026-11-26: "Let me authorize one bounded
+// preparation run per iteration, with the model and limits visible and the
+// allowance revocable. Starting an iteration should disclose that it uses
+// this allowance. If the allowance is absent, exhausted, or would be
+// exceeded, ask first." Whether the project's allowance covers the
+// iteration's preparation now: granted (`per_iteration`), its model the one
+// the Spec Writer requests (provider and model), the run's effective token
+// limit and its estimated cost within its limits (a paid run whose cost
+// cannot be estimated is not within), the role's backend resolved, and no
+// preparation of the iteration made under it yet (one per iteration).
+// `why` names what it does not cover; null when the allowance is off.
+export interface AllowanceVerdict {
+  covered: boolean;
+  why: string | null;
+  snapshot: { by: 'allowance'; policy_revision: number | null; policy_revision_id: string | null; provider: string | null; model: string | null; run_token_limit: number | null; estimated_usd: number | null; limits: { run_tokens: number | null; usd_estimated: number | null }; paid: boolean | null } | null;
+}
+
+export function preparationAllowance(db: Db, iteration: string): AllowanceVerdict {
+  const it = iterationById(db, iteration);
+  if (!it) return { covered: false, why: null, snapshot: null };
+  const policy = projectEffective(db, it.project);
+  if (policy.prototype_preparation_allowance !== 'per_iteration') return { covered: false, why: null, snapshot: null };
+  const named = typeof policy.prototype_preparation_model === 'string' ? policy.prototype_preparation_model : null;
+  const at = named === null ? -1 : named.indexOf('/');
+  const provider = at > 0 ? named!.slice(0, at) : null;
+  const model = at > 0 ? named!.slice(at + 1) : null;
+  const m = preparationManifest(db, iteration);
+  const runTokens = typeof policy.prototype_preparation_run_tokens === 'number' ? policy.prototype_preparation_run_tokens : null;
+  const usdCap = typeof policy.prototype_preparation_usd_estimated === 'number' ? policy.prototype_preparation_usd_estimated : null;
+  const snapshot = {
+    by: 'allowance' as const,
+    policy_revision: policyRevision(db, it.project),
+    policy_revision_id: policyRevisionIdOf(db, it.project),
+    provider: typeof m.provider === 'string' ? m.provider : null,
+    model: typeof m.model === 'string' ? m.model : null,
+    run_token_limit: typeof m.run_token_limit === 'number' ? m.run_token_limit : null,
+    estimated_usd: typeof m.estimated_usd === 'number' ? m.estimated_usd : null,
+    limits: { run_tokens: runTokens, usd_estimated: usdCap },
+    paid: typeof m.paid === 'boolean' ? m.paid : null,
+  };
+  const not = (why: string): AllowanceVerdict => ({ covered: false, why, snapshot });
+  if (provider === null || model === null) return not('the allowance names no model (prototype_preparation_model)');
+  if (m.provider !== provider || m.model !== model) return not(`the ${PREPARATION_ROLE} role requests ${String(m.provider)}/${String(m.model)}, and the allowance authorizes ${provider}/${model} only`);
+  if (m.resolution === 'refused') return not(`the ${PREPARATION_ROLE} role's backend is refused now`);
+  const used = db
+    .prepare(`SELECT w."id" FROM "work_items" w WHERE w."kind" = 'brief_preparation' AND w."trigger_source" = ? AND w."trigger_id" = ? LIMIT 1`)
+    .get(PREPARATION_SOURCE, `${ALLOWANCE_TRIGGER}${it.id}`) as { id: string } | undefined;
+  if (used) return not(`the allowance's one preparation of iteration ${it.seq} was already made (work item ${used.id})`);
+  if (runTokens === null || snapshot.run_token_limit === null || snapshot.run_token_limit > runTokens) return not(`the run's token limit (${String(snapshot.run_token_limit)}) exceeds the allowance's ${String(runTokens)} (prototype_preparation_run_tokens)`);
+  if (m.paid === true && (snapshot.estimated_usd === null || usdCap === null)) return not(`the run's cost cannot be estimated (${String(m.estimate_basis)}), so it cannot be shown within the allowance's estimated ${usd(usdCap)}`);
+  if (m.paid === true && snapshot.estimated_usd! > usdCap!) return not(`the run's estimated cost (${usd(snapshot.estimated_usd)}) exceeds the allowance's ${usd(usdCap)} (prototype_preparation_usd_estimated)`);
+  return { covered: true, why: null, snapshot };
+}
+
+// At an iteration's creation (store/transitions/prototype.ts createIteration):
+// the preparation authorized by the allowance when it covers it, its work
+// created at once, no decision; the iteration records the allowance's
+// snapshot, and the act is a delegated action. null when it does not cover
+// it (the owner is then asked, the question naming why).
+export function prepareByAllowance(tx: Tx, args: { project: string; iteration: string }): { work_item: string; preparation: NonNullable<AllowanceVerdict['snapshot']> } | null {
+  const v = preparationAllowance(tx.db, args.iteration);
+  if (!v.covered || v.snapshot === null) return null;
+  const it = iterationById(tx.db, args.iteration)!;
+  const s = v.snapshot;
+  const work = observeTrigger(
+    tx,
+    {
+      project: args.project,
+      kind: PREPARATION_WORK,
+      trigger_source: PREPARATION_SOURCE,
+      trigger_id: `${ALLOWANCE_TRIGGER}${it.id}`,
+      trigger_generation: 1,
+      subject: { cause: ALLOWANCE_CAUSE },
+      chain: 0,
+    },
+    { iteration: it.id, allowance: s.policy_revision_id },
+  ).work_item.id;
+  tx.db.prepare(`UPDATE "prototype_iterations" SET "preparation_authority" = 'allowance', "preparation_allowance" = ? WHERE "id" = ?`).run(JSON.stringify(s), it.id);
+  recordDelegatedAction(tx, {
+    project: args.project,
+    iteration: it.id,
+    kind: 'preparation_by_allowance',
+    subject_type: 'work_item',
+    subject_id: work,
+    authorized_by_kind: 'allowance',
+    authorized_by: s.policy_revision_id,
+    performed_by: 'policy:preparation_allowance',
+    scope: { runs: 1, run_token_limit: s.run_token_limit, estimated_usd: s.estimated_usd, limits: s.limits, provider: s.provider, model: s.model },
+    basis: { iteration_seq: it.seq, paid: s.paid },
+  });
+  tx.emit('prototype.preparation_authorized', { project: args.project, iteration: it.id }, { by: 'allowance', policy_revision: s.policy_revision, policy_revision_id: s.policy_revision_id, work_item: work, role: PREPARATION_ROLE, provider: s.provider, model: s.model, run_token_limit: s.run_token_limit, estimated_usd: s.estimated_usd, paid: s.paid });
+  return { work_item: work, preparation: s };
+}
+
+// D8: what an Iterate now would do of the next iteration's preparation (GET
+// …/iterations' next_iterate, so that the owner sees it before the click):
+// under the allowance (its model, run token limit and estimated cost), or
+// asked (and why). The next iteration's run would be given the lower of the
+// per-run limit and the iteration token allowance (nothing is used yet).
+export function nextIteratePreparation(db: Db, project: string): Record<string, unknown> {
+  const policy = projectEffective(db, project);
+  if (policy.prototype_preparation_allowance !== 'per_iteration') return { by: 'owner', allowance: 'off', why: 'the preparation allowance is not granted: Iterate asks you to authorize the preparation run' };
+  const named = typeof policy.prototype_preparation_model === 'string' ? policy.prototype_preparation_model : null;
+  const rm = requestedModelOf(db, project, PREPARATION_ROLE);
+  const limit = Math.min(policy.budget_run_billable_tokens as number, policy.prototype_budget_tokens as number);
+  const paid = rm.provider !== 'scripted';
+  const est = paid ? attemptSpendEstimate(rm.provider, rm.model, limit, 1) : null;
+  const usdCap = policy.prototype_preparation_usd_estimated as number;
+  const base = { allowance: 'per_iteration', policy_revision: policyRevision(db, project), provider: rm.provider, model: rm.model, allowance_model: named, run_token_limit: limit, estimated_usd: est?.usd ?? null, limits: { run_tokens: policy.prototype_preparation_run_tokens, usd_estimated: usdCap } };
+  const why =
+    named === null
+      ? 'the allowance names no model (prototype_preparation_model)'
+      : named !== `${rm.provider}/${rm.model}`
+        ? `the ${PREPARATION_ROLE} role requests ${rm.provider}/${rm.model}, and the allowance authorizes ${named} only`
+        : rm.resolution === 'refused'
+          ? `the ${PREPARATION_ROLE} role's backend is refused now`
+          : limit > (policy.prototype_preparation_run_tokens as number)
+            ? `the run's token limit (${limit}) exceeds the allowance's ${String(policy.prototype_preparation_run_tokens)}`
+            : paid && est === null
+              ? "the run's cost cannot be estimated"
+              : paid && est!.usd > usdCap
+                ? `the run's estimated cost (${usd(est!.usd)}) exceeds the allowance's ${usd(usdCap)}`
+                : null;
+  return why === null ? { by: 'allowance', ...base, discloses: `Iterate uses the preparation allowance: one ${roleDisplayName(PREPARATION_ROLE)} run requesting ${rm.provider}/${rm.model}, up to ${limit} billable tokens${paid ? ` (estimated ${usd(est!.usd)} at most, not a cap)` : ' (the scripted provider is unpaid)'}, dispatched without asking you.` } : { by: 'owner', ...base, why };
+}
+
+const policyRevisionIdOf = (db: Db, project: string): string | null =>
+  (db.prepare('SELECT "policy_revision" FROM "projects" WHERE "id" = ?').get(project) as { policy_revision: string | null } | undefined)?.policy_revision ?? null;
+
+// What the iteration's preparation was authorized by, as recorded (the
+// iteration read, the Iterate answer): the allowance's snapshot, the
+// owner's decision, or null when not yet authorized (or recorded before
+// migration 0053).
+export function preparationAuthorityOf(db: Db, iteration: string): Record<string, unknown> | null {
+  const row = db.prepare('SELECT "preparation_authority", "preparation_allowance" FROM "prototype_iterations" WHERE "id" = ?').get(iteration) as { preparation_authority: string | null; preparation_allowance: string | null } | undefined;
+  if (!row || row.preparation_authority === null) return null;
+  if (row.preparation_authority === 'allowance') {
+    try {
+      return JSON.parse(row.preparation_allowance ?? 'null') as Record<string, unknown>;
+    } catch {
+      return { by: 'allowance', policy_revision: null };
+    }
+  }
+  const d = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'approve' ORDER BY "seq" DESC LIMIT 1`).get(iteration) as { id: string } | undefined;
+  return { by: 'owner', decision: d?.id ?? null };
 }
 
 export function preparationManifest(db: Db, iteration: string): Record<string, unknown> {
@@ -294,6 +480,10 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
         ? ''
         : ` You are asked again: your approval (decision ${prior.decision}) authorized a run requesting model ${prior.model}, but the ${PREPARATION_ROLE} role now requests model ${String(m.model)}, so no run was dispatched under it.`;
     const refused = m.resolution === 'refused' ? ` The ${PREPARATION_ROLE} role's backend is refused now (${requestedModelOf(tx.db, it.project, PREPARATION_ROLE).refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+    // D8: the project's preparation allowance is granted but does not cover
+    // this run: why, said here.
+    const allowance = preparationAllowance(tx.db, it.id);
+    const notCovered = allowance.why === null ? '' : ` You are asked because the preparation allowance does not cover this run: ${allowance.why}.`;
     const perRun = projectPolicy(tx.db, it.project).budget_run_billable_tokens!;
     const limitText =
       m.run_token_limit === perRun
@@ -316,7 +506,8 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
       manifest: m,
       // Composed only when the decision is raised or re-raised: a decision
       // already open or consumed keeps the question it recorded.
-      question: `Approve one ${role} run to prepare the prototype brief? (prototype iteration ${it.seq})${labelled}${refused}${why}${continues} The run reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.`,
+      question: `Approve one ${role} run to prepare the prototype brief? (prototype iteration ${it.seq})${labelled}${refused}${notCovered}${why}${continues} The run reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.`,
+      ...(allowance.why === null ? {} : { evidence: { allowance_not_covering: allowance.why, allowance: allowance.snapshot } }),
       options: [
         {
           key: 'approve',
@@ -342,6 +533,7 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     }
     const m = preparationManifest(tx.db, it.id);
     recordApproval(tx, d, { consequence: `one brief preparation run of iteration ${it.seq} authorized`, subjectType: 'prototype_iteration', subjectId: it.id });
+    tx.db.prepare(`UPDATE "prototype_iterations" SET "preparation_authority" = 'owner' WHERE "id" = ?`).run(it.id);
     const work = observeTrigger(tx, { project: it.project, kind: PREPARATION_WORK, trigger_source: PREPARATION_SOURCE, trigger_id: d.id, trigger_generation: 1, subject: { decision: d.id }, chain: 0 }, { iteration: it.id, decision: d.id }).work_item.id;
     setStatus(tx, it, it.status, 'wait: the brief is being prepared');
     tx.emit('prototype.preparation_authorized', { project: it.project, iteration: it.id }, { decision: d.id, work_item: work, role: m.role, provider: m.provider, model: m.model, run_token_limit: m.run_token_limit, estimated_usd: m.estimated_usd, paid: m.paid });
@@ -404,7 +596,29 @@ function modelChangedApproval(db: Db, iteration: string, model: string): { decis
 // requested model is raised; nothing runs until it is answered. Returns
 // whether the dispatch was refused so.
 export function preparationModelMismatch(tx: Tx, item: WorkRow, requested: string): boolean {
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
+  const subject = JSON.parse(item.subject) as { decision?: string };
+  // D8: a preparation under the allowance is dispatched only while the role
+  // requests the model the allowance authorized (its snapshot on the
+  // iteration); otherwise no run, the work cancelled, and the owner asked.
+  const allowanceOf = allowanceIterationOf(tx.db, item.id);
+  if (allowanceOf !== null) {
+    const it = iterationById(tx.db, allowanceOf);
+    const snap = (() => {
+      try {
+        return JSON.parse((tx.db.prepare('SELECT "preparation_allowance" FROM "prototype_iterations" WHERE "id" = ?').get(allowanceOf) as { preparation_allowance: string | null } | undefined)?.preparation_allowance ?? 'null') as { model?: string | null; policy_revision_id?: string | null } | null;
+      } catch {
+        return null;
+      }
+    })();
+    if (snap?.model === requested) return false;
+    const why = `the ${PREPARATION_ROLE} role now requests model ${requested}, but the preparation allowance authorized a run requesting model ${String(snap?.model ?? 'unknown')}: no run was dispatched under it, and your approval is asked`;
+    transitionWork(tx, item, 'cancelled', {}, { cause: 'requested_model_changed', allowance: snap?.policy_revision_id ?? null, approved_model: snap?.model ?? null, requested_model: requested, reason: why });
+    if (!it) return true;
+    if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'approve preparation or discard', { reason: why });
+    raisePreparation(tx, { project: it.project, iteration: it.id });
+    return true;
+  }
+  const decision = subject.decision ?? null;
   if (decision === null) return false;
   const approved = approvedModelOf(tx.db, decision);
   if (approved === null || approved === requested) return false;
@@ -482,8 +696,7 @@ export function requestPreparation(tx: Tx, args: { project: string; iteration: s
 // or discard". A brief that was awaiting approval is left as it was.
 export function preparationEnded(tx: Tx, item: WorkRow, run: { id: string; outcome: string | null; reason_class: string | null; reason_text?: string | null }): void {
   transitionWork(tx, item, 'cancelled', {}, { run: run.id, outcome: run.outcome, cause: 'preparation_failed' });
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
-  const it = decision === null ? undefined : (tx.db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(decision) as IterationLite | undefined);
+  const it = preparationIterationOf(tx.db, item);
   if (!it) return;
   const why = `the brief preparation run ${run.id} ended ${run.outcome ?? 'unknown'}${run.reason_class && run.reason_class !== 'none' ? ` (${run.reason_class})` : ''}${run.reason_text ? `: ${run.reason_text}` : ''}`;
   if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'prepare again or discard', { reason: why });
@@ -567,6 +780,14 @@ export interface BriefTarget {
   kind: 'local_service';
   description: string;
   exposure_note: string;
+  // D4 (S5): the environment's current configuration and its identity, and
+  // its adapter, as they are when the brief is prepared; the approval binds
+  // the ones current then (prototype_iterations.target_*). null when the
+  // environment or its configuration is not recorded.
+  config?: string | null;
+  config_identity?: string | null;
+  adapter?: string | null;
+  adapter_version?: string | null;
 }
 
 // What the engine serves into the brief (R5, R6, R4): read in one store
@@ -576,10 +797,20 @@ export interface BriefFacts {
   version: number;
   target: BriefTarget;
   models: { provider: string; model: string; roles: string[] }[];
-  preparation: { authorized_at: string | null; runs: number; tokens: number | null; usd: number | null } | null;
+  preparation: { authorized_at: string | null; runs: number; tokens: number | null; usd: number | null; spent?: boolean; authorized_by?: { kind: 'decision' | 'allowance'; id: string | null }; this_approval?: string } | null;
   limits: Record<string, number | string | null>;
+  repairs?: { per_iteration: number | null; per_stage: number | null; meaning: string; never: string };
+  plan_bounds?: { phase: number; phases: number; max_stages: number; within: string; asks: string };
   stop_conditions: string[];
 }
+
+// What the brief's repair allowance is spent on (D3), and what it never does.
+export const REPAIRS_MEANING =
+  'The repair allowance (prototype_repairs_per_iteration, and prototype_repairs_per_stage for one stage\'s work) is spent on re-dispatching work that failed and on fixing a defect a check of the brief reproduces, within the brief\'s criteria and its token and estimated-spend limits; each repair is recorded with the finding, the fix and the check result that verified it.';
+export const REPAIRS_NEVER = 'Lowering, accepting or deferring a finding is never a repair: it stays your decision. When the allowance is exhausted, a repair would exceed the brief, or its success cannot be verified, you are asked.';
+// What the brief's required checks authorize of their own tightening (D2).
+export const TIGHTENINGS_AUTHORIZED =
+  "A check tightening tied to the brief's criteria, using the approved check commands and execution permissions and only adding to what is required, is applied under this brief; a change of what can execute, a loosening, one the engine cannot classify, or one outside the brief's criteria comes to you. The check's diff stays readable and the next candidate is verified against it.";
 
 // The Alpha target (R6): local_service on this host only. Its exposure as
 // the configuration records it: the engine configures a port and no bind
@@ -588,19 +819,22 @@ export interface BriefFacts {
 function targetOf(db: Db, project: string, environments: string[]): BriefTarget {
   const name = environments[0] ?? null;
   if (name === null) {
-    return { environment: null, kind: 'local_service', description: 'The specification names no environment: nothing can be deployed until it names one and you configure it.', exposure_note: 'No environment is named, so who could reach a deployment is unknown.' };
+    return { environment: null, kind: 'local_service', description: 'The specification names no environment: nothing can be deployed until it names one and you configure it.', exposure_note: 'No environment is named, so who could reach a deployment is unknown.', config: null, config_identity: null, adapter: null, adapter_version: null };
   }
   const env = db.prepare('SELECT "id", "adapter" FROM "environments" WHERE "project" = ? AND "name" = ?').get(project, name) as { id: string; adapter: string } | undefined;
   const config = env
-    ? (db.prepare(`SELECT "content" FROM "environment_configs" WHERE "environment" = ? AND "status" <> 'superseded' ORDER BY "version" DESC LIMIT 1`).get(env.id) as { content: string } | undefined)
+    ? (db.prepare(`SELECT "id", "content", "config_identity" FROM "environment_configs" WHERE "environment" = ? AND "status" <> 'superseded' ORDER BY "version" DESC LIMIT 1`).get(env.id) as { id: string; content: string; config_identity: string } | undefined)
     : undefined;
   let port: number | null = null;
+  let adapterVersion: string | null = null;
   try {
-    const c = config ? (JSON.parse(config.content) as { port?: unknown }) : null;
+    const c = config ? (JSON.parse(config.content) as { port?: unknown; adapter_version?: unknown }) : null;
     port = c && typeof c.port === 'number' ? c.port : null;
+    adapterVersion = c && typeof c.adapter_version === 'string' ? c.adapter_version : null;
   } catch {
     port = null;
   }
+  const binding = { config: config?.id ?? null, config_identity: config?.config_identity ?? null, adapter: env?.adapter ?? null, adapter_version: adapterVersion };
   const extra = environments.length > 1 ? ` The specification also names ${environments.slice(1).join(', ')}; the prototype deploys to ${name} only.` : '';
   if (port === null) {
     return {
@@ -608,6 +842,7 @@ function targetOf(db: Db, project: string, environments: string[]): BriefTarget 
       kind: 'local_service',
       description: `Environment "${name}": a transient service on this host (the local_service adapter, a systemd user unit), deployed when the prototype's checks pass.${extra}`,
       exposure_note: `Environment "${name}" has no configuration recorded yet: its port and who can reach it are not known, and the engine has not checked its exposure. Configure it before Alpha.`,
+      ...binding,
     };
   }
   return {
@@ -615,6 +850,7 @@ function targetOf(db: Db, project: string, environments: string[]): BriefTarget 
     kind: 'local_service',
     description: `Environment "${name}": a transient service on this host (the local_service adapter, a systemd user unit) on port ${port}, deployed when the prototype's checks pass.${extra}`,
     exposure_note: `The service listens on port ${port} of this host. The configuration sets no bind address: whether it is reachable only from this host (loopback) or from your network depends on how the application binds, which the engine has not checked.`,
+    ...binding,
   };
 }
 
@@ -634,24 +870,95 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
   // The preparation: the authorization, the preparation runs so far (this
   // one under way: its usage is not settled, so tokens and cost are not
   // known yet; the iteration read serves the settled subtotal).
-  const run = db.prepare('SELECT r."iteration", w."subject" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(args.run) as { iteration: string | null; subject: string } | undefined;
+  const run = db.prepare('SELECT r."iteration", w."subject", w."id" AS "work_item", w."created_at" AS "work_created_at" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(args.run) as { iteration: string | null; subject: string; work_item: string; work_created_at: string } | undefined;
   let preparation: BriefFacts['preparation'] = null;
   if (run) {
     const decision = (JSON.parse(run.subject) as { decision?: string }).decision ?? null;
     const at = decision === null ? null : ((db.prepare('SELECT "consumed_at" FROM "decisions" WHERE "id" = ?').get(decision) as { consumed_at: string | null } | undefined)?.consumed_at ?? null);
     const runs = run.iteration === null ? 1 : (db.prepare(`SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."iteration" = ? AND w."kind" = 'brief_preparation'`).get(run.iteration) as { n: number }).n;
-    preparation = { authorized_at: at, runs, tokens: null, usd: null };
+    // D8: a preparation under the allowance names the allowance's policy
+    // revision; otherwise the decision that authorized it.
+    const allowanceIt = allowanceIterationOf(db, run.work_item);
+    const allowance = allowanceIt === null ? null : (preparationAuthorityOf(db, allowanceIt)?.policy_revision_id as string | null | undefined) ?? null;
+    const by = allowanceIt !== null ? { kind: 'allowance' as const, id: allowance } : { kind: 'decision' as const, id: decision };
+    const authorizedAt = allowanceIt !== null ? run.work_created_at : at;
+    preparation = {
+      authorized_at: authorizedAt,
+      runs,
+      tokens: null,
+      usd: null,
+      spent: true,
+      authorized_by: by,
+      this_approval: 'The preparation was already authorized and spent before this brief was written: approving the brief authorizes the build, not the preparation.',
+    };
   }
   const limits: BriefFacts['limits'] = {};
   for (const k of PROTOTYPE_LIMIT_KEYS) limits[k] = (policy[k] as number | undefined) ?? null;
   limits.reservation_rule = `Each run is given an effective allowance at dispatch: the lower of the per-run limit (budget_run_billable_tokens ${policy.budget_run_billable_tokens}) and what the iteration has left of its token allowance after its settled usage, its unknown allowances and the reservations of the other runs under way. The run reserves that allowance from dispatch until its usage is settled, and is stopped at it; usage that cannot be known is charged as an unknown allowance up to it, never as zero. A run that would get no positive allowance is not dispatched. Possible overshoot: what runs already running may still spend under their own allowances. The effective allowance, the reservation and the unknown allowance are estimated allowances, never measured consumption: the iteration read serves what the backends reported (usage) apart from them (unknown_allowance_tokens, reserved_tokens), and its committed figure names both parts.`;
-  return { version: latest + 1, target: targetOf(db, args.project, args.environments), models, preparation, limits, stop_conditions: [...STOP_CONDITIONS] };
+  const done = (db.prepare(`SELECT COALESCE(MAX("phase_number"), 0) AS n FROM "phase_plans" WHERE "project" = ? AND "status" = 'completed'`).get(args.project) as { n: number }).n;
+  const num = (k: string): number | null => (typeof policy[k] === 'number' ? (policy[k] as number) : null);
+  return {
+    version: latest + 1,
+    target: targetOf(db, args.project, args.environments),
+    models,
+    preparation,
+    limits,
+    repairs: { per_iteration: num('prototype_repairs_per_iteration'), per_stage: num('prototype_repairs_per_stage'), meaning: REPAIRS_MEANING, never: REPAIRS_NEVER },
+    plan_bounds: {
+      phase: done + 1,
+      phases: PROTOTYPE_BOUNDS.phases,
+      max_stages: PROTOTYPE_BOUNDS.max_stages,
+      within: `The plan for phase ${done + 1} is published without asking you when it adds exactly that one phase, has at most ${PROTOTYPE_BOUNDS.max_stages} stages, implements only this brief's requirements (and every one not yet implemented), and adds no platform permission, asset path or tier override the approved module map does not hold; updating the roadmap and the modules for it is routine. The basis is recorded.`,
+      asks: 'A plan beyond these bounds, or one the engine cannot establish fits them, is asked of you as an ordinary architecture and plan approval.',
+    },
+    stop_conditions: [...STOP_CONDITIONS],
+  };
+}
+
+// D2, S7: the checks the build must pass under the brief: the tier's kinds,
+// one acceptance check per criterion of the brief's specification, the
+// deployment's behavior check, and the tightenings the brief authorizes.
+export function requiredChecksOf(rep: Pick<SpecRepresentation, 'requirements'> | null): Record<string, unknown> {
+  const criteria = rep === null ? null : rep.requirements.filter((r) => r.withdrawn !== true).flatMap((r) => r.criteria.map((c) => c.id));
+  return {
+    tier: 'T1',
+    kinds: [...KIND_INVENTORY.T1],
+    // (Not named `acceptance`: the receipt names no field after an
+    // acceptance it does not record; M612.)
+    per_criterion: 'one acceptance-origin check for each criterion of the brief',
+    criteria,
+    post_deploy: ['post_deploy_behavior'],
+    tightenings: TIGHTENINGS_AUTHORIZED,
+  };
 }
 
 // The brief, whole, in BRIEF_FIELDS' order.
-export function composeBrief(model: ModelBrief, facts: BriefFacts, preparedAt: string): Record<string, unknown> {
-  const all: Record<string, unknown> = { ...model, version: facts.version, prepared_at: preparedAt, target: facts.target, models: facts.models, preparation: facts.preparation, limits: facts.limits, stop_conditions: facts.stop_conditions };
+export function composeBrief(model: ModelBrief, facts: BriefFacts, preparedAt: string, rep: Pick<SpecRepresentation, 'requirements'> | null = null): Record<string, unknown> {
+  const all: Record<string, unknown> = {
+    ...model,
+    version: facts.version,
+    prepared_at: preparedAt,
+    target: facts.target,
+    models: facts.models,
+    preparation: facts.preparation,
+    limits: facts.limits,
+    required_checks: requiredChecksOf(rep),
+    repairs: facts.repairs ?? null,
+    plan_bounds: facts.plan_bounds ?? null,
+    stop_conditions: facts.stop_conditions,
+  };
   return Object.fromEntries(BRIEF_FIELDS.map((k) => [k, all[k]]));
+}
+
+// A recorded brief as the reads serve it (S7): a brief prepared before
+// DECISIONS item 57 lacks the fields of what one approval authorizes; each is
+// served as null, the absent ones named with the basis
+// `not_in_brief_version`, never filled in from what the engine holds now.
+export function servedBrief(b: Record<string, unknown> | null): { brief: Record<string, unknown> | null; absent: { fields: string[]; basis: string } | null } {
+  if (b === null) return { brief: null, absent: null };
+  const absent = BRIEF_FIELDS.filter((k) => !Object.hasOwn(b, k));
+  if (absent.length === 0) return { brief: b, absent: null };
+  return { brief: Object.fromEntries(BRIEF_FIELDS.map((k) => [k, Object.hasOwn(b, k) ? b[k] : null])), absent: { fields: absent, basis: NOT_IN_BRIEF_VERSION } };
 }
 
 // The brief is complete and in its shape: every field, nothing else.
@@ -736,7 +1043,11 @@ export function briefApproved(tx: Tx, args: { project: string; run: string; deci
   tx.db
     .prepare(`UPDATE "prototype_iterations" SET "brief_spec_revision" = ?, "brief_decision" = ?, "approved_at" = ?, "status" = 'building', "next_step" = ?, "outcome_reason" = NULL WHERE "id" = ?`)
     .run(args.spec_revision, args.decision, tx.at, 'none: the first plan is being made', it.id);
-  tx.emit('prototype.brief_approved', { project: args.project, iteration: it.id, spec_revision: args.spec_revision }, { decision: args.decision, run: args.run, brief_record: m.brief_record, brief_version: m.brief_version });
+  // D4 (DECISIONS item 57): automatic deployment is bound to the
+  // environment the approved brief names, as configured now.
+  bindTarget(tx, { iteration: it.id });
+  const bound = tx.db.prepare('SELECT "target_environment", "target_config", "target_config_identity" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { target_environment: string | null; target_config: string | null; target_config_identity: string | null };
+  tx.emit('prototype.brief_approved', { project: args.project, iteration: it.id, spec_revision: args.spec_revision }, { decision: args.decision, run: args.run, brief_record: m.brief_record, brief_version: m.brief_version, target: bound });
   const work = observeTrigger(tx, { project: args.project, kind: 'replan', trigger_source: FIRST_PLAN_SOURCE, trigger_id: it.id, trigger_generation: 1, subject: { cause: FIRST_PLAN_SOURCE }, chain: 0 }, { iteration: it.id }).work_item.id;
   tx.emit('prototype.first_plan_requested', { project: args.project, iteration: it.id }, { work_item: work, bounds: PROTOTYPE_BOUNDS });
 }
@@ -772,6 +1083,9 @@ export interface BoundsContext {
   phase?: number;
   earlier_implemented?: string[];
   approved_modules?: { name: string; platform_permissions?: { permission: string; target: string }[]; asset_paths?: unknown[]; tier_override?: unknown }[] | null;
+  // D1 (DECISIONS item 57): an approved architecture exists whose module map
+  // the engine cannot read, so what the plan adds to it cannot be established.
+  approved_modules_unreadable?: boolean;
 }
 
 // The one place the prototype policy's bounds are defined (R1; slice E5's
@@ -814,15 +1128,28 @@ export function withinPrototypeBounds(content: Pick<BundleContent, 'roadmap' | '
   if (beyond.length > 0) outside.push(`the plan implements ${beyond.join(', ')}, beyond the approved brief's requirements`);
   const approved = brief.approved_modules ?? [];
   const held = new Set(approved.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)));
-  const permissions = content.modules.modules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)).filter((p) => !held.has(p));
+  const planModules = Array.isArray((content.modules as { modules?: unknown } | null | undefined)?.modules) ? content.modules.modules : [];
+  const permissions = planModules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)).filter((p) => !held.has(p));
   if (permissions.length > 0) outside.push(`the module map asks for platform permission(s): ${permissions.join('; ')}`);
   const sameAssets = (m: { name: string; asset_paths?: unknown[] | undefined }) => JSON.stringify(approved.find((a) => a.name === m.name)?.asset_paths ?? []) === JSON.stringify(m.asset_paths ?? []);
-  const assets = content.modules.modules.filter((m) => (m.asset_paths ?? []).length > 0 && !sameAssets(m)).map((m) => m.name);
+  const assets = planModules.filter((m) => (m.asset_paths ?? []).length > 0 && !sameAssets(m)).map((m) => m.name);
   if (assets.length > 0) outside.push(`module(s) ${assets.join(', ')} declare asset paths (design is off for a prototype)`);
-  const tiers = content.modules.modules.filter((m) => m.tier_override !== undefined && approved.find((a) => a.name === m.name)?.tier_override !== m.tier_override).map((m) => `${m.name} (${String(m.tier_override)})`);
+  const tiers = planModules.filter((m) => m.tier_override !== undefined && approved.find((a) => a.name === m.name)?.tier_override !== m.tier_override).map((m) => `${m.name} (${String(m.tier_override)})`);
   if (tiers.length > 0) outside.push(`module(s) ${tiers.join(', ')} override the prototype's tier`);
-  if (check && check.conformance === 'uncertain') outside.push(`the plan check found it uncertain${(check.uncertain ?? []).length > 0 ? `: ${(check.uncertain ?? []).join('; ')}` : ''}`);
-  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, expected_phase: expected, stages, adrs: Object.keys(content.adrs).length, requirements_uncovered: uncovered, permissions } };
+  // D1 (DECISIONS item 57, the owner's ruling of 2026-11-26: "Judge the plan
+  // against the approved brief using the actual changes"): what the plan
+  // check computed is uncertain (phase_size and the like) routes to the
+  // owner; the Architect's declared `conformance` is recorded in the basis
+  // and never routed on.
+  if (check && (check.uncertain ?? []).length > 0) outside.push(`the plan check found it uncertain: ${(check.uncertain ?? []).join('; ')}`);
+  // "Ask me when ... the engine cannot establish that it fits": never
+  // treated as within.
+  const cannot: string[] = [];
+  if (brief.approved_modules_unreadable === true) cannot.push('the approved module map cannot be read');
+  if (brief.requirement_keys.length === 0) cannot.push("the approved brief's requirements cannot be read");
+  if (!Array.isArray((content.modules as { modules?: unknown } | null | undefined)?.modules)) cannot.push("the plan's module map cannot be read");
+  if (cannot.length > 0) outside.push(`the engine cannot establish that the plan fits the approved brief: ${cannot.join('; ')}`);
+  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, expected_phase: expected, stages, adrs: Object.keys(content.adrs ?? {}).length, requirements_uncovered: uncovered, permissions } };
 }
 
 // What an iteration's plan is judged against now (S4): the approved brief's
@@ -851,7 +1178,9 @@ export function boundsContextOf(db: Db, project: string): BoundsContext {
   } catch {
     approved = null;
   }
-  return { requirement_keys: briefRequirementKeys(db, project), phase: done + 1, earlier_implemented: [...earlier].sort(), approved_modules: approved };
+  // D1: an approved architecture whose module map is not a list of modules.
+  const unreadable = arch !== undefined && !Array.isArray(approved);
+  return { requirement_keys: briefRequirementKeys(db, project), phase: done + 1, earlier_implemented: [...earlier].sort(), approved_modules: unreadable ? null : approved, ...(unreadable ? { approved_modules_unreadable: true } : {}) };
 }
 
 // Whether a replan's run is a prototype's first plan, and its iteration.
@@ -884,14 +1213,34 @@ export function routeFirstPlan(
   const verdict = withinPrototypeBounds(args.content, boundsContextOf(tx.db, args.project), args.check);
   if (it) tx.db.prepare('UPDATE "prototype_iterations" SET "plan_bundle" = ? WHERE "id" = ?').run(args.bundle, it.id);
   if (verdict.within && it && isPrototype(tx.db, args.project)) {
-    const approvals = { policy_authorized: { policy: 'rapid_prototype', iteration: it.id, bounds: PROTOTYPE_BOUNDS, policy_revision: policyRevision(tx.db, args.project) } };
+    // D1 (DECISIONS item 57: "Record the basis when it proceeds
+    // automatically"): the approved brief the plan was judged against and
+    // what the engine computed of the plan's actual changes; the Architect's
+    // declared conformance recorded as declared, not routed on.
+    const basis = planBasis(tx.db, it, args.check, verdict);
+    const approvals = { policy_authorized: { policy: 'rapid_prototype', iteration: it.id, bounds: PROTOTYPE_BOUNDS, policy_revision: policyRevision(tx.db, args.project), basis } };
     tx.db.prepare('UPDATE "plan_bundles" SET "approvals" = ? WHERE "id" = ?').run(JSON.stringify(approvals), args.bundle);
     const plan = args.publish();
     if (plan === null) return 'stale';
     tx.db.prepare('UPDATE "prototype_iterations" SET "phase_plan" = ? WHERE "id" = ?').run(plan, it.id);
+    const roadmap = (tx.db.prepare('SELECT r."version" FROM "phase_plans" p JOIN "roadmap_revisions" r ON r."id" = p."roadmap_revision" WHERE p."id" = ?').get(plan) as { version: number } | undefined)?.version ?? null;
+    const published = { ...basis, computed: { ...(basis.computed as Record<string, unknown>), roadmap_version: roadmap } };
+    if (roadmap !== null) tx.db.prepare('UPDATE "plan_bundles" SET "approvals" = ? WHERE "id" = ?').run(JSON.stringify({ policy_authorized: { ...approvals.policy_authorized, basis: published } }), args.bundle);
+    recordDelegatedAction(tx, {
+      project: args.project,
+      iteration: it.id,
+      kind: 'plan_published',
+      subject_type: 'plan_bundle',
+      subject_id: args.bundle,
+      authorized_by_kind: 'decision',
+      authorized_by: it.brief_decision,
+      performed_by: POLICY_PUBLISHER,
+      scope: { bounds: PROTOTYPE_BOUNDS, phase: verdict.facts.expected_phase, phase_plan: plan },
+      basis: published,
+    });
     const now = iterationById(tx.db, it.id)!;
     setStatus(tx, now, 'building', 'none: building');
-    tx.emit('prototype.plan_policy_authorized', { project: args.project, iteration: it.id, plan_bundle: args.bundle, phase_plan: plan }, { routing: POLICY_ROUTING, approved_by: POLICY_PUBLISHER, bounds: PROTOTYPE_BOUNDS, ...verdict.facts });
+    tx.emit('prototype.plan_policy_authorized', { project: args.project, iteration: it.id, plan_bundle: args.bundle, phase_plan: plan }, { routing: POLICY_ROUTING, approved_by: POLICY_PUBLISHER, bounds: PROTOTYPE_BOUNDS, ...verdict.facts, basis: published });
     return 'published';
   }
   args.raiseOwner();
@@ -901,6 +1250,35 @@ export function routeFirstPlan(
     tx.emit('prototype.plan_routed_to_owner', { project: args.project, iteration: it.id, plan_bundle: args.bundle }, { outside: verdict.outside, ...verdict.facts });
   }
   return 'owner';
+}
+
+// D1: the basis a plan published by the policy is recorded with: the brief
+// decision and its specification revision, the brief's record and digest,
+// what the plan check computed of the plan's changes, the Architect's
+// declared conformance (recorded, not routed on: the computed changes and
+// uncertainty route), and the bounds' facts.
+function planBasis(db: Db, it: IterationLite, check: PlanCheckResult, verdict: BoundsVerdict): Record<string, unknown> {
+  const row = db.prepare('SELECT "brief_spec_revision" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { brief_spec_revision: string | null } | undefined;
+  const record = it.brief_record === null ? undefined : (db.prepare('SELECT "sha256" FROM "records" WHERE "id" = ?').get(it.brief_record) as { sha256: string | null } | undefined);
+  const ch = check.changes;
+  return {
+    brief_decision: it.brief_decision,
+    spec_revision: row?.brief_spec_revision ?? null,
+    brief_record: it.brief_record,
+    brief_digest: record?.sha256 ?? null,
+    computed: {
+      architecture_changed: ch?.changes_architecture.changed ?? null,
+      architecture_subjects: ch?.changes_architecture.subjects ?? null,
+      modules_changed: ch ? ch.changes_architecture.subjects.includes('modules') : null,
+      adrs: ch?.changes_adrs ?? null,
+      roadmap: ch?.changes_roadmap ?? null,
+      roadmap_version: null,
+      uncertain: check.uncertain ?? [],
+    },
+    declared_conformance: check.declared?.conformance ?? null,
+    declared_is: 'the Architect\'s declaration, recorded as declared; the engine routes on what it computed of the plan\'s actual changes',
+    facts: verdict.facts,
+  };
 }
 
 // ---- 4. the iteration's status (R2) -----------------------------------------------------
@@ -1054,8 +1432,7 @@ export interface BriefPreparationFacts {
 }
 
 export function briefPreparationFacts(db: Db, item: { id: string; project: string; subject: string }): BriefPreparationFacts | null {
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
-  const it = decision === null ? undefined : (db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(decision) as IterationLite | undefined);
+  const it = preparationIterationOf(db, item);
   if (!it) return null;
   const p = db.prepare('SELECT "idea_version" FROM "projects" WHERE "id" = ?').get(item.project) as { idea_version: number | null };
   const prev = db

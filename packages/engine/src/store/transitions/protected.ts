@@ -201,7 +201,7 @@ export function classifyProposal(tx: Tx, args: { proposal: string; changeKind: C
 
 // An approval is recorded on the proposal (E13): the human's, in the
 // transaction that consumes the decision, or a Reviewer's run's.
-export function approveProposal(tx: Tx, p: ProposalRow, approver: string, authority: 'reviewer' | 'human'): void {
+export function approveProposal(tx: Tx, p: ProposalRow, approver: string, authority: 'reviewer' | 'human' | 'policy'): void {
   tx.db
     .prepare(`UPDATE "protected_proposals" SET "status" = 'approved', "approver" = ?, "approver_authority" = ?, "approved_at" = ? WHERE "id" = ?`)
     .run(approver, authority, tx.at, p.id);

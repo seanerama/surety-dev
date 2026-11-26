@@ -178,13 +178,27 @@
       "design_approval",
       "design_due",
       "design_verdicts",
-      "prototype_preparation_approval"
+      "prototype_preparation_approval",
+      "deployment_target_approval"
     ],
     "DecisionStatus": [
       "open",
       "answered",
       "consumed",
       "invalidated"
+    ],
+    "DelegatedActionKind": [
+      "plan_published",
+      "tightening_applied",
+      "fix_registered",
+      "deployment_requested",
+      "preparation_by_allowance",
+      "deployment_target_approved"
+    ],
+    "DelegationAuthorityKind": [
+      "decision",
+      "allowance",
+      "policy_revision"
     ],
     "DeliverableFormat": [
       "zip"
@@ -397,7 +411,8 @@
     "FindingScope": [
       "project",
       "lineage",
-      "candidate"
+      "candidate",
+      "plan"
     ],
     "FindingCategory": [
       "defect",
@@ -419,7 +434,8 @@
     "Authority": [
       "role",
       "reviewer",
-      "human"
+      "human",
+      "policy"
     ],
     "GateOutcome": [
       "satisfied",
@@ -605,6 +621,12 @@
       "manifest",
       "unreadable"
     ],
+    "ClockExclusionReason": [
+      "parked_on_blocker",
+      "paused",
+      "engine_stall",
+      "provider_refusal"
+    ],
     "IterationStatus": [
       "preparing",
       "awaiting_brief_approval",
@@ -615,6 +637,13 @@
       "stopped",
       "limit_reached",
       "discarded"
+    ],
+    "PreparationAuthority": [
+      "owner",
+      "allowance"
+    ],
+    "ClockBasis": [
+      "recorded"
     ],
     "AuthMode": [
       "api_key",
@@ -1446,6 +1475,9 @@
         },
         "consumed_at": {
           "required": true
+        },
+        "delegation": {
+          "required": false
         }
       }
     },
@@ -2308,6 +2340,53 @@
         }
       }
     },
+    "delegated_actions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "iteration": {
+          "required": false,
+          "references": "prototype_iterations"
+        },
+        "kind": {
+          "required": true,
+          "enum": "DelegatedActionKind"
+        },
+        "subject_type": {
+          "required": true
+        },
+        "subject_id": {
+          "required": true
+        },
+        "authorized_by_kind": {
+          "required": true,
+          "enum": "DelegationAuthorityKind"
+        },
+        "authorized_by": {
+          "required": false
+        },
+        "performed_by": {
+          "required": true
+        },
+        "scope": {
+          "required": true
+        },
+        "basis": {
+          "required": true
+        },
+        "seq": {
+          "required": false
+        }
+      }
+    },
     "deliverables": {
       "fields": {
         "id": {
@@ -2562,6 +2641,9 @@
           "required": false
         },
         "reconsidered": {
+          "required": false
+        },
+        "restore": {
           "required": false
         }
       }
@@ -3802,6 +3884,17 @@
           "required": false
         },
         "created_seq": {
+          "required": false
+        },
+        "bound_plan": {
+          "required": false,
+          "references": "phase_plans"
+        },
+        "bound_spec_revision": {
+          "required": false,
+          "references": "spec_revisions"
+        },
+        "scope_reason": {
           "required": false
         }
       }
@@ -5290,6 +5383,49 @@
         }
       }
     },
+    "prototype_clock_exclusions": {
+      "fields": {
+        "id": {
+          "required": true
+        },
+        "created_at": {
+          "required": true
+        },
+        "project": {
+          "required": true,
+          "references": "projects"
+        },
+        "iteration": {
+          "required": true,
+          "references": "prototype_iterations"
+        },
+        "reason": {
+          "required": true,
+          "enum": "ClockExclusionReason"
+        },
+        "cause_kind": {
+          "required": false
+        },
+        "cause_id": {
+          "required": false
+        },
+        "from_at": {
+          "required": true
+        },
+        "from_seq": {
+          "required": false
+        },
+        "to_at": {
+          "required": false
+        },
+        "to_seq": {
+          "required": false
+        },
+        "seconds": {
+          "required": false
+        }
+      }
+    },
     "prototype_iterations": {
       "fields": {
         "id": {
@@ -5378,6 +5514,28 @@
         },
         "provider_hold_ms": {
           "required": true
+        },
+        "target_environment": {
+          "required": false,
+          "references": "environments"
+        },
+        "target_config": {
+          "required": false,
+          "references": "environment_configs"
+        },
+        "target_config_identity": {
+          "required": false
+        },
+        "preparation_authority": {
+          "required": false,
+          "enum": "PreparationAuthority"
+        },
+        "preparation_allowance": {
+          "required": false
+        },
+        "clock_basis": {
+          "required": false,
+          "enum": "ClockBasis"
         }
       }
     },
@@ -7679,6 +7837,27 @@
         "change"
       ],
       "target_seconds": 172800
+    },
+    "deployment_target_approval": {
+      "enabled": true,
+      "manifest": [
+        "iteration",
+        "candidate",
+        "candidate_revision",
+        "environment",
+        "environment_name",
+        "adapter",
+        "adapter_version",
+        "port",
+        "exposure_note",
+        "config",
+        "config_identity",
+        "brief_target",
+        "origin",
+        "consequence",
+        "policy_revision"
+      ],
+      "target_seconds": 14400
     }
   },
   "events": {
@@ -8504,7 +8683,8 @@
           "design_approval": 172800,
           "design_due": 172800,
           "design_verdicts": 172800,
-          "prototype_preparation_approval": 172800
+          "prototype_preparation_approval": 172800,
+          "deployment_target_approval": 14400
         }
       },
       "ui_bootstrap": {
@@ -9103,6 +9283,18 @@
         "max": 40,
         "integer": true
       },
+      "prototype_preparation_run_tokens": {
+        "default": 1500000,
+        "min": 10000,
+        "max": 50000000,
+        "integer": true
+      },
+      "prototype_preparation_usd_estimated": {
+        "default": 15,
+        "min": 0,
+        "max": 10000,
+        "integer": false
+      },
       "budget_run_boundary": {
         "default": "invocation",
         "type": "enum",
@@ -9329,6 +9521,24 @@
         "default": "opus",
         "type": "model",
         "widening": "never"
+      },
+      "prototype_preparation_allowance": {
+        "default": "off",
+        "type": "enum",
+        "values": [
+          "off",
+          "per_iteration"
+        ],
+        "widening": "later"
+      },
+      "prototype_preparation_model": {
+        "default": null,
+        "type": "provider_model",
+        "values": [
+          "claude",
+          "codex"
+        ],
+        "widening": "changed_while_allowed"
       }
     }
   }

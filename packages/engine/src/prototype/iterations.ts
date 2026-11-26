@@ -25,6 +25,8 @@ import { projectNotFound } from '../store/transitions/project.js';
 import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, heldSeconds, iterationAccount, iterationControls, iterationVerdict, providerHoldOf, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
+import { delegatedActionsOf } from '../store/transitions/delegation.js';
+import { nextIteratePreparation, preparationAuthorityOf, servedBrief } from './brief.js';
 
 type Db = Database;
 
@@ -119,18 +121,114 @@ function ownerApprovals(db: Db, it: IterationRow) {
   return { count: approved.length, by_kind: byKind, decisions: approved.map((r) => ({ id: r.id, kind: r.kind, consumed_at: r.consumed_at })) };
 }
 
+// The iteration's span in the store order (S7): from its creation event to
+// the next iteration's (null: none yet). What the project as a whole is
+// answered or acted on (a policy widening, a pause) belongs to the
+// iteration that was current when it happened, read by event seq, never by
+// a time window.
+function spanOf(db: Db, it: IterationRow): { from: number; to: number | null } {
+  const created = (id: string): number | null =>
+    (db.prepare(`SELECT "seq" FROM "events" WHERE "type" = 'prototype.iteration_created' AND json_extract("subject", '$.iteration') = ? ORDER BY "seq" LIMIT 1`).get(id) as { seq: number } | undefined)?.seq ?? null;
+  const next = db.prepare('SELECT "id" FROM "prototype_iterations" WHERE "project" = ? AND "seq" > ? ORDER BY "seq" LIMIT 1').get(it.project, it.seq) as { id: string } | undefined;
+  return { from: created(it.id) ?? 0, to: next ? created(next.id) : null };
+}
+
+// D7 (DECISIONS item 57): who performed an answer or an act, as recorded.
+// Recorded before migration 0053: null, with the basis `not_recorded`, never
+// inferred as the owner's or an agent's.
+const NOT_RECORDED = 'not_recorded';
+function performedOf(recorded: unknown): { delegation: unknown; basis: string } {
+  return recorded !== undefined && recorded !== null ? { delegation: recorded, basis: 'recorded' } : { delegation: null, basis: NOT_RECORDED };
+}
+
+// S7, D7: every answer of the owner's about the iteration's work (an
+// approval, a retry, a disposition, a widening, a confirmation), whoever
+// performed it; by stable relationship: a decision about the iteration, one
+// of its runs, a work item one of its runs worked, a protected proposal or a
+// finding one of its runs made, one whose manifest names the iteration; and
+// a decision about the project as a whole answered during the iteration's
+// span (spanOf).
+function ownerAnswers(db: Db, it: IterationRow) {
+  const span = spanOf(db, it);
+  const rows = db
+    .prepare(
+      `SELECT d."id", d."kind", d."subject_type", d."subject_id", d."consumed_at", d."answer", a."delegation" AS "approval_delegation",
+         (SELECT e."seq" FROM "events" e WHERE e."type" = 'decision.consumed' AND json_extract(e."subject", '$.decision') = d."id" LIMIT 1) AS "consumed_seq"
+       FROM "decisions" d LEFT JOIN "approvals" a ON a."decision" = d."id"
+       WHERE d."project" = ? AND d."status" = 'consumed' AND json_extract(d."answer", '$.actor') = 'human' AND (
+         (d."subject_type" = 'prototype_iteration' AND d."subject_id" = ?)
+         OR json_extract(d."dependency_manifest", '$.iteration') = ?
+         OR (d."subject_type" = 'run' AND d."subject_id" IN (SELECT "id" FROM "runs" WHERE "iteration" = ?))
+         OR (d."subject_type" = 'work_item' AND d."subject_id" IN (SELECT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL))
+         OR (d."subject_type" = 'finding' AND d."subject_id" IN (SELECT f."id" FROM "findings" f JOIN "runs" r ON r."id" = f."source_run" WHERE r."iteration" = ?))
+         OR (d."kind" LIKE 'check_correction_%' AND d."subject_id" IN (SELECT p."id" FROM "protected_proposals" p JOIN "runs" r ON r."id" = p."run" WHERE r."iteration" = ?))
+         OR (d."subject_type" = 'project' AND d."id" IN (SELECT json_extract(e."subject", '$.decision') FROM "events" e WHERE e."type" = 'decision.consumed' AND e."seq" > ? AND (? IS NULL OR e."seq" < ?))))
+       ORDER BY d."seq"`,
+    )
+    .all(it.project, it.id, it.id, it.id, it.id, it.id, it.id, span.from, span.to, span.to) as {
+    id: string;
+    kind: string;
+    subject_type: string;
+    subject_id: string;
+    consumed_at: string | null;
+    answer: string | null;
+    approval_delegation: string | null;
+    consumed_seq: number | null;
+  }[];
+  const seen = new Set<string>();
+  return rows
+    .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
+    .map((r) => {
+      const a = parseJson<{ option?: unknown; delegation?: unknown }>(r.answer);
+      const performed = performedOf(a?.delegation ?? parseJson<Record<string, unknown>>(r.approval_delegation));
+      return { decision: r.id, kind: r.kind, subject: { type: r.subject_type, id: r.subject_id }, option: typeof a?.option === 'string' ? a.option : null, consumed_at: r.consumed_at, ...performed };
+    });
+}
+
+// S7, D7: the owner's acts on the iteration (Iterate, retry, resume, stop,
+// discard, prepare, restore) and on the project during its span (pause,
+// resume, a deployment requested, the relay opened or closed, a policy
+// change, a work item resumed), each a mutating request the engine
+// accepted (its api.act record, 2xx), with who performed it. Answers are
+// owner_answers'.
+function ownerActs(db: Db, it: IterationRow) {
+  const span = spanOf(db, it);
+  const base = `/v1/projects/${it.project}/`;
+  const creating = (db.prepare(`SELECT "tx" FROM "events" WHERE "type" = 'prototype.iteration_created' AND json_extract("subject", '$.iteration') = ? LIMIT 1`).get(it.id) as { tx: string } | undefined)?.tx ?? null;
+  const rows = db
+    .prepare(`SELECT "seq", "at", "actor_id", "payload", "tx" FROM "events" WHERE "type" = 'api.act' AND "actor_kind" = 'human' AND "seq" >= ? AND (? IS NULL OR "seq" < ?) ORDER BY "seq"`)
+    .all(span.from, span.to, span.to) as { seq: number; at: string; actor_id: string | null; payload: string; tx: string }[];
+  const PROJECT_ACTS = /^(pause|resume|deployments|policy|environments\/[^/]+\/relay|work\/[^/]+\/resume)$/;
+  const out: Record<string, unknown>[] = [];
+  for (const r of rows) {
+    const p = parseJson<{ method?: string; path?: string; status?: number; delegation?: unknown }>(r.payload);
+    if (!p || typeof p.path !== 'string' || typeof p.status !== 'number' || p.status < 200 || p.status >= 300 || !p.path.startsWith(base)) continue;
+    const rest = p.path.slice(base.length);
+    const mine = rest.startsWith(`iterations/${it.id}/`) || r.tx === creating;
+    if (!mine && !PROJECT_ACTS.test(rest)) continue;
+    out.push({ at: r.at, seq: r.seq, method: p.method ?? null, path: p.path, status: p.status, actor_id: r.actor_id, ...performedOf(p.delegation) });
+  }
+  return out;
+}
+
 // Approval of each preparation to its run's end (R5), summed over the
 // preparations whose run ended; null while none has.
 function preparationSeconds(db: Db, it: IterationRow): number | null {
+  // D8: a preparation under the allowance is authorized when its work is
+  // created (the iteration's creation).
   const rows = db
     .prepare(
-      `SELECT d."consumed_at", r."finished_at" FROM "decisions" d
-       JOIN "work_items" w ON w."kind" = 'brief_preparation' AND json_extract(w."subject", '$.decision') = d."id"
-       JOIN "runs" r ON r."work_item" = w."id"
-       WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ? AND d."status" = 'consumed' AND r."finished_at" IS NOT NULL
-       ORDER BY r."seq"`,
+      `SELECT * FROM (
+         SELECT d."consumed_at", r."finished_at", r."seq" FROM "decisions" d
+         JOIN "work_items" w ON w."kind" = 'brief_preparation' AND json_extract(w."subject", '$.decision') = d."id"
+         JOIN "runs" r ON r."work_item" = w."id"
+         WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ? AND d."status" = 'consumed' AND r."finished_at" IS NOT NULL
+         UNION ALL
+         SELECT w."created_at" AS "consumed_at", r."finished_at", r."seq" FROM "work_items" w JOIN "runs" r ON r."work_item" = w."id"
+         WHERE w."kind" = 'brief_preparation' AND w."trigger_source" = 'prototype_preparation' AND w."trigger_id" = 'allowance:' || ? AND r."finished_at" IS NOT NULL)
+       ORDER BY "seq"`,
     )
-    .all(it.id) as { consumed_at: string | null; finished_at: string }[];
+    .all(it.id, it.id) as { consumed_at: string | null; finished_at: string }[];
   let total: number | null = null;
   for (const r of rows) {
     const s = between(r.consumed_at, r.finished_at, ['the preparation authorized', 'its run ended']);
@@ -163,7 +261,8 @@ export function listIterations(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
   const rows = db.prepare('SELECT * FROM "prototype_iterations" WHERE "project" = ? ORDER BY "seq"').all(args.project) as IterationRow[];
-  return { ...head, iterations: rows.map((r) => summaryOf(r, db)) };
+  // D8: what Iterate would do of the next preparation, disclosed before it.
+  return { ...head, iterations: rows.map((r) => summaryOf(r, db)), next_iterate: { preparation: nextIteratePreparation(db, args.project) } };
 }
 
 const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
@@ -494,6 +593,9 @@ function alphaNow(db: Db, project: string, it: IterationRow, environment: string
 
 // The statement served with `app_totals` (slice E4; R7, R9): what is summed
 // and how, so that nothing is read as more than it is.
+export const DELEGATION_RULE =
+  "owner_answers: every consumed decision of the iteration's work answered by the owner's request; owner_acts: every accepted owner request on the iteration or, during its span, on the project; each with `delegation` as the request stated it ({performed_by: owner} for the owner's own act, {performed_by: agent:<name>, instructed_by: owner, instruction} for an agent on the owner's instruction; the engine records the statement and cannot authenticate it), or null with basis not_recorded when recorded before migration 0053. delegated_actions: what the engine performed under the approved brief or the preparation allowance, with what authorized it, who performed it and its scope.";
+
 export const CUMULATIVE_RULE =
   "The app's totals: every run attributed to any iteration of this project (runs.iteration, fixed when each run was dispatched), each counted once, whatever the iteration's status; the categories, the token total, the cost statuses and the unknown allowances by the same rules as one iteration's totals (a total only where every provider's categories are mutually exclusive, a lower bound while any invocation's usage is pending or incomplete; unknown never 0). A run dispatched while no iteration was open is in no iteration and not counted. Each iteration's own totals exclude its predecessors. The token categories and total are measured consumption (what the backends reported); unknown_allowance_tokens is an estimated allowance charged conservatively in place of usage that is not known, kept apart and never added to the total.";
 
@@ -778,7 +880,19 @@ export function readIteration(db: Db, args: { project: string; iteration: string
     accounting_basis: ACCOUNTING_BASIS,
     // The first plan (R1): its bundle and how it was published.
     plan: planOf(db, it),
+    // Kept as before for compatibility (R5's count of approvals).
     owner_approvals: ownerApprovals(db, it),
+    // S7, D7 (DECISIONS item 57): every answer and act of the owner's, with
+    // who performed it, and every act the engine performed under an
+    // authority the owner gave beforehand.
+    owner_answers: ownerAnswers(db, it),
+    // D8: what authorized the iteration's preparation: the allowance (its
+    // snapshot: policy revision, provider, model, run token limit, estimated
+    // cost) or the owner's decision; null when not yet authorized.
+    preparation: preparationAuthorityOf(db, it.id),
+    owner_acts: ownerActs(db, it),
+    delegated_actions: delegatedActionsOf(db, it.project, it.id),
+    delegation_rule: DELEGATION_RULE,
     time: {
       preparation_seconds: preparationSeconds(db, it),
       approval_to_alpha_seconds: interval(it.approved_at, it.alpha_at, ['the brief approved', 'Alpha reached']),
@@ -790,7 +904,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
     },
     // Slice E4 (demonstration 9): the iteration's brief, whole, as prepared
     // (and approved, when approved_at is set); null before one is prepared.
-    brief: parseJson<Record<string, unknown>>(it.brief_json),
+    // S7: a brief prepared before DECISIONS item 57 is served with the fields
+    // it lacks as null, named in brief_absent (basis not_in_brief_version).
+    brief: servedBrief(parseJson<Record<string, unknown>>(it.brief_json)).brief,
+    brief_absent: servedBrief(parseJson<Record<string, unknown>>(it.brief_json)).absent,
     // What the receipt keeps of the prototype's limits, and what it never
     // claims: Alpha ready means the automated checks passed and the
     // deployment was verified by them; no person's acceptance of the
@@ -826,6 +943,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       current_state: alphaNowState.state,
       current_reason: alphaNowState.reason,
       history_note: ALPHA_HISTORY_NOTE,
+      // WO1 Q1 (DECISIONS item 57): the latest restore of this iteration's
+      // Alpha, as requested and as it ended; null when never restored. A
+      // restore is no later iteration's Alpha.
+      restored: restoreOfIteration(db, it.id),
     },
   };
 }
@@ -845,6 +966,15 @@ function planOf(db: Db, it: IterationRow) {
   const b = db.prepare('SELECT "status", "approvals" FROM "plan_bundles" WHERE "id" = ?').get(it.plan_bundle) as { status: string; approvals: string } | undefined;
   const p = it.phase_plan === null ? undefined : (db.prepare('SELECT "routing", "approved_by" FROM "phase_plans" WHERE "id" = ?').get(it.phase_plan) as { routing: string | null; approved_by: string | null } | undefined);
   return { bundle: it.plan_bundle, bundle_status: b?.status ?? null, approvals: parseJson<Record<string, unknown>>(b?.approvals ?? null), phase_plan: it.phase_plan, routing: p?.routing ?? null, approved_by: p?.approved_by ?? null };
+}
+
+function restoreOfIteration(db: Db, iteration: string) {
+  const r = db
+    .prepare(`SELECT d."id", d."created_at", d."outcome", d."restore", e."name" FROM "deployment_requests" d JOIN "environments" e ON e."id" = d."environment" WHERE json_extract(d."restore", '$.iteration_id') = ? ORDER BY d.rowid DESC LIMIT 1`)
+    .get(iteration) as { id: string; created_at: string; outcome: string; restore: string; name: string } | undefined;
+  if (!r) return null;
+  const done = db.prepare(`SELECT o."finalized_at" FROM "operations" o JOIN "deployment_requests" d ON d."authorization" = o."authorization" WHERE d."id" = ? ORDER BY o.rowid DESC LIMIT 1`).get(r.id) as { finalized_at: string | null } | undefined;
+  return { request: r.id, environment: r.name, requested_at: r.created_at, outcome: r.outcome, restored_at: r.outcome === 'deployed' ? (done?.finalized_at ?? null) : null, ...parseJson<Record<string, unknown>>(r.restore) };
 }
 
 // GET /v1/projects/:p/iterations/:i/receipt.json: the iteration read with

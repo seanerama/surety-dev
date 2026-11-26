@@ -212,6 +212,8 @@ import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
 import { briefFacts, requestPreparation } from '../prototype/brief.js';
+import { askTarget, confirmTarget } from './transitions/deploy-target.js';
+import { restoreFacts } from './transitions/restore.js';
 import { iterate } from '../prototype/iterate.js';
 import { askOfSession, enforceIterationLimit, resumeIteration, retryIteration, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
@@ -372,6 +374,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // cancelled correction again.
   'spec.correct': (tx, a: { project: string; request: string }) => correctRequestAgain(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
+  // WO1 Q1 (DECISIONS item 57): an earlier Alpha restored.
+  'iteration.restore': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   // DECISIONS item 43 (M627): the owner asks for the checks the deployment
   // gate lacks that a Verifier writes; nothing is deployed.
   'environment.request_checks': (tx, a) => ({ ...requestEnvironmentChecks(tx, a), effects: [{ kind: 'tick' }] }),
@@ -428,6 +432,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'checks.execution': (d, a: { execution: string }) => d.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(a.execution) ?? null,
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
+  'iteration.restore_facts': (d, a: { project: string; iteration: string; environment?: unknown }) => {
+    const f = restoreFacts(d, a);
+    return { candidate: f.candidate, environment: f.environment };
+  },
   'operations.list': (d, a) => readOperations(d, a),
   'environment.read': (d, a) => readOneEnvironment(d, a),
   'environment.logs': (d, a) => readEnvironmentLogs(d, a),
@@ -878,6 +886,9 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
+  // D4 (DECISIONS item 57): the deployment target's decision.
+  'deploy.target_ask': (tx, a: { project: string; candidate: string; environment: string }) => askTarget(tx, a),
+  'deploy.target_confirm': (tx, a: { project: string; candidate: string; environment: string; preview_hash?: unknown }) => confirmTarget(tx, a),
   'deploy.policy_preparation_failed': (tx, a) => policyPreparationFailed(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a

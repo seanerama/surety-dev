@@ -55,6 +55,7 @@ import { Refusal } from '../refusal.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
 import type { CommandResult } from '../store/transitions/control.js';
 import { createIteration, currentIteration, limitsOf } from '../store/transitions/prototype.js';
+import { preparationAuthorityOf } from './brief.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, transitionWork } from '../store/transitions/work.js';
@@ -139,6 +140,9 @@ export function iterate(tx: Tx, args: { project: string; iteration: string; chan
       closed_plans: closed,
       project_paused: project.paused === 1,
       decision: decision ?? null,
+      // D8: the preparation the Iterate authorized under the allowance (its
+      // snapshot), or null when it asks the owner (decision above).
+      preparation: preparationAuthorityOf(tx.db, id),
     },
     effects: [{ kind: 'tick' }],
   };

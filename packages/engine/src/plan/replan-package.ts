@@ -402,7 +402,11 @@ export function replanPromptText(r: ReplanFacts): string[] {
   const assigned = new Set((approvedPhases ?? []).flatMap((ph) => (Array.isArray((ph as { requirement_ids?: unknown }).requirement_ids) ? ((ph as { requirement_ids: unknown[] }).requirement_ids as unknown[]) : [])));
   const unassigned = approvedPhases === null ? [] : (r.index ?? []).filter((q) => !q.withdrawn && !assigned.has(q.key)).map((q) => q.key);
   const lead = r.prototype
-    ? [...prototypePlanText(r.prototype, next, r.generation.architecture_revision !== null, versions, roadmapMode, unassigned), `Your result names the plan (\`plan\`: "phase-${next}") and declares \`conformance\` (within_baseline or uncertain).`]
+    ? [
+        ...prototypePlanText(r.prototype, next, r.generation.architecture_revision !== null, versions, roadmapMode, unassigned),
+        `Your result names the plan (\`plan\`: "phase-${next}") and declares \`conformance\` (within_baseline or uncertain).`,
+        'In a prototype iteration the engine judges the bounds from what you change; declare `uncertain` only when you believe the plan goes beyond the approved brief, and say why in `notes`.',
+      ]
     : [
     '',
     '## The replan',

@@ -46,7 +46,7 @@ import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invali
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
-import type { Tx } from './tx.js';
+import { type Tx, delegationOf } from './tx.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
 import { admissionRefusal, attemptAdmission } from './qualification-budget.js';
 import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
@@ -63,6 +63,7 @@ import { designBatchKeyOf } from '../../design/batch-key.js';
 import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
 import { DESIGN_CONFLICT, DESIGN_CONFLICT_SCOPE } from '../../design/findings.js';
 import { PREPARATION_KEYS, PROTOTYPE_PREPARATION_APPROVAL } from '../../prototype/brief.js';
+import { DEPLOYMENT_TARGET_APPROVAL, DEPLOYMENT_TARGET_KEYS } from './deploy-target.js';
 
 type Db = Tx['db'];
 
@@ -151,8 +152,8 @@ function recordApproval(tx: Tx, d: DecisionRow, args: { consequence: string; sub
   tx.db
     .prepare(
       `INSERT INTO "approvals" ("id", "created_at", "project", "decision", "actor", "consequence", "subject_type", "subject_id", "acceptance_content_hash", "result_hash",
-         "policy_revision", "consumed_at")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "policy_revision", "consumed_at", "delegation")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -167,6 +168,8 @@ function recordApproval(tx: Tx, d: DecisionRow, args: { consequence: string; sub
       args.resultHash ?? null,
       d.project === null ? null : policyRevisionId(tx.db, d.project),
       tx.at,
+      // D7 (migration 0053): who performed the approval and its scope.
+      canonical({ ...delegationOf(tx.actor), scope: { decision: d.id, kind: d.kind, subject_type: d.subject_type, subject_id: d.subject_id } }),
     );
   return id;
 }
@@ -1171,8 +1174,18 @@ export function widenPreview(tx: Tx, project: string, change: Policy): Preview |
       { key: 'approve', label: 'Approve', consequence: `The policy is committed with ${widens.join(', ')} raised.`, effect: { change, policy: sorted } },
       { key: 'reject', label: 'Reject', consequence: 'Nothing is changed.', effect: { change } },
     ],
-    question: `The policy change widens what the engine may do unasked (${widens.join(', ')}). Approve it to commit it.`,
+    question: `The policy change widens what the engine may do unasked (${widens.join(', ')}). Approve it to commit it.${allowanceText(widens, sorted)}`,
   };
+}
+
+// D8 (DECISIONS item 57): a widening that grants or widens the preparation
+// allowance states its model and limits.
+const ALLOWANCE_KEYS = ['prototype_preparation_allowance', 'prototype_preparation_model', 'prototype_preparation_run_tokens', 'prototype_preparation_usd_estimated'];
+function allowanceText(widens: string[], proposed: Record<string, unknown>): string {
+  if (!widens.some((k) => ALLOWANCE_KEYS.includes(k)) || proposed.prototype_preparation_allowance !== 'per_iteration') return '';
+  const model = typeof proposed.prototype_preparation_model === 'string' ? proposed.prototype_preparation_model : 'none named (no run is authorized until one is)';
+  const usd = typeof proposed.prototype_preparation_usd_estimated === 'number' ? `$${proposed.prototype_preparation_usd_estimated.toFixed(2)}` : 'unknown';
+  return ` The preparation allowance authorizes one Spec Writer brief preparation run per iteration without asking you: model ${model}, at most ${String(proposed.prototype_preparation_run_tokens)} billable tokens for the run, an estimated ${usd} at most at the price table (an estimate, not a cap). Each Iterate says when it uses it; a run outside it is asked of you. Revoke it by setting prototype_preparation_allowance to off.`;
 }
 
 const changeOf = (d: Subject): Policy =>
@@ -1761,7 +1774,9 @@ export function recordDisposition(
   f: FindingRow,
   args: {
     disposition: 'fix' | 'defer' | 'accept';
-    authority: 'reviewer' | 'human';
+    // `policy` (migration 0053; D3): a fix registered under the approved
+    // brief's repair allowance, never an accept or a defer.
+    authority: 'reviewer' | 'human' | 'policy';
     by: string;
     linked_issue: string | null;
     defer_target: string | null;
@@ -2246,6 +2261,11 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   get prototype_preparation_approval() {
     return PROTOTYPE_PREPARATION_APPROVAL;
   },
+  // DECISIONS item 57, D4: a deployment outside the approved brief's target
+  // (store/transitions/deploy-target.ts).
+  get deployment_target_approval() {
+    return DEPLOYMENT_TARGET_APPROVAL;
+  },
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -2292,6 +2312,9 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   },
   get prototype_preparation_approval() {
     return PREPARATION_KEYS;
+  },
+  get deployment_target_approval() {
+    return DEPLOYMENT_TARGET_KEYS;
   },
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,
