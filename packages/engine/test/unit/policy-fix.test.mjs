@@ -125,7 +125,7 @@ test('(b) the check passed on the candidate: no fix; the check correction routed
   s.run(`UPDATE work_items SET status = 'complete' WHERE id = ?`, corrections[0].id);
   assert.equal(sweep(s.db), 1);
   const [d] = owed(s.db);
-  assert.match(JSON.parse(d.evidence).policy_fix_refused, /repair_unverifiable: the corrected check still passes/);
+  assert.match(JSON.parse(d.evidence).policy_fix_refused, /repair_unverifiable: every check covering R1.1 still passes on the candidate after the correction/);
   assert.equal(finding(s.db).disposition, null);
 });
 
@@ -158,4 +158,51 @@ test('(f) a planned project, or a finding that is not a defect: asked as today, 
     assert.equal(sweep(s.db), 1);
     assert.deepEqual(JSON.parse(owed(s.db)[0].evidence), []);
   }
+});
+
+test('objection 236 option 1: X passed, the correction added Y covering the criterion beside it, Y failed on the candidate: F is bound to Y, X kept in its history, and fixed by policy', (t) => {
+  const s = store(t, { exit: 0 });
+  assert.equal(sweep(s.db), 0);
+  const [corr] = work(s.db, 'check_correction');
+  // The correction applied: a second required acceptance check y covering R1.1, failing on cand_1.
+  s.run(`UPDATE work_items SET status = 'complete' WHERE id = ?`, corr.id);
+  s.run(
+    `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria)
+     VALUES ('chk_y', ?, 'prj_1', 'y', 'pv_1', 'acceptance', 1, '["stage","alpha_authorize"]', '.surety/checks/defs/y.json', 'h', 'direct', '["R1.1"]')`,
+    AT,
+  );
+  s.run(
+    `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq, execution_established, signaled, deadline_hit, exit_status)
+     VALUES ('cr_y', ?, 'prj_1', 'chk_y', 'cand_1', ?, 'pv_1', 'direct', 'r', 2, 1, 0, 0, 1)`,
+    AT,
+    REV,
+  );
+  assert.equal(sweep(s.db), 0, 'no question');
+  const f = finding(s.db);
+  assert.deepEqual([f.check, f.disposition, f.disposition_authority], ['y', 'fix', 'policy']);
+  const ev = JSON.parse(s.db.prepare(`SELECT payload FROM events WHERE type = 'finding.check_unbound'`).get().payload);
+  assert.deepEqual([ev.check, ev.rebound_to, ev.cause, ev.check_result], ['x', 'y', 'reproduced_by_covering_check', 'cr_y']);
+  const act = s.db.prepare(`SELECT * FROM delegated_actions WHERE kind = 'fix_registered'`).get();
+  const basis = JSON.parse(act.basis);
+  assert.deepEqual([basis.reproducing_check, basis.reproduced_by, basis.check_history.map((h) => h.check)], ['y', 'cr_y', ['x']]);
+  assert.equal(JSON.parse(act.scope).check, 'y');
+  assert.equal(work(s.db, 'fix').length, 1);
+});
+
+test('objection 236 option 1: the named check fails: it reproduces the finding, which keeps its check', (t) => {
+  const s = store(t);
+  s.run(
+    `INSERT INTO checks (id, created_at, project, key, protected_version, kind, required, gate_kinds, definition_path, definition_hash, runner_class, criteria)
+     VALUES ('chk_a', ?, 'prj_1', 'a', 'pv_1', 'acceptance', 1, '["stage","alpha_authorize"]', '.surety/checks/defs/a.json', 'h', 'direct', '["R1.1"]')`,
+    AT,
+  );
+  s.run(
+    `INSERT INTO check_results (id, created_at, project, "check", candidate, source_revision, protected_version, runner_class, runner_id, execution_seq, execution_established, signaled, deadline_hit, exit_status)
+     VALUES ('cr_a', ?, 'prj_1', 'chk_a', 'cand_1', ?, 'pv_1', 'direct', 'r', 2, 1, 0, 0, 1)`,
+    AT,
+    REV,
+  );
+  assert.equal(sweep(s.db), 0);
+  assert.equal(finding(s.db).check, 'x', 'the named check first, though a covering check sorting before it failed too');
+  assert.equal(s.db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'finding.check_unbound'`).get().n, 0);
 });

@@ -22,26 +22,32 @@
 // approved: nothing is covered then).
 //
 // D3's "verifiable" is read as the driver's design choice (§3j, flagged for
-// the owner): the finding's named check has a failed established result on
-// the finding's candidate under the effective protected version, so the
-// defect is reproduced by a check before a repair is spent on it. A check
-// that passed on the candidate does not reproduce it: the Verifier is asked
-// to correct the check first (its tightening applied under D2), and the
-// candidate's result under the corrected version decides; a corrected check
-// that still passes leaves the finding the owner's, saying the repair could
-// not be verified. Only `fix` is ever recorded by policy (authority
+// the owner), widened by objection 236 option 1 (the driver's ruling,
+// DECISIONS item 57): a required acceptance check covering the finding's
+// criterion in its candidate's scopes has a failed established result on
+// that candidate under the effective protected version, the check the
+// finding names first, else another covering check (one a correction added
+// beside it, classifier 1 classifying an added check, never an edited
+// input, as a tightening). The defect is so reproduced by a check before a
+// repair is spent on it, and a finding reproduced by another covering
+// check is bound to it, its earlier check kept in its history, so its
+// resolution names the result that discriminates. When no covering check
+// fails, the Verifier is asked to correct the check first (its tightening
+// applied under D2), and the candidate's results under the corrected
+// version decide; covering checks that all still pass leave the finding the
+// owner's, saying the repair could not be verified. Only `fix` is ever recorded by policy (authority
 // `policy`, by `policy:rapid_prototype`); one unit of
 // `prototype_repairs_per_iteration` is consumed by it (prototype.ts
 // iterationAccount counts each `fix_registered` act). Whatever is refused
 // goes to the owner as today, its evidence `{policy_fix_refused: <reason>}`.
 
 import { checkState } from './gates.js';
-import { type CandidateRow, getCandidate } from './evidence.js';
+import { type CandidateRow, candidateContent, getCandidate } from './evidence.js';
 import { effectiveVersion } from './protected.js';
 import { knownCriteria } from './checks.js';
 import { recordDelegatedAction } from './delegation.js';
 import { type FindingRow } from './gates.js';
-import { correctionOpen, findingVerifiable, routeCheckCorrection } from './repair.js';
+import { correctionOpen, routeCheckCorrection, verifiesCriterion } from './repair.js';
 import { alphaNotOwn, iterationAccount, iterationVerdict } from './prototype.js';
 import { projectPolicy } from './settings.js';
 import { recordDisposition } from './queue.js';
@@ -92,18 +98,37 @@ export const runIteration = (db: Db, run: string | null): string | null =>
 
 export type PolicyFixOutcome = { outcome: 'fixed' } | { outcome: 'waiting'; why: string } | { outcome: 'refused'; reason: string } | null;
 
-// The finding's named check on its candidate under the effective version:
-// 'failed' or 'passed' (an established result decides), 'pending' (an
-// execution registered with no result yet), or 'none'.
-function checkOnCandidate(db: Db, f: FindingRow, candidate: CandidateRow): { state: 'failed' | 'passed' | 'pending' | 'none'; result: string | null; version: string | null } {
+// The checks that can reproduce the finding on its candidate (objection
+// 236 option 1, the driver's ruling recorded in DECISIONS item 57): every
+// required acceptance check covering its criterion in the candidate's
+// scopes under the effective version (repair.ts verifiesCriterion over
+// evidence.ts candidateContent, findingVerifiable's pool), the check the
+// finding names first, then the others by key. Each one's state on the
+// candidate: 'failed' or 'passed' (an established result decides),
+// 'pending' (registered, no result yet), or 'none'. The first failed one
+// reproduces the finding.
+interface Reproduction {
+  state: 'failed' | 'passed' | 'pending' | 'none';
+  check: string | null;
+  result: string | null;
+  version: string | null;
+  covering: { check: string; state: string; result: string | null }[];
+}
+function reproductionOn(db: Db, f: FindingRow, candidate: CandidateRow, criterion: string): Reproduction {
   const version = effectiveVersion(db, f.project);
-  if (!version || f.check === null) return { state: 'none', result: null, version: version?.id ?? null };
-  const check = db.prepare('SELECT * FROM "checks" WHERE "protected_version" = ? AND "key" = ?').get(version.id, f.check) as Parameters<typeof checkState>[2] | undefined;
-  if (!check) return { state: 'none', result: null, version: version.id };
-  const s = checkState(db, f.project, check, { candidate, effective: version, environment: null, artifact: null });
-  if (s.state === 'failed' || s.state === 'passed') return { state: s.state, result: s.decider?.id ?? null, version: version.id };
-  if (s.pending !== null) return { state: 'pending', result: null, version: version.id };
-  return { state: 'none', result: null, version: version.id };
+  if (!version) return { state: 'none', check: null, result: null, version: null, covering: [] };
+  const pool = candidateContent(db, f.project, candidate, version.id).checks.filter((c) => verifiesCriterion(c, criterion));
+  pool.sort((x, y) => (x.key === f.check ? -1 : y.key === f.check ? 1 : x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  const covering = pool.map((c) => {
+    const st = checkState(db, f.project, c as Parameters<typeof checkState>[2], { candidate, effective: version, environment: null, artifact: null });
+    const state = st.state === 'failed' || st.state === 'passed' ? st.state : st.pending !== null ? 'pending' : 'none';
+    return { check: c.key, state, result: st.decider?.id ?? null };
+  });
+  const failed = covering.find((c) => c.state === 'failed');
+  if (failed) return { state: 'failed', check: failed.check, result: failed.result, version: version.id, covering };
+  if (covering.some((c) => c.state === 'pending')) return { state: 'pending', check: null, result: null, version: version.id, covering };
+  if (covering.some((c) => c.state === 'passed')) return { state: 'passed', check: null, result: null, version: version.id, covering };
+  return { state: 'none', check: null, result: null, version: version.id, covering };
 }
 
 // Whether a correction of the finding's check was asked and has ended (its
@@ -131,17 +156,23 @@ export function policyFix(tx: Tx, f: FindingRow & { source_role?: string | null 
   if (!candidate || candidate.project !== f.project || candidate.superseded_by || alphaNotOwn(tx.db, it.id, candidate.id) !== null) return { outcome: 'refused', reason: 'subject_not_current_candidate' };
   const criterion = f.criterion ?? null;
   if (criterion === null || !scope.criteria.has(criterion)) return { outcome: 'refused', reason: 'outside_brief' };
-  const version = effectiveVersion(tx.db, f.project);
-  if (!version || f.check === null || !findingVerifiable(tx.db, f, version.id)) return { outcome: 'refused', reason: 'repair_unverifiable' };
-  const on = checkOnCandidate(tx.db, f, candidate);
-  if (on.state === 'pending') return { outcome: 'waiting', why: `check ${f.check} on candidate ${candidate.id} has a result to come` };
-  if (on.state === 'passed' || on.state === 'none') {
-    // Not reproduced: the check is corrected first (D2), once.
-    if (correctionOpen(tx.db, f.project, f.id)) return { outcome: 'waiting', why: `the correction of check ${f.check} is under way` };
-    if (correctionEnded(tx.db, f.project, f.id)) return { outcome: 'refused', reason: on.state === 'passed' ? 'repair_unverifiable: the corrected check still passes on the candidate' : 'repair_unverifiable: no result of the corrected check on the candidate' };
-    if (on.state === 'none') return { outcome: 'refused', reason: 'repair_unverifiable: no result of the check on the candidate' };
+  if (!effectiveVersion(tx.db, f.project)) return { outcome: 'refused', reason: 'repair_unverifiable: no effective protected version' };
+  const on = reproductionOn(tx.db, f, candidate, criterion);
+  if (on.state === 'pending') return { outcome: 'waiting', why: `a check covering ${criterion} on candidate ${candidate.id} has a result to come` };
+  // Covering checks that have no result on the candidate at all: nothing
+  // was run that could reproduce it, and no correction would change that.
+  if (on.state === 'none' && on.covering.length > 0 && !correctionEnded(tx.db, f.project, f.id) && !correctionOpen(tx.db, f.project, f.id)) {
+    return { outcome: 'refused', reason: `repair_unverifiable: no result of a check covering ${criterion} on the candidate` };
+  }
+  if (on.state !== 'failed') {
+    // Not reproduced (every covering check passed, or none covers the
+    // criterion): the check is corrected first (D2), once.
+    if (correctionOpen(tx.db, f.project, f.id)) return { outcome: 'waiting', why: `the correction of check ${f.check ?? '(none named)'} is under way` };
+    if (correctionEnded(tx.db, f.project, f.id)) {
+      return { outcome: 'refused', reason: on.state === 'passed' ? `repair_unverifiable: every check covering ${criterion} still passes on the candidate after the correction` : `repair_unverifiable: no result of a check covering ${criterion} on the candidate after the correction` };
+    }
     routeCheckCorrection(tx, f.project, f.id, 1);
-    return { outcome: 'waiting', why: `check ${f.check} passed on candidate ${candidate.id}: its correction is asked of the Verifier` };
+    return { outcome: 'waiting', why: `no check covering ${criterion} fails on candidate ${candidate.id}: the correction of check ${f.check ?? '(none named)'} is asked of the Verifier` };
   }
   // Reproduced: the allowance decides.
   const limits = (() => {
@@ -158,7 +189,19 @@ export function policyFix(tx: Tx, f: FindingRow & { source_role?: string | null 
   }
   const v = iterationVerdict(tx.db, it as unknown as Parameters<typeof iterationVerdict>[1], { reservation: projectPolicy(tx.db, f.project).budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null }, account);
   if (v !== null) return { outcome: 'refused', reason: `allowance_exceeded: ${v.limit}: ${v.reason}` };
-  recordDisposition(tx, f, { disposition: 'fix', authority: 'policy', by: POLICY_ACTOR, linked_issue: null, defer_target: null });
+  // Reproduced by a covering check other than the one the finding named
+  // (one a correction added beside it): the finding is bound to it, so its
+  // resolution is verified by the result that discriminates; the check it
+  // named is kept in its history (finding.check_unbound, cause
+  // reproduced_by_covering_check, and the act's scope).
+  const previous = f.check;
+  let bound = f;
+  if (on.check !== null && on.check !== f.check) {
+    tx.db.prepare('UPDATE "findings" SET "check" = ? WHERE "id" = ?').run(on.check, f.id);
+    tx.emit('finding.check_unbound', { project: f.project, finding: f.id }, { check: previous, cause: 'reproduced_by_covering_check', rebound_to: on.check, check_result: on.result, version: on.version, by: POLICY_ACTOR });
+    bound = { ...f, check: on.check };
+  }
+  recordDisposition(tx, bound, { disposition: 'fix', authority: 'policy', by: POLICY_ACTOR, linked_issue: null, defer_target: null });
   recordDelegatedAction(tx, {
     project: f.project,
     iteration: it.id,
@@ -168,8 +211,17 @@ export function policyFix(tx: Tx, f: FindingRow & { source_role?: string | null 
     authorized_by_kind: 'decision',
     authorized_by: it.brief_decision,
     performed_by: POLICY_ACTOR,
-    scope: { finding: f.id, criterion, check: f.check, candidate: candidate.id, spec_revision: it.brief_spec_revision, allowance: 'prototype_repairs_per_iteration' },
-    basis: { reproduced_by: on.result, protected_version: on.version, repairs_used_before: account.repairs_used, repairs_per_iteration: perIteration, severity: f.effective_severity },
+    scope: { finding: f.id, criterion, check: on.check, candidate: candidate.id, spec_revision: it.brief_spec_revision, allowance: 'prototype_repairs_per_iteration' },
+    basis: {
+      reproduced_by: on.result,
+      reproducing_check: on.check,
+      check_history: on.check !== previous ? [{ check: previous, until: tx.at, cause: 'reproduced_by_covering_check' }] : [],
+      covering: on.covering,
+      protected_version: on.version,
+      repairs_used_before: account.repairs_used,
+      repairs_per_iteration: perIteration,
+      severity: f.effective_severity,
+    },
   });
   return { outcome: 'fixed' };
 }
