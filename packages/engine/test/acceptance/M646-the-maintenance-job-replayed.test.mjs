@@ -305,8 +305,12 @@ describe('M646 the maintenance job replayed', () => {
     const c3 = its.at(-1);
     assert.notEqual(c3.id, c2, 'the fix nominated a later candidate');
     assert.ok(real.some((r) => r.candidate === c3.id && r.tightened && r.exit === 0), `the tightened accept-r5-5 passed on candidate 3 (${show(real.filter((r) => r.candidate === c3.id).map((r) => [r.tightened, r.exit]))})`);
+    // The resolution names the result that verified it (gates.ts: {evaluation, check_result}):
+    // the tightened accept-r5-5 on candidate 3, exit 0, the execution this test ran for real.
     const verified = J(F.resolution_verification);
-    assert.ok(JSON.stringify(verified ?? {}).includes(c3.id), `the resolution names candidate 3's result (${show(verified)})`);
+    const cr = verified?.check_result ? one(fx.home, 'SELECT "candidate", "exit_status", "execution" FROM "check_results" WHERE "id" = ?', verified.check_result) : null;
+    const ran = cr ? real.find((r) => r.execution === cr.execution) : null;
+    assert.ok(cr && cr.candidate === c3.id && cr.exit_status === 0 && ran?.tightened === true, `the resolution names the tightened accept-r5-5's pass on candidate 3 (${show({ verified, cr, ran: ran && { tightened: ran.tightened, exit: ran.exit } })})`);
   });
 
   test('the plan and the tightenings were the brief\'s: no preparation, architecture, plan, tightening or disposition question in iteration 2; phase 2\'s checks and the R5.5 correction applied by policy', (t) => {
