@@ -1,4 +1,4 @@
-# 236: M603 (c) pins the brief's fields at their pre-item-57 list, and M601 (d) counts every `prototype_` project key as a limit key
+# 238: M603 (c) pins the brief's fields at their pre-item-57 list, and M601 (d) counts every `prototype_` project key as a limit key
 
 Rows: M603 (c) (`M603-the-brief.test.mjs`), M601 (d) (`M601-the-mode-and-its-preset.test.mjs`)
 Fixtures: `packages/engine/test/acceptance/contract/prototype.json` (`brief_fields`, `engine_fields`), `packages/engine/test/acceptance/harness/prototype.mjs` (`LIMIT_KEYS`)
