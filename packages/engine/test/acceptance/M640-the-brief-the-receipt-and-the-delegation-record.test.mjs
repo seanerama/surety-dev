@@ -41,9 +41,13 @@
 // - "the plan bounds" is any key of the brief naming bounds, holding the
 //   phase (1) and the stage bound (2).
 // - (e) has no route to a pre-0053 row on this engine: the engine is
-//   stopped and the preparation answer's `approvals.delegation` is set to
-//   NULL in the store (what migration 0053 leaves on every earlier row),
-//   then started again. This is the file's only store write, labelled.
+//   stopped and the preparation answer is made as an earlier row is (what
+//   migration 0053 leaves on every earlier row): its `approvals.delegation`
+//   set to NULL and `delegation` removed from its `decisions.answer`; then
+//   started again. This is the file's only store write, labelled. The
+//   receipt must serve it `delegation: null`, `basis: 'not_recorded'`; the
+//   decision read (which serves the answer as written) must not infer an
+//   owner or an agent for it.
 //
 // SAFETY (BS6 §4.1; E64): kernel lane; the scripted role program and the
 // scripted deployment adapter in the test's own home; nothing signalled but
@@ -193,16 +197,18 @@ describe('M640 the brief, the receipt and the delegation record', () => {
     let wrote;
     try {
       // The file's one store write (labelled above): what migration 0053 leaves on an earlier row.
-      wrote = withStore(fx.home, (db) => db.prepare('UPDATE "approvals" SET "delegation" = NULL WHERE "decision" = ?').run(S.prep).changes, { readonly: false });
+      wrote = withStore(
+        fx.home,
+        (db) => db.prepare('UPDATE "approvals" SET "delegation" = NULL WHERE "decision" = ?').run(S.prep).changes * db.prepare(`UPDATE "decisions" SET "answer" = json_remove("answer", '$.delegation') WHERE "id" = ?`).run(S.prep).changes,
+        { readonly: false },
+      );
     } catch (e) {
       wrote = `refused: ${e.message}`;
     }
     await fx.start();
-    assert.equal(wrote, 1, `the fixture is live: the preparation answer's row made as a pre-0053 row (${wrote})`);
-    const notRecorded = (v) => entries({ v }).some(([, , x]) => x && typeof x === 'object' && 'delegation' in x && x.delegation === null && x.basis === 'not_recorded');
-    const d = await decisionRead(fx, p, S.prep);
-    assert.ok(notRecorded(d), `the decision read serves delegation null with basis not_recorded (${show(valuesOfKey(d, /delegation|basis|performed_by/))})`);
-    assert.ok(!performedBy(d).some((v) => v === 'owner' || /^agent:/.test(String(v))), 'never inferred as owner or agent in the decision read');
+    assert.equal(wrote, 1, `the fixture is live: the preparation answer made as a pre-0053 row: one approvals row, one decision (${wrote})`);
+        const d = await decisionRead(fx, p, S.prep);
+    assert.ok(!performedBy(d).some((v) => v === 'owner' || /^agent:/.test(String(v))), `never inferred as owner or agent in the decision read (${show(valuesOfKey(d, /delegation|basis|performed_by/))})`);
     const read = await iterationRead(fx, p, S.it);
     const [e] = answerEntry(read.owner_answers, S.prep);
     assert.ok(e, `the receipt still lists the historical answer (${show(read.owner_answers)})`);
