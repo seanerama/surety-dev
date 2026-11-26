@@ -46,7 +46,10 @@
 //   delegated_actions (where served) and its brief, deepEqual before and
 //   after the restore.
 // - "one deployment": one more deploy work item for c1 and one more
-//   adapter deploy call on alpha.
+//   adapter deploy call on alpha; across (e)'s restart (the adapter's calls
+//   are per process, SEAM.md §273; objection 235): one more authorization
+//   and deploy item for c1 in the store, and one deploy call by the
+//   restarted engine.
 //
 // SAFETY (BS6 §4.1; E64): kernel lane; the scripted role program and the
 // scripted deployment adapter in the test's own home; nothing signalled but
@@ -132,6 +135,7 @@ const marks = async (F, Q) => ({
   workBefore: workIds(F.fx.home, F.p).map((w) => w.id),
   deploysBefore: deployItemsFor(F.fx.home, F.p, Q.candidate).length,
   callsBefore: effectCalls(await adapterState(F.fx.engine, F.env.id)).length,
+  authsBefore: rows(F.fx.home, 'SELECT "id" FROM "deployment_authorizations" WHERE "candidate" = ?', Q.candidate).length,
 });
 
 // Phase 2's own authoring: the reference checks, its proposal put to the owner.
@@ -226,6 +230,8 @@ describe('M645 restoring an earlier Alpha', () => {
     await pump(fx, p, () => (deployItemsFor(fx.home, p, Q.candidate).slice(m.deploysBefore).some((w) => w.status === 'complete') ? true : undefined), { max: 20, wait: false, what: 'the restore\'s deployment after the restart' });
     await pump(fx, p, () => undefined, { max: 3, wait: false, what: 'three ticks' }).catch(() => null);
     assert.equal(deployItemsFor(fx.home, p, Q.candidate).length, m.deploysBefore + 1, `one deploy item for the restore (${show(deployItemsFor(fx.home, p, Q.candidate))})`);
-    assert.equal(effectCalls(await adapterState(fx.engine, F.env.id)).length, m.callsBefore + 1, 'one adapter deploy call');
+    // The adapter's calls are per process (SEAM.md §273; objection 235): the restarted engine's own.
+    assert.equal(effectCalls(await adapterState(fx.engine, F.env.id)).length, 1, 'one adapter deploy call by the restarted engine');
+    assert.equal(rows(fx.home, 'SELECT "id" FROM "deployment_authorizations" WHERE "candidate" = ?', Q.candidate).length, m.authsBefore + 1, 'one authorization for the restore');
   });
 });

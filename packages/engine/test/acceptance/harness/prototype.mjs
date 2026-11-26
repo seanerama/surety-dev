@@ -30,7 +30,10 @@ import { withStore } from './store.mjs';
 // The Verifier's prototype table (contract/prototype.json; SEAM.md §575).
 export const PROTO = JSON.parse(readFileSync(new URL('../contract/prototype.json', import.meta.url), 'utf8'));
 export const CONFIG = JSON.parse(readFileSync(new URL('../contract/config.json', import.meta.url), 'utf8'));
-export const LIMIT_KEYS = Object.freeze(Object.keys(CONFIG.project).filter((k) => k.startsWith('prototype_')));
+// The iteration limit keys (R4): the contract's `prototype_` keys but the
+// preparation allowance's (D8, DECISIONS item 57; objection 238), which are
+// the allowance's own bounds, not limits snapshotted on an iteration.
+export const LIMIT_KEYS = Object.freeze(Object.keys(CONFIG.project).filter((k) => k.startsWith('prototype_') && !k.startsWith('prototype_preparation_')));
 
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 const rows = (home, sql, ...params) => withStore(home, (db) => db.prepare(sql).all(...params));
