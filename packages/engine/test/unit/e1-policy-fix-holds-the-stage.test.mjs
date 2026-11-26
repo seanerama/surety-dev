@@ -25,6 +25,7 @@ const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions
 const { recordCheckResult } = await import(join(dist, 'store', 'transitions', 'baseline.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { askUndispositioned } = await import(join(dist, 'store', 'transitions', 'findings.js'));
+const P = await import(join(dist, 'store', 'transitions', 'prototype.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -179,4 +180,29 @@ test('E1 with the repair allowance exhausted: the policy declines, the stage fol
   assert.equal(n, 1, 'the owed question');
   const d = db.prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' AND subject_id = 'fnd_1' AND status = 'open'`).get();
   assert.match(JSON.parse(d.evidence).policy_fix_refused, /repair_allowance_exhausted/);
+});
+
+test('E1, the losing order: a run under way reserves what the iteration has left when the reproducing result lands: the fix is still registered in that transaction (its dispatch waits), no send-back, one repair unit', (t) => {
+  const db = store(t);
+  db.prepare(`UPDATE prototype_iterations SET limits_json = '{"prototype_repairs_per_iteration":3,"prototype_budget_tokens":1000}' WHERE id = 'it_1'`).run();
+  finding(db);
+  // An invocation of the iteration under way, its run limit reserving more than the 1000 left.
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, iteration)
+     VALUES ('run_busy', ?, 'prj_1', 10, 'wi_busy', 'verifier', 'one_shot', 'executing', 'scripted', '1', 'm', ?, ?, 0, 'it_1')`,
+  ).run(AT, A, AT);
+  db.prepare(`INSERT INTO invocation_receipts (id, created_at, project, run, "grant", provider, model_requested, budget_snapshot) VALUES ('inv_busy', ?, 'prj_1', 'run_busy', 'grant_x', 'scripted', 'm', '{"budget_run_billable_tokens":5000}')`).run(AT);
+  const { iterationVerdict } = P;
+  const v = iterationVerdict(db, db.prepare(`SELECT * FROM prototype_iterations WHERE id = 'it_1'`).get(), { reservation: 5000, repair: false, item_repairs: 0, work_item: null });
+  assert.equal(v?.kind, 'settling', `the fixture is live: a run under way holds what is left (${v?.kind}: ${v?.reason})`);
+  post(db, 'chk_acc', 'cand_1', 0);
+  post(db, 'chk_smoke', 'cand_1', 0);
+  post(db, 'chk_acc2', 'cand_1', 1);
+  assert.deepEqual(stage(db), { status: 'verifying', repair_attempts: 0 }, 'not sent back');
+  assert.equal(fixes(db).length, 1, 'the fix registered in the recording transaction');
+  assert.equal(db.prepare(`SELECT disposition_authority FROM findings WHERE id = 'fnd_1'`).get().disposition_authority, 'policy');
+  // The sweep after it registers nothing more and asks nothing.
+  assert.equal(transact(db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' })), 0);
+  assert.equal(fixes(db).length, 1);
+  assert.equal(P.iterationAccount(db, 'prj_1', 'it_1').repairs_used, 1, 'one unit');
 });

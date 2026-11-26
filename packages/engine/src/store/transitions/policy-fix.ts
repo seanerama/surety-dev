@@ -192,7 +192,14 @@ export function policyFix(tx: Tx, f: FindingRow & { source_role?: string | null 
     return { outcome: 'refused', reason: `repair_allowance_exhausted: prototype_repairs_per_iteration ${perIteration}, ${account.repairs_used} used` };
   }
   const v = iterationVerdict(tx.db, it as unknown as Parameters<typeof iterationVerdict>[1], { reservation: projectPolicy(tx.db, f.project).budget_run_billable_tokens!, repair: false, item_repairs: 0, work_item: null }, account);
-  if (v !== null) return { outcome: 'refused', reason: `allowance_exceeded: ${v.limit}: ${v.reason}` };
+  // Only a final verdict refuses: one that is `settling` (runs under way
+  // reserve what is left, and their ends will free it) holds the fix's
+  // dispatch, as any dispatch is held (prototype.ts prototypeBlocker), never
+  // its registration. Refusing then made the outcome depend on whether a run
+  // was under way when the reproducing result landed (M637 (b) on the gate,
+  // once: the stage sent back by reconcileRepair in that transaction, the
+  // fix registered by a later sweep, two repair units).
+  if (v !== null && v.kind === 'final') return { outcome: 'refused', reason: `allowance_exceeded: ${v.limit}: ${v.reason}` };
   // Reproduced by a covering check other than the one the finding named
   // (one a correction added beside it): the finding is bound to it, so its
   // resolution is verified by the result that discriminates; the check it
