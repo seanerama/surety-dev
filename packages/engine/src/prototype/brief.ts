@@ -53,6 +53,7 @@ import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, en
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
+import { recordDelegatedAction } from '../store/transitions/delegation.js';
 import type { PlanCheckResult } from '../plan/check.js';
 
 type Db = Tx['db'];
@@ -88,7 +89,7 @@ const BUILD_ROLES = ['spec_writer', 'architect', 'verifier', 'builder'] as const
 export const STOP_CONDITIONS = [
   'a limit is reached (token allowance, estimated spend, runtime, or automatic repairs): no new run starts; runs already running end at their own limits',
   'a change to the automated checks or their toolchain needs your review (check approval)',
-  'the first plan is outside the prototype bounds (more than one phase or two stages, or beyond the brief): you approve it as an ordinary plan',
+  'the plan is outside the prototype bounds (more than one phase or two stages, a permission, asset or tier override outside the brief, or the engine cannot establish that it fits): you approve it as an ordinary plan',
   'work fails after its automatic repairs, or a gate refuses: you retry, cancel or discard',
   'a check change the engine cannot classify, a finding you must disposition, or an out-of-band change to the repository or the environment',
   "the Alpha environment is not configured, its adapter is not qualified, or its deployment's verification fails",
@@ -772,6 +773,9 @@ export interface BoundsContext {
   phase?: number;
   earlier_implemented?: string[];
   approved_modules?: { name: string; platform_permissions?: { permission: string; target: string }[]; asset_paths?: unknown[]; tier_override?: unknown }[] | null;
+  // D1 (DECISIONS item 57): an approved architecture exists whose module map
+  // the engine cannot read, so what the plan adds to it cannot be established.
+  approved_modules_unreadable?: boolean;
 }
 
 // The one place the prototype policy's bounds are defined (R1; slice E5's
@@ -814,15 +818,28 @@ export function withinPrototypeBounds(content: Pick<BundleContent, 'roadmap' | '
   if (beyond.length > 0) outside.push(`the plan implements ${beyond.join(', ')}, beyond the approved brief's requirements`);
   const approved = brief.approved_modules ?? [];
   const held = new Set(approved.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)));
-  const permissions = content.modules.modules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)).filter((p) => !held.has(p));
+  const planModules = Array.isArray((content.modules as { modules?: unknown } | null | undefined)?.modules) ? content.modules.modules : [];
+  const permissions = planModules.flatMap((m) => (m.platform_permissions ?? []).map((p) => `${m.name}: ${p.permission} (${p.target})`)).filter((p) => !held.has(p));
   if (permissions.length > 0) outside.push(`the module map asks for platform permission(s): ${permissions.join('; ')}`);
   const sameAssets = (m: { name: string; asset_paths?: unknown[] | undefined }) => JSON.stringify(approved.find((a) => a.name === m.name)?.asset_paths ?? []) === JSON.stringify(m.asset_paths ?? []);
-  const assets = content.modules.modules.filter((m) => (m.asset_paths ?? []).length > 0 && !sameAssets(m)).map((m) => m.name);
+  const assets = planModules.filter((m) => (m.asset_paths ?? []).length > 0 && !sameAssets(m)).map((m) => m.name);
   if (assets.length > 0) outside.push(`module(s) ${assets.join(', ')} declare asset paths (design is off for a prototype)`);
-  const tiers = content.modules.modules.filter((m) => m.tier_override !== undefined && approved.find((a) => a.name === m.name)?.tier_override !== m.tier_override).map((m) => `${m.name} (${String(m.tier_override)})`);
+  const tiers = planModules.filter((m) => m.tier_override !== undefined && approved.find((a) => a.name === m.name)?.tier_override !== m.tier_override).map((m) => `${m.name} (${String(m.tier_override)})`);
   if (tiers.length > 0) outside.push(`module(s) ${tiers.join(', ')} override the prototype's tier`);
-  if (check && check.conformance === 'uncertain') outside.push(`the plan check found it uncertain${(check.uncertain ?? []).length > 0 ? `: ${(check.uncertain ?? []).join('; ')}` : ''}`);
-  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, expected_phase: expected, stages, adrs: Object.keys(content.adrs).length, requirements_uncovered: uncovered, permissions } };
+  // D1 (DECISIONS item 57, the owner's ruling of 2026-11-26: "Judge the plan
+  // against the approved brief using the actual changes"): what the plan
+  // check computed is uncertain (phase_size and the like) routes to the
+  // owner; the Architect's declared `conformance` is recorded in the basis
+  // and never routed on.
+  if (check && (check.uncertain ?? []).length > 0) outside.push(`the plan check found it uncertain: ${(check.uncertain ?? []).join('; ')}`);
+  // "Ask me when ... the engine cannot establish that it fits": never
+  // treated as within.
+  const cannot: string[] = [];
+  if (brief.approved_modules_unreadable === true) cannot.push('the approved module map cannot be read');
+  if (brief.requirement_keys.length === 0) cannot.push("the approved brief's requirements cannot be read");
+  if (!Array.isArray((content.modules as { modules?: unknown } | null | undefined)?.modules)) cannot.push("the plan's module map cannot be read");
+  if (cannot.length > 0) outside.push(`the engine cannot establish that the plan fits the approved brief: ${cannot.join('; ')}`);
+  return { within: outside.length === 0, outside, facts: { phases, plan_phase: plan?.phase ?? null, expected_phase: expected, stages, adrs: Object.keys(content.adrs ?? {}).length, requirements_uncovered: uncovered, permissions } };
 }
 
 // What an iteration's plan is judged against now (S4): the approved brief's
@@ -851,7 +868,9 @@ export function boundsContextOf(db: Db, project: string): BoundsContext {
   } catch {
     approved = null;
   }
-  return { requirement_keys: briefRequirementKeys(db, project), phase: done + 1, earlier_implemented: [...earlier].sort(), approved_modules: approved };
+  // D1: an approved architecture whose module map is not a list of modules.
+  const unreadable = arch !== undefined && !Array.isArray(approved);
+  return { requirement_keys: briefRequirementKeys(db, project), phase: done + 1, earlier_implemented: [...earlier].sort(), approved_modules: unreadable ? null : approved, ...(unreadable ? { approved_modules_unreadable: true } : {}) };
 }
 
 // Whether a replan's run is a prototype's first plan, and its iteration.
@@ -884,14 +903,34 @@ export function routeFirstPlan(
   const verdict = withinPrototypeBounds(args.content, boundsContextOf(tx.db, args.project), args.check);
   if (it) tx.db.prepare('UPDATE "prototype_iterations" SET "plan_bundle" = ? WHERE "id" = ?').run(args.bundle, it.id);
   if (verdict.within && it && isPrototype(tx.db, args.project)) {
-    const approvals = { policy_authorized: { policy: 'rapid_prototype', iteration: it.id, bounds: PROTOTYPE_BOUNDS, policy_revision: policyRevision(tx.db, args.project) } };
+    // D1 (DECISIONS item 57: "Record the basis when it proceeds
+    // automatically"): the approved brief the plan was judged against and
+    // what the engine computed of the plan's actual changes; the Architect's
+    // declared conformance recorded as declared, not routed on.
+    const basis = planBasis(tx.db, it, args.check, verdict);
+    const approvals = { policy_authorized: { policy: 'rapid_prototype', iteration: it.id, bounds: PROTOTYPE_BOUNDS, policy_revision: policyRevision(tx.db, args.project), basis } };
     tx.db.prepare('UPDATE "plan_bundles" SET "approvals" = ? WHERE "id" = ?').run(JSON.stringify(approvals), args.bundle);
     const plan = args.publish();
     if (plan === null) return 'stale';
     tx.db.prepare('UPDATE "prototype_iterations" SET "phase_plan" = ? WHERE "id" = ?').run(plan, it.id);
+    const roadmap = (tx.db.prepare('SELECT r."version" FROM "phase_plans" p JOIN "roadmap_revisions" r ON r."id" = p."roadmap_revision" WHERE p."id" = ?').get(plan) as { version: number } | undefined)?.version ?? null;
+    const published = { ...basis, computed: { ...(basis.computed as Record<string, unknown>), roadmap_version: roadmap } };
+    if (roadmap !== null) tx.db.prepare('UPDATE "plan_bundles" SET "approvals" = ? WHERE "id" = ?').run(JSON.stringify({ policy_authorized: { ...approvals.policy_authorized, basis: published } }), args.bundle);
+    recordDelegatedAction(tx, {
+      project: args.project,
+      iteration: it.id,
+      kind: 'plan_published',
+      subject_type: 'plan_bundle',
+      subject_id: args.bundle,
+      authorized_by_kind: 'decision',
+      authorized_by: it.brief_decision,
+      performed_by: POLICY_PUBLISHER,
+      scope: { bounds: PROTOTYPE_BOUNDS, phase: verdict.facts.expected_phase, phase_plan: plan },
+      basis: published,
+    });
     const now = iterationById(tx.db, it.id)!;
     setStatus(tx, now, 'building', 'none: building');
-    tx.emit('prototype.plan_policy_authorized', { project: args.project, iteration: it.id, plan_bundle: args.bundle, phase_plan: plan }, { routing: POLICY_ROUTING, approved_by: POLICY_PUBLISHER, bounds: PROTOTYPE_BOUNDS, ...verdict.facts });
+    tx.emit('prototype.plan_policy_authorized', { project: args.project, iteration: it.id, plan_bundle: args.bundle, phase_plan: plan }, { routing: POLICY_ROUTING, approved_by: POLICY_PUBLISHER, bounds: PROTOTYPE_BOUNDS, ...verdict.facts, basis: published });
     return 'published';
   }
   args.raiseOwner();
@@ -901,6 +940,35 @@ export function routeFirstPlan(
     tx.emit('prototype.plan_routed_to_owner', { project: args.project, iteration: it.id, plan_bundle: args.bundle }, { outside: verdict.outside, ...verdict.facts });
   }
   return 'owner';
+}
+
+// D1: the basis a plan published by the policy is recorded with: the brief
+// decision and its specification revision, the brief's record and digest,
+// what the plan check computed of the plan's changes, the Architect's
+// declared conformance (recorded, not routed on: the computed changes and
+// uncertainty route), and the bounds' facts.
+function planBasis(db: Db, it: IterationLite, check: PlanCheckResult, verdict: BoundsVerdict): Record<string, unknown> {
+  const row = db.prepare('SELECT "brief_spec_revision" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { brief_spec_revision: string | null } | undefined;
+  const record = it.brief_record === null ? undefined : (db.prepare('SELECT "sha256" FROM "records" WHERE "id" = ?').get(it.brief_record) as { sha256: string | null } | undefined);
+  const ch = check.changes;
+  return {
+    brief_decision: it.brief_decision,
+    spec_revision: row?.brief_spec_revision ?? null,
+    brief_record: it.brief_record,
+    brief_digest: record?.sha256 ?? null,
+    computed: {
+      architecture_changed: ch?.changes_architecture.changed ?? null,
+      architecture_subjects: ch?.changes_architecture.subjects ?? null,
+      modules_changed: ch ? ch.changes_architecture.subjects.includes('modules') : null,
+      adrs: ch?.changes_adrs ?? null,
+      roadmap: ch?.changes_roadmap ?? null,
+      roadmap_version: null,
+      uncertain: check.uncertain ?? [],
+    },
+    declared_conformance: check.declared?.conformance ?? null,
+    declared_is: 'the Architect\'s declaration, recorded as declared; the engine routes on what it computed of the plan\'s actual changes',
+    facts: verdict.facts,
+  };
 }
 
 // ---- 4. the iteration's status (R2) -----------------------------------------------------

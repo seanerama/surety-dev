@@ -260,7 +260,7 @@ function applySpecApproval(db, project, d) {
 
 // The first plan as the Architect's acceptance and integration finalizer
 // would record it (runs/accept.ts replanOf, plan/bundle.ts finalizeReplan).
-function firstPlan(db, project, { stages = [stage(1, ['R1', 'R2']), stage(2, ['R3'], [1])], phases = [{ number: 1, goal: 'show the idea', modules: ['app'], requirement_ids: ['R1', 'R2', 'R3'], depends_on: [] }], modules = MODULES } = {}) {
+function firstPlan(db, project, { stages = [stage(1, ['R1', 'R2']), stage(2, ['R3'], [1])], phases = [{ number: 1, goal: 'show the idea', modules: ['app'], requirement_ids: ['R1', 'R2', 'R3'], depends_on: [] }], modules = MODULES, conformance = 'within_baseline' } = {}) {
   const item = itemsOf(db, project, 'replan').at(-1);
   const r = claim(db, project, item.id);
   launch(db, r, { input_tokens: 2000, output_tokens: 500 });
@@ -268,7 +268,7 @@ function firstPlan(db, project, { stages = [stage(1, ['R1', 'R2']), stage(2, ['R
   assert.equal(base.first_plan, true);
   assert.equal(base.baseline.approved, null, 'planned against no approved architecture');
   const roadmap = roadmapOf(phases);
-  const plan = { phase: 1, prepared_against: { spec_version: 1, architecture_version: 1, roadmap_version: 1, revision: 'sha_spec' }, stages, conformance: 'within_baseline' };
+  const plan = { phase: 1, prepared_against: { spec_version: 1, architecture_version: 1, roadmap_version: 1, revision: 'sha_spec' }, stages, conformance };
   const artifacts = { modules, roadmap, adrs: {}, adr_front_matter: {}, architecture_text: 'One module.', plan };
   const check = checkPlan({ ...base.baseline, architecture_version: 1, roadmap_version: 1, roadmap_architecture_version: 1 }, artifacts);
   const bundle = `rec_bundle_${++recordSeq}`;
@@ -644,4 +644,47 @@ test('the brief\'s target is the configuration\'s real exposure: a port and no b
   assert.doesNotMatch(JSON.stringify(f.target), /private/i);
   assert.equal(B.briefFacts(db, { project: p.id, run, environments: [] }).target.environment, null);
   assert.equal(f.preparation, null, 'no preparation run: none');
+});
+
+// ---- DECISIONS item 57, D1 (the owner's ruling of 2026-11-26): the plan judged against the brief by its actual changes ----
+
+test('D1: a declared `uncertain` is not routed on; computed uncertainty is; what the engine cannot establish is never within', () => {
+  const content = (over = {}) => ({ roadmap: roadmapOf([{ number: 1, goal: 'g', modules: ['app'], requirement_ids: ['R1', 'R2', 'R3'], depends_on: [] }]), plan: { phase: 1, stages: [stage(1, ['R1', 'R2']), stage(2, ['R3'])] }, modules: MODULES, adrs: {}, ...over });
+  const keys = { requirement_keys: ['R1', 'R2', 'R3'] };
+  assert.deepEqual(B.withinPrototypeBounds(content(), keys, { conformance: 'uncertain', uncertain: [] }).outside, [], 'declared only: within');
+  assert.deepEqual(B.withinPrototypeBounds(content(), keys, { conformance: 'uncertain', uncertain: ['phase_size: 3 stages'] }).outside, ['the plan check found it uncertain: phase_size: 3 stages']);
+  assert.deepEqual(B.withinPrototypeBounds(content(), { ...keys, approved_modules: null, approved_modules_unreadable: true }).outside, ['the engine cannot establish that the plan fits the approved brief: the approved module map cannot be read']);
+  const none = B.withinPrototypeBounds(content({ plan: { phase: 1, stages: [stage(1, [])] } }), { requirement_keys: [] });
+  assert.equal(none.within, false);
+  assert.ok(none.outside.includes("the engine cannot establish that the plan fits the approved brief: the approved brief's requirements cannot be read"));
+  const unreadable = B.withinPrototypeBounds(content({ modules: { version: 1 } }), keys);
+  assert.deepEqual(unreadable.outside, ["the engine cannot establish that the plan fits the approved brief: the plan's module map cannot be read"]);
+});
+
+test('D1: a plan within the bounds that declares `uncertain` is published by the policy, its basis recorded on the bundle, the event and a delegated action; no owner approval', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  answer(db, p.id, decisionsOf(db, p.id, 'prototype_preparation_approval')[0]);
+  const b = prepareBrief(db, p.id);
+  answer(db, p.id, b.decision);
+  applySpecApproval(db, p.id, b.decision);
+  const before = readIteration(db, { project: p.id, iteration: p.iteration }).owner_approvals.count;
+  const plan = firstPlan(db, p.id, { conformance: 'uncertain' });
+  assert.equal(plan.check.conformance, 'uncertain', 'the declaration makes the check uncertain');
+  assert.deepEqual(plan.check.uncertain, [], 'nothing computed is');
+  assert.ok(plan.published, 'published by the policy');
+  assert.deepEqual([decisionsOf(db, p.id, 'architecture_approval').length, decisionsOf(db, p.id, 'plan_approval').length], [0, 0]);
+  const it = iteration(db, p.iteration);
+  const basis = JSON.parse(db.prepare('SELECT approvals FROM plan_bundles WHERE id = ?').get(plan.bundle).approvals).policy_authorized.basis;
+  assert.deepEqual([basis.brief_decision, basis.spec_revision, basis.brief_record, basis.declared_conformance], [it.brief_decision, it.brief_spec_revision, it.brief_record, 'uncertain']);
+  assert.equal(basis.brief_digest, 'a'.repeat(64));
+  assert.equal(basis.computed.architecture_changed, true, 'the first architecture');
+  assert.deepEqual(basis.computed.uncertain, []);
+  assert.equal(typeof basis.computed.roadmap_version, 'number');
+  assert.deepEqual(events(db, 'prototype.plan_policy_authorized')[0].basis, basis);
+  const acts = db.prepare('SELECT * FROM delegated_actions WHERE iteration = ?').all(p.iteration);
+  assert.equal(acts.length, 1);
+  assert.deepEqual([acts[0].kind, acts[0].subject_type, acts[0].subject_id, acts[0].authorized_by_kind, acts[0].authorized_by, acts[0].performed_by], ['plan_published', 'plan_bundle', plan.bundle, 'decision', it.brief_decision, 'policy:rapid_prototype']);
+  assert.deepEqual(JSON.parse(acts[0].basis), basis);
+  assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).owner_approvals.count, before, 'the published plan is no owner approval');
 });
