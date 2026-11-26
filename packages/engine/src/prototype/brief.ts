@@ -923,7 +923,9 @@ export function requiredChecksOf(rep: Pick<SpecRepresentation, 'requirements'> |
   return {
     tier: 'T1',
     kinds: [...KIND_INVENTORY.T1],
-    acceptance: 'one acceptance check for each criterion of the brief',
+    // (Not named `acceptance`: the receipt names no field after an
+    // acceptance it does not record; M612.)
+    per_criterion: 'one acceptance-origin check for each criterion of the brief',
     criteria,
     post_deploy: ['post_deploy_behavior'],
     tightenings: TIGHTENINGS_AUTHORIZED,
