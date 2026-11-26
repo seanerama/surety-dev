@@ -57,9 +57,12 @@
 // between the disposition and the fix's dispatch gives one fix item.
 //
 // Readings this file makes (the report says them):
-// - "one unit consumed" is read as the iteration read's
-//   `remaining.repairs_iteration` one lower once the fix is dispatched than
-//   when F was first recorded.
+// - "one unit consumed" is read as one `fix_registered` act for F and the
+//   iteration read's `remaining.repairs_iteration` one lower once the fix is
+//   dispatched than before F could exist (read after the Alpha environment
+//   is configured, before any verification work; objection 240: the engine
+//   may register the fix in the transaction that first sees F reproduced,
+//   before the test first sees F).
 // - Order is the store's (DECISIONS item 51; objection 239), never a wall
 //   clock: "the next candidate" is the first whose candidate.nominated event
 //   comes after the fix item's work.created event, and the scripted boundary
@@ -167,7 +170,11 @@ async function toFinding(t, { name, port, severity = 'low', mode = 'a', policy, 
   const { id: p, it } = await toBrief(fx, { name, ...(policy ? { policy } : {}) });
   await answerOpen(fx, p, 'spec_approval');
   await alphaReady(fx, p, { port });
-  const S = { F: null, V0: null, repairsAtF: null, exitLog: [] };
+  // The allowance read before F can exist (objection 240): no verification has
+  // been dispatched yet, and no repair spent; the engine may register F's fix in
+  // the very transaction that first sees it reproduced.
+  const S = { F: null, V0: null, repairsAtF: (await iterationRead(fx, p, it.id)).remaining.repairs_iteration, exitLog: [] };
+  assert.equal(rows(fx.home, `SELECT 1 FROM "work_items" WHERE "project" = ? AND "kind" = 'verification'`, p).length, 0, 'the fixture is live: the allowance read before any verification exists');
   const exitOf = exitsFor(fx, p, mode, S);
   await pumpWith(
     fx,
@@ -179,7 +186,6 @@ async function toFinding(t, { name, port, severity = 'low', mode = 'a', policy, 
         if (pauseAtF) await pauseProject(fx.engine, p);
         S.F = f.id;
         S.V0 = effectiveVersionId(fx.home, p);
-        S.repairsAtF = (await iterationRead(fx, p, it.id)).remaining.repairs_iteration;
       }
       // X's result on C recorded (under the version at F).
       return resultsOf(fx.home, f.candidate, X).length > 0 ? true : undefined;
@@ -212,7 +218,9 @@ async function assertRepairedByPolicy(J, what, { verifying = X } = {}) {
   const fixRuns = runsOn(fx.home, fixes[0].id);
   assert.ok(fixRuns.length >= 1, `${what}: the fix dispatched`);
   const read = await iterationRead(fx, p, it);
-  assert.equal(read.remaining.repairs_iteration, S.repairsAtF - 1, `${what}: one unit of prototype_repairs_per_iteration consumed (${S.repairsAtF} → ${read.remaining.repairs_iteration})`);
+  const acts = rows(fx.home, `SELECT "id" FROM "delegated_actions" WHERE "kind" = 'fix_registered' AND "subject_id" = ?`, F);
+  assert.equal(acts.length, 1, `${what}: one fix_registered act for F (${show(acts)})`);
+  assert.equal(read.remaining.repairs_iteration, S.repairsAtF - 1, `${what}: one unit of prototype_repairs_per_iteration consumed (read before F could exist: ${S.repairsAtF} → ${read.remaining.repairs_iteration})`);
   const fixAt = fixPlace(fx.home, fixes[0]);
   assert.ok(fixAt !== null, `${what}: the fix item's work.created is recorded`);
   const next = rows(fx.home, 'SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"', p).find((c) => (nominatedPlace(fx.home, c.id) ?? -1) > fixAt);
