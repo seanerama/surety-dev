@@ -41,9 +41,10 @@
 //   read as present (not undefined).
 // - `basis` on a recorded iteration is read as any string other than
 //   'not_recorded_before_0053'.
-// - The pre-migration iteration is ARRANGED BY A LABELLED STORE WRITE of
-//   `prototype_iterations.clock_basis` to NULL (the column the slice plan
-//   names for migration 0053; the file fails naming it if absent).
+// - The pre-migration iteration is ARRANGED BY A LABELLED STORE WRITE: its
+//   `prototype_iterations.clock_basis` NULL and its `created_at` a day before
+//   migration 0053's `applied_at` (schema_migrations), as a row written
+//   before the migration is (the file fails naming either if absent).
 //
 // SAFETY (BS6 §4.1; E64): the kernel lane; the scripted role program and
 // the scripted deployment adapter in the test's own home; nothing signalled
@@ -239,8 +240,11 @@ describe('M639 the runtime clock excludes recorded engine-blocked and paused int
     fx.scripted.release('all', 'long');
     // The pre-migration reading.
     assert.ok(columnsOf(fx.home, 'prototype_iterations').includes('clock_basis'), `the fixture is live: prototype_iterations.clock_basis exists (columns: ${columnsOf(fx.home, 'prototype_iterations').join(', ')})`);
-    // FIXTURE TAMPERING (labelled): the iteration as a row written before migration 0053 (no clock basis recorded).
-    withStore(fx.home, (db) => db.prepare('UPDATE "prototype_iterations" SET "clock_basis" = NULL WHERE "id" = ?').run(it.id), { readonly: false });
+    const applied = withStore(fx.home, (db) => db.prepare('SELECT "applied_at" FROM "schema_migrations" WHERE "seq" = 53').get())?.applied_at;
+    assert.ok(applied, 'the fixture is live: migration 0053 recorded as applied');
+    // FIXTURE TAMPERING (labelled): the iteration as a row written before migration 0053 was applied: created a day before it, no clock basis recorded.
+    const before = new Date(Date.parse(applied) - 86_400_000).toISOString();
+    withStore(fx.home, (db) => db.prepare('UPDATE "prototype_iterations" SET "clock_basis" = NULL, "created_at" = ? WHERE "id" = ?').run(before, it.id), { readonly: false });
     const old = clockOf(await iterationRead(fx, p, it.id), '(e) pre-0053');
     assert.equal(old.basis, 'not_recorded_before_0053', `(e) the basis says the intervals were not recorded (${show(old)})`);
     assert.equal(old.excluded_seconds, null, `(e) excluded_seconds unknown, never 0 (${show(old)})`);
