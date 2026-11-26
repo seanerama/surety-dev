@@ -39,8 +39,8 @@
   "publisher": "policy:rapid_prototype",
   "routing": "policy_authorized",
   "preparation": { "work_kind": "brief_preparation", "role": "spec_writer", "decision": "prototype_preparation_approval", "authorizes": "exactly one brief_preparation run", "record_kind": "prototype_brief" },
-  "brief_fields": ["version", "prepared_at", "app", "for", "experience", "included", "objectives", "mocked", "left_out", "assumptions", "limitations", "constraints", "target", "models", "estimates", "preparation", "limits", "stop_conditions"],
-  "engine_fields": ["version", "prepared_at", "target", "models", "preparation", "limits", "stop_conditions"],
+  "brief_fields": ["version", "prepared_at", "app", "for", "experience", "included", "objectives", "mocked", "left_out", "assumptions", "limitations", "constraints", "target", "models", "estimates", "preparation", "limits", "required_checks", "repairs", "plan_bounds", "stop_conditions"],
+  "engine_fields": ["version", "prepared_at", "target", "models", "preparation", "limits", "required_checks", "repairs", "plan_bounds", "stop_conditions"],
   "next_steps": {
     "limit": "raise the limit or discard",
     "unknown": "iterate (a new iteration, whose own totals exclude this one's; the app's totals keep this unknown) or discard",
