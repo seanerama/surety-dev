@@ -305,7 +305,7 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     const J = await toFinding(t, { name: 'M637 restart', port: 18707, mode: 'a', pauseAtF: true });
     const { fx, p, S } = J;
     for (let i = 0; i < 10 && findingRow(fx.home, S.F).disposition === null; i++) await tick(fx.engine, p, { rounds: 1 });
-    assert.equal(findingRow(fx.home, S.F).disposition, 'fix', 'the fixture is live: F dispositioned while the project is paused');
+    assert.equal(findingRow(fx.home, S.F).disposition, 'fix', 'F dispositioned fix by the policy while the project is paused');
     const runsBefore = fixItems(fx.home, p, S.F).flatMap((w) => runsOn(fx.home, w.id));
     assert.deepEqual(runsBefore.map((r) => r.id), [], 'the fixture is live: the fix not yet dispatched');
     await idle(fx, p);
