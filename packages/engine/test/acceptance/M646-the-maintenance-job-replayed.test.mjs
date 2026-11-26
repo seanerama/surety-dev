@@ -268,6 +268,8 @@ describe('M646 the maintenance job replayed', () => {
     const by = {};
     for (const r of runs) by[`${r.role}/${r.work_kind}`] = (by[`${r.role}/${r.work_kind}`] ?? 0) + 1;
     t.diagnostic(`dispatches: ${show(by)} (${runs.length} runs)`);
+    const items = runs.map((r) => one(R.fx.home, 'SELECT "id", "kind", "trigger_source", "trigger_id", "trigger_generation", "subject" FROM "work_items" WHERE "id" = ?', r.work_item));
+    t.diagnostic(`runs: ${show(runs.map((r, i) => [r.role, r.work_kind, r.outcome ?? r.state, items[i]?.trigger_source, items[i]?.trigger_generation, J(items[i]?.subject)]))}`);
     assert.deepEqual(by, TARGET_DISPATCHES, `iteration 2's runs by role/kind (${show(by)})`);
     assert.equal(runs.length, 9, '9 dispatches in all');
   });
